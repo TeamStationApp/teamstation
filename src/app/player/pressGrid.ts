@@ -23,6 +23,44 @@ export type GridZone =
   | 'seekForward'
   | 'scrub'
 
+/** The transport gestures that may act without a visible control. */
+export function worksWhileHidden(zone: GridZone): boolean {
+  return zone === 'seekBack' || zone === 'seekForward' || zone === 'toggle'
+}
+
+/** Native accessibility clicks have an empty payload; web key releases can be raw events. */
+export function pressInputOf(
+  event: object
+): 'keyboard' | 'pointer' | 'virtual' {
+  const source =
+    'nativeEvent' in event &&
+    event.nativeEvent != null &&
+    typeof event.nativeEvent === 'object'
+      ? event.nativeEvent
+      : event
+  if ('key' in source) return 'keyboard'
+  if (
+    'touches' in source ||
+    ('detail' in source &&
+      typeof source.detail === 'number' &&
+      source.detail > 0)
+  )
+    return 'pointer'
+  return 'virtual'
+}
+
+/** A fresh virtual activation must not inherit a canceled gesture's permission. */
+export function pressMayAct(
+  event: object,
+  startedAllowed: boolean | null,
+  shown: boolean,
+  keyboardPress: boolean
+): boolean {
+  return pressInputOf(event) === 'virtual' && !keyboardPress
+    ? shown
+    : (startedAllowed ?? shown)
+}
+
 /**
  * Which of the two groups of controls a zone belongs to: the scrub line on
  * its own, or every control above it, which show together.

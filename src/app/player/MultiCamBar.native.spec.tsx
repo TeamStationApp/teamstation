@@ -17,6 +17,53 @@ afterEach(async function () {
 })
 
 describe("the phone's bar (U33b)", function () {
+  it('offers the live jump only when provided, and ignores hidden activation', async function () {
+    const localHost = document.createElement('div')
+    document.body.appendChild(localHost)
+    root = createRoot(localHost)
+    let jumps = 0
+    const draw = async (visible: boolean, live: boolean): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <MultiCamBar
+              window={{ fromMs: 0, toMs: 100_000 }}
+              atMs={25_000}
+              angles={[]}
+              visible={visible}
+              onJumpToPresent={
+                live
+                  ? () => {
+                      jumps++
+                    }
+                  : undefined
+              }
+            />
+          </ThemeProvider>
+        )
+      })
+    }
+    await draw(true, false)
+    expect(localHost.querySelector('[data-testid="jumpToPresent"]')).equals(
+      null
+    )
+    await draw(false, true)
+    const jump = localHost.querySelector<HTMLElement>(
+      '[data-testid="jumpToPresent"]'
+    )!
+    expect(jump.getAttribute('tabindex')).equals('-1')
+    await act(async () => {
+      jump.click()
+    })
+    expect(jumps).equals(0)
+    await draw(true, true)
+    expect(jump.getAttribute('tabindex')).equals('0')
+    await act(async () => {
+      jump.click()
+    })
+    expect(jumps).equals(1)
+  })
+
   it('has no buttons, takes no touch, and says where its track is in the press layer', async function () {
     const rects: Array<{ x: number; w: number }> = []
     const host = document.createElement('div')

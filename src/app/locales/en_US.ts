@@ -224,6 +224,7 @@ export const enUs = {
   angles_pause: 'Pause',
   angles_back_ten: 'Back ten seconds',
   angles_forward_ten: 'Forward ten seconds',
+  angles_jump_present: 'Jump to present',
   player_slow_mo: 'Slow Mo 25%',
   game_batting: 'Batting',
   game_box_score_empty: 'No batting to show for this game yet.',

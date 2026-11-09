@@ -98,6 +98,10 @@ describe('the full-screen player in the shell (U12)', () => {
     await act(async () => {
       open!.click()
     })
+    expect(currentRoute()).not.has.property('angles')
+    await act(async () => {
+      open!.click()
+    })
     await settle(100)
     expect(currentRoute()).deep.include({ angles: ['v1'], audio: 'v1' })
     expect(window.location.search).includes('angles=v1')

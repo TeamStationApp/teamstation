@@ -4,7 +4,7 @@
  */
 
 /** How long a group of the card's controls stays up after a press or hover. */
-export const CARD_HIDE_MS = 1000
+export const CARD_HIDE_MS = 2000
 
 /**
  * Seconds into the video for a point `fraction` of the way along the card's

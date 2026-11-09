@@ -1,3 +1,5 @@
+import { mock } from 'node:test'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -24,6 +26,7 @@ import {
   type MultiCamOptions,
   type MultiCamProps,
   type TileHandle,
+  useAutoHide,
   useMultiCam
 } from './useMultiCam'
 
@@ -82,6 +85,68 @@ afterEach(async function () {
   root = undefined
   host?.remove()
   host = undefined
+})
+
+describe('playback control visibility deadline', function () {
+  it('hides at two seconds and refreshes the whole interval on interaction', async function () {
+    mock.timers.enable({ apis: ['setTimeout'] })
+    let controls: ReturnType<typeof useAutoHide>
+    function Controls(): null {
+      controls = useAutoHide(2000)
+      return null
+    }
+    try {
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(<Controls />)
+      })
+      await act(async () => {
+        controls.show()
+      })
+      await act(async () => {
+        mock.timers.tick(1999)
+      })
+      expect(controls!.shown).equals(true)
+      await act(async () => {
+        mock.timers.tick(1)
+      })
+      expect(controls!.shown).equals(false)
+      expect(controls!.shownRef.current).equals(false)
+      await act(async () => {
+        controls.show()
+        mock.timers.tick(1000)
+        controls.show()
+      })
+      await act(async () => {
+        mock.timers.tick(1999)
+      })
+      expect(controls!.shown).equals(true)
+      await act(async () => {
+        mock.timers.tick(1)
+      })
+      expect(controls!.shown).equals(false)
+      await act(async () => {
+        controls.setPressed(true)
+        mock.timers.tick(5000)
+        controls.show()
+        mock.timers.tick(5000)
+      })
+      expect(controls!.shown).equals(true)
+      await act(async () => {
+        controls.setPressed(false)
+        mock.timers.tick(1999)
+      })
+      expect(controls!.shown).equals(true)
+      await act(async () => {
+        mock.timers.tick(1)
+      })
+      expect(controls!.shown).equals(false)
+    } finally {
+      mock.timers.reset()
+    }
+  })
 })
 
 /** Says the tile holds these stretches of its recording, in seconds. */
@@ -603,7 +668,116 @@ describe('useMultiCam', function () {
     expect(mc().urls.A).equals('https://media/A.m3u8')
   })
 
-  it('shows only the scrub line on a tap in the bottom row, and hides it three seconds on', async function () {
+  it('consumes hidden non-transport gestures from down through drag, hold, cancel and release', async function () {
+    const { mc, tiles } = await grid()
+    for (const zone of ['audio', 'corner', 'scrub'] as const) {
+      await act(async () => {
+        mc().hideControls()
+      })
+      const x = zone === 'audio' ? WIDTH * 0.1 : WIDTH * 0.9
+      const y = zone === 'scrub' ? HEIGHT * 0.9 : HEIGHT * 0.1
+      const before = tiles.A.currentTime
+      await act(async () => {
+        mc().pressStart(1, x, y, 0)
+        mc().pressMove(1, WIDTH * 0.5, y)
+        expect(mc().pressEnd(1, WIDTH * 0.5, y)).equals('dead')
+      })
+      expect(tiles.A.currentTime).equals(before)
+      expect(mc().soundOff).equals(false)
+      expect(mc().scrubShown).equals(true)
+      expect(mc().controlsShown).equals(true)
+    }
+    await act(async () => {
+      mc().hideBar()
+      mc().pressStart(2, WIDTH * 0.5, HEIGHT * 0.9, 0)
+      mc().pressCancel(2)
+    })
+    expect(tiles.A.currentTime).equals(120)
+    await act(async () => {
+      mc().pressStart(3, WIDTH * 0.3, HEIGHT * 0.9, 0)
+      mc().pressMove(3, WIDTH * 0.6, HEIGHT * 0.9)
+      mc().pressEnd(3, WIDTH * 0.6, HEIGHT * 0.9)
+    })
+    expect(tiles.A.currentTime).not.equals(120)
+  })
+
+  for (const zone of ['scrub', 'audio'] as const)
+    it(`keeps a hidden ${zone} reveal consumed when a second pointer arrives`, async function () {
+      const { mc, tiles } = await grid()
+      const x = WIDTH * 0.1
+      const y = HEIGHT * (zone === 'scrub' ? 0.9 : 0.1)
+      const before = tiles.A.currentTime
+      await act(async () => {
+        mc().hideControls()
+        expect(mc().pressStart(1, x, y, 0)).equals(true)
+        expect(mc().pressStart(2, x, y, 0)).equals(false)
+        mc().pressMove(2, WIDTH * 0.7, y)
+        mc().pressEnd(2, WIDTH * 0.7, y)
+        expect(mc().pressEnd(1, x, y)).equals('dead')
+      })
+      expect(tiles.A.currentTime).equals(before)
+      expect(mc().soundOff).equals(false)
+      await act(async () => {
+        expect(mc().pressStart(3, x, y, 0)).equals(true)
+        mc().pressEnd(3, x, y)
+      })
+      if (zone === 'scrub') expect(tiles.A.currentTime).not.equals(before)
+      else expect(mc().soundOff).equals(true)
+    })
+
+  it('keeps a permitted gesture valid if controls expire before release', async function () {
+    const { mc } = await grid()
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.1, 0)
+      mc().hideControls()
+      mc().pressEnd(1, WIDTH * 0.1, HEIGHT * 0.1)
+    })
+    expect(mc().soundOff).equals(true)
+    expect(mc().controlsShown).equals(true)
+  })
+
+  it('reveals direct hidden audio activation without changing audio or blocked sound', async function () {
+    const { mc, tiles } = await grid()
+    await act(async () => {
+      mc().soundHeld('A')
+      tiles.A.muted = true
+      mc().hideControls()
+      mc().pressStart(1, WIDTH * 0.1, HEIGHT * 0.1, 0)
+      mc().pressEnd(1, WIDTH * 0.1, HEIGHT * 0.1)
+    })
+    expect(mc().soundBlocked).equals(true)
+    expect(tiles.A.muted).equals(true)
+    await act(async () => {
+      mc().hideControls()
+      mc().runZone('audio')
+    })
+    expect(mc().soundOff).equals(false)
+    expect(mc().scrubShown).equals(true)
+  })
+
+  it('permits hidden skip and pause gestures while revealing both groups', async function () {
+    const { mc, tiles } = await grid()
+    for (const [x, expected] of [
+      [WIDTH * 0.9, 130],
+      [WIDTH * 0.1, 120]
+    ]) {
+      await act(async () => {
+        mc().hideControls()
+        mc().pressStart(1, x, HEIGHT * 0.5, 0)
+        mc().pressEnd(1, x, HEIGHT * 0.5)
+      })
+      expect(tiles.A.currentTime).equals(expected)
+      expect(mc().scrubShown).equals(true)
+    }
+    await act(async () => {
+      mc().hideControls()
+      mc().pressStart(1, WIDTH * 0.5, HEIGHT * 0.5, 0)
+      mc().pressEnd(1, WIDTH * 0.5, HEIGHT * 0.5)
+    })
+    expect(mc().playing).equals(false)
+  })
+
+  it('shows controls and scrub line on a bottom-row tap, and hides both two seconds on', async function () {
     this.timeout(6000)
     const { mc } = await grid()
     await act(async () => {
@@ -611,9 +785,9 @@ describe('useMultiCam', function () {
       mc().pressEnd(1, WIDTH * 0.5, HEIGHT * 0.9)
     })
     expect(mc().scrubShown).equals(true)
-    expect(mc().controlsShown).equals(false)
+    expect(mc().controlsShown).equals(true)
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 3200))
+      await new Promise(resolve => setTimeout(resolve, 2100))
     })
     expect(mc().scrubShown).equals(false)
   })
@@ -623,7 +797,7 @@ describe('useMultiCam', function () {
     const { mc, tiles } = await grid()
     expect(mc().controlsShown).equals(true)
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 3200))
+      await new Promise(resolve => setTimeout(resolve, 2100))
     })
     expect(mc().controlsShown).equals(false)
     // The top-centre squares bring them up and do nothing else.
@@ -632,11 +806,11 @@ describe('useMultiCam', function () {
       mc().pressEnd(1, WIDTH * 0.4, HEIGHT * 0.1)
     })
     expect(mc().controlsShown).equals(true)
-    expect(mc().scrubShown).equals(false)
+    expect(mc().scrubShown).equals(true)
     expect(mc().playing).equals(true)
     expect(tiles.A.currentTime).equals(120)
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 3200))
+      await new Promise(resolve => setTimeout(resolve, 2100))
     })
     // +10 s on either of its rows brings them up as well.
     for (const y of [HEIGHT * 0.3, HEIGHT * 0.6]) {
@@ -645,7 +819,7 @@ describe('useMultiCam', function () {
         mc().pressEnd(1, WIDTH * 0.9, y)
       })
       expect(mc().controlsShown).equals(true)
-      expect(mc().scrubShown).equals(false)
+      expect(mc().scrubShown).equals(true)
     }
     expect(tiles.A.currentTime).closeTo(140, 1)
   })
@@ -741,7 +915,7 @@ describe('useMultiCam', function () {
       }
     )
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 3200))
+      await new Promise(resolve => setTimeout(resolve, 2100))
     })
     expect(mc().controlsShown).equals(false)
     const tap = async (): Promise<void> => {
@@ -830,7 +1004,7 @@ describe('useMultiCam scrubbing on the bottom row (U14)', function () {
   const SPAN = 660_000
   const ROW = HEIGHT * 0.9
 
-  it('follows the finger along the drawn line, with nothing but the line showing', async function () {
+  it('follows the finger along the drawn line, with all controls showing', async function () {
     const { mc, tiles } = await grid()
     mc().setTrackRect(TRACK)
     await act(async () => {
@@ -843,7 +1017,7 @@ describe('useMultiCam scrubbing on the bottom row (U14)', function () {
     const expected = T0 + 0.75 * SPAN
     expect(mc().atWallMs).closeTo(expected, 1)
     expect(mc().scrubShown).equals(true)
-    expect(mc().controlsShown).equals(false)
+    expect(mc().controlsShown).equals(true)
     expect(tiles.A.currentTime).closeTo((expected - T0) / 1000, 0.01)
     expect(tiles.B.currentTime).closeTo((expected - T0) / 1000 - 60, 0.01)
     await act(async () => {
@@ -994,6 +1168,44 @@ describe('useMultiCam on live angles', function () {
     fill(tiles.A, [130, 180])
     fill(tiles.B, [70, 150])
   }
+
+  it('jumps to the current playable live point, consumes hidden activation and never rewinds', async function () {
+    const { mc, tiles } = await grid(
+      { ...live, atMs: T0 + 60_000 },
+      {},
+      atTheirEdges
+    )
+    await act(async () => {
+      mc().hideControls()
+      mc().jumpToPresent()
+    })
+    expect(mc().atWallMs).equals(T0 + 60_000)
+    expect(mc().anyLive).equals(true)
+    await act(async () => {
+      mc().jumpToPresent()
+    })
+    expect(mc().atWallMs).equals(T0 + 135_000)
+    expect(tiles.A.currentTime).equals(135)
+    Object.assign(tiles.A, { seekable: { length: 1, end: () => 240 } })
+    Object.assign(tiles.B, { seekable: { length: 1, end: () => 180 } })
+    await act(async () => {
+      mc().jumpToPresent()
+    })
+    expect(mc().atWallMs).equals(T0 + 195_000)
+    await act(async () => {
+      mc().jumpToPresent()
+    })
+    expect(mc().atWallMs).equals(T0 + 195_000)
+  })
+
+  it('does not jump a recorded take', async function () {
+    const { mc } = await grid()
+    expect(mc().anyLive).equals(false)
+    await act(async () => {
+      mc().jumpToPresent()
+    })
+    expect(mc().atWallMs).equals(T0 + 120_000)
+  })
 
   it('opens 45 s behind the newest footage of the slowest tile, and plays every tile (U25)', async function () {
     this.timeout(5000)

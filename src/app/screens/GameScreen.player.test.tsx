@@ -245,7 +245,7 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     platformWas = null
   })
 
-  it('has no controls, and a tap opens the player on it alone, at its moment', async function () {
+  it('has no browser controls, and revealing then opening keeps its moment', async function () {
     const view = await page([videoOf('v1', START, 2), videoOf('v2', START)])
     const video = inline()
     expect(video.controls).equals(false)
@@ -254,6 +254,10 @@ describe("the videos page's picture and the full-screen player (U12)", function 
       '[data-testid="gameVideoOpen"]'
     )!
     expect(open.getAttribute('aria-label')).equals(lstrings.game_video_open)
+    await act(async () => {
+      open.click()
+    })
+    expect(view.changes).has.length(0)
     await act(async () => {
       open.click()
     })
@@ -290,7 +294,9 @@ describe("the videos page's picture and the full-screen player (U12)", function 
           )
         })
     }
-    // The top-left square, near its corner.
+    // The first hidden press reveals; the next changes the sound.
+    await tap(3, 3)
+    expect(inline().muted).equals(true)
     await tap(3, 3)
     expect(inline().muted).equals(false)
     await tap(3, 3)
@@ -301,6 +307,11 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     const view = await page([videoOf('v1', START)])
     expect(inline().muted).equals(true)
     drive(inline(), 20)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
+        .click()
+    })
     await act(async () => {
       document
         .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
@@ -366,6 +377,11 @@ describe("the videos page's picture and the full-screen player (U12)", function 
       }
     )
     drive(inline(), 20)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
+        .click()
+    })
     await act(async () => {
       document
         .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
@@ -796,6 +812,11 @@ describe("the videos page's picture and the full-screen player (U12)", function 
   it('opens a lone recording with no start on its own media time, and back', async function () {
     const view = await page([videoOf('u1', null)])
     drive(inline(), 25)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
+        .click()
+    })
     await act(async () => {
       document
         .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!

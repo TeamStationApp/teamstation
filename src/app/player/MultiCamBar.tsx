@@ -7,6 +7,7 @@ import {
   barHeightRem,
   clock,
   getBarStyles,
+  JumpToPresent,
   type MultiCamBarProps as SharedBarProps,
   TrackStrips
 } from './multiCam/barParts'
@@ -115,8 +116,10 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
       inert={!visible}
       onFocusCapture={onInteract}
     >
-      <View style={styles.bar}>
-        <Text style={styles.time}>{clock(atMs - take.fromMs)}</Text>
+      <View pointerEvents="box-none" style={styles.bar}>
+        <Text pointerEvents="none" style={styles.time}>
+          {clock(atMs - take.fromMs)}
+        </Text>
         <div
           ref={trackRef}
           role="slider"
@@ -126,6 +129,7 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
           aria-valuenow={Math.round((atMs - take.fromMs) / 1000)}
           tabIndex={0}
           style={{
+            pointerEvents: 'none',
             flex: 1,
             position: 'relative',
             height: 24
@@ -133,7 +137,16 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
         >
           <TrackStrips take={take} atMs={atMs} angles={angles} />
         </div>
-        <Text style={styles.time}>{clock(take.toMs - take.fromMs)}</Text>
+        <Text pointerEvents="none" style={styles.time}>
+          {clock(take.toMs - take.fromMs)}
+        </Text>
+        {props.onJumpToPresent != null ? (
+          <JumpToPresent
+            visible={visible}
+            onPress={props.onJumpToPresent}
+            onPressStateChange={props.onPressStateChange}
+          />
+        ) : null}
       </View>
     </div>
   )

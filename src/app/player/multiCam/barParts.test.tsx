@@ -30,6 +30,53 @@ afterEach(async function () {
 })
 
 describe('the multi-camera bar’s parts', function () {
+  it('offers the live jump only when provided, and ignores hidden activation', async function () {
+    const localHost = document.createElement('div')
+    document.body.appendChild(localHost)
+    root = createRoot(localHost)
+    let jumps = 0
+    const draw = async (visible: boolean, live: boolean): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <MultiCamBar
+              window={{ fromMs: 0, toMs: 100_000 }}
+              atMs={25_000}
+              angles={[]}
+              visible={visible}
+              onJumpToPresent={
+                live
+                  ? () => {
+                      jumps++
+                    }
+                  : undefined
+              }
+            />
+          </ThemeProvider>
+        )
+      })
+    }
+    await draw(true, false)
+    expect(localHost.querySelector('[data-testid="jumpToPresent"]')).equals(
+      null
+    )
+    await draw(false, true)
+    const jump = localHost.querySelector<HTMLElement>(
+      '[data-testid="jumpToPresent"]'
+    )!
+    expect(jump.getAttribute('tabindex')).equals('-1')
+    await act(async () => {
+      jump.click()
+    })
+    expect(jumps).equals(0)
+    await draw(true, true)
+    expect(jump.getAttribute('tabindex')).equals('0')
+    await act(async () => {
+      jump.click()
+    })
+    expect(jumps).equals(1)
+  })
+
   it('reads the take’s clock and where an instant falls in it', function () {
     expect(clock(65_000)).equals('1:05')
     expect(clock(3_725_000)).equals('1:02:05')
@@ -101,6 +148,10 @@ describe('the multi-camera bar’s parts', function () {
     const hidden = await render(false)
     expect(hidden.style.opacity).equals('0')
     expect(getComputedStyle(hidden).pointerEvents).equals('none')
+    await act(async () => {
+      host?.querySelector<HTMLElement>('[aria-label="Close"]')?.click()
+    })
+    expect(closed).equals(1)
   })
 
   it('is the time, the track and the total: no buttons, and no way out (U15)', async function () {

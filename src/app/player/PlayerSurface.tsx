@@ -7,14 +7,22 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CARD_HIDE_MS, cardSeekTarget } from './cardScrub'
 import { seekTo } from './explicitSeek'
 import { SlowMoBadge } from './GestureFeedback'
-import { clock, getBarStyles, TrackStrips } from './multiCam/barParts'
+import {
+  clock,
+  getBarStyles,
+  JumpToPresent,
+  TrackStrips
+} from './multiCam/barParts'
 import type { Rect } from './multiCam/layout'
 import { scrubSeeks } from './multiCam/scrubSeeks'
 import {
   type ControlGroup,
   type GridZone,
   placeIcons,
+  pressInputOf,
+  pressMayAct,
   scrubFraction,
+  worksWhileHidden,
   zoneAt,
   zoneGroup
 } from './pressGrid'
@@ -59,6 +67,8 @@ export interface PlayerSurfaceProps {
    * bar its way into full screen.
    */
   playable?: boolean
+  /** Whether the selected video is currently live. */
+  live?: boolean
   /** The card is silent until its own sound square turns the sound on. */
   muted?: boolean
   onMutedChange?: (muted: boolean) => void
@@ -84,11 +94,9 @@ interface Press {
  * two rows tall down the sides (a hold on the right is slow motion for as
  * long as it lasts), play and pause the four in the middle, and the bottom
  * row the scrub line, which seeks to where it is pressed without pausing.
- * A press anywhere in a square runs it, with its icon showing or not.
+ * Hidden non-transport controls reveal first; the whole revealing gesture is consumed.
  *
- * The controls show in two groups, for a second after a press or after the
- * mouse leaves them: every control above the scrub line together, or the
- * scrub line on its own.
+ * The icons and scrub line show together for two seconds after an interaction.
  */
 export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
   const {
@@ -101,6 +109,7 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     onOpen,
     playable = true,
     muted = true,
+    live = false,
     onMutedChange,
     children
   } = props
@@ -186,22 +195,22 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     }
   }, [player])
 
-  // The two groups, each up for a second after whatever called it.
-  const [shown, setShown] = useState<ControlGroup | null>(null)
+  // One interval for every control, read synchronously at gesture start.
+  const [shown, setShown] = useState(false)
+  const shownRef = useRef(false)
+  const controlPressed = useRef(false)
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const show = useCallback((group: ControlGroup, forMs = CARD_HIDE_MS) => {
-    setShown(group)
-    if (hideTimer.current != null) clearTimeout(hideTimer.current)
-    hideTimer.current = setTimeout(() => {
-      hideTimer.current = null
-      setShown(null)
-    }, forMs)
-  }, [])
-  /** Up for as long as the mouse is over the group, then a second more. */
-  const hover = useCallback((group: ControlGroup) => {
+    shownRef.current = true
+    setShown(true)
     if (hideTimer.current != null) clearTimeout(hideTimer.current)
     hideTimer.current = null
-    setShown(group)
+    if (controlPressed.current) return
+    hideTimer.current = setTimeout(() => {
+      hideTimer.current = null
+      shownRef.current = false
+      setShown(false)
+    }, forMs)
   }, [])
   useEffect(
     () => () => {
@@ -306,7 +315,14 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     else video.pause()
   }
 
+  const setControlPressed = (pressed: boolean): void => {
+    controlPressed.current = pressed
+    show('controls')
+  }
+
   const press = useRef<Press | null>(null)
+  const openAllowed = useRef<boolean | null>(null)
+  const openKeyboard = useRef(false)
   const settle = (state: Press): void => {
     if (state.timer != null) clearTimeout(state.timer)
     state.timer = null
@@ -316,17 +332,16 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
     const state: Press = {
       x0: locationX,
       y0: locationY,
-      zone: zoneAt(
-        locationX,
-        locationY,
-        box,
-        shown === 'controls' ? icons : null
-      ),
+      zone: zoneAt(locationX, locationY, box, shownRef.current ? icons : null),
       timer: null,
       mode: 'pending'
     }
+    if (!shownRef.current && !worksWhileHidden(state.zone)) {
+      state.mode = 'dead'
+      show('controls')
+    }
     // Held still on fast forward: slow motion until the finger lifts.
-    if (state.zone === 'seekForward')
+    if (state.mode === 'pending' && state.zone === 'seekForward')
       state.timer = setTimeout(() => {
         state.timer = null
         if (press.current !== state || state.mode !== 'pending') return
@@ -404,42 +419,42 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
             )
               return
             const { offsetX, offsetY } = event.nativeEvent
-            hover(
+            show(
               zoneGroup(
-                zoneAt(
-                  offsetX,
-                  offsetY,
-                  box,
-                  shown === 'controls' ? icons : null
-                )
+                zoneAt(offsetX, offsetY, box, shownRef.current ? icons : null)
               )
             )
           }}
           onPointerLeave={() => {
-            if (shown != null) show(shown)
+            if (shownRef.current) show('controls')
           }}
         />
       ) : null}
       <ZoneIcons
         icons={icons}
-        visible={playable && shown === 'controls'}
+        visible={playable && shown}
         playing={playing}
         soundOff={muted}
         corner={onOpen != null ? 'fullscreen' : undefined}
       />
-      {/* The scrub line, on its own: the full-screen player's bar, with
+      {/* The scrub line follows the full-screen player's bar, with
           where the video is on the left and its length on the right. */}
       <View
         testID="gameVideoScrubLine"
-        pointerEvents="none"
+        pointerEvents={playable && shown ? 'box-none' : 'none'}
+        accessibilityElementsHidden={!shown}
+        importantForAccessibility={shown ? 'auto' : 'no-hide-descendants'}
         style={[
           bar.bar,
           styles.scrubLine,
-          { opacity: playable && shown === 'scrub' ? 1 : 0 }
+          { opacity: playable && shown ? 1 : 0 }
         ]}
       >
-        <Text style={bar.time}>{clock((aimed ?? place.at) * 1000)}</Text>
+        <Text pointerEvents="none" style={bar.time}>
+          {clock((aimed ?? place.at) * 1000)}
+        </Text>
         <View
+          pointerEvents="none"
           style={styles.track}
           onLayout={event => {
             const { x, y, width: w, height: h } = event.nativeEvent.layout
@@ -456,14 +471,34 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
             ]}
           />
         </View>
-        <Text style={bar.time}>{clock(place.length * 1000)}</Text>
+        <Text pointerEvents="none" style={bar.time}>
+          {clock(place.length * 1000)}
+        </Text>
+        {live ? (
+          <JumpToPresent
+            onPressStateChange={setControlPressed}
+            visible={playable && shown}
+            onPress={() => {
+              const allowed = shownRef.current
+              show('controls')
+              if (!allowed) return
+              const video = videoRef.current
+              if (video == null) return
+              const end = seekableEndOf(video)
+              if (end == null || !Number.isFinite(end) || end <= 0) return
+              const to = Math.max(video.currentTime, end)
+              aimAt(to, false)
+              seeks.end(to)
+            }}
+          />
+        ) : null}
       </View>
       {/* Top right, stepped left of the full-screen icon while it shows. */}
       <SlowMoBadge
         rate={slow}
         right={
           theme.rem(theme.spaceSmRem) +
-          (shown === 'controls' && onOpen != null
+          (shownRef.current && onOpen != null
             ? iconSize + theme.rem(theme.spaceXsRem)
             : 0)
         }
@@ -475,9 +510,35 @@ export function PlayerSurface(props: PlayerSurfaceProps): React.ReactElement {
           testID="gameVideoOpen"
           accessibilityRole="button"
           accessibilityLabel={lstrings.game_video_open}
-          onPress={() => {
+          // This is also the accessible way to reveal the hidden controls.
+          tabIndex={0}
+          onPressIn={event => {
+            openAllowed.current = !playable || shownRef.current
+            openKeyboard.current = pressInputOf(event) === 'keyboard'
+            setControlPressed(openAllowed.current)
+          }}
+          onPressOut={() => {
+            setControlPressed(false)
+          }}
+          onBlur={() => {
+            if (!openKeyboard.current) return
+            openKeyboard.current = false
+            openAllowed.current = null
+            setControlPressed(false)
+          }}
+          onPress={event => {
+            const allowed =
+              !playable ||
+              pressMayAct(
+                event,
+                openAllowed.current,
+                shownRef.current,
+                openKeyboard.current
+              )
+            openAllowed.current = null
+            openKeyboard.current = false
             show('controls')
-            onOpen()
+            if (allowed) onOpen()
           }}
           style={[
             styles.corner,

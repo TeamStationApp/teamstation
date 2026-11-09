@@ -187,6 +187,11 @@ describe('live multi-angle in a browser', function () {
     // later than it plus the time since the tap.
     const atOpen = await inlineWall()
     const tapped = Date.now()
+    const hidden = await session.page.$eval(
+      '[data-testid="gameVideoOpen"]',
+      node => node.getAttribute('tabindex') === '-1'
+    )
+    if (hidden) await session.page.click('[data-testid="gameVideoOpen"]')
     await session.page.click('[data-testid="gameVideoOpen"]')
     try {
       await session.page.waitForFunction(
@@ -222,9 +227,11 @@ describe('live multi-angle in a browser', function () {
     await pause(3000)
     const lastTile = (await read(session))[0]
     const lastAt = Date.now()
-    await session.page.evaluate(
-      `(() => { [...document.querySelectorAll('[aria-label="Close"]')].find(node => node.closest('#root') == null).click() })()`
+    await session.page.keyboard.press('Tab')
+    await session.page.waitForFunction(
+      `document.querySelector('[aria-label="Close"][tabindex="0"]')`
     )
+    await session.page.click('[aria-label="Close"][tabindex="0"]')
     const closedAt = Date.now()
     await session.page.waitForFunction(
       `(() => ${GRID_VIDEOS}.length === 0)()`,

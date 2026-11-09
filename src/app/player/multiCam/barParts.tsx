@@ -44,6 +44,8 @@ export interface BarFrame {
 }
 
 export interface MultiCamBarProps {
+  onJumpToPresent?: () => void
+  onPressStateChange?: (pressed: boolean) => void
   window: Window
   atMs: number
   angles: BarAngle[]
@@ -140,6 +142,38 @@ export function BarButton(props: {
   )
 }
 
+/** Live-only chapter-forward control; hidden input belongs to the reveal layer. */
+export function JumpToPresent(props: {
+  visible: boolean
+  onPress: () => void
+  onPressStateChange?: (pressed: boolean) => void
+}): React.ReactElement {
+  const styles = getBarStyles(useTheme())
+  return (
+    <Pressable
+      testID="jumpToPresent"
+      accessibilityRole="button"
+      accessibilityLabel={lstrings.angles_jump_present}
+      accessibilityElementsHidden={!props.visible}
+      importantForAccessibility={props.visible ? 'auto' : 'no-hide-descendants'}
+      pointerEvents={props.visible ? 'auto' : 'none'}
+      tabIndex={props.visible ? 0 : -1}
+      style={styles.button}
+      onPressIn={() => {
+        if (props.visible) props.onPressStateChange?.(true)
+      }}
+      onPressOut={() => props.onPressStateChange?.(false)}
+      onPress={() => {
+        if (props.visible) props.onPress()
+      }}
+    >
+      <View pointerEvents="none" style={{ transform: [{ rotate: '180deg' }] }}>
+        <Icon name="skip_previous" size={1.25} color="#ffffff" />
+      </View>
+    </Pressable>
+  )
+}
+
 /**
  * The way out: an ✕ in the top right corner, on the browser and the phone
  * alike, whichever way the screen is turned.
@@ -153,6 +187,7 @@ export function BarButton(props: {
 export function ExitButton(props: {
   visible: boolean
   onPress: () => void
+  onPressStateChange?: (pressed: boolean) => void
   /** How far down from the top, past a notch or a status bar. */
   top?: number
   right?: number
@@ -178,7 +213,14 @@ export function ExitButton(props: {
         accessibilityRole="button"
         accessibilityLabel={lstrings.angles_close}
         style={styles.exitButton}
-        onPress={onPress}
+        tabIndex={visible ? 0 : -1}
+        onPressIn={() => {
+          if (visible) props.onPressStateChange?.(true)
+        }}
+        onPressOut={() => props.onPressStateChange?.(false)}
+        onPress={() => {
+          if (visible) onPress()
+        }}
       >
         <Text style={styles.buttonText}>✕</Text>
       </Pressable>

@@ -253,6 +253,20 @@ export class ChromePage {
     })
   }
 
+  /** Confirm the typing destination without reading its value. */
+  async passwordFocused(): Promise<boolean> {
+    const result = (await call(
+      this.tab.webSocketDebuggerUrl,
+      'Runtime.evaluate',
+      {
+        expression:
+          'document.activeElement instanceof HTMLInputElement && document.activeElement.type === "password"',
+        returnByValue: true
+      }
+    )) as { result?: { value?: boolean } }
+    return result.result?.value === true
+  }
+
   /** The page's size in CSS pixels and how many device pixels each is. */
   async viewport(): Promise<{
     dpr: number

@@ -2085,6 +2085,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         <PlayerSurface
           videoRef={playerRef}
           player={playerNode}
+          live={freshStatus === 'live'}
           muted={!cardSound}
           onMutedChange={next => {
             setCardSound(!next)
