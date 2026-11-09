@@ -25,6 +25,7 @@ import {
   GAMES_UPCOMING,
   HOME_LISTS
 } from './documentKeys'
+import { type PictureDirectories, pictureDirectories } from './imageCache'
 import {
   Outbox,
   type OutboxListener,
@@ -47,6 +48,8 @@ export interface CachingClientOptions extends ClientOptions {
   openCache: OpenDocumentCache
   /** The outbox's clock, chance and timers, swapped out in tests. */
   outbox?: Pick<OutboxOptions, 'now' | 'random' | 'setTimer' | 'clearTimer'>
+  /** The person's picture files; the platform's own unless a test swaps it. */
+  pictureFiles?: PictureDirectories
 }
 
 /**
@@ -103,9 +106,18 @@ export class CachingClient extends TeamStationClient {
   private prefetching: Promise<void> | undefined
   private readonly outbox: Outbox
 
+  /** The signed-in person's picture files, opened and deleted with the cache. */
+  readonly pictureFiles: PictureDirectories
+
   constructor(options: CachingClientOptions) {
     super(options)
     this.openCache = options.openCache
+    this.pictureFiles = options.pictureFiles ?? pictureDirectories
+    // A picture is fetched again only while the server answers.
+    this.pictureFiles.offline = this.offline
+    this.subscribeOffline(offline => {
+      this.pictureFiles.offline = offline
+    })
     this.outbox = new Outbox({
       store: async () => await this.owned?.store,
       // Checked again just before each send: a sign-in that set another
@@ -256,6 +268,7 @@ export class CachingClient extends TeamStationClient {
       return
     }
     this.outbox.reset()
+    this.pictureFiles.open(userId)
     const previous = this.opened
     this.opened = {
       userId,
@@ -272,12 +285,17 @@ export class CachingClient extends TeamStationClient {
     this.outbox.wake()
   }
 
-  /** Sign-out: closes and deletes the open file, and leaves none open. */
+  /**
+   * Sign-out: closes and deletes the open file and the person's pictures,
+   * and leaves none open.
+   */
   async signedOut(): Promise<void> {
     const opened = this.opened
     this.opened = undefined
     this.ownerToken = undefined
     this.outbox.reset()
+    const pictures = opened?.userId ?? this.pictureFiles.userId
+    if (pictures != null) await this.pictureFiles.remove(pictures)
     const store = await opened?.store
     await store?.destroy().catch(() => undefined)
   }
@@ -292,15 +310,20 @@ export class CachingClient extends TeamStationClient {
     this.opened = undefined
     this.ownerToken = undefined
     this.outbox.reset()
+    this.pictureFiles.close()
     await this.closeQuietly(opened?.store)
   }
 
-  /** Deletes `userId`'s file, whether it is the open one or not. */
+  /**
+   * Deletes `userId`'s file and pictures, whether they are the open ones or
+   * not.
+   */
   async discard(userId: string): Promise<void> {
     if (this.opened?.userId === userId) {
       await this.signedOut()
       return
     }
+    await this.pictureFiles.remove(userId)
     let store: DocumentStore | undefined
     try {
       store = await this.openCache(userId)
