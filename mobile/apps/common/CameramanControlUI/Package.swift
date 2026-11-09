@@ -14,7 +14,12 @@ let package = Package(
     .target(
       name: "CameramanControlUI",
       dependencies: [ "CameramanCore" ],
-      swiftSettings: [ .swiftLanguageMode(.v6) ]
+      swiftSettings: [
+        .swiftLanguageMode(.v6),
+        // Release whole-module optimization aborts while deserializing
+        // CameramanCore.SettingsLayout.columns (CGSize.width) into this module.
+        .unsafeFlags(["-Onone"], .when(configuration: .release))
+      ]
     )
   ]
 )
