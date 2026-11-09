@@ -50,6 +50,7 @@ import {
 import { BallWarmup, PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 import {
+  figureKeys,
   hasPlayerLabel,
   nameplateContains,
   projectPlayerLabel
@@ -405,6 +406,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   useFrame(() => {
     if (drag.current != null) invalidate()
   })
+  const figures = useMemo(() => {
+    const drawn = players.filter(player => player.emptyPosition !== true)
+    const keys = figureKeys(drawn)
+    return drawn.map((player, index) => ({ player, key: keys[index] }))
+  }, [players])
   const eligible = players.filter(player =>
     props.interaction != null
       ? props.interaction.gestures.includes('place') &&
@@ -1014,21 +1020,19 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         <planeGeometry />
         <meshBasicMaterial visible={false} />
       </mesh>
-      {players
-        .filter(player => player.emptyPosition !== true)
-        .map(player => (
-          <Player
-            key={player.id}
-            player={player}
-            fabric={textures.cloth}
-            onMovementComplete={props.onMovementComplete}
-            paused={props.presentationPaused}
-            selected={
-              (preview?.id === player.id || player.keyboardOrigin != null) &&
-              eligible.some(item => item.id === player.id)
-            }
-          />
-        ))}
+      {figures.map(({ player, key }) => (
+        <Player
+          key={key}
+          player={player}
+          fabric={textures.cloth}
+          onMovementComplete={props.onMovementComplete}
+          paused={props.presentationPaused}
+          selected={
+            (preview?.id === player.id || player.keyboardOrigin != null) &&
+            eligible.some(item => item.id === player.id)
+          }
+        />
+      ))}
     </>
   )
 }

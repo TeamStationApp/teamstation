@@ -1,26 +1,34 @@
 import { asArray, type Cleaner } from 'cleaners'
 
 import {
+  asGameDetail,
   asHomeLists,
   asMyRoles,
   asPage,
   asSeasonGame,
   type ClientOptions,
+  type GameDetail,
   type HomeLists,
   IDEMPOTENCY_HEADER,
   type MyRoles,
   type Page,
   type RequestOptions,
   type SeasonGame,
+  type StoredChange,
+  storedGameOfEvents,
+  type SwapSidesAnswer,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { managesRoster } from '../../common/roles'
+import type { StoredGame } from '../../common/scoring/session'
+import type { SwapDocumentsEffect } from '../../common/scoring/swapDocuments'
 import {
   type CacheTransaction,
   type DocumentStore,
   type SchedulePage,
   schedulePageOf,
+  serverBodyOf,
   type ServerDocument,
   type StoredDocument
 } from './cacheStore'
@@ -30,7 +38,9 @@ import {
   candidatesTeamOf,
   candidatesWordsOf,
   documentKeyOf,
+  eventsKey,
   fallbackKeyOf,
+  gameKey,
   HOME_LISTS
 } from './documentKeys'
 import { type PictureDirectories, pictureDirectories } from './imageCache'
@@ -122,6 +132,50 @@ function isGone(error: unknown): boolean {
   )
 }
 
+/** The game a stored-first read is of, or none for a person's or a team's. */
+function gameOfPath(path: string): string | undefined {
+  const match = /^\/games\/([^/?]+)/.exec(path)
+  if (match == null) return undefined
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A swap queued on the phone: its answer, and the game and plays it wrote
+ * swapped onto the phone, which the scoring screen opens again on at once.
+ */
+export interface QueuedSwap {
+  answer: SwapSidesAnswer
+  /** None when what it wrote is not a whole game: the screen reads it. */
+  swapped?: { game: GameDetail; events: StoredGame }
+}
+
+/** A swap's answer as the queue gives it, with the documents it wrote. */
+const asQueuedSwap: Cleaner<QueuedSwap> = raw => {
+  const { documents, ...answer } = raw as SwapSidesAnswer & {
+    documents?: { game: unknown; events: unknown }
+  }
+  // The swap is queued whatever its documents hold.
+  try {
+    return {
+      answer,
+      ...(documents == null
+        ? {}
+        : {
+            swapped: {
+              game: asGameDetail(documents.game),
+              events: storedGameOfEvents(documents.events)
+            }
+          })
+    }
+  } catch {
+    return { answer }
+  }
+}
+
 /** The digest a stored answer carries, for a queued write to build on. */
 function digestOf(raw: unknown): string | null {
   if (raw == null || typeof raw !== 'object') return null
@@ -152,6 +206,11 @@ export class CachingClient extends TeamStationClient {
 
   private prefetching: Promise<void> | undefined
   private readonly outbox: Outbox
+  /** Who hears that a stored-first read came back different, by game. */
+  private readonly storedListeners = new Map<
+    string,
+    Set<(change: StoredChange) => void>
+  >()
 
   /** The signed-in person's picture files, opened and deleted with the cache. */
   readonly pictureFiles: PictureDirectories
@@ -170,14 +229,12 @@ export class CachingClient extends TeamStationClient {
       // Checked again just before each send: a sign-in that set another
       // person's token while the queue read its file sends nothing of it.
       owns: () => this.owned != null,
+      // Every send of the queue gives up as no signal at the deadline.
       send: async (method, path, body, key) =>
-        await super.request(
-          method,
-          path,
-          asRaw,
-          body,
-          key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }
-        ),
+        await super.request(method, path, asRaw, body, {
+          deadline: true,
+          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } })
+        }),
       token: () => this.token,
       // A re-read is the server's copy, never the phone's pending one.
       read: async path => {
@@ -229,6 +286,96 @@ export class CachingClient extends TeamStationClient {
    */
   async discardGame(gameId: string): Promise<boolean> {
     return await this.outbox.discard(`game:${gameId}`)
+  }
+
+  /**
+   * Queues a swap of the game's home and away behind every write already
+   * queued for it, and answers it at once from the phone's copy of the game
+   * (`swappedDocuments`): the stored game, lineups and plays are written
+   * swapped, and with `reset` the plays are gone; those swapped documents
+   * come back with the answer, so the screen opens on them without reading
+   * them again. Refused when the game is not on the phone, which it is once
+   * scoring has opened it.
+   */
+  async queueSwap(
+    gameId: string,
+    effect: SwapDocumentsEffect
+  ): Promise<QueuedSwap> {
+    const game = await this.cached(gameKey(gameId), asRaw)
+    const sides = (game ?? {}) as { homeTeamId?: unknown; awayTeamId?: unknown }
+    if (
+      typeof sides.homeTeamId !== 'string' ||
+      typeof sides.awayTeamId !== 'string'
+    )
+      throw new HttpError(
+        'unavailable',
+        'This game is not on the phone yet. Try again in a moment.'
+      )
+    // A reset names the plays it confirmed losing: the digest and
+    // generation of the server's last answer. The queue puts the ones the
+    // writes ahead of it answered in their place when it sends; these go
+    // when it cannot read the file then.
+    const confirmed = effect === 'reset' ? await this.serverPlaysOf(gameId) : {}
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/swap-sides`,
+      asQueuedSwap,
+      {
+        homeTeamId: sides.homeTeamId,
+        awayTeamId: sides.awayTeamId,
+        ...confirmed,
+        effect
+      },
+      { queue: 'swap' }
+    )
+  }
+
+  /** The plays digest and generation of the game's last server answer. */
+  private async serverPlaysOf(
+    gameId: string
+  ): Promise<{ playsDigest?: string; generation?: number }> {
+    const serverOf = async (key: string): Promise<Record<string, unknown>> => {
+      const held = serverBodyOf(await this.read(key))
+      try {
+        const raw: unknown = held == null ? undefined : JSON.parse(held)
+        return raw != null && typeof raw === 'object'
+          ? (raw as Record<string, unknown>)
+          : {}
+      } catch {
+        return {}
+      }
+    }
+    const events = await serverOf(eventsKey(gameId))
+    const generation =
+      events.generation ?? (await serverOf(gameKey(gameId))).generation
+    return {
+      ...(typeof events.playsDigest === 'string'
+        ? { playsDigest: events.playsDigest }
+        : {}),
+      ...(typeof generation === 'number' ? { generation } : {})
+    }
+  }
+
+  /**
+   * Tells `listener` when a read scoring took stored-first for `gameId`
+   * (the game, its plays, its rosters, the person's roles, the defaults)
+   * came back from the server different from what the phone showed, until
+   * unsubscribed: the screen reads the game again, as after a socket notice.
+   */
+  override onStoredChanged(
+    gameId: string,
+    listener: (change: StoredChange) => void
+  ): () => void {
+    let listeners = this.storedListeners.get(gameId)
+    if (listeners == null) {
+      listeners = new Set()
+      this.storedListeners.set(gameId, listeners)
+    }
+    listeners.add(listener)
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) this.storedListeners.delete(gameId)
+    }
   }
 
   /** Sends a game's held edits again, as they are, from the one refused. */
@@ -483,7 +630,14 @@ export class CachingClient extends TeamStationClient {
     const queued =
       opened == null
         ? undefined
-        : queuedCallOf(method, path, body, options?.deviceNames, background)
+        : queuedCallOf(
+            method,
+            path,
+            body,
+            options?.deviceNames,
+            background,
+            options?.queue
+          )
     if (queued != null)
       return cleaner(
         background
@@ -502,6 +656,22 @@ export class CachingClient extends TeamStationClient {
         options
       )
     const key = method === 'GET' ? documentKeyOf(path) : undefined
+    if (key != null && opened != null && options?.storedFirst === true) {
+      const shown = await this.readFrom(opened.store, key)
+      let value: { cleaned: T } | undefined
+      try {
+        if (shown != null) value = { cleaned: cleaner(JSON.parse(shown.body)) }
+      } catch {
+        value = undefined
+      }
+      if (shown != null && value != null) {
+        const { storedFirst: _first, ...rest } = options
+        this.refreshStored(opened, key, path, shown.body, rest).catch(
+          () => undefined
+        )
+        return value.cleaned
+      }
+    }
     if (key == null || opened == null) {
       const value = await super.request(method, path, cleaner, body, options)
       this.outbox.wake(true)
@@ -572,6 +742,37 @@ export class CachingClient extends TeamStationClient {
     } catch {
       return value
     }
+  }
+
+  /**
+   * The read behind a stored-first answer: to the server, stored as any
+   * read is, and told to the game's listeners when what the phone now holds
+   * differs from what it showed. A read that fails changes nothing.
+   */
+  private async refreshStored(
+    opened: Opened,
+    key: string,
+    path: string,
+    shown: string,
+    options: RequestOptions
+  ): Promise<void> {
+    try {
+      await this.request('GET', path, asRaw, undefined, options)
+    } catch {
+      return
+    }
+    // Tag choices change no game.
+    if (this.owned !== opened || path.startsWith('/tags')) return
+    const now = await this.readFrom(opened.store, key)
+    if (now == null || now.body === shown) return
+    const gameId = gameOfPath(path)
+    const told =
+      gameId == null
+        ? [...this.storedListeners.values()].flatMap(set => [...set])
+        : [...(this.storedListeners.get(gameId) ?? [])]
+    // Roles, rosters and default lineups are no one game's.
+    const change: StoredChange = gameId == null ? 'details' : 'game'
+    for (const listener of told) listener(change)
   }
 
   private async prefetchOnce(): Promise<void> {
