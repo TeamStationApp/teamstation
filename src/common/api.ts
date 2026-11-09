@@ -5506,7 +5506,11 @@ export class TeamStationClient {
   }
 
   async eventInfo(eventId: string, teamId?: string): Promise<EventInfo> {
-    return await this.request('GET', eventInfoPath(eventId, teamId), asEventInfo)
+    return await this.request(
+      'GET',
+      eventInfoPath(eventId, teamId),
+      asEventInfo
+    )
   }
 
   async eventLocation(
