@@ -1,10 +1,19 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { after, afterEach, before, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { storedPictures } from '../../test/storedPictures'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { PictureDirectoriesContext } from './CachedPicture'
 import { Emblem } from './Emblem'
+
+/** Every picture react-native-web asked the browser for. */
+let requests: Array<{
+  src: string
+  onerror: ((event: unknown) => void) | null
+}> = []
+const originalImage = window.Image
 
 let root: Root | undefined
 let host: HTMLElement | undefined
@@ -44,6 +53,54 @@ function hex(color: string): string {
 }
 
 describe('Emblem', function () {
+  before(function () {
+    window.Image = class {
+      src = ''
+      onerror: ((event: unknown) => void) | null = null
+      onload: unknown
+      constructor() {
+        requests.push(this)
+      }
+    } as unknown as typeof Image
+  })
+  after(function () {
+    window.Image = originalImage
+  })
+  afterEach(function () {
+    requests = []
+  })
+
+  it('draws the initials when there is no picture', async function () {
+    const container = await render(<Emblem uri={null} fallback="MP" />)
+    expect(container.textContent).equals('MP')
+    expect(requests).deep.equals([])
+  })
+
+  it('draws the initials when the picture will not load', async function () {
+    const url = 'https://cdn.example.test/images/user/aa-96.png'
+    const container = await render(<Emblem uri={url} fallback="LG" />)
+    expect(container.textContent).equals('')
+    const request = requests.find(each => each.src === url)
+    expect(request).not.equals(undefined)
+    await act(async () => {
+      request!.onerror?.({})
+    })
+    expect(container.textContent).equals('LG')
+  })
+
+  it('draws the stored file offline, and the initials for a picture never stored', async function () {
+    const url = 'https://cdn.example.test/images/team/bb-96.png'
+    const { directories, fileOf } = await storedPictures([url])
+    const container = await render(
+      <PictureDirectoriesContext.Provider value={directories}>
+        <Emblem uri={`${url}?X-Amz-Signature=1`} fallback="AG" />
+        <Emblem uri={`${url}x`} fallback="ZZ" />
+      </PictureDirectoriesContext.Provider>
+    )
+    expect(requests.map(each => each.src)).deep.equals([fileOf(url)])
+    expect(container.textContent).equals('ZZ')
+  })
+
   it('draws a team’s tile in its colour, with white letters, where there is no picture', async function () {
     const container = await render(
       <Emblem uri={null} fallback="AG" tint="#0F766E" size={2} />
