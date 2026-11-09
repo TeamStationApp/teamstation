@@ -1,7 +1,8 @@
-import React, { useState } from 'react'
-import { Image, Text, View } from 'react-native'
+import React from 'react'
+import { Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { CachedPicture } from './CachedPicture'
 import { FittedInitials } from './FittedInitials'
 import { Icon, type IconName } from './Icon'
 
@@ -10,9 +11,12 @@ export interface EmblemProps {
   initialsSize?: number
   /** Opt-in large group preview; ordinary identity tiles keep their sizing. */
   fitInitials?: boolean
-  /** Signed, short-lived, and often absent. */
+  /** Often absent; an old one may be signed and short-lived. */
   uri?: string | null
-  /** Drawn when there is no picture, or when the picture will not load. */
+  /**
+   * Drawn when there is no picture, when the picture will not load, and
+   * offline when the phone has no file of it.
+   */
   fallback: string
   /**
    * A Material Symbol instead of the letters, for a row that stands for a
@@ -41,16 +45,16 @@ export interface EmblemProps {
  * The picture at the front of a row, or the letters that stand in for it.
  *
  * Falling back on a **load error** as well as on a missing URL is the part
- * that matters: these links are signed and expire, so a tab left open
- * overnight will ask for a picture with a stale signature and be refused. The
+ * that matters: an old picture's link is signed and expires, so a tab left
+ * open overnight will ask for it with a stale signature and be refused. The
  * letters are a better answer than a broken-image glyph, and the row keeps its
- * shape either way.
+ * shape either way. On a phone the picture is drawn from its file
+ * (`CachedPicture`), so a face seen online is still there offline.
  */
 export function Emblem(props: EmblemProps): React.ReactElement {
   const { uri, fallback, icon, shape = 'rounded', size = 2.5, tint } = props
   const theme = useTheme()
   const styles = getStyles(theme)
-  const [failedUri, setFailedUri] = useState<string | null>()
 
   const box = {
     width: theme.rem(size),
@@ -59,50 +63,44 @@ export function Emblem(props: EmblemProps): React.ReactElement {
       shape === 'circle' ? theme.radiusPill : theme.rem(theme.radiusRem)
   }
 
-  if (uri == null || uri === '' || failedUri === uri) {
-    return (
-      <View
-        style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
-      >
-        {icon != null ? (
-          <Icon name={icon} size={size / 2} color={theme.activeColor} />
-        ) : props.fitInitials === true ? (
-          <FittedInitials
-            letters={fallback}
-            size={size}
-            color={tint != null ? '#FFFFFF' : theme.activeColor}
-          />
-        ) : (
-          <Text
-            style={[
-              styles.letters,
-              props.initialsSize != null && {
-                fontSize: theme.rem(props.initialsSize)
-              },
-              // Two letters sized to the tile, so a smaller team mark keeps
-              // the same margin round them as the larger default.
-              tint != null && {
-                ...styles.lettersOnTint,
-                fontSize: theme.rem(size * 0.4)
-              }
-            ]}
-            numberOfLines={1}
-          >
-            {fallback}
-          </Text>
-        )}
-      </View>
-    )
-  }
+  const tile = (
+    <View style={[styles.tile, box, tint != null && { backgroundColor: tint }]}>
+      {icon != null ? (
+        <Icon name={icon} size={size / 2} color={theme.activeColor} />
+      ) : props.fitInitials === true ? (
+        <FittedInitials
+          letters={fallback}
+          size={size}
+          color={tint != null ? '#FFFFFF' : theme.activeColor}
+        />
+      ) : (
+        <Text
+          style={[
+            styles.letters,
+            props.initialsSize != null && {
+              fontSize: theme.rem(props.initialsSize)
+            },
+            // Two letters sized to the tile, so a smaller team mark keeps
+            // the same margin round them as the larger default.
+            tint != null && {
+              ...styles.lettersOnTint,
+              fontSize: theme.rem(size * 0.4)
+            }
+          ]}
+          numberOfLines={1}
+        >
+          {fallback}
+        </Text>
+      )}
+    </View>
+  )
 
   return (
-    <Image
+    <CachedPicture
       accessibilityIgnoresInvertColors
-      source={{ uri }}
+      uri={uri}
+      fallback={tile}
       style={[styles.picture, box]}
-      onError={() => {
-        setFailedUri(uri)
-      }}
     />
   )
 }

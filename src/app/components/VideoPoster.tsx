@@ -11,11 +11,15 @@ import { attachHls } from '../player/attachHls'
 import type { VideoHandle } from '../player/videoHandle'
 import { VideoView } from '../player/VideoView'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { useCachedPicture } from './CachedPicture'
 import { Gradient } from './Gradient'
 import { Icon } from './Icon'
 
 export interface VideoPosterProps {
-  /** A frame of the video. Absent until one has been cut. */
+  /**
+   * A frame of the video. Absent until one has been cut. On a phone it is
+   * drawn from its file once fetched, so it is still there offline.
+   */
   uri?: string | null
   /**
    * Play the video itself in the frame, silently.
@@ -149,7 +153,10 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
   const hero = size === 'hero'
-  const hasPicture = uri != null && uri !== ''
+  // The phone's file of the frame when it has one (`CachedPicture`); offline
+  // with none, the empty frame.
+  const picture = useCachedPicture(uri)
+  const hasPicture = picture != null
   const frameRef = useRef<React.ComponentRef<typeof View>>(null)
   const [moving, setMoving] = useState(false)
   const teardown = useRef<(() => void) | undefined>(undefined)
@@ -244,7 +251,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
   // first paint, so the fit is applied then as well as now.
   useLayoutEffect(() => {
     return applyCoverCrop(frameRef.current)
-  }, [uri, hasPicture])
+  }, [picture, hasPicture])
 
   return (
     <View
@@ -269,7 +276,7 @@ export function VideoPoster(props: VideoPosterProps): React.ReactElement {
       {hasPicture ? (
         <Image
           accessibilityIgnoresInvertColors
-          source={{ uri }}
+          source={{ uri: picture }}
           style={styles.picture}
         />
       ) : (
