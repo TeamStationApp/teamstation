@@ -18,7 +18,7 @@ import { isWithdrawnKey } from '../games/withdrawn'
 import { openAddsOf } from '../openAdds'
 import { followMerges } from '../teams/followMerges'
 import { survivors } from '../teams/teamStaff'
-import { isSpoken } from '../users/readerNames'
+import { fullNamesFor, isSpoken, type Reader } from '../users/readerNames'
 
 /**
  * A level's player name privacy, read from what manages it. Inheritance
@@ -370,14 +370,23 @@ export interface PublicPerson {
  * The format each of these people is shown in: their team's, or with no
  * single team the teams they play for now (`currentFormats`). Staff names are
  * not this setting's: anyone shown as something else stays the built-in format.
+ * Anybody the reader may read in full (`fullNamesFor`) is shown in full.
  */
 export async function publicFormats(
   db: Db,
-  people: readonly PublicPerson[]
+  people: readonly PublicPerson[],
+  options: { reader?: Reader } = {}
 ): Promise<Map<string | number, PlayerNamePrivacy>> {
   // A withdrawn player's line reads as its placeholder, which is no name.
+  const withdrawn = (entry: PublicPerson): boolean =>
+    isWithdrawnKey(String(entry.person.id))
   const named = (entry: PublicPerson): boolean =>
-    entry.player !== false && !isWithdrawnKey(String(entry.person.id))
+    entry.player !== false && !withdrawn(entry)
+  const full = await fullNamesFor(
+    db,
+    options.reader,
+    people.flatMap(entry => (withdrawn(entry) ? [] : [String(entry.person.id)]))
+  )
   const players = people.filter(named)
   const teams = await teamFormats(
     db,
@@ -406,11 +415,13 @@ export async function publicFormats(
   for (const entry of people) {
     const team = held(entry)
     const own = current.get(String(entry.person.id))
-    const format = !named(entry)
-      ? DEFAULT_PLAYER_NAME_PRIVACY
-      : team != null && borrowed(entry)
-        ? lentFormat(team, own)
-        : (team ?? own ?? DEFAULT_PLAYER_NAME_PRIVACY)
+    const format = full.has(String(entry.person.id))
+      ? 'full'
+      : !named(entry)
+        ? DEFAULT_PLAYER_NAME_PRIVACY
+        : team != null && borrowed(entry)
+          ? lentFormat(team, own)
+          : (team ?? own ?? DEFAULT_PLAYER_NAME_PRIVACY)
     const earlier = formats.get(entry.person.id)
     formats.set(
       entry.person.id,
@@ -420,12 +431,16 @@ export async function publicFormats(
   return formats
 }
 
-/** Public names for these people, with collisions broken across them. */
+/**
+ * Public names for these people, with collisions broken across them, and
+ * those the reader may read in full written whole.
+ */
 export async function publicNames(
   db: Db,
-  people: readonly PublicPerson[]
+  people: readonly PublicPerson[],
+  options: { reader?: Reader } = {}
 ): Promise<Map<string | number, string>> {
-  const formats = await publicFormats(db, people)
+  const formats = await publicFormats(db, people, options)
   return formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )

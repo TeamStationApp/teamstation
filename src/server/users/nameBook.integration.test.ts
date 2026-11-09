@@ -12,9 +12,11 @@ import {
   gameNames,
   gameNamesDigest,
   nameHalves,
+  shortNamesOf,
   teamNames,
   userNames
 } from './nameBook'
+import { runSpoken } from './readerNames'
 
 describe('name books', function () {
   this.timeout(60000)
@@ -94,6 +96,102 @@ describe('name books', function () {
     expect(both.nameOf(1)).equals(undefined)
     expect(both.digest).not.equals(one.digest)
     expect((await booksOver(counted, new Map())).size).equals(0)
+  })
+
+  it('writes in full whom its reader may read, in a book of its own', async () => {
+    const pujols = userIdOfGumbo(people.jordanPujols.userId)
+    const reader = { userId: pujols, isAdmin: false }
+    const scope = new Map([
+      [0, [people.jordanPujols.userId, people.jordanPerez.userId]]
+    ])
+    const open = (await booksOver(fixture.db, scope)).get(0)!
+    const read = (await booksOver(fixture.db, scope, { reader })).get(0)!
+    expect(read.nameOf(people.jordanPujols.userId)).equals('Jordan Pujols')
+    expect(read.formatOf(people.jordanPujols.userId)).equals('full')
+    expect(read.nameOf(people.jordanPerez.userId)).equals('Jordan P')
+    expect(open.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
+    expect(read.digest).not.equals(open.digest)
+    // A book going to a model names nobody in full, whoever reads it.
+    const admin = { userId: pujols, isAdmin: true }
+    const told = await booksOver(fixture.db, scope, {
+      spoken: true,
+      reader: admin
+    })
+    const asked = await runSpoken(
+      async () => await booksOver(fixture.db, scope, { reader: admin })
+    )
+    for (const spoken of [told.get(0)!, asked.get(0)!]) {
+      expect(spoken.nameOf(people.jordanPujols.userId)).equals('Jordan P')
+      expect(spoken.nameOf(people.jordanPerez.userId)).equals('Jordan P')
+    }
+    expect(
+      await shortNamesOf(
+        fixture.db,
+        [pujols, userIdOfGumbo(people.babe.userId)],
+        {
+          reader
+        }
+      )
+    ).deep.equals(
+      new Map([
+        [pujols, 'Jordan Pujols'],
+        [userIdOfGumbo(people.babe.userId), 'Babe R']
+      ])
+    )
+    expect((await shortNamesOf(fixture.db, [pujols])).get(pujols)).equals(
+      'Jordan P'
+    )
+    const team = makeId('team')
+    await fixture.db
+      .insertInto('teams')
+      .values({ id: team, name: 'Larks' })
+      .execute()
+    await fixture.db
+      .insertInto('memberships')
+      .values({ id: makeId('membership'), user_id: pujols, team_id: team })
+      .execute()
+    const nameOf = await teamNames(fixture.db, team, [people.babe.userId], {
+      reader: { userId: pujols, isAdmin: true }
+    })
+    expect(nameOf(people.jordanPujols.userId)).equals('Jordan Pujols')
+    expect(nameOf(people.babe.userId)).equals('Babe Ruth')
+    expect(
+      (await teamNames(fixture.db, team))(people.jordanPujols.userId)
+    ).equals('Jordan P')
+    const game = makeId('game')
+    await fixture.db
+      .insertInto('games')
+      .values({
+        id: game,
+        start_at: new Date('2026-01-01T00:00:00Z'),
+        home_team_id: 'tem_home',
+        away_team_id: 'tem_away',
+        season_id: 'sea_demo'
+      })
+      .execute()
+    await fixture.db
+      .insertInto('events')
+      .values({
+        id: makeId('event'),
+        gameId: game,
+        gumbo: JSON.stringify({
+          about: { atBatIndex: 0, inning: 1, halfInning: 'top' },
+          result: { eventType: 'single' },
+          matchup: {
+            batter: { id: people.jordanPujols.userId },
+            pitcher: { id: people.babe.userId }
+          }
+        })
+      })
+      .execute()
+    const games = await gameNames(fixture.db, [game], { reader })
+    expect(games.get(game)!.nameOf(people.jordanPujols.userId)).equals(
+      'Jordan Pujols'
+    )
+    expect(games.get(game)!.nameOf(people.babe.userId)).equals('Babe R')
+    expect((await gameNames(fixture.db, [game])).get(game)!.digest).equals(
+      await gameNamesDigest(fixture.db, game)
+    )
   })
 
   it('reads a merged account as its survivor', async () => {

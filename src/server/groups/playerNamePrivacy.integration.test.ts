@@ -7,9 +7,13 @@ import { asGroupDetail } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import { withdrawnKey } from '../games/withdrawn'
+import { runSpoken } from '../users/readerNames'
 import {
   currentFormats,
   loadPlayerNamePrivacy,
+  publicFormats,
+  publicNames,
   teamFormats
 } from './playerNamePrivacy'
 
@@ -214,5 +218,121 @@ describe('player name privacy from the database', function () {
     expect(formats.get(both)).equals('initialLast')
     expect(formats.get(none)).equals('firstLastInitial')
     expect((await currentFormats(f.h.db, [])).size).equals(0)
+  })
+
+  it('names in full whom the reader may read, and breaks collisions among the rest', async function () {
+    const players = [
+      { id: 411, first: 'Carlos', last: 'Correa', teamId: f.teamA },
+      { id: 412, first: 'Carlos', last: 'Carrasco', teamId: f.teamB },
+      { id: 414, first: 'Carlos', last: 'Beltran', teamId: f.teamB },
+      { id: 415, first: 'Carlos', last: 'Baerga', teamId: f.teamB }
+    ]
+    const [correa, carrasco, beltran, baerga, torre] = [
+      411, 412, 414, 415, 413
+    ].map(userIdOfGumbo)
+    await insertFixtureUsers(f.h.db, [
+      ...players.map(player => ({
+        id: player.id,
+        legacyId: `usr_privacy_${player.last.toLowerCase()}`,
+        display_name: `${player.first} ${player.last}`,
+        first_name: player.first,
+        last_name: player.last
+      })),
+      { id: 413, legacyId: 'usr_privacy_torre', display_name: 'Joe Torre' }
+    ])
+    await f.h.db
+      .insertInto('memberships')
+      .values(
+        players.map(player => ({
+          id: makeId('membership'),
+          user_id: userIdOfGumbo(player.id),
+          team_id: player.teamId,
+          role: 'member' as const,
+          is_player: true
+        }))
+      )
+      .execute()
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: torre,
+        scope_type: 'team',
+        scope_id: f.teamA,
+        role: 'coach',
+        granted_by: userIdOfGumbo(101),
+        granted_at: new Date()
+      })
+      .execute()
+    const people = players.map(player => ({
+      person: {
+        id: userIdOfGumbo(player.id),
+        displayName: '',
+        firstName: player.first,
+        lastName: player.last
+      },
+      teamId: player.teamId
+    }))
+    const coach = { userId: torre, isAdmin: false }
+    expect(await publicNames(f.h.db, people)).deep.equals(
+      new Map([
+        [correa, 'Carlos Co'],
+        [carrasco, 'Carlos Ca'],
+        [beltran, 'Carlos Be'],
+        [baerga, 'Carlos Ba']
+      ])
+    )
+    expect(await publicNames(f.h.db, people, { reader: coach })).deep.equals(
+      new Map([
+        [correa, 'Carlos Correa'],
+        [carrasco, 'Carlos C'],
+        [beltran, 'Carlos Be'],
+        [baerga, 'Carlos Ba']
+      ])
+    )
+    // Staff, shown as staff, read in full by somebody who may.
+    const staff = { id: torre, displayName: 'Joe Torre' }
+    expect(
+      (
+        await publicFormats(f.h.db, [{ person: staff, player: false }], {
+          reader: { userId: torre, isAdmin: false }
+        })
+      ).get(torre)
+    ).equals('full')
+    // A placeholder stays one, even for a site admin.
+    const key = withdrawnKey('grq_privacy', 'gam_privacy')
+    const placeholder = { id: key, firstName: 'Demo Hawks A', displayName: '' }
+    const admin = { userId: torre, isAdmin: true }
+    expect(
+      (
+        await publicFormats(
+          f.h.db,
+          [{ person: placeholder, teamId: f.teamA }],
+          {
+            reader: admin
+          }
+        )
+      ).get(key)
+    ).equals('firstLastInitial')
+    expect(
+      (
+        await publicNames(f.h.db, [{ person: placeholder, teamId: f.teamA }], {
+          reader: admin
+        })
+      ).get(key)
+    ).equals('Demo Hawks A')
+    // A read going to a model names nobody in full.
+    expect(
+      await runSpoken(
+        async () => await publicNames(f.h.db, people, { reader: admin })
+      )
+    ).deep.equals(
+      new Map([
+        [correa, 'Carlos C'],
+        [carrasco, 'Carlos C'],
+        [beltran, 'Carlos B'],
+        [baerga, 'Carlos B']
+      ])
+    )
   })
 })
