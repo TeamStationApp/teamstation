@@ -2,7 +2,7 @@ import { shortName, shortNames } from '../../common/names'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { storedRecordOf } from '../../common/scoring/gumbo'
 import {
-  compareScoringMutations,
+  sameScoringMutation,
   type ScoringMutation
 } from '../../common/scoring/scoringMutation'
 import { POSITIONS } from '../../common/scoring/state'
@@ -210,14 +210,9 @@ export function skipsScoringOverlay(document: unknown, post: unknown): boolean {
   const prior = stored.scoringMutation as ScoringMutation | undefined
   const base = body.scoringBase as ScoringMutation | null | undefined
   return (
-    (mutation != null &&
-      prior != null &&
-      compareScoringMutations(mutation, prior) < 0) ||
-    (mutation == null &&
-      base !== undefined &&
-      (base == null
-        ? prior != null
-        : prior == null || compareScoringMutations(base, prior) !== 0))
+    (mutation == null || !sameScoringMutation(mutation, prior)) &&
+    base !== undefined &&
+    !sameScoringMutation(base, prior)
   )
 }
 
@@ -246,15 +241,8 @@ export function appliedEvents(
   const stored = objectOf(document)
   const body = objectOf(post)
   const mutation = body.scoringMutation as ScoringMutation | undefined
-  const prior = stored.scoringMutation as ScoringMutation | undefined
-  const base = body.scoringBase as ScoringMutation | null | undefined
-  const changed =
-    base !== undefined &&
-    (base == null
-      ? prior != null
-      : prior == null || compareScoringMutations(base, prior) !== 0)
   // A queued request still needs delivery, but an already observed winner
-  // must not be replaced by its older optimistic picture during drain.
+  // must not be replaced by a conflicting optimistic picture during drain.
   if (skipsScoringOverlay(document, post)) {
     const snapshot = { ...stored }
     delete snapshot.superseded
@@ -287,10 +275,7 @@ export function appliedEvents(
           ))
       )
         rows.delete(index)
-  for (const play of [
-    ...(mutation != null && changed ? arrayOf(body.scoringHistory) : []),
-    ...arrayOf(body.plays)
-  ]) {
+  for (const play of arrayOf(body.plays)) {
     const index = indexOf(play)
     if (index == null) continue
     const held = rows.get(index)
