@@ -120,6 +120,12 @@ struct DistributorAPITests {
     try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
   }
 
+  @Test("TS Distributor listens on 8771 and the develop app on 8772, so both can run")
+  func ports() {
+    #expect(DistributorAPI.port(production: true) == 8771)
+    #expect(DistributorAPI.port(production: false) == 8772)
+  }
+
   @Test("The index lists every route with what it does, and nothing else")
   func index() async throws {
     let router = DistributorAPI.router(actions: FakeActions(), events: JSONEventHub())

@@ -38,13 +38,16 @@ public enum ControlCommand: Sendable, Equatable {
 
 public enum ControlChannel {
   public static let scheme = "tscameraman"
+  /// What a develop build claims instead, so it and a master build on one device each get their
+  /// own commands. Either is accepted.
+  public static let developScheme = "tscameraman-develop"
 
   /// Parses `tscameraman://test/<command>?<query>`.
   ///
   /// Anything unrecognised returns nil rather than being ignored, so a typo in a flow fails where
   /// it was typed instead of three assertions later.
   public static func command(from url: URL) -> ControlCommand? {
-    guard url.scheme?.lowercased() == scheme else { return nil }
+    guard let given = url.scheme?.lowercased(), given == scheme || given == developScheme else { return nil }
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
 
     let action = components.path

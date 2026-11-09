@@ -379,6 +379,12 @@ class ControlChannelTest {
     private fun command(path: String) = ControlChannel.command("tscameraman://test$path")
 
     @Test
+    fun `a develop build's scheme is accepted and no other`() {
+        assertEquals(ControlCommand.DumpState, ControlChannel.command("tscameraman-develop://test/dump-state"))
+        assertNull(ControlChannel.command("tsdirector://test/dump-state"))
+    }
+
+    @Test
     fun `the argument-free commands parse`() {
         assertEquals(ControlCommand.DumpState, command("/dump-state"))
         assertEquals(ControlCommand.ShowSettings, command("/show-settings"))

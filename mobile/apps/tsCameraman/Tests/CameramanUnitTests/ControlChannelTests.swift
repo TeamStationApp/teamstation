@@ -21,6 +21,11 @@ struct ControlChannelTests {
     #expect(command("/hide-settings") == .hideSettings)
   }
 
+  @Test func acceptsTheDevelopBuildsSchemeAndNoOther() {
+    #expect(ControlChannel.command(from: URL(string: "tscameraman-develop://test/dump-state")!) == .dumpState)
+    #expect(ControlChannel.command(from: URL(string: "tsdirector://test/dump-state")!) == nil)
+  }
+
   @Test func aRadarFeedNeedsASpeed() {
     #expect(command("/radar-feed?pitch=61&exit=0") == .radarFeed(pitch: 61, exit: 0))
     #expect(command("/radar-feed?exit=88") == .radarFeed(pitch: 0, exit: 88))

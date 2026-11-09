@@ -71,11 +71,14 @@ public enum ControlCommand: Sendable, Equatable {
 
 public enum ControlChannel {
   public static let scheme = "tsdirector"
+  /// What a develop build claims instead, so it and a master build on one device each get their
+  /// own commands. Either is accepted.
+  public static let developScheme = "tsdirector-develop"
 
   /// Parses `tsdirector://test/<command>?<query>`. Returns `nil` for anything unrecognised so
   /// a typo in a flow fails loudly rather than silently doing nothing else.
   public static func command(from url: URL) -> ControlCommand? {
-    guard url.scheme?.lowercased() == scheme else { return nil }
+    guard let given = url.scheme?.lowercased(), given == scheme || given == developScheme else { return nil }
     guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return nil }
 
     // tsdirector://test/scrub -> host "test", path "/scrub"
