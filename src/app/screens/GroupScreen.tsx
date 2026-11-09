@@ -1,14 +1,23 @@
 import React, { useCallback, useState } from 'react'
 import { Text, View } from 'react-native'
 
-import type { TeamStationClient, TeamSummary } from '../../common/api'
+import {
+  groupPath,
+  type TeamStationClient,
+  type TeamSummary
+} from '../../common/api'
 import type { GroupKind, GroupRef } from '../../common/groupCreation'
-import type { GroupDetail, PublicGroup } from '../../common/publicGroups'
+import {
+  asGroupDetail,
+  type GroupDetail,
+  type PublicGroup
+} from '../../common/publicGroups'
 import type { TabCorrection } from '../chat/ChatAgeGate'
 import type { ChatLink } from '../chat/ChatLinks'
 import { Button, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { StoredFirst } from '../sync/storedFirst'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { GroupGameSchedule } from './GroupGameSchedule'
@@ -136,12 +145,30 @@ function GroupContent({
   const begin = useLatestRequest()
   const load = useCallback(async (): Promise<void> => {
     const current = begin()
+    // What the phone stored for this page paints at once while nothing is
+    // shown: with no signal the read answers the same, but only once its
+    // deadline has passed.
+    const stored = new StoredFirst()
+    stored
+      .paint(
+        client,
+        groupPath({ kind, id }),
+        asGroupDetail,
+        value => {
+          setDetail(shown => shown ?? value)
+        },
+        current
+      )
+      .catch(() => undefined)
     try {
       const found = await client.group({ kind, id })
+      stored.answered()
       if (!current()) return
       setDetail(found)
       setError('')
     } catch (error) {
+      // The server said why: that is shown, not the stored copy.
+      stored.answered()
       if (!current()) return
       setDetail(undefined)
       setError(
