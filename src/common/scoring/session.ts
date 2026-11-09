@@ -426,6 +426,8 @@ export class ScoringSession {
    * the plays until the game is read again.
    */
   private heldPlays: string[] = []
+  /** The plays digest of the last read or save answer that named one. */
+  private lastPlays: string | undefined
   private heldLineups: string[] = []
   /** The play generation this session opened the game on, if it has one. */
   private openedGeneration: number | undefined
@@ -495,6 +497,7 @@ export class ScoringSession {
     session.openedGeneration = loaded.generation
     session.readSwap = loaded.swap
     session.heldPlays = loaded.playsDigest == null ? [] : [loaded.playsDigest]
+    session.lastPlays = loaded.playsDigest
     session.heldLineups =
       loaded.lineupsDigest == null ? [] : [loaded.lineupsDigest]
     const reopened = loaded.currentPlay?.about.atBatIndex
@@ -751,6 +754,14 @@ export class ScoringSession {
     return this.refusal != null
   }
 
+  /**
+   * The server read the last save and cannot store it: nothing more is sent
+   * until the next change.
+   */
+  get stopped(): boolean {
+    return this.blocked
+  }
+
   get problem(): string | null {
     return this.refusal ?? this.failure ?? this.dropped
   }
@@ -781,6 +792,14 @@ export class ScoringSession {
   /** Changes of this session's a rebase dropped because home and away were swapped. */
   get lostToSwap(): number {
     return this.swapLost
+  }
+
+  /**
+   * The plays digest of the server's last answer this session took up: what
+   * a reset swap confirms the game's plays by.
+   */
+  get playsDigest(): string | undefined {
+    return this.lastPlays
   }
 
   /** The play generation the session opened the game on, if it has one. */
@@ -1144,6 +1163,7 @@ export class ScoringSession {
     }
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
+    this.lastPlays = fresh.lastPlays
     this.heldLineups = fresh.heldLineups
     // Taken up even when the plays are as they were: a withdrawal, or a game
     // marked under way elsewhere, changes only this.
@@ -1170,6 +1190,7 @@ export class ScoringSession {
     this.readActions = fresh.readActions
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
+    this.lastPlays = fresh.lastPlays
     this.heldLineups = fresh.heldLineups
     this.tagIdentities = fresh.tagIdentities
     this.tagSnapshot++
@@ -1791,6 +1812,7 @@ export class ScoringSession {
         this.lineupsBase = answer.lineupsDigest
         this.heldLineups = held(this.heldLineups, answer.lineupsDigest)
       }
+      if (answer?.playsDigest !== undefined) this.lastPlays = answer.playsDigest
       // Found as this session last had it, the game holds only its own.
       if (answer?.playsDigest !== undefined)
         this.heldPlays =
