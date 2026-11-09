@@ -16,7 +16,30 @@ const specs = [
   'src/server/users/readerNames.integration.test.ts',
   'src/server/groups/playerNamePrivacy.test.ts',
   'src/server/groups/playerNamePrivacyReads.test.ts',
-  'src/server/users/nameBook.test.ts'
+  'src/server/users/nameBook.test.ts',
+  'src/server/teams/teamRoster.test.ts',
+  'src/server/routes/people.test.ts',
+  'src/server/routes/players.test.ts',
+  'src/server/routes/teams.test.ts',
+  'src/server/routes/stats.test.ts',
+  'src/server/graphql/graphql.test.ts',
+  'src/server/events/eventInfo.test.ts',
+  'src/server/routes/chat.test.ts',
+  'src/server/routes/chatBlocks.test.ts',
+  'src/server/routes/chatMessages.test.ts',
+  'src/server/notifications/inbox.test.ts',
+  'src/server/notifications/requestInformation.test.ts',
+  'src/server/groups/guardianRequests.test.ts',
+  'src/server/groups/noticePolicy.test.ts',
+  'src/server/teams/addExistingPlayer.test.ts',
+  'src/server/umpires/savePeople.test.ts',
+  'src/server/umpires/leaderboardPages.test.ts',
+  'src/server/umpires/umpireNames.integration.test.ts',
+  'src/server/umpires/schedule.test.ts',
+  'src/server/routes/users.test.ts',
+  'src/server/routes/videoCollections.test.ts',
+  'src/server/users/rosterCandidates.test.ts',
+  'src/server/umpires/admin.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = []

@@ -98,6 +98,7 @@ import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
 import { gameUmpires } from '../umpires/assignments'
 import { gameNames } from '../users/nameBook'
+import { readerOf } from '../users/readerNames'
 import { publicGamesRoute } from './publicGames'
 import {
   externalIdsAsked,
@@ -706,7 +707,7 @@ export function teamRoutes(
       })
       const answer = {
         id: game.id,
-        umpires: await gameUmpires(db, game.id, media),
+        umpires: await gameUmpires(db, game.id, media, readerOf(actor)),
         guests: availability.guests,
         unrostered: availability.unrostered,
         guestPlayers:
@@ -1014,7 +1015,8 @@ export function teamRoutes(
             teamId,
             fullNames === 'true',
             actor,
-            rosterCache
+            rosterCache,
+            readerOf(actor)
           )
         )
         return
@@ -1027,7 +1029,8 @@ export function teamRoutes(
         teamId,
         false,
         actor,
-        rosterCache
+        rosterCache,
+        readerOf(actor)
       )
       res.json(
         roster.map(entry => ({
@@ -1077,7 +1080,8 @@ export function teamRoutes(
             displayName: row.displayName
           },
           teamId
-        }))
+        })),
+        { reader: readerOf(actor) }
       )
 
       if (req.query.kind === 'pitching') {

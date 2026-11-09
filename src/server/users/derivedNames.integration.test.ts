@@ -264,7 +264,10 @@ describe('names derived from accounts', function () {
     return (await boardTimeline(db!, f.gameId))!.version
   }
 
-  /** The test account's inbox titles: pending, then history. */
+  /**
+   * The test account's inbox titles: pending, then history. A coach of the
+   * player's team, the account reads the player in full.
+   */
   async function inboxTitles(): Promise<{
     pending: string[]
     history: string[]
@@ -376,7 +379,8 @@ describe('names derived from accounts', function () {
       'Strikeout: Tyler G',
       'Single: Anthony R · Stolen base: Juan S'
     ])
-    expect((first.sotoPage as { name: string }).name).equals('Juan S')
+    // His team's administrator reads his own page in full.
+    expect((first.sotoPage as { name: string }).name).equals('Juan Soto')
     expect(
       (first.dj as { away: { batters: Array<{ name: string }> } }).away
         .batters[0].name
@@ -399,7 +403,7 @@ describe('names derived from accounts', function () {
       'Ball four, Juan S walks.'
     )
     expect(await inboxTitles()).deep.equals({
-      pending: ["Joe Torre asks to be Mike T's guardian"],
+      pending: ["Joe Torre asks to be Mike Trout's guardian"],
       history: ['Bobby Cox added you as Coach of Lakeside Owls']
     })
     expect(await storedNameCount(await accountNames())).equals(0)
@@ -416,7 +420,10 @@ describe('names derived from accounts', function () {
       { name: { firstName: 'Vladimir', lastName: 'Guerrero' } }
     )
     expect(leadoff.status).equals(200)
-    expect(leadoff.body.shortName).equals('Vladimir G')
+    expect(leadoff.body).include({
+      shortName: 'Vladimir Guerrero',
+      compactName: 'Vladimir G'
+    })
     // A home fielder of the outside scorer's chain is renamed as a roster
     // import renames him: in his account alone.
     await db!
@@ -448,6 +455,7 @@ describe('names derived from accounts', function () {
     second = await surfaces()
     expect(second).deep.equals(
       renamed(first, [
+        ['Juan Soto', 'Vladimir Guerrero'],
         ['Juan S', 'Vladimir G'],
         ['Freddie F', 'Joey V'],
         ['Ichiro S', 'Hideki M']
@@ -455,7 +463,7 @@ describe('names derived from accounts', function () {
     )
     expect(await timelineVersion()).not.equals(firstVersion)
     expect(await inboxTitles()).deep.equals({
-      pending: ["Tony La Russa asks to be Mike T's guardian"],
+      pending: ["Tony La Russa asks to be Mike Trout's guardian"],
       history: ['Earl Weaver added you as Coach of Lakeside Owls']
     })
     // A scorer reads the corrected guest's halves.
@@ -506,7 +514,7 @@ describe('names derived from accounts', function () {
     expect(await inboxTitles()).deep.equals({
       pending: [],
       history: [
-        `${DELETED_NAME} asks to be Mike T's guardian`,
+        `${DELETED_NAME} asks to be Mike Trout's guardian`,
         'Earl Weaver added you as Coach of Lakeside Owls'
       ]
     })

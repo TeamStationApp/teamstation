@@ -31,6 +31,7 @@ import {
   statSplits,
   TooManyLines
 } from '../stats/splits'
+import { readerOf } from '../users/readerNames'
 import { RestError } from './restReader'
 
 /**
@@ -459,15 +460,20 @@ export function statsField(
       if (raw.runners != null) filter.runners = raw.runners
       if (raw.firstPitch != null) filter.firstPitch = raw.firstPitch
       try {
-        return await statSplits(db, scopes, {
-          perspective: args.perspective,
-          filter,
-          groupBy: args.groupBy ?? [],
-          orderBy: args.orderBy ?? undefined,
-          ascending: !args.descending,
-          limit: args.limit,
-          allGames
-        })
+        return await statSplits(
+          db,
+          scopes,
+          {
+            perspective: args.perspective,
+            filter,
+            groupBy: args.groupBy ?? [],
+            orderBy: args.orderBy ?? undefined,
+            ascending: !args.descending,
+            limit: args.limit,
+            allGames
+          },
+          { reader: readerOf(actor) }
+        )
       } catch (error) {
         if (error instanceof TooManyLines)
           throw new RestError(400, error.message)

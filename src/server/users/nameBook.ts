@@ -719,12 +719,13 @@ export async function userNames(
 /**
  * Each user's public name, merged accounts read as their survivor: the name
  * a notice gives the player it is about, who is shown with no single team.
- * Those `options.reader` may read in full are named in full.
+ * Those `options.reader` may read in full are named in full: with
+ * `readsFull`, those of them the caller found already (`fullNamesFor`).
  */
 export async function shortNamesOf(
   db: Db,
   userIds: Iterable<string>,
-  options: { reader?: Reader } = {}
+  options: { reader?: Reader; readsFull?: Iterable<string> } = {}
 ): Promise<Map<string, string>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
@@ -746,7 +747,8 @@ export async function shortNamesOf(
   const full = await fullNamesFor(
     db,
     options.reader,
-    rows.map(row => row.id)
+    rows.map(row => row.id),
+    options.readsFull == null ? {} : { known: options.readsFull }
   )
   const names = formatForReader(
     rows.map(person => ({

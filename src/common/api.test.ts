@@ -1379,9 +1379,11 @@ describe('api client', function () {
     ])
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
 
+    // A coach reads Hank Conger in full; the public label rides beside it.
     const member = {
       userId: userIdOfGumbo(42),
-      shortName: 'Hank C',
+      shortName: 'Hank Conger',
+      compactName: 'Hank C',
       avatarUrl: null,
       label: 'Coach',
       isModerator: true,
@@ -1424,7 +1426,8 @@ describe('api client', function () {
 
     const person = {
       userId: userIdOfGumbo(42),
-      shortName: 'Hank C',
+      shortName: 'Hank Conger',
+      compactName: 'Hank C',
       avatarUrl: null
     }
     const candidates = client([person])
@@ -1441,6 +1444,7 @@ describe('api client', function () {
     const adult = {
       userId: userIdOfGumbo(7),
       shortName: 'Gale G',
+      compactName: undefined,
       label: 'Guardian'
     }
     const adults = client([adult])
@@ -3506,8 +3510,12 @@ describe('who is signed in, with no signal', function () {
       userId: 'usr_a',
       gumboId: 1,
       externalIds: [],
-      shortName: 'Mookie B',
-      shortParts: { first: 'Mookie', last: 'B' },
+      // Read in full, with the public label beside it.
+      shortName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'M Betts',
+      compactFormat: 'initialLast',
+      shortParts: { first: 'Mookie', last: 'Betts' },
       avatarUrl: null,
       bats: 'right',
       throws: null,

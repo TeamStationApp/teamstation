@@ -19,8 +19,10 @@ import { canAdminister } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { noteScopeChange } from '../socket/syncRevision'
+import { type Reader, readerOf } from '../users/readerNames'
 import { people } from './admin'
 import {
+  readerUmpireNames,
   type UmpireIdentity,
   umpireIdentity,
   umpireInterval,
@@ -181,10 +183,15 @@ export async function recheckUmpireAssignments(
     }
   }
 }
+/**
+ * A game's umpire positions and who holds each, named in full to a `reader`
+ * who may read them in full and short otherwise.
+ */
 export async function gameUmpires(
   db: Kysely<Database>,
   gameId: string,
-  media?: MediaContext
+  media?: MediaContext,
+  reader?: Reader
 ): Promise<UmpireGameBlock | null> {
   const row = await db
     .selectFrom('games')
@@ -222,17 +229,21 @@ export async function gameUmpires(
     string,
     { userId: string; name: string; avatarUrl: string | null }
   >()
-  for (const assignment of held) {
-    const p = await umpireIdentity(db, assignment.user_id)
-    const user = await db
-      .selectFrom('users')
-      .select('avatar_path')
-      .where('id', '=', p.userId)
-      .executeTakeFirstOrThrow()
+  // Each holder's account, avatar included, read together.
+  const holders = await Promise.all(
+    held.map(async assignment => await umpireIdentity(db, assignment.user_id))
+  )
+  const names = await readerUmpireNames(
+    db,
+    reader,
+    holders.map(p => p.named)
+  )
+  for (const [i, assignment] of held.entries()) {
+    const p = holders[i]
     slots.set(assignment.slot, {
       userId: p.userId,
-      name: p.name,
-      avatarUrl: media == null ? null : imageUrl(media.space, user.avatar_path)
+      name: names.get(p.userId) ?? p.name,
+      avatarUrl: media == null ? null : imageUrl(media.space, p.avatarPath)
     })
   }
   return {
@@ -297,6 +308,8 @@ export async function leaderboard(
     counts.set(p.userId, held)
   }
   // A page is named as the roster names its people, and holds them all.
+  // Every entry keeps the default answer's name to sort on; the reader's
+  // full names are only what it shows.
   const roster = page == null ? [] : await people(db, leagueId)
   const rosterNames = new Map(roster.map(p => [p.id, p.name]))
   for (const p of roster)
@@ -307,6 +320,15 @@ export async function leaderboard(
         completed: 0,
         scheduled: 0
       })
+  // Whom the rows above loaded are named from their accounts; a roster
+  // entry with no assignment is read only if the reader reads it in full.
+  const loaded = [...new Set(identities.values())]
+  const readerNames = await readerUmpireNames(
+    db,
+    readerOf(actor),
+    loaded.map(p => p.named),
+    [...counts.keys()].filter(id => !identities.has(id))
+  )
   const rank = (key: 'completed' | 'scheduled'): UmpireRank[] => {
     // Ties break on the default answer's name, so a page lists the top ten in
     // the order of its symbols, whatever name it shows them under.
@@ -331,7 +353,7 @@ export async function leaderboard(
           )
     return listed.map(p => ({
       userId: p.userId,
-      name: rosterNames.get(p.userId) ?? p.name,
+      name: readerNames.get(p.userId) ?? rosterNames.get(p.userId) ?? p.name,
       count: p[key],
       symbol: symbolOf.get(p.userId) ?? ''
     }))

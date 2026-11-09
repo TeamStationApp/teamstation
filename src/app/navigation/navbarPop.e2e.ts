@@ -162,8 +162,8 @@ async function main(): Promise<void> {
       await tapCss('[role="link"][aria-label="Demo Hawks"]')
       await settle('Demo Hawks')
       await tapCss('[aria-label="Team sections"] [aria-label="Team"]')
-      await tap(m, 'Alex L')
-      await settle('Alex L')
+      await tap(m, 'Alex Lee')
+      await settle('Alex Lee')
     }
     const popped = async (
       tab: string,
@@ -243,7 +243,7 @@ async function main(): Promise<void> {
       await openPlayerFromGame()
       await tapTab('Videos')
       await tapTab('Home')
-      await settle('Alex L')
+      await settle('Alex Lee')
       const path = await pathOf()
       await note(`switch pathname ${path}`)
       assert.ok(path.startsWith('/players/'))

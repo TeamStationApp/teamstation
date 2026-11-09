@@ -316,6 +316,34 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(lists).deep.equals([])
     })
 
+    it('names a member in full to a coach, with the public label for mentions', async function () {
+      const id = await chatId('Hc', 'Hawks Members')
+      const named = async (
+        who: string
+      ): Promise<Record<string, { shortName: string; compactName?: string }>> =>
+        Object.fromEntries(
+          (
+            (await call(who, 'GET', `/chat/conversations/${id}/members`))
+              .body as Array<{
+              userId: string
+              shortName: string
+              compactName?: string
+            }>
+          ).map(m => [fixture.keyOf(m.userId), m])
+        )
+      // The coach reads his player in full; what he writes to the chat, such
+      // as a mention, carries the label everybody else reads.
+      const coach = await named('Hc')
+      expect(coach.P).to.include({
+        shortName: 'Pat Player',
+        compactName: 'Pat P'
+      })
+      // A plain member reads the public label, with nothing beside it.
+      const member = await named('A')
+      expect(member.P.shortName).equals('Pat P')
+      expect(member.P).not.to.have.property('compactName')
+    })
+
     it('answers members, reads and the log to members only', async function () {
       const id = await chatId('Hc', 'Hawks Staff')
       for (const path of ['members', 'reads', 'log']) {

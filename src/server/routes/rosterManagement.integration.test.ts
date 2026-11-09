@@ -57,9 +57,11 @@ describe('scorekeeper roster-management exception', function () {
         const entries = (await (await get(query)).json()) as Array<
           Record<string, unknown>
         >
+        // The scorekeeper may read the player in full, so the basic read
+        // names him so, the public label beside it, with no name details.
         expect(
-          entries.find(row => row.userId === userIdOfGumbo(100))?.shortName
-        ).equals('Mookie B')
+          entries.find(row => row.userId === userIdOfGumbo(100))
+        ).to.include({ shortName: 'Mookie Betts', compactName: 'Mookie B' })
         expect(entries.every(row => row.nameDetails == null)).equals(true)
       }
       for (const query of [

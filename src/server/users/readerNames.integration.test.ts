@@ -240,6 +240,41 @@ describe('reader names', function () {
     expect(fifty.queries()).equals(two.queries())
   })
 
+  it('takes an answer the caller already has without asking again, and still none for a model', async function () {
+    let queries = 0
+    const db = fixture.db.withPlugin({
+      transformQuery(args) {
+        queries++
+        return args.node
+      },
+      async transformResult(args) {
+        return args.result
+      }
+    })
+    const player = idOf('Mookie Betts')
+    const known = await fullNamesFor(
+      db,
+      reader('Bruce Bochy'),
+      [player, idOf('Aaron Judge')],
+      { known: [player, idOf('Ken Griffey')] }
+    )
+    expect([...known]).deep.equals([player])
+    expect(queries).equals(0)
+    expect(
+      (
+        await runSpoken(
+          async () =>
+            await fullNamesFor(db, reader('Bruce Bochy'), [player], {
+              known: [player]
+            })
+        )
+      ).size
+    ).equals(0)
+    expect(
+      (await fullNamesFor(db, undefined, [player], { known: [player] })).size
+    ).equals(0)
+  })
+
   it('takes the reader from a person, never from a machine', function () {
     const person: Actor = { userId: 'usr_person', isAdmin: true, scopes: [] }
     expect(readerOf(person)).deep.equals({

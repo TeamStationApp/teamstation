@@ -5,6 +5,7 @@ import { badRequest, forbidden, notFound } from '../../common/errors'
 import type { Database } from '../db/database'
 import type { MediaContext } from '../media/mediaContext'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
+import type { Reader } from '../users/readerNames'
 import { chatPeople } from './listing'
 import { inTransaction, notifyChatUser } from './membershipLog'
 
@@ -78,7 +79,8 @@ export async function blockingRecipientIds(
 export async function blocksFor(
   db: Kysely<Database>,
   media: MediaContext,
-  userId: string
+  userId: string,
+  reader?: Reader
 ): Promise<ChatBlock[]> {
   const own = await rowsOfPeople(db, [userId])
   if (own.length === 0) return []
@@ -93,7 +95,7 @@ export async function blocksFor(
     rows.map(row => row.blocked_user_id)
   )
   const ids = [...new Set(canonical.values())].filter(id => id !== userId)
-  const people = await chatPeople(db, media.space, ids)
+  const people = await chatPeople(db, media.space, ids, { reader })
   return await Promise.all(
     ids.map(async id => ({
       userId: id,

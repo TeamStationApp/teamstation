@@ -829,8 +829,9 @@ describe('the chat engine (U12)', function () {
     // Named by who is left in it, then, once Hs is alone, by who was.
     const titleOf = async (): Promise<string | undefined> =>
       (await hs.engine.refresh()).find(item => item.id === chatOf)?.title
+    // As Hs reads them: a name reads per reader, and Es reads their own whole.
     const names = new Map(
-      (await es.client.chatMembers(chatOf)).map(member => [
+      (await hs.client.chatMembers(chatOf)).map(member => [
         member.userId,
         member.shortName
       ])

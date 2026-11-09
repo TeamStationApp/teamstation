@@ -23,10 +23,11 @@ import { onePerson } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
 import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
-import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
+import { compactFields, readerNaming } from '../groups/playerNamePrivacy'
 import { heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import type { Reader } from '../users/readerNames'
 import { gumboIdsOf, teamRosterCore } from './rosterCore'
 import { teamHeadCoach } from './teamHeadCoach'
 
@@ -53,9 +54,9 @@ async function heldAgainst(
 }
 
 /**
- * Who is on a team. Ordinary reads contain short names, for every viewer. A
- * route that has authorized roster management may explicitly request private
- * name details.
+ * Who is on a team. Ordinary reads contain public names, and full names for
+ * the people `reader` may read in full. A route that has authorized roster
+ * management may explicitly request private name details.
  *
  * The people are every member of the team, everybody a season or league
  * above it makes a member of it, everybody given a role on the team, on the
@@ -84,7 +85,8 @@ export async function teamRoster(
    * Where the team's core may be read from and kept (`teamRosterCore`). Not
    * inside a write transaction.
    */
-  cache?: ValkeyCache
+  cache?: ValkeyCache,
+  reader?: Reader
 ): Promise<RosterEntry[]> {
   const core = await teamRosterCore(db, teamId, cache)
   const members = core.members
@@ -137,7 +139,8 @@ export async function teamRoster(
     gumboIds,
     teamId,
     includeFullNames,
-    selfIds: await viewerIds(db, viewer)
+    selfIds: await viewerIds(db, viewer),
+    reader
   })
 }
 
@@ -160,7 +163,8 @@ export async function levelPeople(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   ref: { kind: 'season' | 'league'; id: string },
-  viewer?: { userId: string; isAdmin: boolean }
+  viewer?: { userId: string; isAdmin: boolean },
+  reader?: Reader
 ): Promise<RosterEntry[] | undefined> {
   let levels: { seasonIds: string[]; leagueIds: string[] }
   if (ref.kind === 'season') {
@@ -274,7 +278,8 @@ export async function levelPeople(
       given,
       memberLevels,
       family,
-      selfIds: await viewerIds(db, viewer)
+      selfIds: await viewerIds(db, viewer),
+      reader
     }
   )
 }
@@ -294,10 +299,17 @@ export async function peopleAt(
   space: MediaContext['space'] | undefined,
   ref: { kind: 'league' | 'season' | 'team'; id: string },
   viewer?: { userId: string; isAdmin: boolean },
-  cache?: ValkeyCache
+  cache?: ValkeyCache,
+  reader?: Reader
 ): Promise<RosterEntry[] | undefined> {
   if (ref.kind !== 'team')
-    return await levelPeople(db, space, { kind: ref.kind, id: ref.id }, viewer)
+    return await levelPeople(
+      db,
+      space,
+      { kind: ref.kind, id: ref.id },
+      viewer,
+      reader
+    )
   const team = await db
     .selectFrom('teams')
     .select('id')
@@ -306,7 +318,7 @@ export async function peopleAt(
     .executeTakeFirst()
   return team == null
     ? undefined
-    : await teamRoster(db, space, ref.id, false, viewer, cache)
+    : await teamRoster(db, space, ref.id, false, viewer, cache, reader)
 }
 
 /** Whether somebody is on a level's people list, in any section. */
@@ -490,6 +502,8 @@ async function sectionPeople(
     includeFullNames?: boolean
     /** Ids of the signed-in person. Every other row is somebody else. */
     selfIds?: ReadonlySet<string>
+    /** Who reads the list: the people they may read in full are named so. */
+    reader?: Reader
   }
 ): Promise<RosterEntry[]> {
   const headCoach =
@@ -515,10 +529,8 @@ async function sectionPeople(
     teamId: facts.teamId,
     player: row.isPlayer
   }))
-  const formats = await publicFormats(db, people)
-  const names = formatForReader(
-    people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
-  )
+  const naming = await readerNaming(db, people, facts.reader)
+  const { names, formats } = naming
   const above = (level: RoleLevel | undefined): level is 'season' | 'league' =>
     level != null && level !== ownLevel && level !== 'team'
 
@@ -604,6 +616,12 @@ async function sectionPeople(
         ...(formats.get(row.userId) === DEFAULT_PLAYER_NAME_PRIVACY
           ? {}
           : { nameFormat: formats.get(row.userId) }),
+        ...compactFields(naming, {
+          id: row.userId,
+          firstName: row.firstName,
+          lastName: row.lastName,
+          displayName: row.displayName
+        }),
         avatarUrl: space == null ? null : imageUrl(space, row.avatarPath),
         jersey: row.jersey,
         positions: row.positions,

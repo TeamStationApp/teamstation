@@ -47,6 +47,7 @@ import type { ScheduleRow } from '../routes/seasons'
 import { mayScheduleIn, scheduleRights } from '../schedule/scheduleGames'
 import { noteScopeChange } from '../socket/syncRevision'
 import { recheckUmpireAssignments } from '../umpires/assignments'
+import { type Reader, readerOf } from '../users/readerNames'
 import { refreshFieldWarnings } from '../venues/fieldWarnings'
 
 type ResolvedEvent = Omit<EventInfo, 'attendees' | 'replyUserIds'> & {
@@ -195,12 +196,16 @@ async function gameField(
       }
 }
 
-/** Direct event attendance deliberately does not inherit season/league people. */
+/**
+ * Direct event attendance deliberately does not inherit season/league people.
+ * The people `reader` may read in full are named in full.
+ */
 async function eventPeople(
   db: Kysely<Database>,
   event: ResolvedEvent,
   actor: Actor,
-  media?: MediaContext
+  media?: MediaContext,
+  reader?: Reader
 ): Promise<{ attendees: EventAttendee[]; replyUserIds: string[] }> {
   const identities = new Map<string, OnePerson>()
   const identity = async (id: string): Promise<OnePerson> => {
@@ -372,7 +377,8 @@ async function eventPeople(
       return teams == null
         ? [{ person, player: false }]
         : teams.map(teamId => ({ person, teamId }))
-    })
+    }),
+    { reader }
   )
   const names = new Map(
     users.map(user => {
@@ -490,7 +496,13 @@ export async function readEventInfo(
   const affiliations = new Set<string>()
   for (const id of event.teamIds) {
     if (!choices.some(team => team.id === id)) continue
-    const people = await eventPeople(db, { ...event, teamId: id }, fresh, media)
+    const people = await eventPeople(
+      db,
+      { ...event, teamId: id },
+      fresh,
+      media,
+      readerOf(actor)
+    )
     projections.set(id, people)
     if (
       people.attendees.some(
@@ -533,7 +545,13 @@ export async function readEventInfo(
   }
   const people =
     projections.get(selected) ??
-    (await eventPeople(db, { ...event, teamId: selected }, fresh, media))
+    (await eventPeople(
+      db,
+      { ...event, teamId: selected },
+      fresh,
+      media,
+      readerOf(actor)
+    ))
   return {
     ...info,
     teamId: selected,

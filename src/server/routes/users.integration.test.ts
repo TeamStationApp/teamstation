@@ -37,6 +37,7 @@ const scratchUrl = adminUrl.replace(/\/[^/]*$/, `/${scratchName}`)
 
 const ADMIN = 'tok_users_admin_00000000000000000000'
 const CAL = 'tok_users_cal_0000000000000000000000'
+const DON = 'tok_users_don_0000000000000000000000'
 
 const minted = new Set<number>()
 function mint(): ReturnType<typeof mintUserId> {
@@ -151,20 +152,21 @@ describe('the users route', function () {
     )
     expect(answer.status).equals(200)
     expect(picture(answer.body)).includes('/avatars/ada/')
+    // A site administrator reads everybody in full.
     expect(answer.body).deep.equals(
       [
         {
           userId: userIdOfGumbo(ada.userId),
           gumboId: ada.userId,
           externalIds: ['ext-ada', 'ext-ada-login'],
-          shortName: 'Adam L',
+          shortName: 'Adam LaRoche',
           avatarUrl: picture(answer.body)
         },
         {
           userId: userIdOfGumbo(bea.userId),
           gumboId: bea.userId,
           externalIds: ['ext-bea', 'ext-bee'],
-          shortName: 'Brett B',
+          shortName: 'Brett Butler',
           avatarUrl: null
         }
       ].sort(byUserId)
@@ -195,45 +197,55 @@ describe('the users route', function () {
   it('answers only the people the asker could see', async function () {
     const answer = await ask(CAL, 'ext-ada', 'ext-bea', 'ext-bee', 'ext-cal')
     expect(answer.status).equals(200)
+    // Cal reads his child and himself in full.
     expect(answer.body).deep.equals(
       [
         {
           userId: userIdOfGumbo(ada.userId),
           gumboId: ada.userId,
           externalIds: ['ext-ada'],
-          shortName: 'Adam L',
+          shortName: 'Adam LaRoche',
           avatarUrl: picture(answer.body)
         },
         {
           userId: userIdOfGumbo(cal.userId),
           gumboId: cal.userId,
           externalIds: ['ext-cal'],
-          shortName: 'Cal R',
+          shortName: 'Cal Ripken',
           avatarUrl: null
         }
       ].sort(byUserId)
     )
   })
 
-  it('lists the players the asker is a guardian of, by short name', async function () {
+  it('names a teammate short to a member who may not read them in full', async function () {
+    const answer = await ask(DON, 'ext-ada')
+    expect(answer.status).equals(200)
+    expect(
+      answer.body.map((row: { shortName: string }) => row.shortName)
+    ).deep.equals(['Adam L'])
+  })
+
+  it('lists the players the asker is a guardian of, by the names they read', async function () {
     const answer = await askWith(CAL, 'guardedBy=me')
     expect(answer.status).equals(200)
     // A `guardian` link and a `family` one, the latter to a row since merged,
     // which answers as the row it was merged into; never the `other` link.
+    // Each is named in full to the guardian.
     expect(answer.body).deep.equals(
       [
         {
           userId: userIdOfGumbo(ada.userId),
           gumboId: ada.userId,
           externalIds: [],
-          shortName: 'Adam L',
+          shortName: 'Adam LaRoche',
           avatarUrl: picture(answer.body)
         },
         {
           userId: userIdOfGumbo(bea.userId),
           gumboId: bea.userId,
           externalIds: [],
-          shortName: 'Brett B',
+          shortName: 'Brett Butler',
           avatarUrl: null
         }
       ].sort((a, b) => a.shortName.localeCompare(b.shortName))
@@ -365,7 +377,8 @@ describe('the users route', function () {
       .values(
         [
           { token: ADMIN, userId: userIdOfGumbo(admin.userId) },
-          { token: CAL, userId: userIdOfGumbo(cal.userId) }
+          { token: CAL, userId: userIdOfGumbo(cal.userId) },
+          { token: DON, userId: userIdOfGumbo(dot.userId) }
         ].map(session => ({
           id: makeId('authSession'),
           user_id: session.userId,
@@ -388,6 +401,11 @@ describe('the users route', function () {
         {
           id: makeId('membership'),
           user_id: userIdOfGumbo(cal.userId),
+          team_id: home
+        },
+        {
+          id: makeId('membership'),
+          user_id: userIdOfGumbo(dot.userId),
           team_id: home
         }
       ])

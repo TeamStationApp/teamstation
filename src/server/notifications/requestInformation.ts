@@ -9,6 +9,7 @@ import { isGuardianRequest } from '../groups/guardianLimits'
 import { publicNames } from '../groups/playerNamePrivacy'
 import type { StoredRequest } from '../groups/requests'
 import { shortNamesOf, userNames } from '../users/nameBook'
+import type { Reader } from '../users/readerNames'
 
 /**
  * The group names and season time zones a request's text read when it was
@@ -181,15 +182,19 @@ interface RequestMetadata {
 
 /**
  * A request's title and description, rendered from its terms: the sender's
- * name and the player's are read from `users` now, and the group names and
- * zones are the ones frozen when it was sent (live for any not frozen).
- * `senders` holds the live names a page of requests read for its senders at
- * once (`userNames`); a sender it lacks is read here.
+ * name and the player's are read from `users` now, the player's in full for
+ * a `reader` who may read it in full, and the group names and zones are the
+ * ones frozen when it was sent (live for any not frozen). `senders` holds the
+ * live names a page of requests read for its senders at once (`userNames`);
+ * a sender it lacks is read here. `readsFull`, when a page has found it once
+ * for all its requests, is whom of their players `reader` may read in full.
  */
 export async function titleAndDescription(
   db: Kysely<Database>,
   request: StoredRequest,
-  senders?: ReadonlyMap<string, string>
+  senders?: ReadonlyMap<string, string>,
+  reader?: Reader,
+  readsFull?: Iterable<string>
 ): Promise<{ title: string; description: string }> {
   const event = await db
     .selectFrom('notification_events')
@@ -209,14 +214,19 @@ export async function titleAndDescription(
     return playerAddWords(
       request.terms as PlayerAddTerms,
       named,
-      await shortNamesOf(db, [(request.terms as PlayerAddTerms).userId]),
+      await shortNamesOf(db, [(request.terms as PlayerAddTerms).userId], {
+        reader,
+        ...(readsFull == null ? {} : { readsFull })
+      }),
       metadata,
       await gameDay(db, request.terms as PlayerAddTerms)
     )
   return await rendered(db, request, {
     sender: named,
     organization: metadata?.senderGroupName ?? 'their organization',
-    lookups: frozenLookups(db, metadata?.frozen)
+    lookups: frozenLookups(db, metadata?.frozen),
+    reader,
+    ...(readsFull == null ? {} : { readsFull })
   })
 }
 
@@ -317,13 +327,22 @@ export function playerRemovedWords(
   }
 }
 
-/** A request's words, with its sender named and its groups and zones looked up. */
+/**
+ * A request's words, with its sender named and its groups and zones looked
+ * up, and its player named as `words.reader` may read them.
+ */
 async function rendered(
   db: Kysely<Database>,
   request: StoredRequest,
-  words: { sender: string; organization: string; lookups: Lookups }
+  words: {
+    sender: string
+    organization: string
+    lookups: Lookups
+    reader?: Reader
+    readsFull?: Iterable<string>
+  }
 ): Promise<{ title: string; description: string }> {
-  const { sender, organization, lookups } = words
+  const { sender, organization, lookups, reader, readsFull } = words
   const terms = request.terms as RequestTerms
   const exhibition = (value?: boolean): string =>
     `Exhibition: ${value === true ? 'On' : 'Off'}`
@@ -392,15 +411,19 @@ async function rendered(
       .where('id', '=', terms.playerUserId)
       .executeTakeFirstOrThrow()
     const short = (
-      await publicNames(db, [
-        {
-          person: player,
-          teamId:
-            request.sender_scope_type === 'team'
-              ? request.sender_scope_id
-              : undefined
-        }
-      ])
+      await publicNames(
+        db,
+        [
+          {
+            person: player,
+            teamId:
+              request.sender_scope_type === 'team'
+                ? request.sender_scope_id
+                : undefined
+          }
+        ],
+        { reader, ...(readsFull == null ? {} : { readsFull }) }
+      )
     ).get(player.id)!
     if (isGuardianRequest(request))
       return {

@@ -1410,9 +1410,13 @@ describe('scoring into the server', function () {
     ])
     expect(play.actionIndex).deep.equals([1, 2])
     const [pitching, pinch] = play.playEvents.slice(1, 3)
+    // A stored play names its players by the public label: the roster entry
+    // reads the scorer their full name, and that label beside it.
+    const publicLabel = (entry: RosterEntry): string =>
+      entry.compactName ?? entry.shortName
     expect(pitching).deep.include({
       isSubstitution: true,
-      player: { id: reliefPlayer.userId, fullName: reliefPlayer.shortName },
+      player: { id: reliefPlayer.userId, fullName: publicLabel(reliefPlayer) },
       position: {
         code: '1',
         name: 'Pitcher',
@@ -1424,11 +1428,11 @@ describe('scoring into the server', function () {
     expect(pitching).not.have.property('replacedPlayer')
     expect(pitching.details).deep.include({
       event: 'Pitching Substitution',
-      description: `Pitching Change: ${reliefPlayer.shortName} replaces ${starter}.`
+      description: `Pitching Change: ${publicLabel(reliefPlayer)} replaces ${starter}.`
     })
     expect(pinch).deep.include({
       isSubstitution: true,
-      player: { id: pinchPlayer.userId, fullName: pinchPlayer.shortName },
+      player: { id: pinchPlayer.userId, fullName: publicLabel(pinchPlayer) },
       battingOrder: '101'
     })
     expect(pinch.position).deep.include({ code: '11', abbreviation: 'PH' })
@@ -1436,12 +1440,12 @@ describe('scoring into the server', function () {
     expect(pinch.replacedPlayer!.id).equals(fixture.away[0])
     expect(pinch.details).deep.include({
       event: 'Offensive Substitution',
-      description: `Offensive Substitution: Pinch-hitter ${pinchPlayer.shortName} replaces ${dueBatter}.`
+      description: `Offensive Substitution: Pinch-hitter ${publicLabel(pinchPlayer)} replaces ${dueBatter}.`
     })
     // The reliever was created with a right arm, so the hand is known.
     expect(play.matchup).deep.include({
-      batter: { id: pinchPlayer.userId, fullName: pinchPlayer.shortName },
-      pitcher: { id: reliefPlayer.userId, fullName: reliefPlayer.shortName },
+      batter: { id: pinchPlayer.userId, fullName: publicLabel(pinchPlayer) },
+      pitcher: { id: reliefPlayer.userId, fullName: publicLabel(reliefPlayer) },
       pitchHand: { code: 'R', description: 'Right' }
     })
     console.log(`      pitching: ${String(pitching.details.description)}`)

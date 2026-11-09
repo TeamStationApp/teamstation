@@ -3,6 +3,7 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { shortParts } from '../../common/names'
+import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { teamsOfRow } from '../../common/teamLists'
 import {
   canManageRoster,
@@ -17,9 +18,10 @@ import {
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
-import { publicNames } from '../groups/playerNamePrivacy'
+import { compactFields, readerNaming } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
+import { readerOf } from './readerNames'
 
 /** How close a player is to the asker, nearest first. */
 export const CANDIDATE_TIERS = ['mine', 'season', 'league', 'other'] as const
@@ -32,7 +34,10 @@ export interface RosterCandidate {
   externalIds: string[]
   /** `Jordan P`, told apart from anybody else on the same page. */
   shortName: string
-  /** `shortName` split where it was built: "Mookie" and "B". */
+  /**
+   * The public label split where it was built: "Mookie" and "B", even for an
+   * asker who reads the name in full.
+   */
   shortParts: { first: string; last: string }
   avatarUrl: string | null
   bats: 'left' | 'right' | 'switch' | null
@@ -479,19 +484,33 @@ export async function rosterCandidates(
     lastName: row.last_name,
     displayName: row.display_name
   }))
-  // Anybody's player, from anywhere: the formats of the teams they play for.
-  const names = await publicNames(
+  // Anybody's player, from anywhere: the formats of the teams they play for,
+  // and in full for those the asker may read in full.
+  // The public label goes beside a full one: a phone adding him offline puts
+  // it on the field, the board strip and the lineup QR.
+  const naming = await readerNaming(
     db,
-    named.map(person => ({ person }))
+    named.map(person => ({ person })),
+    readerOf(actor)
   )
   return people.map((row, index) => {
-    const short = names.get(row.user_id) ?? ''
+    const short = naming.names.get(row.user_id) ?? ''
+    const format = naming.formats.get(row.user_id)
     return {
       userId: row.user_id,
       gumboId: row.gumbo_id,
       externalIds: [],
       shortName: short,
-      shortParts: shortParts(named[index], short),
+      ...(format == null || format === DEFAULT_PLAYER_NAME_PRIVACY
+        ? {}
+        : { nameFormat: format }),
+      ...compactFields(naming, named[index]),
+      // Split from the public label: the add-to-roster form stores the parts
+      // on the session player, and the lineup QR sends them to GameChanger.
+      shortParts: shortParts(
+        named[index],
+        naming.compact.get(row.user_id) ?? short
+      ),
       avatarUrl: space == null ? null : imageUrl(space, row.avatar_path),
       bats: row.bats,
       throws: row.throws,

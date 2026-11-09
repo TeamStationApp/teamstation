@@ -32,8 +32,8 @@ import { type StatsContext, statsField } from './statsField'
  *
  * Every field is resolved by reading the REST route that already serves it,
  * as the caller (`RestReader`), and taking what that route answered. So a
- * field holds exactly what the route gives this caller: the short name where
- * they may not see the full one, a game's non-member view, a stat line only
+ * field holds exactly what the route gives this caller: the full name where
+ * they may read it and the short name elsewhere, a game's non-member view, a stat line only
  * for a game they may open. A route that refuses becomes an error on the
  * field, which is then null. Account fields, sessions, tokens, settings and
  * the stats builder's status are no type here and cannot be asked for.
@@ -246,7 +246,7 @@ const playerOf = (line: Json): PlayerSource | null =>
 const lineName = {
   type: GraphQLString,
   description:
-    'The name the line reads under: a player’s short name, or the placeholder a withdrawn player reads as.',
+    'The name the line reads under: a player’s name as the caller may read it, or the placeholder a withdrawn player reads as.',
   resolve: (line: Json) => line.shortName ?? null
 }
 
@@ -409,7 +409,7 @@ const PlayerType: GraphQLObjectType = new GraphQLObjectType({
     name: {
       type: GraphQLString,
       description:
-        "The public name, as every screen draws it: first name and last initial unless the player's team chose another format.",
+        "The name as the caller may read it: the full name for a caller who may read it, and otherwise the public name, first name and last initial unless the player's team chose another format.",
       resolve: async (player: PlayerSource, _args, context: GraphqlContext) =>
         player.shortName ?? (await playerDetail(player, context)).name
     },

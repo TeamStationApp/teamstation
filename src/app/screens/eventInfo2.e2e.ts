@@ -608,9 +608,10 @@ async function main(): Promise<void> {
       persisted.replyUserIds,
       [101, 103, 104, 115].map(userIdOfGumbo)
     )
+    // The reader, 101, reads their own name in full.
     assert.equal(
       persisted.attendees.find(row => row.userId === userIdOfGumbo(101))?.name,
-      'Babe R'
+      'Babe Ruth'
     )
     assert.equal(
       persisted.attendees.find(row => row.userId === userIdOfGumbo(115))

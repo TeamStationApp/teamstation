@@ -224,8 +224,8 @@ async function main(): Promise<void> {
   const openPlayer = async (): Promise<void> => {
     await openTeam()
     await tap('Team')
-    await visible('Alex L')
-    await open('Alex L', 'Player sections')
+    await visible('Alex Lee')
+    await open('Alex Lee', 'Player sections')
   }
   const pastHome = async (): Promise<void> => {
     // Back to a clean Home whatever the last case left.
@@ -361,8 +361,8 @@ async function main(): Promise<void> {
         await m.swipe({ start: '0%, 50%', end: '80%, 50%', duration: 600 })
         await visible('Team sections')
         await tap('Team')
-        await visible('Alex L')
-        await open('Alex L', 'Player sections')
+        await visible('Alex Lee')
+        await open('Alex Lee', 'Player sections')
         // Android commits a back gesture let go anywhere; it cancels one
         // whose finger comes back to the edge first. Out and back, by raw
         // touches, because a swipe goes one way.
@@ -389,8 +389,8 @@ async function main(): Promise<void> {
         await m.pressKey({ key: 'Home' })
         await m.launchApp({ appId: APP_ID, stopApp: false })
         await tap('Team')
-        await visible('Alex L')
-        await open('Alex L', 'Player sections')
+        await visible('Alex Lee')
+        await open('Alex Lee', 'Player sections')
         await m.swipe({ start: '0%, 50%', end: '80%, 50%', duration: 600 })
         await visible('Team sections')
         await pastHome()

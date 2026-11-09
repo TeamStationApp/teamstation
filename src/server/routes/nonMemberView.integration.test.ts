@@ -395,11 +395,12 @@ describe('the non-member view', function () {
         roster.body as Array<{ userId: string; avatarUrl: string | null }>
       ).find(row => row.userId === userIdOfGumbo(f.players[0].id))
       expect(avery?.avatarUrl).to.be.a('string')
-      // A member reads whom a family member is a guardian of.
+      // A member reads whom a family member is a guardian of: the coach, by
+      // their player's whole name.
       const guardian = (
         roster.body as Array<{ userId: string; guardianOf?: string[] }>
       ).find(row => row.userId === userIdOfGumbo(f.people.guardian))
-      expect(guardian?.guardianOf).deep.equals(['Alfonso S'])
+      expect(guardian?.guardianOf).deep.equals(['Alfonso Soriano'])
 
       for (const path of [
         `/teams/${f.teamA}/stats`,

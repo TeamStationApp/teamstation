@@ -112,44 +112,46 @@ async function main(): Promise<void> {
       )
     }
     await open(base, 'Select rows')
-    for (const name of ['Ada L', 'Billy L', 'Uma L']) await click(name)
+    // The admin reads herself (Ada) and her team's player (Billy) in full,
+    // and Uma and Bobby, whom she may not read in full, short.
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
     expect(await checked()).length(3)
-    for (const name of ['Ada L', 'Billy L', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
     expect(await checked()).length(0)
-    await click('Ada L')
+    await click('Ada Lee')
     await click('Uma L', 'Shift')
     expect(await checked()).length(3)
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
-    await click('Billy L', modifier)
-    expect(await checked()).deep.equals(['Select Ada L', 'Select Uma L'])
-    await click('Ada L', modifier)
+    await click('Billy Lee', modifier)
+    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma L'])
+    await click('Ada Lee', modifier)
     expect(await checked()).deep.equals(['Select Uma L'])
-    await click('Billy L', 'Shift')
-    expect(await checked()).deep.equals(['Select Ada L', 'Select Billy L'])
-    await click('Ada L')
-    await click('Billy L')
+    await click('Billy Lee', 'Shift')
+    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Billy Lee'])
+    await click('Ada Lee')
+    await click('Billy Lee')
     await page.focus('[aria-label="Select Uma L"]')
     await page.keyboard.press('Space')
     expect(await checked()).deep.equals(['Select Uma L'])
     await page.keyboard.press('Space')
     expect(await checked()).length(0)
-    await click('Ada L')
+    await click('Ada Lee')
     await page.focus('[aria-label="Select Uma L"]')
     await page.keyboard.down('Shift')
     await page.keyboard.press('Enter')
     await page.keyboard.up('Shift')
     expect(await checked()).deep.equals([
-      'Select Ada L',
-      'Select Billy L',
+      'Select Ada Lee',
+      'Select Billy Lee',
       'Select Uma L'
     ])
-    for (const name of ['Ada L', 'Billy L', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
     const cdp = await page.createCDPSession()
     await cdp.send('Emulation.setTouchEmulationEnabled', {
       enabled: true,
       maxTouchPoints: 1
     })
-    const point = await page.$eval('[aria-label="Select Ada L"]', n => {
+    const point = await page.$eval('[aria-label="Select Ada Lee"]', n => {
       const r = n.getBoundingClientRect()
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
     })
@@ -170,36 +172,36 @@ async function main(): Promise<void> {
     }
     await drag([160])
     expect(await checked()).length(3)
-    await click('Billy L')
-    expect(await checked()).deep.equals(['Select Ada L', 'Select Uma L'])
-    await click('Ada L')
+    await click('Billy Lee')
+    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma L'])
+    await click('Ada Lee')
     await click('Uma L')
     await drag([160, 80])
-    expect(await checked()).deep.equals(['Select Ada L', 'Select Billy L'])
-    await click('Ada L')
-    await click('Billy L')
+    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Billy Lee'])
+    await click('Ada Lee')
+    await click('Billy Lee')
     await drag([113], { ...point, y: point.y + 23 })
     expect(await checked()).length(3)
-    for (const name of ['Ada L', 'Billy L', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
     await drag([-113], { ...point, y: point.y + 136 })
     expect(await checked()).length(3)
-    for (const name of ['Ada L', 'Billy L', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
     await drag([])
-    expect(await checked()).deep.equals(['Select Ada L'])
-    await click('Ada L')
+    expect(await checked()).deep.equals(['Select Ada Lee'])
+    await click('Ada Lee')
     expect(
       await page.$eval('[aria-label="Save"]', n =>
         n.getAttribute('aria-disabled')
       )
     ).equals('true')
-    await tap(m, 'Ada L, AA, Plate')
-    await tap(m, 'Ada L, AA, Plate')
+    await tap(m, 'Ada Lee, AA, Plate')
+    await tap(m, 'Ada Lee, AA, Plate')
     expect(
       await page.$eval('[aria-label="Save"]', n =>
         n.getAttribute('aria-disabled')
       )
     ).equals('true')
-    await tap(m, 'Ada L, AA, Plate')
+    await tap(m, 'Ada Lee, AA, Plate')
     await capture(m, artifacts, 'management-after.png')
     let fail = true
     await page.setRequestInterception(true)
@@ -228,20 +230,20 @@ async function main(): Promise<void> {
     await tap(m, 'Save')
     await contains(page, 'Simulated save failure')
     expect(
-      await page.$eval('[aria-label="Ada L, AA, Plate"]', n =>
+      await page.$eval('[aria-label="Ada Lee, AA, Plate"]', n =>
         n.getAttribute('aria-pressed')
       )
     ).equals('true')
     await saved()
     await open(base, 'Select rows')
     expect(
-      await page.$eval('[aria-label="Ada L, AA, Plate"]', n =>
+      await page.$eval('[aria-label="Ada Lee, AA, Plate"]', n =>
         n.getAttribute('aria-pressed')
       )
     ).equals('true')
-    await click('Ada L')
+    await click('Ada Lee')
     await click('Uma L', 'Shift')
-    await tap(m, 'Ada L, AAA, Field')
+    await tap(m, 'Ada Lee, AAA, Field')
     await saved()
     expect(
       await f.h.db
@@ -252,10 +254,10 @@ async function main(): Promise<void> {
         .where('enabled', '=', true)
         .execute()
     ).length(3)
-    await click('Ada L')
-    await click('Billy L')
+    await click('Ada Lee')
+    await click('Billy Lee')
     await click('Uma L')
-    await tap(m, 'Ada L, AA, Field')
+    await tap(m, 'Ada Lee, AA, Field')
     await f.h.db
       .updateTable('umpire_certifications')
       .set({ enabled: false })
@@ -308,6 +310,7 @@ async function main(): Promise<void> {
       .deleteFrom('user_links')
       .where('related_user_id', '=', userIdOfGumbo(104))
       .execute()
+    // Off the admin's team, Billy reads short to her again.
     await open(base, 'Select rows')
     await m.tapOn({ css: '[aria-label="Open profile for Billy L"]' })
     await page.waitForFunction(() => location.pathname.includes('/people/'))

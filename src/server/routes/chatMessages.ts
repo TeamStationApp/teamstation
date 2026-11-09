@@ -40,6 +40,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { setAudit, skipAudit } from '../middleware/withAudit'
 import { requireActor, requireAdmin } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { readerOf } from '../users/readerNames'
 
 const asMessageId: Cleaner<string> = raw => {
   if (!isMessageId(raw)) throw new TypeError('Expected a msg_ message id')
@@ -272,7 +273,8 @@ export function chatMessageRoutes(
     withAsync(async (req, res) => {
       res.json(
         await reportsFor(db, media.space, {
-          open: req.query.open === 'true' || req.query.open === '1'
+          open: req.query.open === 'true' || req.query.open === '1',
+          reader: readerOf(req.actor)
         })
       )
     })

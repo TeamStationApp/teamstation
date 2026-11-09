@@ -23,6 +23,7 @@ import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { peopleCandidates, peopleQueryOf } from '../users/peopleCandidates'
+import { type Reader, readerOf } from '../users/readerNames'
 import { candidateQueryOf, rosterCandidates } from '../users/rosterCandidates'
 import { teamsOf } from './players'
 import { externalIdsAsked } from './seasons'
@@ -89,7 +90,8 @@ export function userRoutes(
         const people = await describe(
           db,
           space,
-          ids.map(userId => ({ userId, externalIds: [] }))
+          ids.map(userId => ({ userId, externalIds: [] })),
+          readerOf(actor)
         )
         res.json(
           people
@@ -126,7 +128,8 @@ export function userRoutes(
         const people = await describe(
           db,
           space,
-          guarded.map(userId => ({ userId, externalIds: [] }))
+          guarded.map(userId => ({ userId, externalIds: [] })),
+          readerOf(actor)
         )
         res.json(
           people.sort((a, b) => {
@@ -151,18 +154,22 @@ export function userRoutes(
         actor.userId,
         system
       )
-      res.json(await describe(db, space, matches))
+      res.json(await describe(db, space, matches, readerOf(actor)))
     })
   )
 
   return router
 }
 
-/** Each person's short name and picture, beside what was already known. */
+/**
+ * Each person's name, in full for those `reader` may read in full, and
+ * picture, beside what was already known.
+ */
 async function describe(
   db: Kysely<Database>,
   space: SpaceSettings | undefined,
-  people: Array<Pick<UserMatch, 'userId' | 'externalIds'>>
+  people: Array<Pick<UserMatch, 'userId' | 'externalIds'>>,
+  reader: Reader | undefined
 ): Promise<UserMatch[]> {
   if (people.length === 0) return []
   const rows = await db
@@ -184,7 +191,8 @@ async function describe(
     .execute()
   const names = await publicNames(
     db,
-    rows.map(person => ({ person }))
+    rows.map(person => ({ person })),
+    { reader }
   )
   const byId = new Map(rows.map(row => [row.id, row]))
   return people.map(person => {

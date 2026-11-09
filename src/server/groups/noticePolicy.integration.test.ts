@@ -596,7 +596,8 @@ describe('adds made with a notice', function () {
       NOTICE_DAYS * DAY
     )
 
-    // The guardian sees it as news, with Reject and no Accept.
+    // The guardian sees it as news, with Reject and no Accept, and their
+    // child by their whole name.
     const pending = await inbox(TOKENS.guardian)
     expect(pending.hasPending).equals(true)
     const card = pending.items.find(
@@ -606,7 +607,7 @@ describe('adds made with a notice', function () {
       status: 'applied',
       canAct: false,
       canReject: true,
-      title: 'Dave Roberts added Mookie B to Ridgeview Falcons'
+      title: 'Dave Roberts added Mookie Betts to Ridgeview Falcons'
     })
     expect(card.rejectUntil).equals(stored.expires_at.toISOString())
     expect(
@@ -677,7 +678,8 @@ describe('adds made with a notice', function () {
     expect(told.recorded_recipients).includes(ids.coach)
     // It keeps ids, not the player's name: the card reads it from `users`.
     expect(JSON.stringify(told.metadata)).not.includes('Mookie')
-    // It waits in the coach's Pending, lighting the bell, until dismissed.
+    // It waits in the coach's Pending, lighting the bell, until dismissed,
+    // naming the player short: they are no longer the coach's to read whole.
     const coachInbox = (await call(TOKENS.coach, 'GET', '/me/notifications'))
       .body
     expect(coachInbox.hasPending).equals(true)
@@ -739,7 +741,7 @@ describe('adds made with a notice', function () {
     expect(asking).to.include({
       status: 'pending',
       canAct: true,
-      title: 'Dave Roberts asks to add Mookie B to Ridgeview Falcons'
+      title: 'Dave Roberts asks to add Mookie Betts to Ridgeview Falcons'
     })
     // Another team's first add still goes through with a notice.
     expect(await playerAddPolicy(db!, ids['Mookie Betts'], TEAM.herons)).equals(
@@ -953,16 +955,17 @@ describe('adds made with a notice', function () {
         ).guests as Record<string, unknown>
       )[TEAM.herons]
     expect(await guests(fresh)).deep.equals([gumbo['Tony Kemp']])
-    // The Bears' coach stands in for a guardian, and is told why.
+    // The Bears' coach stands in for a guardian, and is told why. They
+    // read their player in full.
     const card = (await inbox(TOKENS.bearsCoach)).items.find(
       (item: any) => item.requestId === kemp.requestId
     )
     expect(card.title).equals(
-      'Dave Roberts added Tony K to Lakeside Herons for the game on Oct 28'
+      'Dave Roberts added Tony Kemp to Lakeside Herons for the game on Oct 28'
     )
     // Stored once and kept: it says only what stays true.
     expect(card.description).match(
-      /^Tony K was added to play for Lakeside Herons\. /
+      /^Tony Kemp was added to play for Lakeside Herons\. /
     )
     expect(card.description).includes('has no guardian on TeamStation')
     // How long a Reject holds is the card's own line, not the stored text,

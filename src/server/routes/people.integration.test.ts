@@ -1023,14 +1023,21 @@ describe('people at a team, a season and a league', function () {
         fullName: 'Pat Neshek',
         canHoldRoles: true
       })
+      // The coach reads the parent, whom they may not read in full, short,
+      // and the child, their player, in full.
       expect(body.guardianOf).deep.equals([
         {
           userId: userIdOfGumbo(PLAYER),
-          shortName: 'Alex Y',
+          shortName: 'Alex Young',
           avatarUrl: null,
           teamId: f.teamA
         }
       ])
+      const player = await profile('team', f.teamA, PLAYER, COACH)
+      expect(player.body.person).includes({
+        shortName: 'Alex Young',
+        fullName: 'Alex Young'
+      })
       expect(body.sections.map(section => section.level)).deep.equals([
         'team',
         'season',

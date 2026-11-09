@@ -60,6 +60,8 @@ const ALEX = 7001
 const RILEY = 7101
 const SCORER = 7201
 const STRANGER = 7202
+/** A teammate of Alex's, who reads names in the public format. */
+const TEAMMATE = ALEX + 1
 
 describe('a game named in player name privacy', function () {
   this.timeout(60000)
@@ -208,8 +210,13 @@ describe('a game named in player name privacy', function () {
         granted_at: new Date()
       })
       .execute()
+    await db
+      .updateTable('users')
+      .set({ login_enabled: true })
+      .where('id', '=', userIdOfGumbo(TEAMMATE))
+      .execute()
     const { createSession } = await import('../auth/sessions')
-    for (const id of [SCORER, STRANGER])
+    for (const id of [SCORER, STRANGER, TEAMMATE])
       tokens.set(
         id,
         (await createSession(db, userIdOfGumbo(id), 'privacy-reads')).token
@@ -486,7 +493,12 @@ describe('a game named in player name privacy', function () {
 
     it('reads no format on a roster with nothing chosen', async function () {
       const rows = (await (
-        await f.h.request('GET', `/teams/${f.teamA}/roster`, undefined, 101)
+        await f.h.request(
+          'GET',
+          `/teams/${f.teamA}/roster`,
+          undefined,
+          TEAMMATE
+        )
       ).json()) as RosterEntry[]
       expect(
         rows.find(row => row.userId === userIdOfGumbo(ALEX))
@@ -505,7 +517,10 @@ describe('a game named in player name privacy', function () {
       ).json()) as RosterEntry[]
       const alex = full.find(row => row.userId === userIdOfGumbo(ALEX))!
       expect(alex.nameDetails?.lastName).equals('Lee')
-      expect(alex.shortName).equals('A L')
+      // The scorekeeper reads the name in full, the public format beside it.
+      expect(alex.shortName).equals('Alex Lee')
+      expect(alex.compactName).equals('A L')
+      expect(alex.compactFormat).equals('initials')
       const named = await f.h.request(
         'GET',
         `/players/${userIdOfGumbo(ALEX)}/name`,
@@ -545,7 +560,7 @@ describe('a game named in player name privacy', function () {
               'GET',
               `/players/${userIdOfGumbo(ALEX)}${query}`,
               undefined,
-              101
+              TEAMMATE
             )
           ).json()) as { name: string }
         ).name
@@ -561,7 +576,10 @@ describe('a game named in player name privacy', function () {
 
     it('names a level list and a people search with no single team', async function () {
       await privacy(f.teamA, 'initials')
-      expect(await name(`/leagues/${f.leagueA}/people`, 101)).include('"A L"')
+      // The league's admin reads Alex in full, the public format beside it.
+      expect(await name(`/leagues/${f.leagueA}/people`, 101)).include(
+        '"shortName":"Alex Lee","nameFormat":"full","compactName":"A L"'
+      )
       await f.h.db
         .insertInto('user_links')
         .values({
@@ -571,8 +589,9 @@ describe('a game named in player name privacy', function () {
           kind: 'guardian'
         })
         .execute()
+      // A guardian reads their child in full.
       expect(await name('/users?guardedBy=me', 103)).include(
-        '"shortName":"A L"'
+        '"shortName":"Alex Lee"'
       )
       await f.h.db
         .deleteFrom('user_links')
@@ -623,14 +642,18 @@ describe('a game named in player name privacy', function () {
         .set({ season_id: f.seasonA })
         .where('id', '=', gameId)
         .execute()
-      expect(await name(`/seasons/${f.seasonA}/stats`, 101)).include(
-        '"shortName":"A Lee"'
-      )
       expect(await name(`/games/${gameId}/box-score`, SCORER)).include(
         '"shortName":"A Lee"'
       )
-      expect(await name(`/teams/${f.teamA}/stats`, SCORER)).include(
+      expect(await name(`/teams/${f.teamA}/stats`, TEAMMATE)).include(
         '"shortName":"A Lee"'
+      )
+      // The scorekeeper and the league's admin read the stats in full.
+      expect(await name(`/teams/${f.teamA}/stats`, SCORER)).include(
+        '"shortName":"Alex Lee"'
+      )
+      expect(await name(`/seasons/${f.seasonA}/stats`, 101)).include(
+        '"shortName":"Alex Lee"'
       )
     })
 
@@ -701,9 +724,14 @@ describe('a game named in player name privacy', function () {
 
     it('writes a roster candidate in the format they play in', async function () {
       await privacy(f.teamB, 'initials')
-      const found = await name(`/users?forTeam=${f.teamA}&q=Riley`, 101)
+      const found = await name(`/users?forTeam=${f.teamA}&q=Riley`, SCORER)
       expect(found).include('"shortName":"R C"')
       expect(found).include('"shortParts":{"first":"R","last":"C"}')
+      // A site administrator reads every candidate in full.
+      const admin = await name(`/users?forTeam=${f.teamA}&q=Riley`, 105)
+      expect(admin).include('"shortName":"Riley Chen"')
+      // The parts the add-to-roster form stores are the public label's.
+      expect(admin).include('"shortParts":{"first":"R","last":"C"}')
     })
 
     it('keeps modelNames from a model', async function () {
@@ -874,6 +902,15 @@ describe('a game named in player name privacy', function () {
         userIdOfGumbo(ALEX)
       ])
       expect(people.get(userIdOfGumbo(ALEX))?.shortName).equals('A L')
+      const named = async (userId: number): Promise<string | undefined> =>
+        (
+          await chatPeople(f.h.db, space as never, [userIdOfGumbo(ALEX)], {
+            reader: { userId: userIdOfGumbo(userId), isAdmin: false }
+          })
+        ).get(userIdOfGumbo(ALEX))?.shortName
+      // The team's scorekeeper reads Alex in full; a teammate reads him short.
+      expect(await named(SCORER)).equals('Alex Lee')
+      expect(await named(TEAMMATE)).equals('A L')
     })
 
     it('writes a player in a DJ roster', async function () {
@@ -903,7 +940,9 @@ describe('a game named in player name privacy', function () {
         .execute()
       await privacy(f.teamA, 'full')
       await privacy(f.teamB, 'initials')
-      const info = await name(`/events/${gameId}/info`, 103)
+      const info = await name(`/events/${gameId}/info`, TEAMMATE)
+      // Their guardian reads them in full.
+      const guardian = await name(`/events/${gameId}/info`, 103)
       await f.h.db
         .deleteFrom('user_links')
         .where('related_user_id', '=', userIdOfGumbo(ALEX))
@@ -915,6 +954,7 @@ describe('a game named in player name privacy', function () {
         .execute()
       expect(info).include('"A L"')
       expect(info).not.include('Alex Lee')
+      expect(guardian).include('"Alex Lee"')
     })
 
     it('writes a player in the umpire list, and the adults as they were', async function () {
@@ -928,12 +968,20 @@ describe('a game named in player name privacy', function () {
         })
         .execute()
       const list = JSON.stringify(await umpirePeople(f.h.db, f.leagueA))
+      // The league's admin reads the list with Alex in full.
+      const admin = JSON.stringify(
+        await umpirePeople(f.h.db, f.leagueA, undefined, undefined, {
+          userId: userIdOfGumbo(101),
+          isAdmin: false
+        })
+      )
       await f.h.db
         .deleteFrom('league_umpires')
         .where('user_id', '=', userIdOfGumbo(ALEX))
         .execute()
       expect(list).include('"A L"')
       expect(list).not.include('Alex L"')
+      expect(admin).include('"Alex Lee"')
     })
 
     it("tells a guardian's Tess context the format of their child", async function () {
@@ -979,9 +1027,15 @@ describe('a game named in player name privacy', function () {
 
     it('writes a person profile and a split in the team', async function () {
       await privacy(f.teamA, 'initialLast')
+      // The profile is for those who manage the team, who read Alex in full.
       expect(
         await name(`/teams/${f.teamA}/people/${userIdOfGumbo(ALEX)}`, 101)
-      ).include('"shortName":"A Lee"')
+      ).include('"shortName":"Alex Lee"')
+      // With the public format it is written in, which the board strip
+      // prints whole.
+      expect(await name(`/teams/${f.teamA}/roster`, 101)).include(
+        '"compactName":"A Lee","compactFormat":"initialLast"'
+      )
     })
   })
 

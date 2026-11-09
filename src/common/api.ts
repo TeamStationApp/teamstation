@@ -438,6 +438,11 @@ export type ChatConversation = ReturnType<typeof asChatConversation>
 export const asChatMember = asObject({
   userId: asUserId,
   shortName: asString,
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the reader writes to others, such as a mention's label.
+   */
+  compactName: asOptional(asString),
   avatarUrl: asNullable(asString),
   /** How they stand in the chat, such as "Coach · Guardian". */
   label: asString,
@@ -451,7 +456,12 @@ export const asChatMember = asObject({
   /** Their current per-user key generation. */
   generation: asNullable(asNumber)
 })
-export type ChatMember = ReturnType<typeof asChatMember>
+export type ChatMember = Omit<
+  ReturnType<typeof asChatMember>,
+  'compactName'
+> & {
+  compactName?: string
+}
 
 /**
  * One row of a chat's hash-chained membership log. `prevHash` and `hash` are
@@ -473,9 +483,19 @@ export type ChatLogRow = ReturnType<typeof asChatLogRow>
 export const asChatPerson = asObject({
   userId: asUserId,
   shortName: asString,
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the reader writes to others, such as a mention's label.
+   */
+  compactName: asOptional(asString),
   avatarUrl: asNullable(asString)
 })
-export type ChatPerson = ReturnType<typeof asChatPerson>
+export type ChatPerson = Omit<
+  ReturnType<typeof asChatPerson>,
+  'compactName'
+> & {
+  compactName?: string
+}
 
 export const asChatBlock = asObject({
   userId: asUserId,
@@ -493,9 +513,19 @@ export type ChatBlock = ReturnType<typeof asChatBlock>
 export const asIncludedAdult = asObject({
   userId: asUserId,
   shortName: asString,
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the reader writes to others, such as a mention's label.
+   */
+  compactName: asOptional(asString),
   label: asString
 })
-export type IncludedAdult = ReturnType<typeof asIncludedAdult>
+export type IncludedAdult = Omit<
+  ReturnType<typeof asIncludedAdult>,
+  'compactName'
+> & {
+  compactName?: string
+}
 
 /** How far one member has read, from `GET /chat/conversations/:id/reads`. */
 export const asChatRead = asObject({ userId: asUserId, seq: asNumber })
@@ -1427,14 +1457,20 @@ const cleanRosterEntry = asObject({
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   /**
-   * The public name: first name, last initial, unless the team has chosen
-   * another format. The field is named for what it is so a stored full name
-   * cannot be shipped here by accident — the compiler visits every call site,
-   * where a reviewer might not.
+   * The name as this reader reads it: the full name for somebody the reader
+   * may read in full (`mayEditName`), and otherwise the public name, first
+   * name and last initial unless the team has chosen another format.
    */
   shortName: asString,
-  /** The public format of `shortName`, unless it is the built-in one. */
+  /** The format of `shortName`, unless it is the built-in one. */
   nameFormat: asOptional(asPlayerNamePrivacy),
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what a compact surface such as the scoring field draws.
+   */
+  compactName: asOptional(asString),
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat: asOptional(asPlayerNamePrivacy),
   avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
@@ -1480,7 +1516,7 @@ const cleanRosterEntry = asObject({
   teamNames: asOptional(asArray(asString)),
   /**
    * Under a family member, the players on this list they are a guardian of,
-   * by their short names; absent for everybody else.
+   * by the names the list gives them; absent for everybody else.
    */
   guardianOf: asOptional(asArray(asString))
 })
@@ -1489,6 +1525,8 @@ export type RosterEntry = Omit<
   | 'teamNames'
   | 'guardianOf'
   | 'nameFormat'
+  | 'compactName'
+  | 'compactFormat'
   | 'pool'
   | 'ownIdentity'
   | 'isHeadCoach'
@@ -1497,6 +1535,8 @@ export type RosterEntry = Omit<
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
+  compactName?: string
+  compactFormat?: PlayerNamePrivacy
   pool?: boolean
   ownIdentity?: boolean
 }
@@ -1668,9 +1708,11 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
 /**
  * One person, for their own page.
  *
- * `name` is **always** the short form — `Jordan P` — for everybody, on every
- * screen. The whole name is never part of it: it is fetched separately, by
- * `playerName`, when somebody who may change it opens the name field.
+ * `name` is the person's full name for a reader who may read it
+ * (`mayEditName`: a guardian, the player, the staff of a team they play on),
+ * and the public short form — `Jordan P` — for everybody else. The halves are
+ * fetched separately, by `playerName`, when somebody who may change them
+ * opens the name field.
  *
  * No jersey number on the person: a number belongs to a player *on a team*,
  * and travels only in a `teams` row of `PlayerDetail`, beside its team.
@@ -2068,6 +2110,15 @@ export interface RosterCandidate {
   gumboId: number | null
   externalIds: string[]
   shortName: string
+  /** The format of `shortName`, unless it is the built-in one. */
+  nameFormat?: PlayerNamePrivacy
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the field, the board strip and the lineup QR draw.
+   */
+  compactName?: string
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat?: PlayerNamePrivacy
   shortParts: { first: string; last: string }
   avatarUrl: string | null
   bats: 'left' | 'right' | 'switch' | null
@@ -2081,6 +2132,9 @@ export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
   gumboId: asNullable(asNumber),
   externalIds: asArray(asString),
   shortName: asString,
+  nameFormat: asOptional(asPlayerNamePrivacy),
+  compactName: asOptional(asString),
+  compactFormat: asOptional(asPlayerNamePrivacy),
   shortParts: asObject({ first: asString, last: asString }),
   avatarUrl: asNullable(asString),
   bats: asBats,

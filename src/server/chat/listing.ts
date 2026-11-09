@@ -11,13 +11,15 @@ import type {
 import { hasRole, openAdds, roleScopes } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import {
+  compactFields,
   formatForReader,
   publicFormats,
-  publicNames
+  readerNaming
 } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
+import type { Reader } from '../users/readerNames'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
 import { blockedSenderIds } from './blocks'
 import { DmFacts } from './dms'
@@ -56,11 +58,17 @@ interface ConversationRow {
   last_seq: number
 }
 
-/** Short names and pictures for people, by id. */
+/**
+ * Names and pictures for people, by id: public names, and full names for
+ * those `options.reader` may read in full, with the public label beside a
+ * full one (`compactName`) for anything the reader writes to others, such as
+ * a mention.
+ */
 export async function chatPeople(
   db: Kysely<Database>,
   space: MediaContext['space'],
-  userIds: string[]
+  userIds: string[],
+  options: { reader?: Reader } = {}
 ): Promise<Map<string, ChatPerson & { names: string[] }>> {
   const ids = [...new Set(userIds)]
   if (ids.length === 0) return new Map()
@@ -75,20 +83,25 @@ export async function chatPeople(
     ])
     .where('id', 'in', ids)
     .execute()
-  const names = await publicNames(
+  const naming = await readerNaming(
     db,
-    rows.map(person => ({ person }))
+    rows.map(person => ({ person })),
+    options.reader
   )
   return new Map(
-    rows.map(row => [
-      row.id,
-      {
-        userId: row.id,
-        shortName: names.get(row.id) ?? row.displayName,
-        avatarUrl: imageUrl(space, row.avatarPath),
-        names: [row.displayName, row.firstName ?? '', row.lastName ?? '']
-      }
-    ])
+    rows.map(row => {
+      const { compactName } = compactFields(naming, row)
+      return [
+        row.id,
+        {
+          userId: row.id,
+          shortName: naming.names.get(row.id) ?? row.displayName,
+          ...(compactName == null ? {} : { compactName }),
+          avatarUrl: imageUrl(space, row.avatarPath),
+          names: [row.displayName, row.firstName ?? '', row.lastName ?? '']
+        }
+      ]
+    })
   )
 }
 
@@ -105,7 +118,8 @@ export async function conversationsFor(
   media: MediaContext,
   userId: string,
   isAdmin: boolean,
-  now: Date = new Date()
+  now: Date = new Date(),
+  reader?: Reader
 ): Promise<ChatConversation[]> {
   if (!(await isEligible(db, userId, now))) return []
   const rows: ConversationRow[] = await db
@@ -129,7 +143,7 @@ export async function conversationsFor(
     .orderBy('chat_conversations.id')
     .execute()
   if (rows.length === 0) return []
-  return await describe(db, media, rows, userId, isAdmin)
+  return await describe(db, media, rows, userId, isAdmin, reader)
 }
 
 /** One conversation as the list shows it to `userId`. */
@@ -138,14 +152,15 @@ export async function conversationFor(
   media: MediaContext,
   conversationId: string,
   userId: string,
-  isAdmin: boolean
+  isAdmin: boolean,
+  reader?: Reader
 ): Promise<ChatConversation> {
   const row = await db
     .selectFrom('chat_conversations')
     .select(['id', 'kind', 'scope_type', 'scope_id', 'closed_at', 'last_seq'])
     .where('id', '=', conversationId)
     .executeTakeFirstOrThrow()
-  const [described] = await describe(db, media, [row], userId, isAdmin)
+  const [described] = await describe(db, media, [row], userId, isAdmin, reader)
   return described
 }
 
@@ -154,7 +169,8 @@ async function describe(
   media: MediaContext,
   rows: ConversationRow[],
   userId: string,
-  isAdmin: boolean
+  isAdmin: boolean,
+  reader: Reader | undefined
 ): Promise<ChatConversation[]> {
   const ids = rows.map(row => row.id)
   const hidden = await blockedSenderIds(db, userId)
@@ -222,7 +238,8 @@ async function describe(
     db,
     media.space,
     rows.filter(row => row.kind === 'dm').map(row => row.id),
-    userId
+    userId,
+    reader
   )
   // When each chat last had a message, for the list. The newest envelope
   // of any kind: a reaction or an edit is news in a chat too.
@@ -313,7 +330,8 @@ async function describe(
 }
 
 /**
- * For each DM, everybody else who was in it with the caller, by short name:
+ * For each DM, everybody else who was in it with the caller, by name (in full
+ * for those `reader` may read in full):
  * its current members, and those who left no earlier than the caller (last)
  * joined, marked `left`, so the app can still name a DM whose others have all gone.
  * Nobody who left before the caller came, and never the caller's own
@@ -324,7 +342,8 @@ async function dmPeople(
   db: Kysely<Database>,
   space: MediaContext['space'],
   conversationIds: string[],
-  userId: string
+  userId: string,
+  reader: Reader | undefined
 ): Promise<Map<string, ChatDmPerson[]>> {
   if (conversationIds.length === 0) return new Map()
   const { rows } = await sql<{
@@ -364,7 +383,8 @@ async function dmPeople(
   }
   const formats = await publicFormats(
     db,
-    [...userOf.values()].map(person => ({ person }))
+    [...userOf.values()].map(person => ({ person })),
+    { reader }
   )
   const result = new Map<string, ChatDmPerson[]>()
   for (const [conversationId, list] of byConversation) {
@@ -687,7 +707,8 @@ export async function membersOf(
   db: Kysely<Database>,
   space: MediaContext['space'],
   conversationId: string,
-  now: Date = new Date()
+  now: Date = new Date(),
+  reader?: Reader
 ): Promise<ChatMember[]> {
   const conversation = await db
     .selectFrom('chat_conversations')
@@ -703,7 +724,7 @@ export async function membersOf(
       .execute()
   ).map(row => row.user_id)
   if (members.length === 0) return []
-  const people = await chatPeople(db, space, members)
+  const people = await chatPeople(db, space, members, { reader })
   const moderators = await moderatorsOf(db, conversation, members)
   const labels = await labelsOf(db, conversation, members, now)
   const identities = await db
@@ -744,6 +765,9 @@ export async function membersOf(
       return {
         userId,
         shortName: person?.shortName ?? String(userId),
+        ...(person?.compactName == null
+          ? {}
+          : { compactName: person.compactName }),
         avatarUrl: person?.avatarUrl ?? null,
         label: labels.get(userId) ?? 'Member',
         isModerator,

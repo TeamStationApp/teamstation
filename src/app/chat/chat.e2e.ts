@@ -1641,7 +1641,8 @@ describe('chat scenarios in the browser', function () {
       await press(page, `Pick ${pick}`)
       await pressText(page, 'Start conversation')
     }
-    await newDm(keeper, 'Pat', 'Pat P')
+    // The season's scorekeeper may read its players, Pat among them, in full.
+    await newDm(keeper, 'Pat', 'Pat Player')
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
     )
@@ -1685,7 +1686,7 @@ describe('chat scenarios in the browser', function () {
         : undefined
     })
 
-    await newDm(keeper, 'Pat', 'Pat P')
+    await newDm(keeper, 'Pat', 'Pat Player')
     await waitForText(keeper, 'Include another adult')
     for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
       await waitForText(keeper, name)
@@ -1710,7 +1711,8 @@ describe('chat scenarios in the browser', function () {
 
     const guardian = await signedIn('G2')
     await signIn(guardian, seed, 'G2')
-    await newDm(guardian, 'Pat', 'Pat P')
+    // Pat's guardian reads Pat in full.
+    await newDm(guardian, 'Pat', 'Pat Player')
     await until('G2’s DM', () =>
       /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
     )
@@ -2019,7 +2021,8 @@ describe('chat scenarios in the browser', function () {
     await openChatTab(coach)
     await pressText(coach, 'New message')
     await typeInto(coach, 'Name', 'Pat')
-    await press(coach, 'Pick Pat P')
+    // Pat's coach reads Pat in full.
+    await press(coach, 'Pick Pat Player')
     await pressText(coach, 'Start conversation')
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined

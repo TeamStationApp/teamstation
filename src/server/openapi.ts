@@ -38,7 +38,7 @@ import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 import { venuePaths } from './venues/venuesOpenApi'
 
 const PUBLIC_NAME =
-  "The public name: first name and last initial, unless the player's league, season or team chose another format."
+  "The name as the caller may read it: the full name for a caller who may read it (a guardian, the player, staff of a team they play on), and otherwise the public name, first name and last initial unless the player's league, season or team chose another format."
 
 const videoCollectionParameters = [
   {
@@ -128,7 +128,7 @@ const statIdentity = {
     description:
       'Whether the line opens its player\u2019s page for this viewer. Absent from team tables, which is true.'
   },
-  shortName: { type: 'string' },
+  shortName: { type: 'string', description: PUBLIC_NAME },
   teamId: { type: ['string', 'null'] }
 }
 const battingSchema = {
@@ -2788,6 +2788,19 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'string',
               description: PUBLIC_NAME
             },
+            compactName: {
+              type: 'string',
+              description:
+                'The public name, present only when `shortName` is full ' +
+                'because of the caller: what a compact surface draws.'
+            },
+            compactFormat: {
+              type: 'string',
+              enum: ['initialLast', 'initials', 'full'],
+              description:
+                'The format of `compactName`, when it is not the built-in ' +
+                'first name and last initial.'
+            },
             pool: {
               type: 'boolean',
               description:
@@ -2903,8 +2916,8 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'array',
               items: { type: 'string' },
               description:
-                'For a family member, the short names of the players on this ' +
-                'list they are a parent or guardian of. Absent for everybody ' +
+                'For a family member, the names this list gives the players on ' +
+                'it they are a parent or guardian of. Absent for everybody ' +
                 'else.'
             }
           }
@@ -2936,7 +2949,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               ],
               properties: {
                 userId: userIdSchema,
-                shortName: { type: 'string' },
+                shortName: { type: 'string', description: PUBLIC_NAME },
                 fullName: {
                   type: ['string', 'null'],
                   description:
@@ -2963,7 +2976,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 required: ['userId', 'shortName', 'avatarUrl', 'teamId'],
                 properties: {
                   userId: userIdSchema,
-                  shortName: { type: 'string' },
+                  shortName: { type: 'string', description: PUBLIC_NAME },
                   avatarUrl: { type: ['string', 'null'] },
                   teamId: { type: 'string' }
                 }
@@ -6444,7 +6457,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'One person, for their own page',
           description:
-            'Their public name, avatar, bats and throws, whether the caller ' +
+            'Their name as the caller may read it, avatar, bats and throws, whether the caller ' +
             'may change their name (`canEditName`), how the caller may ' +
             'invite a guardian of them (`guardianInviteAs`), and the teams ' +
             'they have played for that the caller may see: every one to the ' +
@@ -6950,7 +6963,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'anybody already in that game, are left out. Each row adds ' +
             '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
             'in a season ending today or later), `tier` and `cursor`, and ' +
-            'nothing else about the person. `forTeam` beside `externalId` or ' +
+            'nothing else about the person; `nameFormat` when `shortName` is ' +
+            'not in the built-in format, and beside a name full only for the ' +
+            'asker, the public name in `compactName` (its format in ' +
+            '`compactFormat` unless built in). `forTeam` beside `externalId` or ' +
             '`guardedBy` is 400. A team or game you cannot see is 404; one you ' +
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
@@ -7184,7 +7200,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'name. Anybody signed in who is not a member of the team (the ' +
             'non-member view) reads the same roster, followers included, ' +
             'with `avatarUrl` null on every entry. ' +
-            "Names follow the team's player name privacy, a first name and last " +
+            'Somebody the caller may read in full (`mayEditName`) is named in ' +
+            "full, with the public name in `compactName` (its format in `compactFormat`); everybody else follows the team's player name privacy, a first name and last " +
             'initial by default, and a row in another format says so in ' +
             '`nameFormat`. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
@@ -7235,7 +7252,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'hand, so a roster import does not overwrite them. The person ' +
             'can be merged later because they are a real user. Audited. ' +
             'With `{ userId, jersey?, positions? }` instead, an existing player joins the ' +
-            'team: 201 with their entry (short name only) and `notice` (`requestId`, and `told`: ' +
+            'team: 201 with their entry (named as the caller may read them) and `notice` (`requestId`, and `told`: ' +
             'guardians, player or coaches) when their side was told, 200 with `unchanged` when ' +
             'they already play for it, or 202 `{ pending: { requestId } }` ' +
             'when their side must accept first. Any other key beside `userId` is 400. ' +
@@ -7551,8 +7568,10 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A chat's members",
           description:
             'For members only; anybody else gets 404. Each is `{userId, ' +
-            'shortName, avatarUrl, label, isModerator, isApprover, eligible, ' +
-            'hasIdentity, identityKey, generation}`.',
+            'shortName, compactName?, avatarUrl, label, isModerator, ' +
+            'isApprover, eligible, hasIdentity, identityKey, generation}`. ' +
+            '`shortName` is full for somebody the caller may read in full; ' +
+            '`compactName` is then the public label, what a mention writes.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
           responses: {
@@ -7607,7 +7626,9 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'The people the caller may start a DM with',
           description:
             'Exactly those the DM rules let the caller name, whose name holds ' +
-            '`q`, at most 50: `{userId, shortName, avatarUrl}`. Empty for ' +
+            '`q`, at most 50: `{userId, shortName, compactName?, ' +
+            'avatarUrl}`, `compactName` the public label beside a full ' +
+            '`shortName`. Empty for ' +
             'somebody whose only tie is following a team.',
           security: [{ bearer: [] }],
           parameters: [
@@ -7641,7 +7662,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'adult family members and immediate coaches; with `q`: every ' +
             'included adult (guardians, family, adult team, season and ' +
             'league staff) whose name holds it. Never the caller. Each is ' +
-            '`{userId, shortName, label}`.',
+            '`{userId, shortName, compactName?, label}`.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -10876,7 +10897,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Authorized season batting and pitching aggregates',
           description:
-            'Requires private season access. Adds only stored stat rows from visible games assigned to this season. Names are shortened. Public discovery never receives this resource.',
+            'Requires private season access. Adds only stored stat rows from visible games assigned to this season. Each name is full where the caller may read it and shortened otherwise. Public discovery never receives this resource.',
           security: [{ bearer: [] }],
           parameters: [
             {
