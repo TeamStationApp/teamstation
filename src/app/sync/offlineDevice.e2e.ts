@@ -722,6 +722,20 @@ async function openFromHome(
         timeout: 10000
       })
       .catch(() => undefined)
+  // A row under the floating tab bar is on screen but cannot take a tap there.
+  for (let lift = 0; lift < 3; lift++) {
+    if ((await find(name, aboveTabBar)) != null) break
+    if ((await find(name)) == null) break
+    const x = Math.round(screen.width / 2)
+    await m.swipe({
+      startX: x,
+      startY: Math.round(screen.height * 0.7),
+      endX: x,
+      endY: Math.round(screen.height * 0.45),
+      duration: 500
+    })
+    await pause(800)
+  }
   if (!(await tryTap(name, 3000, aboveTabBar))) {
     if (link == null) return undefined
     // Home's list is not on screen (develop offline): open the screen by its link.
@@ -869,6 +883,21 @@ async function battingFirst(): Promise<string | undefined> {
   return next === FIXTURE.teamNames.opened
     ? FIXTURE.teamNames.opponent
     : FIXTURE.teamNames.opened
+}
+
+/** Picks the opened team's side of the roster sheet, whichever bats first. */
+async function openedTeamSide(): Promise<void> {
+  const side = await waitFor(
+    new RegExp(`^${FIXTURE.teamNames.opened}$`),
+    10000,
+    upper(0.3)
+  )
+  if (side == null) log('no team pill on the roster sheet')
+  else {
+    await tapNode(side)
+    await pause(800)
+    log(`roster sheet on ${FIXTURE.teamNames.opened}`)
+  }
 }
 
 /** Scrolls the roster sheet until Add Existing Player is clear of its footer. */
@@ -1029,18 +1058,33 @@ async function step2(): Promise<void> {
     (await waitFor(/Offline Owls @ Offline Falcons/, 20000, aboveTabBar)) !=
       null
   )
-  await openFromHome(new RegExp(`^${FIXTURE.teamNames.opened}`), 'Schedule')
+  await openFromHome(
+    new RegExp(`^${FIXTURE.teamNames.opened}`),
+    'Schedule',
+    `teamstation://teams/${FIXTURE.teams.opened}`
+  )
   log(`opened team ${FIXTURE.teamNames.opened} and its Schedule`)
-  await openFromHome(/^Offline Fall Demo/, 'Schedule')
+  await openFromHome(
+    /^Offline Fall Demo/,
+    'Schedule',
+    `teamstation://seasons/${FIXTURE.seasonId}`
+  )
   log('opened season Offline Fall Demo and its Schedule')
-  await openFromHome(/^Offline Demo League$/)
-  log('opened league Offline Demo League')
+  await openFromHome(
+    /^Offline Demo League$/,
+    undefined,
+    `teamstation://leagues/${FIXTURE.leagueId}`
+  )
+  const league = await waitFor(/^Offline Fall Demo/, 20000, upper(0.8))
+  check('the league opens online', league != null)
+  await shot('leagueOnline')
   assert.ok(await openUpcomingEvent(), 'The upcoming event did not open online')
   log('opened the upcoming event')
   assert.ok(await openScoring(), 'Scoring did not open online')
   log('opened scoring')
   await tap(/^Open scoring menu$/)
   await tap(/^Set Team Rosters$/)
+  await openedTeamSide()
   const addRow = await revealAddExisting()
   assert.ok(addRow != null, 'Add Existing Player is not reachable')
   await tapNode(addRow)
@@ -1300,6 +1344,11 @@ async function step7(): Promise<void> {
   await shot('offlineLineStalled')
 
   // Event tag
+  // A reset swap leaves no play to tag: enter one first.
+  if (!(await undoLabel()).startsWith('Undo ')) {
+    log('no play since the reset swap; entering a pitch to tag')
+    await pitch()
+  }
   const undo = (await nodes()).find(
     n => label(n).startsWith('Undo ') && (n.type ?? '').includes('Button')
   )
@@ -1418,19 +1467,26 @@ async function step7(): Promise<void> {
       await pause(1500)
       const all = await nodes()
       const refreshing = all.find(n => /^Refreshing game\.\.\.$/.test(label(n)))
-      const ball = all.find(
-        n => label(n) === 'Ball' && (n.type ?? '').includes('Button')
-      )
-      const offControls = all.filter(
+      // The sheet's own controls: the pitch buttons behind a sheet are
+      // always off while it is up, as they are under every sheet.
+      const choices = all.filter(
         n =>
-          /^(Ball|Called Strike|Swing and Miss|Foul Ball|Swing in Play|Bunt in Play)$/.test(
-            label(n)
-          ) && n.enabled === false
+          label(n).startsWith('Assign ') &&
+          (n.type ?? '').includes('Button') &&
+          onScreen(n)
+      )
+      const off = choices.filter(n => n.enabled === false)
+      const create = all.find(
+        n => label(n) === 'Create Player' && (n.type ?? '').includes('Button')
       )
       check(
         'stalled: during the defensive Refresh the field controls stay on',
-        ball != null && ball.enabled !== false && offControls.length === 0,
-        `${refreshing != null ? '"Refreshing game..." shown; ' : ''}${offControls.length} pitch controls disabled`
+        refreshing == null &&
+          choices.length > 0 &&
+          off.length === 0 &&
+          create != null &&
+          create.enabled !== false,
+        `${refreshing != null ? '"Refreshing game..." shown; ' : ''}${choices.length} fielder choices, ${off.length} off; Create Player ${create == null ? 'missing' : create.enabled === false ? 'off' : 'on'}`
       )
       await shot('refreshStalled')
       await dumpHierarchy('refreshStalled')
@@ -1461,6 +1517,7 @@ async function step7(): Promise<void> {
   await tap(/^Open scoring menu$/)
   await tap(/^Set Team Rosters$/)
   await pause(1000)
+  await openedTeamSide()
   await revealAddExisting()
   const roster = await nodes()
   const addExisting = roster.find(n => label(n) === 'Add Existing Player')
@@ -1548,14 +1605,19 @@ async function step8(): Promise<void> {
             : null
       )
       .filter((kind): kind is 'swap' | 'pitch' => kind != null)
-    const order = kinds.filter((kind, i) => i === 0 || kind !== kinds[i - 1])
+    const merged = kinds.filter((kind, i) => i === 0 || kind !== kinds[i - 1])
+    // The pitch entered to tag, and a save that follows the reset swap, come
+    // after the last swap; only what came before it is the order entered.
+    const lastSwap = merged.lastIndexOf('swap')
+    const order = merged.slice(0, lastSwap + 1)
     log(
       `writes to ${FIXTURE.upcomingGameId}, in arrival order:\n${lines.join('\n')}`
     )
     check(
       'the request log shows the pitches and both swaps in the order entered',
-      order.join(',') === 'pitch,swap,pitch,swap',
-      `${kinds.join(',')} (repeats merged: ${order.join(',')})`
+      order.join(',') === 'pitch,swap,pitch,swap' &&
+        merged.slice(lastSwap + 1).every(kind => kind === 'pitch'),
+      `${kinds.join(',')} (repeats merged, through the last swap: ${order.join(',')}; after it: ${lastSwap + 1 < merged.length ? merged.slice(lastSwap + 1).join(',') : 'nothing'})`
     )
   } else log('request log not read in before mode')
 }
