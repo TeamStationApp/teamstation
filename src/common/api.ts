@@ -164,6 +164,7 @@ import {
 import type {
   LineupRecovery,
   SaveChange,
+  SaveHandoff,
   SessionLog,
   StoredGame
 } from './scoring/session'
@@ -1617,6 +1618,14 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
 }
 
 /**
+ * A game's plays as a session reads them, from an events document as the
+ * server answers `GET /games/:id/events` (or the phone keeps it).
+ */
+export function storedGameOfEvents(raw: unknown): StoredGame {
+  return storedGameOf(asStoredGame(raw))
+}
+
+/**
  * What a session reads of a save's answer: the digests and the generation
  * the game was left with, each only when the answer has it.
  */
@@ -1720,12 +1729,20 @@ const asSwapSidesAnswer = asObject({
   homeTeamId: asString,
   awayTeamId: asString,
   generation: asOptional(asNumber, 0),
+  /**
+   * The new sides' lineups digest as the swap committed, which the first
+   * save on the swapped lineups is built on. An older server sends none.
+   */
+  lineupsDigest: asOptional(asString),
   reset: asOptional(asObject({ atBats: asNumber, innings: asNumber }), () => ({
     atBats: 0,
     innings: 0
   }))
 })
-export type SwapSidesAnswer = ReturnType<typeof asSwapSidesAnswer>
+export type SwapSidesAnswer = Omit<
+  ReturnType<typeof asSwapSidesAnswer>,
+  'lineupsDigest'
+> & { lineupsDigest?: string }
 
 /**
  * A replay step as the announcer reads it: its key, and how many of its
@@ -3418,6 +3435,56 @@ export interface RequestOptions {
   background?: boolean
   /** Cancels the call; a cancelled call is not the network going away. */
   signal?: AbortSignal
+  /**
+   * Gives up as `offline` once `REQUEST_DEADLINE_MS` pass with no answer
+   * begun, as if the request never left the device. On by default for a
+   * `GET`; the phone's queue asks it for every write it sends. An upload
+   * (a `Uint8Array`, or JSON over `UPLOAD_BODY_CHARS`) never has one.
+   */
+  deadline?: boolean
+  /**
+   * The phone answers what it stored for the read at once, when it stored
+   * anything, and asks the server behind it: for the scoring screen's own
+   * reads as it opens. The web keeps nothing, and reads the server.
+   */
+  storedFirst?: boolean
+  /**
+   * `swap`: the phone queues a swap of home and away and answers it from
+   * its own copy of the game (`CachingClient.queueSwap`). Without it the
+   * swap goes to the server.
+   */
+  queue?: 'swap'
+  /**
+   * The phone's queue tells a scoring session once it holds the write on
+   * the phone, and stops waiting on the server when the session lets it go
+   * (`SaveHandoff`). The plain client keeps nothing, and ignores it.
+   */
+  handoff?: SaveHandoff
+}
+
+/**
+ * How long a `GET`, or a write the phone's queue sends, waits for the
+ * server's answer to begin before it is `offline`: a link that takes the
+ * request and then stalls is no signal.
+ */
+export const REQUEST_DEADLINE_MS = 10_000
+
+/** A JSON body longer than this is an upload, which keeps no deadline. */
+export const UPLOAD_BODY_CHARS = 64 * 1024
+
+/**
+ * What a stored-first read that came back different was: one of the game's
+ * own documents, or the person's roles, a roster or a default lineup.
+ */
+export type StoredChange = 'game' | 'details'
+
+/** How a read takes `storedFirst`, for the screens that ask for it. */
+export interface ReadOptions {
+  storedFirst?: boolean
+}
+
+function readOptions(options: ReadOptions | undefined): RequestOptions {
+  return options?.storedFirst === true ? { storedFirst: true } : {}
 }
 
 /**
@@ -3472,6 +3539,8 @@ export interface ClientOptions {
   passwordKdf?: PasswordKdf
   passwordCosts?: ClientPasswordCosts
   passwordTargetMs?: number
+  /** `REQUEST_DEADLINE_MS` unless a test shortens it. */
+  requestDeadlineMs?: number
 }
 
 export type { DefaultLineup, Lineup, LineupChange, LineupPerson, SideLineups }
@@ -4192,6 +4261,7 @@ export class TeamStationClient {
   private readonly passwordKdf?: PasswordKdf
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
+  private readonly requestDeadlineMs: number
   private passwordPreparation?: Promise<ClientPasswordCosts>
   /**
    * The sign-in request this client asked for last. An installed app that
@@ -4254,6 +4324,7 @@ export class TeamStationClient {
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
+    this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -5720,11 +5791,13 @@ export class TeamStationClient {
     )
   }
 
-  async game(gameId: string): Promise<GameDetail> {
+  async game(gameId: string, options?: ReadOptions): Promise<GameDetail> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}`,
-      asGameDetail
+      asGameDetail,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -5989,11 +6062,16 @@ export class TeamStationClient {
    * here that began with a different one. All three fields are null for a
    * team with none.
    */
-  async defaultLineup(teamId: string): Promise<DefaultLineup> {
+  async defaultLineup(
+    teamId: string,
+    options?: ReadOptions
+  ): Promise<DefaultLineup> {
     return await this.request(
       'GET',
       `/teams/${encodeURIComponent(teamId)}/default-lineup`,
-      asDefaultLineup
+      asDefaultLineup,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6061,7 +6139,9 @@ export class TeamStationClient {
   }
 
   /** The caller's recent tags and globally popular active assignments. */
-  async tagChoices(options: { includeUnused?: boolean } = {}): Promise<{
+  async tagChoices(
+    options: { includeUnused?: boolean } & ReadOptions = {}
+  ): Promise<{
     recent: string[]
     popular: Array<{ tag: string; count: number }>
   }> {
@@ -6071,7 +6151,9 @@ export class TeamStationClient {
       asObject({
         recent: asArray(asString),
         popular: asArray(asObject({ tag: asString, count: asNumber }))
-      })
+      }),
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6179,12 +6261,14 @@ export class TeamStationClient {
    * A game's stored plays and the at-bat in progress, with the digest of its
    * lineups.
    */
-  async gameEvents(gameId: string): Promise<StoredGame> {
+  async gameEvents(gameId: string, options?: ReadOptions): Promise<StoredGame> {
     return storedGameOf(
       await this.request(
         'GET',
         `/games/${encodeURIComponent(gameId)}/events`,
-        asStoredGame
+        asStoredGame,
+        undefined,
+        readOptions(options)
       )
     )
   }
@@ -6201,7 +6285,8 @@ export class TeamStationClient {
    */
   async saveGameEvents(
     gameId: string,
-    change: SaveChange
+    change: SaveChange,
+    handoff?: SaveHandoff
   ): Promise<PostedEdits> {
     return await this.request(
       'POST',
@@ -6211,7 +6296,8 @@ export class TeamStationClient {
       {
         deviceNames: change.names,
         deviceLineupRecovery: change.deviceLineupRecovery,
-        deviceLog: change.log
+        deviceLog: change.log,
+        ...(handoff == null ? {} : { handoff })
       }
     )
   }
@@ -6277,12 +6363,14 @@ export class TeamStationClient {
 
   async roster(
     teamId: string,
-    options: { includeFullNames?: boolean } = {}
+    options: { includeFullNames?: boolean } & ReadOptions = {}
   ): Promise<RosterEntry[]> {
     return await this.request(
       'GET',
       `/teams/${encodeURIComponent(teamId)}/roster${options.includeFullNames === true ? '?includeFullNames=true' : ''}`,
-      asArray(asRosterEntry)
+      asArray(asRosterEntry),
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -7484,8 +7572,28 @@ export class TeamStationClient {
   }
 
   /** The roles the signed-in person holds, team by team. */
-  async myRoles(): Promise<MyRoles> {
-    return await this.request('GET', '/me/roles', asMyRoles)
+  async myRoles(options?: ReadOptions): Promise<MyRoles> {
+    return await this.request(
+      'GET',
+      '/me/roles',
+      asMyRoles,
+      undefined,
+      readOptions(options)
+    )
+  }
+
+  /**
+   * Tells `listener` when a read the scoring screen took stored-first for
+   * `gameId` came back from the server different, until unsubscribed, and
+   * which: the game's own (`game`: the game, its plays, its lineups) or the
+   * person's roles, a team's roster or default lineup (`details`). The web
+   * stores nothing, and never tells.
+   */
+  onStoredChanged(
+    _gameId: string,
+    _listener: (change: StoredChange) => void
+  ): () => void {
+    return () => undefined
   }
 
   /**
@@ -7745,6 +7853,37 @@ export class TeamStationClient {
       headers['x-teamstation-app'] = this.analyticsApp
     headers[PROTOCOL_HEADER] = String(GAME_SOCKET_PROTOCOL)
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
+    const json =
+      bytes == null && body !== undefined ? JSON.stringify(body) : undefined
+    // A link that takes the request and then stalls answers nothing: past
+    // the deadline it is no signal, as a fetch that throws is. An upload
+    // may take longer than that to send, and keeps none.
+    const timed =
+      (options.deadline ?? method === 'GET') &&
+      bytes == null &&
+      (json == null || json.length <= UPLOAD_BODY_CHARS)
+    let expired = false
+    // The caller cancelled before the deadline passed: its own error.
+    let cancelled = options.signal?.aborted === true
+    const callerAborted = (): void => {
+      if (!expired) cancelled = true
+    }
+    if (timed && options.signal != null && !options.signal.aborted)
+      options.signal.addEventListener('abort', callerAborted)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = !timed
+      ? undefined
+      : new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            expired = true
+            reject(new Error('No answer before the deadline'))
+          }, this.requestDeadlineMs)
+          // A deadline alone never keeps a process up.
+          ;(timer as { unref?: () => void }).unref?.()
+        })
+    // The fetch gets the caller's own signal, or none: the deadline gives up
+    // on the answer without putting a signal of its own on the request.
+    const signal = options.signal
 
     // `fetch` rejects with a bare TypeError when the request never leaves the
     // device — no data, aeroplane mode, a captive portal at the field. Safari
@@ -7754,7 +7893,7 @@ export class TeamStationClient {
     // of a ball field, where no signal is the ordinary case, not the exception.
     let response: Response
     try {
-      response = await this.doFetch(`${this.baseUrl}${path}`, {
+      const sent = this.doFetch(`${this.baseUrl}${path}`, {
         method,
         headers,
         // The session lives in an `HttpOnly` cookie, which this code cannot
@@ -7762,21 +7901,27 @@ export class TeamStationClient {
         // it when the app and the API are different origins, as they are in
         // development.
         credentials: 'include',
-        body:
-          bytes != null
-            ? new Uint8Array(bytes)
-            : body === undefined
-              ? undefined
-              : JSON.stringify(body),
-        ...(options.signal == null ? {} : { signal: options.signal })
+        body: bytes != null ? new Uint8Array(bytes) : json,
+        ...(signal == null ? {} : { signal })
       })
+      if (deadline == null) response = await sent
+      else {
+        // The fetch the deadline gave up on settles unheard.
+        sent.catch(() => undefined)
+        response = await Promise.race([sent, deadline])
+      }
     } catch (caught: unknown) {
-      if (options.signal?.aborted === true) throw caught
+      // The caller's own cancel is its own, never no signal.
+      if (cancelled || (options.signal?.aborted === true && !expired))
+        throw caught
       this.offline = true
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
+    } finally {
+      if (timer != null) clearTimeout(timer)
+      options.signal?.removeEventListener('abort', callerAborted)
     }
     this.offline = false
     if (

@@ -251,8 +251,22 @@ export interface EventStore {
   load: (gameId: string) => Promise<StoredGame>
   save: (
     gameId: string,
-    change: SaveChange
+    change: SaveChange,
+    handoff?: SaveHandoff
   ) => Promise<PostedEdits | StoredGame>
+}
+/**
+ * How a store that keeps a save on the device says so before the server
+ * answers it (a phone's queue): `taken` once the save is held there, in its
+ * place, ahead of every write made after it, whatever the server answers.
+ * The save still answers the server's answer when it comes. Once `release`
+ * settles, the session would rather not wait for that answer: the store
+ * answers from the device, as when no answer comes in time. A store that
+ * keeps nothing ignores both.
+ */
+export interface SaveHandoff {
+  taken: () => void
+  release: Promise<void>
 }
 export interface SessionContext {
   gamePk: string
@@ -610,6 +624,19 @@ export class ScoringSession {
   private readonly derivedIndexes = new Set<number>()
   private readonly listeners = new Set<() => void>()
   private running: Promise<void> | null = null
+  /**
+   * The save the store is sending: what it covers, whether the store holds
+   * it on the device yet (`SaveHandoff.taken`), and how to let it go.
+   */
+  private sending?: {
+    covering: ScoringAction[]
+    times: Array<string | undefined>
+    taken: boolean
+    release: () => void
+  }
+
+  /** Told whenever `sending` changes, for `handedOff`. */
+  private handoffWaiters: Array<() => void> = []
   private timer: unknown = null
   private retryMs = FIRST_RETRY_MS
   private blocked = false
@@ -646,6 +673,8 @@ export class ScoringSession {
    * the plays until the game is read again.
    */
   private heldPlays: string[] = []
+  /** The plays digest of the last read or save answer that named one. */
+  private lastPlays: string | undefined
   private heldLineups: string[] = []
   /** The play generation this session opened the game on, if it has one. */
   private openedGeneration: number | undefined
@@ -844,6 +873,7 @@ export class ScoringSession {
     session.openedGeneration = loaded.generation
     session.readSwap = loaded.swap
     session.heldPlays = loaded.playsDigest == null ? [] : [loaded.playsDigest]
+    session.lastPlays = loaded.playsDigest
     session.heldLineups =
       loaded.lineupsDigest == null ? [] : [loaded.lineupsDigest]
     const reopened = loaded.currentPlay?.about.atBatIndex
@@ -1105,6 +1135,14 @@ export class ScoringSession {
     return this.refusal != null
   }
 
+  /**
+   * The server read the last save and cannot store it: nothing more is sent
+   * until the next change.
+   */
+  get stopped(): boolean {
+    return this.blocked
+  }
+
   get problem(): string | null {
     return (
       this.refusal ??
@@ -1146,6 +1184,14 @@ export class ScoringSession {
   /** Changes of this session's a rebase dropped because home and away were swapped. */
   get lostToSwap(): number {
     return this.swapLost
+  }
+
+  /**
+   * The plays digest of the server's last answer this session took up: what
+   * a reset swap confirms the game's plays by.
+   */
+  get playsDigest(): string | undefined {
+    return this.lastPlays
   }
 
   /** The play generation the session opened the game on, if it has one. */
@@ -1580,6 +1626,7 @@ export class ScoringSession {
     this.knownMutation = fresh.knownMutation
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
+    this.lastPlays = fresh.lastPlays
     this.heldLineups = fresh.heldLineups
     // Taken up even when the plays are as they were: a withdrawal, or a game
     // marked under way elsewhere, changes only this.
@@ -1612,6 +1659,7 @@ export class ScoringSession {
     this.readActions = fresh.readActions
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
+    this.lastPlays = fresh.lastPlays
     this.heldLineups = fresh.heldLineups
     this.tagIdentities = fresh.tagIdentities
     this.tagSnapshot++
@@ -2069,19 +2117,81 @@ export class ScoringSession {
    * own notices all come while it is still running.
    */
   async flush(): Promise<void> {
+    await this.startSave()
+  }
+
+  /** Starts the save now, or answers the one running. */
+  private async startSave(): Promise<void> {
     if (this.timer != null) {
       this.clearTimer(this.timer)
       this.timer = null
     }
-    if (this.running != null) {
-      await this.running
-      return
-    }
-    this.running = this.save().finally(() => {
+    this.running ??= this.save().finally(() => {
       this.running = null
       this.notify()
     })
     await this.running
+  }
+
+  /**
+   * Saves what the server has not acknowledged, as `flush` does, but waits
+   * only until every change the session holds is in its store's hands: on a
+   * phone, on its queue, in order, ahead of any write made after it. A save
+   * the store holds is not waited on for the server's answer, which the
+   * session still takes when it comes. Changes made while such a save is
+   * out are not yet the store's: the save is let go (`SaveHandoff.release`),
+   * the store answers it from the device, and the changes go behind it. A
+   * store that keeps nothing holds nothing: this is `flush`.
+   */
+  async handedOff(): Promise<void> {
+    const running = this.startSave()
+    const save = { done: false }
+    running
+      .finally(() => {
+        save.done = true
+      })
+      .catch(() => undefined)
+    while (!save.done) {
+      const sending = this.sending
+      if (sending?.taken === true) {
+        if (this.covers(sending)) return
+        sending.release()
+      }
+      await Promise.race([
+        running.catch(() => undefined),
+        new Promise<void>(resolve => this.handoffWaiters.push(resolve))
+      ])
+    }
+  }
+
+  /**
+   * How many changes are not yet in the store's hands: `pending`, less a
+   * save the store holds that covers all the session has.
+   */
+  get unhanded(): number {
+    const sending = this.sending
+    if (sending?.taken === true && this.covers(sending)) return 0
+    return this.pending
+  }
+
+  /** Whether `sending` covers every action the session holds, as taken. */
+  private covers(sending: {
+    covering: ScoringAction[]
+    times: Array<string | undefined>
+  }): boolean {
+    return (
+      sending.covering.length === this.log.length &&
+      sending.covering.every(
+        (action, i) =>
+          action === this.log[i] && sending.times[i] === this.actionTimes[i]
+      )
+    )
+  }
+
+  private handoffChanged(): void {
+    const waiters = this.handoffWaiters
+    this.handoffWaiters = []
+    for (const waiter of waiters) waiter()
   }
 
   // ---- The log, split into plays ----
@@ -2598,9 +2708,32 @@ export class ScoringSession {
         playbackTimes: coveringPlaybackTimes
       } = attempt
       let answer: PostedEdits | StoredGame | undefined
+      let release!: () => void
+      const released = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const sending = {
+        covering,
+        times: coveringTimes,
+        taken: false,
+        release
+      }
+      this.sending = sending
       try {
         attempt.sends++
-        answer = await this.store.save(this.gameId, attempt.request)
+        try {
+          answer = await this.store.save(this.gameId, attempt.request, {
+            taken: () => {
+              if (this.sending !== sending) return
+              sending.taken = true
+              this.handoffChanged()
+            },
+            release: released
+          })
+        } finally {
+          this.sending = undefined
+          this.handoffChanged()
+        }
       } catch (error) {
         const code = error instanceof HttpError ? error.code : null
         if (
@@ -2677,6 +2810,7 @@ export class ScoringSession {
         this.lineupsBase = answer.lineupsDigest
         this.heldLineups = held(this.heldLineups, answer.lineupsDigest)
       }
+      if (answer?.playsDigest !== undefined) this.lastPlays = answer.playsDigest
       // Found as this session last had it, the game holds only its own.
       if (answer?.playsDigest !== undefined)
         this.heldPlays =
