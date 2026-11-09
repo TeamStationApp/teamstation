@@ -3203,6 +3203,99 @@ describe('api client', function () {
     ])
   })
 
+  it('keeps the token a code sign-in took when a claim it raced comes back after it', async function () {
+    const session = {
+      token: 'tok_code',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
+    }
+    const calls: string[] = []
+    let answerClaim: (() => void) | undefined
+    const fetch = async (url: unknown): Promise<Response> => {
+      const path = String(url).slice('http://x/api/v1'.length)
+      calls.push(path)
+      if (path === '/auth/email-code')
+        return new Response(
+          JSON.stringify({ sent: true, requestId: 'req_1', clientSecret: 's' }),
+          { status: 202 }
+        )
+      if (path === '/auth/request/claim') {
+        // The code approved the request, so the claim mints a session too;
+        // its answer arrives after the code's.
+        await new Promise<void>(resolve => {
+          answerClaim = resolve
+        })
+        return new Response(JSON.stringify({ ...session, token: 'tok_claim' }))
+      }
+      return new Response(JSON.stringify(session))
+    }
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch
+    })
+    const wait = await client.requestEmailCode('a@b.c')
+    const claimed = client.claimSignIn(wait)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(answerClaim).not.equals(undefined)
+    await client.signInWithCode('a@b.c', '123456')
+    expect(client.token).equals('tok_code')
+    answerClaim?.()
+    expect(await claimed).equals(undefined)
+    // The phone's file was opened for this token, and it was kept.
+    expect(client.token).equals('tok_code')
+    // A poll after the sign-in asks nothing.
+    expect(await client.claimSignIn(wait)).equals(undefined)
+    expect(calls).deep.equals([
+      '/auth/email-code',
+      '/auth/request/claim',
+      '/auth/email-code/verify'
+    ])
+  })
+
+  it('claims a sign-in asked for while a token the server refused is still held', async function () {
+    const session = {
+      token: 'tok_claim',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
+    }
+    const fetch = async (url: unknown): Promise<Response> =>
+      String(url).endsWith('/auth/email-code')
+        ? new Response(
+            JSON.stringify({
+              sent: true,
+              requestId: 'req_2',
+              clientSecret: 's'
+            }),
+            { status: 202 }
+          )
+        : new Response(JSON.stringify(session))
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch,
+      token: 'tok_stale'
+    })
+    const wait = await client.requestEmailCode('a@b.c')
+    expect((await client.claimSignIn(wait))?.token).equals('tok_claim')
+    expect(client.token).equals('tok_claim')
+    // Signed in by that claim: the next poll asks nothing.
+    expect(await client.claimSignIn(wait)).equals(undefined)
+    // A wait this client never asked for is claimed on the token it holds.
+    expect(
+      (await client.claimSignIn({ requestId: 'req_other', clientSecret: 's' }))
+        ?.token
+    ).equals('tok_claim')
+  })
+
   it("reads a game's scoring and scoreboard flags, and their defaults from a server from before them", async function () {
     const game = {
       id: 'g/1',

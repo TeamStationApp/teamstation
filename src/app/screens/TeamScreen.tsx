@@ -1,3 +1,4 @@
+import { asArray } from 'cleaners'
 import React, { memo, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   type LayoutChangeEvent,
@@ -6,16 +7,18 @@ import {
   View
 } from 'react-native'
 
-import type {
-  BattingRow,
-  GamesPageQuery,
-  GameSummary,
-  PitchingRow,
-  RosterEntry,
-  StaffEntry,
-  StandingsRow,
-  TeamStationClient,
-  TeamSummary
+import {
+  asGameSummary,
+  asRosterEntry,
+  type BattingRow,
+  type GamesPageQuery,
+  type GameSummary,
+  type PitchingRow,
+  type RosterEntry,
+  type StaffEntry,
+  type StandingsRow,
+  type TeamStationClient,
+  type TeamSummary
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { eventName, type PlayerRsvpCounts } from '../../common/eventInfo'
@@ -68,6 +71,8 @@ import { ActiveView, TabPages } from '../components/TabPages'
 import { EMPTY_PAGE, type PagedRows, usePagedList } from '../hooks/usePagedList'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { videoCountLabel } from '../locales/strings'
+import { rosterKey } from '../sync/documentKeys'
+import { storedSchedule, teamScope } from '../sync/scheduleReads'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
@@ -275,8 +280,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         cursor == null ? VIDEOS_OPEN : { ...VIDEOS_OPEN, cursor }
       )
   })
-  const { apply: applySchedule, fail: failSchedule } = schedule
-  const { apply: applyVideos, fail: failVideos } = videos
+  const {
+    apply: applySchedule,
+    fail: failSchedule,
+    paint: paintSchedule
+  } = schedule
+  const { apply: applyVideos, fail: failVideos, paint: paintVideos } = videos
   const [roster, setRoster] = useState<RosterEntry[]>([])
   const [batting, setBatting] = useState<BattingRow[]>([])
   const [pitching, setPitching] = useState<PitchingRow[]>([])
@@ -308,6 +317,25 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     }
     setError(undefined)
     const load = async (): Promise<void> => {
+      // What the phone stored of both lists and the roster, until their
+      // reads return.
+      const scope = teamScope(team.id)
+      const [storedGames, storedVideos, storedRoster] = await Promise.all([
+        storedSchedule(client, scope, SCHEDULE_OPENS, asGameSummary),
+        storedSchedule(client, scope, VIDEOS_OPEN, asGameSummary),
+        (async () =>
+          await client.cached(
+            rosterKey(team.id),
+            asArray(asRosterEntry)
+          ))().catch(() => undefined)
+      ])
+      if (cancelled) return
+      if (storedGames != null) paintSchedule(storedGames)
+      if (storedVideos != null) paintVideos(storedVideos)
+      if (storedRoster != null) setRoster(storedRoster)
+      // What the phone stored shows now, its reads still out: with no signal
+      // each answers the same, but only once its deadline has passed.
+      if (storedGames != null || storedVideos != null) setLoading(false)
       const [firstGames, firstVideos] = await Promise.all([
         client.teamGamesPage(team.id, SCHEDULE_OPENS),
         client.teamGamesPage(team.id, VIDEOS_OPEN)
@@ -386,6 +414,8 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
     client,
     failSchedule,
     failVideos,
+    paintSchedule,
+    paintVideos,
     team.id,
     publicDetail,
     nonMemberView,
