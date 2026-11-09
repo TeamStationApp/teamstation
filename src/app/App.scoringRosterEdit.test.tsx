@@ -284,46 +284,25 @@ describe('actual App scoring player Settings return', function () {
       TeamStationClient.prototype.roster = roster
     }
   })
-  it('shares one leave decision across repeated Home taps and recovers after Cancel', async function () {
+  it('leaves for Home at once with scoring writes still out, and asks nothing', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
       await openEditor()
-      await press('Lineup')
-      const was = await moveDown('Aaron J')
       await press('Roster')
       await press('Mookie Betts,')
       await waitFor(
         () => document.body.textContent?.includes('JERSEY NUMBER') === true
       )
+      // The web goes on sending the pitch once the screen has closed.
       await press('Home')
       await press('Home')
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Cancel')
+      await waitFor(() => currentRoute().name === 'home')
       expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
         null
       )
-      expect(currentRoute()).includes({
-        name: 'player',
-        userId: userIdOfGumbo(100)
-      })
-      expect(document.body.textContent).includes('JERSEY NUMBER')
-      await press('Back')
-      await press('Lineup')
-      expect(slotOf('Aaron J')).not.equals(was)
-      await press('Roster')
-      await press('Mookie Betts,')
-      await waitFor(
-        () => document.body.textContent?.includes('JERSEY NUMBER') === true
-      )
-      await press('Home')
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Discard and Exit')
-      await waitFor(() => currentRoute().name === 'home')
+      fixture.pauseWrites(false)
+      await settle()
     })
   })
   const openNotifications = async (): Promise<void> => {
@@ -339,33 +318,24 @@ describe('actual App scoring player Settings return', function () {
     await press('Notifications')
   }
 
-  it('protects Notifications navigation while scoring writes are pending', async function () {
+  it('opens Notifications at once while scoring writes are pending', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
       await openEditor()
       await press('Mookie Betts,')
       await openNotifications()
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Cancel')
-      expect(currentRoute()).includes({
-        name: 'player',
-        userId: userIdOfGumbo(100)
-      })
-      expect(document.body.textContent).includes('JERSEY NUMBER')
-      await openNotifications()
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Discard and Exit')
       await waitFor(() => currentRoute().name === 'notifications')
+      expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
+        null
+      )
       await press('Back')
       await waitFor(() => currentRoute().name === 'home')
       expect(document.querySelector('[aria-label="Open scoring menu"]')).equals(
         null
       )
+      fixture.pauseWrites(false)
+      await settle()
     })
   })
   it('ignores a prior scorer lifetime reply after reopening the same game', async function () {
@@ -650,7 +620,7 @@ describe('actual App scoring player Settings return', function () {
         })
       }
     )
-  it('keeps the browser exit guard live through Discard and cancels back to the same roster', async function () {
+  it('goes Back from scoring at once with writes still out', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
@@ -658,23 +628,16 @@ describe('actual App scoring player Settings return', function () {
       await act(async () => {
         window.history.back()
       })
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Cancel')
-      expect(document.body.textContent).includes('Tap player to edit.')
-      await act(async () => {
-        window.history.back()
-      })
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Discard and Exit')
       await waitFor(() => currentRoute().name === 'scoreOptions')
       expect(currentRoute()).includes({
         name: 'scoreOptions',
         gameId: fixture.gameId
       })
+      expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
+        null
+      )
+      fixture.pauseWrites(false)
+      await settle()
     })
   })
   it('keeps names hidden when Save finishes during a revoked-role recheck', async function () {
