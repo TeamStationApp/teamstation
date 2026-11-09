@@ -276,6 +276,7 @@ describe('home and away swapped before the first pitch', function () {
         plays: [],
         remove: [],
         currentPlay: held.currentPlay,
+        scoringBase: held.scoringMutation ?? null,
         lineupsBase: held.lineupsDigest
       })
     } catch (error) {
