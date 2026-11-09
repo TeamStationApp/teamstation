@@ -81,6 +81,7 @@ import {
 } from './components'
 import { FLOATING_HEIGHT_REM } from './components/AppNav'
 import { AppSidebar } from './components/AppSidebar'
+import { PictureDirectoriesContext } from './components/CachedPicture'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
@@ -4220,7 +4221,16 @@ function Shell(props: AppProps): React.ReactElement {
     </GestureHandlerRootView>
   )
   return (
-    <ChatAgeContext.Provider value={chatAge}>{shell}</ChatAgeContext.Provider>
+    <ChatAgeContext.Provider value={chatAge}>
+      {caching == null ? (
+        shell
+      ) : (
+        // The phone draws each picture from its file of it, offline too.
+        <PictureDirectoriesContext.Provider value={caching.pictureFiles}>
+          {shell}
+        </PictureDirectoriesContext.Provider>
+      )}
+    </ChatAgeContext.Provider>
   )
 }
 
