@@ -21,6 +21,7 @@ import {
 import { scoringPreferences } from './scoringPreferences'
 import { ScoringScreen } from './ScoringScreen'
 import { playerRef } from './scoringSelectors'
+import { ScoringSheet } from './ScoringSheet'
 import { memoryStore, type ScoringSource } from './scoringSource'
 import type { ScoringSessionState } from './scoringTypes'
 let root: Root | undefined
@@ -1174,5 +1175,38 @@ describe('the animation switch in settings', function () {
     await click('Toggle play animations')
     expect(checked()).equals(true)
     await click('Done')
+  })
+})
+
+describe('a sheet hidden while it stays open', function () {
+  afterEach(unmountSheet)
+  it('draws nothing while hidden, and its content again when shown', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const draw = async (hidden: boolean): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <ScoringSheet
+              title="Swap Home and Away"
+              hidden={hidden}
+              onClose={() => undefined}
+            >
+              <Text>What the swap does</Text>
+            </ScoringSheet>
+          </ThemeProvider>
+        )
+      })
+    }
+    await draw(false)
+    expect(document.body.textContent).includes('What the swap does')
+    expect(document.querySelector('[aria-label="Cancel"]')).not.equals(null)
+    await draw(true)
+    expect(document.body.textContent).not.includes('What the swap does')
+    expect(document.body.textContent).not.includes('Swap Home and Away')
+    expect(document.querySelector('[aria-label="Cancel"]')).equals(null)
+    await draw(false)
+    expect(document.body.textContent).includes('What the swap does')
   })
 })

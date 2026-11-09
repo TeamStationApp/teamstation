@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -7,21 +11,36 @@ import { Platform } from 'react-native'
 import { asRosterEntry, TeamStationClient } from '../../common/api'
 import type { TagTarget } from '../../common/eventTags'
 import { userIdOfGumbo } from '../../common/userId'
+import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { EventTagText } from '../components/EventTagText'
 import {
   BaseballScreen,
   type BaseballScreenProps
 } from '../field/BaseballScreen'
+import { cacheFileName, openCacheStore } from '../sync/cacheStore'
+import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { EventTagEditor } from './EventTagEditor'
 import { gameFixture } from './isUnscoredGame.test'
 import { HistoryPopup } from './ScoringHistory'
 import { scoringPreferences } from './scoringPreferences'
+import type { PreferenceStorage } from './scoringPreferenceStore'
 import { ScoringScreen } from './ScoringScreen'
-import { DevelopmentScoringSource } from './scoringSource'
+import { DevelopmentScoringSource, ServerScoringSource } from './scoringSource'
+import { ServerClock } from './serverClock'
 import { useHoldSelection } from './useHoldSelection'
 
 let root: Root | undefined
+/** Where the server clock keeps its offset, in memory. */
+function memoryStorage(): PreferenceStorage {
+  const held = new Map<string, string>()
+  return {
+    getItem: async key => held.get(key) ?? null,
+    setItem: async (key, value) => {
+      held.set(key, value)
+    }
+  }
+}
 const targets: TagTarget[] = Array.from({ length: 6 }, (_, at) => ({
   id: `target_${at}`,
   atBatIndex: 0,
@@ -541,39 +560,34 @@ describe('event tag UI', function () {
     expect(closed).equals(true)
   })
 
-  it('saves a pill immediately once, shows failures and preserves input for retry', async () => {
-    let calls = 0
+  it('closes on a pill at once, and says when the save behind it failed', async () => {
     let closed = false
-    const saved: Array<string | null> = []
+    const failed: string[] = []
     await mount(
       <EventTagEditor
         target={targets[0]}
         loadChoices={async () => ({ recent: ['great catch'], popular: [] })}
-        saveTag={async tag => {
-          calls++
-          if (calls === 1) throw new Error('Offline. Try again.')
-          saved.push(tag)
+        saveTag={async () => {
+          throw new Error('Offline. Try again.')
         }}
         onClose={() => {
           closed = true
+        }}
+        onFailed={message => {
+          failed.push(message)
         }}
       />
     )
     await input('new label')
     await click('Use tag great catch')
-    expect(document.body.textContent).includes('Offline. Try again.')
-    expect(
-      document.querySelector<HTMLInputElement>('[aria-label="New tag"]')!.value
-    ).equals('new label')
-    expect(closed).equals(false)
-    await click('Use tag great catch')
-    expect(saved).deep.equals(['great catch'])
     expect(closed).equals(true)
+    expect(failed).deep.equals(['Offline. Try again.'])
   })
 
   it('validates empty input, removes an existing tag and handles non-Error failures', async () => {
     const saved: Array<string | null> = []
-    await mount(
+    const failed: string[] = []
+    const editor = (): React.ReactElement => (
       <EventTagEditor
         target={{ ...targets[0], tag: 'old label' }}
         loadChoices={async () => {
@@ -589,8 +603,12 @@ describe('event tag UI', function () {
           saved.push(tag)
         }}
         onClose={() => undefined}
+        onFailed={message => {
+          failed.push(message)
+        }}
       />
     )
+    await mount(editor())
     expect(document.body.textContent).includes(
       'Tags could not be loaded. Try again.'
     )
@@ -601,20 +619,22 @@ describe('event tag UI', function () {
     )
     await input('new label')
     await click('Save tag')
-    expect(document.body.textContent).includes(
-      'Tag could not be saved. Try again.'
-    )
+    expect(failed).deep.equals(['Tag could not be saved. Try again.'])
+    await act(async () => {
+      root?.unmount()
+    })
+    await mount(editor())
     await click('Remove tag')
     expect(saved).deep.equals([null])
   })
 
-  it('prevents duplicate pill saves while busy and ignores completion after unmount', async () => {
+  it('has no busy state, closes on save while the save is held, and saves once', async () => {
     let finish: (() => void) | undefined
     const pending = new Promise<void>(resolve => {
       finish = resolve
     })
     let calls = 0
-    let closed = false
+    let closed = 0
     await mount(
       <EventTagEditor
         target={targets[0]}
@@ -624,23 +644,94 @@ describe('event tag UI', function () {
           await pending
         }}
         onClose={() => {
-          closed = true
+          closed++
         }}
       />
     )
     await click('Use tag great catch')
+    // Closed at once, the save still out.
+    expect(closed).equals(1)
     await click('Use tag great catch')
+    await click('Save tag')
     expect(calls).equals(1)
-    expect(document.querySelector('[aria-label="Saving tag…"]')).not.equals(
-      null
-    )
+    expect(document.querySelector('[aria-label="Saving tag…"]')).equals(null)
+    expect(
+      document
+        .querySelector('[aria-label="Save tag"]')
+        ?.getAttribute('aria-disabled')
+    ).not.equals('true')
+    expect(
+      document.querySelector<HTMLInputElement>('[aria-label="New tag"]')!
+        .disabled
+    ).equals(false)
     await act(async () => {
       root!.unmount()
       root = undefined
       finish!()
       await pending
     })
-    expect(closed).equals(false)
+    expect(closed).equals(1)
+  })
+
+  it('shows the stored tag choices at once while their read is held (P51)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'teamstation-tags-'))
+    const executors: Array<ReturnType<typeof nodeSqliteExecutor>> = []
+    let held = false
+    let asked = 0
+    try {
+      const client = new CachingClient({
+        baseUrl: 'http://x/api/v1',
+        token: 'token-1',
+        fetch: async (url: unknown) => {
+          if (String(url).endsWith('/tags')) {
+            asked++
+            if (held) return await new Promise<Response>(() => undefined)
+          }
+          return new Response(
+            JSON.stringify({
+              recent: ['stored tag'],
+              popular: [{ tag: 'popular tag', count: 2 }]
+            })
+          )
+        },
+        openCache: async userId => {
+          const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+          executors.push(executor)
+          return await openCacheStore(executor)
+        },
+        outbox: { setTimer: () => 0, clearTimer: () => undefined }
+      })
+      client.openFor('usr_tags')
+      // Read once with signal: the phone keeps it.
+      await client.tagChoices()
+      held = true
+      const source = new ServerScoringSource(
+        client,
+        new ServerClock(async () => Date.now(), memoryStorage())
+      )
+      await mount(
+        <EventTagEditor
+          target={targets[0]}
+          loadChoices={async () => await source.tagChoices()}
+          saveTag={async () => undefined}
+          onClose={() => undefined}
+        />
+      )
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 10))
+      })
+      expect(document.body.textContent).includes('stored tag')
+      expect(document.body.textContent).includes('popular tag')
+      // The server is still asked, behind what the editor shows.
+      expect(asked).equals(2)
+    } finally {
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      for (const executor of executors) await executor.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('renders a full-size intact inline pill immediately after descriptive words', async () => {

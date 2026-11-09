@@ -1,5 +1,13 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View, type ViewStyle } from 'react-native'
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
+import { Pressable, StyleSheet, Text, View, type ViewStyle } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
 import { GlassView } from '../components/GlassView'
@@ -32,7 +40,9 @@ import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
+import type { ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
+import { createRelay, type Relay, useRelay } from './fieldPropsRelay'
 import {
   compactToastBounds,
   type MenuButtonEdges,
@@ -260,6 +270,131 @@ export function bandedSafe(safe: ViewStyle, band: number): ViewStyle {
           : `calc(${String(top)} + ${band}px)`
   }
 }
+/** What the screen on top of a kept field draws it with. */
+interface KeptFieldDraw {
+  field: FieldCanvasProps
+  band: number
+  suspended: boolean
+  /** Counts the screens that have taken the field, the first 1. */
+  taken: number
+}
+const KeptFieldContext = createContext<Relay<KeptFieldDraw | undefined> | null>(
+  null
+)
+
+/**
+ * Keeps one field — its canvas, the scene and the scoreboard the scene draws
+ * — under whichever `BaseballScreen` inside it is on screen now. A screen
+ * that replaces another (the scoring panel of a game opened again, after a
+ * swap of home and away) draws its players and scoreboard on the same field
+ * in the next frame: on a phone a new GL canvas takes most of two seconds to
+ * draw anything, and the field would be blank until it had. The field takes
+ * the props of the screen drawn last and keeps them while none is drawn.
+ */
+export function FieldKeeper(props: {
+  children: React.ReactNode
+}): React.ReactElement {
+  const [relay] = useState(() =>
+    createRelay<KeptFieldDraw | undefined>(undefined)
+  )
+  const surface = useFieldSurface()
+  const theme = useTheme()
+  return (
+    <KeptFieldContext.Provider value={relay}>
+      <View style={[surface.root, { backgroundColor: theme.backgroundColor }]}>
+        <KeptField relay={relay} />
+        <View pointerEvents="box-none" style={StyleSheet.absoluteFill}>
+          {props.children}
+        </View>
+      </View>
+    </KeptFieldContext.Provider>
+  )
+}
+
+function KeptField(props: {
+  relay: Relay<KeptFieldDraw | undefined>
+}): React.ReactElement {
+  const draw = useRelay(props.relay)
+  const latest = useRef(draw)
+  latest.current = draw
+  /**
+   * What the scene last said of its bases, board and catcher. It says each
+   * only when it moves, so a screen that takes the field is told it here.
+   */
+  const heard = useRef<{
+    bases?: BaseProjection
+    board?: ScoreboardBounds
+    catcher?: ScreenRect
+  }>({})
+  const [reports] = useState(() => ({
+    handleBaseProjection: (bases: BaseProjection) => {
+      heard.current.bases = bases
+      latest.current?.field.onBaseProjection?.(bases)
+    },
+    handleScoreboardBounds: (board: ScoreboardBounds) => {
+      heard.current.board = board
+      latest.current?.field.onScoreboardBounds?.(board)
+    },
+    handleCatcherBounds: (catcher: ScreenRect) => {
+      heard.current.catcher = catcher
+      latest.current?.field.onCatcherBounds?.(catcher)
+    }
+  }))
+  const taken = draw?.taken
+  useLayoutEffect(() => {
+    const field = latest.current?.field
+    if (taken == null || taken < 2 || field == null) return
+    const { bases, board, catcher } = heard.current
+    if (bases != null) field.onBaseProjection?.(bases)
+    if (board != null) field.onScoreboardBounds?.(board)
+    if (catcher != null) field.onCatcherBounds?.(catcher)
+  }, [taken])
+  const field = draw?.field
+  return (
+    <View style={fieldHolderStyle(draw?.band ?? 0)}>
+      {field != null && draw?.suspended === false && (
+        <FieldCanvas
+          {...field}
+          {...SCORING_CAMERA}
+          bottomExtension={112}
+          onBaseProjection={
+            field.onBaseProjection == null
+              ? undefined
+              : reports.handleBaseProjection
+          }
+          onScoreboardBounds={reports.handleScoreboardBounds}
+          onCatcherBounds={
+            field.onCatcherBounds == null
+              ? undefined
+              : reports.handleCatcherBounds
+          }
+        />
+      )}
+    </View>
+  )
+}
+
+/**
+ * Hands the field this screen draws to the `FieldKeeper` around it, each
+ * render; none when there is no keeper, and the screen draws its own.
+ */
+function useKeptField(
+  field: FieldCanvasProps,
+  band: number,
+  suspended: boolean
+): boolean {
+  const relay = useContext(KeptFieldContext)
+  const taken = useRef(0)
+  useLayoutEffect(() => {
+    if (relay == null) return
+    // This screen takes the field: the keeper tells it where the bases, the
+    // board and the catcher are, as a field of its own tells it as it starts.
+    if (taken.current === 0) taken.current = (relay.get()?.taken ?? 0) + 1
+    relay.set({ field, band, suspended, taken: taken.current })
+  })
+  return relay != null
+}
+
 /** Immersive scoring surface, with one fixed responsive camera. */
 export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const [historyBounds, setHistoryBounds] = useState<HistoryBounds | null>(null)
@@ -290,6 +425,11 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     bounds,
     onScoreboardBounds
   } = useBandedReports(props.field, band)
+  const kept = useKeptField(
+    { ...bandedCanvas, onScoreboardBounds },
+    band,
+    props.suspended === true
+  )
   const [viewportHeight, setViewportHeight] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(0)
   const [header, setHeader] = useState<ScoreboardBounds>()
@@ -309,7 +449,13 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const button = { ...controlFrame, flex: 1 } as const
   return (
     <View
-      style={[surface.root, { backgroundColor: theme.backgroundColor }]}
+      // Over a kept field, the field shows through, and takes the touches
+      // nothing drawn over it takes.
+      pointerEvents={kept ? 'box-none' : 'auto'}
+      style={[
+        surface.root,
+        { backgroundColor: kept ? 'transparent' : theme.backgroundColor }
+      ]}
       onLayout={event => {
         setViewportHeight(event.nativeEvent.layout.height)
         setViewportWidth(event.nativeEvent.layout.width)
@@ -327,16 +473,18 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           }}
         />
       )}
-      <View style={fieldHolderStyle(band)}>
-        {props.suspended !== true && (
-          <FieldCanvas
-            {...bandedCanvas}
-            {...SCORING_CAMERA}
-            bottomExtension={112}
-            onScoreboardBounds={onScoreboardBounds}
-          />
-        )}
-      </View>
+      {!kept && (
+        <View style={fieldHolderStyle(band)}>
+          {props.suspended !== true && (
+            <FieldCanvas
+              {...bandedCanvas}
+              {...SCORING_CAMERA}
+              bottomExtension={112}
+              onScoreboardBounds={onScoreboardBounds}
+            />
+          )}
+        </View>
+      )}
       <View
         pointerEvents="box-none"
         style={[
