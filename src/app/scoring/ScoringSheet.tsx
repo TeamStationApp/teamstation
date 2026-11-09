@@ -189,9 +189,16 @@ function SheetContent({
   onBackdropPress,
   onClose,
   keyboardVerticalOffset,
+  hidden = false,
   children
 }: {
   visible?: boolean
+  /**
+   * Draws nothing while the sheet stays open: what replaces the screen under
+   * it is drawn in the next frame, and a sheet taken away with that screen
+   * would slide down over it first (a phone's modal animates out).
+   */
+  hidden?: boolean
   compact?: boolean
   placement?: 'top' | 'bottom' | 'center'
   title: string
@@ -285,177 +292,185 @@ function SheetContent({
       onShow={onShow}
       onRequestClose={onClose}
     >
-      {visible && (fullScreen || tall) && (
+      {!hidden && visible && (fullScreen || tall) && (
         <StatusBar barStyle="light-content" />
       )}
-      <SafeAreaProvider
-        initialMetrics={
-          initialWindowMetrics ?? {
-            frame: { x: 0, y: 0, width: 0, height: 0 },
-            insets: { top: 0, bottom: 0, left: 0, right: 0 }
-          }
-        }
-      >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={keyboardVerticalOffset}
-          style={
-            Platform.OS === 'web'
-              ? { height: '100dvh', width: '100%' }
-              : { flex: 1 }
+      {!hidden && (
+        <SafeAreaProvider
+          initialMetrics={
+            initialWindowMetrics ?? {
+              frame: { x: 0, y: 0, width: 0, height: 0 },
+              insets: { top: 0, bottom: 0, left: 0, right: 0 }
+            }
           }
         >
-          <SheetArea
-            edges={
-              fullScreen || tall || placement !== 'bottom'
-                ? ['top', 'bottom', 'left', 'right']
-                : ['bottom', 'left', 'right']
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            keyboardVerticalOffset={keyboardVerticalOffset}
+            style={
+              Platform.OS === 'web'
+                ? { height: '100dvh', width: '100%' }
+                : { flex: 1 }
             }
-            style={{
-              flex: 1,
-              justifyContent:
-                placement === 'center'
-                  ? 'center'
-                  : placement === 'top'
-                    ? 'flex-start'
-                    : 'flex-end',
-              backgroundColor: fullScreen ? theme.backgroundColor : undefined
-            }}
           >
-            {!fullScreen && (
-              <Pressable
-                accessibilityLabel="Dismiss sheet"
-                onPress={() => {
-                  ;(onBackdropPress ?? onClose)()
-                }}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  backgroundColor: theme.overlayBackgroundColor
-                }}
-              />
-            )}
-            <Animated.View
-              testID="Scoring sheet"
-              accessibilityViewIsModal
+            <SheetArea
+              edges={
+                fullScreen || tall || placement !== 'bottom'
+                  ? ['top', 'bottom', 'left', 'right']
+                  : ['bottom', 'left', 'right']
+              }
               style={{
-                transform: [{ translateY: pulled }],
-                ...(maxWidth == null
-                  ? {}
-                  : { width: '100%', maxWidth, alignSelf: 'center' }),
-                maxHeight: fullScreen || tall ? undefined : '92%',
-                flex: fullScreen || tall ? 1 : undefined,
-                height,
-                marginHorizontal: placement === 'center' ? 12 : undefined,
-                marginVertical: placement === 'center' ? 24 : undefined,
-                marginTop: tall ? 8 : undefined,
-                backgroundColor: scoring
-                  ? theme.scoringSurface.background
-                  : theme.backgroundColor,
-                borderWidth: scoring && !fullScreen ? 1 : 0,
-                borderColor: scoring ? theme.scoringSurface.border : undefined,
-                borderTopLeftRadius: fullScreen
-                  ? 0
-                  : theme.rem(theme.radiusLargeRem),
-                borderTopRightRadius: fullScreen
-                  ? 0
-                  : theme.rem(theme.radiusLargeRem),
-                borderBottomLeftRadius:
-                  placement === 'center' ? theme.rem(theme.radiusLargeRem) : 0,
-                borderBottomRightRadius:
-                  placement === 'center' ? theme.rem(theme.radiusLargeRem) : 0,
-                padding: compact ? 12 : 16,
-                paddingBottom: headerless ? 0 : 16,
-                gap: compact ? 8 : 12
+                flex: 1,
+                justifyContent:
+                  placement === 'center'
+                    ? 'center'
+                    : placement === 'top'
+                      ? 'flex-start'
+                      : 'flex-end',
+                backgroundColor: fullScreen ? theme.backgroundColor : undefined
               }}
             >
-              {!headerless && (
-                <View
-                  {...(swipeToDismiss ? pull.panHandlers : {})}
-                  style={{ gap: compact ? 8 : 12 }}
-                >
-                  {swipeToDismiss && (
-                    <View
-                      accessibilityLabel="Pull down to close"
-                      style={{
-                        alignSelf: 'center',
-                        width: 40,
-                        height: 5,
-                        borderRadius: 3,
-                        marginTop: -6,
-                        backgroundColor: theme.secondaryTextColor
-                      }}
-                    />
-                  )}
+              {!fullScreen && (
+                <Pressable
+                  accessibilityLabel="Dismiss sheet"
+                  onPress={() => {
+                    ;(onBackdropPress ?? onClose)()
+                  }}
+                  style={{
+                    position: 'absolute',
+                    inset: 0,
+                    backgroundColor: theme.overlayBackgroundColor
+                  }}
+                />
+              )}
+              <Animated.View
+                testID="Scoring sheet"
+                accessibilityViewIsModal
+                style={{
+                  transform: [{ translateY: pulled }],
+                  ...(maxWidth == null
+                    ? {}
+                    : { width: '100%', maxWidth, alignSelf: 'center' }),
+                  maxHeight: fullScreen || tall ? undefined : '92%',
+                  flex: fullScreen || tall ? 1 : undefined,
+                  height,
+                  marginHorizontal: placement === 'center' ? 12 : undefined,
+                  marginVertical: placement === 'center' ? 24 : undefined,
+                  marginTop: tall ? 8 : undefined,
+                  backgroundColor: scoring
+                    ? theme.scoringSurface.background
+                    : theme.backgroundColor,
+                  borderWidth: scoring && !fullScreen ? 1 : 0,
+                  borderColor: scoring
+                    ? theme.scoringSurface.border
+                    : undefined,
+                  borderTopLeftRadius: fullScreen
+                    ? 0
+                    : theme.rem(theme.radiusLargeRem),
+                  borderTopRightRadius: fullScreen
+                    ? 0
+                    : theme.rem(theme.radiusLargeRem),
+                  borderBottomLeftRadius:
+                    placement === 'center'
+                      ? theme.rem(theme.radiusLargeRem)
+                      : 0,
+                  borderBottomRightRadius:
+                    placement === 'center'
+                      ? theme.rem(theme.radiusLargeRem)
+                      : 0,
+                  padding: compact ? 12 : 16,
+                  paddingBottom: headerless ? 0 : 16,
+                  gap: compact ? 8 : 12
+                }}
+              >
+                {!headerless && (
                   <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12
-                    }}
+                    {...(swipeToDismiss ? pull.panHandlers : {})}
+                    style={{ gap: compact ? 8 : 12 }}
                   >
-                    <Text
-                      accessibilityRole="header"
+                    {swipeToDismiss && (
+                      <View
+                        accessibilityLabel="Pull down to close"
+                        style={{
+                          alignSelf: 'center',
+                          width: 40,
+                          height: 5,
+                          borderRadius: 3,
+                          marginTop: -6,
+                          backgroundColor: theme.secondaryTextColor
+                        }}
+                      />
+                    )}
+                    <View
                       style={{
-                        fontFamily: theme.boldTextFont,
-                        fontSize: compact ? 18 : 22,
-                        color: scoring
-                          ? theme.scoringSurface.text
-                          : theme.primaryTextColor,
-                        flex: 1
+                        flexDirection: 'row',
+                        alignItems: 'center',
+                        justifyContent: 'space-between',
+                        gap: 12
                       }}
                     >
-                      {title}
-                    </Text>
-                    {done ? null : textCancel ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Cancel"
-                        onPress={onClose}
+                      <Text
+                        accessibilityRole="header"
                         style={{
-                          minHeight: compact ? 32 : 44,
-                          paddingHorizontal: 10,
-                          justifyContent: 'center'
+                          fontFamily: theme.boldTextFont,
+                          fontSize: compact ? 18 : 22,
+                          color: scoring
+                            ? theme.scoringSurface.text
+                            : theme.primaryTextColor,
+                          flex: 1
                         }}
                       >
-                        <Text
+                        {title}
+                      </Text>
+                      {done ? null : textCancel ? (
+                        <Pressable
+                          accessibilityRole="button"
+                          accessibilityLabel="Cancel"
+                          onPress={onClose}
                           style={{
-                            fontFamily: theme.semiBoldTextFont,
-                            color: theme.dangerColor
+                            minHeight: compact ? 32 : 44,
+                            paddingHorizontal: 10,
+                            justifyContent: 'center'
                           }}
                         >
-                          Cancel
-                        </Text>
-                      </Pressable>
-                    ) : (
-                      <ScoringButton label="Cancel" onPress={onClose} />
-                    )}
+                          <Text
+                            style={{
+                              fontFamily: theme.semiBoldTextFont,
+                              color: theme.dangerColor
+                            }}
+                          >
+                            Cancel
+                          </Text>
+                        </Pressable>
+                      ) : (
+                        <ScoringButton label="Cancel" onPress={onClose} />
+                      )}
+                    </View>
                   </View>
-                </View>
-              )}
-              <Content
-                testID="Scoring sheet content"
-                ref={scroll ? contentScroll : undefined}
-                style={{
-                  flex: fullScreen || tall || height != null ? 1 : undefined,
-                  minHeight: 0
-                }}
-                onLayout={event => {
-                  setContentHeight(event.nativeEvent.layout.height)
-                }}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ gap: 0 }}
-              >
-                <ScoringSheetHeight.Provider value={contentHeight}>
-                  {children}
-                </ScoringSheetHeight.Provider>
-              </Content>
-              {done && <ScoringButton label="Done" onPress={onClose} />}
-            </Animated.View>
-          </SheetArea>
-        </KeyboardAvoidingView>
-      </SafeAreaProvider>
+                )}
+                <Content
+                  testID="Scoring sheet content"
+                  ref={scroll ? contentScroll : undefined}
+                  style={{
+                    flex: fullScreen || tall || height != null ? 1 : undefined,
+                    minHeight: 0
+                  }}
+                  onLayout={event => {
+                    setContentHeight(event.nativeEvent.layout.height)
+                  }}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{ gap: 0 }}
+                >
+                  <ScoringSheetHeight.Provider value={contentHeight}>
+                    {children}
+                  </ScoringSheetHeight.Provider>
+                </Content>
+                {done && <ScoringButton label="Done" onPress={onClose} />}
+              </Animated.View>
+            </SheetArea>
+          </KeyboardAvoidingView>
+        </SafeAreaProvider>
+      )}
     </Modal>
   )
 }
