@@ -15,6 +15,7 @@ import type {
 } from '../../test/concurrentScoring/context'
 import { fourInnings } from '../../test/concurrentScoring/game'
 import { networkRecovery } from '../../test/concurrentScoring/networkRecovery'
+import { staleTail } from '../../test/concurrentScoring/staleTail'
 import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
 import { stackBrowserCoverage } from '../../test/stackBrowserCoverage'
 
@@ -37,6 +38,7 @@ async function main(): Promise<void> {
       'lineups',
       'four-innings',
       'conflicts',
+      'stale-tail',
       'network-recovery'
     ].includes(scenario)
   )
@@ -152,7 +154,8 @@ async function main(): Promise<void> {
     else if (scenario === 'network-recovery') {
       assert.equal(surface, 'safari')
       await networkRecovery(rig)
-    } else if (scenario === 'conflicts') await conflictingPitches(rig)
+    } else if (scenario === 'stale-tail') await staleTail(rig)
+    else if (scenario === 'conflicts') await conflictingPitches(rig)
     else if (scenario === 'lineups') {
       await rig.open()
       await rig.pitch(1, 'Ball')
