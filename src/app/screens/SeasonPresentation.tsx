@@ -481,7 +481,12 @@ export function SeasonPresentation(
         : 'Cannot load season'
   const shownError = error !== '' ? error : listError
   // The first of the season's games are in, however its pills go after that.
-  const opening = loading || (mayView && counts == null && shownList.loading)
+  // The schedule and Videos wait on their own list alone, which paints from
+  // the phone's stored games: never on the season's teams, a read that with
+  // no signal answers only once its deadline has passed.
+  const listOpening = mayView && counts == null && shownList.loading
+  const opening =
+    listOpening || (loading && tab !== 'schedule' && tab !== 'videos')
   const chooseTab = (next: TabId, correcting?: TabCorrection): void => {
     setTab(next)
     onTab?.(next, correcting)
