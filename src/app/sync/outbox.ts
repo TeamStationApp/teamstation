@@ -1,9 +1,11 @@
 import { HttpError } from '../../common/errors'
+import { type TagDocument, tagMetadata } from '../../common/eventTags'
 import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import { swappedDocuments } from '../../common/scoring/swapDocuments'
 import { userIdOfGumbo } from '../../common/userId'
 import type {
   CacheTransaction,
@@ -55,6 +57,11 @@ import {
  *   is held parks too. Every other chain keeps draining. A game-only
  *   player's rename the server refuses is dropped alone: its game's chain
  *   keeps draining, and the documents it wrote are read again.
+ *
+ * A write of a game's scoring (its chain is `game:<id>`) is always queued
+ * and answered from the phone's documents, whatever its chain holds: the
+ * scoring screen never waits on the server. Only a write whose documents are
+ * not on the phone, which has no answer of the phone's, is sent as it is.
  *
  * The drain runs when woken: the app coming to the front, the network
  * coming back, any request that succeeded. It never runs in the background.
@@ -123,6 +130,28 @@ export type QueuedCall =
       body: unknown
       names?: DeviceNames
     }
+  | {
+      /**
+       * Home and away swapped from the scoring screen: `POST`, on the game's
+       * chain, behind every write already queued for it. Its body names the
+       * sides as the phone read them and the `effect` the scorer confirmed;
+       * a reset is sent with the plays digest and generation of the game's
+       * last answer from the server.
+       */
+      kind: 'swapSides'
+      gameId: string
+      path: string
+      body: unknown
+    }
+  | {
+      /** A tag put on a play or one of its events, or taken off (`DELETE`). */
+      kind: 'eventTag'
+      gameId: string
+      targetId: string
+      method: 'PUT' | 'DELETE'
+      path: string
+      body: unknown
+    }
 
 const ROSTER_PATH = /^\/teams\/([^/?]+)\/roster-players$/
 const LINEUPS_PATH = /^\/games\/([^/?]+)\/lineups$/
@@ -130,6 +159,8 @@ const EVENTS_PATH = /^(\/games\/([^/?]+)\/events)(?:\?answer=edits)?$/
 const GUEST_PATH = /^\/games\/([^/?]+)\/guest-players\/([^/?]+)$/
 const GUESTS_PATH = /^\/games\/([^/?]+)\/guest-players$/
 const UNROSTER_PATH = /^\/games\/([^/?]+)\/unroster$/
+const SWAP_PATH = /^\/games\/([^/?]+)\/swap-sides$/
+const TAG_PATH = /^\/games\/([^/?]+)\/tags\/([^/?]+)$/
 
 function decoded(id: string): string | undefined {
   try {
@@ -146,16 +177,38 @@ function decoded(id: string): string | undefined {
  * `background`, from a screen that does not wait for the server, also
  * queues a player left off a game or put back (`unroster`), a game-only
  * player made (`guestPlayer`) and a person who already exists added
- * (`existingPlayer`); without it those go to the server as before.
+ * (`existingPlayer`); without it those go to the server as before. A tag
+ * put or taken off is always one (`eventTag`); a swap of home and away only
+ * with `queue` `swap` (`CachingClient.queueSwap`): Game Settings' swap goes
+ * to the server.
  */
 export function queuedCallOf(
   method: string,
   path: string,
   body: unknown,
   names?: DeviceNames,
-  background = false
+  background = false,
+  queue?: 'swap'
 ): QueuedCall | undefined {
   const existing = body != null && typeof body === 'object' && 'userId' in body
+  const tag =
+    method === 'PUT' || method === 'DELETE' ? TAG_PATH.exec(path) : null
+  const tagGame = tag == null ? undefined : decoded(tag[1])
+  const targetId = tag == null ? undefined : decoded(tag[2])
+  if (tagGame != null && targetId != null)
+    return {
+      kind: 'eventTag',
+      gameId: tagGame,
+      targetId,
+      method: method as 'PUT' | 'DELETE',
+      path,
+      body: method === 'DELETE' ? null : body
+    }
+  const swap =
+    queue === 'swap' && method === 'POST' ? SWAP_PATH.exec(path) : null
+  const swapGame = swap == null ? undefined : decoded(swap[1])
+  if (swapGame != null)
+    return { kind: 'swapSides', gameId: swapGame, path, body }
   if (background) {
     const unroster = method === 'PUT' ? UNROSTER_PATH.exec(path) : null
     const unrosterGame = unroster == null ? undefined : decoded(unroster[1])
@@ -231,10 +284,16 @@ export function queuedCallOf(
 }
 
 /** The method a queued write is sent with. */
-export function methodOf(call: QueuedCall): 'POST' | 'PUT' {
+export function methodOf(call: QueuedCall): 'POST' | 'PUT' | 'DELETE' {
+  if (call.kind === 'eventTag') return call.method
   return call.kind === 'guestRename' || call.kind === 'unroster'
     ? 'PUT'
     : 'POST'
+}
+
+/** What a queued write sends as its body: none for a `DELETE`. */
+function sentBody(call: QueuedCall, body: unknown): unknown {
+  return methodOf(call) === 'DELETE' ? undefined : body
 }
 
 export function chainOf(call: QueuedCall): string {
@@ -396,7 +455,7 @@ export interface OutboxOptions {
    * the server's JSON or throws its `HttpError`.
    */
   send: (
-    method: 'POST' | 'PUT',
+    method: 'POST' | 'PUT' | 'DELETE',
     path: string,
     body: unknown,
     key: string | undefined
@@ -509,9 +568,16 @@ function callOfRow(row: OutboxRow): QueuedCall {
   const body = parsed(row.body)
   const names = namesOfRow(row)
   // A kind only a screen that does not wait queues reads as one whatever
-  // the row says: such a call that fell back to a direct send kept it.
-  return (queuedCallOf(row.method, row.path, body, names, row.background) ??
-    queuedCallOf(row.method, row.path, body, names, true))!
+  // the row says: such a call that fell back to a direct send kept it. A
+  // swap on the queue was queued as one.
+  return (queuedCallOf(
+    row.method,
+    row.path,
+    body,
+    names,
+    row.background,
+    'swap'
+  ) ?? queuedCallOf(row.method, row.path, body, names, true))!
 }
 
 /** The gumbo id a rename names, and the name it gives him. */
@@ -547,9 +613,65 @@ function documentsOf(call: QueuedCall): Array<{ key: string; path: string }> {
   const game = `/games/${encodeURIComponent(call.gameId)}`
   if (call.kind === 'unroster')
     return [{ key: gameKey(call.gameId), path: game }]
+  if (call.kind === 'swapSides') return gameDocuments(call.gameId)
   return call.kind === 'lineups'
     ? [{ key: lineupsKey(call.gameId), path: `${game}/lineups` }]
     : [{ key: eventsKey(call.gameId), path: `${game}/events` }]
+}
+
+/** A game's three documents, and the read that fills each. */
+function gameDocuments(gameId: string): Array<{ key: string; path: string }> {
+  const game = `/games/${encodeURIComponent(gameId)}`
+  return [
+    { key: gameKey(gameId), path: game },
+    { key: lineupsKey(gameId), path: `${game}/lineups` },
+    { key: eventsKey(gameId), path: `${game}/events` }
+  ]
+}
+
+/** Whether `call` is scoring's, on a game's chain: always queued. */
+function scoring(call: QueuedCall): boolean {
+  return chainOf(call).startsWith('game:')
+}
+
+/**
+ * A game's stored plays with one tag target given `tag` (null takes it
+ * off), wherever a play or an event of one names it.
+ */
+function taggedEvents(
+  document: Json,
+  targetId: string,
+  tag: string | null
+): Json {
+  const label = (play: unknown): unknown => {
+    if (!isJson(play)) return play
+    const metadata = tagMetadata(play as unknown as TagDocument)
+    const names =
+      metadata.play?.id === targetId ||
+      metadata.events.some(event => event.id === targetId)
+    if (!names) return play
+    return {
+      ...play,
+      tagTargets: {
+        ...metadata,
+        play:
+          metadata.play?.id === targetId
+            ? { ...metadata.play, tag }
+            : metadata.play,
+        events: metadata.events.map(event =>
+          event.id === targetId ? { ...event, tag } : event
+        )
+      }
+    }
+  }
+  const plays = Array.isArray(document.plays) ? document.plays : []
+  return {
+    ...document,
+    plays: plays.map(row =>
+      isJson(row) ? { ...row, gumbo: label(row.gumbo) } : row
+    ),
+    currentPlay: label(document.currentPlay)
+  }
 }
 
 /** The document a game write keeps: its lineups, or its plays. */
@@ -577,6 +699,8 @@ export class Outbox {
   /** Set by a 401: nothing is sent while the token is still this one. */
   private paused: { token: string | undefined } | undefined
   private timer: unknown
+  /** When `timer` wakes the queue. */
+  private timerAt = 0
   /** The last drain found nothing it could send, and nothing was queued since. */
   private idle = false
   private readonly listeners = new Set<OutboxListener>()
@@ -588,6 +712,8 @@ export class Outbox {
   private readonly direct = new Set<string>()
   /** Each chain's direct send in flight, settled once it is answered. */
   private readonly directSends = new Map<string, Promise<void>>()
+  /** Tags answered on this phone, each later than the last. */
+  private tagRevisions = 0
 
   constructor(options: OutboxOptions) {
     this.options = {
@@ -602,9 +728,11 @@ export class Outbox {
   }
 
   /**
-   * Sends `call` now when nothing of its chain is queued before it, and
-   * queues it when its chain has a write waiting or a player it names is
-   * not made yet. A send that cannot be answered (no signal, a 5xx) is
+   * Queues a game's scoring write and answers the phone's answer at once,
+   * written onto the phone's documents, for the drain to send behind it. A
+   * team's new player is sent now when nothing of its chain is queued before
+   * it, and queued when its chain has a write waiting or a player it names
+   * is not made yet. A send that cannot be answered (no signal, a 5xx) is
    * queued with the key it was sent with. Answers the server's JSON, or for
    * a queued write the phone's.
    */
@@ -620,9 +748,10 @@ export class Outbox {
    * the phone's documents in the same transaction, whatever else its chain
    * holds: the drain sends it later, in order, after a direct send of the
    * chain still in flight, whose row holds its place. For a screen that
-   * never waits on the network. A call whose documents are not on the
-   * phone, so it has no answer of the phone's, or a file that cannot be
-   * written, goes to the server as `submit` sends it.
+   * never waits on the network. A team's call whose documents are not on
+   * the phone, so it has no answer of the phone's, or a file that cannot be
+   * written, goes to the server as `submit` sends it; a game's is refused,
+   * as the game is on the phone once scoring has opened it.
    */
   async submitBackground(call: QueuedCall): Promise<unknown> {
     const store = await this.options.store()
@@ -638,7 +767,8 @@ export class Outbox {
         undefined,
         true
       )
-    } catch {
+    } catch (error: unknown) {
+      if (scoring(call)) throw error
       return await this.submit(call)
     }
     return answer
@@ -690,6 +820,7 @@ export class Outbox {
   reset(): void {
     this.options.clearTimer(this.timer)
     this.timer = undefined
+    this.timerAt = 0
     this.failures = 0
     this.retryAt = 0
     this.lastNetwork = false
@@ -924,7 +1055,12 @@ export class Outbox {
     const store = await this.options.store()
     const method = methodOf(call)
     if (store == null)
-      return await this.options.send(method, call.path, call.body, undefined)
+      return await this.options.send(
+        method,
+        call.path,
+        sentBody(call, call.body),
+        undefined
+      )
     const chain = chainOf(call)
     const key = this.makeId()
     // Sent now when nothing of its chain waits, with a row of its own in
@@ -945,17 +1081,22 @@ export class Outbox {
         // called in.
         const own = rows.filter(row => row.chain === chain)
         const waits = (await this.dependencies(tx, rows, call.body)).length > 0
-        if (own.length > 0 || waits) {
+        if (own.length > 0 || waits || scoring(call)) {
           const queued = await this.queueIn(tx, call, key)
-          // With no answer of the phone's to queue, behind direct sends of
-          // its chain alone it waits for them, then goes as they did.
-          if (
-            queued === undefined &&
-            !waits &&
-            own.every(row => this.direct.has(row.id))
-          )
-            return 'behindDirect' as const
-          return { queued }
+          // A game's write with nothing of the phone's to answer from and
+          // nothing ahead of it goes to the server, as before.
+          const alone = own.length === 0 && !waits
+          if (queued !== undefined || !alone) {
+            // With no answer of the phone's to queue, behind direct sends of
+            // its chain alone it waits for them, then goes as they did.
+            if (
+              queued === undefined &&
+              !waits &&
+              own.every(row => this.direct.has(row.id))
+            )
+              return 'behindDirect' as const
+            return { queued }
+          }
         }
         const body = await this.prepared(tx, call, call.body)
         const row = await tx.enqueue({
@@ -988,10 +1129,20 @@ export class Outbox {
       })
     } catch {
       // A file that cannot be read queues nothing: the call is sent as is.
-      return await this.options.send(method, call.path, call.body, undefined)
+      return await this.options.send(
+        method,
+        call.path,
+        sentBody(call, call.body),
+        undefined
+      )
     }
     if (reserved === 'notOurs')
-      return await this.options.send(method, call.path, call.body, undefined)
+      return await this.options.send(
+        method,
+        call.path,
+        sentBody(call, call.body),
+        undefined
+      )
     if (reserved === 'behindDirect') {
       await this.directSends.get(chain)
       return await this.submitNow(call)
@@ -1018,7 +1169,12 @@ export class Outbox {
     const chain = chainOf(call)
     let answer: unknown
     try {
-      answer = await this.options.send(method, call.path, body, key)
+      answer = await this.options.send(
+        method,
+        call.path,
+        sentBody(call, body),
+        key
+      )
     } catch (error: unknown) {
       if (!isRetryable(error, call)) {
         await store
@@ -1052,8 +1208,9 @@ export class Outbox {
     }
     await this.told(landing)
     this.notify()
-    // What was queued behind it goes now.
-    if (behind) this.wake()
+    // What was queued behind it goes now, and a send that works ends the
+    // wait of a chain a 5xx skipped.
+    this.wake(!behind)
     return answer
   }
 
@@ -1172,6 +1329,8 @@ export class Outbox {
     if (call.kind === 'guestPlayer') return await this.localGuest(tx, call)
     if (call.kind === 'existingPlayer')
       return await this.existingEntry(tx, call)
+    if (call.kind === 'swapSides') return await this.swapped(tx, call)
+    if (call.kind === 'eventTag') return await this.tagged(tx, call)
     const key = ownKey(call)
     const held = await tx.read(key)
     if (held == null) return undefined
@@ -1182,6 +1341,74 @@ export class Outbox {
       pending: true
     })
     return { answer: next }
+  }
+
+  /**
+   * Home and away swapped on the phone's copy of the game, its lineups and
+   * its plays (`swappedDocuments`), and the swap's answer with the swapped
+   * game and plays as written (`documents`), which the scoring screen opens
+   * on at once; none when the game or its plays are not on the phone.
+   */
+  private async swapped(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'swapSides' }>
+  ): Promise<{ answer: unknown } | undefined> {
+    const [game, lineups, events] = await Promise.all(
+      gameDocuments(call.gameId).map(async doc => await tx.read(doc.key))
+    )
+    if (game == null || events == null) return undefined
+    const done = swappedDocuments(
+      {
+        game: parsed(game.body),
+        lineups: lineups == null ? null : parsed(lineups.body),
+        events: parsed(events.body)
+      },
+      swapEffectOf(call),
+      `${LOCAL_PREFIX}${this.makeId()}`
+    )
+    for (const [key, held, body] of [
+      [gameKey(call.gameId), game, done.game],
+      [lineupsKey(call.gameId), lineups, done.lineups],
+      [eventsKey(call.gameId), events, done.events]
+    ] as const)
+      if (held != null && body != null)
+        await tx.write(key, {
+          ...held,
+          body: JSON.stringify(body),
+          pending: true
+        })
+    return {
+      answer: {
+        ...done.answer,
+        documents: { game: done.game, events: done.events }
+      }
+    }
+  }
+
+  /**
+   * A tag put on, or taken off, the phone's copy of the game's plays, and
+   * the answer the server gives it: a revision later than the phone's last.
+   */
+  private async tagged(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'eventTag' }>
+  ): Promise<{ answer: unknown } | undefined> {
+    const key = eventsKey(call.gameId)
+    const held = await tx.read(key)
+    if (held == null) return undefined
+    const raw = (call.body as Json | null)?.tag
+    const tag = call.method === 'DELETE' || typeof raw !== 'string' ? null : raw
+    await tx.write(key, {
+      ...held,
+      body: JSON.stringify(taggedEvents(parsed(held.body), call.targetId, tag)),
+      pending: true
+    })
+    // Longer than any revision the server gives, and each later than the
+    // last: the screen takes the newest answer of a target as it stands.
+    const revision = String(
+      this.options.now() * 1000 + (this.tagRevisions++ % 1000)
+    )
+    return { answer: { targetId: call.targetId, tag, revision } }
   }
 
   /**
@@ -1497,6 +1724,8 @@ export class Outbox {
     body: unknown
   ): Promise<unknown> {
     const sent = withServerIds(body, await this.landedIds(tx))
+    if (call.kind === 'swapSides')
+      return await this.preparedSwap(tx, call, sent)
     const field = baseField(call)
     if (field == null || (call.kind !== 'lineups' && call.kind !== 'events'))
       return sent
@@ -1506,6 +1735,36 @@ export class Outbox {
     // A lineup save names a base, empty or not; a live post may name none.
     if (digest == null) return field === 'base' ? { ...rest, base: '' } : rest
     return { ...rest, [field]: digest }
+  }
+
+  /**
+   * A swap as it is sent, once the writes queued ahead of it have landed:
+   * without the `effect` the scorer confirmed, and for a reset with the
+   * plays digest and generation of the game's last answer from the server,
+   * which each landed play brought. A body sent before is sent as it went.
+   */
+  private async preparedSwap(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'swapSides' }>,
+    sent: unknown
+  ): Promise<unknown> {
+    if (!isJson(sent) || !('effect' in sent)) return sent
+    const { effect, ...rest } = sent
+    if (effect !== 'reset') return rest
+    const serverOf = async (key: string): Promise<Json> => {
+      const held = await tx.read(key)
+      return held?.serverBody == null ? {} : parsed(held.serverBody)
+    }
+    const events = await serverOf(eventsKey(call.gameId))
+    const game = await serverOf(gameKey(call.gameId))
+    const generation = events.generation ?? game.generation
+    return {
+      ...rest,
+      ...(typeof events.playsDigest === 'string'
+        ? { playsDigest: events.playsDigest }
+        : {}),
+      ...(typeof generation === 'number' ? { generation } : {})
+    }
   }
 
   /** The lineups digest of the game's last answer from the server. */
@@ -1544,8 +1803,12 @@ export class Outbox {
       await this.landedPlayer(tx, call, row, answer, later)
       return
     }
-    if (call.kind === 'guestRename') {
+    if (call.kind === 'guestRename' || call.kind === 'eventTag') {
       await this.landedRename(tx, call)
+      return
+    }
+    if (call.kind === 'swapSides') {
+      await this.landedSwap(tx, call, later, landing)
       return
     }
     if (call.kind === 'unroster') {
@@ -1568,6 +1831,9 @@ export class Outbox {
     ])
     for (const other of later) {
       const otherCall = callOfRow(other)
+      // Writes after a swap build on its new sides: they take the digest
+      // the game is read with once the swap lands.
+      if (otherCall.kind === 'swapSides') break
       const otherField = baseField(otherCall)
       if (otherField == null || serverDigest == null) continue
       const body = parsed(other.body)
@@ -1584,12 +1850,10 @@ export class Outbox {
     )
     let document = response
     for (const other of rewriting)
-      document = await this.applied(
+      document = await this.reapplied(
         tx,
-        callOfRow(other) as Extract<
-          QueuedCall,
-          { kind: 'guestRename' | 'lineups' | 'events' }
-        >,
+        callOfRow(other),
+        own,
         document,
         parsed(other.body)
       )
@@ -1598,7 +1862,10 @@ export class Outbox {
       body: JSON.stringify(document),
       revision: held?.revision ?? '0',
       serverDigest,
-      pending: rewriting.length > 0
+      pending: rewriting.length > 0,
+      // The server's own answer, kept beside the phone's: what a swap
+      // queued behind it confirms.
+      serverBody: JSON.stringify(response)
     })
     // The game's other document carries the same lineups digest: as its
     // server digest, and in its body too unless a queued write holds it,
@@ -1619,12 +1886,80 @@ export class Outbox {
   }
 
   /**
-   * A rename landed: the game's plays the phone wrote it onto are the
-   * server's to answer again, once no write still queued holds them.
+   * A later write of the chain written again over `document`, the answer
+   * stored for `key`: a swap exchanges its sides (and a reset empties its
+   * plays), a tag labels its play, anything else as `applied` writes it.
+   */
+  private async reapplied(
+    tx: CacheTransaction,
+    call: QueuedCall,
+    key: string,
+    document: Json,
+    body: unknown
+  ): Promise<Json> {
+    if (call.kind === 'eventTag') {
+      const raw = (body as Json | null)?.tag
+      return taggedEvents(
+        document,
+        call.targetId,
+        call.method === 'DELETE' || typeof raw !== 'string' ? null : raw
+      )
+    }
+    if (call.kind === 'swapSides') {
+      const plays = key === eventsKey(call.gameId)
+      const done = swappedDocuments(
+        {
+          game: { generation: document.generation },
+          lineups: plays ? null : document,
+          events: plays ? document : null
+        },
+        swapEffectOf({ ...call, body }),
+        `${LOCAL_PREFIX}${this.makeId()}`
+      )
+      return (plays ? done.events : done.lineups) ?? document
+    }
+    return await this.applied(
+      tx,
+      call as Extract<
+        QueuedCall,
+        { kind: 'guestRename' | 'lineups' | 'events' }
+      >,
+      document,
+      body
+    )
+  }
+
+  /**
+   * A swap landed: each of the game's documents nothing queued after it
+   * writes is the server's to answer again, and the game, its lineups and
+   * its plays are read from the server before the chain's next write is
+   * sent, so it carries the new sides' digest and generation.
+   */
+  private async landedSwap(
+    tx: CacheTransaction,
+    call: Extract<QueuedCall, { kind: 'swapSides' }>,
+    later: OutboxRow[],
+    landing: Landing
+  ): Promise<void> {
+    const written = new Set(
+      later.flatMap(other => documentsOf(callOfRow(other)).map(doc => doc.key))
+    )
+    for (const doc of gameDocuments(call.gameId)) {
+      landing.reads.push(doc.path)
+      if (written.has(doc.key)) continue
+      const held = await tx.read(doc.key)
+      if (held?.pending === true)
+        await tx.write(doc.key, { ...held, pending: false })
+    }
+  }
+
+  /**
+   * A rename or a tag landed: the game's plays the phone wrote it onto are
+   * the server's to answer again, once no write still queued holds them.
    */
   private async landedRename(
     tx: CacheTransaction,
-    call: Extract<QueuedCall, { kind: 'guestRename' }>
+    call: Extract<QueuedCall, { kind: 'guestRename' | 'eventTag' }>
   ): Promise<void> {
     const key = eventsKey(call.gameId)
     const writing = (await tx.outbox()).some(other =>
@@ -2025,16 +2360,30 @@ export class Outbox {
     this.lastNetwork = false
   }
 
+  /**
+   * Wakes the queue in `ms`, unless a wake already set comes sooner: a
+   * lease's long wait never puts off the backoff of a chain a 5xx skipped.
+   */
   private schedule(ms: number): void {
+    const now = this.options.now()
+    const at = now + ms
+    if (this.timer != null && now < this.timerAt && this.timerAt <= at) return
     this.options.clearTimer(this.timer)
+    this.timerAt = at
     this.timer = this.options.setTimer(() => {
       this.timer = undefined
       this.wake()
     }, ms)
   }
 
-  /** The next row to send, or none, as one transaction. */
-  private async pick(tx: CacheTransaction): Promise<{
+  /**
+   * The next row to send, or none, as one transaction: never one of the
+   * chains in `skipped`, which wait out a server that could not answer.
+   */
+  private async pick(
+    tx: CacheTransaction,
+    skipped: ReadonlySet<string> = new Set()
+  ): Promise<{
     row?: OutboxRow
     call?: QueuedCall
     body?: unknown
@@ -2077,7 +2426,7 @@ export class Outbox {
     let leaseEnds: number | undefined
     const ready: OutboxRow[] = []
     for (const head of heads.values()) {
-      if (isHeld(head.state)) continue
+      if (isHeld(head.state) || skipped.has(head.chain)) continue
       if (head.state === 'inflight') {
         leaseEnds = Math.min(leaseEnds ?? Infinity, head.leaseUntil!)
         continue
@@ -2136,6 +2485,10 @@ export class Outbox {
   }
 
   private async drainOnce(): Promise<void> {
+    // Chains a 5xx sent back this time: they wait, and the others go on, as
+    // every write is queued and a game's trouble is its own. No signal
+    // stops them all.
+    const skipped = new Set<string>()
     for (;;) {
       if (!this.active) return
       if (this.paused != null) {
@@ -2143,19 +2496,26 @@ export class Outbox {
         this.paused = undefined
       }
       const wait = this.retryAt - this.options.now()
-      if (wait > 0) {
+      if (wait > 0 && skipped.size === 0) {
         if (this.timer == null) this.schedule(wait)
         return
       }
       const store = await this.options.store()
       if (store == null) return
-      const picked = await store.atomically(async tx => await this.pick(tx))
+      const picked = await store.atomically(
+        async tx => await this.pick(tx, skipped)
+      )
       if (picked.changed) this.notify()
       const { row, call } = picked
       if (row == null || call == null) {
         if (picked.leaseEnds != null)
           this.schedule(Math.max(0, picked.leaseEnds - this.options.now()))
-        else this.idle = true
+        else if (skipped.size === 0) this.idle = true
+        // A chain a 5xx skipped this pass goes again on its backoff, or at
+        // once when a send since has succeeded: nothing else may come to
+        // wake it while the app stays open.
+        if (skipped.size > 0)
+          this.schedule(Math.max(0, this.retryAt - this.options.now()))
         return
       }
       // The session changed while the row was read: it is not the new
@@ -2175,7 +2535,7 @@ export class Outbox {
           answer: await this.options.send(
             methodOf(call),
             row.path,
-            picked.body,
+            sentBody(call, picked.body),
             row.idempotencyKey
           )
         }
@@ -2184,7 +2544,10 @@ export class Outbox {
       }
       const go = await this.settle(store, row, call, picked.body, outcome)
       this.notify()
-      if (!go) return
+      if (!go) {
+        if (outcome.kind !== 'retry' || outcome.network) return
+        skipped.add(row.chain)
+      }
     }
   }
 
@@ -2338,6 +2701,15 @@ function randomGumboId(): number {
 
 const isJson = (value: unknown): value is Json =>
   value != null && typeof value === 'object' && !Array.isArray(value)
+
+/** What a queued swap confirmed: the sides alone, or a reset. */
+function swapEffectOf(
+  call: Extract<QueuedCall, { kind: 'swapSides' }>
+): 'swap' | 'reset' {
+  const body = (call.body ?? {}) as Json
+  // Sent once already, it went with the digest a reset confirms instead.
+  return body.effect === 'reset' || 'playsDigest' in body ? 'reset' : 'swap'
+}
 
 /** A game's players left off, by side, as the phone holds them. */
 function unrosteredLists(raw: unknown): { away: number[]; home: number[] } {

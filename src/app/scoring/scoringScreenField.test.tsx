@@ -1387,7 +1387,7 @@ describe('scoring screen field wiring', function () {
   })
 
   for (const change of ['close', 'reselect', 'account', 'unmount'] as const)
-    it(`does not issue a tag request after ${change} while scoring flush is pending`, async () => {
+    it(`${change === 'account' ? 'issues no tag request' : 'still saves the tag'} after ${change} while scoring flush is pending`, async () => {
       const source = new DevelopmentScoringSource()
       await mount(source)
       await step(() => {
@@ -1438,9 +1438,9 @@ describe('scoring screen field wiring', function () {
       }
       release()
       const result = await saving
-      expect(result).instanceOf(Error)
-      expect((result as Error).message).includes('tag selection changed')
-      expect(calls).equals(0)
+      // The editor closes as the save starts: only another account stops it.
+      expect(result).equals(undefined)
+      expect(calls).equals(change === 'account' ? 0 : 1)
     })
 
   it('keeps a pitch description when a deferred batting-team roster change is the newest Undo action', async () => {
