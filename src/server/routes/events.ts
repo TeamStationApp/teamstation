@@ -545,7 +545,10 @@ export function eventRoutes(
    * TeamStation. The body names the sides the scorer read: a call sent
    * again after its answer was lost finds them already exchanged and
    * changes nothing, rather than swapping them back. The answer is the new
-   * sides, the game's generation, and what the reset deleted.
+   * sides, the game's generation, what the reset deleted, and the lineups
+   * digest the sides have as the swap commits: a save built on the swapped
+   * lineups names it as its base, so a lineup another device saved after
+   * the swap is refused as stale rather than overwritten.
    */
   router.post(
     '/games/:gameId/swap-sides',
@@ -556,53 +559,93 @@ export function eventRoutes(
       const gameId = pathParam(req.params.gameId)
       const read = cleanBody(asSwapSidesBody, req.body)
       await requireVisibleGame(db, actor.userId, actor.isAdmin, gameId)
-      const done = await atomic(db, async trx => {
-        await lockKeys(trx, ['creation:parent-graph', `game:${gameId}`])
-        await lockPlayerEdits(trx)
-        const game = await trx
-          .selectFrom('games')
-          .select(['id', 'home_team_id', 'away_team_id', 'play_generation'])
-          .where('id', '=', gameId)
-          .forUpdate()
-          .executeTakeFirst()
-        if (game == null) throw notFound()
-        const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
-        if (
-          !canScore(scorers, game.home_team_id) &&
-          !canScore(scorers, game.away_team_id)
-        )
-          throw forbidden('Only someone who can score this game may swap it')
-        const unchanged = { atBats: 0, innings: 0 }
-        if (
-          game.home_team_id === read.awayTeamId &&
-          game.away_team_id === read.homeTeamId
-        )
-          return {
-            ...read.swapped,
-            generation: game.play_generation,
-            reset: unchanged,
-            swapped: false
-          }
-        if (
-          game.home_team_id !== read.homeTeamId ||
-          game.away_team_id !== read.awayTeamId
-        )
-          throw conflict("This game's teams changed. Open it again.")
-        const done = await swapOrReset(trx, gameId, actor.userId, read)
-        return {
-          ...read.swapped,
-          generation: game.play_generation + (done.reset ? 1 : 0),
-          reset: done.lost,
-          swapped: true
+      const answerOf = (done: {
+        homeTeamId: string
+        awayTeamId: string
+        generation: number
+        reset: { atBats: number; innings: number }
+        lineupsDigest: string
+      }): { status: number; body: unknown } => ({
+        status: 200,
+        body: {
+          homeTeamId: done.homeTeamId,
+          awayTeamId: done.awayTeamId,
+          generation: done.generation,
+          reset: done.reset,
+          lineupsDigest: done.lineupsDigest
         }
       })
-      if (done.swapped) tellGameWritten(options.onGameWritten, gameId)
-      res.json({
-        homeTeamId: done.homeTeamId,
-        awayTeamId: done.awayTeamId,
-        generation: done.generation,
-        reset: done.reset
+      // Answered once per Idempotency-Key, as a phone's queue sends it again
+      // after a deadline: a resend of a swap that committed is told what the
+      // swap committed, never the sides or lineups as they stand since, nor
+      // swapped again after another device swapped back.
+      const answer = await answerOnce(db, idempotentCallOf(req, actor.userId), {
+        write: async claim => {
+          const done = await atomic(db, async trx => {
+            await lockKeys(trx, ['creation:parent-graph', `game:${gameId}`])
+            await lockPlayerEdits(trx)
+            const game = await trx
+              .selectFrom('games')
+              .select([
+                'id',
+                'home_team_id',
+                'away_team_id',
+                'currentPlay',
+                'pregame',
+                'lineups_digest',
+                'play_generation'
+              ])
+              .where('id', '=', gameId)
+              .forUpdate()
+              .executeTakeFirst()
+            if (game == null) throw notFound()
+            const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
+            if (
+              !canScore(scorers, game.home_team_id) &&
+              !canScore(scorers, game.away_team_id)
+            )
+              throw forbidden(
+                'Only someone who can score this game may swap it'
+              )
+            const unchanged = { atBats: 0, innings: 0 }
+            if (
+              game.home_team_id === read.awayTeamId &&
+              game.away_team_id === read.homeTeamId
+            )
+              return {
+                ...read.swapped,
+                generation: game.play_generation,
+                reset: unchanged,
+                lineupsDigest: await storedLineupsDigest(trx, game),
+                swapped: false
+              }
+            if (
+              game.home_team_id !== read.homeTeamId ||
+              game.away_team_id !== read.awayTeamId
+            )
+              throw conflict("This game's teams changed. Open it again.")
+            const swap = await swapOrReset(trx, gameId, actor.userId, read)
+            const done = {
+              ...read.swapped,
+              generation: game.play_generation + (swap.reset ? 1 : 0),
+              reset: swap.lost,
+              lineupsDigest: swap.lineupsDigest,
+              swapped: true
+            }
+            // The key is claimed with the answer, in the swap's own
+            // transaction.
+            await claim?.(trx, { answer: answerOf(done) })
+            return done
+          })
+          if (done.swapped) tellGameWritten(options.onGameWritten, gameId)
+          return answerOf(done)
+        },
+        // Every claim here keeps its answer.
+        rebuild: async () => {
+          throw conflict("This game's teams changed. Open it again.")
+        }
       })
+      res.status(answer.status).json(answer.body)
     })
   )
 

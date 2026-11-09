@@ -27,6 +27,7 @@ import { baseIds, overrideOf, tiebreakerSetupError } from './rules'
 import {
   type EventStore,
   type SaveChange,
+  type SaveHandoff,
   ScoringSession,
   type SessionContext,
   storedChange,
@@ -1052,6 +1053,48 @@ describe('a scoring session', function () {
     expect(session.problem).equals('Invalid local rebase')
     session.close()
   })
+
+  for (const answer of ['stale', 'superseded'] as const)
+    it(`reads nothing to rebase once closed, and counts what it held as lost to the swap (${answer}, 9.harness-review.1)`, async () => {
+      const clock = new Clock()
+      let reads = 0
+      let release!: () => void
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const session = await ScoringSession.open(
+        {
+          load: async () => {
+            // The rebase's read, on a stalled link, never settles.
+            if (++reads > 1) return await new Promise<never>(() => undefined)
+            return { plays: [], currentPlay: null }
+          },
+          save: async () => {
+            await held
+            if (answer === 'stale')
+              throw new HttpError('conflict', 'The lineups changed', {
+                stale: true
+              })
+            return { plays: [], currentPlay: null, superseded: true }
+          }
+        },
+        'g1',
+        context,
+        clock.options
+      )
+      session.apply(ball)
+      const saving = session.flush()
+      expect(session.saving).equals(true)
+      // Another device swapped the game: the screen closes the session.
+      session.close()
+      release()
+      await saving
+      expect(reads).equals(1)
+      expect(session.saving).equals(false)
+      expect(session.lostToSwap).greaterThan(0)
+      expect(session.pending).equals(0)
+      expect(clock.waiting).deep.equals([])
+    })
 
   it('backs off a retry after a server error', async function () {
     const { session, store, clock } = await open()
@@ -3466,5 +3509,128 @@ describe('a scoring session after the defense is cleared (U35)', function () {
     ).deep.equals([])
     expect(session.apply(ball).problems).deep.equals([])
     expect(session.state.liveData.linescore.balls).equals(1)
+  })
+})
+
+/**
+ * A store that holds a save on the device before the server answers it, as
+ * a phone's queue does: it says so at once (`SaveHandoff.taken`), and holds
+ * the answer until `answer` is called, or answers from the device once the
+ * session lets the save go.
+ */
+class HandingStore extends FakeStore {
+  held: Array<{
+    change: SaveChange
+    answer: (failure?: HttpError) => void
+    released: boolean
+  }> = []
+
+  override async save(
+    gameId: string,
+    change: SaveChange,
+    handoff?: SaveHandoff
+  ): Promise<StoredGame> {
+    let answer!: (failure?: HttpError) => void
+    const answered = new Promise<HttpError | undefined>(resolve => {
+      answer = resolve
+    })
+    const entry = { change, answer, released: false }
+    this.held.push(entry)
+    handoff?.taken()
+    const released = handoff?.release.then(() => {
+      entry.released = true
+    })
+    const failure = await Promise.race([answered, released])
+    if (failure != null) {
+      this.posts.push(JSON.parse(JSON.stringify(change)) as SaveChange)
+      throw failure
+    }
+    return await super.save(gameId, change)
+  }
+}
+
+describe('a scoring session handing its saves to a store that keeps them', function () {
+  /** Lets the promises queued so far run. */
+  const turn = async (): Promise<void> => {
+    for (let i = 0; i < 5; i++)
+      await new Promise(resolve => setImmediate(resolve))
+  }
+
+  it('is handed off once the store holds its last save, before the server answers, and still takes the answer when it comes', async function () {
+    const { session, store } = await open(new HandingStore())
+    session.apply(ball)
+    let handed = false
+    const handing = session.handedOff().then(() => {
+      handed = true
+    })
+    await turn()
+    expect(handed, 'handed off before any answer').equals(true)
+    await handing
+    expect(session.pending).equals(1)
+    expect(session.unhanded).equals(0)
+    const held = store as HandingStore
+    expect(held.held).length(1)
+    expect(held.held[0].released).equals(false)
+    // The server refuses it: the session takes the refusal as before.
+    held.held[0].answer(new HttpError('conflict', 'Refused by the server'))
+    await session.flush()
+    expect(session.problem).equals('Refused by the server')
+    expect(session.state.liveData.linescore.balls).equals(0)
+  })
+
+  it('lets a save it holds go when changes are made behind it, so they are handed off at once too', async function () {
+    const { session, store } = await open(new HandingStore())
+    const held = store as HandingStore
+    session.apply(ball)
+    const saving = session.flush()
+    await turn()
+    expect(held.held).length(1)
+    // A second pitch while the first save is out: not yet the store's.
+    session.apply(strike)
+    expect(session.unhanded).greaterThan(0)
+    let handed = false
+    const handing = session.handedOff().then(() => {
+      handed = true
+    })
+    await turn()
+    // The first save was let go and answered from the device; the second,
+    // covering both pitches, is the store's.
+    expect(held.held[0].released).equals(true)
+    expect(held.held).length(2)
+    expect(handed).equals(true)
+    await handing
+    expect(session.unhanded).equals(0)
+    held.held[1].answer()
+    await saving
+    await session.flush()
+    expect(session.pending).equals(0)
+    // Both went, in order: the one let go, then the one behind it.
+    expect(store.posts).length(2)
+    expect((await store.load()).currentPlay?.count).deep.include({
+      balls: 1,
+      strikes: 1
+    })
+  })
+
+  it('waits for the answer, as a flush does, from a store that keeps nothing', async function () {
+    const store = new FakeStore()
+    let open_!: () => void
+    store.gate = new Promise<void>(resolve => {
+      open_ = resolve
+    })
+    const { session } = await open(store)
+    session.apply(ball)
+    let handed = false
+    const handing = session.handedOff().then(() => {
+      handed = true
+    })
+    await turn()
+    expect(handed).equals(false)
+    expect(session.unhanded).equals(1)
+    open_()
+    await handing
+    expect(session.pending).equals(0)
+    // Nothing to save: handed off at once.
+    await session.handedOff()
   })
 })

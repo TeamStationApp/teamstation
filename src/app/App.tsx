@@ -228,6 +228,7 @@ import {
 } from './sync/cachingClient'
 import type { HeldChain } from './sync/outbox'
 import { watchReachability } from './sync/reachability'
+import { leaveStalledConnections } from './sync/stalledConnections'
 import {
   heldTeamText,
   offlineBannerText,
@@ -510,7 +511,8 @@ function Shell(props: AppProps): React.ReactElement {
             baseUrl: apiBaseUrl,
             token: initialToken,
             passwordKdf,
-            openCache: documentCache
+            openCache: documentCache,
+            onDeadlineMissed: leaveStalledConnections
           }),
     [apiBaseUrl, initialToken, documentCache]
   )
