@@ -200,6 +200,7 @@ import { useMenuEscape } from './useMenuEscape'
 import { useScoringClock } from './useScoringClock'
 import { useScoringExit } from './useScoringExit'
 import { useTiebreakerSetup } from './useTiebreakerSetup'
+import { WebWrites } from './webWrites'
 
 export interface ScoringScreenProps {
   active?: boolean
@@ -237,10 +238,6 @@ export interface ScoringScreenProps {
 }
 /** How long the notice that home and away were swapped stays up. */
 const SWAP_NOTICE_MS = 8000
-/** The menu's swap, refused while a change has not reached the server. */
-const SWAP_UNSAVED = "Save the game's changes before swapping. Try again."
-const SWAP_CHANGED =
-  'The game changed since this opened. Check what will be lost, then confirm again.'
 const NOTHING_LOST: PlaysLost = { atBats: 0, innings: 0 }
 export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const theme = useTheme()
@@ -303,6 +300,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const surface = useFieldSurface()
   const fallback = useMemo(() => new DevelopmentScoringSource(), [])
   const source: ScoringSource = props.source ?? fallback
+  // The web's swaps, sent behind the screen; a phone's go on its queue.
+  const webWrites = useMemo(() => new WebWrites(props.client), [props.client])
   // Every action is stamped on the server's clock, measured while this is open.
   useEffect(() => source.keepTime?.(), [source])
   useEffect(() => {
@@ -318,16 +317,31 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     setKeeperSide(undefined)
     setFailed(false)
     const load = async (): Promise<void> => {
-      const game = await props.client.game(props.gameId)
-      const roles = await props.client.myRoles().catch(() => undefined)
-      const rights = {
+      const web = !(props.client instanceof CachingClient)
+      // A phone opens again on the documents its queue swapped; the web on
+      // the swapped copy of what it opened on, while the swap is out.
+      const held = web ? webWrites.held(props.gameId) : undefined
+      if (web && held == null) await webWrites.settled()
+      // Every read the screen waits on as it opens is the phone's stored one
+      // when it has one, read from the server behind it.
+      const game =
+        held?.game ??
+        (await props.client.game(props.gameId, { storedFirst: true }))
+      const roles =
+        held != null
+          ? held.roles
+          : await props.client
+              .myRoles({ storedFirst: true })
+              .catch(() => undefined)
+      const rights = held?.rights ?? {
         [game.awayTeamId]: managesRoster(roles, game.awayTeamId),
         [game.homeTeamId]: managesRoster(roles, game.homeTeamId)
       }
       const loadRoster = async (teamId: string): Promise<RosterEntry[]> => {
         try {
           return await props.client.roster(teamId, {
-            includeFullNames: rights[teamId]
+            includeFullNames: rights[teamId],
+            storedFirst: true
           })
         } catch (caught: unknown) {
           if (
@@ -336,20 +350,40 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             ['unauthorized', 'forbidden', 'notFound'].includes(caught.code)
           ) {
             rights[teamId] = false
-            return withoutPrivateNames(await props.client.roster(teamId))
+            return withoutPrivateNames(
+              await props.client.roster(teamId, { storedFirst: true })
+            )
           }
           // An unavailable roster is not an empty team: reconciliation would
           // otherwise remove the saved lineup and defense. Offer load retry.
           throw caught
         }
       }
-      const [away, home, defaults] = await Promise.all([
-        loadRoster(game.awayTeamId),
-        loadRoster(game.homeTeamId),
-        defaultsOf(props.client, game)
-      ])
-      const value = await source.open(game, away, home)
+      const [away, home, defaults] =
+        held != null
+          ? [
+              held.rosters[game.awayTeamId],
+              held.rosters[game.homeTeamId],
+              held.defaults
+            ]
+          : await Promise.all([
+              loadRoster(game.awayTeamId),
+              loadRoster(game.homeTeamId),
+              defaultsOf(props.client, game, true)
+            ])
+      const value = await source.open(game, away, home, held, {
+        storedFirst: true
+      })
       if (!live) return
+      // What a swap from this screen is made over.
+      if (web)
+        webWrites.keep(props.gameId, {
+          game,
+          roles,
+          rights,
+          rosters: { [game.awayTeamId]: away, [game.homeTeamId]: home },
+          defaults
+        })
       setOpenedSides({
         homeTeamId: game.homeTeamId,
         awayTeamId: game.awayTeamId,
@@ -380,7 +414,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [props.client, props.gameId, props.userId, source, retry])
+  }, [props.client, props.gameId, props.userId, source, retry, webWrites])
   /**
    * Reads the person's roles and both teams' rosters again. `quiet`, behind
    * a roster sheet that already lists them: what is shown stays, with the
@@ -546,70 +580,37 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     },
     [props.client, props.gameId, props.userId, source, retry]
   )
-  // Home and away swapped under the open game: once a save on its way has
-  // come back, it is opened again, as a retry opens it, on its new sides
-  // with their rosters, and the scorer is told.
+  // Home and away swapped under the open game: it is opened again at once,
+  // as a retry opens it, on its new sides with their rosters, and the scorer
+  // is told.
   const reopenedFrom = useRef<GameSession>(undefined)
-  // A wait for a save on its way, stopped when the screen moves on.
-  const waitingForSave = useRef<(() => void) | undefined>(undefined)
-  useEffect(
-    () => () => {
-      waitingForSave.current?.()
-      waitingForSave.current = undefined
-    },
-    [opened]
-  )
   const reopenReplaced = useCallback(
-    (change: GameReplaced): void => {
+    (change: GameReplaced, own = false): void => {
       const session = opened
       // Once for each opened game, however many callers find the change.
       if (session == null || reopenedFrom.current === session) return
       reopenedFrom.current = session
-      const reopen = async (): Promise<void> => {
-        // Its changes name the old sides, or plays a reset deleted: it saves
-        // nothing more. What it had not saved now, and what a stale save's
-        // rebase dropped, is lost; a save that landed before a swap was
-        // carried to the new sides.
-        session.close()
-        let lost = session.pending + session.lostToSwap
-        // On a phone, writes the outbox still holds for the game from before
-        // would be sent stale behind it: they are given up.
-        if (props.client instanceof CachingClient) {
-          const queue = await props.client.outboxSummary()
-          if (
-            (queue.chains[`game:${props.gameId}`] ?? 0) > 0 ||
-            queue.games[props.gameId] != null
-          ) {
-            await props.client.discardGame(props.gameId)
-            lost = Math.max(lost, 1)
-          }
-        }
-        setSwapNotice(replacedNotice(change, lost))
-        setRetry(value => value + 1)
-      }
-      const start = (): void => {
-        reopen().catch(() => {
-          setSwapNotice(replacedNotice(change, 0))
-          setRetry(value => value + 1)
-        })
-      }
-      if (!session.saving) {
-        start()
-        return
-      }
-      const stop = session.subscribe(() => {
-        if (session.saving) return
-        stop()
-        waitingForSave.current = undefined
-        start()
-      })
-      waitingForSave.current = stop
+      // Its changes name the old sides, or plays a reset deleted: it saves
+      // nothing more. A swap of this screen's own went behind its changes,
+      // on the phone's queue or the web's, and the phone's queue sends the
+      // writes ahead of a swap before it. Another device's swap loses what
+      // a stale save's rebase dropped and, on the web, what was not saved.
+      session.close()
+      const lost = own
+        ? 0
+        : session.lostToSwap +
+          (props.client instanceof CachingClient ? 0 : session.pending)
+      setSwapNotice(replacedNotice(change, lost))
+      setRetry(value => value + 1)
     },
-    [opened, props.client, props.gameId]
+    [opened, props.client]
   )
+  // While the web's own swap is out, the game is the copy it swapped.
   const readSides = useCallback(
-    async (): Promise<OpenedGame> => await props.client.game(props.gameId),
-    [props.client, props.gameId]
+    async (): Promise<OpenedGame> =>
+      webWrites.held(props.gameId)?.game ??
+      (await props.client.game(props.gameId)),
+    [props.client, props.gameId, webWrites]
   )
   useGameReplaced(
     props.socket,
@@ -764,13 +765,24 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           setRetry(value => value + 1)
         }}
         onSwapped={answer => {
-          reopenReplaced({
-            swapped: true,
-            reset:
-              answer.reset.atBats > 0 ||
-              (openedSides?.generation != null &&
-                answer.generation !== openedSides.generation)
-          })
+          reopenReplaced(
+            {
+              swapped: true,
+              reset:
+                answer.reset.atBats > 0 ||
+                (openedSides?.generation != null &&
+                  answer.generation !== openedSides.generation)
+            },
+            true
+          )
+        }}
+        webWrites={webWrites}
+        onSwapRefused={message => {
+          // The game opened on the swap's own copy: it saves nothing more,
+          // and is read from the server again.
+          openedContext.current?.session.close()
+          setSwapNotice(message)
+          setRetry(value => value + 1)
         }}
         openedSides={openedSides}
         game={opened}
@@ -823,6 +835,24 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       )}
     </>
   )
+}
+/**
+ * Lets `game` go on sending what it has not saved after its screen has
+ * closed, and closes it once that is saved, or the server refused it.
+ */
+function closeOnceSaved(game: GameSession): void {
+  const done = (): boolean =>
+    game.pending === 0 || game.readOnly || game.stopped || game.replaced
+  if (done()) {
+    game.close()
+    return
+  }
+  const stop = game.subscribe(() => {
+    if (!done()) return
+    stop()
+    game.close()
+  })
+  game.flush().catch(() => undefined)
 }
 function statusOf(game: GameSession): SaveStatus {
   return {
@@ -937,6 +967,10 @@ function ScoringPanel(props: {
   onReopen: (arrived: boolean) => void
   /** Home and away were swapped from the menu: open the game again. */
   onSwapped: (answer: SwapSidesAnswer) => void
+  /** The web's writes sent behind the screen: its swaps. */
+  webWrites: WebWrites
+  /** The server refused a swap the web sent behind the screen. */
+  onSwapRefused: (message: string) => void
   /**
    * The teams the screen opened on. A guest names its side's team from
    * these, never from a later read, so the server refuses one a swap moved.
@@ -1236,7 +1270,6 @@ function ScoringPanel(props: {
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'swap' | 'game'
   >()
   const { height: windowHeight } = useWindowDimensions()
-  const [swapping, setSwapping] = useState(false)
   const [swapProblem, setSwapProblem] = useState<string>()
   /** What the open swap sheet says will be lost. */
   const [swapLoses, setSwapLoses] = useState<PlaysLost>(NOTHING_LOST)
@@ -1253,7 +1286,6 @@ function ScoringPanel(props: {
     position: Position
     side: Side
   }>()
-  const [rosterLoading, setRosterLoading] = useState(false)
   const [rosterProblem, setRosterProblem] = useState<string>()
   const [rosterInitial, setRosterInitial] = useState<RosterEditorDraft>()
   /** Guests made since the game opened, whose accounts a rename finds too. */
@@ -1318,13 +1350,11 @@ function ScoringPanel(props: {
     props.active &&
     state.phase === 'runnerPitchType' &&
     !status.readOnly &&
-    !rosterLoading &&
     setupReady
   const actionsAllowed =
     props.active &&
     bottomActionsAllowed(state) &&
     !status.readOnly &&
-    !rosterLoading &&
     setupReady
   /** The team the screen opened on for this side, else the one read now. */
   const openedTeam = (side: Side, read: string): string =>
@@ -1369,68 +1399,65 @@ function ScoringPanel(props: {
   }
 
   /**
-   * Saves what is still on its way, then swaps: a lineup change must reach
-   * the server first, or it would arrive stale behind the swap. On a phone
-   * a save is answered from the outbox, so its queue for this game must
-   * empty too.
+   * Swaps at once, from what the sheet shows: the scorer confirmed the swap
+   * or the reset it names. On a phone the sheet closes with the tap, then the
+   * game's last change goes on its queue and the swap behind it, both
+   * answered from the phone's documents, and a swap the phone cannot queue
+   * opens the sheet again to say why; on the web the swap is answered from what the screen loaded,
+   * the game opens again at once on that swapped copy, and the swap is sent
+   * behind the screen after the game's unsaved changes (`WebWrites`).
+   * Nothing waits on the server: the server's refusal, when it comes, is the
+   * held game's notice on a phone, and on the web a notice over the game
+   * read again.
    */
   const confirmSwap = async (): Promise<void> => {
     setSwapProblem(undefined)
-    setSwapping(true)
+    // A game withdrawn, or scored outside TeamStation, as the last read said.
+    if (swapRefusal() != null) {
+      setSwapProblem(
+        serverSwap === 'withdrawn' ? WITHDRAWN_GAME : SWAP_SCORED_ELSEWHERE
+      )
+      return
+    }
+    const effect = swapResets ? 'reset' : 'swap'
     try {
-      const unsaved = new Error(SWAP_UNSAVED)
-      await props.game.flush().catch(() => {
-        throw unsaved
-      })
-      // A change a rebase dropped is only a notice; what could still be
-      // sent stale behind the swap is a change waiting or a refused game.
-      if (props.game.readOnly)
-        throw new Error(props.game.problem ?? SWAP_UNSAVED)
-      if (props.game.pending > 0) throw unsaved
+      let answer: SwapSidesAnswer
       if (props.client instanceof CachingClient) {
-        await props.client.drainOutbox()
-        const queue = await props.client.outboxSummary()
-        if (
-          (queue.chains[`game:${props.gameId}`] ?? 0) > 0 ||
-          queue.games[props.gameId] != null
-        )
-          throw unsaved
+        // The sheet closes with the tap. The session's last change and the
+        // swap behind it are written to the phone's file after, never sent
+        // from here: a save still on its way, of a write whose documents are
+        // not on the phone, would hold the sheet open on the network.
+        setSheet(undefined)
+        await props.game.flush().catch(() => undefined)
+        answer = await props.client.queueSwap(props.gameId, effect)
+      } else {
+        const picture = props.game.picture()
+        answer = props.webWrites.queueSwap({
+          gameId: props.gameId,
+          effect,
+          game: {
+            homeTeamId: session.gameData.teams.home.id,
+            awayTeamId: session.gameData.teams.away.id,
+            ...(props.openedSides?.generation == null
+              ? {}
+              : { generation: props.openedSides.generation })
+          },
+          plays: {
+            plays: [...picture.plays.values()],
+            currentPlay: picture.current
+          },
+          session: props.game,
+          onRefused: props.onSwapRefused
+        })
       }
-      // The plays as the server holds them now: a phone's own answers
-      // carried digests of its own until its queue drained.
-      const read = await props.client.gameEvents(props.gameId)
-      const losing = playsLost(read)
-      // The server's word on what the swap does; an older server's, whether
-      // it loses any at-bat.
-      const effect = read.swap ?? (resetsPlays(read) ? 'reset' : 'swap')
-      if (effect === 'scoredElsewhere') throw new Error(SWAP_SCORED_ELSEWHERE)
-      if (effect === 'withdrawn') throw new Error(WITHDRAWN_GAME)
-      const resets = effect === 'reset'
-      if (
-        losing.atBats !== swapLoses.atBats ||
-        losing.innings !== swapLoses.innings ||
-        resets !== swapResets
-      ) {
-        if (!swapMounted.current) return
-        setSwapLoses(losing)
-        setSwapResets(resets)
-        setSwapProblem(SWAP_CHANGED)
-        return
-      }
-      const answer = await props.client.swapGameSides(props.gameId, {
-        homeTeamId: session.gameData.teams.home.id,
-        awayTeamId: session.gameData.teams.away.id,
-        ...(read.generation == null ? {} : { generation: read.generation }),
-        ...(read.playsDigest == null ? {} : { playsDigest: read.playsDigest })
-      })
       if (!swapMounted.current) return
       setSheet(undefined)
       props.onSwapped(answer)
     } catch (error) {
-      if (swapMounted.current)
-        setSwapProblem(error instanceof Error ? error.message : String(error))
-    } finally {
-      if (swapMounted.current) setSwapping(false)
+      if (!swapMounted.current) return
+      // The sheet the tap closed opens again, to say why.
+      setSheet('swap')
+      setSwapProblem(error instanceof Error ? error.message : String(error))
     }
   }
   const tiebreaker = useTiebreakerSetup(
@@ -1499,7 +1526,6 @@ function ScoringPanel(props: {
     !menu &&
     sheet == null &&
     !defensiveOpen &&
-    !rosterLoading &&
     !outcomeMenu &&
     !moreOpen &&
     !tiebreaker.active
@@ -1739,7 +1765,6 @@ function ScoringPanel(props: {
       if (
         !props.active ||
         tiebreaker.active ||
-        rosterLoading ||
         (!lineupAccepted && !hasActivePlay)
       )
         return
@@ -1759,19 +1784,12 @@ function ScoringPanel(props: {
       (atRest(state) || state.reel != null) &&
       !gestureActive &&
       !tiebreaker.active &&
-      !rosterLoading &&
       (lineupAccepted || hasActivePlay),
     gestureHeld: fingerDown,
     undone,
     refused,
     onActions: (transcript, actions, roster, undo) => {
-      if (
-        fingerDown.current ||
-        !props.active ||
-        rosterLoading ||
-        tiebreaker.active
-      )
-        return
+      if (fingerDown.current || !props.active || tiebreaker.active) return
       if (undo === true) {
         // Undone now, before the rest of the sentence is applied. With a
         // question open, what is taken back is the unanswered sentence.
@@ -1817,24 +1835,23 @@ function ScoringPanel(props: {
   // The walk-up song stops the moment the scorer leaves, not once the save
   // the exit waits on has finished.
   const stopWalkUp = useRef<() => void>(() => undefined)
-  // Leaving first saves what the server has not acknowledged, and asks only
-  // about changes that still did not reach it. A server that does not answer
-  // holds the scorer back three seconds at most.
+  // Leaving never waits on the server. On a phone the game's last change
+  // goes on its queue, a write to the phone's file. On the web the session
+  // goes on sending what it has not saved once the screen has closed, and
+  // closes itself once it has. Only changes the server refused for good, or
+  // a game that keeps nothing (the field preview), ask first.
   const leaving = useRef<Promise<boolean> | null>(null)
   const leave = useCallback(async (): Promise<boolean> => {
     if (leaving.current != null) return await leaving.current
     const decision = (async (): Promise<boolean> => {
       stopWalkUp.current()
       if (props.persistent) {
-        await Promise.race([
-          props.game.flush().catch(() => undefined),
-          new Promise<void>(resolve => {
-            setTimeout(() => {
-              resolve()
-            }, 3000)
-          })
-        ])
-        if (props.game.pending === 0) return true
+        const game = props.game
+        if (props.client instanceof CachingClient)
+          await game.flush().catch(() => undefined)
+        else closeOnceSaved(game)
+        // Changes the server will never take are the only ones to ask about.
+        if (!game.readOnly && !game.stopped) return true
       } else if (scoredHere.current === 0) return true
       return await requestConfirmation()
     })()
@@ -1844,7 +1861,7 @@ function ScoringPanel(props: {
     } finally {
       if (leaving.current === decision) leaving.current = null
     }
-  }, [props.game, props.persistent, requestConfirmation])
+  }, [props.client, props.game, props.persistent, requestConfirmation])
   const exit = useScoringExit(
     session.gamePk,
     props.persistent ? status.pending > 0 : state.past.length > 0,
@@ -1921,15 +1938,12 @@ function ScoringPanel(props: {
   }
   /**
    * Reads the game from the server and answers the setup to edit, or null
-   * when it cannot be edited now. `quiet`: behind a sheet already showing
-   * the game as this screen holds it, so nothing waits on it: no spinner,
-   * no lock, and a read that fails says nothing.
+   * when it cannot be edited now. Always behind a sheet already showing the
+   * game as this screen holds it, so nothing waits on it: no spinner and no
+   * lock. `quiet`: a read that fails says nothing.
    */
   const refreshSetup = async (quiet = false): Promise<GameState | null> => {
-    if (!quiet) {
-      setRosterLoading(true)
-      setRosterProblem(undefined)
-    }
+    if (!quiet) setRosterProblem(undefined)
     try {
       if (!props.persistent) return currentSetup.current
       const { session: fresh, oldUnresolved } = await followServer()
@@ -1947,10 +1961,20 @@ function ScoringPanel(props: {
       if (!quiet)
         setRosterProblem('Unable to refresh the game. Please try again.')
       return null
-    } finally {
-      if (!quiet) setRosterLoading(false)
     }
   }
+  /**
+   * The setup to edit as this screen holds it, or null when it cannot be
+   * edited now: what a sheet opens over before the server's copy is read.
+   */
+  const localSetup = (): GameState | null =>
+    !props.persistent
+      ? currentSetup.current
+      : props.game.readOnly ||
+          currentSetup.current.pending != null ||
+          awaitingResult(props.game.state)
+        ? null
+        : currentSetup.current
   // Another device's plays and lineups, heard on the game socket, are read
   // in once the screen is at rest: on a step where nothing is being entered,
   // with no sheet open but the rosters. A save of this screen's own still
@@ -2011,7 +2035,6 @@ function ScoringPanel(props: {
     (state.phase === 'ready' || state.phase === 'awaitingBatter') &&
     atRest(state) &&
     (sheet == null || sheet === 'rosters') &&
-    !rosterLoading &&
     !defensiveOpen &&
     !gestureActive &&
     !outcomeMenu &&
@@ -2064,6 +2087,25 @@ function ScoringPanel(props: {
   useEffect(() => {
     followStale.current()
   }, [staleCheck, settled])
+  // A read the screen opened on from the phone's store came back from the
+  // server different: read in as another device's change heard on the
+  // socket is.
+  // So is the server's copy once it took the web's own swap, which the game
+  // opened on before it was answered.
+  useEffect(() => {
+    if (!persistent) return
+    const follow = (): void => {
+      echoes.current = null
+      stale.current = true
+      setStaleCheck(value => value + 1)
+    }
+    const stored = props.client.onStoredChanged(gameId, follow)
+    const landed = props.webWrites.onLanded(gameId, follow)
+    return () => {
+      stored()
+      landed()
+    }
+  }, [props.client, props.webWrites, persistent, gameId])
   // The microphone goes to the roster sheet on as it was here, and comes
   // back on when the sheet closes, however it closes.
   const rosterMicOn = useDictationHandover(sheet === 'rosters', dictation)
@@ -2111,8 +2153,11 @@ function ScoringPanel(props: {
     // Before the game is read, so a change saved meanwhile is heard.
     rosterLive.start()
     if (typeof lineup === 'object') {
-      // Opened only once the change is staged on the refreshed game.
-      openDictatedRosters(lineup.dictated, refreshSetup, {
+      // Opened at once with the change staged on the game as this screen
+      // holds it; the server's copy is read behind it, and stages the change
+      // on that instead when it differs.
+      const local = localSetup()
+      openDictatedRosters(lineup.dictated, async () => local, {
         open: initial => {
           setRosterInitial(initial)
           setRosterRead(value => value + 1)
@@ -2120,6 +2165,25 @@ function ScoringPanel(props: {
         },
         refuse
       }).catch(() => undefined)
+      if (local == null || !props.persistent) return
+      refreshSetup(true)
+        .then(async fresh => {
+          if (
+            fresh == null ||
+            currentSheet.current !== 'rosters' ||
+            JSON.stringify(setupOf(fresh)) === JSON.stringify(setupOf(local))
+          )
+            return
+          await openDictatedRosters(lineup.dictated, async () => fresh, {
+            open: initial => {
+              if (currentSheet.current !== 'rosters') return
+              setRosterInitial(initial)
+              setRosterRead(value => value + 1)
+            },
+            refuse: () => undefined
+          })
+        })
+        .catch(() => undefined)
       return
     }
     // The editor opens at once over the game as this screen holds it. The
@@ -2276,7 +2340,7 @@ function ScoringPanel(props: {
   }
   const refreshDefensiveRoster = (): void => {
     const slot = defensiveSlot
-    if (slot == null || rosterLoading) return
+    if (slot == null) return
     refreshSetup()
       .then(fresh => {
         if (
@@ -2444,7 +2508,8 @@ function ScoringPanel(props: {
     state.phase === 'homeDecision' &&
     !state.motions.some(motion => !motion.complete)
   const runnerIds =
-    !setupReady || rosterLoading
+    // A read of the game behind a sheet holds no runner back.
+    !setupReady
       ? []
       : relayForce
         ? players
@@ -2534,7 +2599,6 @@ function ScoringPanel(props: {
     !menu &&
     sheet == null &&
     !defensiveOpen &&
-    !rosterLoading &&
     !outcomeMenu &&
     !moreOpen &&
     !tiebreaker.active
@@ -2932,7 +2996,7 @@ function ScoringPanel(props: {
       }}
       onUndo={() => {
         scoringAudio.stop()
-        if (fingerDown.current || status.readOnly || rosterLoading) return
+        if (fingerDown.current || status.readOnly) return
         tiebreaker.handleClose()
         // The reducer decides, from the state every earlier tap left, whether
         // this one is the screen's to take back or the saved game's.
@@ -3108,7 +3172,7 @@ function ScoringPanel(props: {
           session={displaySession}
           side={fieldingSide(session)}
           position={defensiveSlot.position}
-          busy={rosterLoading}
+          busy={false}
           problem={rosterProblem}
           onClose={() => {
             cancelDefensiveCreation()
@@ -3480,7 +3544,6 @@ function ScoringPanel(props: {
               <ScoringButton
                 label={swapResets ? 'Reset and Swap' : 'Confirm Swap'}
                 color={swapResets ? theme.scoringSurface.dangerFill : undefined}
-                disabled={swapping}
                 onPress={() => {
                   confirmSwap().catch(() => undefined)
                 }}
@@ -3610,14 +3673,15 @@ function ScoringPanel(props: {
             tagSelection.current++
             setTagTarget(null)
           }}
+          onFailed={refuse}
           saveTag={async tag => {
-            const selected = tagSelection.current
+            const target = tagTarget
             const token = props.client.token
-            await props.game.flush()
+            // The editor has closed: only another game, source or account
+            // stops the save, never the editor going.
             const currentContext = (): boolean => {
               const current = tagContext.current
               return !(
-                !tagMounted.current ||
                 current.game !== props.game ||
                 current.source !== props.source ||
                 current.userId !== props.userId ||
@@ -3626,31 +3690,24 @@ function ScoringPanel(props: {
                 props.client.token !== token
               )
             }
-            if (selected !== tagSelection.current || !currentContext())
-              throw new Error(
-                'The tag selection changed. Open the event again.'
-              )
+            // The play goes before its tag. On a phone both go on the game's
+            // queue, in order, and nothing here waits on the server.
+            await props.game.flush().catch(() => undefined)
+            if (!currentContext()) return
             if (props.game.pending > 0 || props.game.problem != null)
               throw new Error(
                 'Save the scoring event before assigning a tag. Try again.'
               )
-            if (
-              !props.game.eventTargets.some(
-                target => target.id === tagTarget.id
-              )
-            )
+            if (!props.game.eventTargets.some(each => each.id === target.id))
               throw new Error('This scoring event no longer exists')
             let snapshot = props.game.tagSnapshotVersion
             const result = await props.source.saveTag!(
               props.game,
-              tagTarget.id,
+              target.id,
               tag,
               props.userId
             )
-            if (!currentContext())
-              throw new Error(
-                'The tag selection changed. Open the event again.'
-              )
+            if (!currentContext()) return
             // Commit revisions distinguish delayed requests from delayed responses.
             const superseded = (): boolean => {
               const acknowledged = tagAcknowledgments.current.get(
@@ -3665,8 +3722,8 @@ function ScoringPanel(props: {
             }
             if (superseded()) return
             let acknowledgedTag = result.tag
-            // A reload or another accepted write may have adopted a newer label.
-            // Read storage again rather than overwrite that snapshot with this reply.
+            // A reload or another accepted write may have adopted a newer label
+            // while the save was out: storage is read again, after the save.
             while (snapshot !== props.game.tagSnapshotVersion) {
               snapshot = props.game.tagSnapshotVersion
               const storedTag = await props.game.readEventTag(result.targetId)
