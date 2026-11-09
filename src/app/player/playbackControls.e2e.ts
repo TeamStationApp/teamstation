@@ -154,6 +154,56 @@ async function session(
 
 describe('playback control visibility', function () {
   after(finish)
+  it('starts playback when Videos is selected from another event tab', async function () {
+    if (before) return
+    const s = await session('videos-autoplay', 402, 874)
+    const recording =
+      artifacts == null
+        ? undefined
+        : await s.page.screencast({
+            path: join(artifacts, 'videos-autoplay.mp4') as `${string}.mp4`,
+            format: 'mp4'
+          })
+    const select = async (label: string): Promise<void> => {
+      const selector = `[aria-label="Game sections"] [aria-label="${label}"]`
+      await s.page.waitForSelector(selector)
+      await at(s, await rect(s, selector, false))
+    }
+    const advancing = async (): Promise<number> => {
+      await ready(s, false, 1)
+      const time = (await state(s, false)).time
+      await s.page.waitForFunction(
+        `(() => {const v=document.querySelector('#root video');return !v.paused && v.currentTime>${time + 0.5}})()`,
+        { timeout: 30000 }
+      )
+      return (await state(s, false)).time
+    }
+    try {
+      await open(s, `/games/${fixture().games.S.id}?tab=boxScore`)
+      await pause(1000)
+      await select('Videos')
+      await advancing()
+      await pause(1000)
+      await shot(s, 'videos-autoplay-after.png')
+      for (const tab of ['Info', 'Box score']) {
+        const middle = await rect(s, '[data-testid="zoneIcon-pause"]', false)
+        await at(s, middle)
+        const paused = await state(s, false)
+        expect(paused.paused, 'viewer pauses before leaving').equals(true)
+        await select(tab)
+        await select('Videos')
+        const resumed = await advancing()
+        expect(resumed, 'tab entry retains the saved position').at.least(
+          paused.time - 0.5
+        )
+      }
+      await open(s, `/games/${fixture().games.V.id}?tab=boxScore`)
+      await select('Videos')
+      await advancing()
+    } finally {
+      await recording?.stop()
+    }
+  })
   for (const [width, height] of [
     [402, 874],
     [874, 402]

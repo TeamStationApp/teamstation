@@ -18,7 +18,9 @@ async function main(): Promise<void> {
   if (out == null) throw new Error('Supply TS_ARTIFACTS_DIR')
   await mkdir(out, { recursive: true })
   const f = await guardianFixture(resolve('dist'))
-  const d = await maestro('video-membership')
+  const d = await maestro(
+    process.env.TS_VIDEO_MEMBERSHIP_DAEMON ?? 'video-membership'
+  )
   const s = await browserSession(
     d,
     'video-membership-web',

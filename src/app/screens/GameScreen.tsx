@@ -450,6 +450,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       ? 'watch'
       : undefined)
   const [tab, setTab] = useState<Tab>(requestedTab ?? 'info')
+  /** An explicit Videos entry requests play once its source is ready. */
+  const watchPlayRequest = useRef<string | null>(null)
   const explicitSelection = useRef(requestedTab != null)
   useEffect(() => {
     explicitSelection.current = requestedTab != null
@@ -1156,6 +1158,12 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * screen owns it.
    */
   const viewerWants = useRef(false)
+  const playAttached = useRef<(() => void) | null>(null)
+  useEffect(() => {
+    watchPlayRequest.current = null
+    setResumeAt(undefined)
+    viewerWants.current = false
+  }, [gameId])
   /**
    * The card plays silent until its own sound square turns it on — or, in a
    * browser, a highlight chosen here or on a player's page, which is heard as
@@ -1344,7 +1352,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     // buffers go with it, and the resume written above brings the position
     // back when it returns.
     if (element == null || playbackUrl == null || standDown) return
+    const playOnEntry = watchPlayRequest.current === gameId
+    watchPlayRequest.current = null
+    if (playOnEntry) viewerWants.current = true
     attached.current = true
+    // Only this attachment may answer a refused play. A detached picture
+    // must not restart after its metadata or play promise arrives late.
+    let current = true
+    const play = (): void => {
+      if (!current || suspended.current) return
+      Promise.resolve(element.play()).catch((error: unknown) => {
+        const refused =
+          error instanceof Error && error.name === 'NotAllowedError'
+        if (!refused || !current || element.muted) return
+        element.muted = true
+        setCardSound(false)
+        element.play().catch(() => undefined)
+      })
+    }
+    playAttached.current = play
     mappingRef.current = null
     /** The stream has said it carries no dates, or has been given its time. */
     let datesDone = false
@@ -1390,6 +1416,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       clearTimeout(datesTimer)
       clearTimeout(timelineTimer)
       landRef.current = null
+    }
+    const stand = (): void => {
+      current = false
+      if (playAttached.current === play) playAttached.current = null
+      detach()
     }
 
     // Picking up where the other angle was, once the new source is attached.
@@ -1452,7 +1483,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           // As the viewer's own seek, so nothing that joins a live stream at
           // its edge takes it back.
           seekTo(element, target)
-          if (resume.playing) element.play().catch(() => undefined)
+          if (resume.playing || playOnEntry) play()
           setResumeAt(undefined)
         }
         const loaded = (): void => {
@@ -1467,46 +1498,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           for (const name of events) element.removeEventListener(name, land)
           element.removeEventListener('loadedmetadata', loaded)
           stop()
-          detach()
+          stand()
         }
       }
       const apply = (): void => {
         element.currentTime =
           resume.sec ?? resumeSecondsAt(placed, resume.wallMs, element.duration)
-        if (resume.playing) element.play().catch(() => undefined)
+        if (resume.playing || playOnEntry) play()
         setResumeAt(undefined)
       }
       stop()
       if (element.readyState >= HAVE_METADATA) apply()
       else element.addEventListener('loadedmetadata', apply, { once: true })
-      return detach
+      return () => {
+        element.removeEventListener('loadedmetadata', apply)
+        stand()
+      }
     }
     stop()
 
     // A link to a moment: start there, and start playing, because that is
     // what the person who sent the link meant by sending it. An explicit
     // paused return from another page keeps that intent instead.
-    // This run's own: a play refused after it has been stood down is not
-    // this run's to answer.
-    let current = true
-    // Played as it is set to be heard; a browser that will not start it
-    // with its sound (a refusal, not an interruption) gets it silent rather
-    // than not at all.
-    const play = (): void => {
-      Promise.resolve(element.play()).catch((error: unknown) => {
-        const refused =
-          error instanceof Error && error.name === 'NotAllowedError'
-        if (!refused || !current || element.muted) return
-        element.muted = true
-        setCardSound(false)
-        element.play().catch(() => undefined)
-      })
-    }
-    const stand = (): void => {
-      current = false
-      detach()
-    }
-
     const linkAt = startAtSecRef.current
     if (linkAt != null && linkAt > 0 && !startedFromLink.current) {
       // Started once it has run: a source swapped before its metadata (an
@@ -1517,7 +1530,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         // be, and lands there itself.
         if (aimedAt.current != null) return
         element.currentTime = linkAt
-        if (autoPlayRef.current !== false) play()
+        if (playOnEntry || autoPlayRef.current !== false) play()
       }
       if (element.readyState >= HAVE_METADATA) jump()
       else element.addEventListener('loadedmetadata', jump, { once: true })
@@ -1527,7 +1540,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       }
     }
 
-    if (autoPlayRef.current === true) {
+    if (playOnEntry || autoPlayRef.current === true) {
       // Silent unless a highlight brought it here, which every browser lets
       // start on its own; heard, it falls back to silent if refused. If it
       // will not start at all, a tap opens the player, and saying so would
@@ -1543,7 +1556,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       }
     }
     return stand
-  }, [playbackUrl, playerNode, standDown])
+  }, [playbackUrl, playerNode, standDown, gameId])
 
   /**
    * The other recording, from the same moment, still playing.
@@ -1795,11 +1808,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           : theme.pillActiveBackground
 
   const selectSection = (next: Tab): void => {
+    watchPlayRequest.current = next === 'watch' ? gameId : null
     // Leaving the video unmounts it, so where it had got to is written
     // down here and picked up by the attach that follows the remount.
     // Without this you came back to the start of the game, which is a
     // poor reward for having looked at the box score.
     const player = playerRef.current
+    if (next === 'watch') {
+      setResumeAt(resume =>
+        resume == null ? resume : { ...resume, playing: true }
+      )
+      // A quick return can reuse the outgoing tab's still-mounted player.
+      // It needs the new intent even when no attachment effect runs.
+      if (player != null && playAttached.current != null) {
+        watchPlayRequest.current = null
+        viewerWants.current = true
+        playAttached.current()
+      }
+    }
     if (next !== 'watch' && player != null && video != null) {
       setResumeAt({
         videoId: video.id,

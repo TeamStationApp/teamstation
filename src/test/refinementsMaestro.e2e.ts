@@ -68,7 +68,7 @@ export async function browserSession(
     appId: `about:blank#${device}`,
     artifacts: 'on-failure',
     extra: {
-      browser: browserName,
+      browser: process.env.TS_REFINEMENTS_BROWSER ?? browserName,
       windowSize: `${width}x${height}`,
       headed: false,
       userDataDir: profile
