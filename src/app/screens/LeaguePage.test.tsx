@@ -391,6 +391,66 @@ describe('the league page', () => {
     expect(button('Create team')).equals(undefined)
     expect(button('More for Demo Hawks')).equals(undefined)
   })
+  it('paints what the phone stored for the league while its read is out, then the answer', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    const asked: string[] = []
+    api.cached = async <T,>(
+      key: string,
+      cleaner: (raw: unknown) => T
+    ): Promise<T | undefined> => {
+      asked.push(key)
+      return key === `/leagues/${league.id}`
+        ? cleaner(JSON.parse(JSON.stringify(detail)))
+        : undefined
+    }
+    // Offline the read answers only at its deadline; here, when told to.
+    let answer: (found: typeof detail) => void = () => {}
+    api.group = async () =>
+      await new Promise<typeof detail>(resolve => {
+        answer = resolve
+      })
+    await mount(render(api, []))
+    expect(asked).deep.equals([`/leagues/${league.id}`])
+    const text = document.body.textContent ?? ''
+    expect(text).not.includes('Loading…')
+    expect(text).includes('Demo League')
+    expect(button('Open Demo Spring')).not.equals(undefined)
+    await act(async () => {
+      answer({
+        ...detail,
+        children: [
+          season('season_next', 'Demo Summer', '2026-06-01', '2026-08-31')
+        ]
+      })
+    })
+    expect(button('Open Demo Summer')).not.equals(undefined)
+    expect(button('Open Demo Spring')).equals(undefined)
+  })
+  it('does not paint the stored league over an answer already shown', async () => {
+    const api = new TeamStationClient({ baseUrl: '/api/v1' })
+    let release: () => void = () => {}
+    api.cached = async <T,>(
+      _key: string,
+      cleaner: (raw: unknown) => T
+    ): Promise<T | undefined> => {
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return cleaner(JSON.parse(JSON.stringify(detail)))
+    }
+    api.group = async () => ({
+      ...detail,
+      children: [
+        season('season_next', 'Demo Summer', '2026-06-01', '2026-08-31')
+      ]
+    })
+    await mount(render(api, []))
+    await act(async () => {
+      release()
+    })
+    expect(button('Open Demo Summer')).not.equals(undefined)
+    expect(button('Open Demo Spring')).equals(undefined)
+  })
 })
 
 describe('a league’s People tab', () => {

@@ -21,6 +21,7 @@ import { spaceObjectStore, startChatPurge } from './chat/attachments'
 import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
 import { purgeExpiredKeys } from './db/syncIdempotency'
+import { requestRecorder } from './dev/requestRecorder'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { dictationScopes } from './dictation/scopes'
@@ -659,6 +660,9 @@ function runWorker(): void {
   app.set('trust proxy', 'loopback')
   app.disable('x-powered-by')
   app.use(requestLogs)
+  // Development scenarios read which requests arrived: off unless set.
+  const recorder = requestRecorder()
+  if (recorder != null) app.use(recorder)
   app.use(withCors(serverConfig.corsOrigins))
 
   // Who is calling, and the ceiling of an API key, then their body, which
