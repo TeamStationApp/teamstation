@@ -195,7 +195,34 @@ async function open(
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
     else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
-    else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
+    else if (request.method() === 'GET' && url.pathname === '/api/v1/me/home')
+      body = { teams: [], seasons: [], leagues: [] }
+    else if (
+      request.method() === 'GET' &&
+      [
+        '/api/v1/events',
+        '/api/v1/live',
+        '/api/v1/users',
+        '/api/v1/me/umpire-leagues',
+        '/api/v1/chat/blocks',
+        '/api/v1/chat/links',
+        '/api/v1/chat/conversations'
+      ].includes(url.pathname)
+    )
+      body =
+        url.searchParams.get('paged') === '1'
+          ? {
+              items: [],
+              nextCursor: null,
+              prevCursor: null,
+              anchorId: null,
+              counts: null
+            }
+          : []
+    else if (url.pathname === '/api/v1/analytics/events') {
+      status = 202
+      body = {}
+    } else if (url.pathname === '/api/v1/time') body = { now: Date.now() }
     else if (url.pathname === '/api/v1/me/notifications/summary')
       body = { hasPending: false }
     // Confirmed for chat, as the Shell reads on sign-in.
