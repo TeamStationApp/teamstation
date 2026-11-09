@@ -27,6 +27,8 @@ export interface SceneSlotProps {
   headerHeight: number
   /** The floating navbar's height, which a screen keeps clear of. */
   navigationHeight?: number
+  /** The offline banner's height, at the bottom, which a screen keeps clear of. */
+  bannerHeight?: number
   onHandoff: (node: React.ReactNode) => void
   /** How much of the header the handoff takes. */
   onHandoffHeight?: (height: number) => void
@@ -135,6 +137,7 @@ export function SceneSlot(props: SceneSlotProps): React.ReactElement {
         <HeaderSlotProvider
           headerHeight={headerHeight}
           navigationHeight={props.navigationHeight}
+          bannerHeight={props.bannerHeight}
           onHandoff={setHandoff}
           onHandoffHeight={setHandoffHeight}
           onBackOverride={setBackOverride}
