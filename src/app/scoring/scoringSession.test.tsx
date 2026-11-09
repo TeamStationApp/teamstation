@@ -797,6 +797,8 @@ describe('swapping from the scoring menu', function () {
     session: () => GameSession
     /** What the last swap was asked with. */
     read: () => unknown
+    /** The client the screen was given, for a test to answer its own way. */
+    client: () => CachingClient
   }> {
     const store = memoryStore()
     let game = gameFixture
@@ -1011,7 +1013,8 @@ describe('swapping from the scoring menu', function () {
         releaseHeld()
       },
       session: () => opened!,
-      read: () => asked
+      read: () => asked,
+      client: () => client as CachingClient
     }
   }
   /** The menu row's text, its subtext included. */
@@ -1401,6 +1404,44 @@ describe('swapping from the scoring menu', function () {
     expect(queued.queued()).deep.equals(['swap'])
     expect(queued.swaps()).equals(0)
     expect(queued.opens()).equals(2)
+  })
+
+  it('on a phone, closes the sheet with the tap while the session’s last save is still on its way, and queues the swap behind it', async function () {
+    const queued = await swappable({
+      holdSaves: true,
+      phone: { chains: {}, games: {} }
+    })
+    await click('Ball')
+    await click(MENU)
+    await click(SWAP)
+    await click('Reset and Swap')
+    // Closed at once, with the save still held and nothing queued yet.
+    expect(document.querySelector('[aria-label="Reset and Swap"]')).equals(null)
+    expect(queued.queued()).deep.equals([])
+    queued.release()
+    await settle()
+    expect(queued.order()).deep.equals(['save', 'swap'])
+    expect(queued.queued()).deep.equals(['reset'])
+    expect(queued.opens()).equals(2)
+  })
+
+  it('on a phone, opens the sheet again to say why a swap could not be queued', async function () {
+    const queued = await swappable({ phone: { chains: {}, games: {} } })
+    const client = queued.client()
+    client.queueSwap = async () => {
+      throw new Error('This game is not on the phone yet. Try again in a moment.')
+    }
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    expect(document.querySelector('[aria-label="Confirm Swap"]')).not.equals(
+      null
+    )
+    expect(document.body.textContent).includes(
+      'This game is not on the phone yet. Try again in a moment.'
+    )
+    expect(queued.opens()).equals(1)
   })
 
   it('leaves room for all seven rows in a window a phone held sideways is', async function () {

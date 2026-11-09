@@ -1398,9 +1398,10 @@ function ScoringPanel(props: {
 
   /**
    * Swaps at once, from what the sheet shows: the scorer confirmed the swap
-   * or the reset it names. On a phone the game's last change goes on its
-   * queue, then the swap behind it, and both are answered from the phone's
-   * documents; on the web the swap is answered from what the screen loaded,
+   * or the reset it names. On a phone the sheet closes with the tap, then the
+   * game's last change goes on its queue and the swap behind it, both
+   * answered from the phone's documents, and a swap the phone cannot queue
+   * opens the sheet again to say why; on the web the swap is answered from what the screen loaded,
    * the game opens again at once on that swapped copy, and the swap is sent
    * behind the screen after the game's unsaved changes (`WebWrites`).
    * Nothing waits on the server: the server's refusal, when it comes, is the
@@ -1420,7 +1421,11 @@ function ScoringPanel(props: {
     try {
       let answer: SwapSidesAnswer
       if (props.client instanceof CachingClient) {
-        // Written to the phone's file, never sent from here.
+        // The sheet closes with the tap. The session's last change and the
+        // swap behind it are written to the phone's file after, never sent
+        // from here: a save still on its way, of a write whose documents are
+        // not on the phone, would hold the sheet open on the network.
+        setSheet(undefined)
         await props.game.flush().catch(() => undefined)
         answer = await props.client.queueSwap(props.gameId, effect)
       } else {
@@ -1447,8 +1452,10 @@ function ScoringPanel(props: {
       setSheet(undefined)
       props.onSwapped(answer)
     } catch (error) {
-      if (swapMounted.current)
-        setSwapProblem(error instanceof Error ? error.message : String(error))
+      if (!swapMounted.current) return
+      // The sheet the tap closed opens again, to say why.
+      setSheet('swap')
+      setSwapProblem(error instanceof Error ? error.message : String(error))
     }
   }
   const tiebreaker = useTiebreakerSetup(
