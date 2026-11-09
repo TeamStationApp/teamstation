@@ -194,6 +194,12 @@ describe('the outbox against the server', function () {
     await client.gameLineups(lineupGame)
     await client.roster(f.teamA)
 
+    // Each write is queued and answered from the phone; the drain sends it
+    // behind, and the second send goes once the network is back.
+    const resend = async (): Promise<void> => {
+      client.wakeOutbox(true)
+      await client.drainOutbox()
+    }
     // A live play: the server commits it, the phone never hears.
     transport.dropNext = true
     const queued = await client.saveGameEvents(gameId, {
@@ -201,7 +207,10 @@ describe('the outbox against the server', function () {
       remove: []
     })
     expect(queued.playsDigest).match(/^local-/)
+    await client.drainOutbox()
     expect(await playCount(f, gameId)).equals(1)
+    expect((await client.outboxSummary()).count).equals(1)
+    await resend()
     // A roster player, the same.
     transport.dropNext = true
     const local = await client.createRosterPlayer(
@@ -209,6 +218,8 @@ describe('the outbox against the server', function () {
       newPlayer('Vladimir')
     )
     expect(await playersNamed(f, f.teamA, 'Vladimir')).length(1)
+    expect((await client.outboxSummary()).count).equals(1)
+    await resend()
     // And a lineup.
     const lineup = await homeLineup(f, lineupGame)
     const notices = await listenScreenScopes(f.h.db)
@@ -223,14 +234,14 @@ describe('the outbox against the server', function () {
     const unsaved = await digest()
     transport.dropNext = true
     await client.saveLineups(lineupGame, lineup)
+    await client.drainOutbox()
     // The save committed: the game keeps its lineups.
     const stored = await digest()
     expect(stored).not.equals(unsaved)
     const saved = notices.mark()
-    expect((await client.outboxSummary()).count).equals(3)
+    expect((await client.outboxSummary()).count).equals(1)
 
-    client.wakeOutbox(true)
-    await client.drainOutbox()
+    await resend()
     expect((await client.outboxSummary()).count).equals(0)
     // Each was sent twice with one key, and answered the second time from
     // what the server stored.
