@@ -1365,6 +1365,49 @@ describe('Coach Game (U25)', function () {
     await waitFor(() => held.reads.boxScore === 3, 'a third read')
   })
 
+  it('opens on the server’s plays and defaults, never the phone’s stored copy', async function () {
+    const held = server()
+    // The server's plays reverse his order; the phone's stored copy, older,
+    // has no plays at all.
+    const store = memoryStore()
+    const scored = await ScoringSession.open(store, held.game.id, {
+      gamePk: held.game.id,
+      teams: teamsOf(held.game),
+      setup: startingSetup(held.game, roster('away'), roster('home'))
+    })
+    const setup = setupOf(scored.resumable().state)
+    setup.sides.home.battingOrder.reverse()
+    const applied = scored.apply({ type: 'lineup', kind: 'roster', setup })
+    expect(applied.problems, JSON.stringify(applied.problems)).deep.equals([])
+    await scored.flush()
+    const newer = store.games.get(held.game.id)!
+    const reads: string[] = []
+    const note = (name: string, options?: { storedFirst?: boolean }): void => {
+      reads.push(`${name}${options?.storedFirst === true ? ':stored' : ''}`)
+    }
+    held.client.gameEvents = async (_gameId, options) => {
+      held.reads.events++
+      note('events', options)
+      return options?.storedFirst === true
+        ? { plays: [], currentPlay: null }
+        : newer
+    }
+    held.client.defaultLineup = async (_teamId, options) => {
+      note('default', options)
+      return { lineup: null, fromGameId: null, setAt: null }
+    }
+    await coach(held)
+    await click('Lineup', 'tab')
+    const order =
+      document.querySelector<HTMLElement>('[aria-label="Batting lineup"]')
+        ?.textContent ?? ''
+    expect(order.indexOf('Hawk 9'), 'the server’s order').greaterThan(-1)
+    expect(order.indexOf('Hawk 9')).lessThan(order.indexOf('Hawk 1'))
+    // Read from the server, as every open but the scoring screen's is.
+    expect(reads.filter(read => read.endsWith(':stored'))).deep.equals([])
+    expect(reads).includes('events')
+  })
+
   it('says so to somebody who does not coach the team, and when the game cannot be read', async function () {
     const held = server({ coachSides: ['away'] })
     await render(

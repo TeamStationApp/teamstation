@@ -38,11 +38,30 @@ export interface ScoringSource {
    * server's while the screen is open; the returned function stops it.
    */
   keepTime?: () => () => void
+  /**
+   * Opens the game. `held`, on the web after a swap of its own the server
+   * has not answered: opened on the swapped copy the screen holds, never
+   * read, and its saves sent once the swap is. `storedFirst`, for the
+   * scoring screen alone: the defaults and the first read of the plays are
+   * the phone's stored ones; every other caller reads the server.
+   */
   open: (
     game: GameDetail,
     away: RosterEntry[],
-    home: RosterEntry[]
+    home: RosterEntry[],
+    held?: HeldOpening,
+    options?: { storedFirst?: boolean }
   ) => Promise<ScoringSession>
+}
+
+/** A game opened from the copy a swap still out left (`WebWrites.held`). */
+export interface HeldOpening {
+  /** The plays as the swap leaves them, its lineups digest the swap's own. */
+  events: StoredGame
+  /** Both teams' default lineups, by the new sides. */
+  defaults: DefaultLineups
+  /** Settles once the server took the swap; rejects once it refused it. */
+  landed: Promise<void>
 }
 
 function context(
@@ -62,15 +81,17 @@ function context(
 
 /**
  * Both teams' default lineups. A default that fails to load is none, so the
- * side starts from its roster.
+ * side starts from its roster. `storedFirst`, for the scoring screen as it
+ * opens: the phone's stored defaults, read from the server behind them.
  */
 export async function defaultsOf(
   client: TeamStationClient,
-  game: GameDetail
+  game: GameDetail,
+  storedFirst = false
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> => {
     try {
-      return (await client.defaultLineup(teamId)).lineup
+      return (await client.defaultLineup(teamId, { storedFirst })).lineup
     } catch {
       return null
     }
@@ -98,8 +119,9 @@ export class ServerScoringSource implements ScoringSource {
     return this.clock.keepTime()
   }
 
+  /** The phone's stored choices at once, read from the server behind them. */
   async tagChoices(): Promise<TagChoices> {
-    return await this.client.tagChoices()
+    return await this.client.tagChoices({ storedFirst: true })
   }
 
   async saveTag(
@@ -113,15 +135,20 @@ export class ServerScoringSource implements ScoringSource {
   async open(
     game: GameDetail,
     away: RosterEntry[],
-    home: RosterEntry[]
+    home: RosterEntry[],
+    opening?: HeldOpening,
+    options?: { storedFirst?: boolean }
   ): Promise<ScoringSession> {
     const client = this.client
+    const storedFirst = options?.storedFirst === true
     let currentGame = game
     let rosters = { away, home }
     let first = true
     // The defaults shape only a new game: one with records is rebuilt from
-    // them, whatever the defaults say now.
-    const defaults = await defaultsOf(client, game)
+    // them, whatever the defaults say now. As the scoring screen opens,
+    // every read it waits on is the phone's stored one, when it has one.
+    const defaults =
+      opening?.defaults ?? (await defaultsOf(client, game, storedFirst))
     // The context for the game's teams as last read, rebuilt only when they
     // change: every read gives the one its teams call for, whether or not
     // the session keeps that read.
@@ -143,7 +170,15 @@ export class ServerScoringSource implements ScoringSource {
         const later = !first
         if (later) await readTeams(await client.game(gameId))
         first = false
-        let stored = await client.gameEvents(gameId)
+        // The first read, as the scoring screen opens, is the phone's stored
+        // plays; a reload after a notice, and every other open, reads the
+        // server.
+        let stored =
+          opening != null && !later
+            ? opening.events
+            : await client.gameEvents(gameId, {
+                storedFirst: storedFirst && !later
+              })
         // On a reload or a rebase, the game read again after its plays: a
         // swap between the two reads would pair the swapped record with the
         // old teams. Read both again until they agree. (The screen checks
@@ -176,8 +211,20 @@ export class ServerScoringSource implements ScoringSource {
           }
         return { ...stored, context: held.context }
       },
-      save: async (gameId, change) =>
-        await client.saveGameEvents(gameId, change)
+      save: async (gameId, change) => {
+        if (opening == null) return await client.saveGameEvents(gameId, change)
+        // Behind the swap, as a phone's queue sends it; built on the swap's
+        // own lineups digest, it names the one the server gave the new sides.
+        await opening.landed
+        if (change.lineupsBase !== opening.events.lineupsDigest)
+          return await client.saveGameEvents(gameId, change)
+        const { lineupsBase: _swapped, ...rest } = change
+        const { lineupsDigest } = await client.gameEvents(gameId)
+        return await client.saveGameEvents(
+          gameId,
+          lineupsDigest == null ? rest : { ...rest, lineupsBase: lineupsDigest }
+        )
+      }
     }
     return await ScoringSession.open(store, game.id, held.context, {
       requireCurrentSetup: true,

@@ -65,10 +65,18 @@ export function fieldServer(stored: {
   /** While set, every request waits on it before it is answered. */
   hold?: Promise<void>
   posts: Post[]
+  /** Each write as it reached the server: method and path. */
+  writes: string[]
+  /** While set, a tag is refused: its event is not the server's. */
+  refuseTags: boolean
 } {
   const plays = new Map(stored.plays.map(play => [play.about.atBatIndex, play]))
   let currentPlay = stored.currentPlay
   let revision = 1
+  // Home and away, as a swap leaves them, and the play generation.
+  let swapped = false
+  let generation = 0
+  const tags = new Map<string, string>()
   const made: Array<{ teamId: string; entry: unknown }> = []
   const roster = (teamId: string): unknown[] => [
     ...JSON.parse(
@@ -89,17 +97,32 @@ export function fieldServer(stored: {
       .map((gumbo, index) => ({ id: `evt_${index}`, gameId: 'g1', gumbo })),
     currentPlay,
     playsDigest: `plays-${revision}`,
-    lineupsDigest: 'lineups-1'
+    lineupsDigest: swapped ? 'lineups-swapped' : 'lineups-1',
+    generation
   })
   const routes: Record<string, () => unknown> = {
     // The scorekeeper also coaches the Hawks, for Coach Game.
-    '/games/g1': () => ({ ...gameFixture, coachSides: ['home'] }),
+    '/games/g1': () => ({
+      ...gameFixture,
+      ...(swapped
+        ? {
+            homeTeamId: gameFixture.awayTeamId,
+            awayTeamId: gameFixture.homeTeamId,
+            homeTeamName: gameFixture.awayTeamName,
+            awayTeamName: gameFixture.homeTeamName
+          }
+        : {}),
+      generation,
+      coachSides: ['home']
+    }),
     '/games/g1/events': eventsBody,
     '/games/g1/lineups': () => ({
-      away: side('away', 'Owls'),
-      home: side('home', 'Hawks'),
-      digest: 'lineups-1'
+      away: swapped ? side('home', 'Hawks') : side('away', 'Owls'),
+      home: swapped ? side('away', 'Owls') : side('home', 'Hawks'),
+      digest: swapped ? 'lineups-swapped' : 'lineups-1',
+      generation
     }),
+    '/tags': () => ({ recent: ['great catch'], popular: [] }),
     '/me/roles': () => ({
       teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
       guardianOf: []
@@ -146,6 +169,8 @@ export function fieldServer(stored: {
     holdPlays: undefined as Promise<void> | undefined,
     hold: undefined as Promise<void> | undefined,
     posts: [] as Post[],
+    writes: [] as string[],
+    refuseTags: false,
     fetch: (async (url: unknown, init?: RequestInit) => {
       if (state.hold != null) await state.hold
       if (state.offline) throw new TypeError('Load failed')
@@ -155,6 +180,56 @@ export function fieldServer(stored: {
         init?.method === 'POST' ? target.split('?') : [target]
       const json = (status: number, body: unknown): Response =>
         new Response(JSON.stringify(body), { status })
+      if (init?.method != null && init.method !== 'GET')
+        state.writes.push(`${init.method} ${path}`)
+      const tag = /^\/games\/g1\/tags\/([^/]+)$/.exec(path)?.[1]
+      if (tag != null && state.refuseTags)
+        return json(404, { code: 'notFound', message: 'No such event.' })
+      if (
+        tag != null &&
+        (init?.method === 'PUT' || init?.method === 'DELETE')
+      ) {
+        const label =
+          init.method === 'PUT'
+            ? String((JSON.parse(init.body as string) as { tag: string }).tag)
+            : null
+        if (label == null) tags.delete(tag)
+        else tags.set(tag, label)
+        return json(200, {
+          targetId: tag,
+          tag: label,
+          revision: String(revision++)
+        })
+      }
+      if (init?.method === 'POST' && path === '/games/g1/swap-sides') {
+        const body = JSON.parse(init.body as string) as Record<string, unknown>
+        state.posts.push({ path, query, body })
+        const home = swapped ? gameFixture.awayTeamId : gameFixture.homeTeamId
+        if (body.homeTeamId !== home)
+          return json(409, {
+            code: 'conflict',
+            message: "This game's teams changed. Open it again."
+          })
+        const lost = plays.size
+        if (typeof body.playsDigest === 'string') {
+          if (body.playsDigest !== `plays-${revision}`)
+            return json(409, {
+              code: 'conflict',
+              message: "This game's plays changed. Open it again."
+            })
+          plays.clear()
+          currentPlay = null
+          generation++
+        }
+        swapped = !swapped
+        revision++
+        return json(200, {
+          homeTeamId: swapped ? gameFixture.awayTeamId : gameFixture.homeTeamId,
+          awayTeamId: swapped ? gameFixture.homeTeamId : gameFixture.awayTeamId,
+          generation,
+          reset: { atBats: lost, innings: lost > 0 ? 1 : 0 }
+        })
+      }
       if (init?.method === 'POST') {
         const body = JSON.parse(init.body as string) as Record<string, unknown>
         state.posts.push({ path, query, body })
@@ -268,6 +343,64 @@ const hasLabel = (label: string): boolean =>
 
 const status = (): string | null | undefined =>
   document.querySelector('[aria-label="Save status"]')?.textContent
+
+interface Fiber {
+  type?: { name?: string } | string | null
+  memoizedProps?: unknown
+  child?: Fiber | null
+  sibling?: Fiber | null
+  memoizedState?: { memoizedState?: unknown; next?: Fiber['memoizedState'] }
+  stateNode?: { current?: Fiber }
+}
+function findFiber(
+  fiber: Fiber | null | undefined,
+  name: string
+): Fiber | undefined {
+  for (let node = fiber; node != null; node = node.sibling) {
+    if (typeof node.type === 'function' || typeof node.type === 'object')
+      if (node.type?.name === name) return node
+    const inside = findFiber(node.child, name)
+    if (inside != null) return inside
+  }
+  return undefined
+}
+/** The component `name` as React rendered it last under `host`. */
+function rendered(host: HTMLElement, name: string): Fiber {
+  const key = Object.keys(host).find(key =>
+    key.startsWith('__reactContainer$')
+  )!
+  const fiber = (host as unknown as Record<string, Fiber>)[key]
+  const found = findFiber(fiber.stateNode?.current ?? fiber, name)
+  if (found == null) throw new Error(`${name} has not rendered`)
+  return found
+}
+/** The props the screen gave `name`: the 3D field's, here. */
+function panelProps(host: HTMLElement, name: string): unknown {
+  return rendered(host, name).memoizedProps
+}
+/** Says `transcript` to the scoring screen, as dictation hands it on. */
+function dictateTo(
+  host: HTMLElement,
+  transcript: string,
+  actions: unknown[],
+  roster: unknown[]
+): void {
+  const panel = rendered(host, 'ScoringPanel')
+  for (let hook = panel.memoizedState; hook != null; hook = hook.next) {
+    const ref = hook.memoizedState as
+      | {
+          current?: {
+            onActions?: (t: string, a: unknown[], r: unknown[]) => void
+          }
+        }
+      | undefined
+    if (typeof ref?.current?.onActions === 'function') {
+      ref.current.onActions(transcript, actions, roster)
+      return
+    }
+  }
+  throw new Error('Missing dictated scoring callback')
+}
 
 describe('scoring an upcoming game on the phone with no signal (S6)', function () {
   let dir: string
@@ -957,5 +1090,314 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
     await settle(100)
     expect(document.body.textContent).includes(PENDING_APPROVAL_MESSAGE)
     expect(reads, 'the game is read again').greaterThan(before)
+  })
+
+  describe('with every request held (#237)', function () {
+    /** Holds every request the phone makes until `release`. */
+    function holdAll(net: ReturnType<typeof fieldServer>): () => void {
+      let release: () => void = () => undefined
+      net.hold = new Promise<void>(resolve => {
+        release = resolve
+      })
+      return () => {
+        net.hold = undefined
+        release()
+      }
+    }
+    const text = (): string => document.body.textContent ?? ''
+    const disabled = (label: string): boolean => {
+      const nodes = document.querySelectorAll(`[aria-label="${label}"]`)
+      return (
+        nodes.item(nodes.length - 1)?.getAttribute('aria-disabled') === 'true'
+      )
+    }
+    const homeOf = (): string | undefined =>
+      /Owls \d+ · Hawks \d+|Hawks \d+ · Owls \d+/.exec(text())?.[0]
+
+    it('opens on what the phone stored, and takes pitches, undo, an override, the end of a half and a lineup change at once, each after the last', async function () {
+      const { client, net, rows } = await preparedPhone()
+      const release = holdAll(net)
+      const before = net.writes.length
+      await open(client)
+      // Every read the open waits on is held: it opened from the phone.
+      expect(text()).includes('Owls 0 · Hawks 0')
+      expect(text()).includes('1 balls')
+      await click('Ball')
+      expect(text()).includes('2 balls')
+      await click('Called Strike')
+      expect(text()).includes('1 strikes')
+      const undo = document
+        .querySelector('[aria-label^="Undo "]')
+        ?.getAttribute('aria-label')
+      expect(undo).to.be.a('string')
+      await click(undo!)
+      expect(text()).not.includes('1 strikes')
+      await click('Open scoring menu')
+      await click('Overrides')
+      await click('Apply Override')
+      expect(hasLabel('Apply Override')).equals(false)
+      await click('Open scoring menu')
+      await click('End Half Inning')
+      await click('Confirm End Half Inning')
+      expect(hasLabel('Confirm End Half Inning')).equals(false)
+      await click('Open scoring menu')
+      await click('Set Team Rosters')
+      expect(disabled('Create Player')).equals(false)
+      await click('Create Player')
+      await input('First Name', 'Mookie')
+      await input('Last Name', 'Betts')
+      await click('Create Player')
+      await settle()
+      await click('Add Mookie B to Lineup')
+      await click('Save Rosters')
+      await settle()
+      expect(hasLabel('Save Rosters')).equals(false)
+      await click('Ball')
+      await settle(50)
+      expect(text()).includes('1 balls')
+      // Nothing reached the server; all of it is queued, in order.
+      expect(net.writes.length).equals(before)
+      const queued = rows()
+      expect(queued.length).greaterThan(3)
+      release()
+      client.wakeOutbox(true)
+      await act(async () => {
+        await client.drainOutbox()
+      })
+      await settle(50)
+      expect(rows()).deep.equals([])
+      expect(net.writes.slice(before)).deep.equals(
+        queued.map(row => `${String(row.method)} ${String(row.path)}`)
+      )
+    })
+
+    it('closes Confirm Swap at once, shows the exchanged sides and takes the next pitch, and sends the pitches and the swap in order once let go', async function () {
+      const { client, net, rows } = await preparedPhone()
+      const release = holdAll(net)
+      const before = net.writes.length
+      await open(client)
+      expect(homeOf()).equals('Owls 0 · Hawks 0')
+      await click('Open scoring menu')
+      await click('Swap Home and Away')
+      await settle()
+      // A pitch is in: the swap resets the game.
+      expect(disabled('Reset and Swap')).equals(false)
+      await click('Reset and Swap')
+      expect(hasLabel('Reset and Swap')).equals(false)
+      await settle(100)
+      expect(homeOf()).equals('Hawks 0 · Owls 0')
+      expect(text()).includes(
+        'Home and away were swapped and the game was reset.'
+      )
+      expect(text()).includes('0 balls')
+      await click('Ball')
+      await settle(50)
+      expect(text()).includes('1 balls')
+      // Then a second swap, before the first pitch on the new sides counts.
+      await click('Open scoring menu')
+      await click('Swap Home and Away')
+      await settle()
+      const label = hasLabel('Confirm Swap') ? 'Confirm Swap' : 'Reset and Swap'
+      await click(label)
+      expect(hasLabel(label)).equals(false)
+      await settle(100)
+      expect(homeOf()).equals('Owls 0 · Hawks 0')
+      await click('Ball')
+      await settle(50)
+      expect(net.writes.length).equals(before)
+      const queued = rows().map(row => String(row.path))
+      expect(queued.filter(path => path.endsWith('/swap-sides'))).length(2)
+      release()
+      client.wakeOutbox(true)
+      await act(async () => {
+        await client.drainOutbox()
+      })
+      await settle(100)
+      expect(rows()).deep.equals([])
+      // In the order they were entered, each swap behind the plays before it.
+      expect(net.writes.slice(before)).deep.equals(
+        queued.map(path => `POST ${path}`)
+      )
+      expect(
+        await (await net.fetch('http://x/api/v1/games/g1')).json()
+      ).deep.include({ homeTeamId: 'home' })
+    })
+
+    it('keeps the scorer on screen through Confirm Swap, never showing Loading game, and paints the exchanged sides from the phone', async function () {
+      const { client, net } = await preparedPhone()
+      holdAll(net)
+      const before = net.writes.length
+      await open(client)
+      expect(homeOf()).equals('Owls 0 · Hawks 0')
+      // Every node the screen adds from here on, however briefly it shows.
+      const loading: string[] = []
+      const observer = new MutationObserver(records => {
+        for (const record of records)
+          for (const node of record.addedNodes)
+            if (
+              node instanceof Element &&
+              (node.matches('[aria-label="Loading game"]') ||
+                node.querySelector('[aria-label="Loading game"]') != null)
+            )
+              loading.push(record.type)
+      })
+      observer.observe(document.body, { childList: true, subtree: true })
+      try {
+        await click('Open scoring menu')
+        await click('Swap Home and Away')
+        await settle()
+        await click('Reset and Swap')
+        expect(hasLabel('Reset and Swap')).equals(false)
+        expect(hasLabel('Loading game')).equals(false)
+        await settle(100)
+        observer.takeRecords().forEach(record => {
+          for (const node of record.addedNodes)
+            if (
+              node instanceof Element &&
+              node.querySelector('[aria-label="Loading game"]') != null
+            )
+              loading.push(record.type)
+        })
+        expect(loading).deep.equals([])
+        expect(homeOf()).equals('Hawks 0 · Owls 0')
+        await click('Ball')
+        await settle(50)
+        expect(text()).includes('1 balls')
+        // Not one request answered: the swap and the reopen are the phone's.
+        expect(net.writes.length).equals(before)
+      } finally {
+        observer.disconnect()
+      }
+    })
+
+    it('saves an event tag with the editor closing at once, and shows the held-game notice when the server refuses it', async function () {
+      const { client, net, rows } = await preparedPhone()
+      const release = holdAll(net)
+      await open(client)
+      await click('Ball')
+      await settle(50)
+      const undo = document.querySelector<HTMLElement>(
+        '[aria-label="Undo Ball"]'
+      )!
+      await act(async () => {
+        undo.dispatchEvent(
+          new window.MouseEvent('mousedown', { bubbles: true, button: 0 })
+        )
+        await new Promise(resolve => setTimeout(resolve, 1700))
+      })
+      await act(async () => {
+        document.dispatchEvent(
+          new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+        )
+      })
+      await click('Tag event: Ball')
+      // The stored choices, read before, show with their read held.
+      await input('New tag', 'nice eye')
+      await click('Save tag')
+      expect(hasLabel('New tag')).equals(false)
+      await settle(50)
+      expect(rows().map(row => String(row.method))).includes('PUT')
+      expect(net.writes).deep.equals([])
+      // Let go, the server refuses the tag: the game is held, and says so.
+      net.refuseTags = true
+      release()
+      client.wakeOutbox(true)
+      await act(async () => {
+        await client.drainOutbox()
+      })
+      await settle(50)
+      expect(rows().map(row => [row.method, row.state])).deep.equals([
+        ['PUT', 'dead']
+      ])
+      expect(
+        document.querySelector('[data-testid="heldGameMessage"]')?.textContent
+      ).equals('Not sent: No such event.')
+    })
+
+    it('keeps every control on through the defensive Refresh and a dictated substitution, and leaves without waiting', async function () {
+      const { client, net } = await preparedPhone()
+      const release = holdAll(net)
+      let exits = 0
+      const source = new ServerScoringSource(
+        client,
+        new ServerClock(async () => await client.serverTime(), memoryStorage())
+      )
+      let leave: (() => Promise<boolean>) | undefined
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <ScoringScreen
+              client={client}
+              gameId="g1"
+              userId="usr_scorer"
+              source={source}
+              onExit={() => {
+                exits++
+              }}
+              onBeforeLeave={check => {
+                leave = check
+                return () => undefined
+              }}
+            />
+          </ThemeProvider>
+        )
+      })
+      await settle(50)
+      // The defense sheet over a fielder, whose Refresh reads the game with
+      // the read held: once it is closed, the field takes the next pitch.
+      const field = (): {
+        tapIds?: string[]
+        onPlayerTap?: (id: string) => void
+      } => (panelProps(host, 'BaseballScreen') as { field: never }).field
+      const tapped = field().tapIds?.[0]
+      expect(tapped, 'a fielder to tap').to.be.a('string')
+      await act(async () => {
+        field().onPlayerTap?.(tapped!)
+      })
+      await settle()
+      await click('Create Player')
+      await click('Cancel')
+      await settle()
+      // The Refresh's read is still out.
+      expect(hasLabel('Defensive roster')).equals(true)
+      await click('Cancel')
+      await settle()
+      expect(hasLabel('Defensive roster')).equals(false)
+      expect(disabled('Ball')).equals(false)
+      await click('Ball')
+      expect(text()).includes('2 balls')
+      // A substitution said aloud opens the rosters at once, over the game
+      // as the phone holds it, with the read behind it held.
+      await act(async () => {
+        dictateTo(
+          host,
+          'Number 2 pitches',
+          [],
+          [
+            {
+              type: 'setPositions',
+              places: [{ player: { jersey: '2' }, position: 'P' }]
+            }
+          ]
+        )
+      })
+      await settle(50)
+      expect(hasLabel('Save Rosters')).equals(true)
+      expect(disabled('Save Rosters')).equals(false)
+      await click('Cancel')
+      await settle()
+
+      expect(disabled('Ball')).equals(false)
+      let left: boolean | undefined
+      await act(async () => {
+        left = await leave!()
+      })
+      expect(left).equals(true)
+      expect(exits).equals(0)
+      release()
+    })
   })
 })
