@@ -24,6 +24,11 @@ import React, {
 export interface HeaderSlot {
   headerHeight: number
   navigationHeight?: number
+  /**
+   * The offline banner's height while it shows, at the bottom of the window:
+   * a screen's last row clears it as well as the capsule.
+   */
+  bannerHeight?: number
   setHandoff: (node: React.ReactNode) => void
   setHandoffHeight: (height: number) => void
   /** A screen that wants the header's back, instead of leaving the screen. */
@@ -44,6 +49,7 @@ export function useHeaderSlot(): HeaderSlot {
 export interface HeaderSlotProviderProps {
   headerHeight: number
   navigationHeight?: number
+  bannerHeight?: number
   onHandoff: (node: React.ReactNode) => void
   onHandoffHeight?: (height: number) => void
   onBackOverride?: (handler: (() => void) | null) => void
@@ -58,6 +64,7 @@ export function HeaderSlotProvider(
     () => ({
       headerHeight,
       navigationHeight: props.navigationHeight,
+      bannerHeight: props.bannerHeight,
       setHandoff: onHandoff,
       setHandoffHeight: props.onHandoffHeight ?? (() => undefined),
       setBackOverride: onBackOverride ?? (() => undefined)
@@ -65,6 +72,7 @@ export function HeaderSlotProvider(
     [
       headerHeight,
       props.navigationHeight,
+      props.bannerHeight,
       onHandoff,
       props.onHandoffHeight,
       onBackOverride
