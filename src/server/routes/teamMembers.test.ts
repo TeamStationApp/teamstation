@@ -2437,9 +2437,7 @@ describe('a team’s people by external id', function () {
         .select(['logo_path', 'logo_sha256', 'logo_source', 'logo_updated_at'])
         .where('id', '=', teamId)
         .executeTakeFirstOrThrow()
-      expect(row.logo_path).matches(
-        new RegExp(`^images/team/${teamId}/[0-9a-f]{8}$`)
-      )
+      expect(row.logo_path).matches(/^images\/team\/[0-9a-f]{32}$/)
       expect(row.logo_sha256).matches(/^[0-9a-f]{64}$/)
       expect(row.logo_source).equals('import')
       expect(row.logo_updated_at).not.equals(null)
@@ -2450,9 +2448,9 @@ describe('a team’s people by external id', function () {
         ]
       )
 
-      // The URL is the signed 192 px rendition, and it is one.
+      // The URL is the public 192 px rendition, unsigned, and it is one.
       expect(answer.body.url).includes(`${row.logo_path}-192.png`)
-      expect(answer.body.url).includes('X-Amz-Signature=')
+      expect(new URL(answer.body.url).search).equals('')
       const drawn = await fetch(answer.body.url)
       expect(drawn.status).equals(200)
       expect(pngSize(Buffer.from(await drawn.arrayBuffer()))).deep.equals({
@@ -2484,9 +2482,7 @@ describe('a team’s people by external id', function () {
         ])
         .where('id', '=', fixtureUserId(userId))
         .executeTakeFirstOrThrow()
-      expect(row.avatar_path).matches(
-        new RegExp(`^images/user/${userId}/[0-9a-f]{8}$`)
-      )
+      expect(row.avatar_path).matches(/^images\/user\/[0-9a-f]{32}$/)
       expect(row.avatar_sha256).matches(/^[0-9a-f]{64}$/)
       expect(row.avatar_source).equals('import')
       expect(row.avatar_updated_at).not.equals(null)

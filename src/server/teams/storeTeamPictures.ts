@@ -192,7 +192,6 @@ async function storePicture(
       ffmpegPath: store.ffmpegPath,
       space: store.space,
       kind,
-      entityId,
       source: picture.bytes,
       knownSha256: held.path == null ? null : held.sha256
     })

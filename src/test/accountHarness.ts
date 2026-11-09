@@ -167,6 +167,20 @@ export async function accountHarness(
           res.end('Unavailable')
           return
         }
+        // A CopyObject: the source's bytes, which never leave the Space.
+        const copied = req.headers['x-amz-copy-source']
+        if (typeof copied === 'string') {
+          const bytes = objects.get(decodeURIComponent(copied))
+          if (bytes == null) {
+            res.writeHead(404)
+            res.end('<Error><Code>NoSuchKey</Code></Error>')
+            return
+          }
+          objects.set(key, bytes)
+          res.writeHead(200)
+          res.end('<CopyObjectResult/>')
+          return
+        }
         objects.set(key, Buffer.concat(chunks))
         res.writeHead(200)
         res.end()
