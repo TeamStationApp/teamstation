@@ -974,7 +974,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(document.body.textContent).includes('Home and away were swapped.')
   })
 
-  it('waits for a save on its way before opening the game again, and says why', async function () {
+  it('opens the game again at once with a save on its way, and says what was not saved there', async function () {
     const screen = await swappable({ holdSaves: true })
     await click('Called Strike')
     await settle()
@@ -982,14 +982,14 @@ describe('a game swapped under the scoring screen on the socket', function () {
     screen.swap()
     await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
     await settle()
-    expect(screen.opens()).equals(1)
+    // Nothing waits on the save: the web's unsaved pitch named the old sides.
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes(
+      'Home and away were swapped, so changes not yet saved before the swap were not kept.'
+    )
     screen.release()
     await settle()
-    await settle()
     expect(screen.opens()).equals(2)
-    // The pitch was saved before the swap and went with it: nothing lost.
-    expect(document.body.textContent).includes('Home and away were swapped.')
-    expect(document.body.textContent).not.includes('were not kept')
   })
 
   it('tells the scorer of changes a stale save lost to the swap', async function () {
@@ -1009,35 +1009,18 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.session().state.gameData.teams.home.id).equals('away')
   })
 
-  it('on a phone, gives up the writes queued for the game before the swap', async function () {
+  it('on a phone, keeps the writes queued for the game, which go ahead of the swap', async function () {
     const screen = await swappable({ phone: { 'game:g1': 1 } })
     const before = screen.session()
     screen.swap()
     await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
     await settle()
-    expect(screen.discarded).deep.equals(['g1'])
+    expect(screen.discarded).deep.equals([])
     expect(screen.opens()).equals(2)
     expect(screen.session()).not.equals(before)
     expect(screen.session().readOnly).equals(false)
-    expect(document.body.textContent).includes(
-      'changes not yet saved before the swap were not kept'
-    )
-  })
-
-  it('stops waiting for a save on its way when the screen goes', async function () {
-    const screen = await swappable({ holdSaves: true })
-    await click('Called Strike')
-    await settle()
-    screen.swap()
-    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
-    await act(async () => {
-      root?.unmount()
-    })
-    root = undefined
-    expect(screen.listening()).equals(0)
-    screen.release()
-    await settle()
-    expect(screen.opens()).equals(1)
+    expect(document.body.textContent).includes('Home and away were swapped.')
+    expect(document.body.textContent).not.includes('were not kept')
   })
 
   it('opens the game again when a swap made while the socket was down comes to light on resync', async function () {
@@ -1078,7 +1061,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(state.gameData.teams.home.id).equals('home')
   })
 
-  it('waits for a save on its way, and counts what a reset left unsaved (A6)', async function () {
+  it('opens again at once on a reset with a save on its way, and counts what it left unsaved (A6)', async function () {
     const waits = await swappable({ holdSaves: true })
     await click('Called Strike')
     await settle()
@@ -1089,7 +1072,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
       generation: 1
     })
     await settle()
-    expect(waits.opens()).equals(1)
+    // Opened again at once, the pitch still out counted as lost.
+    expect(waits.opens()).equals(2)
+    expect(document.body.textContent).includes(
+      'This game was reset, so 1 change not yet saved before the reset was not kept.'
+    )
     waits.release()
     await settle()
     await settle()
@@ -1130,7 +1117,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.session().state.gameData.teams.home.id).equals('away')
   })
 
-  it('on a phone, gives up the writes queued before a reset (A7)', async function () {
+  it('on a phone, keeps the writes queued before a reset (A7)', async function () {
     const screen = await swappable({ phone: { 'game:g1': 1 } })
     screen.reset()
     await screen.notice({
@@ -1139,11 +1126,9 @@ describe('a game swapped under the scoring screen on the socket', function () {
       generation: 1
     })
     await settle()
-    expect(screen.discarded).deep.equals(['g1'])
+    expect(screen.discarded).deep.equals([])
     expect(screen.opens()).equals(2)
-    expect(document.body.textContent).includes(
-      'This game was reset, so 1 change not yet saved before the reset was not kept.'
-    )
+    expect(document.body.textContent).includes('This game was reset.')
   })
 
   it('keeps the notice up for its time once the slow reopen is drawn', async function () {

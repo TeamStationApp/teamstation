@@ -94,6 +94,11 @@ const SPECS = [
   'src/server/routes/pictures.test.ts',
   // The development request recorder the device scenario reads.
   'src/server/dev/requestRecorder.test.ts',
+  // Scoring that never waits: the swap answered from the documents, and
+  // the web screen's writes sent behind it.
+  'src/common/scoring/swapDocuments.test.ts',
+  'src/app/scoring/webWrites.test.ts',
+  'src/app/scoring/scoringSource.test.ts',
   'src/app/sync/**/*.test.ts'
 ].filter(spec => spec.includes('*') || existsSync(spec))
 
