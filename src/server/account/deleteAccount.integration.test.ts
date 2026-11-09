@@ -728,11 +728,20 @@ describe('deleting an account', function () {
         )
       ).status
     ).equals(200)
+    const { avatar_path: avatar } = await h.db
+      .selectFrom('users')
+      .select('avatar_path')
+      .where('id', '=', gone.id)
+      .executeTakeFirstOrThrow()
+    expect(avatar).matches(/^images\/user\/[0-9a-f]{32}$/)
+    // And one stored before names were random, under the account's id.
+    const legacy = `/${h.space.bucket}/images/user/${gone.id}/abcd1234-96.png`
+    h.objects.set(legacy, Buffer.from('old'))
     const pictures = (): string[] =>
-      [...h.objects.keys()].filter(key =>
-        key.includes(`/images/user/${gone.id}/`)
+      [...h.objects.keys()].filter(
+        key => key.includes(`/${avatar}-`) || key === legacy
       )
-    expect(pictures().length).greaterThan(0)
+    expect(pictures().length).equals(3)
     const sent = makeId('audit')
     await h.db
       .insertInto('notification_events')

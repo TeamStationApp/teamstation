@@ -79,6 +79,19 @@ const SPECS = [
   'src/server/socket/writerNotices.integration.test.ts',
   'src/server/socket/notifyRollback.integration.test.ts',
   'src/server/routes/syncIdempotency.integration.test.ts',
+  // Pictures: public names, unsigned URLs, and the republish at start.
+  'src/server/media/imageUrls.test.ts',
+  'src/server/media/images.integration.test.ts',
+  'src/server/media/republishImages.integration.test.ts',
+  'src/server/media/pictureCatalog.integration.test.ts',
+  'src/server/routes/teamsOf.integration.test.ts',
+  'src/server/chat/chat2Identity.integration.test.ts',
+  'src/server/routes/venues.integration.test.ts',
+  'src/server/account/deleteAccount.integration.test.ts',
+  'src/server/routes/account.integration.test.ts',
+  'src/server/routes/account.chatAge.integration.test.ts',
+  'src/server/dev/fakeSpace.test.ts',
+  'src/server/routes/pictures.integration.test.ts',
   'src/app/sync/**/*.test.ts'
 ].filter(spec => spec.includes('*') || existsSync(spec))
 

@@ -31,6 +31,10 @@ import type { GooglePlaces, VenuePlace } from '../location/googlePlaces'
 import { type ImageKind, storeImage, UnreadableImage } from '../media/images'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import {
+  namingUploaded,
+  releaseReplacedPicture
+} from '../media/republishImages'
 import { spaceConfigured } from '../media/spacesHls'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
@@ -539,7 +543,6 @@ export async function endVenueClaim(
 async function storePhoto(
   services: VenueServices,
   kind: ImageKind,
-  entityId: string,
   photo: PhotoUpload
 ): Promise<{ path: string; sha256: string }> {
   if (!spaceConfigured(services.media.space))
@@ -550,7 +553,6 @@ async function storePhoto(
       ffmpegPath: services.media.ffmpegPath,
       space: services.media.space,
       kind,
-      entityId,
       source: picture.bytes
     })
     if (stored == null) throw unavailable('The photo could not be saved')
@@ -616,10 +618,15 @@ export async function updateVenue(
   const photo =
     changes.photo == null
       ? null
-      : await storePhoto(services, 'venue', venueId, changes.photo)
-  await atomic(db, async trx => {
+      : await storePhoto(services, 'venue', changes.photo)
+  await namingUploaded(db, services.media.space, photo?.path, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
+    const before = await trx
+      .selectFrom('venues')
+      .select('photo_path')
+      .where('id', '=', venueId)
+      .executeTakeFirst()
     await trx
       .updateTable('venues')
       .set({
@@ -644,6 +651,12 @@ export async function updateVenue(
       })
       .where('id', '=', venueId)
       .execute()
+    if (photo != null)
+      await releaseReplacedPicture(
+        trx,
+        services.media.space,
+        before?.photo_path
+      )
     // Renamed, its upcoming games show the new name.
     if (changes.name != null)
       await placeFieldGames(
@@ -725,8 +738,8 @@ export async function createField(
   const photo =
     changes.photo == null
       ? null
-      : await storePhoto(services, 'field', fieldId, changes.photo)
-  await atomic(db, async trx => {
+      : await storePhoto(services, 'field', changes.photo)
+  await namingUploaded(db, services.media.space, photo?.path, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
     await trx
@@ -782,11 +795,11 @@ export async function updateField(
   const photo =
     changes.photo == null
       ? null
-      : await storePhoto(services, 'field', fieldId, changes.photo)
-  await atomic(db, async trx => {
+      : await storePhoto(services, 'field', changes.photo)
+  await namingUploaded(db, services.media.space, photo?.path, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
-    await liveField(trx, venueId, fieldId)
+    const before = await liveField(trx, venueId, fieldId)
     const values = fieldValues(changes)
     if (Object.keys(values).length === 0 && photo == null) return
     await trx
@@ -804,6 +817,8 @@ export async function updateField(
       })
       .where('id', '=', fieldId)
       .execute()
+    if (photo != null)
+      await releaseReplacedPicture(trx, services.media.space, before.photo_path)
     // A pin moved moves its upcoming games' place on the map.
     if (changes.pin !== undefined) await placeFieldGames(trx, [fieldId], clock)
     if (

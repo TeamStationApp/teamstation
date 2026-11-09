@@ -6,11 +6,14 @@ import {
   asGroupKind,
   asGroupRef
 } from '../../common/groupCreation'
+import { userIdOfGumbo } from '../../common/userId'
+import { accountTestPicture } from '../../test/accountHarness'
 import {
   demoLocality,
   type GroupFixture,
   groupFixture
 } from '../../test/groupFixtures'
+import { afterCommitsSettled } from '../db/atomic'
 
 describe('minimal group creation HTTP service', function () {
   this.timeout(60000)
@@ -53,6 +56,46 @@ describe('minimal group creation HTTP service', function () {
         .where('role', '=', 'admin')
         .execute()
     ).length(1)
+  })
+  it('releases the picture it uploaded when the creation does not commit', async () => {
+    for (const route of ['/leagues', '/teams'] as const) {
+      const key = `rolled-back-picture${route.replace('/', '-')}`
+      const name = `Demo Rolled Back ${route.slice(1)}`
+      const before = new Set(f.h.objects.keys())
+      // The same retry key is taken while the picture is uploaded: the
+      // creation's last statement fails, and its transaction rolls back.
+      f.h.controls.beforePut = async () => {
+        await f.h.db
+          .insertInto('creation_idempotency')
+          .values({
+            user_id: userIdOfGumbo(101),
+            key,
+            body_hash: 'taken',
+            response: {}
+          })
+          .execute()
+      }
+      const failed = await f.h.request('POST', route, {
+        name,
+        locality: demoLocality,
+        picture: { image: accountTestPicture },
+        idempotencyKey: key
+      })
+      expect(failed.status, await failed.text()).not.lessThan(400)
+      expect(f.h.controls.beforePut).equals(undefined)
+      await afterCommitsSettled()
+      expect(
+        [...f.h.objects.keys()].filter(held => !before.has(held))
+      ).deep.equals([])
+      const table = route === '/leagues' ? 'leagues' : 'teams'
+      expect(
+        await f.h.db
+          .selectFrom(table)
+          .select('id')
+          .where('name', '=', name)
+          .execute()
+      ).deep.equals([])
+    }
   })
   it('preserves retry identity and rejects changed details, missing locality and unauthorized context', async () => {
     const body = {

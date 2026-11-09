@@ -143,7 +143,7 @@ export function pathOfKey(dir: string, key: string): string | undefined {
     return undefined
   if (
     (parts[0] === 'videos' && parts.length >= 3) ||
-    (parts[0] === 'images' && parts.length >= 4) ||
+    (parts[0] === 'images' && parts.length >= 3) ||
     (parts[0] === 'chat' && parts.length === 3)
   )
     return join(dir, ...parts)

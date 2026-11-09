@@ -11,9 +11,11 @@ import {
   pictureCatalog,
   pictureCatalogVersion
 } from '../../common/pictureCatalog'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { imageKey, putObject, sha256Of } from './images'
 import { imageUrl, PROFILE_SIZE } from './imageUrls'
+import { releaseReplacedPicture } from './republishImages'
 import { spaceConfigured, type SpaceSettings } from './spacesHls'
 
 export async function availablePictures(space: SpaceSettings): Promise<{
@@ -89,24 +91,37 @@ export async function publishPictureCatalog(
   return uploaded
 }
 
-/** A catalog choice is a manual selection, protected from subsequent imports. */
+/**
+ * A catalog choice is a manual selection, protected from subsequent imports.
+ * The picture it replaces goes once no row names it.
+ */
 export async function selectAccountCatalogPicture(
   db: Kysely<Database>,
+  space: SpaceSettings,
   userId: string,
   raw: unknown
 ): Promise<void> {
   const entry = catalogPicture(asCatalogId(raw))!
   if (entry.kind !== 'photo')
     throw new TypeError('Choose a sports profile picture')
-  await db
-    .updateTable('users')
-    .set({
-      picture_catalog_id: entry.id,
-      avatar_path: entry.prefix,
-      avatar_sha256: entry.sha256,
-      avatar_source: 'upload',
-      avatar_updated_at: new Date()
-    })
-    .where('id', '=', userId)
-    .execute()
+  await atomic(db, async trx => {
+    const before = await trx
+      .selectFrom('users')
+      .select('avatar_path')
+      .where('id', '=', userId)
+      .forUpdate()
+      .executeTakeFirst()
+    await trx
+      .updateTable('users')
+      .set({
+        picture_catalog_id: entry.id,
+        avatar_path: entry.prefix,
+        avatar_sha256: entry.sha256,
+        avatar_source: 'upload',
+        avatar_updated_at: new Date()
+      })
+      .where('id', '=', userId)
+      .execute()
+    await releaseReplacedPicture(trx, space, before?.avatar_path)
+  })
 }

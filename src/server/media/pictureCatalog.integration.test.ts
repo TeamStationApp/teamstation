@@ -7,20 +7,27 @@ import { resolve } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import { asCatalogId, pictureCatalog } from '../../common/pictureCatalog'
+import {
+  asCatalogId,
+  catalogPicture,
+  pictureCatalog
+} from '../../common/pictureCatalog'
 import { userIdOfGumbo } from '../../common/userId'
 import {
   type AccountHarness,
   accountHarness,
   accountTestPicture
 } from '../../test/accountHarness'
+import { afterCommitsSettled } from '../db/atomic'
 import { asPictureBody, storePlayerAvatar } from '../teams/storeTeamPictures'
 import { sha256Of } from './images'
+import { imageUrl } from './imageUrls'
 import {
   availablePictures,
   publishPictureCatalog,
   selectAccountCatalogPicture
 } from './pictureCatalog'
+import { republishOwnedImages } from './republishImages'
 import type { SpaceSettings } from './spacesHls'
 
 describe('shared sports picture catalog', function () {
@@ -61,8 +68,18 @@ describe('shared sports picture catalog', function () {
       await publishPictureCatalog(h.space, resolve('src/app/assets/sports'))
     ).equals(0)
     const count = h.objects.size
-    await selectAccountCatalogPicture(h.db, userIdOfGumbo(101), 'baseball')
-    await selectAccountCatalogPicture(h.db, userIdOfGumbo(102), 'baseball')
+    await selectAccountCatalogPicture(
+      h.db,
+      h.space,
+      userIdOfGumbo(101),
+      'baseball'
+    )
+    await selectAccountCatalogPicture(
+      h.db,
+      h.space,
+      userIdOfGumbo(102),
+      'baseball'
+    )
     const users = await h.db
       .selectFrom('users')
       .select(['avatar_path', 'picture_catalog_id'])
@@ -72,7 +89,12 @@ describe('shared sports picture catalog', function () {
     expect(h.objects.size).equals(count)
     const first = (await availablePictures(h.space)).entries[0]
     expect((await fetch(first.url)).status).equals(200)
-    await selectAccountCatalogPicture(h.db, userIdOfGumbo(102), 'basketball')
+    await selectAccountCatalogPicture(
+      h.db,
+      h.space,
+      userIdOfGumbo(102),
+      'basketball'
+    )
     expect(h.objects.size).equals(count)
     expect(
       await availablePictures({ ...h.space, accessKeyId: '' }).then(
@@ -81,11 +103,36 @@ describe('shared sports picture catalog', function () {
       )
     ).instanceOf(Error)
     expect(
-      await selectAccountCatalogPicture(h.db, userIdOfGumbo(101), 'flag').then(
+      await selectAccountCatalogPicture(
+        h.db,
+        h.space,
+        userIdOfGumbo(101),
+        'flag'
+      ).then(
         () => null,
         (error: unknown) => error
       )
     ).instanceOf(TypeError)
+  })
+  it('deletes the uploaded picture a catalog choice replaces', async () => {
+    const uploaded = `images/user/${'9a'.repeat(16)}`
+    const keys = [96, 192].map(
+      size => `/${h.space.bucket}/${uploaded}-${size}.png`
+    )
+    for (const key of keys) h.objects.set(key, Buffer.from('face'))
+    await h.db
+      .updateTable('users')
+      .set({ avatar_path: uploaded, picture_catalog_id: null })
+      .where('id', '=', userIdOfGumbo(101))
+      .execute()
+    await selectAccountCatalogPicture(
+      h.db,
+      h.space,
+      userIdOfGumbo(101),
+      'baseball-cap'
+    )
+    await afterCommitsSettled()
+    expect(keys.map(key => h.objects.has(key))).deep.equals([false, false])
   })
   it('refuses missing renditions and allows retry after publication', async () => {
     const entry = pictureCatalog[0]
@@ -98,6 +145,43 @@ describe('shared sports picture catalog', function () {
     ).instanceOf(Error)
     await publishPictureCatalog(h.space, resolve('src/app/assets/sports'))
     expect((await availablePictures(h.space)).entries).length(31)
+  })
+  it('keeps a catalog picture on its catalog prefix, signed, through republish', async () => {
+    await selectAccountCatalogPicture(
+      h.db,
+      h.space,
+      userIdOfGumbo(101),
+      'baseball'
+    )
+    await selectAccountCatalogPicture(
+      h.db,
+      h.space,
+      userIdOfGumbo(102),
+      'baseball'
+    )
+    const keys = [...h.objects.keys()].sort()
+    expect(await republishOwnedImages(h.db, h.space)).includes({ moved: 0 })
+    const prefix = catalogPicture(asCatalogId('baseball'))!.prefix
+    for (const id of [101, 102]) {
+      const { avatar_path: held } = await h.db
+        .selectFrom('users')
+        .select('avatar_path')
+        .where('id', '=', userIdOfGumbo(id))
+        .executeTakeFirstOrThrow()
+      expect(held).equals(prefix)
+      expect(
+        new URL(imageUrl(h.space, held) ?? '').searchParams.has(
+          'X-Amz-Signature'
+        )
+      ).equals(true)
+    }
+    expect([...h.objects.keys()].sort()).deep.equals(keys)
+    const available = await availablePictures(h.space)
+    expect(available.entries).length(31)
+    for (const entry of available.entries)
+      expect(new URL(entry.url).searchParams.has('X-Amz-Signature')).equals(
+        true
+      )
   })
   it('reads a signature-enforcing private catalog with GET and recovers when a rendition is missing', async () => {
     const fixtureSecret = 'synthetic-catalog-signature-secret'
