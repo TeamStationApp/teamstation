@@ -564,6 +564,34 @@ describe('a guardian reading their child’s page', function () {
     }
   })
 
+  it('gives a team on a public prefix its logo with no signature', async function () {
+    const db = f.h.db
+    const prefix = `images/team/${'5a'.repeat(16)}`
+    await db
+      .updateTable('teams')
+      .set({ logo_path: prefix })
+      .where('id', '=', f.teamA)
+      .execute()
+    try {
+      const mine = await read(
+        `/players/${userIdOfGumbo(avery)}`,
+        f.people.guardian
+      )
+      const logo = (
+        mine.teams as Array<{ teamId: string; logoUrl: string | null }>
+      ).find(team => team.teamId === f.teamA)?.logoUrl
+      const url = new URL(logo ?? '')
+      expect(url.pathname.endsWith(`/${prefix}-96.png`)).equals(true)
+      expect(url.search).equals('')
+    } finally {
+      await db
+        .updateTable('teams')
+        .set({ logo_path: null })
+        .where('id', '=', f.teamA)
+        .execute()
+    }
+  })
+
   it('lists the Hawks once, in the season they are a child of, to the guardian and the coach', async function () {
     const seasons = (answer: any): Array<[string, string | null]> =>
       (answer.teams as Array<{ teamId: string; seasonId: string | null }>).map(
