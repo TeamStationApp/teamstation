@@ -40,6 +40,16 @@ export function compareScoringMutations(
         ? 1
         : a.revision - b.revision
 }
+
+/** Whether two writes observed the same accepted scoring version. */
+export function sameScoringMutation(
+  a: ScoringMutation | null | undefined,
+  b: ScoringMutation | null | undefined
+): boolean {
+  return a == null
+    ? b == null
+    : b != null && compareScoringMutations(a, b) === 0
+}
 /** Stable across property order, so retries cannot reuse an identity for different data. */
 export function scoringFingerprintInput(value: unknown): string {
   if (Array.isArray(value))

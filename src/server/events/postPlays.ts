@@ -27,7 +27,7 @@ import {
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
 import {
   asScoringMutation,
-  compareScoringMutations,
+  sameScoringMutation,
   scoringFingerprintInput,
   type ScoringMutation
 } from '../../common/scoring/scoringMutation'
@@ -350,6 +350,15 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       : null
     const mutation = body.scoringMutation
     if (
+      live &&
+      system === 'teamstation' &&
+      (mutation != null || options.scoringAuthor === true) &&
+      body.scoringBase === undefined
+    )
+      throw badRequest(
+        'Update TeamStation and reopen the game before scoring; an observed scoring base is required'
+      )
+    if (
       body.scoringHistory != null &&
       (mutation == null || body.scoringBase === undefined)
     )
@@ -370,11 +379,8 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         : asScoringMutation(game.scoring_mutation)
     const scoringBaseChanged =
       body.scoringBase !== undefined &&
-      (body.scoringBase == null
-        ? priorMutation != null
-        : priorMutation == null ||
-          compareScoringMutations(body.scoringBase, priorMutation) !== 0)
-    if (scoringBaseChanged && body.scoringHistory == null)
+      !sameScoringMutation(body.scoringBase, priorMutation)
+    if (scoringBaseChanged && mutation == null)
       throw conflict(
         'Somebody else changed the scoring since this lineup was read',
         { stale: true }
@@ -384,10 +390,9 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       .digest('hex')
     if (
       mutation != null &&
-      priorMutation != null &&
-      compareScoringMutations(mutation, priorMutation) <= 0
+      (scoringBaseChanged || sameScoringMutation(mutation, priorMutation))
     ) {
-      const equal = compareScoringMutations(mutation, priorMutation) === 0
+      const equal = sameScoringMutation(mutation, priorMutation)
       if (
         equal &&
         (game.scoring_mutation as { fingerprint?: string }).fingerprint !==
@@ -423,17 +428,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       return answer
     }
     if (mutation != null) {
-      // Usually this is a small delta. After another branch displaced its
-      // base, restore the author's completed ancestry before applying it.
-      if (scoringBaseChanged && body.scoringHistory != null)
-        body.plays = [
-          ...new Map([
-            ...body.scoringHistory.map(
-              play => [play.about.atBatIndex, play] as const
-            ),
-            ...body.plays.map(play => [play.about.atBatIndex, play] as const)
-          ]).values()
-        ]
+      // Only an edit based on the accepted version can replace its tail.
       const cursor = body.currentPlay?.about.atBatIndex
       if (
         (cursor != null && cursor !== mutation.frontier) ||

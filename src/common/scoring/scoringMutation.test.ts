@@ -5,6 +5,7 @@ import {
   asScoringMutation,
   authoredScoringMutation,
   compareScoringMutations,
+  sameScoringMutation,
   scoringFingerprintInput
 } from './scoringMutation'
 
@@ -35,6 +36,18 @@ describe('scoring authorship', () => {
     expect(compareScoringMutations(stamp, { ...stamp, id: 'phone-0' })).above(0)
     expect(compareScoringMutations(stamp, { ...stamp, revision: 1 })).below(0)
     expect(compareScoringMutations(stamp, { ...stamp, frontier: 0 })).equals(0)
+  })
+  it('compares observed versions independently of a deletion frontier', () => {
+    expect(sameScoringMutation(null, undefined)).equals(true)
+    expect(sameScoringMutation(undefined, stamp)).equals(false)
+    expect(sameScoringMutation(stamp, null)).equals(false)
+    expect(sameScoringMutation(stamp, { ...stamp, frontier: 0 })).equals(true)
+    for (const other of [
+      { ...stamp, at: 999 },
+      { ...stamp, id: 'peer' },
+      { ...stamp, revision: 1 }
+    ])
+      expect(sameScoringMutation(stamp, other)).equals(false)
   })
   it('authors distinct identities even in the same clock millisecond', () => {
     const a = authoredScoringMutation(1000)
