@@ -25,6 +25,8 @@ export interface StackOptions {
   lan?: boolean
   /** Start Metro with this stack's API, for a native app. */
   native?: boolean
+  /** Which bundle to compile before the app asks, so a cold Metro is ready. */
+  platform?: 'ios' | 'android'
   services: string[]
   root?: string
   /** Seeds `baseline` on this mailbox, so its accounts can sign in. */
@@ -65,6 +67,19 @@ async function waitForPackager(port: number): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 500))
   }
   throw new BlockedError('Metro did not start')
+}
+
+/** Compiles the app bundle before a phone asks, so the first screen is not a loader. */
+async function warmBundle(
+  port: number,
+  platform: 'ios' | 'android'
+): Promise<void> {
+  const url =
+    `http://127.0.0.1:${port}/index.bundle?platform=${platform}` +
+    '&dev=true&minify=false'
+  const reply = await fetch(url, { signal: AbortSignal.timeout(180000) })
+  if (!reply.ok) throw new BlockedError('Metro did not serve the bundle')
+  await reply.arrayBuffer()
 }
 
 export async function packagerPort(host = '127.0.0.1'): Promise<number> {
@@ -328,6 +343,8 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         metro.kill('SIGTERM')
       })
       await waitForPackager(metroPort)
+      if (options.platform != null)
+        await warmBundle(metroPort, options.platform)
     }
 
     // Waiting for the API to come up answers 502s that are nobody's failure.

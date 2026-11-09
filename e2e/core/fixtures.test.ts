@@ -109,7 +109,7 @@ describe('ctx.signIn', function () {
       {
         assertVisible: async (value: { text?: string }) => {
           calls.push(['see', value])
-          if (value.text === 'TeamStation menu' && menuChecks++ < 2) {
+          if (value.text === 'TeamStation menu' && menuChecks++ < 3) {
             throw new Error('not signed in')
           }
         },
@@ -133,7 +133,7 @@ describe('ctx.signIn', function () {
         name === 'type' && (value as { text?: string }).text === 'pw'
     )
     expect(typed.length).equals(2)
-    expect(menuChecks).equals(4)
+    expect(menuChecks).equals(5)
   })
 
   it('still fails when the password never signs in', async function () {
@@ -157,7 +157,7 @@ describe('ctx.signIn', function () {
       })
     })
     expect(error.message).equals('not signed in')
-    expect(menuChecks).equals(6)
+    expect(menuChecks).equals(9)
   })
 
   it('takes a role from the scenario’s worlds first, then baseline', function () {

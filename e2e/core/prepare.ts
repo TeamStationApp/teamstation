@@ -35,6 +35,29 @@ const realRun: Run = (command, args, env) => {
   })
 }
 
+/** An SDK whose platform-tools are missing cannot install or see a device. */
+function androidSdkEnv(): NodeJS.ProcessEnv {
+  const home = process.env.ANDROID_HOME
+  if (home != null && existsSync(join(home, 'platform-tools', 'adb'))) return {}
+  const sdk = join(homedir(), 'Library', 'Android', 'sdk')
+  if (!existsSync(join(sdk, 'platform-tools', 'adb'))) return {}
+  return { ANDROID_HOME: sdk, ANDROID_SDK_ROOT: sdk }
+}
+
+/** The phone loads the packager from its own localhost. Forward that to this machine. */
+function forwardPackager(
+  device: string,
+  port: number,
+  run: Run,
+  env: NodeJS.ProcessEnv
+): void {
+  const adb =
+    env.ANDROID_HOME == null
+      ? 'adb'
+      : join(env.ANDROID_HOME, 'platform-tools', 'adb')
+  run(adb, ['-s', device, 'reverse', `tcp:${port}`, `tcp:${port}`])
+}
+
 function installPackage(options: PrepareOptions, run: Run): void {
   const { app, device, packagePath } = options
   if (packagePath == null) throw new HarnessError('No package to install')
@@ -49,7 +72,9 @@ function installPackage(options: PrepareOptions, run: Run): void {
       packagePath
     ])
   } else if (app.endsWith('-android')) {
-    run('adb', ['-s', device, 'install', '-r', packagePath])
+    const env = androidSdkEnv()
+    run('adb', ['-s', device, 'install', '-r', packagePath], env)
+    forwardPackager(device, options.metroPort ?? 8081, run, env)
   } else {
     throw new HarnessError(`Unknown app "${app}"`)
   }
@@ -133,6 +158,7 @@ function buildLocally(options: PrepareOptions, run: Run): void {
       env
     )
   } else if (app.endsWith('-android')) {
+    const androidEnv = { ...env, ...androidSdkEnv() }
     run(
       'npx',
       [
@@ -143,8 +169,9 @@ function buildLocally(options: PrepareOptions, run: Run): void {
         '--no-packager',
         ...port
       ],
-      env
+      androidEnv
     )
+    forwardPackager(device, options.metroPort ?? 8081, run, androidEnv)
   } else {
     throw new HarnessError(`Unknown app "${app}"`)
   }

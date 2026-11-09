@@ -770,9 +770,20 @@ describe('prepare', function () {
     })[0]
     expect(phone.args).includes('--device')
     expect(phone.args).not.includes('--udid')
-    expect(
-      runs({ app: 'teamstation-android', device: 'd', origin })[0].args
-    ).includes('run-android')
+    const android = runs({
+      app: 'teamstation-android',
+      device: 'd',
+      origin,
+      metroPort: 8081
+    })
+    expect(android[0].args).includes('run-android')
+    expect(android[1].args).deep.equals([
+      '-s',
+      'd',
+      'reverse',
+      'tcp:8081',
+      'tcp:8081'
+    ])
   })
 
   it('refuses a loopback origin, no target and an unknown app', function () {

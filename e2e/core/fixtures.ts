@@ -146,9 +146,14 @@ async function typeCredentials(
 ): Promise<void> {
   await typeInto(device, 'E-mail address', account.email)
   await typeInto(device, 'Password', account.password)
-  // The password field's Go key signs in on its own. The button is gone by
-  // the time a tap would reach it, and the home screen is already up.
+  // iOS submits from the password field's Go key. Android leaves the keyboard
+  // over the button, so it is dismissed and the button is tapped. Hiding the
+  // keyboard on iOS sends Return, which submits that same field.
   if (await visible(device, 'TeamStation menu', 2000)) return
+  if (typeof device.hideKeyboard === 'function') {
+    await device.hideKeyboard()
+    if (await visible(device, 'TeamStation menu', 2000)) return
+  }
   await device.tapOn({ text: 'Sign in' })
 }
 

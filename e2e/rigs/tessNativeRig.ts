@@ -276,6 +276,8 @@ export async function withTessNative(
       await typeInto(m, 'E-mail address', email)
       await m.hideKeyboard()
       await native.tapIfShown('Send me a sign-in code', 2000)
+      // The code field focuses and its keyboard covers the prompt on Android.
+      if (options.surface === 'android-app') await m.hideKeyboard()
       await show('.*six-digit code.*', 30000)
       for (let waited = 0; code == null && waited < 5000; waited += 1000) {
         code = t.f.h.mail.get(email)

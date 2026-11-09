@@ -295,6 +295,12 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       stack = await startStack({
         lan: surface !== 'web-chromium',
         native: surface === 'ios-app' || surface === 'android-app',
+        platform:
+          surface === 'ios-app'
+            ? 'ios'
+            : surface === 'android-app'
+              ? 'android'
+              : undefined,
         services: spec.services,
         root,
         fault: options.fault,
