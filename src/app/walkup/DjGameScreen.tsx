@@ -16,6 +16,7 @@ import {
   NAV_CLEARANCE_REM,
   Screen
 } from '../components'
+import { useHeaderSlot } from '../components/headerSlot'
 import { navClearanceAboveInset } from '../components/navClearance'
 import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
@@ -131,13 +132,17 @@ export function DjGameScreen(props: DjGameScreenProps): React.ReactElement {
     screen: 'dj',
     store: readinessStore
   })
-  // The list runs under the floating tabs, and ends clear of them.
+  // The list runs under the floating tabs and the offline banner, and ends
+  // clear of them.
+  const banner = useHeaderSlot().bannerHeight ?? 0
   const clearance =
     navClearanceAboveInset(
       Platform.OS,
       theme.rem(NAV_CLEARANCE_REM),
       theme.rem(FLOATING_BOTTOM_REM)
-    ) + useInsets().bottom
+    ) +
+    useInsets().bottom +
+    banner
 
   const [shown, setShown] = useState<DjGame | undefined>(undefined)
   const [error, setError] = useState(false)
