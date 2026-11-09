@@ -33,7 +33,7 @@ import type { SwapEffect } from './playsLost'
 import { awaitingResult, closesFirst, nextDecision } from './rules'
 import {
   authoredScoringMutation,
-  compareScoringMutations,
+  sameScoringMutation,
   type ScoringMutation
 } from './scoringMutation'
 import {
@@ -503,8 +503,8 @@ export class ScoringSession {
 
   /** Capture the calibrated time of input before rendering or animation runs. */
   captureScoringAction(at = this.now().getTime()): ScoringMutation {
-    // Calibration may move wall time backwards. An action that observed a
-    // version must still sort after it; unrelated devices keep wall ordering.
+    // Calibration may move wall time backwards. Keep local action identities
+    // increasing; the server resolves conflicts against the observed base.
     this.lastAuthoredAt = Math.max(
       at,
       this.lastAuthoredAt + 1,
@@ -704,7 +704,7 @@ export class ScoringSession {
       if (rejectedScoring != null) {
         if (
           winner.scoringMutation == null ||
-          compareScoringMutations(rejectedScoring, winner.scoringMutation) >= 0
+          sameScoringMutation(rejectedScoring, winner.scoringMutation)
         )
           return undefined
       } else if (
@@ -1246,7 +1246,7 @@ export class ScoringSession {
         play: this.game.liveData.plays.currentPlay
       }
     // `time` is when the change was made, on another device and maybe long
-    // before: its action time, for the latest change to win. It plays, and
+    // before: retain its authorship time for lineup reconciliation. It plays, and
     // its event is recorded, now, as it enters the log after what was
     // logged meanwhile, so the log's play times run forward.
     const now = this.now().toISOString()
@@ -1295,7 +1295,10 @@ export class ScoringSession {
     // An Undo puts nothing back, so what it took off within the minute is let
     // go at once (`settle`).
     if (this.log.slice(length - 1).some(action => action.type !== 'lineup')) {
-      if (authorship != null && authorship.id !== this.authoredMutation?.id) {
+      if (
+        authorship != null &&
+        authorship.id !== (this.authoredMutation ?? this.knownMutation)?.id
+      ) {
         this.authoredMutation = { ...authorship }
         this.mutationPending = true
       } else this.authorMutation(authorship != null)
@@ -1497,7 +1500,7 @@ export class ScoringSession {
         if (authored && !rosterCompletion) {
           if (
             authorship != null &&
-            authorship.id !== this.authoredMutation?.id
+            authorship.id !== (this.authoredMutation ?? this.knownMutation)?.id
           ) {
             this.authoredMutation = { ...authorship }
             this.mutationPending = true
@@ -1512,8 +1515,8 @@ export class ScoringSession {
   /**
    * Reads the game the server holds again and takes it up, so a change
    * somebody else saved arrives here. It does so only while nothing here is
-   * waiting to be saved, so none of this session's changes are lost; the last
-   * one saved wins. The optional guard also protects UI input not yet
+   * waiting to be saved, so pending changes retain their observed base.
+   * The optional guard also protects UI input not yet
    * represented by a pending save. Says whether the game changed.
    */
   async reload(canAdopt: () => boolean = () => true): Promise<boolean> {
@@ -1643,9 +1646,11 @@ export class ScoringSession {
       return count
     }
     const ownMutation = this.mutationPending ? this.authoredMutation : undefined
-    const ordered = ownMutation != null && fresh.knownMutation != null
+    const ordered =
+      ownMutation != null &&
+      (this.knownMutation != null || fresh.knownMutation != null)
     const oursWins =
-      ordered && compareScoringMutations(ownMutation, fresh.knownMutation!) > 0
+      ordered && sameScoringMutation(this.knownMutation, fresh.knownMutation)
     const fork = agree(this.log, fresh.log)
     const same = oursWins ? fork : agree(this.savedLog, this.log)
     const kept = oursWins ? fork : agree(this.savedLog, fresh.log)
@@ -2446,12 +2451,11 @@ export class ScoringSession {
       const mutation = this.mutationPending ? this.authoredMutation : undefined
       if (mutation != null) {
         const picture = this.picture()
-        // A newer branch can win after an acknowledged ancestor was replaced
-        // or undone elsewhere. Include its completed ancestry, even when the
-        // phone's optimistic queue has already drained that ancestor.
+        // Keep ancestry for durable lineup recovery. It never authorizes a
+        // scoring write after another timeline has displaced its observed base.
         change.scoringHistory = [...picture.plays.values()]
         change.scoringBase = this.knownMutation ?? null
-        // A stamped snapshot can rewind a competing tail. Always state its
+        // An accepted current-version Undo can rewind its tail. Always state its
         // current play explicitly; omission means unchanged for legacy writes.
         change.currentPlay = picture.current
         change.scoringMutation = {
