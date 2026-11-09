@@ -1429,7 +1429,9 @@ describe('swapping from the scoring menu', function () {
     const queued = await swappable({ phone: { chains: {}, games: {} } })
     const client = queued.client()
     client.queueSwap = async () => {
-      throw new Error('This game is not on the phone yet. Try again in a moment.')
+      throw new Error(
+        'This game is not on the phone yet. Try again in a moment.'
+      )
     }
     await click(MENU)
     await click(SWAP)
