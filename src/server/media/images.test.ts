@@ -1,5 +1,12 @@
 import { execFile } from 'node:child_process'
-import { mkdtemp, readFile, rm, type stat, writeFile } from 'node:fs/promises'
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  type stat,
+  writeFile
+} from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -12,6 +19,7 @@ import {
   IMAGE_SIZES,
   imageKey,
   imagePathPrefix,
+  isPublicImagePrefix,
   MAX_SOURCE_BYTES,
   normaliseImage,
   putObject,
@@ -23,6 +31,7 @@ import {
   UnreadableImage,
   WIDE_IMAGE_SIZES
 } from './images'
+import { uploadVideoDirectory } from './spacesVideo'
 
 const run = promisify(execFile)
 const FFMPEG = process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
@@ -67,11 +76,29 @@ describe('stored images', function () {
     await rm(dir, { recursive: true, force: true })
   })
 
-  it('names a key by the entity and the hash of its bytes', function () {
-    const prefix = imagePathPrefix('user', 'usr_1', 'a'.repeat(64))
-    expect(prefix).equals('images/user/usr_1/aaaaaaaa')
-    expect(imageKey(prefix, 96)).equals('images/user/usr_1/aaaaaaaa-96.png')
-    expect(imageKey(prefix, 192)).equals('images/user/usr_1/aaaaaaaa-192.png')
+  it('names a key by 16 random bytes and nothing else', function () {
+    for (const kind of ['team', 'league', 'user', 'venue', 'field'] as const) {
+      const prefix = imagePathPrefix(kind)
+      expect(prefix).matches(new RegExp(`^images/${kind}/[0-9a-f]{32}$`))
+      expect(isPublicImagePrefix(prefix), prefix).equals(true)
+      expect(imagePathPrefix(kind), 'a second name').not.equals(prefix)
+    }
+    const prefix = imagePathPrefix('user')
+    expect(imageKey(prefix, 96)).equals(`${prefix}-96.png`)
+    expect(imageKey(prefix, 192)).equals(`${prefix}-192.png`)
+  })
+
+  it('takes neither a catalog picture nor an old name for a public one', function () {
+    for (const prefix of [
+      'images/catalog/v1/baseball/0123456789ab',
+      'images/user/usr_1/aaaaaaaa',
+      `images/team/${'A'.repeat(32)}`,
+      `images/team/${'a'.repeat(31)}`,
+      `images/photo/${'a'.repeat(32)}`,
+      `images/team/${'a'.repeat(32)}/more`,
+      'demo-startup/hosts'
+    ])
+      expect(isPublicImagePrefix(prefix), prefix).equals(false)
   })
 
   it('renders every size, square, whatever shape it was given', async function () {
@@ -295,6 +322,11 @@ describe('stored images', function () {
       string,
       { contentLength?: string; transferEncoding?: string }
     >()
+    /** What each PUT signed and sent besides its body. */
+    const access = new Map<
+      string,
+      { signed: string | null; acl?: string; cacheControl?: string }
+    >()
     const parts = new Map<string, Map<number, Buffer>>()
     const aborted: string[] = []
     let nextUploadId = 1
@@ -339,6 +371,11 @@ describe('stored images', function () {
         framing.set(path, {
           contentLength: req.headers['content-length'],
           transferEncoding: req.headers['transfer-encoding']
+        })
+        access.set(path, {
+          signed: url.searchParams.get('X-Amz-SignedHeaders'),
+          acl: req.headers['x-amz-acl'] as string | undefined,
+          cacheControl: req.headers['cache-control']
         })
         if (path.includes('refused')) {
           // A Space refuses a bad signature at once, without reading the body,
@@ -546,21 +583,76 @@ describe('stored images', function () {
       )
     })
 
-    it('uploads every size and reports where the row should point', async function () {
+    it('uploads every size, public, and reports where the row should point', async function () {
       const source = await makeSource(dir, 200, 200)
       const stored = await storeImage({
         ffmpegPath: FFMPEG,
         space,
         kind: 'user',
-        entityId: 'usr_7',
         source
       })
       expect(stored, 'a new picture is stored').not.equals(undefined)
-      expect(stored?.pathPrefix).contains('images/user/usr_7/')
+      expect(stored?.pathPrefix).matches(/^images\/user\/[0-9a-f]{32}$/)
       for (const size of IMAGE_SIZES) {
         const key = imageKey(stored?.pathPrefix ?? '', size)
         expect(written.has(`/example-media-bkt/${key}`), key).equals(true)
+        expect(access.get(`/example-media-bkt/${key}`), key).deep.equals({
+          signed: 'host;x-amz-acl',
+          acl: 'public-read',
+          cacheControl: undefined
+        })
       }
+    })
+
+    it('keeps a still and a chat attachment private, signing host alone', async function () {
+      // A still's PUT, as `stills.ts` makes it.
+      await putObject({
+        space,
+        key: 'stills/vid_1/12-480.jpg',
+        body: Buffer.from('jpeg'),
+        contentType: 'image/jpeg',
+        signal: AbortSignal.timeout(5000)
+      })
+      // A chat attachment's, as `chat/attachments.ts` makes it.
+      const whole = join(dir, 'attachment')
+      await writeFile(whole, 'sealed')
+      await putObjectFile({
+        space,
+        key: 'chat/att_1',
+        path: whole,
+        contentType: 'application/octet-stream'
+      })
+      for (const path of [
+        '/example-media-bkt/stills/vid_1/12-480.jpg',
+        '/example-media-bkt/chat/att_1'
+      ])
+        expect(access.get(path), path).deep.equals({
+          signed: 'host',
+          acl: undefined,
+          cacheControl: undefined
+        })
+    })
+
+    it('keeps a secret-path segment public and cached, as it was', async function () {
+      const video = join(dir, 'secretVideo')
+      await rm(video, { recursive: true, force: true })
+      await mkdir(video)
+      await writeFile(join(video, 'seg000001.m4s'), 'segment')
+      await uploadVideoDirectory({
+        space,
+        videoId: 'vid_secret',
+        spaceSecret: 'c'.repeat(32),
+        dir: video
+      })
+      const [path] = [...access.keys()].filter(key =>
+        key.endsWith('/seg000001.m4s')
+      )
+      expect(path).contains('vid_secret')
+      expect(access.get(path)).deep.equals({
+        signed: 'cache-control;host;x-amz-acl',
+        acl: 'public-read',
+        cacheControl: 'public, max-age=600'
+      })
     })
 
     it('uploads nothing when the picture has not changed', async function () {
@@ -569,7 +661,6 @@ describe('stored images', function () {
         ffmpegPath: FFMPEG,
         space,
         kind: 'user',
-        entityId: 'usr_8',
         source
       })
       const before = written.size
@@ -577,7 +668,6 @@ describe('stored images', function () {
         ffmpegPath: FFMPEG,
         space,
         kind: 'user',
-        entityId: 'usr_8',
         source,
         knownSha256: first?.sha256
       })
