@@ -340,7 +340,17 @@ systemctl restart "$4"`,
     [RECORD_DROPIN, SEAT.recordFile, SEAT.serviceUser, SEAT.service]
   )
   await seatHealthy()
-  log(`request recorder on for the seat service (TS_REQUEST_RECORD set)`)
+  // The health reads just made go through the recorder. A service whose
+  // filesystem is read-only outside its data directory drops every line
+  // silently, which would pass every request-log check with nothing in it.
+  const written = recorded().filter(line => line.includes('/api/v1/health'))
+  if (written.length === 0)
+    throw new Error(
+      'The request recorder wrote nothing: seat.recordFile must be a path the seat service may write (its data directory)'
+    )
+  log(
+    `request recorder on for the seat service (TS_REQUEST_RECORD set; ${written.length} health reads recorded)`
+  )
 }
 /** The recorder's lines, in arrival order. */
 function recorded(): string[] {
@@ -1572,8 +1582,8 @@ async function main(): Promise<void> {
   let recorder = false
   try {
     if (MODE === 'after' && runs(2)) {
-      await startRecorder()
       recorder = true
+      await startRecorder()
     }
     const steps = [step1, step2, step3, step4, step5, step6, step7, step8]
     for (let i = 0; i < steps.length; i++) {

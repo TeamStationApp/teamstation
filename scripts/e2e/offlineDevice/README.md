@@ -35,7 +35,7 @@ Where the seat and the shaper are, and how to reach them, stays out of Git.
     "serviceUser": "<the user the seat's service runs as>",
     "service": "<the seat's API service unit>",
     "psql": "<a command that opens psql on the seat's database>",
-    "recordFile": "<where the request recorder writes during the run>"
+    "recordFile": "<where the request recorder writes: a path the seat service may write>"
   }
 }
 ```
@@ -104,6 +104,10 @@ failing. Steps:
 
 The request recorder (`TS_REQUEST_RECORD`) is switched on for the seat's
 service for an `after` run and switched off, its file deleted, when it ends.
+A seat service whose filesystem is read-only outside its data directory
+drops the recorder's lines without an error, so `recordFile` belongs in that
+directory; the run stops at once if the seat's own health reads are not
+recorded.
 Every shape is cleared in `finally`, and each shape call is a `$` line in
 `<artifacts>/shape.log`.
 
