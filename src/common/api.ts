@@ -2028,6 +2028,22 @@ export interface GamesPageQuery {
   limit?: number
 }
 
+/** The read of a league's, season's or team's page. */
+export function groupPath(ref: GroupRef): string {
+  const collection =
+    ref.kind === 'league'
+      ? 'leagues'
+      : ref.kind === 'season'
+        ? 'seasons'
+        : 'teams'
+  return `/${collection}/${encodeURIComponent(ref.id)}`
+}
+
+/** The read of an event's Info section, for one team's attendance or none. */
+export function eventInfoPath(eventId: string, teamId?: string): string {
+  return `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`
+}
+
 function gamesPageParams(query: GamesPageQuery): string {
   const params = ['paged=1']
   if (query.when != null && query.when !== 'all')
@@ -4663,17 +4679,7 @@ export class TeamStationClient {
   }
 
   async group(ref: GroupRef): Promise<GroupDetail> {
-    const collection =
-      ref.kind === 'league'
-        ? 'leagues'
-        : ref.kind === 'season'
-          ? 'seasons'
-          : 'teams'
-    return await this.request(
-      'GET',
-      `/${collection}/${encodeURIComponent(ref.id)}`,
-      asGroupDetail
-    )
+    return await this.request('GET', groupPath(ref), asGroupDetail)
   }
 
   async createGroup(body: CreateGroup): Promise<{
@@ -5461,7 +5467,7 @@ export class TeamStationClient {
   async eventInfo(eventId: string, teamId?: string): Promise<EventInfo> {
     return await this.request(
       'GET',
-      `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`,
+      eventInfoPath(eventId, teamId),
       asEventInfo
     )
   }
@@ -7252,6 +7258,26 @@ export class TeamStationClient {
    */
   async cached<T>(_key: string, _cleaner: Cleaner<T>): Promise<T | undefined> {
     return undefined
+  }
+
+  /**
+   * The games this client keeps on the device for one schedule's window
+   * (`scope` such as `me` or `team:<id>`), as the page its screen paints
+   * before its read returns. The web keeps none: an empty page, which a
+   * screen does not paint.
+   */
+  async scheduleGames<T>(
+    _scope: string,
+    _window: string,
+    _cleaner: Cleaner<T>
+  ): Promise<Page<T>> {
+    return {
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    }
   }
 
   /**
