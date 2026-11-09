@@ -1,4 +1,4 @@
-import { asArray } from 'cleaners'
+import { asArray, asMaybe, asString, type Cleaner } from 'cleaners'
 import { useCallback, useEffect, useState } from 'react'
 
 import {
@@ -8,7 +8,7 @@ import {
   type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { candidatesKey } from '../sync/documentKeys'
+import { candidatesKey, searchWords } from '../sync/documentKeys'
 import { useDebouncedValue } from './useDebouncedValue'
 
 /** How long typing must pause before the server is asked. */
@@ -34,20 +34,43 @@ export interface RosterCandidates {
   retry: () => void
 }
 
-/** Whether a person the phone keeps answers `query`, as the server matches. */
+/**
+ * A person the phone keeps for a team, with the words of the searches that
+ * found him (`matched`): the server matched each to the start of one of his
+ * names, which his short name (`Jordan Q`) may not show.
+ */
+export type KeptCandidate = RosterCandidate & { matched?: string[] }
+
+/** A kept person as the phone stored him, his search words with him. */
+const asKeptCandidate: Cleaner<KeptCandidate> = raw => {
+  const candidate = asRosterCandidate(raw)
+  const matched = asMaybe(asArray(asString))(
+    raw != null && typeof raw === 'object'
+      ? (raw as { matched?: unknown }).matched
+      : undefined
+  )
+  return matched == null || matched.length === 0
+    ? candidate
+    : { ...candidate, matched }
+}
+
+/**
+ * Whether a person the phone keeps answers `query`, as the server matches:
+ * each word starts one of his shown names, or starts a word of a search the
+ * server already found him by (a name of his that starts with that word
+ * starts with this one too).
+ */
 export function candidateMatches(
-  candidate: RosterCandidate,
+  candidate: KeptCandidate,
   query: string
 ): boolean {
-  const words = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter(word => word !== '')
+  const words = searchWords(query)
   if (words.length === 0) return true
   const names = [
     candidate.shortName,
     candidate.shortParts.first,
-    candidate.shortParts.last
+    candidate.shortParts.last,
+    ...(candidate.matched ?? [])
   ]
     .join(' ')
     .toLowerCase()
@@ -55,31 +78,43 @@ export function candidateMatches(
   return words.every(word => names.some(name => name.startsWith(word)))
 }
 
+/** A kept person as a row to list, without his search words. */
+function listedRow(candidate: KeptCandidate): RosterCandidate {
+  if (candidate.matched == null) return candidate
+  const { matched: _matched, ...row } = candidate
+  return row
+}
+
 /**
  * The people each client's searches found this session, by the session's
  * token and the team: the scoring screen's at-once list where the client
  * keeps no file (the web), and before the phone's file is read.
  */
-const found = new WeakMap<object, Map<string, RosterCandidate[]>>()
+const found = new WeakMap<object, Map<string, KeptCandidate[]>>()
 
-function foundFor(
-  client: TeamStationClient,
-  teamId: string
-): RosterCandidate[] {
+function foundFor(client: TeamStationClient, teamId: string): KeptCandidate[] {
   return found.get(client)?.get(`${client.token ?? ''} ${teamId}`) ?? []
 }
 
-/** Keeps `rows` as found for `teamId`, newest first and each once. */
+/**
+ * Keeps `rows`, the answer to a search for `query`, as found for `teamId`,
+ * newest first and each once, with the words that found each.
+ */
 function keepFound(
   client: TeamStationClient,
   teamId: string,
-  rows: readonly RosterCandidate[]
+  rows: readonly RosterCandidate[],
+  query: string
 ): void {
   if (rows.length === 0) return
-  const byTeam = found.get(client) ?? new Map<string, RosterCandidate[]>()
+  const byTeam = found.get(client) ?? new Map<string, KeptCandidate[]>()
   found.set(client, byTeam)
   const key = `${client.token ?? ''} ${teamId}`
-  byTeam.set(key, merged(rows, byTeam.get(key) ?? []).slice(0, 500))
+  const words = searchWords(query)
+  const answered = rows.map(row =>
+    words.length === 0 ? row : { ...row, matched: words }
+  )
+  byTeam.set(key, merged(answered, byTeam.get(key) ?? []).slice(0, 500))
 }
 
 /**
@@ -101,13 +136,30 @@ export function forgetFound(
     )
 }
 
-/** `first`, then each of `then` it does not list, by user id. */
-function merged(
-  first: readonly RosterCandidate[],
-  then: readonly RosterCandidate[]
-): RosterCandidate[] {
+/**
+ * `first`, then each of `then` it does not list, by user id. A person in
+ * both keeps the search words of both.
+ */
+function merged<T extends KeptCandidate>(
+  first: readonly T[],
+  then: readonly T[]
+): T[] {
+  const later = new Map(then.map(row => [row.userId, row]))
   const listed = new Set(first.map(row => row.userId))
-  return [...first, ...then.filter(row => !listed.has(row.userId))]
+  return [
+    ...first.map(row => {
+      const words = [
+        ...new Set([
+          ...(row.matched ?? []),
+          ...(later.get(row.userId)?.matched ?? [])
+        ])
+      ]
+      return words.length === (row.matched?.length ?? 0)
+        ? row
+        : { ...row, matched: words }
+    }),
+    ...then.filter(row => !listed.has(row.userId))
+  ]
 }
 
 function problemOf(error: unknown): string {
@@ -155,7 +207,7 @@ export function useRosterCandidates({
   const offline = phoneOffline && !cacheFirst
   // The people found before for the team: this session's at once, then
   // those the phone keeps.
-  const [kept, setKept] = useState<RosterCandidate[]>(() =>
+  const [kept, setKept] = useState<KeptCandidate[]>(() =>
     cacheFirst ? foundFor(client, teamId) : []
   )
   useEffect(() => {
@@ -166,7 +218,7 @@ export function useRosterCandidates({
     Promise.resolve()
       .then(
         async () =>
-          await client.cached(candidatesKey(teamId), asArray(asRosterCandidate))
+          await client.cached(candidatesKey(teamId), asArray(asKeptCandidate))
       )
       .then(
         stored => {
@@ -182,7 +234,9 @@ export function useRosterCandidates({
   // Those matching what is typed, as it is typed.
   const typed = query.trim()
   const cachedRows = cacheFirst
-    ? kept.filter(candidate => candidateMatches(candidate, typed))
+    ? kept
+        .filter(candidate => candidateMatches(candidate, typed))
+        .map(listedRow)
     : []
   useEffect(() => {
     setOffline(client.offline)
@@ -220,7 +274,7 @@ export function useRosterCandidates({
       .then(
         found => {
           if (!current) return
-          keepFound(client, teamId, found)
+          keepFound(client, teamId, found, settled)
           setRows(found)
           setLoading(false)
         },

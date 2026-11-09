@@ -98,6 +98,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dev/refoldScoredGames.js',
   'server/dev/repairPeople.js',
   'server/dev/replaySeed.js',
+  'server/dev/requestRecorder.js',
   'server/dev/rosterCacheEpoch.js',
   'server/dev/samePerson.js',
   'server/dev/scopeAgreementCheck.js',
