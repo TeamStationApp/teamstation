@@ -17,8 +17,14 @@ import {
   applyDevelopIdentity,
   buildIos,
   buildTv,
+  CAMERAMAN_APP,
+  CAMERAMAN_DEVELOP_APP,
   compileAndroid,
   DEVELOP_APP,
+  DIRECTOR_APP,
+  DIRECTOR_DEVELOP_APP,
+  DISTRIBUTOR_APP,
+  DISTRIBUTOR_DEVELOP_APP,
   provenanceEnvironment,
   releaseIos,
   seatEnvironment,
@@ -308,7 +314,18 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.equal(version, 1)
       },
       buildNumber(key, options) {
-        assert.ok([STABLE_APP, TV_APP].includes(key))
+        assert.ok(
+          [
+            STABLE_APP,
+            TV_APP,
+            DIRECTOR_APP,
+            DIRECTOR_DEVELOP_APP,
+            CAMERAMAN_APP,
+            CAMERAMAN_DEVELOP_APP,
+            DISTRIBUTOR_APP,
+            DISTRIBUTOR_DEVELOP_APP
+          ].includes(key)
+        )
         assert.equal(options?.format, 'YYMMDDCC')
         assert.equal(options?.timeZone, 'America/Los_Angeles')
       },
@@ -317,16 +334,18 @@ describe('TeamStation pipeline Masonfile', () => {
       },
       workflow(name, options, declare) {
         const recorded: Record<string, unknown> = { options }
-        declare({
-          stage(stageName, stageOptions) {
-            recorded[stageName] = stageOptions
-          },
-          parallel(groupName, members, groupOptions) {
-            assert.equal(groupName, 'build')
-            assert.equal(groupOptions?.failFast, false)
-            Object.assign(stages, members)
-          }
-        })
+        if (name === 'build') {
+          declare({
+            stage(stageName, stageOptions) {
+              recorded[stageName] = stageOptions
+            },
+            parallel(groupName, members, groupOptions) {
+              assert.equal(groupName, 'build')
+              assert.equal(groupOptions?.failFast, false)
+              Object.assign(stages, members)
+            }
+          })
+        }
         workflows[name] = recorded
       }
     })
@@ -365,7 +384,13 @@ describe('TeamStation pipeline Masonfile', () => {
       branch: ['master'],
       params: { seat: 'production' }
     })
-    assert.deepEqual(Object.keys(workflows), ['build', 'tvos'])
+    assert.deepEqual(Object.keys(workflows), [
+      'build',
+      'tvos',
+      'director',
+      'cameraman',
+      'distributor'
+    ])
     assert.deepEqual(workflows.build?.options, {
       params: {
         seat: {
@@ -701,7 +726,14 @@ describe('TeamStation pipeline Masonfile', () => {
       parallel() {
         assert.fail('the build stages belong to the build workflow')
       },
-      workflow(_name, _options, declare) {
+      workflow(name, _options, declare) {
+        if (name !== 'build') {
+          declare({
+            stage() {},
+            parallel() {}
+          })
+          return
+        }
         declare({
           stage() {},
           parallel(_group, members) {
@@ -727,7 +759,10 @@ describe('TeamStation pipeline Masonfile', () => {
       DEVELOP_APP,
       DEVELOP_APP,
       STABLE_APP,
-      TV_APP
+      TV_APP,
+      DIRECTOR_DEVELOP_APP,
+      CAMERAMAN_DEVELOP_APP,
+      DISTRIBUTOR_DEVELOP_APP
     ])
   })
 
@@ -1028,6 +1063,14 @@ describe('request-only Apple TV workflow', () => {
         workflow(name, options, declare) {
           if (name === 'build') {
             assert.equal(options.triggers, undefined)
+            return
+          }
+          if (
+            name === 'director' ||
+            name === 'cameraman' ||
+            name === 'distributor'
+          ) {
+            assert.deepEqual(options.triggers, [{ request: true }])
             return
           }
           assert.equal(name, 'tvos')

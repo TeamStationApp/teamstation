@@ -14,8 +14,11 @@ declare module '@mason/types' {
   }
   export interface ArchiveOptions {
     workspace?: string
+    project?: string
     scheme: string
     configuration?: string
+    destination?: string
+    sdk?: string
     /** Sets MARKETING_VERSION. One to three numeric components. */
     version?: string
     buildNumber?: string
@@ -27,6 +30,8 @@ declare module '@mason/types' {
   export interface ArchiveResult {
     archive: string
     ipa?: string
+    app?: string
+    pkg?: string
     dsyms: string
   }
   export interface ResignResult {
@@ -70,6 +75,8 @@ declare module '@mason/types' {
       app: string
       platform: string
       path: string
+      version?: string
+      buildNumber?: string
     }) => Promise<void>
     apple: {
       archive: (options: ArchiveOptions) => Promise<ArchiveResult>
@@ -137,6 +144,7 @@ declare module '@mason/types' {
   export interface WorkflowOptions {
     triggers?: Array<{ request: true }>
     params?: Record<string, ChoiceParam>
+    timeout?: string
   }
   export interface Setup {
     /** The branch this run builds. A caller that omits it stands in for master. */

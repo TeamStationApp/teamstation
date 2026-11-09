@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
@@ -28,7 +28,29 @@ export const STABLE_APP = 'app.teamstation.app'
 export const TV_APP = 'app.teamstation.tv'
 export const DEVELOP_APP = 'app.teamstation.develop'
 export const DEVELOP_DISPLAY_NAME = 'TeamStation Develop'
+export const DIRECTOR_APP = 'app.teamstation.director'
+export const CAMERAMAN_APP = 'app.teamstation.cameraman'
+export const DIRECTOR_DEVELOP_APP = 'app.teamstation.director-develop'
+// A dot, not a hyphen: Android package names allow no hyphen, and Mason
+// publishes an APK only under the app id that is its package.
+export const CAMERAMAN_DEVELOP_APP = 'app.teamstation.cameraman.develop'
+export const DIRECTOR_DEVELOP_NAME = 'Director Develop'
+export const CAMERAMAN_DEVELOP_NAME = 'Cameraman Develop'
+// The test control channel's URL schemes a develop build claims, so a flow's
+// tsdirector:// or tscameraman:// link reaches the master build beside it.
+export const DIRECTOR_DEVELOP_SCHEME = 'tsdirector-develop'
+export const CAMERAMAN_DEVELOP_SCHEME = 'tscameraman-develop'
+export const DISTRIBUTOR_APP = 'app.teamstation.distributor'
+export const DISTRIBUTOR_DEVELOP_APP = 'app.teamstation.distributor-develop'
+export const DISTRIBUTOR_NAME = 'TS Distributor'
+export const DISTRIBUTOR_DEVELOP_NAME = 'Distributor Develop'
+// The team of the field apps' Mason app records. The xcconfig carries it:
+// -xcconfig overrides even Mason's own DEVELOPMENT_TEAM on the command line.
+export const FIELD_TEAM = 'V4AK4X7A2V'
+export const FIELD_VERSION = '1.0'
 const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
+const CAMERAMAN_APK_DIR =
+  'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
@@ -42,15 +64,42 @@ const TESTFLIGHT_GROUP = 'TeamStation testers'
 // The same shape ctx.apple.archive and ctx.apple.resign accept.
 const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
 
+/** A master run, or one that names no branch, which stands in for master. */
+export function isMasterBranch(branch: string | undefined): boolean {
+  return branch == null || branch === '' || branch === 'master'
+}
+
+/**
+ * Replaces `from` with `to` in a file below root. A file that already has
+ * `to` and no `from` was rewritten before and is left alone.
+ */
+function rewriteOnce(
+  root: string,
+  file: string,
+  from: string,
+  to: string
+): void {
+  const full = path.join(root, file)
+  let text: string
+  try {
+    text = readFileSync(full, 'utf8')
+  } catch {
+    throw new Error(`${file} is missing ${from}`)
+  }
+  if (!text.includes(from)) {
+    if (text.includes(to)) return
+    throw new Error(`${file} is missing ${from}`)
+  }
+  writeFileSync(full, text.replaceAll(from, to))
+}
+
 /** Which app id this run publishes. Master stays stable; every other branch and every seat does not. */
 export function appIdOf(
   input: { branch?: string; seat?: string } = {}
 ): string {
-  const branch =
-    input.branch == null || input.branch === '' ? 'master' : input.branch
   const seat =
     input.seat == null || input.seat === '' ? 'production' : input.seat
-  if (branch !== 'master' || seat !== 'production') return DEVELOP_APP
+  if (!isMasterBranch(input.branch) || seat !== 'production') return DEVELOP_APP
   return STABLE_APP
 }
 
@@ -79,18 +128,7 @@ function runApp(ctx: {
  */
 export function applyDevelopIdentity(root: string): void {
   const rewrite = (file: string, from: string, to: string): void => {
-    const full = path.join(root, file)
-    let text: string
-    try {
-      text = readFileSync(full, 'utf8')
-    } catch {
-      throw new Error(`${file} is missing ${from}`)
-    }
-    if (!text.includes(from)) {
-      if (text.includes(to)) return
-      throw new Error(`${file} is missing ${from}`)
-    }
-    writeFileSync(full, text.replaceAll(from, to))
+    rewriteOnce(root, file, from, to)
   }
   rewrite(
     'android/app/build.gradle',
@@ -170,6 +208,126 @@ export function setup(m: Setup): void {
         buildNumbers: [TV_APP],
         cache: [{ key: 'npm', paths: ['~/.npm'] }],
         run: buildTv
+      })
+    }
+  )
+  // Request-only, so a push of master or develop does not start these.
+  // Master installs the stable app. Develop and every other branch install
+  // the develop app, beside a master build.
+  const directorApp = fieldAppId(DIRECTOR_APP, DIRECTOR_DEVELOP_APP, m.branch)
+  const cameramanApp = fieldAppId(
+    CAMERAMAN_APP,
+    CAMERAMAN_DEVELOP_APP,
+    m.branch
+  )
+  m.buildNumber(directorApp, {
+    format: 'YYMMDDCC',
+    timeZone: 'America/Los_Angeles'
+  })
+  m.workflow(
+    'director',
+    { triggers: [{ request: true }], timeout: '8h' },
+    w => {
+      w.stage('archive', {
+        on: APPLE,
+        tools: { node: '24', xcode: '26.6', brew: ['xcodegen'] },
+        timeout: '6h',
+        apple: { distribution: 'adHoc', app: directorApp },
+        publishes: [directorApp],
+        buildNumbers: [directorApp],
+        run: archiveDirector
+      })
+    }
+  )
+  m.buildNumber(cameramanApp, {
+    format: 'YYMMDDCC',
+    timeZone: 'America/Los_Angeles'
+  })
+  m.workflow(
+    'cameraman',
+    { triggers: [{ request: true }], timeout: '8h' },
+    w => {
+      w.parallel(
+        'build',
+        {
+          ios: [
+            {
+              name: 'archive',
+              on: APPLE,
+              tools: { node: '24', xcode: '26.6', brew: ['xcodegen'] },
+              timeout: '6h',
+              apple: { distribution: 'adHoc', app: cameramanApp },
+              publishes: [cameramanApp],
+              buildNumbers: [cameramanApp],
+              run: archiveCameraman
+            }
+          ],
+          android: [
+            {
+              name: 'compile',
+              on: ANDROID,
+              tools: {
+                node: '24',
+                java: '17',
+                android: [
+                  'platforms;android-37.0',
+                  'build-tools;37.0.0',
+                  'ndk;27.1.12297006',
+                  'cmake;3.22.1'
+                ],
+                androidLicenses: 'accept'
+              },
+              timeout: '6h',
+              buildNumbers: [cameramanApp],
+              run: compileCameraman
+            },
+            {
+              // The compile node's keystore is its own, so the release key
+              // signs here and every build installs over the one before.
+              name: 'sign',
+              on: SIGN,
+              tools: {
+                node: '24',
+                java: '17',
+                android: ['build-tools;37.0.0'],
+                androidLicenses: 'accept'
+              },
+              timeout: '1h',
+              publishes: [cameramanApp],
+              buildNumbers: [cameramanApp],
+              run: signCameraman
+            }
+          ]
+        },
+        { failFast: false }
+      )
+    }
+  )
+  const distributorApp = fieldAppId(
+    DISTRIBUTOR_APP,
+    DISTRIBUTOR_DEVELOP_APP,
+    m.branch
+  )
+  m.buildNumber(distributorApp, {
+    format: 'YYMMDDCC',
+    timeZone: 'America/Los_Angeles'
+  })
+  m.workflow(
+    'distributor',
+    { triggers: [{ request: true }], timeout: '8h' },
+    w => {
+      w.stage('archive', {
+        on: APPLE,
+        tools: { node: '24', xcode: '26.6', brew: ['xcodegen'] },
+        timeout: '6h',
+        apple: {
+          distribution: 'development',
+          app: distributorApp,
+          platform: 'macos'
+        },
+        publishes: [distributorApp],
+        buildNumbers: [distributorApp],
+        run: archiveDistributor
       })
     }
   )
@@ -267,7 +425,7 @@ export function seatEnvironment(
   const seat = ctx.run.params?.seat ?? 'production'
   const branch = ctx.run.branch
   if (seat === 'production') {
-    if (branch == null || branch === '' || branch === 'master')
+    if (isMasterBranch(branch))
       return {
         TS_API_BASE_URL: 'https://app.teamstation.app/api/v1',
         TS_APP_ORIGIN: 'https://app.teamstation.app'
@@ -517,4 +675,392 @@ export async function signAndroid(ctx: Stage): Promise<void> {
   if (apk == null) throw new Error('No release APK was signed')
   await ctx.artifacts.save('android-apk', apk)
   await ctx.publish({ app: runApp(ctx), platform: 'android', path: apk })
+}
+
+/**
+ * Master keeps the stable app id. Develop and every other branch use the
+ * develop id, so that install sits beside a master build.
+ */
+export function fieldAppId(
+  stable: string,
+  developId: string,
+  branch: string | undefined
+): string {
+  if (isMasterBranch(branch)) return stable
+  return developId
+}
+
+/**
+ * Rewrites a develop or branch build's bundle id and the name shown on the
+ * home screen. PRODUCT_NAME stays, so the executable, the module and the test
+ * hosts that name `TS Director.app` and `TS Cameraman.app` keep their names. A second call finds the develop id already written and leaves
+ * the tree alone. A master build does not call this.
+ */
+export function applyFieldDevelopIdentity(
+  root: string,
+  which: 'director' | 'cameraman' | 'distributor'
+): void {
+  const rewrite = (file: string, from: string, to: string): void => {
+    rewriteOnce(root, file, from, to)
+  }
+  if (which === 'distributor') {
+    // A Mac installs the app under its PRODUCT_NAME, so the develop build
+    // takes its own name to sit beside TS Distributor.app.
+    for (const [from, to] of [
+      [
+        `PRODUCT_BUNDLE_IDENTIFIER: ${DISTRIBUTOR_APP}\n`,
+        `PRODUCT_BUNDLE_IDENTIFIER: ${DISTRIBUTOR_DEVELOP_APP}\n`
+      ],
+      [
+        `PRODUCT_NAME: ${DISTRIBUTOR_NAME}\n`,
+        `PRODUCT_NAME: ${DISTRIBUTOR_DEVELOP_NAME}\n`
+      ],
+      [
+        `INFOPLIST_KEY_CFBundleDisplayName: ${DISTRIBUTOR_NAME}\n`,
+        `INFOPLIST_KEY_CFBundleDisplayName: ${DISTRIBUTOR_DEVELOP_NAME}\n`
+      ]
+    ])
+      rewrite('mobile/apps/tsDistributor/project.yml', from, to)
+    return
+  }
+  if (which === 'director') {
+    rewrite(
+      'mobile/apps/tsDirector/project.yml',
+      'PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.director\n',
+      `PRODUCT_BUNDLE_IDENTIFIER: ${DIRECTOR_DEVELOP_APP}\n`
+    )
+    rewrite(
+      'mobile/apps/tsDirector/App/Info.plist',
+      '<key>CFBundleDisplayName</key>\n  <string>TS Director</string>',
+      `<key>CFBundleDisplayName</key>\n  <string>${DIRECTOR_DEVELOP_NAME}</string>`
+    )
+    rewrite(
+      'mobile/apps/tsDirector/App/Info.plist',
+      '<string>app.teamstation.director.control</string>',
+      `<string>${DIRECTOR_DEVELOP_APP}.control</string>`
+    )
+    rewrite(
+      'mobile/apps/tsDirector/App/Info.plist',
+      '<string>tsdirector</string>',
+      `<string>${DIRECTOR_DEVELOP_SCHEME}</string>`
+    )
+    return
+  }
+  rewrite(
+    'mobile/apps/tsCameraman/project.yml',
+    'PRODUCT_BUNDLE_IDENTIFIER: app.teamstation.cameraman\n',
+    `PRODUCT_BUNDLE_IDENTIFIER: ${CAMERAMAN_DEVELOP_APP}\n`
+  )
+  rewrite(
+    'mobile/apps/tsCameraman/App/Info.plist',
+    '<key>CFBundleDisplayName</key>\n  <string>TS Cameraman</string>',
+    `<key>CFBundleDisplayName</key>\n  <string>${CAMERAMAN_DEVELOP_NAME}</string>`
+  )
+  rewrite(
+    'mobile/apps/tsCameraman/App/Info.plist',
+    '<string>app.teamstation.cameraman.control</string>',
+    `<string>${CAMERAMAN_DEVELOP_APP}.control</string>`
+  )
+  rewrite(
+    'mobile/apps/tsCameraman/App/Info.plist',
+    '<string>tscameraman</string>',
+    `<string>${CAMERAMAN_DEVELOP_SCHEME}</string>`
+  )
+  rewrite(
+    'mobile/apps/tsCameramanAndroid/app/src/main/AndroidManifest.xml',
+    'android:scheme="tscameraman"',
+    `android:scheme="${CAMERAMAN_DEVELOP_SCHEME}"`
+  )
+  rewrite(
+    'mobile/apps/tsCameramanAndroid/app/build.gradle.kts',
+    'applicationId = "app.teamstation.cameraman"',
+    `applicationId = "${CAMERAMAN_DEVELOP_APP}"`
+  )
+  rewrite(
+    'mobile/apps/tsCameramanAndroid/app/src/main/res/values/strings.xml',
+    '<string name="app_name">TS Cameraman</string>',
+    `<string name="app_name">${CAMERAMAN_DEVELOP_NAME}</string>`
+  )
+}
+
+/** The server a field app signs in to and reports to. Master stays on production. */
+export function fieldOrigin(branch: string | undefined): string {
+  if (isMasterBranch(branch)) return 'https://app.teamstation.app'
+  return DEVELOP_ORIGIN
+}
+
+/**
+ * The host a field app's sign-in links are mailed from, which opens that app:
+ * the deployment's appLinks.json gives each one its own, and the server
+ * answers that host's apple-app-site-association and assetlinks.json for it
+ * alone. The develop ids and Distributor have none, so their builds ask for
+ * ordinary web links.
+ */
+export const FIELD_LINK_ORIGINS: Readonly<Record<string, string>> = {
+  [DIRECTOR_APP]: 'https://director.teamstation.app',
+  [CAMERAMAN_APP]: 'https://cameraman.teamstation.app'
+}
+
+/**
+ * Writes the gitignored clientConfig.json a field app's Xcode and Gradle
+ * builds read for their team and the link host of the app id they publish.
+ */
+export function writeFieldClientConfig(appDir: string, app: string): void {
+  const appOrigin = FIELD_LINK_ORIGINS[app]
+  writeFileSync(
+    path.join(appDir, 'clientConfig.json'),
+    JSON.stringify({
+      appleTeamId: FIELD_TEAM,
+      ...(appOrigin == null ? {} : { appOrigin })
+    }) + '\n',
+    { mode: 0o600 }
+  )
+}
+
+/**
+ * The xcodebuild arguments every field archive takes: the
+ * clientConfig.xcconfig scripts/clientConfig.mjs wrote for the app, which
+ * names the team, the link host and the entitlements, as the app's own build
+ * scripts pass it; and the server the app signs in to and reports to
+ * (Info.plist's TSPrimaryHost), which the xcconfig does not carry.
+ */
+export function fieldLinkSettings(
+  appDir: string,
+  branch: string | undefined
+): string[] {
+  return [
+    '-xcconfig',
+    `${appDir}/clientConfig.xcconfig`,
+    'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
+    `TS_PRIMARY_HOST=${new URL(fieldOrigin(branch)).host}`
+  ]
+}
+
+async function archiveFieldApp(
+  ctx: Stage,
+  appDir: string,
+  entitlements: string,
+  project: string,
+  scheme: string,
+  app: string
+): Promise<{ ipa: string; dsyms: string; build: string }> {
+  const root = developRoot(ctx)
+  writeFieldClientConfig(path.join(root, appDir), app)
+  await ctx.sh(
+    `node scripts/clientConfig.mjs ${appDir} --entitlements ${entitlements}`
+  )
+  const build = ctx.getBuildNumber(app)
+  const archived = await ctx.apple.archive({
+    project,
+    scheme,
+    configuration: 'Release',
+    version: FIELD_VERSION,
+    buildNumber: build,
+    xcargs: fieldLinkSettings(appDir, ctx.run.branch)
+  })
+  if (archived.ipa == null) throw new Error('No IPA was exported')
+  return { ipa: archived.ipa, dsyms: archived.dsyms, build }
+}
+
+export async function archiveDirector(ctx: Stage): Promise<void> {
+  const app = fieldAppId(DIRECTOR_APP, DIRECTOR_DEVELOP_APP, ctx.run.branch)
+  if (app === DIRECTOR_DEVELOP_APP)
+    applyFieldDevelopIdentity(developRoot(ctx), 'director')
+  // Absolute: bootstrap.sh changes directory, then looks up bootstrapNdi.sh
+  // relative to the path it was started with.
+  await ctx.sh('bash "$PWD/mobile/apps/tsDirector/scripts/bootstrap.sh"')
+  const { ipa, dsyms, build } = await archiveFieldApp(
+    ctx,
+    'mobile/apps/tsDirector',
+    'App/Director.entitlements',
+    'mobile/apps/tsDirector/Director.xcodeproj',
+    'Director',
+    app
+  )
+  await ctx.artifacts.save('director-ipa', ipa)
+  // The xcarchive is not kept, so these are what symbolicate a crash report.
+  await ctx.artifacts.save('director-dsym', dsyms)
+  await ctx.publish({
+    app,
+    platform: 'ios',
+    path: ipa,
+    version: FIELD_VERSION,
+    buildNumber: build
+  })
+}
+
+export async function archiveCameraman(ctx: Stage): Promise<void> {
+  const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
+  if (app === CAMERAMAN_DEVELOP_APP)
+    applyFieldDevelopIdentity(developRoot(ctx), 'cameraman')
+  await ctx.sh('bash mobile/apps/tsCameraman/scripts/bootstrap.sh')
+  const { ipa, dsyms, build } = await archiveFieldApp(
+    ctx,
+    'mobile/apps/tsCameraman',
+    'App/Cameraman.entitlements',
+    'mobile/apps/tsCameraman/Cameraman.xcodeproj',
+    'Cameraman',
+    app
+  )
+  await ctx.artifacts.save('cameraman-ipa', ipa)
+  await ctx.artifacts.save('cameraman-dsym', dsyms)
+  await ctx.publish({
+    app,
+    platform: 'ios',
+    path: ipa,
+    version: FIELD_VERSION,
+    buildNumber: build
+  })
+}
+
+export async function compileCameraman(ctx: Stage): Promise<void> {
+  const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
+  const root = developRoot(ctx)
+  if (app === CAMERAMAN_DEVELOP_APP)
+    applyFieldDevelopIdentity(root, 'cameraman')
+  const dir = 'mobile/apps/tsCameramanAndroid'
+  writeFieldClientConfig(path.join(root, dir), app)
+  const build = ctx.getBuildNumber(app)
+  const host = new URL(fieldOrigin(ctx.run.branch)).host
+  await ctx.sh(
+    [
+      'test -f app/debug.keystore || keytool -genkeypair',
+      '-keystore app/debug.keystore -alias androiddebugkey',
+      '-keyalg RSA -keysize 2048 -validity 10000',
+      '-storepass android -keypass android',
+      "-dname 'CN=Android Debug,O=Android,C=US'"
+    ].join(' '),
+    { cwd: dir }
+  )
+  await ctx.sh(
+    [
+      "cat > mason-version.gradle << 'EOF'",
+      'gradle.beforeProject { project ->',
+      "  project.plugins.withId('com.android.application') {",
+      "    project.extensions.getByName('androidComponents').finalizeDsl { android ->",
+      "      android.defaultConfig.versionCode = Integer.parseInt(System.getenv('MASON_BUILD_NUMBER'))",
+      "      android.defaultConfig.versionName = System.getenv('MASON_APP_VERSION')",
+      '    }',
+      '  }',
+      '}',
+      'EOF',
+      './gradlew --no-daemon --init-script mason-version.gradle :app:assembleRelease'
+    ].join('\n'),
+    {
+      cwd: dir,
+      env: {
+        MASON_BUILD_NUMBER: build,
+        MASON_APP_VERSION: FIELD_VERSION,
+        TS_PRIMARY_HOST: host
+      }
+    }
+  )
+  const apks = await ctx.fs.glob(`${CAMERAMAN_APK_DIR}/*.apk`)
+  if (apks[0] == null) throw new Error('No Cameraman release APK was built')
+  await ctx.stash('cameraman-release', `${CAMERAMAN_APK_DIR}/*.apk`)
+}
+
+/** Signs the compiled Cameraman APK with the release key and publishes it. */
+export async function signCameraman(ctx: Stage): Promise<void> {
+  const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
+  await ctx.unstash('cameraman-release')
+  await ctx.sh(
+    `"$HOME/.local/bin/teamstation-sign-release-apk" ${CAMERAMAN_APK_DIR}`
+  )
+  const apks = await ctx.fs.glob(`${CAMERAMAN_APK_DIR}/*.apk`)
+  const apk = apks[0]
+  if (apk == null) throw new Error('No Cameraman release APK was signed')
+  await ctx.artifacts.save('cameraman-apk', apk)
+  await ctx.publish({
+    app,
+    platform: 'android',
+    path: apk,
+    version: FIELD_VERSION,
+    buildNumber: ctx.getBuildNumber(app)
+  })
+}
+
+/**
+ * The Read Me in Distributor's disk image. Mason signs it with the team's
+ * development identity and does not notarize it (the team has no Developer
+ * ID certificate), so Gatekeeper stops the first launch until it is allowed.
+ */
+export function distributorReadMe(name: string, build: string): string {
+  return `${name}, build ${build} (${name} > About ${name} shows it)
+
+1. Drag ${name} onto Applications.
+
+2. Open it from Applications. The first time, macOS says it cannot check the
+   app, because it is not notarized. Click Done, open System Settings >
+   Privacy & Security, find "${name} was blocked", and click Open Anyway.
+   This is needed once. (Or, in Terminal:
+   xattr -dr com.apple.quarantine "/Applications/${name}.app")
+   It is signed for development, so it opens only on a Mac registered to
+   the TeamStation team.
+
+3. Plug the iPad in with a USB-C cable, tap Trust on the iPad if it asks, and
+   open TS Director on it, in front.
+
+Needs macOS 15 or later.
+`
+}
+
+export async function archiveDistributor(ctx: Stage): Promise<void> {
+  const app = fieldAppId(
+    DISTRIBUTOR_APP,
+    DISTRIBUTOR_DEVELOP_APP,
+    ctx.run.branch
+  )
+  const name =
+    app === DISTRIBUTOR_DEVELOP_APP
+      ? DISTRIBUTOR_DEVELOP_NAME
+      : DISTRIBUTOR_NAME
+  const root = developRoot(ctx)
+  if (app === DISTRIBUTOR_DEVELOP_APP)
+    applyFieldDevelopIdentity(root, 'distributor')
+  const dir = 'mobile/apps/tsDistributor'
+  writeFieldClientConfig(path.join(root, dir), app)
+  await ctx.sh(`node scripts/clientConfig.mjs ${dir}`)
+  await ctx.sh('xcodegen generate --quiet', { cwd: dir })
+  const build = ctx.getBuildNumber(app)
+  const archived = await ctx.apple.archive({
+    project: `${dir}/Distributor.xcodeproj`,
+    scheme: 'Distributor',
+    configuration: 'Release',
+    destination: 'generic/platform=macOS',
+    version: FIELD_VERSION,
+    buildNumber: build,
+    xcargs: fieldLinkSettings(dir, ctx.run.branch)
+  })
+  if (archived.app == null) throw new Error('No app was exported')
+  // Laid out as scripts/package.sh lays it out: the app, an Applications link
+  // to drag it onto, and a Read Me for the first launch.
+  const image = 'distributor-image'
+  const bundle = path.basename(archived.app)
+  await ctx.sh(
+    [
+      `rm -rf ${image}`,
+      `mkdir ${image}`,
+      `ditto ${JSON.stringify(archived.app)} ${JSON.stringify(`${image}/${bundle}`)}`,
+      `ln -s /Applications ${image}/Applications`
+    ].join(' && ')
+  )
+  mkdirSync(path.join(root, image), { recursive: true })
+  writeFileSync(
+    path.join(root, image, 'Read Me.txt'),
+    distributorReadMe(name, build)
+  )
+  const packed = 'distributor.dmg'
+  await ctx.sh(
+    `hdiutil create -volname ${JSON.stringify(name)} -srcfolder ${image} -ov -format UDZO ${packed}`
+  )
+  await ctx.artifacts.save('distributor-app', packed)
+  await ctx.artifacts.save('distributor-dsym', archived.dsyms)
+  await ctx.publish({
+    app,
+    platform: 'macos',
+    path: packed,
+    version: FIELD_VERSION,
+    buildNumber: build
+  })
 }
