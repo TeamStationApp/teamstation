@@ -376,6 +376,62 @@ describe('venue routes', function () {
     ).equals(400)
   })
 
+  it('deletes the photo a new venue or field photo replaces', async () => {
+    const venue = await claim()
+    const id = venue.id!
+    const held = (prefix: string | null): boolean[] =>
+      [640, 1280].map(size =>
+        f.h.objects.has(`/${f.h.space.bucket}/${prefix}-${size}.png`)
+      )
+    const venuePhoto = async (): Promise<string | null> =>
+      (
+        await f.h.db
+          .selectFrom('venues')
+          .select('photo_path')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).photo_path
+    await json<VenueDetail>(
+      await f.h.request('PUT', `/venues/${id}`, { photo: accountTestPicture })
+    )
+    const first = await venuePhoto()
+    expect(held(first)).deep.equals([true, true])
+    await json<VenueDetail>(
+      await f.h.request('PUT', `/venues/${id}`, { photo: accountTestPicture })
+    )
+    expect(await venuePhoto()).not.equals(first)
+    expect(held(first)).deep.equals([false, false])
+    expect(held(await venuePhoto())).deep.equals([true, true])
+
+    const field = (
+      await json<VenueDetail>(
+        await f.h.request('POST', `/venues/${id}/fields`, {
+          name: 'Field 1',
+          sizes: ['50/70'],
+          photo: accountTestPicture
+        }),
+        201
+      )
+    ).fields[0]
+    const fieldPhoto = async (): Promise<string | null> =>
+      (
+        await f.h.db
+          .selectFrom('venue_fields')
+          .select('photo_path')
+          .where('id', '=', field.id)
+          .executeTakeFirstOrThrow()
+      ).photo_path
+    const shot = await fieldPhoto()
+    await json<VenueDetail>(
+      await f.h.request('PUT', `/venues/${id}/fields/${field.id}`, {
+        photo: accountTestPicture
+      })
+    )
+    expect(await fieldPhoto()).not.equals(shot)
+    expect(held(shot)).deep.equals([false, false])
+    expect(held(await fieldPhoto())).deep.equals([true, true])
+  })
+
   it('edits a venue and its fields for an owner, softly deletes a field, and stores photos wide', async () => {
     const venue = await claim()
     const id = venue.id!

@@ -272,6 +272,33 @@ describe('chat identity metadata through authorized routes', function () {
     expectImage(current.avatarUrl, 'fixtures/person')
   })
 
+  it('gives an avatar on a public prefix with no signature', async function () {
+    const prefix = `images/user/${'7c'.repeat(16)}`
+    await fixture.db
+      .updateTable('users')
+      .set({ avatar_path: prefix })
+      .where('id', '=', fixture.id('Hs'))
+      .execute()
+    try {
+      const answer = await fixture.call('Hc', 'POST', '/chat/dms', {
+        userIds: [fixture.id('Hs')]
+      })
+      expect(answer.status).oneOf([200, 201])
+      const person = asChatConversation(answer.body).people.find(
+        row => row.userId === fixture.id('Hs')
+      )
+      expect(person?.avatarUrl).equals(
+        `https://media.example.test/synthetic-images/${prefix}-96.png`
+      )
+    } finally {
+      await fixture.db
+        .updateTable('users')
+        .set({ avatar_path: 'fixtures/person' })
+        .where('id', '=', fixture.id('Hs'))
+        .execute()
+    }
+  })
+
   it('carries server identities and blank zero-post previews into engine list items without activating or reading history', async function () {
     const calls: string[] = []
     const client = new TeamStationClient({
