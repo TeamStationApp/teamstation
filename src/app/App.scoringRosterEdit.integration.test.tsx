@@ -969,6 +969,9 @@ describe('actual App scoring player Settings return', function () {
         name: 'player',
         userId: userIdOfGumbo(100)
       })
+      await waitFor(
+        () => document.body.textContent?.includes('JERSEY NUMBER') === true
+      )
       expect(document.body.textContent).includes('JERSEY NUMBER')
       await press('Stats')
       await press('Back')
