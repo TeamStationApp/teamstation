@@ -25,6 +25,7 @@ import { recordOf } from '../../common/scoring/gumbo'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import { newSetup } from '../../common/scoring/lineup'
 import { readLineups } from '../../common/scoring/lineupHistory'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type EventStore,
   ScoringSession,
@@ -920,7 +921,13 @@ describe('posting and reading plays', function () {
         mode: 'live',
         source: { system: 'teamstation' },
         plays: [],
-        currentPlay: scorer.currentPlay
+        currentPlay: scorer.currentPlay,
+        scoringBase:
+          (
+            (await read(TOKEN)) as unknown as {
+              scoringMutation?: ScoringMutation
+            }
+          ).scoringMutation ?? null
       },
       flagUser('scorekeeper').token
     )
@@ -1269,7 +1276,10 @@ describe('posting and reading plays', function () {
           }))
         )
         .execute()
-      const posted = await ask(`/games/${viaRoute}/events`, 'POST', body)
+      const posted = await ask(`/games/${viaRoute}/events`, 'POST', {
+        ...body,
+        scoringBase: null
+      })
       expect(posted.status).equals(200)
       const returned = await postGamePlays(
         db!,
@@ -1698,6 +1708,9 @@ describe('posting and reading plays', function () {
     expect(owed.status).equals('pending')
   })
 
+  const observedBase = async (gameId: string): Promise<unknown> =>
+    (await ask(`/games/${gameId}/events`)).body.scoringMutation ?? null
+
   /** A live post, answered with every stored play, which these cases read. */
   const live = async (
     gameId: string,
@@ -1709,12 +1722,44 @@ describe('posting and reading plays', function () {
       'POST',
       {
         mode: 'live',
+        scoringBase: await observedBase(gameId),
         source: { system: 'teamstation' },
         plays: [],
         ...body
       },
       token
     )
+  it('refuses missing scoring bases and stale unstamped rewinds at the public route', async () => {
+    const id = makeId('game')
+    await db!
+      .insertInto('games')
+      .values({
+        id,
+        home_team_id: home,
+        away_team_id: away,
+        start_at: new Date()
+      })
+      .execute()
+    const body = { mode: 'live', source: { system: 'teamstation' }, plays: [] }
+    const missing = await ask(`/games/${id}/events`, 'POST', body)
+    expect(missing.status).equals(400)
+    expect(missing.body.message).contains('observed scoring base')
+    const first = await ask(`/games/${id}/events`, 'POST', {
+      ...body,
+      scoringBase: null,
+      currentPlay: current(0)
+    })
+    expect(first.status).equals(200)
+    const before = await ask(`/games/${id}/events`)
+    const stale = await ask(`/games/${id}/events`, 'POST', {
+      ...body,
+      scoringBase: null,
+      currentPlay: null
+    })
+    expect(stale.status).equals(409)
+    expect((await ask(`/games/${id}/events`)).body).deep.equals(before.body)
+  })
+
   const gameRow = async (
     id: string
   ): Promise<{
@@ -2008,6 +2053,7 @@ describe('posting and reading plays', function () {
     ): Promise<{ status: number; body: Record<string, unknown> }> =>
       await ask(`/games/${id}/events${query}`, 'POST', {
         mode: 'live',
+        scoringBase: await observedBase(id),
         source: { system: 'teamstation' },
         plays: [],
         ...body
@@ -4031,6 +4077,15 @@ describe('the team default lineup a live post keeps (U10)', function () {
     gameId: string,
     body: Record<string, unknown>
   ): Promise<{ status: number; body: StoredGame & { plays: unknown[] } }> {
+    if (body.mode === 'live' && body.scoringBase === undefined) {
+      const read = await fetch(`${base}/games/${gameId}/events`, {
+        headers: { authorization: `Bearer ${OWNER}` }
+      })
+      const current = (await read.json()) as {
+        scoringMutation?: ScoringMutation
+      }
+      body = { ...body, scoringBase: current.scoringMutation ?? null }
+    }
     const response = await fetch(`${base}/games/${gameId}/events`, {
       method: 'POST',
       headers: {
@@ -4054,14 +4109,17 @@ describe('the team default lineup a live post keeps (U10)', function () {
       const read = (await response.json()) as {
         plays: Array<{ gumbo: GumboPlay }>
         currentPlay: CurrentPlay | null
+        scoringMutation?: ScoringMutation
       }
       return {
         plays: read.plays.map(row => row.gumbo),
-        currentPlay: read.currentPlay
+        currentPlay: read.currentPlay,
+        scoringMutation: read.scoringMutation
       }
     },
     save: async (_gameId, change) => {
       const answer = await post(gameId, {
+        ...change,
         mode: 'live',
         source: { system: 'teamstation' },
         plays: change.plays,

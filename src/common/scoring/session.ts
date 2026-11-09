@@ -33,7 +33,7 @@ import type { SwapEffect } from './playsLost'
 import { awaitingResult, closesFirst, nextDecision } from './rules'
 import {
   authoredScoringMutation,
-  compareScoringMutations,
+  sameScoringMutation,
   type ScoringMutation
 } from './scoringMutation'
 import {
@@ -680,7 +680,7 @@ export class ScoringSession {
       if (rejectedScoring != null) {
         if (
           winner.scoringMutation == null ||
-          compareScoringMutations(rejectedScoring, winner.scoringMutation) >= 0
+          sameScoringMutation(rejectedScoring, winner.scoringMutation)
         )
           return undefined
       } else if (
@@ -1208,7 +1208,7 @@ export class ScoringSession {
         play: this.game.liveData.plays.currentPlay
       }
     // `time` is when the change was made, on another device and maybe long
-    // before: its action time, for the latest change to win. It plays, and
+    // before: retain its authorship time for lineup reconciliation. It plays, and
     // its event is recorded, now, as it enters the log after what was
     // logged meanwhile, so the log's play times run forward.
     const now = this.now().toISOString()
@@ -1605,9 +1605,11 @@ export class ScoringSession {
       return count
     }
     const ownMutation = this.mutationPending ? this.authoredMutation : undefined
-    const ordered = ownMutation != null && fresh.knownMutation != null
+    const ordered =
+      ownMutation != null &&
+      (this.knownMutation != null || fresh.knownMutation != null)
     const oursWins =
-      ordered && compareScoringMutations(ownMutation, fresh.knownMutation!) > 0
+      ordered && sameScoringMutation(this.knownMutation, fresh.knownMutation)
     const fork = agree(this.log, fresh.log)
     const same = oursWins ? fork : agree(this.savedLog, this.log)
     const kept = oursWins ? fork : agree(this.savedLog, fresh.log)
@@ -2380,12 +2382,11 @@ export class ScoringSession {
       const mutation = this.mutationPending ? this.authoredMutation : undefined
       if (mutation != null) {
         const picture = this.picture()
-        // A newer branch can win after an acknowledged ancestor was replaced
-        // or undone elsewhere. Include its completed ancestry, even when the
-        // phone's optimistic queue has already drained that ancestor.
+        // Keep ancestry for durable lineup recovery. It never authorizes a
+        // scoring write after another timeline has displaced its observed base.
         change.scoringHistory = [...picture.plays.values()]
         change.scoringBase = this.knownMutation ?? null
-        // A stamped snapshot can rewind a competing tail. Always state its
+        // An accepted current-version Undo can rewind its tail. Always state its
         // current play explicitly; omission means unchanged for legacy writes.
         change.currentPlay = picture.current
         change.scoringMutation = {
