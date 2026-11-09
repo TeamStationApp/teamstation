@@ -953,11 +953,12 @@ describe('the event page’s screen scope', () => {
     const keys: string[] = []
     client.cached = (async (key: string) => {
       keys.push(key)
-      return { ...game }
+      return key === 'game.g1' ? { ...game } : undefined
     }) as TeamStationClient['cached']
     await renderScoped({ client, gameId: 'g1' }, socket)
     expect(reads(), 'client.game before subscribed').equals(0)
-    expect(keys).deep.equals(['game.g1'])
+    // The game, then the Info section under it, each from the phone.
+    expect(keys).deep.equals(['game.g1', '/events/g1/info'])
     expect(selected()).equals('Info')
     await act(async () => {
       socket.ack()

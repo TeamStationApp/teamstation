@@ -2,9 +2,11 @@
  * The documents the phone keeps, one per GET it can show without a signal,
  * and the key each is stored under.
  *
- * Only these exact requests are stored. `GET /events?season=`, any other
- * query, and every other path are network reads and stay that way, so a
- * season's games are never answered offline with the whole list.
+ * The reads below keep the short keys they always had, which the outbox and
+ * the screens read by name. Every other GET is kept under its path and
+ * query, except the denylist (`networkOnly`), which stays a network read. A
+ * schedule read (`scheduleReads.ts`) is not a document at all: its games are
+ * kept as one set, and `CachingClient` routes it there first.
  */
 export const HOME_LISTS = 'home.lists'
 export const HOME_TEAMS = 'home.teams'
@@ -16,6 +18,10 @@ export const HOME_RECENT = 'home.recent'
 export const ME_ROLES = 'me.roles'
 /** Whether this person has unlocked chat: kept, so a confirmed person stays so offline. */
 export const ME_CHAT_AGE = 'me.chatAge'
+/**
+ * The schedule lists an older build kept as documents. The store's upgrade
+ * reads them once into the schedule set; nothing writes them now.
+ */
 export const GAMES_UPCOMING = 'games.upcoming'
 export const GAMES_PAST = 'games.past'
 export const GAMES_ALL = 'games.all'
@@ -47,17 +53,6 @@ export function candidatesTeamOf(path: string): string | undefined {
   return team == null || team === '' ? undefined : team
 }
 
-/** The key the first page of one of the feed's lists is stored under. */
-export function gamesKey(list: 'past' | 'upcoming' | 'all' | 'videos'): string {
-  return list === 'past'
-    ? GAMES_PAST_PAGE
-    : list === 'upcoming'
-      ? GAMES_UPCOMING_PAGE
-      : list === 'videos'
-        ? GAMES_VIDEOS_PAGE
-        : GAMES_ALL_PAGE
-}
-
 /** Requests with no id in them, by path and query exactly as sent. */
 const FIXED: Record<string, string> = {
   '/me/home': HOME_LISTS,
@@ -68,16 +63,7 @@ const FIXED: Record<string, string> = {
   '/users?guardedBy=me': HOME_GUARDED,
   '/events?played=1&limit=1': HOME_RECENT,
   '/me/roles': ME_ROLES,
-  '/me/account/chat-age': ME_CHAT_AGE,
-  '/events?when=upcoming': GAMES_UPCOMING,
-  '/events?when=past': GAMES_PAST,
-  '/events': GAMES_ALL,
-  // A list's first page: a page with a cursor has no document, so it is a
-  // network read, and offline a list ends at what is stored.
-  '/events?paged=1&when=upcoming': GAMES_UPCOMING_PAGE,
-  '/events?paged=1&when=past': GAMES_PAST_PAGE,
-  '/events?paged=1': GAMES_ALL_PAGE,
-  '/events?paged=1&hasVideo=1': GAMES_VIDEOS_PAGE
+  '/me/account/chat-age': ME_CHAT_AGE
 }
 
 /** Requests naming one team or game: the pattern, and the key of its id. */
@@ -90,7 +76,46 @@ const BY_ID: Array<[RegExp, (id: string) => string]> = [
   [/^\/games\/([^/?]+)\/events$/, eventsKey]
 ]
 
-/** The document a GET of `path` fills, or none for a request not stored. */
+/**
+ * GETs that are never stored, by path without the query: a session, a
+ * clock, a stream or its address, and chat's own sync state.
+ */
+const NETWORK_ONLY: RegExp[] = [
+  // A stored session answer would sign the phone in as whoever was stored.
+  /^\/auth(\/|$)/,
+  /^\/(health|time)$/,
+  // A stored live list would offer a stream the phone cannot play.
+  /^\/live(\/|$)/,
+  /^\/me\/(builds|api-keys)(\/|$)/,
+  // The address expires, and the stream does not play offline.
+  /^\/videos\/[^/]+\/(playback|wall-timeline)$/,
+  /^\/games\/[^/]+\/scoreboard-timeline$/,
+  /^\/games\/[^/]+\/(live-streams|stream-access)(\/|$)/
+]
+
+/**
+ * Chat's reads that are a screen: the conversation list and a conversation's
+ * messages. Every other chat GET is the engine's keys and cursors, and a
+ * stored page returned as fresh would skip messages.
+ */
+const CHAT_STORED = [
+  /^\/chat\/conversations$/,
+  /^\/chat\/conversations\/[^/]+\/messages$/
+]
+
+/** Whether a GET of `path` stays a network read, whatever it answers. */
+export function networkOnly(path: string): boolean {
+  const at = path.indexOf('?')
+  const pathname = at < 0 ? path : path.slice(0, at)
+  if (pathname === '/chat' || pathname.startsWith('/chat/'))
+    return !CHAT_STORED.some(pattern => pattern.test(pathname))
+  return NETWORK_ONLY.some(pattern => pattern.test(pathname))
+}
+
+/**
+ * The document a GET of `path` fills: its short key, else the path itself,
+ * or none for a read on the denylist.
+ */
 export function documentKeyOf(path: string): string | undefined {
   const fixed = FIXED[path]
   if (fixed != null) return fixed
@@ -104,7 +129,7 @@ export function documentKeyOf(path: string): string | undefined {
       return undefined
     }
   }
-  return undefined
+  return networkOnly(path) ? undefined : path
 }
 
 /**
