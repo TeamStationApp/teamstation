@@ -81,6 +81,7 @@ import {
   personTerms
 } from '../invites/personRequests'
 import type { MediaContext } from '../media/mediaContext'
+import { releaseReplacedPicture } from '../media/republishImages'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { completionNotice } from '../notifications/completionNotice'
@@ -1264,10 +1265,21 @@ export function groupRoutes(
             (picture.catalogId != null && picture.image != null)
           )
             throw badRequest('Choose one picture')
+          // The picture a catalog choice or initials replaces, whose objects
+          // go once no row names them.
+          const replaced = async (): Promise<string | null | undefined> =>
+            (
+              await trx
+                .selectFrom(table)
+                .select('logo_path')
+                .where('id', '=', ref.id)
+                .executeTakeFirst()
+            )?.logo_path
           if (picture.catalogId != null) {
             const chosen = catalogPicture(
               clean(asCatalogId, picture.catalogId)
             )!
+            const before = await replaced()
             await trx
               .updateTable(table)
               .set({
@@ -1278,6 +1290,7 @@ export function groupRoutes(
               })
               .where('id', '=', ref.id)
               .execute()
+            await releaseReplacedPicture(trx, media.space, before)
           } else if (picture.image != null) {
             await storeGroupPhoto(
               trx,
@@ -1285,7 +1298,8 @@ export function groupRoutes(
               ref,
               picture.image as { contentType: string; base64: string }
             )
-          } else if (picture.initials === true)
+          } else if (picture.initials === true) {
+            const before = await replaced()
             await trx
               .updateTable(table)
               .set({
@@ -1296,7 +1310,8 @@ export function groupRoutes(
               })
               .where('id', '=', ref.id)
               .execute()
-          else throw badRequest('Choose a photo or initials')
+            await releaseReplacedPicture(trx, media.space, before)
+          } else throw badRequest('Choose a photo or initials')
         }
       })
       // In the background: a save is done once it commits, however many

@@ -3,9 +3,11 @@ import type { Kysely } from 'kysely'
 import type { AccountPicture } from '../../common/accountSettings'
 import { unavailable, unsupportedMedia } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { storeImage, UnreadableImage } from '../media/images'
 import type { MediaContext } from '../media/mediaContext'
+import { releaseReplacedPicture } from '../media/republishImages'
 import { spaceConfigured } from '../media/spacesHls'
 import { asPictureBody, storeTeamLogo } from '../teams/storeTeamPictures'
 
@@ -33,20 +35,29 @@ export async function storeGroupPhoto(
       ffmpegPath: media.ffmpegPath,
       space: media.space,
       kind: 'league',
-      entityId: ref.id,
       source: picture.bytes
     })
     if (stored == null) throw unavailable('The picture could not be saved')
-    await db
-      .updateTable(ref.kind === 'league' ? 'leagues' : 'seasons')
-      .set({
-        logo_path: stored.pathPrefix,
-        logo_sha256: stored.sha256,
-        logo_source: 'upload',
-        picture_catalog_id: null
-      })
-      .where('id', '=', ref.id)
-      .execute()
+    const table = ref.kind === 'league' ? 'leagues' : 'seasons'
+    await atomic(db, async trx => {
+      const before = await trx
+        .selectFrom(table)
+        .select('logo_path')
+        .where('id', '=', ref.id)
+        .forUpdate()
+        .executeTakeFirst()
+      await trx
+        .updateTable(table)
+        .set({
+          logo_path: stored.pathPrefix,
+          logo_sha256: stored.sha256,
+          logo_source: 'upload',
+          picture_catalog_id: null
+        })
+        .where('id', '=', ref.id)
+        .execute()
+      await releaseReplacedPicture(trx, media.space, before?.logo_path)
+    })
     return stored.pathPrefix
   } catch (error) {
     if (error instanceof UnreadableImage)
