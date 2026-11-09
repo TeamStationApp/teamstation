@@ -726,7 +726,6 @@ describe('saving from the scoring screen', function () {
 describe('swapping from the scoring menu', function () {
   const MENU = 'Open scoring menu'
   const SWAP = 'Swap Home and Away'
-  const UNSAVED = "Save the game's changes before swapping. Try again."
   async function settle(): Promise<void> {
     for (let i = 0; i < 4; i++)
       await act(async () => {
@@ -774,11 +773,22 @@ describe('swapping from the scoring menu', function () {
       openedSwap?: StoredGame['swap']
       /** The game's first plate appearance was imported from outside. */
       imported?: boolean
+      /** Saves wait for `release` before the store answers them. */
+      holdSaves?: boolean
+      /** Every swap request waits for `release` before it is answered. */
+      holdSwaps?: boolean
     } = {}
   ): Promise<{
     opens: () => number
     swaps: () => number
     drains: () => number
+    /** Reads of the plays from the client, which a swap never takes. */
+    reads: () => number
+    /** The effects a phone queued its swaps with. */
+    queued: () => string[]
+    /** What reached the store and the server, in order. */
+    order: () => string[]
+    release: () => void
     session: () => GameSession
     /** What the last swap was asked with. */
     read: () => unknown
@@ -845,22 +855,36 @@ describe('swapping from the scoring menu', function () {
     let opens = 0
     let swaps = 0
     let drains = 0
+    let reads = 0
+    const queued: string[] = []
+    const order: string[] = []
     let asked: unknown
     let opened: GameSession | undefined
+    let releaseHeld: () => void = () => undefined
+    const held = new Promise<void>(resolve => {
+      releaseHeld = resolve
+    })
     const source: ScoringSource = {
       persistent: options.persistent ?? true,
       open: async detail => {
         opens++
-        const read =
-          options.openedSwap == null
-            ? store
-            : {
-                load: async (id: string) => ({
-                  ...(await store.load(id)),
-                  swap: options.openedSwap
-                }),
-                save: store.save.bind(store)
-              }
+        const read = {
+          load: async (id: string) => {
+            const stored = await store.load(id)
+            const shown = options.events?.(stored) ?? stored
+            return options.openedSwap == null
+              ? shown
+              : { ...shown, swap: options.openedSwap }
+          },
+          save: async (
+            id: string,
+            change: Parameters<typeof store.save>[1]
+          ) => {
+            if (options.holdSaves === true) await held
+            order.push('save')
+            return await store.save(id, change)
+          }
+        }
         const session = await GameSession.open(read, 'g1', context(detail))
         if (options.pendingAfterFlush === true) {
           session.flush = async () => undefined
@@ -896,12 +920,20 @@ describe('swapping from the scoring menu', function () {
                 chains: options.phone!.chains,
                 games: options.phone!.games,
                 teams: {}
-              })
+              }),
+              // The phone's queue: answered from its own copy, the server's
+              // swap made on it as the queue's local answer is.
+              queueSwap: async (_gameId: string, effect: 'swap' | 'reset') => {
+                queued.push(effect)
+                order.push('swap')
+                return await swapStored()
+              }
             }
           )
     client.game = async () => game
     client.roster = async teamId => scoringRoster(teamId === 'away' ? 1 : 10)
     client.gameEvents = async () => {
+      reads++
       const stored = await store.load('g1')
       return options.events?.(stored) ?? stored
     }
@@ -912,7 +944,14 @@ describe('swapping from the scoring menu', function () {
         homeTeamId: game.homeTeamId,
         awayTeamId: game.awayTeamId
       })
+      if (options.holdSwaps === true) await held
+      order.push('swap')
       if (options.refuse != null) throw options.refuse
+      return await swapStored()
+    }
+    async function swapStored(): ReturnType<
+      TeamStationClient['swapGameSides']
+    > {
       const lost = playsLost(await store.load('g1'))
       if (lost.atBats > 0) store.games.set('g1', pregame)
       game = {
@@ -945,6 +984,12 @@ describe('swapping from the scoring menu', function () {
       opens: () => opens,
       swaps: () => swaps,
       drains: () => drains,
+      reads: () => reads,
+      queued: () => queued,
+      order: () => order,
+      release: () => {
+        releaseHeld()
+      },
       session: () => opened!,
       read: () => asked
     }
@@ -1004,7 +1049,7 @@ describe('swapping from the scoring menu', function () {
     expect(pitched.swaps()).equals(0)
   })
 
-  it('names the at-bats and innings lost, resets and swaps on Reset and Swap, and says so (A4)', async function () {
+  it('names the at-bats and innings lost, resets and swaps on Reset and Swap at once, and says so (A4)', async function () {
     const screen = await swappable({
       events: stored => ({ ...stored, playsDigest: 'server', generation: 0 })
     })
@@ -1020,15 +1065,22 @@ describe('swapping from the scoring menu', function () {
       'Lineups go back to how they were at the first pitch.'
     )
     expect(document.querySelector('[aria-label="Confirm Swap"]')).equals(null)
+    expect(disabled('Reset and Swap')).equals(false)
     await click('Reset and Swap')
+    // The sheet is gone at once; the swap goes behind it.
+    expect(document.querySelector('[aria-label="Reset and Swap"]')).equals(null)
     await settle()
     expect(screen.swaps()).equals(1)
+    // Confirmed with the session's last plays digest and generation, read
+    // as it opened: the plays themselves are never read again.
+    expect(screen.reads()).equals(0)
     expect(screen.read()).deep.equals({
       homeTeamId: 'home',
       awayTeamId: 'away',
       generation: 0,
       playsDigest: 'server'
     })
+    expect(screen.order()).deep.equals(['save', 'swap'])
     expect(screen.opens()).equals(2)
     const state = screen.session().state
     expect(state.gameData.teams.home.id).equals('away')
@@ -1081,7 +1133,7 @@ describe('swapping from the scoring menu', function () {
     expect(screen.swaps()).equals(1)
   })
 
-  it('shows a stale confirmation refused, and opens nothing again (A5)', async function () {
+  it('closes at once on a reset the server refuses as stale, and says so over the game read again (A5)', async function () {
     const screen = await swappable({
       refuse: new HttpError(
         'conflict',
@@ -1093,84 +1145,65 @@ describe('swapping from the scoring menu', function () {
     await click(MENU)
     await click(SWAP)
     await click('Reset and Swap')
+    expect(document.querySelector('[aria-label="Reset and Swap"]')).equals(null)
     await settle()
     expect(screen.swaps()).equals(1)
-    expect(screen.opens()).equals(1)
-    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+    // Opened again on what the server holds, which kept its sides.
+    expect(screen.opens()).equals(2)
+    expect(screen.session().state.gameData.teams.home.id).equals('home')
+    expect(document.body.textContent).includes(
       "This game's plays changed. Open it again."
     )
-    await click('Cancel')
-    await settle()
   })
 
-  it("on a phone, drains its queue and confirms the server's plays, asking again when they changed (A11)", async function () {
-    let extra = true
-    // Another device's at-bat, in the 2nd: only its place is counted.
-    const another: unknown = { about: { atBatIndex: 40, inning: 2 } }
-    const screen = await swappable({
-      phone: { chains: {}, games: {} },
-      events: stored => ({
-        ...stored,
-        // It landed, once.
-        plays: extra
-          ? [...stored.plays, another as (typeof stored.plays)[number]]
-          : stored.plays,
-        playsDigest: 'server',
-        generation: 0
-      })
-    })
+  it('on a phone, queues the swap behind the game’s last change, never drains, reads the plays or sends it, and opens on the swapped sides', async function () {
+    const screen = await swappable({ phone: { chains: {}, games: {} } })
     await click('Ball')
-    await settle()
     await click(MENU)
     await click(SWAP)
     await click('Reset and Swap')
+    expect(document.querySelector('[aria-label="Reset and Swap"]')).equals(null)
     await settle()
-    expect(screen.drains()).equals(1)
+    expect(screen.queued()).deep.equals(['reset'])
+    // The pitch went on the queue first, then the swap.
+    expect(screen.order()).deep.equals(['save', 'swap'])
+    expect(screen.drains()).equals(0)
+    expect(screen.reads()).equals(0)
     expect(screen.swaps()).equals(0)
+    expect(screen.opens()).equals(2)
+    expect(screen.session().state.gameData.teams.home.id).equals('away')
     expect(document.body.textContent).includes(
-      'Resets all game plays: 2 at-bats in 2 innings will be lost.'
+      'Home and away were swapped and the game was reset.'
     )
-    expect(document.querySelector('[role="alert"]')?.textContent).equals(
-      'The game changed since this opened. Check what will be lost, then confirm again.'
-    )
-    extra = false
-    await click('Reset and Swap')
-    await settle()
-    // The counts changed back: asked once more, then it goes.
-    expect(screen.swaps()).equals(0)
-    await click('Reset and Swap')
-    await settle()
-    expect(screen.swaps()).equals(1)
-    expect(screen.read()).deep.include({ playsDigest: 'server', generation: 0 })
   })
 
-  it("follows the server's word on what the swap does, and refuses a game scored outside TeamStation", async function () {
-    let effect: 'reset' | 'scoredElsewhere' = 'reset'
-    // Before the first pitch here; the server holds more.
-    const screen = await swappable({
-      events: stored => ({ ...stored, swap: effect })
-    })
-    await click(MENU)
-    await click(SWAP)
-    await click('Confirm Swap')
-    await settle()
-    expect(screen.swaps()).equals(0)
-    expect(document.querySelector('[role="alert"]')?.textContent).equals(
-      'The game changed since this opened. Check what will be lost, then confirm again.'
-    )
-    expect(document.body.textContent).includes(
-      'Resets all game plays. Hawks will bat first'
-    )
-    effect = 'scoredElsewhere'
-    await click('Reset and Swap')
-    await settle()
-    expect(screen.swaps()).equals(0)
-    expect(screen.opens()).equals(1)
-    expect(document.querySelector('[role="alert"]')?.textContent).equals(
-      'This game was scored outside TeamStation, so home and away cannot be swapped here.'
-    )
-    await click('Cancel')
-    await settle()
+  it('refuses a game the last read calls scored elsewhere or withdrawn from the sheet, with no request', async function () {
+    for (const [effect, message] of [
+      [
+        'scoredElsewhere',
+        'This game was scored outside TeamStation, so home and away cannot be swapped here.'
+      ],
+      ['withdrawn', 'This canceled game cannot be changed.']
+    ] as const) {
+      const screen = await swappable()
+      await click(MENU)
+      await click(SWAP)
+      // A notice the session read once the sheet was open.
+      const session = screen.session()
+      Object.defineProperty(session, 'serverSwap', { get: () => effect })
+      await act(async () => {
+        ;(session as unknown as { notify: () => void }).notify()
+      })
+      await click('Confirm Swap')
+      await settle()
+      expect(screen.swaps(), effect).equals(0)
+      expect(screen.opens()).equals(1)
+      expect(document.querySelector('[role="alert"]')?.textContent).equals(
+        message
+      )
+      await click('Cancel')
+      await unmount()
+    }
   })
 
   it('offers no swap of a game scored outside TeamStation or withdrawn, and says why', async function () {
@@ -1209,23 +1242,7 @@ describe('swapping from the scoring menu', function () {
     expect(rowText(SWAP)).equals(`${SWAP}\nresets all game plays`)
   })
 
-  it('refuses a withdrawn game the server names at the swap', async function () {
-    const screen = await swappable({
-      events: stored => ({ ...stored, swap: 'withdrawn' })
-    })
-    await click(MENU)
-    await click(SWAP)
-    await click('Confirm Swap')
-    await settle()
-    expect(screen.swaps()).equals(0)
-    expect(document.querySelector('[role="alert"]')?.textContent).equals(
-      'This canceled game cannot be changed.'
-    )
-    await click('Cancel')
-    await settle()
-  })
-
-  it('shows the server’s refusal and opens nothing again', async function () {
+  it('closes at once on a swap the server refuses, and says so over the game read again', async function () {
     const screen = await swappable({
       refuse: new HttpError(
         'conflict',
@@ -1234,28 +1251,56 @@ describe('swapping from the scoring menu', function () {
     })
     await click(MENU)
     await click(SWAP)
+    expect(disabled('Confirm Swap')).equals(false)
     await click('Confirm Swap')
+    expect(document.querySelector('[aria-label="Confirm Swap"]')).equals(null)
     await settle()
     expect(screen.swaps()).equals(1)
-    expect(screen.opens()).equals(1)
-    expect(document.querySelector('[role="alert"]')?.textContent).equals(
+    expect(screen.opens()).equals(2)
+    expect(screen.session().state.gameData.teams.home.id).equals('home')
+    expect(document.body.textContent).includes(
       'Home and away can be swapped only before the first pitch'
     )
-    await click('Cancel')
-    await settle()
   })
 
-  it('refuses while a change has not reached the server, and asks nothing of it', async function () {
-    const screen = await swappable({ pendingAfterFlush: true })
+  it('swaps at once while a save is held, and sends the save before the swap', async function () {
+    const screen = await swappable({ holdSaves: true })
+    await click('Ball')
+    await click(MENU)
+    await click(SWAP)
+    await click('Reset and Swap')
+    // Applied at once, with the save and the swap both still out.
+    expect(document.querySelector('[aria-label="Reset and Swap"]')).equals(null)
+    await settle()
+    expect(screen.swaps()).equals(0)
+    expect(screen.order()).deep.equals([])
+    screen.release()
+    await settle()
+    expect(screen.order()).deep.equals(['save', 'swap'])
+    expect(screen.swaps()).equals(1)
+    expect(screen.opens()).equals(2)
+  })
+
+  it('closes the sheet and opens the game again before a swap request that never settles is answered', async function () {
+    const screen = await swappable({ holdSwaps: true })
     await click(MENU)
     await click(SWAP)
     await click('Confirm Swap')
+    expect(document.querySelector('[aria-label="Confirm Swap"]')).equals(null)
     await settle()
-    expect(screen.swaps()).equals(0)
-    expect(screen.opens()).equals(1)
-    expect(document.body.textContent).includes(UNSAVED)
-    await click('Cancel')
+    expect(screen.swaps()).equals(1)
+    expect(screen.reads()).equals(0)
+    // The old session saves nothing more, and the screen is opening again:
+    // the web reads the swapped game once the server has it.
+    expect(screen.session().state.gameData.teams.home.id).equals('home')
+    expect(document.querySelector('[aria-label="Loading game"]')).not.equals(
+      null
+    )
+    screen.release()
     await settle()
+    expect(screen.opens()).equals(2)
+    expect(screen.session().state.gameData.teams.home.id).equals('away')
+    expect(document.body.textContent).includes('Home and away were swapped.')
   })
 
   it('swaps past the notice of a change a rebase dropped, with nothing left to save', async function () {
@@ -1270,36 +1315,24 @@ describe('swapping from the scoring menu', function () {
     await settle()
     expect(screen.swaps()).equals(1)
     expect(screen.opens()).equals(2)
-    expect(document.body.textContent).not.includes(UNSAVED)
+    expect(document.body.textContent).includes('Home and away were swapped.')
   })
 
-  it('on a phone, waits on the game’s queued writes only', async function () {
+  it('on a phone, swaps with the game’s writes still queued, and never asks the queue', async function () {
     const queued = await swappable({
-      phone: { chains: { 'game:g1': 1 }, games: {} }
-    })
-    await click(MENU)
-    await click(SWAP)
-    await click('Confirm Swap')
-    await settle()
-    expect(queued.drains()).equals(1)
-    expect(queued.swaps()).equals(0)
-    expect(document.body.textContent).includes(UNSAVED)
-    await click('Cancel')
-    await settle()
-    await unmount()
-    const elsewhere = await swappable({
       phone: {
-        chains: { 'game:g2': 1 },
-        games: { g2: { state: 'parked', message: 'stale' } }
+        chains: { 'game:g1': 2 },
+        games: { g1: { state: 'parked', message: 'stale' } }
       }
     })
     await click(MENU)
     await click(SWAP)
     await click('Confirm Swap')
     await settle()
-    expect(elsewhere.drains()).equals(1)
-    expect(elsewhere.swaps()).equals(1)
-    expect(elsewhere.opens()).equals(2)
+    expect(queued.drains()).equals(0)
+    expect(queued.queued()).deep.equals(['swap'])
+    expect(queued.swaps()).equals(0)
+    expect(queued.opens()).equals(2)
   })
 
   it('leaves room for all seven rows in a window a phone held sideways is', async function () {
@@ -1334,5 +1367,76 @@ describe('swapping from the scoring menu', function () {
       delete (root as { clientHeight?: number }).clientHeight
       window.dispatchEvent(new window.Event('resize'))
     }
+  })
+})
+
+describe('the scoring open, from what the phone stored', function () {
+  it('opens on stored-first reads, reads the game again when one came back different, and a reload reads the server', async function () {
+    const reads: string[] = []
+    const note = (name: string, options?: { storedFirst?: boolean }): void => {
+      reads.push(`${name}${options?.storedFirst === true ? ':stored' : ''}`)
+    }
+    let told: (() => void) | undefined
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.game = async (_gameId, options) => {
+      note('game', options)
+      return gameFixture
+    }
+    client.myRoles = async options => {
+      note('roles', options)
+      return { teams: {}, guardianOf: [] }
+    }
+    client.roster = async (teamId, options) => {
+      note('roster', options)
+      return scoringRoster(teamId === 'away' ? 1 : 10)
+    }
+    client.defaultLineup = async (_teamId, options) => {
+      note('default', options)
+      return { lineup: null, fromGameId: null, setAt: null }
+    }
+    client.gameEvents = async (_gameId, options) => {
+      note('events', options)
+      return { plays: [], currentPlay: null }
+    }
+    client.onStoredChanged = (gameId, listener) => {
+      expect(gameId).equals('g1')
+      told = listener
+      return () => {
+        told = undefined
+      }
+    }
+    const source = new ServerScoringSource(
+      client,
+      new ServerClock(async () => Date.now(), memoryStorage())
+    )
+    await mount(client, source)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    // Every read the open waits on asks for the phone's stored copy; only
+    // the check of its sides, once it is open, reads the game as it is.
+    expect(reads.filter(read => !read.endsWith(':stored'))).deep.equals([
+      'game'
+    ])
+    expect(new Set(reads.filter(read => read.endsWith(':stored')))).deep.equals(
+      new Set([
+        'game:stored',
+        'roles:stored',
+        'roster:stored',
+        'default:stored',
+        'events:stored'
+      ])
+    )
+    expect(told).to.be.a('function')
+    reads.length = 0
+    await act(async () => {
+      told!()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    // Read again as a socket notice reads it: from the server.
+    expect(reads).includes('events')
+    expect(reads.filter(read => read.endsWith(':stored'))).deep.equals([])
+    await unmount()
+    expect(told).equals(undefined)
   })
 })

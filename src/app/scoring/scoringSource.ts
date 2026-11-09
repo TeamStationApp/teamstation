@@ -62,15 +62,17 @@ function context(
 
 /**
  * Both teams' default lineups. A default that fails to load is none, so the
- * side starts from its roster.
+ * side starts from its roster. `storedFirst`, for the scoring screen as it
+ * opens: the phone's stored defaults, read from the server behind them.
  */
 export async function defaultsOf(
   client: TeamStationClient,
-  game: GameDetail
+  game: GameDetail,
+  storedFirst = false
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> => {
     try {
-      return (await client.defaultLineup(teamId)).lineup
+      return (await client.defaultLineup(teamId, { storedFirst })).lineup
     } catch {
       return null
     }
@@ -98,8 +100,9 @@ export class ServerScoringSource implements ScoringSource {
     return this.clock.keepTime()
   }
 
+  /** The phone's stored choices at once, read from the server behind them. */
   async tagChoices(): Promise<TagChoices> {
-    return await this.client.tagChoices()
+    return await this.client.tagChoices({ storedFirst: true })
   }
 
   async saveTag(
@@ -120,8 +123,9 @@ export class ServerScoringSource implements ScoringSource {
     let rosters = { away, home }
     let first = true
     // The defaults shape only a new game: one with records is rebuilt from
-    // them, whatever the defaults say now.
-    const defaults = await defaultsOf(client, game)
+    // them, whatever the defaults say now. As the screen opens, every read
+    // it waits on is the phone's stored one, when it has one.
+    const defaults = await defaultsOf(client, game, true)
     // The context for the game's teams as last read, rebuilt only when they
     // change: every read gives the one its teams call for, whether or not
     // the session keeps that read.
@@ -143,7 +147,9 @@ export class ServerScoringSource implements ScoringSource {
         const later = !first
         if (later) await readTeams(await client.game(gameId))
         first = false
-        let stored = await client.gameEvents(gameId)
+        // The first read, as the screen opens, is the phone's stored plays;
+        // a reload after a notice reads the server.
+        let stored = await client.gameEvents(gameId, { storedFirst: !later })
         // On a reload or a rebase, the game read again after its plays: a
         // swap between the two reads would pair the swapped record with the
         // old teams. Read both again until they agree. (The screen checks
