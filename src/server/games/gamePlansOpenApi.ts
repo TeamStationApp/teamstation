@@ -22,7 +22,7 @@ const gamePlan = {
     enabled: {
       type: 'boolean',
       description:
-        "Whether the scorekeeper's game moves the side's defence to the next inning's column at each inning's end"
+        "Whether the scorekeeper's game moves the side's defence to the next inning's column at each inning's end. The server stores whether any cell holds a field position, whatever is sent"
     },
     innings: { type: 'integer', minimum: 1, maximum: MAX_PLAN_INNINGS },
     rows: {
@@ -44,7 +44,7 @@ const gamePlan = {
           cells: {
             type: 'array',
             description:
-              'Exactly one per inning: a field position, DH or EH (bats without fielding), - (sits), or blank (not yet planned)',
+              'Exactly one per inning: a field position, DH or EH (bats without fielding), or blank (sits). An inning whose column holds no field position is not planned yet. A - from an older client is read as blank',
             items: { type: 'string', enum: [...PLAN_CELLS, ''] }
           }
         }

@@ -69,7 +69,7 @@ const season = (
   positions: Partial<PlanRowCounts['positions']>,
   sits = 0
 ): PlanRowCounts => ({
-  positions: { ...planRowCounts([]).positions, ...positions },
+  positions: { ...planRowCounts([], []).positions, ...positions },
   sits
 })
 
@@ -86,12 +86,20 @@ const of = (
 const only = (list: PlanWarning[], rule: PlanWarning['rule']): PlanWarning[] =>
   list.filter(warning => warning.rule === rule)
 
-/** `count` rows that each field one inning of `innings` and sit the rest. */
+/**
+ * `count` rows that each field one inning of `innings` and sit the rest, in
+ * turn, so every inning is planned.
+ */
 const oneInningEach = (count: number, innings: number): PlanCell[][] =>
-  Array.from({ length: count }, () => [
-    'LF',
-    ...Array<PlanCell>(innings - 1).fill('-')
-  ])
+  Array.from({ length: count }, (_, at) =>
+    Array.from({ length: innings }, (__, inning) =>
+      inning === at % innings ? 'LF' : ''
+    )
+  )
+
+/** The same rows a column later, after an inning not planned yet. */
+const afterUnplanned = (rows: PlanCell[][]): PlanCell[][] =>
+  rows.map(cells => ['', ...cells])
 
 describe('plan warnings', function () {
   it('warns of two players at one position in an inning, with no rules', function () {
@@ -118,16 +126,16 @@ describe('plan warnings', function () {
       }
     ])
     // Blank cells are never a duplicate, so this rule has no yellow.
-    expect(warnings([[''], [''], ['-'], ['-']], rules())).deep.equals([])
+    expect(warnings([[''], [''], [''], ['']], rules())).deep.equals([])
   })
 
   it('warns of nothing else while every rule is off', function () {
     expect(
       warnings(
         [
-          ['-', '-', '-'],
+          ['', '', ''],
           ['C', 'C', 'C'],
-          ['', '', '']
+          ['DH', 'EH', '']
         ],
         {}
       )
@@ -135,13 +143,14 @@ describe('plan warnings', function () {
   })
 
   describe('Mandatory Play', function () {
-    it('is red when the outs are out of reach and yellow while blanks could meet them', function () {
+    it('is red when the outs are out of reach and yellow while unplanned innings could meet them', function () {
+      // The fourth inning is not planned yet.
       const list = warnings(
         [
-          ['P', 'P', 'P'],
-          ['-', '-', 'LF'],
-          ['-', '', 'RF'],
-          ['-', '-', '-']
+          ['P', 'P', 'P', ''],
+          ['', '', '', ''],
+          ['', '', 'RF', ''],
+          ['', '', '', '']
         ],
         { mandatoryPlay: true }
       )
@@ -156,11 +165,12 @@ describe('plan warnings', function () {
     })
 
     it('needs consecutive innings when Must Be Consecutive is on', function () {
+      // The fifth inning is not planned yet.
       const list = warnings(
         [
-          ['LF', '-', 'LF', '-'],
-          ['CF', '', '-', '-'],
-          ['RF', 'RF', '-', '-']
+          ['LF', '', 'LF', '', ''],
+          ['', '', '', 'CF', ''],
+          ['RF', 'RF', '', '', '']
         ],
         { mandatoryPlay: true, mustBeConsecutive: true }
       )
@@ -196,8 +206,8 @@ describe('plan warnings', function () {
     // only two of the innings played; Gehrig and Ruth share LF in inning 5,
     // which was never played.
     const rows: PlanCell[][] = [
-      ['LF', 'LF', '-', '-', 'LF', 'LF'],
-      ['CF', 'CF', 'CF', 'CF', 'LF', '-']
+      ['LF', 'LF', '', '', 'LF', 'LF'],
+      ['CF', 'CF', 'CF', 'CF', 'LF', '']
     ]
     const nine = (
       applyInShortenedGames: PlayingTimeRules['applyInShortenedGames']
@@ -263,11 +273,12 @@ describe('plan warnings', function () {
 
   describe('Stricter Minimum Innings', function () {
     it('counts fielded innings up to its deadline', function () {
+      // The second inning is not planned yet.
       const list = warnings(
         [
-          ['-', '-', 'LF', 'LF', 'LF'],
-          ['-', '', 'CF', '', ''],
-          ['LF', 'LF', '-', '-', '-']
+          ['', '', '', 'LF', 'LF'],
+          ['', '', 'CF', '', ''],
+          ['LF', '', 'LF', '', '']
         ],
         { stricterMinimumInnings: true, minimumInningsBy: 3 }
       )
@@ -284,7 +295,7 @@ describe('plan warnings', function () {
 
     it('reads a game-end deadline as this game', function () {
       expect(
-        warnings([['LF', '-', '']], {
+        warnings([['LF', '', '']], {
           stricterMinimumInnings: true,
           minimumFullInnings: 2
         })[0].message
@@ -294,24 +305,25 @@ describe('plan warnings', function () {
 
   describe('infield and outfield minimums', function () {
     it('warns of too few infield innings, red and yellow', function () {
+      // The third inning is not planned yet.
       const list = warnings(
         [
-          ['LF', 'LF'],
-          ['CF', ''],
-          ['SS', 'RF']
+          ['LF', 'LF', ''],
+          ['CF', 'SS', ''],
+          ['SS', '2B', '']
         ],
-        { requireMinimumInfield: true }
+        { requireMinimumInfield: true, infieldInningsRequired: 2 }
       )
       expect(
         list.map(({ level, message }) => ({ level, message }))
       ).deep.equals([
         {
           level: 'red',
-          message: `Cannot play 1 infield inning this game: ${RUTH}`
+          message: `Cannot play 2 infield innings this game: ${RUTH}`
         },
         {
           level: 'yellow',
-          message: `Not yet 1 infield inning this game: ${GEHRIG}`
+          message: `Not yet 2 infield innings this game: ${GEHRIG}`
         }
       ])
     })
@@ -352,24 +364,29 @@ describe('plan warnings', function () {
     })
 
     it('warns of too few outfield innings by their deadline, red and yellow', function () {
+      // The third inning is not planned yet.
       const list = warnings(
         [
-          ['1B', '1B', '1B', 'LF'],
-          ['2B', '', '2B', '2B'],
-          ['SS', 'RF', 'SS', 'SS']
+          ['1B', '1B', '', 'LF'],
+          ['2B', 'RF', '', '2B'],
+          ['LF', 'CF', '', 'SS']
         ],
-        { requireMinimumOutfield: true, outfieldBy: 3 }
+        {
+          requireMinimumOutfield: true,
+          outfieldInningsRequired: 2,
+          outfieldBy: 3
+        }
       )
       expect(
         list.map(({ level, message }) => ({ level, message }))
       ).deep.equals([
         {
           level: 'red',
-          message: `Cannot play 1 outfield inning by inning 3: ${RUTH}`
+          message: `Cannot play 2 outfield innings by inning 3: ${RUTH}`
         },
         {
           level: 'yellow',
-          message: `Not yet 1 outfield inning by inning 3: ${GEHRIG}`
+          message: `Not yet 2 outfield innings by inning 3: ${GEHRIG}`
         }
       ])
     })
@@ -380,7 +397,7 @@ describe('plan warnings', function () {
     // outfield, and Gehrig sits twice in a row.
     const rows: PlanCell[][] = [
       ['P', 'P', 'P'],
-      ['C', '-', '-'],
+      ['C', '', ''],
       ['SS', 'LF', 'LF']
     ]
 
@@ -418,11 +435,12 @@ describe('plan warnings', function () {
   describe('sitting limits', function () {
     it('warns red of two sits in a row, and never yellow', function () {
       const sitting = { enforceSittingLimits: true, maxSitsPerGame: 3 }
+      // The fourth inning is not planned yet, so holds no sit.
       const list = warnings(
         [
-          ['-', '-', 'LF'],
-          ['-', '', '-'],
-          ['CF', '-', 'CF']
+          ['', '', 'LF', ''],
+          ['', 'SS', '', ''],
+          ['CF', '', 'CF', '']
         ],
         sitting
       )
@@ -435,16 +453,22 @@ describe('plan warnings', function () {
         }
       ])
       expect(
-        warnings([['-', '-']], { ...sitting, noConsecutiveSits: false })
+        warnings(
+          [
+            ['', ''],
+            ['LF', 'LF']
+          ],
+          { ...sitting, noConsecutiveSits: false, equalSittingOrder: 'off' }
+        )
       ).deep.equals([])
     })
 
     it('warns red above the most sits a game, and never yellow', function () {
       const list = warnings(
         [
-          ['-', 'LF', '-'],
-          ['-', '', ''],
-          ['CF', 'CF', 'CF']
+          ['', 'LF', '', ''],
+          ['', 'SS', 'SS', ''],
+          ['CF', 'CF', 'CF', '']
         ],
         { enforceSittingLimits: true, equalSittingOrder: 'off' }
       )
@@ -457,10 +481,16 @@ describe('plan warnings', function () {
         }
       ])
       expect(
-        warnings([['-', 'LF']], {
-          enforceSittingLimits: true,
-          maxSitsPerGame: 0
-        })[0].message
+        warnings(
+          [
+            ['', 'LF'],
+            ['SS', 'SS']
+          ],
+          {
+            enforceSittingLimits: true,
+            maxSitsPerGame: 0
+          }
+        )[0].message
       ).equals(`More than 0 sits: ${RUTH}`)
     })
 
@@ -468,12 +498,12 @@ describe('plan warnings', function () {
       const order = { enforceSittingLimits: true, maxSitsPerGame: 3 }
       // Mantle catches the first inning and never sits, but he is exempt.
       const rows = (dimaggio: PlanCell[]): PlanCell[][] => [
-        ['-', 'LF', '-', 'LF'],
-        ['CF', '-', 'CF', 'CF'],
+        ['', 'LF', '', 'LF'],
+        ['CF', '', 'CF', 'CF'],
         dimaggio,
         ['C', 'C', 'C', 'C']
       ]
-      expect(warnings(rows(['RF', 'RF', 'RF', '-']), order)).deep.equals([
+      expect(warnings(rows(['RF', 'RF', 'RF', '']), order)).deep.equals([
         {
           rule: 'equalSittingOrder',
           level: 'red',
@@ -481,7 +511,11 @@ describe('plan warnings', function () {
           players: [RUTH]
         }
       ])
-      expect(warnings(rows(['RF', 'RF', '', '-']), order)).deep.equals([
+      // An inning not planned yet could still hold DiMaggio's sit. Mantle,
+      // no longer the starting catcher, could sit in it too.
+      expect(
+        warnings(afterUnplanned(rows(['RF', 'RF', 'RF', ''])), order)
+      ).deep.equals([
         {
           rule: 'equalSittingOrder',
           level: 'yellow',
@@ -489,9 +523,9 @@ describe('plan warnings', function () {
           players: [RUTH]
         }
       ])
-      expect(warnings(rows(['RF', '-', 'RF', 'RF']), order)).deep.equals([])
+      expect(warnings(rows(['RF', '', 'RF', 'RF']), order)).deep.equals([])
       expect(
-        warnings(rows(['RF', 'RF', 'RF', '-']), {
+        warnings(rows(['RF', 'RF', 'RF', '']), {
           ...order,
           equalSittingOrder: 'off'
         })
@@ -506,29 +540,32 @@ describe('plan warnings', function () {
         equalSittingOrder: 'thirdAfterAll' as const
       }
       const rows = (dimaggio: PlanCell[]): PlanCell[][] => [
-        ['-', 'LF', '-', 'LF', '-'],
-        ['CF', '-', 'CF', '-', 'CF'],
+        ['', 'LF', '', 'LF', ''],
+        ['CF', '', 'CF', '', 'CF'],
         dimaggio
       ]
       expect(
         of(
-          warnings(rows(['-', 'RF', 'RF', 'RF', 'RF']), order),
+          warnings(rows(['', 'RF', 'RF', 'RF', 'RF']), order),
           'equalSittingOrder'
         )
       ).deep.equals([{ level: 'red', players: [RUTH] }])
-      const yellow = warnings(rows(['-', 'RF', '', 'RF', 'RF']), order)
+      const yellow = warnings(
+        afterUnplanned(rows(['', 'RF', 'RF', 'RF', 'RF'])),
+        order
+      )
       expect(yellow.map(warning => warning.message)).deep.equals([
         `Sits a third time before everyone has two planned sits: ${RUTH}`
       ])
       // Second After All lets the same plan stand.
       expect(
-        warnings(rows(['-', 'RF', 'RF', 'RF', 'RF']), {
+        warnings(rows(['', 'RF', 'RF', 'RF', 'RF']), {
           ...order,
           equalSittingOrder: 'secondAfterAll'
         })
       ).deep.equals([])
       expect(
-        warnings(rows(['-', 'RF', 'RF', 'RF', 'RF']), order)[0].message
+        warnings(rows(['', 'RF', 'RF', 'RF', 'RF']), order)[0].message
       ).equals(`Sits a third time before everyone has sat twice: ${RUTH}`)
     })
   })
@@ -586,13 +623,15 @@ describe('plan warnings', function () {
         requireMinimumOutfield: true,
         mustPlayInfieldAndOutfield: true
       }
+      // The third inning is not planned yet: one more inning can meet one
+      // missing half, not two.
       const list = warnings(
         [
-          ['SS', 'SS'],
-          ['SS', ''],
-          ['SS', 'LF'],
-          ['', ''],
-          ['-', '']
+          ['', '', ''],
+          ['SS', 'SS', ''],
+          ['1B', 'LF', ''],
+          ['DH', 'RF', ''],
+          ['', 'EH', '']
         ],
         both
       )
@@ -779,13 +818,123 @@ describe('plan warnings', function () {
     })
   })
 
+  describe('innings not planned yet', function () {
+    // Ten players, planned for innings 1 and 2 of 6: Gehrig sits the
+    // first and Gibson the second.
+    const twoPlanned = (): PlanCell[][] =>
+      [
+        ['P', 'P'],
+        ['', 'C'],
+        ['1B', '1B'],
+        ['2B', '2B'],
+        ['SS', 'SS'],
+        ['3B', '3B'],
+        ['LF', 'LF'],
+        ['CF', 'CF'],
+        ['RF', 'RF'],
+        ['C', '']
+      ].map((cells): PlanCell[] => [...(cells as PlanCell[]), '', '', '', ''])
+    const sitting = {
+      enforceSittingLimits: true,
+      maxSitsPerGame: 0,
+      startingBatteryExemptFromSitting: false
+    }
+
+    it('raise no sits', function () {
+      // Every player sits innings 3 to 6 by their blanks, which count for
+      // nothing; only the two planned sits do.
+      expect(of(warnings(twoPlanned(), sitting), 'maxSitsPerGame')).deep.equals(
+        [{ level: 'red', players: [GEHRIG, NAMES[9]] }]
+      )
+      expect(
+        warnings(twoPlanned(), { ...sitting, maxSitsPerGame: 1 })
+      ).deep.equals([])
+    })
+
+    it('leave a minimum whose deadline reaches them yellow, and red once planned without it', function () {
+      const stricter = {
+        stricterMinimumInnings: true,
+        minimumFullInnings: 2,
+        minimumInningsBy: 4 as const
+      }
+      expect(
+        of(warnings(twoPlanned(), stricter), 'stricterMinimumInnings')
+      ).deep.equals([{ level: 'yellow', players: [GEHRIG, NAMES[9]] }])
+      // Innings 3 and 4 planned with both on the bench.
+      const planned = twoPlanned().map((cells, at): PlanCell[] => [
+        ...cells.slice(0, 2),
+        at === 1 || at === 9 ? '' : cells[0],
+        at === 1 || at === 9 ? '' : cells[0],
+        ...cells.slice(4)
+      ])
+      expect(
+        of(warnings(planned, stricter), 'stricterMinimumInnings')
+      ).deep.equals([{ level: 'red', players: [GEHRIG, NAMES[9]] }])
+    })
+
+    it('include a column of only DH, EH and blanks', function () {
+      const rows: PlanCell[][] = [
+        ['LF', 'DH'],
+        ['CF', ''],
+        ['RF', 'EH']
+      ]
+      expect(
+        warnings(rows, { enforceSittingLimits: true, maxSitsPerGame: 0 })
+      ).deep.equals([])
+      expect(
+        of(
+          warnings(rows, { stricterMinimumInnings: true }),
+          'stricterMinimumInnings'
+        )
+      ).deep.equals([{ level: 'yellow', players: [RUTH, GEHRIG, DIMAGGIO] }])
+      // Planned, its blank is a sit.
+      const fielded: PlanCell[][] = [['LF', 'SS'], ...rows.slice(1)]
+      expect(
+        of(
+          warnings(fielded, { enforceSittingLimits: true, maxSitsPerGame: 0 }),
+          'maxSitsPerGame'
+        )
+      ).deep.equals([{ level: 'red', players: [GEHRIG] }])
+    })
+
+    it('keep consecutive outs across them yellow', function () {
+      const consecutive: Partial<PlayingTimeRules> = {
+        mandatoryPlay: true,
+        defensiveOutsRequired: 9,
+        mustBeConsecutive: true
+      }
+      // Ruth sits the first inning and fields the second; three and four
+      // are not planned yet.
+      const rows: PlanCell[][] = [
+        ['', 'LF', '', ''],
+        ['SS', 'SS', '', '']
+      ]
+      expect(of(warnings(rows, consecutive), 'mandatoryPlay')).deep.equals([
+        { level: 'yellow', players: [RUTH, GEHRIG] }
+      ])
+      // The third planned with Ruth on the bench breaks his run.
+      expect(
+        of(
+          warnings(
+            [
+              ['', 'LF', '', ''],
+              ['SS', 'SS', 'SS', '']
+            ],
+            consecutive
+          ),
+          'mandatoryPlay'
+        )
+      ).deep.equals([{ level: 'red', players: [RUTH] }])
+    })
+  })
+
   it('warns of nothing for the batting-order rules', function () {
     expect(
       warnings(
         [
-          ['-', '-', '-'],
           ['', '', ''],
-          ['DH', 'EH', '-']
+          ['LF', 'LF', 'LF'],
+          ['DH', 'EH', '']
         ],
         {
           continuousBatting: true,
@@ -812,7 +961,7 @@ describe('plan warnings', function () {
           ['LF', 'LF'],
           ['SS', 'SS'],
           ['SS', 'LF'],
-          ['-', '-']
+          ['', '']
         ],
         { trackSeasonInfieldBalance: true },
         { history }
@@ -903,9 +1052,9 @@ describe('plan warnings', function () {
         lastGameSits: { 'g:1': 2, 'g:2': 2, 'g:3': 1 }
       }
       const rows: PlanCell[][] = [
-        ['-', 'LF'],
-        ['LF', '-'],
-        ['-', 'CF']
+        ['', 'LF'],
+        ['LF', ''],
+        ['', 'CF']
       ]
       expect(warnings(rows, next, { history })).deep.equals([
         {
@@ -921,7 +1070,7 @@ describe('plan warnings', function () {
     it('never warns red', function () {
       const list = warnings(
         [
-          ['-', '-', '-'],
+          ['', '', ''],
           ['SS', 'SS', 'SS'],
           ['LF', 'LF', 'LF']
         ],
@@ -948,14 +1097,16 @@ describe('plan warnings', function () {
   })
 
   it('lists reds before yellows', function () {
+    // The third inning is not planned yet.
     const list = warnings(
       [
-        ['-', ''],
-        ['-', '-']
+        ['1B', '', ''],
+        ['', '', ''],
+        ['SS', '2B', '']
       ],
       {
         mandatoryPlay: true,
-        defensiveOutsRequired: 3,
+        infieldInningsRequired: 2,
         rotateLeadoff: true,
         requireMinimumInfield: true
       },

@@ -210,7 +210,7 @@ function placeTargets(): void {
   const spots: Record<string, [number, number]> = {
     CF: [200, 100],
     LF: [120, 140],
-    '-': [300, 260]
+    bench: [300, 260]
   }
   for (const [value, [x, y]] of Object.entries(spots)) {
     const target = byId(`Plan pick ${value}`)!
@@ -280,8 +280,7 @@ describe('the game plan tab', function () {
       [['r', 'RF'], 'RF'],
       [['d', 'Dh'], 'DH'],
       [['e', 'eh'], 'EH'],
-      [['p'], 'P'],
-      [['-'], '-']
+      [['p'], 'P']
     ]
     for (const [at, [keys, value]] of entries.entries()) {
       const input = cell((at % 3) + 1, Math.floor(at / 3) + 1)
@@ -316,7 +315,8 @@ describe('the game plan tab', function () {
     await typeText(input, 'c')
     await typeText(input, 'Cf')
     expect(cells()[1][2]).equals('CF')
-    for (const text of ['X', 'q']) {
+    // The bench is blank, so a dash is no value either.
+    for (const text of ['X', 'q', '-']) {
       await typeText(input, text)
       expect(cells()[1][2], text).equals('CF')
       expect(input.value, text).equals('CF')
@@ -380,10 +380,20 @@ describe('the game plan tab', function () {
     await focus(cell(1, 2))
     await press(byId('Plan pick CF'))
     expect(cells()[0][1]).equals('')
-    // Bench writes a dash, and the close button leaves the cell alone.
+    // Bench blanks the cell, and is lit for a blank one; the close button
+    // leaves the cell alone.
+    await focus(cell(1, 1))
+    expect(byId('Plan pick bench')!.getAttribute('aria-selected')).equals(
+      'false'
+    )
+    await press(byId('Plan pick bench'))
+    expect(cells()[0][0]).equals('')
     await focus(cell(1, 3))
-    await press(byId('Plan pick -'))
-    expect(cells()[0][2]).equals('-')
+    expect(byId('Plan pick bench')!.getAttribute('aria-selected')).equals(
+      'true'
+    )
+    await press(byId('Plan pick bench'))
+    expect(cells()[0][2]).equals('')
     await focus(cell(1, 4))
     await press(byId('Plan picker close'))
     expect(picker()).equals(null)
@@ -515,9 +525,9 @@ describe('the game plan tab', function () {
       plan: {
         ...PLAN,
         rows: [
-          { player: LINEUP[0], cells: ['P', 'P', '-', '', '', ''] },
+          { player: LINEUP[0], cells: ['P', 'P', '', '', '', ''] },
           { player: LINEUP[1], cells: ['C', 'C', 'C', '', '', ''] },
-          { player: LINEUP[2], cells: ['CF', '-', 'LF', '', '', ''] }
+          { player: LINEUP[2], cells: ['CF', '', 'LF', '', '', ''] }
         ]
       }
     })
@@ -541,7 +551,7 @@ describe('the game plan tab', function () {
     expect(byId('Plan player 1')!.textContent).equals('#24 Willie Mays')
     expect([1, 2, 3].map(inning => cell(1, inning).value)).deep.equals([
       'CF',
-      '-',
+      '',
       'LF'
     ])
     expect([1, 2, 3].map(inning => cell(3, inning).value)).deep.equals([
@@ -585,7 +595,7 @@ describe('the game plan tab', function () {
     expect(byId('Plan player 3')!.textContent).equals('#24 Willie Mays')
     expect([1, 2, 3].map(inning => cell(3, inning).value)).deep.equals([
       'CF',
-      '-',
+      '',
       'LF'
     ])
   })
@@ -613,9 +623,9 @@ describe('the game plan tab', function () {
       plan: {
         ...PLAN,
         rows: [
-          { player: LINEUP[0], cells: ['1B', '-', '', '', '', ''] },
-          { player: LINEUP[1], cells: ['C', 'C', 'C', '', '', ''] },
-          { player: LINEUP[2], cells: ['CF', 'CF', 'CF', '', '', ''] }
+          { player: LINEUP[0], cells: ['1B', '', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['C', 'C', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['CF', 'CF', '', '', '', ''] }
         ]
       }
     })
@@ -623,12 +633,14 @@ describe('the game plan tab', function () {
       [...document.querySelectorAll('[data-testid^="Plan warning "]')].map(
         node => String(node.getAttribute('data-testid'))
       )
-    // Ruth's six outs are still reachable: yellow; nothing red yet.
+    // Ruth's six outs are still reachable in the innings not planned yet:
+    // yellow; nothing red yet.
     expect(shown()).deep.equals(['Plan warning yellow mandatoryPlay'])
-    // A second sit breaks Max Sits at once, before any save.
-    const input = cell(1, 3)
+    // Planning the third inning without him is a second sit, which breaks
+    // Max Sits at once, before any save.
+    const input = cell(2, 3)
     await focus(input)
-    await typeText(input, '-')
+    await typeText(input, 'c')
     expect(shown()).deep.include('Plan warning red maxSitsPerGame')
     const red = byId('Plan warning red maxSitsPerGame')!
     expect(red.textContent).includes('Babe Ruth')
@@ -705,8 +717,8 @@ describe('the game plan tab', function () {
     await press(byId('Plan clear confirm'))
     await settle()
     expect(cells()).deep.equals([blank(7), blank(7), blank(7)])
-    // The toggle and the innings stay.
-    expect(latest.enabled).equals(true)
+    // Empty, the plan is off; the innings stay.
+    expect(latest.enabled).equals(false)
     expect(latest.innings).equals(7)
   })
 
@@ -714,7 +726,7 @@ describe('the game plan tab', function () {
     const plan: GamePlan = {
       ...PLAN,
       rows: [
-        { player: LINEUP[0], cells: ['-', '-', '-', '-', 'P', 'P'] },
+        { player: LINEUP[0], cells: ['', '', '', '', 'P', 'P'] },
         { player: LINEUP[1], cells: ['C', 'C', 'C', 'C', 'C', 'C'] },
         { player: LINEUP[2], cells: ['CF', 'CF', 'CF', 'CF', 'CF', 'CF'] }
       ]

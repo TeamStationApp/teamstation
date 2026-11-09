@@ -5,6 +5,7 @@ import type { LineupPlayer } from './api'
 import {
   addInning,
   alignPlan,
+  asGamePlan,
   clearPlan,
   DEFAULT_PLAN_INNINGS,
   type GamePlan,
@@ -14,8 +15,11 @@ import {
   type PlanCell,
   planCellEntry,
   planCellOf,
+  planHasPositions,
+  plannedInnings,
   planPlayerKey,
-  planRowCounts
+  planRowCounts,
+  removeInning
 } from './gamePlan'
 import { type Position, POSITIONS } from './scoring/state'
 
@@ -52,10 +56,23 @@ describe('game plan model', function () {
       expect(planCellOf(' ')).equals('')
       expect(planCellOf(' c')).equals('C')
       expect(planCellOf('1b')).equals('1B')
+      // The bench is blank, not a dash.
+      expect(PLAN_CELLS).not.includes('-')
     })
 
     it('refuses anything else, and text longer than a cell', function () {
-      for (const text of ['X', '1', 'SSS', 'LF ', 'Q', 'S', 'CC', 'P1', '--'])
+      for (const text of [
+        'X',
+        '1',
+        'SSS',
+        'LF ',
+        'Q',
+        'S',
+        'CC',
+        'P1',
+        '-',
+        '--'
+      ])
         expect(planCellOf(text), text).equals(null)
     })
   })
@@ -64,8 +81,9 @@ describe('game plan model', function () {
     it('commits whole values', function () {
       expect(planCellEntry('', 'ss')).deep.equals({ commit: 'SS' })
       expect(planCellEntry('', 'P')).deep.equals({ commit: 'P' })
-      expect(planCellEntry('', '-')).deep.equals({ commit: '-' })
+      // An emptied cell commits the bench; a dash is no value.
       expect(planCellEntry('LF', '')).deep.equals({ commit: '' })
+      expect(planCellEntry('', '-')).deep.equals({ refuse: true })
       // C commits at once, and F after it makes CF.
       expect(planCellEntry('', 'c')).deep.equals({ commit: 'C' })
       expect(planCellEntry('C', 'CF')).deep.equals({ commit: 'CF' })
@@ -81,7 +99,7 @@ describe('game plan model', function () {
       // A key after a one-letter value that makes nothing with it starts
       // over.
       expect(planCellEntry('P', 'Ps')).deep.equals({ pending: 'S' })
-      expect(planCellEntry('-', '-l')).deep.equals({ pending: 'L' })
+      expect(planCellEntry('C', 'Cl')).deep.equals({ pending: 'L' })
     })
 
     it('refuses what starts no value', function () {
@@ -105,7 +123,7 @@ describe('game plan model', function () {
       const stored = plan([
         [ruth, ['P', 'P', 'P']],
         [mantle, ['CF', 'CF', 'LF']],
-        [gehrig, ['1B', '1B', '-']]
+        [gehrig, ['1B', '1B', '']]
       ])
       // Gehrig's name reads differently now; Mantle has no gumboId.
       const renamed = { ...gehrig, fullName: 'Gehrig H L' }
@@ -113,7 +131,7 @@ describe('game plan model', function () {
       expect(aligned.enabled).equals(true)
       expect(aligned.innings).equals(3)
       expect(aligned.rows).deep.equals([
-        { player: renamed, cells: ['1B', '1B', '-'] },
+        { player: renamed, cells: ['1B', '1B', ''] },
         { player: ruth, cells: ['P', 'P', 'P'] },
         { player: mantle, cells: ['CF', 'CF', 'LF'] },
         { player: dimaggio, cells: ['', '', ''] }
@@ -151,6 +169,57 @@ describe('game plan model', function () {
         ['1B', '1B', '1B']
       ])
     })
+
+    it('reads a dash, the bench of a plan saved before it was blank, as blank', function () {
+      const held = plan([[ruth, ['P', '-' as PlanCell, '']]])
+      expect(alignPlan(held, [ruth]).rows[0].cells).deep.equals(['P', '', ''])
+    })
+  })
+
+  describe('asGamePlan', function () {
+    const sent = (cells: string[][], enabled: boolean): unknown => ({
+      enabled,
+      innings: cells[0].length,
+      rows: cells.map((row, at) => ({
+        player: [ruth, gehrig][at],
+        cells: row
+      }))
+    })
+
+    it('reads a stored dash as the bench', function () {
+      expect(
+        asGamePlan(
+          sent(
+            [
+              ['P', '-', 'DH'],
+              ['-', '-', '']
+            ],
+            true
+          )
+        ).rows.map(row => row.cells)
+      ).deep.equals([
+        ['P', '', 'DH'],
+        ['', '', '']
+      ])
+    })
+
+    it('is on when any cell holds a field position, whatever was sent', function () {
+      expect(asGamePlan(sent([['', 'DH', 'EH']], true)).enabled).equals(false)
+      expect(asGamePlan(sent([['', '', 'C']], false)).enabled).equals(true)
+      expect(planHasPositions(plan([[ruth, ['', 'DH']]]))).equals(false)
+      expect(planHasPositions(plan([[ruth, ['', 'RF']]]))).equals(true)
+      expect(planHasPositions({ rows: [] })).equals(false)
+    })
+
+    it('refuses a cell that is no value, and rows that miss an inning', function () {
+      expect(() => asGamePlan(sent([['P', 'X']], true))).throws(TypeError)
+      expect(() =>
+        asGamePlan({ ...(sent([['P', 'P']], true) as object), innings: 3 })
+      ).throws(TypeError, 'Row 1 has 2 cells for 3 innings')
+      expect(() =>
+        asGamePlan({ ...(sent([['P']], true) as object), innings: 13 })
+      ).throws(TypeError)
+    })
   })
 
   it('adds a blank inning, and stops at 12', function () {
@@ -161,18 +230,34 @@ describe('game plan model', function () {
     expect(addInning(full)).equals(full)
   })
 
-  it('clears every cell and keeps the toggle, innings and rows', function () {
+  it('deletes an added inning, and never one of the first six', function () {
+    const nine = plan([
+      [ruth, ['P', 'P', 'P', 'P', 'P', 'P', 'C', 'LF', 'RF']],
+      [gehrig, ['C', 'C', 'C', 'C', 'C', 'C', 'P', '', 'DH']]
+    ])
+    const deleted = removeInning(nine, 8)
+    expect(deleted.innings).equals(8)
+    expect(deleted.rows.map(row => row.cells)).deep.equals([
+      ['P', 'P', 'P', 'P', 'P', 'P', 'C', 'RF'],
+      ['C', 'C', 'C', 'C', 'C', 'C', 'P', 'DH']
+    ])
+    expect(removeInning(removeInning(deleted, 7), 7).innings).equals(6)
+    for (const inning of [0, 1, DEFAULT_PLAN_INNINGS, 10])
+      expect(removeInning(nine, inning), String(inning)).equals(nine)
+  })
+
+  it('clears every cell, which turns it off, and keeps its innings and rows', function () {
     const cleared = clearPlan(
       plan(
         [
-          [ruth, ['P', '-', 'DH']],
+          [ruth, ['P', '', 'DH']],
           [gehrig, ['1B']]
         ],
         3
       )
     )
     expect(cleared).deep.equals({
-      enabled: true,
+      enabled: false,
       innings: 3,
       rows: [
         { player: ruth, cells: ['', '', ''] },
@@ -186,9 +271,24 @@ describe('game plan model', function () {
     expect(planPlayerKey(mantle)).equals('n:Mantle M#7')
   })
 
-  it('counts a row’s innings at each field position, and its sits', function () {
+  it('finds the planned innings: those whose column holds a field position', function () {
     expect(
-      planRowCounts(['P', 'C', 'SS', 'LF', 'RF', 'SS', '-', 'DH', 'EH', ''])
+      plannedInnings(
+        plan([
+          [ruth, ['P', '', 'DH', '', 'EH']],
+          [gehrig, ['', '', 'EH', 'LF', '']]
+        ])
+      )
+    ).deep.equals([true, false, false, true, false])
+  })
+
+  it('counts a row’s innings at each field position, and its sits in planned innings', function () {
+    const planned = [...Array<boolean>(9).fill(true), false]
+    expect(
+      planRowCounts(
+        ['P', 'C', 'SS', 'LF', 'RF', 'SS', '', 'DH', 'EH', ''],
+        planned
+      )
     ).deep.equals({
       positions: {
         P: 1,
@@ -241,15 +341,37 @@ describe('game plan model', function () {
 
     it('takes a batter off the field for DH, EH and a sit', function () {
       expect(
-        inningDefense(column(['DH', 'EH', '-', 'LF']), 2, side, players)
+        inningDefense(column(['DH', 'EH', '', 'LF']), 2, side, players)
       ).deep.equals(defense({ P: 9, LF: 70 }))
     })
 
-    it('reads a blank as no instruction', function () {
-      // Ruth is unplanned and keeps C; Mantle is unplanned and loses LF to
-      // DiMaggio.
+    it('benches the blanks of a partly blank column', function () {
+      // Ruth and Mantle are blank: they leave C and LF, and DiMaggio takes
+      // LF. Gehrig stays at 1B.
       expect(
         inningDefense(column(['', '1B', 'LF', '']), 2, side, players)
+      ).deep.equals(defense({ P: 9, '1B': 4, LF: 5 }))
+    })
+
+    it('reads a column with no field position as no instruction', function () {
+      expect(inningDefense(column(['', '', '', '']), 2, side, players)).equals(
+        null
+      )
+      expect(
+        inningDefense(column(['DH', '', 'EH', '']), 2, side, players)
+      ).equals(null)
+    })
+
+    it('keeps a batter with no row where he is', function () {
+      // Berra bats now but has no row: Mantle's LF goes to DiMaggio, and
+      // Berra keeps P.
+      expect(
+        inningDefense(
+          column(['C', '1B', 'LF', '']),
+          2,
+          { ...side, battingOrder: [...side.battingOrder, 9] },
+          players
+        )
       ).deep.equals(defense({ P: 9, C: 3, '1B': 4, LF: 5 }))
     })
 
@@ -264,9 +386,6 @@ describe('game plan model', function () {
     it('is null when the column changes nothing, or there is none', function () {
       const unchanged = column(['C', '1B', 'CF', 'LF'])
       expect(inningDefense(unchanged, 2, side, players)).equals(null)
-      expect(inningDefense(column(['', '', '', '']), 2, side, players)).equals(
-        null
-      )
       expect(inningDefense(unchanged, 3, side, players)).equals(null)
       expect(inningDefense(unchanged, 0, side, players)).equals(null)
     })

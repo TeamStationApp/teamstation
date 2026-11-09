@@ -30,6 +30,7 @@ import { ScoringSession } from '../../common/scoring/session'
 import {
   copyState,
   type GameState,
+  isPosition,
   POSITIONS,
   setupOf
 } from '../../common/scoring/state'
@@ -1593,7 +1594,7 @@ describe('the coach’s game plan', function () {
     expect(sent.rows[0].cells).deep.equals(['CF', '', '', '', '', ''])
     await waitFor(() => saveDisabled(), 'a clean plan')
     // Both changed: the lineup is saved, then the plan.
-    await type(2, 2, ['-'])
+    await type(2, 2, ['p'])
     await stageChange()
     await click('Save Rosters')
     await waitFor(() => held.savedPlans.length === 2, 'the plan saved again')
@@ -1865,10 +1866,12 @@ describe('the coach’s game plan', function () {
       )
     ).not.equals(null)
     await click('Save Rosters')
+    // Its inning 1, two pitchers and the rest blank, benches the Defense
+    // tab's other fielders before the first pitch: the notice says so too.
     await waitFor(
       () =>
         document.body.textContent!.includes(
-          'Saved. Plan has 1 red and 1 yellow playing-time warnings.'
+          'Saved. Defense set from the plan’s inning 1. Plan has 1 red and 1 yellow playing-time warnings.'
         ),
       'the warning notice'
     )
@@ -1896,7 +1899,7 @@ describe('the coach’s game plan', function () {
     await plan(held)
     expect(cell(1, 1).value).equals('P')
     expect(cell(1, 7)).not.equals(null)
-    await type(1, 1, ['-'])
+    await type(1, 1, [''])
     expect(saveDisabled()).equals(false)
     await click('Back')
     expect(document.body.textContent).includes(
@@ -1997,19 +2000,16 @@ describe('the coach’s game plan', function () {
   describe('his plan’s first inning, before the first pitch', function () {
     /**
      * His plan with Hawk 1 to 9 in batting order, `first` their inning 1
-     * column, the rest blank.
+     * column, the rest blank: on when it holds a position, as the server
+     * stores it.
      */
-    function firstInning(
-      held: Server,
-      enabled: boolean,
-      first: PlanCell[]
-    ): void {
+    function firstInning(held: Server, first: PlanCell[]): void {
       held.plans = {
         away: null,
         home: {
           ...HOME_PLAN,
           plan: {
-            enabled,
+            enabled: first.some(isPosition),
             innings: 6,
             rows: [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ({
               player: {
@@ -2023,8 +2023,14 @@ describe('the coach’s game plan', function () {
         }
       }
     }
+    /**
+     * An inning 1 column that keeps Hawk 1 to 9 at P to RF, but for the
+     * cells given, by Hawk.
+     */
+    const column = (changes: Record<number, PlanCell> = {}): PlanCell[] =>
+      POSITIONS.map((position, at) => changes[at + 1] ?? position)
     /** Hawk 1 and 2 swapped, P and C: the rest keep their positions. */
-    const SWAPPED: PlanCell[] = ['C', 'P']
+    const SWAPPED = column({ 1: 'C', 2: 'P' })
     /**
      * Opens his screen over a game that takes each lineup save, as the
      * server's roster action does, so the game read back holds it.
@@ -2075,13 +2081,14 @@ describe('the coach’s game plan', function () {
       ...changes
     })
 
-    it('starts the lineup he saves in it once he follows the plan, and Defense shows it', async function () {
+    it('starts the lineup he saves in it, and Defense shows it', async function () {
       const held = accepted()
-      firstInning(held, false, SWAPPED)
+      firstInning(held, SWAPPED)
       await opened(held)
       await click('Plan', 'tab')
       await waitFor(() => cell(1, 1) != null, 'the plan sheet')
-      await click('Enable per-inning game plan')
+      // An edit to a later inning, so there is something to save.
+      await type(1, 2, ['p'])
       await click('Save Rosters')
       await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
       expect(held.writes).deep.equals(['lineups', 'plan'])
@@ -2148,8 +2155,8 @@ describe('the coach’s game plan', function () {
 
     it('says when his inning 1 puts someone else where he moved a fielder on Defense', async function () {
       const held = server()
-      // Hawk 5 plays shortstop in inning 1; Hawk 4 is not planned.
-      firstInning(held, true, ['', '', '', '', 'SS'])
+      // Hawk 5 plays shortstop in inning 1; Hawk 4 sits.
+      firstInning(held, column({ 4: '', 5: 'SS' }))
       await opened(held)
       // He moves Hawk 4 from second to short, Hawk 5 to second.
       await moveFielder('2B', 'SS')
@@ -2170,9 +2177,28 @@ describe('the coach’s game plan', function () {
       )
     })
 
+    it('says when his inning 1 benches a fielder the Defense tab has, leaving his position empty', async function () {
+      const held = server()
+      // Hawk 4, at second on Defense, sits inning 1, and nobody takes second.
+      firstInning(held, column({ 4: '' }))
+      await opened(held)
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the lineup saved')
+      const { '2B': second, ...rest } = fielding()
+      expect(second).equals(3)
+      expect(held.saved[0].defense).deep.equals(rest)
+      await waitFor(
+        () =>
+          document.body.textContent!.includes(
+            'Saved. Defense set from the plan’s inning 1.'
+          ),
+        'the notice'
+      )
+    })
+
     it('says his inning 1 set the defence beside the plan’s warnings', async function () {
       const held = accepted()
-      firstInning(held, true, ['', '', '', '', 'SS'])
+      firstInning(held, column({ 4: '', 5: 'SS' }))
       held.plans.home = {
         ...held.plans.home!,
         rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
@@ -2195,7 +2221,7 @@ describe('the coach’s game plan', function () {
 
     it('says nothing of his inning 1 when it agrees with his Defense edit', async function () {
       const held = server()
-      firstInning(held, true, ['', '', '', 'SS', '2B'])
+      firstInning(held, column({ 4: 'SS', 5: '2B' }))
       await opened(held)
       await moveFielder('2B', 'SS')
       await click('Save Rosters')
@@ -2205,9 +2231,12 @@ describe('the coach’s game plan', function () {
       expect(document.body.textContent).not.includes('Defense set from')
     })
 
-    it('keeps the Defense tab’s defence for a plan he does not follow', async function () {
+    it('keeps the Defense tab’s defence for a plan with no position in it', async function () {
       const held = server()
-      firstInning(held, false, SWAPPED)
+      firstInning(
+        held,
+        column().map((): PlanCell => '')
+      )
       await opened(held)
       await click('Save Rosters')
       await waitFor(() => held.saved.length === 1, 'the lineup saved')
@@ -2218,7 +2247,7 @@ describe('the coach’s game plan', function () {
 
     it('leaves the defence alone once the game is under way', async function () {
       const held = accepted()
-      firstInning(held, true, SWAPPED)
+      firstInning(held, SWAPPED)
       await coach(held, {
         source: {
           open: async () =>
@@ -2240,7 +2269,7 @@ describe('the coach’s game plan', function () {
     it('does not start a column that leaves nobody pitching, and says so', async function () {
       const held = server()
       // Hawk 1 leaves the mound to catch, and nobody takes it.
-      firstInning(held, true, ['C'])
+      firstInning(held, column({ 1: 'C', 2: '1B', 3: '' }))
       await opened(held)
       await click('Save Rosters')
       await waitFor(() => held.saved.length === 1, 'the lineup saved')
@@ -2258,7 +2287,7 @@ describe('the coach’s game plan', function () {
 
     it('says so beside the plan’s warnings', async function () {
       const held = accepted()
-      firstInning(held, true, ['C'])
+      firstInning(held, column({ 1: 'C', 2: '1B', 3: '' }))
       held.plans.home = {
         ...held.plans.home!,
         rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
@@ -2266,7 +2295,7 @@ describe('the coach’s game plan', function () {
       await opened(held)
       await click('Plan', 'tab')
       await waitFor(() => cell(1, 1) != null, 'the plan sheet')
-      await type(2, 1, ['c'])
+      await type(2, 2, ['c'])
       await click('Save Rosters')
       await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
       expect(held.writes).deep.equals(['plan'])

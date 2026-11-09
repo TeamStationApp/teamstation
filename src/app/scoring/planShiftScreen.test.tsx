@@ -279,7 +279,7 @@ describe('plan shift on the scoring screen', function () {
       '3B',
       'LF',
       'CF',
-      '-'
+      ''
     ]
     const plans = scoringPlans({
       home: scoringSidePlan(
@@ -306,7 +306,7 @@ describe('plan shift on the scoring screen', function () {
 
   it('tells the scorer a column it could not apply, and why', async function () {
     const benched: PlanCell[] = [
-      '-',
+      '',
       'C',
       '1B',
       '2B',
@@ -337,9 +337,9 @@ describe('plan shift on the scoring screen', function () {
       '3B',
       'LF',
       'CF',
-      '-'
+      ''
     ]
-    const benched: PlanCell[] = ['-', ...sitting.slice(1, 8), 'RF']
+    const benched: PlanCell[] = ['', ...sitting.slice(1, 8), 'RF']
     const plans = scoringPlans({
       away: scoringSidePlan(
         1,

@@ -74,10 +74,10 @@ import {
  * sit on six rows with names at 13.75 points; P4 to P9 work the Plan tab:
  * its grid (P4), typing and pasting into a cell (P5), the field picker (P6),
  * moving a player's row (P7), the live playing-time warnings and the save's
- * summary (P8), and Clear (P9); P10 scores the game with the plan's toggle
- * on and then off, ending halves from the scoring menu, and reads the
- * defence the game stores after each inning's end, with a mid-game edit of
- * the plan made while the scoring screen is open; P11 finds the
+ * summary (P8), and Clear (P9); P10 scores the game with the plan on and
+ * then with no positions in it, ending halves from the scoring menu, and
+ * reads the defence the game stores after each inning's end, with a
+ * mid-game edit of the plan made while the scoring screen is open; P11 finds the
  * scorekeeper's footer and field
  * as P2 and P3 do. P12 fits the footer on a 320-point screen; P13 has the
  * scorekeeper reorder the lineup over the API after the coach's plan is
@@ -185,7 +185,7 @@ const HOME_PLAN: PlanCell[][] = [
   ['SS', 'SS', 'SS', 'SS', '2B', '2B'],
   ['1B', '1B', '1B', 'P', 'P', 'P'],
   ['CF', 'CF', 'LF', 'LF', 'CF', 'CF'],
-  ['RF', 'RF', 'RF', 'RF', '-', '-'],
+  ['RF', 'RF', 'RF', 'RF', '', ''],
   ['2B', '2B', '2B', '2B', 'SS', 'SS'],
   ['3B', '3B', '3B', '3B', '3B', '3B'],
   ['LF', 'LF', 'CF', 'CF', 'LF', 'LF'],
@@ -305,10 +305,14 @@ const SHIFT_PLAN: PlanCell[][] = [
   ['3B', '1B', '3B', '3B', '3B', '3B'],
   ['LF', 'CF', 'LF', 'LF', 'LF', 'LF'],
   ['CF', 'LF', 'CF', 'CF', 'CF', 'CF'],
-  ['-', '-', 'RF', 'RF', 'RF', 'RF']
+  ['', '', 'RF', 'RF', 'RF', 'RF']
 ]
 const SHIFT_EDITED: PlanCell[][] = SHIFT_PLAN.map((row, at) =>
-  at === 8 ? ['-', '-', '-', 'RF', 'RF', 'RF'] : row
+  at === 8 ? ['', '', '', 'RF', 'RF', 'RF'] : row
+)
+/** SHIFT_PLAN with no positions: every cell blank, so the plan is off. */
+const NO_POSITIONS: PlanCell[][] = SHIFT_PLAN.map(row =>
+  row.map((): PlanCell => '')
 )
 
 /**
@@ -1372,9 +1376,12 @@ describe('Coach Plan', function () {
     await coach.page.waitForFunction(
       () => document.querySelector('[data-testid="Plan field picker"]') == null
     )
+    // The bench is blank: Backspace empties a cell.
     await coach.click('[data-testid="Plan cell 4-1"]')
-    await coach.page.keyboard.type('-')
-    expect(await coach.cell(4, 1)).equals('-')
+    await coach.page.keyboard.type('p')
+    expect(await coach.cell(4, 1)).equals('P')
+    await coach.page.keyboard.press('Backspace')
+    expect(await coach.cell(4, 1)).equals('')
   })
 
   it('P6 writes the position clicked on the picker, and does nothing on hover', async function () {
@@ -1509,7 +1516,7 @@ describe('Coach Plan', function () {
     // Senga benched in the first three innings: red at once, before Save.
     for (const inning of [1, 2, 3]) {
       await coach.click(`[data-testid="Plan cell 9-${inning}"]`)
-      await coach.page.keyboard.type('-')
+      await coach.page.keyboard.press('Backspace')
     }
     const benched = await coach.warnings()
     const consecutive = benched.find(line =>
@@ -1585,11 +1592,7 @@ describe('Coach Plan', function () {
         }
       })
     ).json()) as { home: { plan: GamePlan } }
-    expect(saved.home.plan.rows[0].cells.slice(0, 3)).deep.equals([
-      '-',
-      '-',
-      '-'
-    ])
+    expect(saved.home.plan.rows[0].cells.slice(0, 3)).deep.equals(['', '', ''])
     expect(saved.home.plan.rows[0].player.fullName).equals(senga)
   })
 
@@ -1642,12 +1645,12 @@ describe('Coach Plan', function () {
     expect(cleared).has.length(9)
   })
 
-  it('P10 moves the scorekeeper’s defence to the plan’s next column at each inning’s end, and not with the toggle off', async function () {
+  it('P10 moves the scorekeeper’s defence to the plan’s next column at each inning’s end, and not with a plan of no positions', async function () {
     if (CAPTURING) this.skip()
     for (const enabled of [true, false]) {
       const toggle = enabled ? 'on' : 'off'
       const fixture = lineupFixture()
-      await savePlan(fixture, SHIFT_PLAN, enabled)
+      await savePlan(fixture, enabled ? SHIFT_PLAN : NO_POSITIONS)
       await coach.as(fixture, 'scorekeeper')
       await coach.scoreGame(fixture.gameId)
       await coach.ball()
@@ -1682,7 +1685,7 @@ describe('Coach Plan', function () {
         noConsecutiveSits: false,
         equalSittingOrder: 'off'
       })
-      await savePlan(fixture, SHIFT_EDITED, enabled)
+      await savePlan(fixture, enabled ? SHIFT_EDITED : NO_POSITIONS)
       await new Promise(resolve => setTimeout(resolve, 3000))
       await coach.endHalf()
       await coach.ball()
@@ -1701,6 +1704,107 @@ describe('Coach Plan', function () {
         expect(third).equals(null)
         expect(afterSecond).deep.equals(opening)
       }
+    }
+  })
+
+  /**
+   * P18: a plan filled for innings 1 and 2 only (the defaults, then
+   * SHIFT_PLAN's second inning, where Senga sits), with the home team's
+   * sitting limits on, and then a plan with no positions. The coach's sheet
+   * warns of no sits in innings 3 to 6. The scorekeeper ends innings 1 and
+   * 2: inning 2's column applies, and inning 3, not planned, changes
+   * nothing; the plan with no positions never shifts. Clear then turns the
+   * first plan off. Its output, tee'd, is `plan-blank-columns.log`.
+   */
+  it('P18 applies a partly filled plan’s planned columns only, warns of no sits in the rest, never shifts a plan of no positions, and Clear turns a plan off', async function () {
+    if (CAPTURING) this.skip()
+    const twoInnings: PlanCell[][] = SHIFT_PLAN.map(row => [
+      row[2],
+      row[1],
+      '',
+      '',
+      '',
+      ''
+    ])
+    const sits =
+      /^(red|yellow) (noConsecutiveSits|maxSitsPerGame|equalSittingOrder)/
+    for (const [label, cells] of [
+      ['innings 1-2', twoInnings],
+      ['no positions', NO_POSITIONS]
+    ] as const) {
+      const planned = cells === twoInnings
+      const fixture = lineupFixture()
+      await teamRules(fixture, { enforceSittingLimits: true })
+      await savePlan(fixture, cells)
+      await coach.as(fixture, 'headCoach')
+      await coach.coachGame(fixture.gameId)
+      await coach.plan()
+      const warnings = await coach.warnings()
+      console.log(`    ${label}, warnings: ${JSON.stringify(warnings)}`)
+      expect(warnings.filter(line => sits.test(line))).deep.equals([])
+      await coach.as(fixture, 'scorekeeper')
+      await coach.scoreGame(fixture.gameId)
+      await coach.ball()
+      await storedInning(fixture, 1)
+      const opening = await homeDefense(fixture)
+      expect(opening).deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
+      console.log(`    ${label}, inning 1: ${named(fixture, opening)}`)
+      await coach.endHalf()
+      await coach.ball()
+      await coach.endHalf()
+      const second = await coach.planNotice()
+      await coach.ball()
+      await storedInning(fixture, 2)
+      const afterFirst = await homeDefense(fixture)
+      console.log(
+        `    ${label}, after the 1st (notice ${JSON.stringify(second)}): ${named(fixture, afterFirst)}`
+      )
+      expect(second).equals(planned ? 'Inning 2 plan applied' : null)
+      expect(afterFirst).deep.equals(
+        planned ? columnDefense(fixture, twoInnings, 2) : opening
+      )
+      await coach.endHalf()
+      await coach.ball()
+      await coach.endHalf()
+      const third = await coach.planNotice()
+      await coach.ball()
+      await storedInning(fixture, 3)
+      const afterSecond = await homeDefense(fixture)
+      console.log(
+        `    ${label}, after the 2nd (notice ${JSON.stringify(third)}): ${named(fixture, afterSecond)}`
+      )
+      // Inning 3 is not planned: the defence stays as inning 2 left it.
+      expect(third).equals(null)
+      expect(afterSecond).deep.equals(afterFirst)
+      if (!planned) continue
+      // Clear empties the plan, and the saved plan is off.
+      await coach.as(fixture, 'headCoach')
+      await coach.coachGame(fixture.gameId)
+      await coach.plan()
+      await coach.page.$eval('[data-testid="Plan clear"]', node => {
+        node.scrollIntoView({ block: 'center' })
+      })
+      await coach.tapCss('[data-testid="Plan clear"]')
+      await coach.tapCss('[data-testid="Plan clear confirm"]')
+      await coach.tap('Save Rosters')
+      await coach.page.waitForSelector(
+        '[aria-label="Save Rosters"][aria-disabled="true"]',
+        { timeout: 30000 }
+      )
+      const stored = (await (
+        await fetch(`${API}/games/${fixture.gameId}/plans`, {
+          headers: {
+            authorization: `Bearer ${await tokenOf(fixture, 'headCoach')}`
+          }
+        })
+      ).json()) as { home: { plan: GamePlan } }
+      console.log(
+        `    ${label}, cleared and saved: enabled ${String(stored.home.plan.enabled)}`
+      )
+      expect(stored.home.plan.enabled).equals(false)
+      expect(
+        stored.home.plan.rows.every(row => row.cells.every(cell => cell === ''))
+      ).equals(true)
     }
   })
 

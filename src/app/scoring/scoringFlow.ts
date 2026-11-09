@@ -1,4 +1,8 @@
-import { alignPlan, inningDefense } from '../../common/gamePlan'
+import {
+  alignPlan,
+  inningDefense,
+  planHasPositions
+} from '../../common/gamePlan'
 import {
   type PlanWarning,
   planWarnings,
@@ -146,14 +150,14 @@ function applyLogged(
 const NO_PITCHER = 'needs a pitcher'
 
 /**
- * Puts each side whose game plan is on into the defence its column for
- * `inning` gives (`inningDefense`), as a roster save that keeps each side's
- * batting slot, logged after the action that ended the inning and so taken
- * back with it. A column that leaves nobody pitching, or that the game
- * refuses, is skipped, and the notice says why for that side; the inning's
- * end stands either way. The notice counts the playing-time warnings of the
- * plans applied, judged by the rules, history and same-day load they were
- * read with.
+ * Puts each side whose game plan is on (holds a position) into the defence
+ * its column for `inning` gives (`inningDefense`; a column not planned gives
+ * none), as a roster save that keeps each side's batting slot, logged after
+ * the action that ended the inning and so taken back with it. A column
+ * that leaves nobody pitching, or that the game refuses, is skipped, and the
+ * notice says why for that side; the inning's end stands either way. The
+ * notice counts the playing-time warnings of the plans applied, judged by
+ * the rules, history and same-day load they were read with.
  */
 function shiftToPlans(next: ScoringSnapshot, inning: number): void {
   const sides: Side[] = []
@@ -162,7 +166,7 @@ function shiftToPlans(next: ScoringSnapshot, inning: number): void {
   for (const side of ['away', 'home'] as const) {
     const planned = next.plans?.[side]
     const plan = planned?.plan
-    if (planned == null || plan?.enabled !== true) continue
+    if (planned == null || plan == null || !planHasPositions(plan)) continue
     const defense = inningDefense(
       plan,
       inning,

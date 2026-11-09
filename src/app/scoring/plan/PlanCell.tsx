@@ -66,7 +66,8 @@ function useCellStyle(
  * a whole value is written at once, the first letter of a two-letter one
  * waits for the second, and anything else is refused, as is a paste that is
  * not a whole value. A refusal keeps the cell's value and outlines it in red.
- * There is no hover style.
+ * The bench is blank: the field shows nothing, and emptying it (Delete or
+ * Backspace) benches. There is no hover style.
  */
 export function WebPlanCell({
   value,
@@ -176,8 +177,8 @@ export function WebPlanCell({
 }
 
 /**
- * A plan cell on a phone: its value, and a tap that opens the field picker
- * for it. A hold opens the picker too and starts a drag onto it, which the
+ * A plan cell on a phone: its value, nothing on the bench, and a tap that
+ * opens the field picker for it. A hold opens the picker too and starts a drag onto it, which the
  * tab's root follows once the finger moves.
  */
 export function NativePlanCell({

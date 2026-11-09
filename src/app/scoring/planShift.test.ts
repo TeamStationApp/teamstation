@@ -11,6 +11,7 @@ import type { ScoringAction } from '../../common/scoring/actions'
 import type { Position, Side } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
 import {
+  PLAN_BLANK as BLANK,
   PLAN_START as START,
   PLAN_SWAPPED as SWAPPED,
   scoringPlans,
@@ -118,9 +119,13 @@ describe('plan shift', function () {
     expect(state.planNotice).equals(undefined)
   })
 
-  it('does nothing with the toggle off, with no plan, or with no next column', function () {
+  it('does nothing with no positions in the plan, with no plan, or with no next column, or a blank one', function () {
+    const noPositions = Object.fromEntries(
+      [1, 2, 3, 4, 5, 6].map(inning => [inning, BLANK])
+    )
     for (const given of [
-      { home: sidePlan(10, { 2: SWAPPED }, { enabled: false }) },
+      { home: sidePlan(10, noPositions) },
+      { home: sidePlan(10, { 2: BLANK }) },
       { home: { ...sidePlan(10, {}), plan: null } },
       { home: sidePlan(10, { 2: SWAPPED }, { innings: 1 }) },
       {}
@@ -135,6 +140,28 @@ describe('plan shift', function () {
     // Nor before the plans are read.
     const unread = run(initial(), [{ type: 'END_HALF' }, { type: 'END_HALF' }])
     expect(rosters(unread.log)).deep.equals([])
+  })
+
+  it('reads a plan as on by its positions, not the flag it came with', function () {
+    const swapped = sidePlan(10, { 2: SWAPPED })
+    const flagged = (
+      plan: typeof swapped,
+      enabled: boolean
+    ): typeof swapped => ({
+      ...plan,
+      plan: plan.plan == null ? null : { ...plan.plan, enabled }
+    })
+    let state = run(initial(), [plans({ home: flagged(swapped, false) })])
+    state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
+    expect(defenseOf(state, 'home')).deep.equals(fielded(10, SWAPPED))
+    const blank = sidePlan(
+      10,
+      Object.fromEntries([1, 2, 3, 4, 5, 6].map(inning => [inning, BLANK]))
+    )
+    state = run(initial(), [plans({ home: flagged(blank, true) })])
+    state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
+    expect(rosters(state.log)).deep.equals([])
+    expect(state.planNotice).equals(undefined)
   })
 
   it('does nothing once the game is over', function () {
@@ -227,7 +254,7 @@ describe('plan shift', function () {
   it('skips a column that leaves nobody pitching and says why, leaving the out standing', function () {
     // Inning 2 benches the pitcher and gives nobody P.
     const benched: PlanCell[] = [
-      '-',
+      '',
       'C',
       '1B',
       '2B',
@@ -290,9 +317,9 @@ describe('plan shift', function () {
       '3B',
       'LF',
       'CF',
-      '-'
+      ''
     ]
-    const benched: PlanCell[] = ['-', ...sitting.slice(1, 8), 'RF']
+    const benched: PlanCell[] = ['', ...sitting.slice(1, 8), 'RF']
     const state = run(initial(), [
       plans({
         away: sidePlan(1, { 1: sitting, 2: sitting, 3: sitting }, { rules }),
@@ -364,7 +391,7 @@ describe('plan shift', function () {
       '3B',
       'LF',
       'CF',
-      '-'
+      ''
     ]
     const state = run(initial(), [
       plans({

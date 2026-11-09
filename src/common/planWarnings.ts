@@ -3,6 +3,7 @@ import {
   type GamePlanRow,
   OUTFIELD_POSITIONS,
   type PlanCell,
+  plannedInnings,
   planPlayerKey,
   type PlanRowCounts,
   planRowCounts
@@ -84,6 +85,12 @@ export interface PlanWarningsInput {
 
 type Level = PlanWarning['level']
 type Finding = Omit<PlanWarning, 'players'> & { player: string }
+/**
+ * A cell as the warnings judge it: its value in a planned inning, where a
+ * blank is a sit, and null, still open, in an inning not planned yet.
+ */
+type Judged = PlanCell | null
+type JudgedRow = Omit<GamePlanRow, 'cells'> & { cells: Judged[]; key: string }
 
 const plural = (count: number, word: string): string =>
   `${count} ${count === 1 ? word : `${word}s`}`
@@ -91,23 +98,24 @@ const ordinal = (count: number): string => (count === 2 ? 'second' : 'third')
 
 /**
  * Where a minimum stands for one player: met, still reachable with the
- * blanks inside its window (yellow), or out of reach (red).
+ * innings inside its window not planned yet (yellow), or out of reach of
+ * the planned ones (red).
  */
 function minimum(
-  cells: readonly PlanCell[],
-  counts: (cell: PlanCell) => boolean,
+  cells: readonly Judged[],
+  counts: (cell: Judged) => boolean,
   required: number
 ): Level | null {
   const met = cells.filter(counts).length
   if (met >= required) return null
-  const open = cells.filter(cell => cell === '').length
+  const open = cells.filter(unplanned).length
   return met + open >= required ? 'yellow' : 'red'
 }
 
 /** The longest run of consecutive cells `counts` accepts. */
 function longestRun(
-  cells: readonly PlanCell[],
-  counts: (cell: PlanCell) => boolean
+  cells: readonly Judged[],
+  counts: (cell: Judged) => boolean
 ): number {
   let longest = 0
   let run = 0
@@ -118,9 +126,10 @@ function longestRun(
   return longest
 }
 
-const fielded = (cell: PlanCell): boolean => isPosition(cell)
-const sits = (cell: PlanCell): boolean => cell === '-'
-const outfield = (cell: PlanCell): boolean =>
+const fielded = (cell: Judged): boolean => isPosition(cell)
+const sits = (cell: Judged): boolean => cell === ''
+const unplanned = (cell: Judged): boolean => cell == null
+const outfield = (cell: Judged): boolean =>
   OUTFIELD_POSITIONS.includes(cell as (typeof OUTFIELD_POSITIONS)[number])
 
 /**
@@ -132,7 +141,7 @@ const outfield = (cell: PlanCell): boolean =>
  * `fourth`, catching a fourth inning blocks him as 4 innings do.
  */
 function pitchingBlockedFrom(
-  cells: readonly PlanCell[],
+  cells: readonly Judged[],
   caughtBefore: number,
   fourthBefore: boolean,
   fourth: boolean
@@ -148,10 +157,13 @@ function pitchingBlockedFrom(
 }
 
 /**
- * The plan's warnings under `rules`, reds first. Red means the filled cells
- * break an enabled rule whatever the blanks become; yellow means a minimum
- * is not met yet but the blanks inside its deadline could still meet it.
- * The season-tracking rules only ever warn yellow.
+ * The plan's warnings under `rules`, reds first. Only the planned innings
+ * are judged (those whose column holds a field position): a blank in one is
+ * a sit, and an inning not planned yet holds no sit and no position. Red
+ * means the planned innings break an enabled rule whatever the others
+ * become; yellow means a minimum is not met yet but the innings inside its
+ * deadline not planned yet could still meet it. The season-tracking rules
+ * only ever warn yellow.
  */
 export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
   const { plan, rules, history, sameDay } = input
@@ -161,9 +173,12 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
     input.playedInnings < plan.innings
   // A shortened game is judged on the innings it played.
   const length = shortened ? (input.playedInnings ?? 0) : plan.innings
-  const rows: Array<GamePlanRow & { key: string }> = plan.rows.map(row => ({
+  const planned = plannedInnings(plan)
+  const rows: JudgedRow[] = plan.rows.map(row => ({
     ...row,
-    cells: row.cells.slice(0, length),
+    cells: row.cells
+      .slice(0, length)
+      .map((cell, inning) => (planned[inning] ? cell : null)),
     key: planPlayerKey(row.player)
   }))
   const findings: Finding[] = []
@@ -171,7 +186,7 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
     rule: Finding['rule'],
     level: Level | null,
     message: string,
-    row: GamePlanRow
+    row: Pick<GamePlanRow, 'player'>
   ): void => {
     if (level != null)
       findings.push({ rule, level, message, player: row.player.fullName })
@@ -216,7 +231,8 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
       position => position !== 'C' || catcherInfield
     )
   )
-  const infield = (cell: PlanCell): boolean => infieldSet.has(cell)
+  const infield = (cell: Judged): boolean =>
+    cell != null && infieldSet.has(cell)
 
   // A player who bats in any inning meets Mandatory Play's at-bat; one who
   // sits every inning has fielded none, which the outs already refuse.
@@ -234,7 +250,7 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
       const level = rules.mustBeConsecutive
         ? longestRun(row.cells, fielded) >= outs / 3
           ? null
-          : longestRun(row.cells, cell => fielded(cell) || cell === '') >=
+          : longestRun(row.cells, cell => fielded(cell) || unplanned(cell)) >=
               outs / 3
             ? 'yellow'
             : 'red'
@@ -330,15 +346,15 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
           .filter(at => at >= 0)[before]
         if (inning == null) continue
         const upTo = (
-          other: GamePlanRow,
-          counts: (cell: PlanCell) => boolean
+          other: JudgedRow,
+          counts: (cell: Judged) => boolean
         ): number => other.cells.slice(0, inning + 1).filter(counts).length
         const others = sitters.filter(other => other !== row)
         const level = others.every(other => upTo(other, sits) >= before)
           ? null
           : others.every(
                 other =>
-                  upTo(other, cell => sits(cell) || cell === '') >= before
+                  upTo(other, cell => sits(cell) || unplanned(cell)) >= before
               )
             ? 'yellow'
             : 'red'
@@ -392,7 +408,7 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
       if (minimumExempt(row)) continue
       const missing =
         (row.cells.some(infield) ? 0 : 1) + (row.cells.some(outfield) ? 0 : 1)
-      const open = row.cells.filter(cell => cell === '').length
+      const open = row.cells.filter(unplanned).length
       const level = missing === 0 ? null : open >= missing ? 'yellow' : 'red'
       warn(
         'mustPlayInfieldAndOutfield',
@@ -454,7 +470,10 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
     // Infield is the minimum's set, applied to the season's innings too.
     const shares = rows.map(row => {
       const past = history.players[row.key]
-      const now = planRowCounts(row.cells)
+      const now = planRowCounts(
+        row.cells.map(cell => cell ?? ''),
+        planned
+      )
       const innings = (positions: readonly Position[]): number =>
         positions.reduce(
           (sum, position) =>
@@ -492,9 +511,7 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
     for (const row of rows)
       warn(
         'mustPlayNextSuggestions',
-        most > 0 &&
-          history.lastGameSits[row.key] === most &&
-          row.cells[0] === '-'
+        most > 0 && history.lastGameSits[row.key] === most && sits(row.cells[0])
           ? 'yellow'
           : null,
         'Sat the most last game, and sits in inning 1',

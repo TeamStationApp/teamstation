@@ -12,6 +12,7 @@ import {
 import {
   type GamePlan,
   type PlanCell,
+  planHasPositions,
   type PlanRowCounts,
   planRowCounts
 } from '../../common/gamePlan'
@@ -42,19 +43,22 @@ const CHAPMAN = { gumboId: 202, fullName: 'Ben Chapman', jersey: '12' }
 const DECKER = { gumboId: 203, fullName: 'Cody Decker', jersey: '23' }
 const BERRA = { gumboId: null, fullName: 'Yogi Berra', jersey: '8' }
 
-/** A plan of these rows, each a string of cells such as `'SS 2B - -'`. */
+/**
+ * A plan of these rows, each a string of cells such as `'SS 2B _ _'`, where
+ * `_` is a blank (the bench), on when it holds a position, as the server
+ * stores it.
+ */
 const planOf = (
-  rows: Array<[typeof SORIANO | typeof BERRA, string]>,
-  enabled = false
+  rows: Array<[typeof SORIANO | typeof BERRA, string]>
 ): GamePlan => {
   const cells = rows.map(([, text]) =>
     text.split(' ').map(cell => (cell === '_' ? '' : cell) as PlanCell)
   )
-  return {
-    enabled,
+  const plan = {
     innings: cells[0]?.length ?? 6,
     rows: rows.map(([player], at) => ({ player, cells: cells[at] }))
   }
+  return { enabled: planHasPositions(plan), ...plan }
 }
 
 /** A season's innings at the positions given, none elsewhere, and its sits. */
@@ -62,7 +66,7 @@ const season = (
   positions: Partial<PlanRowCounts['positions']>,
   sits: number
 ): PlanRowCounts => ({
-  positions: { ...planRowCounts([]).positions, ...positions },
+  positions: { ...planRowCounts([], []).positions, ...positions },
   sits
 })
 
@@ -196,13 +200,10 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
   })
 
   it('lets the head coach save and read his side, and nobody else’s', async function () {
-    const plan = planOf(
-      [
-        [SORIANO, 'SS SS 2B 2B - -'],
-        [BERRA, 'C C _ _ LF LF']
-      ],
-      true
-    )
+    const plan = planOf([
+      [SORIANO, 'SS SS 2B 2B _ _'],
+      [BERRA, 'C C _ _ LF LF']
+    ])
     const side = await saved(game, plan, f.people.teamCoach)
     expect(side).deep.equals({
       teamId: f.teamA,
@@ -272,6 +273,47 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     ).deep.equals([])
   })
 
+  it('stores a plan on only when it holds a position, whatever the save says, and reads a dash as the bench', async function () {
+    const sent = (cells: string[], enabled: boolean): unknown => ({
+      enabled,
+      innings: cells.length,
+      rows: [{ player: SORIANO, cells }]
+    })
+    const stored = async (): Promise<boolean> =>
+      (
+        await f.h.db
+          .selectFrom('game_plans')
+          .select('enabled')
+          .executeTakeFirstOrThrow()
+      ).enabled
+    // A plan of no positions is off, though it was sent on.
+    let side = await saved(game, sent(['', 'DH', 'EH'], true) as GamePlan)
+    expect(side.plan?.enabled).equals(false)
+    expect(await stored()).equals(false)
+    // One position turns it on, though it was sent off. A plan saved by an
+    // older client sits with a dash, which is stored blank.
+    side = await saved(game, sent(['-', 'SS', '-'], false) as GamePlan)
+    expect(side.plan).deep.equals(planOf([[SORIANO, '_ SS _']]))
+    expect(await stored()).equals(true)
+    const row = await f.h.db
+      .selectFrom('game_plans')
+      .select('rows')
+      .executeTakeFirstOrThrow()
+    expect(row.rows).deep.equals([{ player: SORIANO, cells: ['', 'SS', ''] }])
+    // A plan stored before it was derived, with a dash and its old toggle,
+    // reads as it would be saved now.
+    await f.h.db
+      .updateTable('game_plans')
+      .set({
+        enabled: false,
+        rows: JSON.stringify([{ player: SORIANO, cells: ['C', '-', '-'] }])
+      })
+      .execute()
+    expect((await plans(game)).home?.plan).deep.equals(
+      planOf([[SORIANO, 'C _ _']])
+    )
+  })
+
   it('refuses a cell that is no value, more than 12 innings, or a row of the wrong length', async function () {
     const good = planOf([[SORIANO, 'SS 2B']])
     for (const bad of [
@@ -328,29 +370,30 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     await saved(
       first,
       planOf([
-        [SORIANO, 'SS SS LF -'],
-        [BERRA, 'C - - RF']
+        [SORIANO, 'SS SS LF _'],
+        [BERRA, 'C _ _ RF']
       ])
     )
+    // Its fifth inning is not planned yet: no sits.
     await saved(
       second,
       planOf([
-        [CHAPMAN, 'P P - -'],
-        [SORIANO, '2B CF - DH'],
-        [BERRA, '_ EH 1B 1B']
+        [CHAPMAN, 'P P _ _ _'],
+        [SORIANO, '2B CF _ DH _'],
+        [BERRA, '_ EH 1B 1B _']
       ])
     )
     for (const ignored of [later, otherSeason, noSeason, cancelled])
-      await saved(ignored, planOf([[SORIANO, '- - - -']]))
+      await saved(ignored, planOf([[SORIANO, 'LF _ _ _']]))
     const { home } = await plans(game)
     expect(home?.history).deep.equals({
       players: {
         'g:201': season({ SS: 2, LF: 1, '2B': 1, CF: 1 }, 2),
-        'n:Yogi Berra#8': season({ C: 1, RF: 1, '1B': 2 }, 2),
+        'n:Yogi Berra#8': season({ C: 1, RF: 1, '1B': 2 }, 3),
         'g:202': season({ P: 2 }, 2)
       },
       lastLeadoff: 'g:202',
-      lastGameSits: { 'g:202': 2, 'g:201': 1, 'n:Yogi Berra#8': 0 }
+      lastGameSits: { 'g:202': 2, 'g:201': 1, 'n:Yogi Berra#8': 1 }
     })
     // A game in no season has no history, and the first game of one none.
     expect((await plans(noSeason)).home?.history).deep.equals(
@@ -386,17 +429,24 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     await saved(
       shortened,
       planOf([
-        [SORIANO, 'SS SS 2B 2B - -'],
-        [BERRA, '- C C C LF LF']
+        [SORIANO, 'SS SS 2B 2B _ _'],
+        [BERRA, '_ C C C LF LF']
       ])
     )
-    await saved(unscored, planOf([[CHAPMAN, 'P P - - - -']]))
+    await saved(
+      unscored,
+      planOf([
+        [CHAPMAN, 'P P _ _ _ _'],
+        [DECKER, 'C C C C C C']
+      ])
+    )
     const { home } = await plans(game)
     expect(home?.history).deep.equals({
       players: {
         'g:201': season({ SS: 2, '2B': 2 }, 0),
         'n:Yogi Berra#8': season({ C: 3 }, 1),
-        'g:202': season({ P: 2 }, 4)
+        'g:202': season({ P: 2 }, 4),
+        'g:203': season({ C: 6 }, 0)
       },
       lastLeadoff: 'g:201',
       lastGameSits: { 'g:201': 0, 'n:Yogi Berra#8': 1 }
@@ -420,7 +470,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
       morning,
       planOf([
         [DECKER, 'C C C C P'],
-        [CHAPMAN, 'P P C _ -'],
+        [CHAPMAN, 'P P C _ _'],
         [BERRA, 'P P P P P']
       ])
     )

@@ -4,6 +4,8 @@ import type { SidePlan } from '../../common/api'
 import {
   asGamePlan,
   type GamePlan,
+  planHasPositions,
+  plannedInnings,
   planPlayerKey,
   planRowCounts
 } from '../../common/gamePlan'
@@ -29,7 +31,10 @@ type StoredPlan = Pick<
   'enabled' | 'innings' | 'rows'
 >
 
-/** A stored row as the plan it holds, cleaned as a save is. */
+/**
+ * A stored row as the plan it holds, cleaned as a save is: on when it holds
+ * a position, and a `-` from before the bench was blank read as blank.
+ */
 const planOf = (row: StoredPlan): GamePlan =>
   asGamePlan({ enabled: row.enabled, innings: row.innings, rows: row.rows })
 
@@ -132,10 +137,11 @@ async function historyFor(
   for (const stored of earlier) {
     const plan = playedPlan(planOf(stored), stored.reached)
     if (last == null && plan.rows.length > 0) last = plan
+    const planned = plannedInnings(plan)
     for (const row of plan.rows) {
-      const counts = planRowCounts(row.cells)
+      const counts = planRowCounts(row.cells, planned)
       const held = (history.players[planPlayerKey(row.player)] ??=
-        planRowCounts([]))
+        planRowCounts([], []))
       for (const position of POSITIONS)
         held.positions[position] += counts.positions[position]
       held.sits += counts.sits
@@ -143,9 +149,11 @@ async function historyFor(
   }
   if (last != null) {
     history.lastLeadoff = planPlayerKey(last.rows[0].player)
+    const planned = plannedInnings(last)
     for (const row of last.rows)
       history.lastGameSits[planPlayerKey(row.player)] = planRowCounts(
-        row.cells
+        row.cells,
+        planned
       ).sits
   }
   return history
@@ -241,8 +249,10 @@ export async function loadSidePlan(
 
 /**
  * Stores a team's plan in a game in place of any it had, as `userId` saved
- * it, and announces it to the game's viewers when the save commits. An
- * all-blank plan is stored like any other: there is no delete.
+ * it, and announces it to the game's viewers when the save commits. It is
+ * stored on when any cell holds a position (`planHasPositions`), whatever
+ * `enabled` says. An all-blank plan is stored, off, like any other: there is
+ * no delete.
  */
 export async function saveGamePlan(
   db: Kysely<Database>,
@@ -252,7 +262,7 @@ export async function saveGamePlan(
   userId: string
 ): Promise<void> {
   const values = {
-    enabled: plan.enabled,
+    enabled: planHasPositions(plan),
     innings: plan.innings,
     // jsonb from text: an array would be sent as a Postgres array.
     rows: JSON.stringify(plan.rows),

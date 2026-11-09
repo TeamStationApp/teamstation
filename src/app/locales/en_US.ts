@@ -169,7 +169,8 @@ export const enUs = {
     'Saved. Inning 1 plan not applied: needs a pitcher. Plan has %s.',
   /**
    * After a save before the first pitch whose followed plan's inning 1
-   * changed who plays a position it fills from what the Defense tab had.
+   * changed who plays a position from what the Defense tab had, by putting
+   * someone else there or benching its fielder.
    */
   coach_plan_saved_defense: 'Saved. Defense set from the plan\u2019s inning 1.',
   coach_plan_saved_defense_warnings:
@@ -193,7 +194,7 @@ export const enUs = {
   /** A cell's accessible name: the player, and the inning. */
   plan_cell_label: '%1$s, inning %2$s',
   plan_refused:
-    '%s is not a position. Use P, C, 1B, 2B, 3B, SS, LF, CF, RF, DH, EH or a dash.',
+    '%s is not a position. Use P, C, 1B, 2B, 3B, SS, LF, CF, RF, DH or EH, or leave it blank to bench.',
   /** The field picker's title: who and which inning it assigns. */
   plan_assign_title: 'Assign: %1$s (Inn %2$s)',
   plan_bench: 'Bench',

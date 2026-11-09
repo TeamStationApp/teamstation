@@ -24,7 +24,8 @@ import {
   alignPlan,
   DEFAULT_PLAN_INNINGS,
   type GamePlan,
-  inningDefense
+  inningDefense,
+  planHasPositions
 } from '../../common/gamePlan'
 import { planWarnings, warningSummary } from '../../common/planWarnings'
 import { begun } from '../../common/scoring/lineup'
@@ -723,14 +724,16 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     if (opened == null || state == null) return
     const saving = opened
     setProblem(undefined)
-    // Before the game has begun, a plan he follows sets the defence his
-    // lineup starts in: its first inning's column (`inningDefense`), saved
-    // with the lineup and shown on Defense. A column that leaves nobody
-    // pitching is not applied, and the save's notice says so; so does one
-    // that changes who plays a position it fills from the Defense tab's.
+    // Before the game has begun, a plan that holds a position sets the
+    // defence his lineup starts in: its first inning's column
+    // (`inningDefense`, none while that inning is not planned), saved with
+    // the lineup and shown on Defense. A column that leaves nobody pitching
+    // is not applied, and the save's notice says so; so does one that
+    // changes who plays any position from the Defense tab's, by putting
+    // someone else there or by benching its fielder (a blank is the bench).
     // Later innings are the scorekeeper's, at each inning's end.
     const first =
-      plan?.enabled === true && !begun(edited)
+      plan != null && planHasPositions(plan) && !begun(edited)
         ? inningDefense(
             plan,
             1,
@@ -744,8 +747,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     const overruled =
       applied != null &&
       POSITIONS.some(
-        position =>
-          applied[position] != null && applied[position] !== edits[position]
+        position => (applied[position] ?? null) !== (edits[position] ?? null)
       )
     const draft = applied == null ? edited : copyState(edited)
     if (applied != null)

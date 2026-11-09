@@ -25,11 +25,11 @@ const FIELD_HEIGHT =
  */
 const CHIP_WIDTH = 44
 const CHIP_HEIGHT = 26
-/** The values that do not field, in the row under the field. */
+/** The values that do not field, in the row under the field: Bench is blank. */
 const OTHERS: ReadonlyArray<{ value: PlanCell; label: string }> = [
   { value: 'DH', label: 'DH' },
   { value: 'EH', label: 'EH' },
-  { value: '-', label: lstrings.plan_bench }
+  { value: '', label: lstrings.plan_bench }
 ]
 
 /**
@@ -99,13 +99,13 @@ export function PlanFieldPicker({
   ): React.ReactElement => {
     const lit = over === target
     const chosen = value === target
-    const bench = target === '-'
+    const bench = target === ''
     return (
       <Pressable
         ref={view => {
           views.current.set(target, view)
         }}
-        testID={`Plan pick ${target}`}
+        testID={`Plan pick ${bench ? 'bench' : target}`}
         accessibilityRole="button"
         accessibilityLabel={label}
         accessibilityState={{ selected: chosen }}
@@ -258,10 +258,10 @@ export function PlanFieldPicker({
         }}
       >
         {OTHERS.map(({ value: target, label }) => (
-          <React.Fragment key={target}>
-            {target === '-' && <View style={{ flex: 1 }} />}
+          <React.Fragment key={label}>
+            {target === '' && <View style={{ flex: 1 }} />}
             {chip(target, label, {
-              width: target === '-' ? 64 : CHIP_WIDTH,
+              width: target === '' ? 64 : CHIP_WIDTH,
               height: OTHERS_HEIGHT
             })}
           </React.Fragment>

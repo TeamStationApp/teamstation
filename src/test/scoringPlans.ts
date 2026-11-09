@@ -1,5 +1,9 @@
 import type { GamePlansResponse, SidePlan } from '../common/api'
-import type { GamePlan, PlanCell } from '../common/gamePlan'
+import {
+  type GamePlan,
+  type PlanCell,
+  planHasPositions
+} from '../common/gamePlan'
 import { EMPTY_PLAN_HISTORY, EMPTY_PLAN_SAME_DAY } from '../common/planWarnings'
 import type { PlayingTimeRules } from '../common/playingTimeRules'
 import type { Position, Side } from '../common/scoring/state'
@@ -34,35 +38,38 @@ export const PLAN_SWAPPED: PlanCell[] = [
   'LF'
 ]
 
+/** A column that benches every batter: an inning not planned. */
+export const PLAN_BLANK: PlanCell[] = PLAN_START.map(() => '')
+
 /**
  * The plan of the side whose first player is `first` (1 away, 10 home):
  * every inning the starting defence, except the columns given, which name a
- * cell per batter.
+ * cell per batter. It is on when it holds a position, as the server says.
  */
 export function scoringSidePlan(
   first: number,
   columns: Record<number, PlanCell[]>,
   options: {
-    enabled?: boolean
     innings?: number
     rules?: PlayingTimeRules
   } = {}
 ): SidePlan {
   const innings = options.innings ?? 6
+  const rows: GamePlan['rows'] = PLAN_START.map((position, at) => ({
+    player: {
+      gumboId: first + at,
+      fullName: `Player ${at + 1}`,
+      jersey: String(at + 1)
+    },
+    cells: Array.from(
+      { length: innings },
+      (_, inning) => columns[inning + 1]?.[at] ?? position
+    )
+  }))
   const plan: GamePlan = {
-    enabled: options.enabled ?? true,
+    enabled: planHasPositions({ rows }),
     innings,
-    rows: PLAN_START.map((position, at) => ({
-      player: {
-        gumboId: first + at,
-        fullName: `Player ${at + 1}`,
-        jersey: String(at + 1)
-      },
-      cells: Array.from(
-        { length: innings },
-        (_, inning) => columns[inning + 1]?.[at] ?? position
-      )
-    }))
+    rows
   }
   return {
     teamId: first === 1 ? 'away' : 'home',

@@ -22,8 +22,8 @@ import { asGumboId } from './userId'
 /**
  * A coach's per-inning game plan: one row per batter, in batting order, and
  * one cell per inning naming where that batter plays it. A field position
- * fields; DH and EH bat without fielding; `-` sits; a blank is not yet
- * planned.
+ * fields; DH and EH bat without fielding; a blank sits. An inning whose
+ * column holds no field position is not planned yet, blanks and all.
  */
 export const PLAN_CELLS = [
   'P',
@@ -36,10 +36,9 @@ export const PLAN_CELLS = [
   'CF',
   'RF',
   'DH',
-  'EH',
-  '-'
+  'EH'
 ] as const
-/** `''` is an inning not yet planned. */
+/** `''` is an inning on the bench. */
 export type PlanCell = (typeof PLAN_CELLS)[number] | ''
 export const DEFAULT_PLAN_INNINGS = 6
 export const MAX_PLAN_INNINGS = 12
@@ -51,7 +50,11 @@ export interface GamePlanRow {
 }
 
 export interface GamePlan {
-  /** Whether the scorekeeper's game moves the defence at each inning's end. */
+  /**
+   * Whether the scorekeeper's game moves the defence at each inning's end:
+   * whether any cell holds a field position (`planHasPositions`), which the
+   * server stores whatever a save sends.
+   */
   enabled: boolean
   innings: number
   rows: GamePlanRow[]
@@ -61,6 +64,9 @@ export const OUTFIELD_POSITIONS = ['LF', 'CF', 'RF'] as const
 
 const isPlanCell = (raw: string): raw is PlanCell =>
   raw === '' || PLAN_CELLS.includes(raw as (typeof PLAN_CELLS)[number])
+
+/** The bench as plans saved before it was blank wrote it. */
+const LEGACY_BENCH = '-'
 
 /**
  * What a cell's text means: a value of `PLAN_CELLS` in any case, or `''`,
@@ -75,6 +81,7 @@ export function planCellOf(text: string): PlanCell | null {
 }
 
 const asPlanCell: Cleaner<PlanCell> = raw => {
+  if (raw === LEGACY_BENCH) return ''
   if (typeof raw === 'string' && isPlanCell(raw)) return raw
   throw new TypeError(
     `Expected a plan cell (${PLAN_CELLS.join(', ')} or blank), got ${JSON.stringify(raw)}`
@@ -96,11 +103,18 @@ const asPlanShape = asObject({
   )
 })
 
+/** Whether any cell of the plan holds a field position: whether it is on. */
+export function planHasPositions(plan: Pick<GamePlan, 'rows'>): boolean {
+  return plan.rows.some(row => row.cells.some(isPosition))
+}
+
 /**
  * Cleans a plan as it is saved and stored: whole innings from 1 to
  * `MAX_PLAN_INNINGS`, and in every row exactly one cell per inning, each a
- * value of `PLAN_CELLS` as it is stored (upper case, untrimmed) or blank.
- * Anything else is a `TypeError`, which the server answers with 400.
+ * value of `PLAN_CELLS` as it is stored (upper case, untrimmed) or blank. A
+ * `-`, the bench of plans saved before it was blank, reads as blank. Anything
+ * else is a `TypeError`, which the server answers with 400. `enabled` is
+ * whatever the cells make it (`planHasPositions`), not what was sent.
  */
 export const asGamePlan: Cleaner<GamePlan> = raw => {
   const plan = asPlanShape(raw)
@@ -118,7 +132,7 @@ export const asGamePlan: Cleaner<GamePlan> = raw => {
         `Row ${at + 1} has ${row.cells.length} cells for ${plan.innings} innings`
       )
   })
-  return plan
+  return { ...plan, enabled: planHasPositions(plan) }
 }
 
 /** The first letters a two-letter value starts with that are no value. */
@@ -142,11 +156,12 @@ function entryOf(text: string): PlanCellEntry {
 /**
  * A key typed into a web cell, checked against the values as it arrives.
  * `previous` is what the input showed before it and `text` what it shows
- * now. A whole value commits; `S`, `1`, `2`, `3`, `L`, `R`, `D` and `E`,
- * which only start one, are held pending while the cell keeps its stored
- * value; anything else is refused. P, C and `-` commit at once, so a key
- * typed after one is read with it (C then F is CF) and, when the two make
- * nothing, on its own (P then S is a pending S).
+ * now. A whole value commits, and so does an emptied cell, which benches;
+ * `S`, `1`, `2`, `3`, `L`, `R`, `D` and `E`, which only start one, are held
+ * pending while the cell keeps its stored value; anything else is refused.
+ * P and C commit at once, so a key typed after one is read with it (C then F
+ * is CF) and, when the two make nothing, on its own (P then S is a pending
+ * S).
  */
 export function planCellEntry(previous: string, text: string): PlanCellEntry {
   const entry = entryOf(text)
@@ -164,7 +179,11 @@ export function planCellEntry(previous: string, text: string): PlanCellEntry {
 }
 
 const fitted = (cells: readonly PlanCell[], innings: number): PlanCell[] =>
-  Array.from({ length: innings }, (_, inning) => cells[inning] ?? '')
+  Array.from({ length: innings }, (_, inning) => {
+    const cell = cells[inning] ?? ''
+    // A plan held from before the bench was blank may still say `-`.
+    return (cell as string) === LEGACY_BENCH ? '' : cell
+  })
 
 /**
  * Which stored row each batter keeps, in batting order: the row of his
@@ -199,8 +218,9 @@ function matchedRows(
 
 /**
  * The plan for the lineup as it stands: one row per batter in its batting
- * order, each with his stored cells (blank when he has none), padded or cut
- * to the plan's innings. A stored row nobody bats in is dropped.
+ * order, each with his stored cells (blank when he has none, and a `-` read
+ * as blank), padded or cut to the plan's innings. A stored row nobody bats
+ * in is dropped.
  */
 export function alignPlan(
   plan: GamePlan,
@@ -228,10 +248,31 @@ export function addInning(plan: GamePlan): GamePlan {
   }
 }
 
-/** The plan's contents blanked: its toggle, innings and rows stay. */
+/**
+ * One of the innings added past `DEFAULT_PLAN_INNINGS` deleted, every row's
+ * cell with it, so the innings after it move up one. Innings 1 to
+ * `DEFAULT_PLAN_INNINGS`, and an inning the plan does not have, stay.
+ */
+export function removeInning(plan: GamePlan, inning: number): GamePlan {
+  if (inning <= DEFAULT_PLAN_INNINGS || inning > plan.innings) return plan
+  return {
+    ...plan,
+    innings: plan.innings - 1,
+    rows: plan.rows.map(row => ({
+      ...row,
+      cells: row.cells.filter((_, at) => at !== inning - 1)
+    }))
+  }
+}
+
+/**
+ * The plan's contents blanked, which turns it off: its innings and rows
+ * stay.
+ */
 export function clearPlan(plan: GamePlan): GamePlan {
   return {
     ...plan,
+    enabled: false,
     rows: plan.rows.map(row => ({
       ...row,
       cells: fitted([], plan.innings)
@@ -251,32 +292,54 @@ export function planPlayerKey(player: LineupPlayer): string {
 }
 
 /**
+ * Which of the plan's innings are planned, one flag per inning: those whose
+ * column holds a field position. A column of blanks, DH and EH gives no
+ * instruction yet, so its blanks are not sits.
+ */
+export function plannedInnings(
+  plan: Pick<GamePlan, 'innings' | 'rows'>
+): boolean[] {
+  return Array.from({ length: plan.innings }, (_, inning) =>
+    plan.rows.some(row => isPosition(row.cells[inning]))
+  )
+}
+
+/**
  * A row's innings at each field position, and its sits, as a season's
- * history counts them; DH, EH and blank innings count in neither. Which
- * positions are infield is the Playing Time Rules' choice, so the warnings
- * make it.
+ * history counts them: a sit is a blank in a planned inning (`planned`, as
+ * `plannedInnings` gives it). DH, EH and unplanned innings count in neither.
+ * Which positions are infield is the Playing Time Rules' choice, so the
+ * warnings make it.
  */
 export interface PlanRowCounts {
   positions: Record<Position, number>
   sits: number
 }
 
-export function planRowCounts(cells: readonly PlanCell[]): PlanRowCounts {
+export function planRowCounts(
+  cells: readonly PlanCell[],
+  planned: readonly boolean[]
+): PlanRowCounts {
   const positions = Object.fromEntries(
     POSITIONS.map(position => [position, 0])
   ) as Record<Position, number>
   for (const cell of cells) if (isPosition(cell)) positions[cell]++
-  return { positions, sits: cells.filter(cell => cell === '-').length }
+  return {
+    positions,
+    sits: cells.filter((cell, at) => cell === '' && planned[at]).length
+  }
 }
 
 /**
  * The defence the plan's column for `inning` (from 1) gives the side, or
- * null when there is no such column or it changes nothing. Each batter is
- * found in the plan as `alignPlan` finds him.
+ * null when there is no such column, it is not planned (none of the side's
+ * batters has a field position in it), or it changes nothing. Each batter is
+ * found in the plan as `alignPlan` finds him. A planned column applies whole:
  * - A batter planned at a field position takes it; when two are, the first
  *   in batting order does, and the other is read as unplanned.
- * - A batter planned at DH, EH or `-` leaves the field.
- * - An unplanned batter keeps his position if no planned batter takes it.
+ * - A batter planned at DH, EH or blank (the bench) leaves the field.
+ * - A batter with no row is unplanned, and keeps his position if no planned
+ *   batter takes it.
  * - A position nobody is given keeps its holder unless he was moved or left
  *   the field, and is otherwise empty.
  */
@@ -303,15 +366,18 @@ export function inningDefense(
   const next = Object.fromEntries(
     POSITIONS.map(position => [position, null])
   ) as Record<Position, number | null>
+  const column = rows.map(row => row?.cells[inning - 1])
+  if (!column.some(isPosition)) return null
   const placed = new Set<number>()
   const left = new Set<number>()
   order.forEach((id, at) => {
-    const cell = rows[at]?.cells[inning - 1] ?? ''
+    const cell = column[at]
+    if (cell == null) return
     if (isPosition(cell)) {
       if (next[cell] != null) return
       next[cell] = id
       placed.add(id)
-    } else if (cell !== '') left.add(id)
+    } else left.add(id)
   })
   for (const position of POSITIONS) {
     const holder = side.defense[position]

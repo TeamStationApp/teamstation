@@ -13,7 +13,7 @@ import {
 const TARGETS: PickerTarget[] = [
   { value: 'LF', rect: { x: 100, y: 300, width: 40, height: 26 } },
   { value: 'CF', rect: { x: 160, y: 280, width: 40, height: 26 } },
-  { value: '-', rect: { x: 220, y: 300, width: 60, height: 30 } }
+  { value: '', rect: { x: 220, y: 300, width: 60, height: 30 } }
 ]
 const cell = { row: 2, inning: 4 }
 
@@ -22,7 +22,7 @@ describe('the game plan hold-and-drag', function () {
     expect(pickerHit({ x: 120, y: 310 }, TARGETS)).equals('LF')
     expect(pickerHit({ x: 160, y: 280 }, TARGETS)).equals('CF')
     expect(pickerHit({ x: 200, y: 306 }, TARGETS)).equals('CF')
-    expect(pickerHit({ x: 250, y: 329 }, TARGETS)).equals('-')
+    expect(pickerHit({ x: 250, y: 329 }, TARGETS)).equals('')
     expect(pickerHit({ x: 150, y: 310 }, TARGETS)).equals(null)
     expect(pickerHit({ x: 120, y: 310 }, [])).equals(null)
   })

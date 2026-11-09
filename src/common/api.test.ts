@@ -857,7 +857,11 @@ describe('api client', function () {
       method: 'GET'
     })
     expect(plans.away).equals(null)
-    expect(plans.home?.plan).deep.equals(side.plan)
+    // A dash, the bench as an older server stores it, reads as blank.
+    expect(plans.home?.plan).deep.equals({
+      ...side.plan,
+      rows: [side.plan.rows[0], { ...side.plan.rows[1], cells: ['C', ''] }]
+    })
     // A rule the server left out takes its default.
     expect(plans.home?.rules?.mandatoryPlay).equals(true)
     expect(plans.home?.rules?.defensiveOutsRequired).equals(6)
