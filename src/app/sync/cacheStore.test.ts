@@ -6,7 +6,12 @@ import { expect } from 'chai'
 
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { openDocumentCache } from './cache'
-import { cacheFileName, openCacheStore } from './cacheStore'
+import {
+  cacheFileName,
+  openCacheStore,
+  QUERY_DOCUMENTS_KEPT,
+  type SchedulePageMeta
+} from './cacheStore'
 
 describe('the phone document cache', function () {
   let dir: string
@@ -30,7 +35,8 @@ describe('the phone document cache', function () {
     const first = { body: '[1]', revision: '3', serverDigest: null }
     expect(await store.store('home.teams', first)).deep.equals({
       ...first,
-      pending: false
+      pending: false,
+      serverBody: '[1]'
     })
     await store.store('home.teams', {
       body: '[2]',
@@ -41,8 +47,47 @@ describe('the phone document cache', function () {
       body: '[2]',
       revision: '4',
       serverDigest: 'd1',
-      pending: false
+      pending: false,
+      serverBody: '[2]'
     })
+    await store.close()
+  })
+
+  it('keeps only the newest documents of one path with a query, never a pending one or a short key', async function () {
+    let clock = 1000
+    const executor = nodeSqliteExecutor(join(dir, 'bounded.sqlite'))
+    const store = await openCacheStore(executor, { now: () => clock })
+    const doc = { body: '[]', revision: '0', serverDigest: null }
+    await store.store('/users?q=pending', doc)
+    executor.db.exec(
+      "UPDATE documents SET pending = 1 WHERE key = '/users?q=pending'"
+    )
+    await store.store('home.teams', doc)
+    await store.store('/teams/t1', doc)
+    // A different path's queries are counted on their own.
+    await store.store('/users_x?q=other', doc)
+    const words = Array.from(
+      { length: QUERY_DOCUMENTS_KEPT + 5 },
+      (_, n) => `/users?q=${'a'.repeat(n + 1)}`
+    )
+    for (const key of words) {
+      clock += 1
+      await store.store(key, doc)
+    }
+    // Stored again: the oldest word is now the newest.
+    clock += 1
+    await store.storeServer(words[0], doc)
+    const kept = executor.db
+      .prepare("SELECT key FROM documents WHERE key LIKE '/users?%'")
+      .all()
+      .map(row => String(row.key))
+      .sort()
+    expect(kept).deep.equals(
+      [words[0], ...words.slice(6), '/users?q=pending'].sort()
+    )
+    expect(kept).length(QUERY_DOCUMENTS_KEPT + 1)
+    for (const key of ['home.teams', '/teams/t1', '/users_x?q=other'])
+      expect(await store.read(key), key).not.equals(undefined)
     await store.close()
   })
 
@@ -66,9 +111,258 @@ describe('the phone document cache', function () {
       body: '{"mine":true}',
       revision: '5',
       serverDigest: 'local-1',
-      pending: true
+      pending: true,
+      serverBody: '{"mine":true}'
     })
+    // The server's own answer is recorded beside the pending body.
+    expect(
+      await store.storeServer('lineups.g1', {
+        body: '{"server":true}',
+        revision: '6',
+        serverDigest: 'd2'
+      })
+    ).deep.equals({
+      body: '{"mine":true}',
+      revision: '5',
+      serverDigest: 'd2',
+      pending: true,
+      serverBody: '{"server":true}'
+    })
+    // A local write leaves the server's body as it was.
+    await store.atomically(async tx => {
+      await tx.write('lineups.g1', {
+        body: '{"mine":2}',
+        revision: '5',
+        serverDigest: 'd2',
+        pending: true
+      })
+    })
+    expect(await store.read('lineups.g1')).deep.include({
+      body: '{"mine":2}',
+      serverBody: '{"server":true}'
+    })
+    // With no queued write, the server's answer is the body.
+    executor.db.exec(
+      "UPDATE documents SET pending = 0 WHERE key = 'lineups.g1'"
+    )
+    expect(
+      await store.storeServer('lineups.g1', {
+        body: '{"server":3}',
+        revision: '7',
+        serverDigest: 'd3'
+      })
+    ).deep.include({ body: '{"server":3}', serverDigest: 'd3', pending: false })
+    expect(
+      await store.storeServer('game.g1', {
+        body: '{}',
+        revision: '0',
+        serverDigest: null
+      })
+    ).deep.include({ body: '{}', serverBody: '{}' })
     await store.close()
+  })
+
+  it('adds the server body column and the schedule tables to a file made before them, and keeps a schedule page with its cursors', async function () {
+    const executor = nodeSqliteExecutor(join(dir, 'before.sqlite'))
+    executor.db.exec(`CREATE TABLE documents (
+      key text PRIMARY KEY, body text NOT NULL, revision text NOT NULL,
+      server_digest text, pending integer NOT NULL DEFAULT 0)`)
+    executor.db.exec(
+      "INSERT INTO documents VALUES ('lineups.g1', '{}', '0', 'd1', 1)"
+    )
+    const store = await openCacheStore(executor)
+    expect(await store.read('lineups.g1')).deep.include({ serverBody: null })
+    await store.storeServer('lineups.g1', {
+      body: '{"s":1}',
+      revision: '0',
+      serverDigest: 'd2'
+    })
+    expect(await store.read('lineups.g1')).deep.include({
+      body: '{}',
+      serverDigest: 'd2',
+      serverBody: '{"s":1}'
+    })
+    const page = {
+      scope: 'team:t1',
+      window: 'all+asc',
+      cursor: 'first',
+      gameIds: ['g1', 'g2'],
+      meta: { nextCursor: 'n1', prevCursor: 'p1', anchorId: 'g1', counts: null }
+    }
+    await store.atomically(async tx => {
+      await tx.writeSchedule('GameSummary', page, [
+        { id: 'g1', body: '{"id":"g1"}' },
+        { id: 'g2', body: '{"id":"g2"}' }
+      ])
+      await tx.writeSchedule('GameSummary', { ...page, gameIds: ['g2'] }, [
+        { id: 'g2', body: '{"id":"g2","v":2}' }
+      ])
+    })
+    const read = await store.atomically(async tx => ({
+      pages: await tx.schedulePages('team:t1', ['all+asc']),
+      none: await tx.schedulePages('team:t1', []),
+      rows: await tx.scheduleRows('GameSummary', ['g2', 'g1', 'g2', 'g9']),
+      next: await tx.scheduleWindowOf('team:t1', 'n1'),
+      prev: await tx.scheduleWindowOf('team:t1', 'p1'),
+      other: await tx.scheduleWindowOf('team:t2', 'n1')
+    }))
+    expect(read.pages).deep.equals([{ ...page, gameIds: ['g2'] }])
+    expect(read.none).deep.equals([])
+    // No stored page names g1 any more: it went with the page's new read.
+    expect(read.rows).deep.equals([{ id: 'g2', body: '{"id":"g2","v":2}' }])
+    expect([read.next, read.prev, read.other]).deep.equals([
+      'all+asc',
+      'all+asc',
+      undefined
+    ])
+    await store.close()
+    // Opened again, the columns and tables are there already.
+    await (
+      await openCacheStore(nodeSqliteExecutor(join(dir, 'before.sqlite')))
+    ).close()
+  })
+
+  it('keeps only the schedule pages a first page or whole list reaches, and the games they name', async function () {
+    const store = await openCacheStore(
+      nodeSqliteExecutor(join(dir, 'bounded.sqlite'))
+    )
+    const meta = (
+      nextCursor: string | null,
+      prevCursor: string | null = null
+    ): SchedulePageMeta => ({
+      nextCursor,
+      prevCursor,
+      anchorId: null,
+      counts: null
+    })
+    const write = async (
+      window: string,
+      cursor: string,
+      ids: string[],
+      next: string | null,
+      prev: string | null = null
+    ): Promise<void> => {
+      await store.atomically(async tx => {
+        await tx.writeSchedule(
+          'SeasonGame',
+          { scope: 'me', window, cursor, gameIds: ids, meta: meta(next, prev) },
+          ids.map(id => ({ id, body: JSON.stringify({ id }) }))
+        )
+      })
+    }
+    const cursors = async (window: string): Promise<string[]> =>
+      (
+        await store.atomically(
+          async tx => await tx.schedulePages('me', [window])
+        )
+      )
+        .map(page => page.cursor)
+        .sort()
+    const rows = async (ids: string[]): Promise<string[]> =>
+      (
+        await store.atomically(
+          async tx => await tx.scheduleRows('SeasonGame', ids)
+        )
+      ).map(row => row.id)
+    // Monday: the first page, and the two it leads to.
+    await write('upcoming', 'first', ['g1', 'g2'], 'c2')
+    await write('upcoming', 'c2', ['g3'], 'c3')
+    await write('upcoming', 'c3', ['g4'], null)
+    // Another window keeps its own.
+    await write('past', 'list', ['g0'], null)
+    expect(await cursors('upcoming')).deep.equals(['c2', 'c3', 'first'])
+    // Tuesday the first page moved on: its old chain goes, and the games
+    // only that chain named.
+    await write('upcoming', 'first', ['g2', 'g3'], 'd2')
+    expect(await cursors('upcoming')).deep.equals(['first'])
+    expect(await cursors('past')).deep.equals(['list'])
+    expect(await rows(['g0', 'g1', 'g2', 'g3', 'g4'])).deep.equals([
+      'g0',
+      'g2',
+      'g3'
+    ])
+    // A page read by its cursor stays as the newest written, and is reached
+    // once the first page leads to it.
+    await write('upcoming', 'd2', ['g5'], null, 'first')
+    expect(await cursors('upcoming')).deep.equals(['d2', 'first'])
+    await store.close()
+  })
+
+  it('reads the schedule list documents an older build kept into the set once', async function () {
+    const executor = nodeSqliteExecutor(join(dir, 'legacy.sqlite'))
+    executor.db.exec(`CREATE TABLE documents (
+      key text PRIMARY KEY, body text NOT NULL, revision text NOT NULL,
+      server_digest text, pending integer NOT NULL DEFAULT 0)`)
+    const insert = executor.db.prepare(
+      "INSERT INTO documents (key, body, revision) VALUES (?, ?, '0')"
+    )
+    const game = (id: string): Record<string, unknown> => ({ id })
+    insert.run('games.upcoming', JSON.stringify([game('u1')]))
+    insert.run(
+      'games.past.page',
+      JSON.stringify({
+        items: [game('p1'), game('p2')],
+        nextCursor: 'n',
+        prevCursor: null,
+        anchorId: null,
+        counts: { total: 2 }
+      })
+    )
+    insert.run('games.videos.page', JSON.stringify({ items: [game('p2')] }))
+    insert.run('games.all', '{broken')
+    insert.run('games.all.page', JSON.stringify({ items: [{ noId: 1 }] }))
+    const store = await openCacheStore(executor)
+    const pages = (): unknown =>
+      executor.db
+        .prepare(
+          'SELECT scope, "window", cursor, game_ids, page_meta FROM schedule_pages ORDER BY "window", cursor'
+        )
+        .all()
+        .map(row => ({ ...row }))
+    expect(pages()).deep.equals([
+      {
+        scope: 'me',
+        window: 'all+videos',
+        cursor: 'first',
+        game_ids: '["p2"]',
+        page_meta:
+          '{"nextCursor":null,"prevCursor":null,"anchorId":null,"counts":null}'
+      },
+      {
+        scope: 'me',
+        window: 'past',
+        cursor: 'first',
+        game_ids: '["p1","p2"]',
+        page_meta:
+          '{"nextCursor":"n","prevCursor":null,"anchorId":null,"counts":{"total":2}}'
+      },
+      {
+        scope: 'me',
+        window: 'upcoming',
+        cursor: 'list',
+        game_ids: '["u1"]',
+        page_meta:
+          '{"nextCursor":null,"prevCursor":null,"anchorId":null,"counts":null}'
+      }
+    ])
+    expect(
+      executor.db
+        .prepare(
+          "SELECT COUNT(*) AS n FROM schedule_games WHERE shape = 'SeasonGame'"
+        )
+        .get()
+    ).property('n', 3)
+    // The documents stay, and a second open reads them into nothing.
+    expect(await store.read('games.upcoming')).not.equals(undefined)
+    executor.db.exec('DELETE FROM schedule_pages WHERE "window" = \'past\'')
+    await store.close()
+    const again = nodeSqliteExecutor(join(dir, 'legacy.sqlite'))
+    await (await openCacheStore(again)).close()
+    const left = nodeSqliteExecutor(join(dir, 'legacy.sqlite'))
+    expect(
+      left.db.prepare('SELECT COUNT(*) AS n FROM schedule_pages').get()
+    ).property('n', 2)
+    left.db.close()
   })
 
   it('runs one transaction at a time, and goes on after one that failed', async function () {
@@ -91,7 +385,7 @@ describe('the phone document cache', function () {
     }
     expect(failure).instanceOf(Error)
     executor.db.exec(
-      'CREATE TABLE documents (key text PRIMARY KEY, body text NOT NULL, revision text NOT NULL, server_digest text, pending integer NOT NULL DEFAULT 0)'
+      'CREATE TABLE documents (key text PRIMARY KEY, body text NOT NULL, revision text NOT NULL, server_digest text, pending integer NOT NULL DEFAULT 0, server_body text)'
     )
     expect(await store.read('game.g1')).equals(undefined)
     await store.close()
@@ -148,6 +442,10 @@ describe('the phone document cache', function () {
     const web = await openDocumentCache('usr_1')
     const document = { body: '[]', revision: '1', serverDigest: null }
     expect(await web.store('home.teams', document)).deep.equals({
+      ...document,
+      pending: false
+    })
+    expect(await web.storeServer('home.teams', document)).deep.equals({
       ...document,
       pending: false
     })

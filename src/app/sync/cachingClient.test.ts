@@ -11,14 +11,41 @@ import { pageOf } from '../../test/pageOf'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
 import { CachingClient, PREFETCH_CONCURRENCY } from './cachingClient'
 import {
+  CANDIDATES_KEPT,
   candidatesKey,
   candidatesTeamOf,
+  candidatesWordsOf,
   documentKeyOf,
   fallbackKeyOf,
   fullRosterKey,
-  gamesKey,
+  GAMES_ALL,
+  GAMES_PAST,
+  GAMES_UPCOMING_PAGE,
+  GAMES_VIDEOS_PAGE,
+  networkOnly,
   rosterKey
 } from './documentKeys'
+import {
+  groupScope,
+  ME_SCOPE,
+  scheduleReadOf,
+  scheduleWindow,
+  seasonScope,
+  storedSchedule,
+  teamScope
+} from './scheduleReads'
+
+/** A game as the server sent it, unread: the rows' own bodies. */
+const asRawGame = (raw: unknown): { id: string } => raw as { id: string }
+
+/** A GET through the client's protected request, its answer unread. */
+async function rawRead(client: CachingClient, path: string): Promise<unknown> {
+  return await (
+    client as unknown as {
+      request: (m: string, p: string, c: typeof asRawGame) => Promise<unknown>
+    }
+  ).request('GET', path, asRawGame)
+}
 
 const team = (id: string, name: string): Record<string, unknown> => ({
   id,
@@ -190,6 +217,127 @@ describe('CachingClient', function () {
     expect(candidatesTeamOf('/users?forTeam=t%201&q=x')).equals('t 1')
     expect(candidatesTeamOf('/users?guardedBy=me')).equals(undefined)
     expect(candidatesTeamOf('/teams/t1/roster')).equals(undefined)
+    expect(candidatesWordsOf('/users?forTeam=t1&q=Jor%20%20Q')).deep.equals([
+      'jor',
+      'q'
+    ])
+    expect(candidatesWordsOf('/users?forTeam=t1')).deep.equals([])
+    expect(candidatesWordsOf('/teams/t1/roster')).deep.equals([])
+  })
+
+  interface Kept {
+    userId: string
+    cursor: string
+    matched?: string[]
+  }
+  it('keeps a typed search’s people beside the list with nothing typed, each with the words that found him, under the cap', async function () {
+    const person = (
+      first: string,
+      last: string,
+      cursor: string
+    ): Record<string, unknown> => ({
+      userId: `usr_${first}`,
+      gumboId: null,
+      externalIds: [],
+      // The short name shows only the last name's initial.
+      shortName: `${first} ${last.slice(0, 1)}`,
+      shortParts: { first, last: last.slice(0, 1) },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      tier: 'league',
+      cursor
+    })
+    // The list with nothing typed is full, and Jordan is not on it.
+    const nearest = Array.from({ length: 30 }, (_, i) =>
+      person(`Near${i}`, 'Birch', `n${i}`)
+    )
+    const net = server({
+      '/users?forTeam=tem_falcons&forGame=gam_1&limit=30': { body: nearest },
+      '/users?forTeam=tem_falcons&forGame=gam_1&q=Quill&limit=30': {
+        body: [person('Jordan', 'Quillfeather', 'q1')]
+      },
+      '/users?forTeam=tem_falcons&forGame=gam_1&q=jor+q&limit=30': {
+        body: [person('Jordan', 'Quillfeather', 'q2')]
+      }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    const ask = { teamId: 'tem_falcons', gameId: 'gam_1', limit: 30 }
+    await client.rosterCandidates(ask)
+    await client.rosterCandidates({ ...ask, q: 'Quill' })
+    const keptNow = async (): Promise<Kept[] | undefined> =>
+      await client.cached(candidatesKey('tem_falcons'), raw => raw as Kept[])
+    let kept = await keptNow()
+    expect(kept).has.length(31)
+    expect(kept?.[0]).deep.include({
+      userId: 'usr_Jordan',
+      cursor: 'q1',
+      matched: ['quill']
+    })
+    expect(kept?.[1]).not.has.property('matched')
+    // Found again by other words: he keeps both searches' words, once.
+    await client.rosterCandidates({ ...ask, q: 'jor q' })
+    kept = await keptNow()
+    expect(kept?.[0]).deep.include({
+      userId: 'usr_Jordan',
+      cursor: 'q2',
+      matched: ['quill', 'jor', 'q']
+    })
+    expect(kept).has.length(31)
+    // Found by the list with nothing typed, he keeps them: it adds none.
+    await client.rosterCandidates(ask)
+    kept = await keptNow()
+    expect(kept?.find(row => row.userId === 'usr_Jordan')?.matched).deep.equals(
+      ['quill', 'jor', 'q']
+    )
+    // Offline, the phone's file still holds him for the sheet to filter.
+    net.offline = true
+    await client.rosterCandidates({ ...ask, q: 'Quill' }).catch(() => [])
+    kept = await keptNow()
+    expect(kept?.map(row => row.userId)).includes('usr_Jordan')
+  })
+
+  it('keeps no more than the cap of found people, the newest answer’s first', async function () {
+    const person = (n: number): Record<string, unknown> => ({
+      userId: `usr_${n}`,
+      gumboId: null,
+      externalIds: [],
+      shortName: `P${n} B`,
+      shortParts: { first: `P${n}`, last: 'B' },
+      avatarUrl: null,
+      bats: null,
+      throws: null,
+      teams: [],
+      tier: 'other',
+      cursor: `c${n}`
+    })
+    const routes: Record<string, Answer> = {}
+    const pages = Math.ceil(CANDIDATES_KEPT / 100) + 1
+    for (let p = 0; p < pages; p++)
+      routes[`/users?forTeam=tem_falcons&q=p${p}&limit=100`] = {
+        body: Array.from({ length: 100 }, (_, i) => person(p * 100 + i))
+      }
+    const client = clientOf(server(routes).fetch)
+    client.openFor('usr_1')
+    for (let p = 0; p < pages; p++)
+      await client.rosterCandidates({
+        teamId: 'tem_falcons',
+        q: `p${p}`,
+        limit: 100
+      })
+    const kept = await client.cached(
+      candidatesKey('tem_falcons'),
+      raw => raw as Array<{ userId: string; matched?: string[] }>
+    )
+    expect(kept).has.length(CANDIDATES_KEPT)
+    expect(kept?.[0]).deep.include({
+      userId: `usr_${(pages - 1) * 100}`,
+      matched: [`p${pages - 1}`]
+    })
+    // The oldest answer's people are the ones that went.
+    expect(kept?.map(row => row.userId)).not.includes('usr_0')
   })
 
   it('answers a GET that fails to leave the device from the store, the first time (Cache hit)', async function () {
@@ -233,7 +381,7 @@ describe('CachingClient', function () {
     expect(await client.cached('game.g404', raw => raw)).equals(undefined)
   })
 
-  it('stores no season query as games.all, and a season read offline throws (Season query)', async function () {
+  it('keeps a season’s games apart from the person’s whole list (Season query)', async function () {
     const all = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const net = server({
       '/events?season=sea_1': { body: [] },
@@ -242,18 +390,19 @@ describe('CachingClient', function () {
     const client = clientOf(net.fetch)
     client.openFor('usr_1')
     await client.seasonGames('sea_1')
-    expect(await client.cached('games.all', raw => raw)).equals(undefined)
     await client.games({ when: 'all' })
-    expect(await client.cached('games.all', raw => raw)).deep.equals(all)
+    expect(await client.cached('games.all', raw => raw)).equals(undefined)
     net.offline = true
+    expect(await client.seasonGames('sea_1')).deep.equals([])
+    expect(await client.games({})).length(1)
+    // A season never read has no list to answer.
     let failure: unknown
     try {
-      await client.seasonGames('sea_1')
+      await client.seasonGames('sea_2')
     } catch (error) {
       failure = error
     }
     expect(failure).property('code', 'offline')
-    expect(await client.games({})).length(1)
   })
 
   it('answers a pending document as stored, even when the server answered (Pending document)', async function () {
@@ -446,7 +595,7 @@ describe('CachingClient', function () {
     expect(stored).includes(fullRosterKey('tem_hawks'))
     expect(stored).not.includes(fullRosterKey('tem_owls'))
     expect(stored, 'a failed read is skipped').not.includes('game.g1')
-    expect(stored).includes('me.roles').and.includes('games.upcoming')
+    expect(stored).includes('me.roles').and.not.includes('games.upcoming')
     expect(fetched, 'the scoring read stays').includes('/events?when=upcoming')
 
     net.offline = true
@@ -474,17 +623,18 @@ describe('CachingClient', function () {
     client.openFor('usr_1')
     await client.prefetch()
     expect(net.calls).includes('/events?paged=1&when=upcoming')
-    const stored = await client.cached(
-      gamesKey('upcoming'),
-      asPage(asSeasonGame)
+    const stored = await client.scheduleGames(
+      ME_SCOPE,
+      'upcoming',
+      asSeasonGame
     )
-    expect(stored?.items.map(game => game.id)).deep.equals(['g1'])
+    expect(stored.items.map(game => game.id)).deep.equals(['g1'])
     net.offline = true
     const page = await client.gamesPage({ when: 'upcoming' })
     expect(page.items.map(game => game.id)).deep.equals(['g1'])
   })
 
-  it('stores a list’s first page, and no page after it (First page)', async function () {
+  it('answers each list’s stored first page offline, and fails a later page never stored as offline (First page)', async function () {
     const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const lists: Array<[string, Parameters<CachingClient['gamesPage']>[0]]> = [
       ['/events?paged=1&when=upcoming', { when: 'upcoming' }],
@@ -501,43 +651,25 @@ describe('CachingClient', function () {
     net.offline = true
     for (const [, query] of lists)
       expect((await client.gamesPage(query)).items).length(1)
-    let failure: unknown
+    // A first page never stored is no games, and no error.
+    expect(
+      await client.gamesPage({ when: 'upcoming', order: 'asc' })
+    ).deep.equals({
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    })
+    // A later page never stored is the offline error: the list's Could not
+    // load more, and its Retry.
+    let failed: unknown
     try {
       await client.gamesPage({ when: 'past', cursor: 'next:50' })
     } catch (error) {
-      failure = error
+      failed = error
     }
-    expect(failure).property('code', 'offline')
-  })
-
-  it('reads an array an older build stored as a miss (Stored array)', async function () {
-    const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
-    const net = server({
-      '/events?when=upcoming': { body: games }
-    })
-    const client = clientOf(net.fetch)
-    client.openFor('usr_1')
-    await client.games({ when: 'upcoming' })
-    expect(await client.cached('games.upcoming', asPage(asSeasonGame))).equals(
-      undefined
-    )
-    const store = await openCacheStore(stores.get('usr_1')!)
-    await store.store(gamesKey('upcoming'), {
-      body: JSON.stringify(games),
-      revision: '0',
-      serverDigest: null
-    })
-    expect(
-      await client.cached(gamesKey('upcoming'), asPage(asSeasonGame))
-    ).equals(undefined)
-    net.offline = true
-    let failure: unknown
-    try {
-      await client.gamesPage({ when: 'upcoming' })
-    } catch (error) {
-      failure = error
-    }
-    expect(failure).property('code', 'offline')
+    expect(failed).property('code', 'offline')
   })
 
   it('reads ahead from the stored upcoming list when it will not load', async function () {
@@ -615,6 +747,9 @@ describe('CachingClient', function () {
         throw new Error('locked')
       },
       store: async () => {
+        throw new Error('locked')
+      },
+      storeServer: async () => {
         throw new Error('locked')
       },
       close: async () => {
@@ -701,7 +836,7 @@ describe('CachingClient', function () {
     expect(await client.myRoles()).deep.include({ teams: {} })
   })
 
-  it('leaves a request it does not store, and an empty answer, as they were', async function () {
+  it('keeps an unmapped read under its path, and leaves an empty answer as it was', async function () {
     const net = server({
       '/me/groups?role=admin': { body: [] },
       '/teams': { body: '' }
@@ -710,6 +845,728 @@ describe('CachingClient', function () {
     client.openFor('usr_1')
     expect(await client.ownGroups('admin')).deep.equals([])
     expect(await client.cached('home.groups', raw => raw)).equals(undefined)
+    expect(
+      await client.cached('/me/groups?role=admin', raw => raw)
+    ).deep.equals([])
+  })
+  describe('the schedule set', function () {
+    const game = (
+      id: string,
+      startAt: string | null,
+      fields: Record<string, unknown> = {}
+    ): Record<string, unknown> => ({
+      ...(upcomingGame(id, 'tem_hawks', 'tem_owls') as Record<string, unknown>),
+      startAt,
+      ...fields
+    })
+    const ids = (page: { items: unknown[] }): string[] =>
+      page.items.map(item => (item as { id: string }).id)
+    const offline = (error: unknown): unknown => error
+    const pages = (userId = 'usr_1'): Array<Record<string, unknown>> =>
+      stores
+        .get(userId)!
+        .db.prepare(
+          'SELECT scope, "window", cursor FROM schedule_pages ORDER BY scope, "window", cursor'
+        )
+        .all()
+        .map(row => ({ ...row }))
+
+    it('recognizes each schedule read, and leaves Home’s recent game and a lookup to the documents', function () {
+      expect(scheduleReadOf('/events?paged=1&when=upcoming')).deep.equals({
+        scope: 'me',
+        window: 'upcoming',
+        cursor: 'first',
+        shape: 'SeasonGame',
+        paged: true,
+        cursorOnly: false
+      })
+      expect(scheduleReadOf('/events')).deep.include({
+        scope: 'me',
+        window: 'all',
+        cursor: 'list',
+        paged: false
+      })
+      expect(
+        scheduleReadOf('/events?season=sea_1&paged=1&hasVideo=1&order=desc')
+      ).deep.include({ scope: 'season:sea_1', window: 'all+videos+desc' })
+      expect(
+        scheduleReadOf('/teams/tem_1/games?paged=1&cursor=next%3A2')
+      ).deep.include({
+        scope: 'team:tem_1',
+        cursor: 'next:2',
+        shape: 'GameSummary',
+        cursorOnly: true
+      })
+      // A public page is the group's, though it is a team's path.
+      expect(
+        scheduleReadOf('/teams/tem_1/games?public=1&paged=1')
+      ).deep.include({ scope: 'group:tem_1', shape: 'PublicGame' })
+      expect(
+        scheduleReadOf('/seasons/sea_1/games?public=1&paged=1&when=past')
+      ).deep.include({ scope: 'group:sea_1', window: 'past' })
+      for (const path of [
+        '/events?played=1&limit=1',
+        '/events?externalId=x',
+        '/events?when=recent',
+        '/events?order=sideways',
+        '/events?paged=1&hasVideo=true',
+        '/events?season=a&season=b',
+        '/events?season=',
+        '/seasons/sea_1/games',
+        '/teams/%E0%A4%A/games',
+        '/teams/t/roster'
+      ])
+        expect(scheduleReadOf(path), path).equals(undefined)
+      expect(scheduleWindow({ when: 'past', order: 'desc' })).equals(
+        'past+desc'
+      )
+      expect(groupScope('x')).equals('group:x')
+    })
+
+    it('writes only the prefetch’s two upcoming pages, reads them when the list will not load, and paints Upcoming from the first page', async function () {
+      const games = [game('g1', '2026-10-22T18:00:00Z')]
+      const routes: Record<string, Answer | undefined> = {
+        '/events?when=upcoming': { body: games },
+        '/events?paged=1&when=upcoming': {
+          body: pageOf([...games, game('g2', '2026-10-23T18:00:00Z')])
+        }
+      }
+      const net = server(routes)
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.prefetch()
+      expect(pages()).deep.equals([
+        { scope: 'me', window: 'upcoming', cursor: 'first' },
+        { scope: 'me', window: 'upcoming', cursor: 'list' }
+      ])
+      expect(
+        net.calls.filter(path => /^\/(events|teams\/[^/]+\/games)/.test(path))
+      ).deep.equals(['/events?when=upcoming', '/events?paged=1&when=upcoming'])
+      expect(
+        ids(await client.scheduleGames(ME_SCOPE, 'upcoming', asSeasonGame))
+      ).deep.equals(['g1', 'g2'])
+      // The list will not load: the stored games choose what is read ahead.
+      routes['/events?when=upcoming'] = {
+        status: 503,
+        body: { code: 'unavailable', message: 'Restarting' }
+      }
+      net.calls.length = 0
+      await client.prefetch()
+      expect(net.calls).includes('/games/g2/lineups')
+    })
+
+    it('keeps each window of a season apart, and offline Past paints only past games', async function () {
+      const past = [game('p1', '2026-01-01T18:00:00Z')]
+      const upcoming = [game('u1', '2026-12-01T18:00:00Z')]
+      const net = server({
+        '/events?season=sea_1&paged=1&when=past&order=desc': {
+          body: pageOf(past)
+        },
+        '/events?season=sea_1&paged=1&when=upcoming&order=asc': {
+          body: pageOf(upcoming)
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.seasonGamesPage('sea_1', { when: 'past', order: 'desc' })
+      await client.seasonGamesPage('sea_1', { when: 'upcoming', order: 'asc' })
+      net.offline = true
+      expect(
+        ids(
+          await client.seasonGamesPage('sea_1', { when: 'past', order: 'desc' })
+        )
+      ).deep.equals(['p1'])
+      expect(
+        ids(
+          await client.scheduleGames(
+            seasonScope('sea_1'),
+            'past+desc',
+            asSeasonGame
+          )
+        )
+      ).deep.equals(['p1'])
+      // A season's game is not the person's Upcoming.
+      expect(
+        ids(await client.scheduleGames(ME_SCOPE, 'upcoming', asSeasonGame))
+      ).deep.equals([])
+    })
+
+    it('answers a stored later page offline for its cursor, with its counts, cursors and anchor', async function () {
+      const rows = [1, 2, 3, 4, 5].map(n =>
+        game(`g${n}`, `2026-10-0${n}T18:00:00Z`)
+      )
+      const counts = {
+        total: 5,
+        upcoming: 5,
+        withVideo: 0,
+        videos: 0,
+        newestSeasonId: null
+      }
+      const first = pageOf(rows, { limit: 2 }, { counts, anchorId: 'g1' })
+      const second = pageOf(rows, { cursor: 'next:2', limit: 2 })
+      const net = server({
+        '/events?paged=1&when=upcoming&limit=2': { body: first },
+        '/events?paged=1&when=upcoming&cursor=next%3A2&limit=2': {
+          body: second
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.gamesPage({ when: 'upcoming', limit: 2 })
+      await client.gamesPage({ when: 'upcoming', cursor: 'next:2', limit: 2 })
+      net.offline = true
+      const later = await client.gamesPage({
+        when: 'upcoming',
+        cursor: 'next:2',
+        limit: 2
+      })
+      expect(later).deep.equals(asPage(asSeasonGame)(second))
+      const opened = await client.gamesPage({ when: 'upcoming', limit: 2 })
+      expect(ids(opened)).deep.equals(['g1', 'g2', 'g3', 'g4'])
+      expect(opened.counts).deep.equals(counts)
+      expect(opened.anchorId).equals('g1')
+      expect(opened.nextCursor).equals('next:4')
+      expect(opened.prevCursor).equals(null)
+    })
+
+    it('joins a team’s cursor-only later page to its first page, back and forth, and paints it offline after it', async function () {
+      const rows = [1, 2, 3, 4, 5, 6].map(n =>
+        game(`g${n}`, `2026-10-0${n}T18:00:00Z`)
+      )
+      const first = pageOf(rows, { limit: 2 }, { anchorIndex: 2 })
+      expect(ids(first)).deep.equals(['g2', 'g3', 'g4'])
+      const routes: Record<string, Answer | undefined> = {
+        '/teams/tem_hawks/games?paged=1&order=asc&around=next': { body: first },
+        '/teams/tem_hawks/games?paged=1&cursor=next%3A4': {
+          body: pageOf(rows, { cursor: 'next:4', limit: 2 })
+        },
+        '/teams/tem_hawks/games?paged=1&cursor=prev%3A1': {
+          body: pageOf(rows, { cursor: 'prev:1', limit: 2 })
+        }
+      }
+      const net = server(routes)
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.teamGamesPage('tem_hawks', { around: 'next', order: 'asc' })
+      await client.teamGamesPage('tem_hawks', { cursor: 'next:4' })
+      await client.teamGamesPage('tem_hawks', { cursor: 'prev:1' })
+      expect(pages().filter(row => row.scope === 'team:tem_hawks')).deep.equals(
+        [
+          {
+            scope: 'team:tem_hawks',
+            window: 'all+asc+around=next',
+            cursor: 'first'
+          },
+          {
+            scope: 'team:tem_hawks',
+            window: 'all+asc+around=next',
+            cursor: 'next:4'
+          },
+          {
+            scope: 'team:tem_hawks',
+            window: 'all+asc+around=next',
+            cursor: 'prev:1'
+          }
+        ]
+      )
+      net.offline = true
+      const painted = await client.scheduleGames(
+        teamScope('tem_hawks'),
+        'all+asc+around=next',
+        asRawGame
+      )
+      expect(ids(painted)).deep.equals(['g1', 'g2', 'g3', 'g4', 'g5', 'g6'])
+      expect(painted.nextCursor).equals(null)
+      expect(
+        ids(await client.teamGamesPage('tem_hawks', { cursor: 'next:4' }))
+      ).deep.equals(['g5', 'g6'])
+      // The person's Upcoming is not the team's.
+      expect(
+        ids(
+          await client.scheduleGames(
+            teamScope('tem_hawks'),
+            'upcoming',
+            asRawGame
+          )
+        )
+      ).deep.equals([])
+    })
+
+    it('keeps a first page opened on the next game apart from one opened at the start, and one of another limit', async function () {
+      const rows = [1, 2, 3, 4, 5, 6].map(n =>
+        game(`g${n}`, `2026-10-0${n}T18:00:00Z`)
+      )
+      const net = server({
+        '/teams/tem_hawks/games?paged=1&order=asc&around=next': {
+          body: pageOf(rows, { limit: 2 }, { anchorIndex: 4 })
+        },
+        '/teams/tem_hawks/games?paged=1&order=asc': {
+          body: pageOf(rows, { limit: 2 })
+        },
+        '/teams/tem_hawks/games?paged=1&order=asc&limit=4': {
+          body: pageOf(rows, { limit: 4 })
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      const around = await client.teamGamesPage('tem_hawks', {
+        around: 'next',
+        order: 'asc'
+      })
+      const start = await client.teamGamesPage('tem_hawks', { order: 'asc' })
+      const four = await client.teamGamesPage('tem_hawks', {
+        order: 'asc',
+        limit: 4
+      })
+      expect(ids(around)).not.deep.equals(ids(start))
+      expect(ids(four)).not.deep.equals(ids(start))
+      net.offline = true
+      expect(
+        ids(
+          await client.teamGamesPage('tem_hawks', {
+            around: 'next',
+            order: 'asc'
+          })
+        )
+      ).deep.equals(ids(around))
+      expect(
+        ids(await client.teamGamesPage('tem_hawks', { order: 'asc' }))
+      ).deep.equals(ids(start))
+      expect(
+        ids(await client.teamGamesPage('tem_hawks', { order: 'asc', limit: 4 }))
+      ).deep.equals(ids(four))
+      expect(
+        ids(
+          (await storedSchedule(
+            client,
+            teamScope('tem_hawks'),
+            { around: 'next', order: 'asc' },
+            asRawGame
+          ))!
+        )
+      ).deep.equals(ids(around))
+    })
+
+    it('keeps one row per game and shape: a team’s summary never replaces the person’s game', async function () {
+      const net = server({
+        '/events?paged=1&when=upcoming': {
+          body: pageOf([game('g1', '2026-10-01T18:00:00Z')])
+        },
+        '/teams/tem_hawks/games?paged=1': {
+          body: pageOf([{ id: 'g1', note: 'summary' }])
+        },
+        '/teams/tem_hawks/games?public=1&paged=1': {
+          body: pageOf([{ id: 'g1', note: 'public' }])
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.gamesPage({ when: 'upcoming' })
+      await rawRead(client, '/teams/tem_hawks/games?paged=1')
+      await rawRead(client, '/teams/tem_hawks/games?public=1&paged=1')
+      const rows = stores
+        .get('usr_1')!
+        .db.prepare('SELECT shape, game_id FROM schedule_games ORDER BY shape')
+        .all()
+        .map(row => ({ ...row }))
+      expect(rows).deep.equals([
+        { shape: 'GameSummary', game_id: 'g1' },
+        { shape: 'PublicGame', game_id: 'g1' },
+        { shape: 'SeasonGame', game_id: 'g1' }
+      ])
+      const upcoming = await client.scheduleGames(
+        ME_SCOPE,
+        'upcoming',
+        asRawGame
+      )
+      expect(upcoming.items[0]).not.property('note')
+      expect(
+        (await client.scheduleGames(groupScope('tem_hawks'), 'all', asRawGame))
+          .items[0]
+      ).property('note', 'public')
+    })
+
+    it('paints All, never read, from what Upcoming and Past stored, a game with no start last, and Videos from the games with one', async function () {
+      const net = server({
+        '/events?paged=1&when=upcoming': {
+          body: pageOf([
+            game('u1', '2026-12-01T18:00:00Z'),
+            game('tbd', null),
+            game('u2', '2026-12-05T18:00:00Z')
+          ])
+        },
+        '/events?paged=1&when=past': {
+          body: pageOf([
+            game('p1', '2026-01-01T18:00:00Z', { videoCount: 2 }),
+            game('p2', '2026-02-01T18:00:00Z')
+          ])
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      expect(
+        ids(await client.scheduleGames(ME_SCOPE, 'all', asSeasonGame))
+      ).deep.equals([])
+      await client.gamesPage({ when: 'upcoming' })
+      await client.gamesPage({ when: 'past' })
+      expect(
+        ids(await client.scheduleGames(ME_SCOPE, 'all', asSeasonGame))
+      ).deep.equals(['u2', 'u1', 'p2', 'p1', 'tbd'])
+      net.offline = true
+      expect(ids(await client.gamesPage({}))).deep.equals([
+        'u2',
+        'u1',
+        'p2',
+        'p1',
+        'tbd'
+      ])
+      expect(ids(await client.gamesPage({ hasVideo: true }))).deep.equals([
+        'p1'
+      ])
+      // A scope with nothing stored paints nothing.
+      expect(
+        ids(
+          await client.scheduleGames(seasonScope('sea_9'), 'all', asSeasonGame)
+        )
+      ).deep.equals([])
+    })
+
+    it('replaces a page with its next answer: a dropped game leaves, a changed score is the row, and nothing else is read', async function () {
+      const ten = Array.from({ length: 10 }, (_, n) =>
+        game(`g${n}`, `2026-10-${String(n + 10)}T18:00:00Z`)
+      )
+      const routes: Record<string, Answer | undefined> = {
+        '/events?paged=1&when=upcoming': { body: pageOf(ten) },
+        '/events?paged=1': { body: pageOf(ten) },
+        '/events?paged=1&when=past': { body: pageOf([]) }
+      }
+      const net = server(routes)
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.gamesPage({ when: 'upcoming' })
+      expect(net.calls).deep.equals(['/events?paged=1&when=upcoming'])
+      // All, entered with those ten stored, paints them and still reads.
+      expect(
+        ids(await client.scheduleGames(ME_SCOPE, 'all', asSeasonGame))
+      ).length(10)
+      const scored = [
+        { ...ten[0], homeScore: 3, awayScore: 1, status: 'final' },
+        ...ten.slice(2)
+      ]
+      routes['/events?paged=1'] = { body: pageOf(scored) }
+      await client.gamesPage({})
+      expect(net.calls.at(-1)).equals('/events?paged=1')
+      const all = await client.scheduleGames(ME_SCOPE, 'all', asSeasonGame)
+      expect(ids(all)).not.includes('g1')
+      expect(all.items[0]).deep.include({ homeScore: 3, status: 'final' })
+      // The same row: Upcoming's page shows the new score too.
+      expect(
+        (await client.scheduleGames(ME_SCOPE, 'upcoming', asSeasonGame))
+          .items[0]
+      ).deep.include({ homeScore: 3 })
+      await client.gamesPage({ when: 'past' })
+      expect(net.calls.at(-1)).equals('/events?paged=1&when=past')
+      expect(
+        stores
+          .get('usr_1')!
+          .db.prepare(
+            "SELECT COUNT(*) AS n FROM schedule_games WHERE game_id = 'g0'"
+          )
+          .get()
+      ).property('n', 1)
+    })
+
+    it('answers a team opened offline, and a team never opened has no games', async function () {
+      const net = server({
+        '/teams/tem_hawks/games?paged=1&order=asc&around=next': {
+          body: pageOf([{ id: 'g1' }])
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      const read = async (teamId: string): Promise<unknown> =>
+        await rawRead(
+          client,
+          `/teams/${teamId}/games?paged=1&order=asc&around=next`
+        )
+      await read('tem_hawks')
+      net.offline = true
+      expect(await read('tem_hawks')).deep.include({ items: [{ id: 'g1' }] })
+      expect(await read('tem_owls')).deep.include({ items: [] })
+      expect(
+        stores
+          .get('usr_1')!
+          .db.prepare(
+            "SELECT COUNT(*) AS n FROM schedule_pages WHERE scope = 'team:tem_owls'"
+          )
+          .get()
+      ).property('n', 0)
+    })
+
+    it('answers a whole list a server error refused with that error, not the store', async function () {
+      const net = server({ '/events?when=past': { body: [game('p1', null)] } })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.games({ when: 'past' })
+      const failing = server({
+        '/events?when=past': {
+          status: 500,
+          body: { code: 'internal', message: 'x' }
+        }
+      })
+      const other = new CachingClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: failing.fetch,
+        openCache: async () => await openCacheStore(stores.get('usr_1')!)
+      })
+      other.openFor('usr_1')
+      let failure: unknown
+      await other.games({ when: 'past' }).catch((error: unknown) => {
+        failure = offline(error)
+      })
+      expect(failure).property('code', 'internal')
+      net.offline = true
+      expect(await client.games({ when: 'past' })).length(1)
+    })
+
+    it('upgrades the schedule lists an older build stored, once, and leaves the documents', async function () {
+      const executor = nodeSqliteExecutor(join(dir, 'legacy.sqlite'))
+      const legacy = await openCacheStore(executor)
+      await legacy.store(GAMES_UPCOMING_PAGE, {
+        body: JSON.stringify(
+          pageOf([game('u1', '2026-12-01T18:00:00Z')], {}, { anchorId: 'u1' })
+        ),
+        revision: '0',
+        serverDigest: null
+      })
+      await legacy.store(GAMES_VIDEOS_PAGE, {
+        body: JSON.stringify(
+          pageOf([game('p1', '2026-01-01T18:00:00Z', { videoCount: 1 })])
+        ),
+        revision: '0',
+        serverDigest: null
+      })
+      await legacy.store(GAMES_PAST, {
+        body: JSON.stringify([game('p1', '2026-01-01T18:00:00Z')]),
+        revision: '0',
+        serverDigest: null
+      })
+      await legacy.store(GAMES_ALL, {
+        body: '"not a list"',
+        revision: '0',
+        serverDigest: null
+      })
+      // The tables did not exist when those were stored.
+      executor.db.exec('DROP TABLE schedule_games; DROP TABLE schedule_pages')
+      const net = server({})
+      net.offline = true
+      const client = new CachingClient({
+        baseUrl: 'http://x/api/v1',
+        fetch: net.fetch,
+        openCache: async () => await openCacheStore(executor)
+      })
+      client.openFor('usr_1')
+      const upcoming = await client.gamesPage({ when: 'upcoming' })
+      expect(ids(upcoming)).deep.equals(['u1'])
+      expect(upcoming.anchorId).equals('u1')
+      expect(ids(await client.gamesPage({ hasVideo: true }))).deep.equals([
+        'p1'
+      ])
+      expect(ids({ items: await client.games({ when: 'past' }) })).deep.equals([
+        'p1'
+      ])
+      expect(await client.cached(GAMES_UPCOMING_PAGE, raw => raw)).not.equals(
+        undefined
+      )
+      // Once: what the older build left is not read into the set again.
+      await legacy.store(GAMES_UPCOMING_PAGE, {
+        body: JSON.stringify(pageOf([game('u9', null)])),
+        revision: '0',
+        serverDigest: null
+      })
+      await openCacheStore(executor)
+      expect(ids(await client.gamesPage({ when: 'upcoming' }))).deep.equals([
+        'u1'
+      ])
+    })
+  })
+
+  describe('screen reads', function () {
+    const read = rawRead
+
+    it('answers Home, a team, a season, a league, a game and its plays offline once their screens read them', async function () {
+      const home = { teams: [], seasons: [], leagues: [] }
+      const routes: Record<string, Answer | undefined> = {
+        '/me/home': { body: home },
+        '/teams/tem_hawks': { body: { id: 'tem_hawks' } },
+        '/seasons/sea_1/teams': { body: [] },
+        '/leagues/lea_1': { body: { id: 'lea_1' } },
+        '/games/g1/events': {
+          body: { plays: [], lineupsDigest: 'l1', playsDigest: 'p1' }
+        }
+      }
+      const net = server(routes)
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.home()
+      for (const path of Object.keys(routes).slice(1)) await read(client, path)
+      const keys = (
+        stores
+          .get('usr_1')!
+          .db.prepare('SELECT key FROM documents ORDER BY key')
+          .all() as Array<{ key: string }>
+      ).map(row => row.key)
+      // A mapped read keeps its short key; the rest are their paths.
+      expect(keys).deep.equals([
+        '/leagues/lea_1',
+        '/seasons/sea_1/teams',
+        '/teams/tem_hawks',
+        'events.g1',
+        'home.lists'
+      ])
+      net.offline = true
+      expect(await client.home()).deep.include({ teams: [] })
+      for (const path of Object.keys(routes).slice(1))
+        expect(await read(client, path), path).deep.equals(routes[path]!.body)
+    })
+
+    it('stores no stream, playback, clock, session or chat sync read, and keeps the chat list', async function () {
+      const paths = [
+        '/games/g1/live-streams',
+        '/games/g1/stream-access',
+        '/chat/devices',
+        '/chat/conversations/c1/log?after=2',
+        '/live',
+        '/videos/v1/playback',
+        '/time',
+        '/auth/me'
+      ]
+      const net = server({
+        ...Object.fromEntries(paths.map(path => [path, { body: { a: 1 } }])),
+        '/chat/conversations': { body: [] }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      for (const path of paths) await read(client, path)
+      await read(client, '/chat/conversations')
+      const keys = (
+        stores
+          .get('usr_1')!
+          .db.prepare('SELECT key FROM documents')
+          .all() as Array<{ key: string }>
+      ).map(row => row.key)
+      expect(keys).deep.equals(['/chat/conversations'])
+      net.offline = true
+      for (const path of paths) {
+        let failure: unknown
+        await read(client, path).catch((error: unknown) => {
+          failure = error
+        })
+        expect(failure, path).property('code', 'offline')
+      }
+    })
+
+    it('reads roles from the network while a row is stored', async function () {
+      const routes: Record<string, Answer | undefined> = {
+        '/me/roles': { body: { teams: {} } }
+      }
+      const net = server(routes)
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.myRoles()
+      // A group was created: the next read is the server's.
+      routes['/me/roles'] = { body: { teams: { tem_new: ['admin'] } } }
+      expect(await client.myRoles()).deep.include({
+        teams: { tem_new: ['admin'] }
+      })
+    })
+
+    it('reads the server for the outbox while a queued write holds the row, and records its digest beside the phone’s body', async function () {
+      const routes: Record<string, Answer | undefined> = {
+        '/games/g1/lineups': {
+          body: { away: 'server', home: 'server', digest: 'd9' }
+        },
+        '/games/g2/lineups': {
+          body: { away: 'server', home: 'server', digest: 'd2' }
+        },
+        '/games/g3/lineups': {
+          status: 404,
+          body: { code: 'notFound', message: 'Gone' }
+        },
+        '/time': { body: { now: 1 } }
+      }
+      const net = server(routes)
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.cached('none', raw => raw)
+      const db = stores.get('usr_1')!.db
+      db.prepare(
+        "INSERT INTO documents (key, body, revision, server_digest, pending) VALUES ('lineups.g1', ?, '0', 'd4', 1)"
+      ).run(JSON.stringify({ mine: true }))
+      db.prepare(
+        "INSERT INTO documents (key, body, revision, server_digest, pending) VALUES ('lineups.g3', '{}', '0', null, 0)"
+      ).run()
+      expect(await client.serverRead('/games/g1/lineups')).deep.include({
+        digest: 'd9'
+      })
+      expect(net.calls).deep.equals(['/games/g1/lineups'])
+      expect(
+        db
+          .prepare(
+            "SELECT body, server_digest, server_body, pending FROM documents WHERE key = 'lineups.g1'"
+          )
+          .get()
+      ).deep.include({
+        body: '{"mine":true}',
+        server_digest: 'd9',
+        server_body: JSON.stringify(routes['/games/g1/lineups']!.body),
+        pending: 1
+      })
+      // With no queued write, the server's body is the row.
+      await client.serverRead('/games/g2/lineups')
+      expect(await client.cached('lineups.g2', raw => raw)).deep.include({
+        digest: 'd2'
+      })
+      // Gone on the server: the phone's copy goes too.
+      let failure: unknown
+      await client.serverRead('/games/g3/lineups').catch((error: unknown) => {
+        failure = error
+      })
+      expect(failure).property('code', 'notFound')
+      expect(await client.cached('lineups.g3', raw => raw)).equals(undefined)
+      // A read the phone never keeps is only the server's answer.
+      expect(await client.serverRead('/time')).deep.equals({ now: 1 })
+      await client.signedOut()
+      expect(await client.serverRead('/time')).deep.equals({ now: 1 })
+    })
+
+    it('still paints Home on a phone that only has the stored home lists', async function () {
+      const net = server({
+        '/me/home': {
+          body: {
+            teams: [
+              { ...team('tem_hawks', 'Hawks'), direct: true, source: 'member' }
+            ],
+            seasons: [],
+            leagues: []
+          }
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      await client.home()
+      stores.get('usr_1')!.db.close()
+      net.offline = true
+      const cold = clientOf(net.fetch)
+      cold.openFor('usr_1')
+      expect(
+        (await cold.cached('home.lists', raw => raw as { teams: unknown[] }))
+          ?.teams
+      ).length(1)
+      expect(
+        (await cold.scheduleGames(ME_SCOPE, 'upcoming', asSeasonGame)).items
+      ).deep.equals([])
+    })
   })
 })
 
@@ -720,9 +1577,9 @@ describe('document keys', function () {
     expect(documentKeyOf('/teams')).equals('home.teams')
     expect(documentKeyOf('/users?guardedBy=me')).equals('home.guarded')
     expect(documentKeyOf('/events?played=1&limit=1')).equals('home.recent')
-    expect(documentKeyOf('/events?when=past')).equals('games.past')
-    expect(documentKeyOf('/events?externalId=x')).equals(undefined)
-    expect(documentKeyOf('/events?season=s')).equals(undefined)
+    // Any other GET is its path; the schedule reads are routed before this.
+    expect(documentKeyOf('/events?externalId=x')).equals('/events?externalId=x')
+    expect(documentKeyOf('/teams/t')).equals('/teams/t')
     expect(documentKeyOf('/teams/tem%2F1/roster')).equals(rosterKey('tem/1'))
     expect(documentKeyOf('/teams/t/roster?includeFullNames=true')).equals(
       'roster.full.t'
@@ -731,22 +1588,38 @@ describe('document keys', function () {
     expect(documentKeyOf('/games/g')).equals('game.g')
     expect(documentKeyOf('/games/g/events')).equals('events.g')
     expect(documentKeyOf('/games/%E0%A4%A/lineups')).equals(undefined)
-    expect(documentKeyOf('/games/g/dj')).equals(undefined)
-    expect(documentKeyOf('/events?paged=1&when=upcoming')).equals(
-      'games.upcoming.page'
+    expect(documentKeyOf('/games/g/dj')).equals('/games/g/dj')
+    for (const path of [
+      '/auth/me',
+      '/health',
+      '/time',
+      '/live',
+      '/me/builds',
+      '/me/api-keys',
+      '/videos/v1/playback',
+      '/videos/v1/wall-timeline?from=1',
+      '/games/g/scoreboard-timeline',
+      '/games/g/live-streams',
+      '/games/g/stream-access',
+      '/chat/devices',
+      '/chat/me/keys',
+      '/chat/conversations/c1/log?after=4',
+      '/chat/conversations/c1/epochs?after=1',
+      // One-shot answers, and a place search's billing session.
+      '/oauth/approvals/h1',
+      '/oauth/approve/u1/details',
+      '/join/CODE1',
+      '/join/CODE1/email-code',
+      '/locations?query=fen&session=s1',
+      '/locations/p1?session=s1'
+    ]) {
+      expect(networkOnly(path), path).equals(true)
+      expect(documentKeyOf(path), path).equals(undefined)
+    }
+    expect(documentKeyOf('/chat/conversations')).equals('/chat/conversations')
+    expect(documentKeyOf('/chat/conversations/c1/messages?after=3')).equals(
+      '/chat/conversations/c1/messages?after=3'
     )
-    expect(documentKeyOf('/events?paged=1&when=past')).equals('games.past.page')
-    expect(documentKeyOf('/events?paged=1')).equals('games.all.page')
-    expect(documentKeyOf('/events?paged=1&hasVideo=1')).equals(
-      'games.videos.page'
-    )
-    expect(documentKeyOf('/events?paged=1&when=past&cursor=c')).equals(
-      undefined
-    )
-    expect(gamesKey('upcoming')).equals('games.upcoming.page')
-    expect(gamesKey('past')).equals('games.past.page')
-    expect(gamesKey('all')).equals('games.all.page')
-    expect(gamesKey('videos')).equals('games.videos.page')
     expect(fallbackKeyOf('roster.full.t')).equals('roster.t')
     expect(fallbackKeyOf('roster.t')).equals(undefined)
   })
@@ -756,5 +1629,15 @@ describe('the web client', function () {
   it('has no cached documents', async function () {
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     expect(await client.cached('home.teams', raw => raw)).equals(undefined)
+    // The web stores no schedule: an empty page, which no screen paints.
+    expect(
+      await client.scheduleGames('me', 'upcoming', raw => raw)
+    ).deep.equals({
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    })
   })
 })
