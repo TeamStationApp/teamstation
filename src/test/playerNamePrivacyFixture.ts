@@ -11,6 +11,10 @@ import { addGame } from './scoreboardKit'
 export const COACH = 303
 export const SCOREKEEPER = 304
 export const STRANGER = 305
+/** Alex Lee's parent: a `guardian` link to Alex, and none to anyone else. */
+export const PARENT = 306
+/** Mookie Betts, a Demo Hawks player outside the game, whom the parent has no link to. */
+export const MOOKIE = 7003
 /** A teammate: sees the game, and may not dictate. */
 export const TEAMMATE = 4001
 
@@ -21,7 +25,8 @@ const fillers = (start: number): number[] =>
  * The people, teams and game every player name privacy pass reads, invented
  * throughout: Alex Lee of Demo Hawks, whom Spring and Fall of the league
  * Lakeshore manage and who also compete in a third season, batting against
- * Riley Chen after one pitch.
+ * Riley Chen after one pitch. Alex's parent is linked to Alex alone, and
+ * Mookie Betts is on Demo Hawks' roster beside him.
  */
 export async function seedPrivacyGame(
   f: GroupFixture
@@ -59,23 +64,33 @@ export async function seedPrivacyGame(
       legacyId: `usr_privacy_${id}`,
       display_name: `Filler ${id}`,
       first_name: 'Filler',
-      last_name: String(id)
+      last_name: String(id),
+      // The teammate signs in: he reads the public names in the browser.
+      ...(id === TEAMMATE ? { login_enabled: true } : {})
     })),
     ...(
       [
         [COACH, 'Cal Ripken'],
         [SCOREKEEPER, 'Ozzie Smith'],
-        [STRANGER, 'Babe Ruth']
+        [STRANGER, 'Babe Ruth'],
+        [PARENT, 'Lou Gehrig']
       ] as const
     ).map(([id, name]) => ({
       id,
       legacyId: `usr_privacy_${id}`,
       display_name: name,
       login_enabled: true
-    }))
+    })),
+    {
+      id: MOOKIE,
+      legacyId: `usr_privacy_${MOOKIE}`,
+      display_name: 'Mookie Betts',
+      first_name: 'Mookie',
+      last_name: 'Betts'
+    }
   ])
   for (const [ids, teamId] of [
-    [hawks, f.teamA],
+    [[...hawks, MOOKIE], f.teamA],
     [eagles, f.teamB]
   ] as const)
     await db
@@ -116,7 +131,7 @@ export async function seedPrivacyGame(
         granted_at: new Date()
       })
       .execute()
-  for (const id of [COACH, SCOREKEEPER, STRANGER, TEAMMATE])
+  for (const id of [COACH, SCOREKEEPER, STRANGER, TEAMMATE, PARENT])
     tokens.set(
       id,
       (await createSession(db, userIdOfGumbo(id), 'privacy-fixture')).token
@@ -148,6 +163,17 @@ export async function seedPrivacyGame(
       })
       .where('id', '=', userIdOfGumbo(id))
       .execute()
+  await db
+    .insertInto('user_links')
+    .values({
+      id: makeId('userLink'),
+      user_id: userIdOfGumbo(PARENT),
+      related_user_id: userIdOfGumbo(ALEX),
+      kind: 'guardian',
+      can_manage: true,
+      created_at: new Date()
+    })
+    .execute()
   const gameId = await addGame(db, {
     homeTeamId: f.teamB,
     awayTeamId: f.teamA,

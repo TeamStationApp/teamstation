@@ -5,13 +5,15 @@ import { createInterface } from 'node:readline'
 
 import express from 'express'
 
+import { userIdOfGumbo } from '../common/userId'
 import type { Turn } from '../server/dictation/interpreter'
 import { attachDictation } from '../server/dictation/route'
 import { dictationScopes } from '../server/dictation/scopes'
 import { dictatingHealth } from './dictationFakes'
 import type { GroupFixture } from './groupFixtures'
 import { groupFixture } from './groupFixtures'
-import { seedPrivacyGame } from './playerNamePrivacyFixture'
+import { fixtureEmail } from './insertFixtureUsers'
+import { COACH, seedPrivacyGame } from './playerNamePrivacyFixture'
 import { quiet, requireRedis, testPrefix, testStore } from './scoreboardKit'
 
 /**
@@ -32,6 +34,8 @@ export interface PrivacyNativeManifest {
   origin: string
   control: string
   email: string
+  /** Demo Hawks' coach (N11), who reads Alex Lee in full. */
+  coachEmail: string
   gameId: string
   teamId: string
   leagueId: string
@@ -134,6 +138,7 @@ async function main(): Promise<void> {
     origin: `http://${host}:${port}`,
     control: `http://127.0.0.1:${address.port}`,
     email: 'alex@example.com',
+    coachEmail: fixtureEmail(userIdOfGumbo(COACH)),
     gameId,
     teamId: f.teamA,
     leagueId: f.leagueA,
