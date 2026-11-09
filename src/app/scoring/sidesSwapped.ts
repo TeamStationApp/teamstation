@@ -83,8 +83,8 @@ export function useGameReplaced(
 
 /**
  * What the scorer is told once the game opens again. `lost` counts the
- * changes it had not saved, which are not kept; a phone's queue given up
- * counts as one, since it cannot tell how many it held.
+ * changes it had not saved, which are not kept; each save a phone's queue
+ * gave up counts as one.
  */
 export function replacedNotice(change: GameReplaced, lost: number): string {
   if (!change.reset)

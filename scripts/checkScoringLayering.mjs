@@ -16,7 +16,9 @@ import ts from 'typescript'
  * player to a dictation model, `depth` names how far a ball went, and
  * `baseOutWords` reads the words that say a fielder took a base for an out.
  * `playsLost` counts what a reset of the game would delete, as the server
- * counts it; it changes nothing.
+ * counts it; it changes nothing. `swapDocuments` makes a phone's copy of a
+ * game as the server's swap leaves it, through the server's own record
+ * transforms; the swap itself is the server's.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -31,7 +33,8 @@ export const APP_MAY_IMPORT = [
   'depth',
   'pitchType',
   'baseOutWords',
-  'playsLost'
+  'playsLost',
+  'swapDocuments'
 ]
 const LIBRARY = 'src/common/scoring'
 
