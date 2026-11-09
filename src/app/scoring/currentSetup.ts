@@ -134,20 +134,50 @@ export function defensiveRosterName(player: ScoringPlayer): string {
 /**
  * First name and last initial for everyone drawn from a game. A stored label
  * may already be that short name, or the whole name; two players who would
- * read the same take another letter, the same way a roster does.
+ * read the same take another letter, the same way a roster does. A player
+ * named in full only for this reader is drawn by the public label he keeps
+ * beside it (`compactName`), unchanged, and everyone else breaks ties
+ * against it: these are the labels the field draws.
  */
 export function shortPlayerNames(
   players: Iterable<
     Pick<
       ScoringPlayer,
-      'id' | 'fullName' | 'firstName' | 'lastName' | 'nameFormat'
+      | 'id'
+      | 'fullName'
+      | 'firstName'
+      | 'lastName'
+      | 'nameFormat'
+      | 'compactName'
+      | 'compactFormat'
     >
   >
 ): Map<number, string> {
   const list = [...players]
-  const names = gamePlayerNames(list)
+  // A compact label stands in the collision check as the public label it is,
+  // so a player named here lengthens against it, as he did before full names.
+  const names = gamePlayerNames(
+    list.map(player =>
+      player.compactName == null
+        ? player
+        : {
+            id: player.id,
+            fullName: player.compactName,
+            firstName: '',
+            lastName: '',
+            ...(player.compactFormat == null
+              ? {}
+              : { nameFormat: player.compactFormat })
+          }
+    )
+  )
   const out = new Map<number, string>()
   for (const player of list) {
+    // The public label, written by the server with collisions broken.
+    if (player.compactName != null) {
+      out.set(player.id, player.compactName.trim())
+      continue
+    }
     const stored = player.fullName.trim()
     const shown = names.get(player.id) ?? stored
     // A label that is already an initial keeps its period: `Jordan K.`.
@@ -179,19 +209,33 @@ export function withRosterDetails(
     const currentName = entry.shortName.trim()
     const fullName = currentName === '' ? player.fullName : currentName
     const jersey = entry.jersey?.trim() ?? ''
+    // A label full only for this reader keeps the public one beside it.
+    const compactName =
+      currentName === '' ? player.compactName : entry.compactName
+    const compactFormat =
+      currentName === '' ? player.compactFormat : entry.compactFormat
     if (
       fullName === player.fullName &&
       jersey === player.jersey &&
-      entry.nameFormat === player.nameFormat
+      entry.nameFormat === player.nameFormat &&
+      compactName === player.compactName &&
+      compactFormat === player.compactFormat
     )
       continue
     // The format travels with the label: one without the other misreads it.
-    const { nameFormat: _held, ...rest } = player
+    const {
+      nameFormat: _held,
+      compactName: _compact,
+      compactFormat: _compactFormat,
+      ...rest
+    } = player
     players[player.id] = {
       ...rest,
       fullName,
       jersey,
-      ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat })
+      ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat }),
+      ...(compactName == null ? {} : { compactName }),
+      ...(compactFormat == null ? {} : { compactFormat })
     }
     changed = true
   }

@@ -2524,6 +2524,45 @@ describe('api client', function () {
     expect((await reading.gameEvents('g')).readerNames).deep.equals({
       7: 'Alex Lee'
     })
+    // ...which the cleaner gives the game's players: the full name, with the
+    // public label beside it; the play's references stay as everyone's.
+    const setupPlayer = {
+      id: 7,
+      teamId: 'tem_1',
+      fullName: 'Alex L',
+      jersey: '7',
+      bats: 'right',
+      throws: 'right',
+      positions: [],
+      local: false
+    }
+    const withSetup = {
+      ...play,
+      matchup: {
+        batter: { id: 7, fullName: 'Alex L' },
+        pitcher: { id: 8, fullName: 'Gerrit C' }
+      },
+      teamStation: {
+        version: 2,
+        setupBefore: { players: { 7: setupPlayer } },
+        actions: []
+      }
+    }
+    const named = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, {
+        plays: [{ id: 'evt_1', gameId: 'gam_1', gumbo: withSetup }],
+        readerNames: { 7: 'Alex Lee' }
+      }).fetch
+    }).gameEvents('g')
+    const held = named.plays[0] as unknown as typeof withSetup
+    expect(held.teamStation.setupBefore.players[7]).deep.equals({
+      ...setupPlayer,
+      fullName: 'Alex Lee',
+      nameFormat: 'full',
+      compactName: 'Alex L'
+    })
+    expect(held.matchup.batter.fullName).equals('Alex L')
     const none = stubFetch(200, { plays: [] })
     const bare = new TeamStationClient({
       baseUrl: 'http://x/api/v1',

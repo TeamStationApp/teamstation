@@ -962,7 +962,7 @@ describe('a player’s Teams tab', function () {
 describe('a player’s Settings tab', function () {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
-  it('abbreviates collision-expanded roster names on ordinary tabs, including delayed profiles', async function () {
+  it('draws the name the server gives the page on ordinary tabs after a save, including delayed profiles', async function () {
     for (const delayed of [false, true]) {
       const client = playerClient()
       const entry = {
@@ -974,12 +974,17 @@ describe('a player’s Settings tab', function () {
           displayName: 'Paul Goldschmidt'
         }
       }
-      let release:
-        ((player: ReturnType<typeof asPlayerDetail>) => void) | undefined
+      // Every read of the page waits, delayed, until all are let go.
+      const waiting: Array<
+        (player: ReturnType<typeof asPlayerDetail>) => void
+      > = []
+      const release = (player: ReturnType<typeof asPlayerDetail>): void => {
+        for (const resolve of waiting.splice(0)) resolve(player)
+      }
       client.player = async () =>
         delayed
           ? await new Promise(resolve => {
-              release = resolve
+              waiting.push(resolve)
             })
           : asPlayerDetail({
               userId: userIdOfGumbo(7),
@@ -1001,9 +1006,12 @@ describe('a player’s Settings tab', function () {
       await press('Save')
       expect(text()).includes('Paul Goldschmidt')
       await press('Videos')
-      expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
+      // The saved entry's name until the page is read again; then the
+      // server's, never one shortened here.
+      if (!delayed)
+        expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
       await act(async () => {
-        release?.(
+        release(
           asPlayerDetail({
             userId: userIdOfGumbo(7),
             name: 'Paul G',
@@ -1019,6 +1027,50 @@ describe('a player’s Settings tab', function () {
         root?.unmount()
       })
       root = undefined
+    }
+  })
+  it('draws the saved name by its public label once the viewer may no longer manage the player', async function () {
+    const client = playerClient()
+    // The coach reads the player in full; the public label is kept beside.
+    const entry = {
+      ...jordan,
+      shortName: 'Paul Goldschmidt',
+      nameFormat: 'full' as const,
+      compactName: 'Paul G',
+      nameDetails: {
+        firstName: 'Paul',
+        lastName: 'Goldschmidt',
+        displayName: 'Paul Goldschmidt'
+      }
+    }
+    client.player = async () =>
+      asPlayerDetail({
+        userId: userIdOfGumbo(7),
+        name: 'Paul Goldschmidt',
+        teams: []
+      })
+    client.roster = async () => [entry]
+    client.setPlayerSettings = async () => ({ ...entry, jersey: '9' })
+    const page = (viewer: MyRoles | undefined): React.ReactElement => (
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        forTeam="t1"
+        roles={viewer}
+        initialTab="settings"
+      />
+    )
+    await render(page(coach))
+    await typeName('Jersey number', '9')
+    await press('Save')
+    expect(text()).includes('Paul Goldschmidt')
+    for (const viewer of [undefined, roles({}), coach]) {
+      await act(async () => {
+        root!.render(<ThemeProvider>{page(viewer)}</ThemeProvider>)
+        await delay(20)
+      })
+      if (viewer === coach) expect(text()).includes('Paul Goldschmidt')
+      else expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
     }
   })
   it('recovers the full header name after a failed independent header lookup and successful Save', async function () {
@@ -1073,10 +1125,18 @@ describe('a player’s Settings tab', function () {
     }
     let release:
       ((player: ReturnType<typeof asPlayerDetail>) => void) | undefined
+    // The page's first read is held; the one after the save answers as saved.
+    let reads = 0
     client.player = async () =>
-      await new Promise(resolve => {
-        release = resolve
-      })
+      ++reads === 1
+        ? await new Promise(resolve => {
+            release = resolve
+          })
+        : asPlayerDetail({
+            userId: userIdOfGumbo(7),
+            name: 'Paul G',
+            teams: []
+          })
     client.roster = async () => [entry]
     client.setPlayerSettings = async () => ({
       ...entry,
@@ -1115,6 +1175,13 @@ describe('a player’s Settings tab', function () {
   })
   it('shows the saved name and rejects an older header-name response', async function () {
     const client = playerClient()
+    // The page read again after the save names the player as saved.
+    let saved = false
+    const player = client.player.bind(client)
+    client.player = async (...args) => ({
+      ...(await player(...args)),
+      ...(saved ? { name: 'Paul G' } : {})
+    })
     const entry = {
       ...jordan,
       nameDetails: {
@@ -1131,15 +1198,18 @@ describe('a player’s Settings tab', function () {
         : await new Promise(resolve => {
             release = resolve
           })
-    client.setPlayerSettings = async () => ({
-      ...entry,
-      shortName: 'Paul G',
-      nameDetails: {
-        firstName: 'Paul',
-        lastName: 'Goldschmidt',
-        displayName: 'Paul Goldschmidt'
+    client.setPlayerSettings = async () => {
+      saved = true
+      return {
+        ...entry,
+        shortName: 'Paul G',
+        nameDetails: {
+          firstName: 'Paul',
+          lastName: 'Goldschmidt',
+          displayName: 'Paul Goldschmidt'
+        }
       }
-    })
+    }
     await render(
       <PlayerScreen
         client={client}
@@ -1173,6 +1243,100 @@ describe('a player’s Settings tab', function () {
     expect(text()).includes('Paul Goldschmidt').and.not.includes('Mookie Betts')
     await press('Videos')
     expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
+  })
+  it('falls back to its own name, not the roster label, when the read after a save fails', async function () {
+    for (const details of [true, false]) {
+      const client = playerClient()
+      // The roster tells him from a teammate by a second letter; the page,
+      // which names him alone, does not.
+      const entry = {
+        ...jordan,
+        shortName: 'Jordan Pa',
+        ...(details
+          ? {
+              nameDetails: {
+                firstName: 'Jordan',
+                lastName: 'Pacheco',
+                displayName: 'Jordan Pacheco'
+              }
+            }
+          : {})
+      }
+      const read = client.player.bind(client)
+      // Every read of the page after the save fails.
+      let saved = false
+      let refused = 0
+      client.player = async (...args) => {
+        if (!saved) return await read(...args)
+        refused++
+        throw new Error('temporary refusal')
+      }
+      client.roster = async () => [entry]
+      client.setPlayerSettings = async () => {
+        saved = true
+        return { ...entry, jersey: '9' }
+      }
+      await render(
+        <PlayerScreen
+          client={client}
+          userId={userIdOfGumbo(7)}
+          forTeam="t1"
+          roles={coach}
+          initialTab="settings"
+        />
+      )
+      await typeName('Jersey number', '9')
+      await press('Save')
+      await act(async () => {
+        await delay(20)
+      })
+      await press('Videos')
+      expect(refused, `with details ${details}`).greaterThan(0)
+      expect(text(), `with details ${details}`)
+        .includes('Jordan P')
+        .and.not.includes('Jordan Pa')
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+    }
+  })
+
+  it('keeps the full name the server gives a reader who may read it after a save', async function () {
+    const client = playerClient()
+    const entry = {
+      ...jordan,
+      shortName: 'Mookie Betts',
+      nameFormat: 'full' as const,
+      compactName: 'Mookie B',
+      nameDetails: {
+        firstName: 'Mookie',
+        lastName: 'Betts',
+        displayName: 'Mookie Betts'
+      }
+    }
+    client.player = async () =>
+      asPlayerDetail({
+        userId: userIdOfGumbo(7),
+        name: 'Mookie Betts',
+        teams: []
+      })
+    client.roster = async () => [entry]
+    client.setPlayerSettings = async () => ({ ...entry, jersey: '50' })
+    await render(
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        forTeam="t1"
+        roles={coach}
+        initialTab="settings"
+      />
+    )
+    await typeName('Jersey number', '50')
+    await press('Save')
+    await press('Videos')
+    expect(text()).includes('Mookie Betts').and.not.includes('Mookie B·')
+    expect(text()).not.match(/Mookie B(?!etts)/)
   })
   it('shows authorized full names only in Settings and forwards completed saves', async function () {
     const client = playerClient()

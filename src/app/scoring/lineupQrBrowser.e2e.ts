@@ -243,8 +243,9 @@ async function main(): Promise<void> {
     await page.screenshot({ path: join(artifacts, 'share-row-web.png') })
     await click('Lineup')
     const before = savedSetups().length
-    // Every roster player starts in the order; Zack W comes out of it.
-    await click('Remove Zack W')
+    // Every roster player starts in the order; Zack Wheeler comes out of it.
+    // The scorekeeper reads the roster's names in full.
+    await click('Remove Zack Wheeler')
     await click('Save Rosters')
     const until = Date.now() + 30000
     while (savedSetups().length === before && Date.now() < until)
@@ -253,12 +254,12 @@ async function main(): Promise<void> {
     assert(saved != null, 'Save Rosters saved the lineup')
     assert(
       !saved.sides.away.battingOrder.some(
-        id => saved.players[id].fullName === 'Zack W'
+        id => saved.players[id].fullName === 'Zack Wheeler'
       ),
       'The saved order leaves out the removed batter'
     )
     await openRosters()
-    await click('Remove Adam D')
+    await click('Remove Adam Duvall')
     await click('Cancel')
     await page.waitForSelector('[aria-label="Save Rosters"]', {
       hidden: true,

@@ -5,7 +5,7 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import { expect } from 'chai'
 
-import type { SaveLineupsBody } from '../../common/api'
+import { asRosterEntry, type SaveLineupsBody } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { CreateGroup } from '../../common/groupCreation'
 import type { GumboPlay } from '../../common/gumboPlay'
@@ -20,11 +20,15 @@ import { copyState, setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { scoringSession } from '../../test/scoringSession'
+import { candidateNames } from '../scoring/candidateNames'
+import { shortPlayerNames } from '../scoring/currentSetup'
 import { guestRenames, sendGuestRenames } from '../scoring/guestRenames'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
 import {
+  addRosteredPlayer,
   draftOfLocalPlayer,
-  editLocalPlayerDraft
+  editLocalPlayerDraft,
+  emptyPlayerDraft
 } from '../scoring/playerDraft'
 import { memoryStore } from '../scoring/scoringSource'
 import {
@@ -930,7 +934,7 @@ describe('the phone outbox', function () {
     expect(p.rows()[0].attempts).equals(1)
   })
 
-  it('stores the first post’s answer and writes the second over it, pending until it lands (Re-apply)', async function () {
+  it('stores the first post’s answer and writes the second over it, pending until it lands, its reader’s names kept (Re-apply)', async function () {
     let release: (() => void) | undefined
     let online = false
     const p = phone(
@@ -949,7 +953,9 @@ describe('the phone outbox', function () {
               `D${index}`,
               Array.from({ length: index + 1 }, (_, at) => play(at))
             ) as object),
-            playsDigest: `server-${index}`
+            playsDigest: `server-${index}`,
+            // Whom the poster reads in full, beside plays named for all.
+            readerNames: { 7: 'Mookie Betts' }
           }
         }
       })
@@ -974,11 +980,57 @@ describe('the phone outbox', function () {
     expect(body.priorPlaysDigest).equals('server-1')
     expect(body.playsDigest).match(/^local-/)
     expect(body.plays[1].id).equals('evt_1')
+    expect(body.readerNames).deep.equals({ 7: 'Mookie Betts' })
     release!()
     await p.client.drainOutbox()
     const after = p.document(eventsKey('g1'))!
     expect(after.pending).equals(0)
     expect(JSON.parse(String(after.body)).playsDigest).equals('server-2')
+    expect(JSON.parse(String(after.body)).readerNames).deep.equals({
+      7: 'Mookie Betts'
+    })
+  })
+
+  it('names a player the cached answer does not hold as the public reads him, his full name apart, from the rosters on the phone', async function () {
+    const p = phone(
+      server(
+        {
+          '/games/g1': { ...gameFixture, id: 'g1' },
+          '/games/g1/events': eventsDoc('g1', 'D0', []),
+          // The scorer reads 7 in full; 8 is told from a teammate he reads
+          // in full by a letter the public reads, which his list does not.
+          '/teams/home/roster': [
+            {
+              ...(serverEntry(7, 'Mookie') as object),
+              shortName: 'Mookie Betts',
+              nameFormat: 'full',
+              compactName: 'Mookie B'
+            },
+            {
+              ...(serverEntry(8, 'Matt') as object),
+              shortName: 'Matt B',
+              compactName: 'Matt Be'
+            }
+          ]
+        },
+        () => 'offline'
+      )
+    )
+    await p.client.game('g1')
+    await p.client.roster('home')
+    await p.client.gameEvents('g1')
+    await p.client.saveGameEvents('g1', {
+      plays: [play(0), play(1, 8), play(2, 9)],
+      remove: [],
+      names: { 7: 'Mookie Betts', 8: 'Matt B', 9: 'Juan Soto' }
+    })
+    const body = JSON.parse(String(p.document(eventsKey('g1'))!.body))
+    expect(
+      body.plays.map(
+        (row: { gumbo: GumboPlay }) => row.gumbo.matchup?.batter?.fullName
+      )
+    ).deep.equals(['Mookie B', 'Matt Be', 'Juan Soto'])
+    expect(body.readerNames).deep.equals({ 7: 'Mookie Betts' })
   })
 
   it('parks a game’s queue on a stale 409 and keeps sending the other game’s (Park)', async function () {
@@ -3403,6 +3455,81 @@ describe('the phone outbox', function () {
       expect(roster.filter(listed => listed.userId === userId)).deep.equals([
         { ...(serverEntry(777, 'Mookie') as object), userId }
       ])
+    })
+
+    it('keeps the public label beside a name the search gave in full', async function () {
+      const p = phone(
+        server(
+          {
+            '/teams/home/roster': homeRoster,
+            '/teams/home/roster?includeFullNames=true': homeRoster
+          },
+          () => 'offline'
+        )
+      )
+      await p.client.roster('home')
+      await p.client.roster('home', { includeFullNames: true })
+      const userId = userIdOfGumbo(777)
+      // A coach of his reads him in full; everyone else reads Mookie B.
+      const names = candidateNames({
+        userId,
+        gumboId: 777,
+        externalIds: [],
+        shortName: 'Mookie Betts',
+        nameFormat: 'full',
+        compactName: 'Mookie B',
+        shortParts: { first: 'Mookie', last: 'Betts' },
+        avatarUrl: null,
+        bats: null,
+        throws: null,
+        teams: [],
+        tier: 'mine',
+        cursor: ''
+      })
+      const answer = await p.client.addExistingRosterPlayer(
+        'home',
+        { userId, jersey: '12', positions: ['SS'] },
+        { background: true, deviceNames: names }
+      )
+      const entry = (answer as { entry: Record<string, unknown> }).entry
+      expect(entry).deep.include({
+        userId,
+        gumboId: 777,
+        shortName: 'Mookie Betts',
+        nameFormat: 'full',
+        compactName: 'Mookie B'
+      })
+      expect(entry.compactFormat).equals(undefined)
+      for (const key of [rosterKey('home'), fullRosterKey('home')])
+        expect(
+          JSON.parse(String(p.document(key)!.body)).find(
+            (listed: { userId: string }) => listed.userId === userId
+          )
+        ).deep.include({ shortName: 'Mookie Betts', compactName: 'Mookie B' })
+      // What leaves the reader takes the public label, as on the server's entry.
+      const session = scoringSession(gameFixture)
+      const id = addRosteredPlayer(
+        session,
+        'home',
+        asRosterEntry({
+          ...entry,
+          role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null
+        }),
+        { ...emptyPlayerDraft(), firstName: 'Mookie', lastName: 'Betts' }
+      )
+      expect(
+        shortPlayerNames(Object.values(session.gameData.players)).get(id)
+      ).equals('Mookie B')
+      // The body sent is the add alone.
+      const [row] = p.rows()
+      expect(JSON.parse(String(row.body))).deep.equals({
+        userId,
+        jersey: '12',
+        positions: ['SS']
+      })
     })
 
     it('keeps the gumbo id somebody who exists already has, and adds a pool player to the game', async function () {

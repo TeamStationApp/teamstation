@@ -17,15 +17,23 @@ const CODE_OF = Object.fromEntries(
 const EH = 11
 const DH = 12
 
-/** A player's first and last names, split from his full name if need be. */
+/**
+ * A player's first and last names as GameChanger is told them: the public
+ * label, never one full only for this reader. A player this reader reads in
+ * full carries the public label as `compactName` (in `compactFormat`), and
+ * that wins over any parts he holds, which may be the full ones.
+ */
 function namesOf(player: ScoringPlayer): { f: string; l: string } {
-  if (`${player.firstName ?? ''}${player.lastName ?? ''}`.trim() !== '')
+  if (
+    player.compactName == null &&
+    `${player.firstName ?? ''}${player.lastName ?? ''}`.trim() !== ''
+  )
     return { f: player.firstName ?? '', l: player.lastName ?? '' }
-  const full = player.fullName.trim()
-  const space = full.lastIndexOf(' ')
+  const label = (player.compactName ?? player.fullName).trim()
+  const space = label.lastIndexOf(' ')
   return space < 0
-    ? { f: full, l: '' }
-    : { f: full.slice(0, space), l: full.slice(space + 1) }
+    ? { f: label, l: '' }
+    : { f: label.slice(0, space), l: label.slice(space + 1) }
 }
 
 /**

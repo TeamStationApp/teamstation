@@ -35,13 +35,19 @@ export function scoreboardFor(session: ScoringSessionState): ScoreboardState {
   const pitcher = session.liveData.linescore.defense.P
   const players = session.gameData.players
   // The board's own formatter takes a first name and a last name. A stored
-  // label may already be a short name, or it may be the whole name.
+  // label may already be a short name, or it may be the whole name. The
+  // strip is as narrow as the pixel board, so a player named in full only for
+  // this reader is printed by the public label he keeps (`compactName`), in
+  // the public format it was written in (`compactFormat`).
   const person = (
-    fullName: string,
+    label: string,
     id: number | undefined
   ): { firstName: string; lastName: string } => {
+    const player = id == null ? undefined : players[id]
+    const fullName = player?.compactName ?? label
     // A label that shows a surname is printed whole.
-    const format = id == null ? undefined : players[id]?.nameFormat
+    const format =
+      player?.compactName == null ? player?.nameFormat : player.compactFormat
     if (format === 'full' || format === 'initialLast')
       return { firstName: fullName.trim(), lastName: '' }
     const shown = shortName({ id: 0, displayName: fullName })

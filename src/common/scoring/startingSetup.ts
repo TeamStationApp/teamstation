@@ -56,6 +56,10 @@ function rosterOf(rows: RosterEntry[]): RosterPlayer[] {
       gumboId: asGumboId(row.gumboId),
       shortName: row.shortName,
       ...(row.nameFormat == null ? {} : { nameFormat: row.nameFormat }),
+      ...(row.compactName == null ? {} : { compactName: row.compactName }),
+      ...(row.compactFormat == null
+        ? {}
+        : { compactFormat: row.compactFormat }),
       jersey: row.jersey,
       bats: row.bats,
       throws: row.throws,

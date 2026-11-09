@@ -6350,7 +6350,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '(version, team names and timestamped inning lines), `initial` ' +
             '(the native pregame box or null), `boxes` (timestamped player ' +
             'statistics or an availability message), and `source` (authorized ' +
-            'plays, currentPlay and generation for replay). Imported plays ' +
+            'plays, currentPlay and generation for replay, named as the public ' +
+            'reads them), with `readerNames` (gumbo id to full name) for the ' +
+            'players the caller may read in full, as the events read answers ' +
+            'it. Imported plays ' +
             'are supported. Missing detail does not hide available inning ' +
             'scores. Native box steps also identify their atBatIndex and ' +
             'actionIndex so replay can distinguish actions at the same time. ' +

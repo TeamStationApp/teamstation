@@ -149,6 +149,7 @@ import {
   type SideLineups
 } from './scoring/lineupHistory'
 import { asSwapEffect } from './scoring/playsLost'
+import { withReaderNames } from './scoring/readerNames'
 import {
   asSaidRosterCommand,
   type SaidRosterCommand
@@ -1564,9 +1565,17 @@ export const asStoredGameAnswer: Cleaner<StoredGame> = raw =>
   storedGameOf(asStoredGame(raw))
 
 function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
+  // The game's players as this reader reads them; its plays as everyone does.
+  const { plays, currentPlay } = withReaderNames(
+    {
+      plays: stored.plays.map(row => row.gumbo),
+      currentPlay: stored.currentPlay
+    },
+    stored.readerNames
+  )
   return {
-    plays: stored.plays.map(row => row.gumbo),
-    currentPlay: stored.currentPlay,
+    plays,
+    currentPlay,
     ...(stored.playsDigest == null ? {} : { playsDigest: stored.playsDigest }),
     ...(stored.priorPlaysDigest == null
       ? {}
@@ -3642,7 +3651,7 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
   steps: asArray(asObject({ at: asNumber, state: asScoreboardState }))
 })
 
-export const asGameStatistics: Cleaner<GameStatistics> = asObject({
+const asStatisticsAnswer = asObject({
   version: asString,
   board: asBoardTimelineWindow,
   line: asLineScoreTimeline,
@@ -3661,8 +3670,20 @@ export const asGameStatistics: Cleaner<GameStatistics> = asObject({
     plays: asArray(asGumboPlay),
     currentPlay: asNullable(asCurrentPlay),
     generation: asNumber
-  })
+  }),
+  readerNames: asOptional(asObject(asString))
 })
+
+/**
+ * A playback answer with its replay documents as their reader reads them:
+ * the players `readerNames` names in full so, each keeping his public label
+ * beside it for the replay diamond and the card's sentences (which the
+ * announcer reads from the public record), as the events read does.
+ */
+export const asGameStatistics: Cleaner<GameStatistics> = raw => {
+  const { readerNames, source, ...rest } = asStatisticsAnswer(raw)
+  return { ...rest, source: withReaderNames(source, readerNames) }
+}
 
 function statisticsPath(
   gameId: string,

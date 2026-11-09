@@ -46,10 +46,34 @@ const specs = [
   'src/server/routes/publicGameAccess.test.ts',
   'src/server/routes/highlightRoutes.test.ts',
   'src/server/users/derivedNames.test.ts',
-  'src/common/api.test.ts'
+  'src/common/api.test.ts',
+  'src/common/scoring/readerNames.test.ts',
+  'src/common/scoring/storedNames.test.ts',
+  'src/common/scoring/actions.test.ts',
+  'src/common/scoring/rosterCommands.test.ts',
+  'src/common/replay/replayNames.test.ts',
+  'src/app/sync/outbox.test.ts',
+  'src/app/sync/cacheStore.test.ts',
+  'src/app/scoring/scoringMotion.test.ts',
+  'src/app/scoring/scoringRosterCache.test.ts',
+  'src/app/scoring/currentSetup.test.ts',
+  'src/app/scoring/playerDraft.test.ts',
+  'src/app/scoring/lineupQrImport.test.ts',
+  'src/app/scoring/lineupQrExport.test.ts',
+  'src/app/scoring/fieldAdapter.test.ts',
+  'src/app/scoring/playerNameFormat.test.ts',
+  'src/common/scoring/startingSetup.test.ts',
+  'src/app/scoring/createDictatedPlayers.test.ts',
+  'src/app/chat/chat2Mentions.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
-const screens = []
+const screens = [
+  'src/app/screens/PlayerScreen.test.tsx',
+  'src/app/scoring/scoringScreenField.test.tsx',
+  'src/app/scoring/RosterEditor.coach.test.tsx',
+  'src/app/replay/GameReplayScreen.test.tsx',
+  'src/app/App.scoringRosterEdit.test.tsx'
+]
 
 const database = spawnSync('node', ['src/migrate/requirePostgres18.js'], {
   stdio: 'inherit'

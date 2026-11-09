@@ -776,6 +776,246 @@ describe('scoring screen field wiring', function () {
     ).equals('12')
     expect(field().scoreboard?.batterJersey).equals('12')
   })
+  describe('a team whose full names its reader may no longer read', function () {
+    // The game names two players in full for a coach of both teams; then
+    // he loses both roles, and the screen returns to their public labels.
+    const named = {
+      1: ['Mookie Betts', 'Mookie B'],
+      2: ['Aaron Judge', 'Aaron J'],
+      10: ['Shohei Ohtani', 'Shohei O']
+    } as const
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const heldRoles = TeamStationClient.prototype.myRoles
+    let roles: Awaited<ReturnType<TeamStationClient['myRoles']>>
+    afterEach(function () {
+      TeamStationClient.prototype.myRoles = heldRoles
+    })
+    const click = async (label: string): Promise<void> => {
+      const nodes = document.querySelectorAll<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(nodes.length, label).greaterThan(0)
+      await step(() => {
+        nodes.item(nodes.length - 1).click()
+      })
+    }
+    const fullNamesShown = (): string[] =>
+      Object.values(named)
+        .map(([full]) => full)
+        .filter(full => document.body.innerHTML.includes(full))
+    /** Opens `live` as a coach of both teams, then takes the roles away. */
+    const openThenRevoke = async (
+      live: ScoringSession,
+      source: Partial<ScoringSource> = {}
+    ): Promise<void> => {
+      roles = {
+        teams: { away: ['coach'], home: ['coach'] },
+        guardianOf: []
+      }
+      TeamStationClient.prototype.myRoles = async () => roles
+      const render = await mount({
+        persistent: false,
+        open: async () => live,
+        ...source
+      })
+      roles = { teams: {}, guardianOf: [] }
+      await render({ active: false })
+      await render({ active: true })
+      await step(() => undefined)
+    }
+    const session = (): ReturnType<typeof scoringSession> => {
+      const initial = scoringSession(gameFixture)
+      for (const [id, [full, label]] of Object.entries(named)) {
+        const person = initial.gameData.players[Number(id)]
+        person.local = false
+        person.fullName = full
+        person.nameFormat = 'full'
+        person.compactName = label
+      }
+      return initial
+    }
+    it('draws the runner decision and the steps it takes by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session(), {
+        requireCurrentSetup: true
+      })
+      expect(live.state.liveData.linescore.offense.batter?.id).equals(1)
+      live.apply({ type: 'pitch', call: 'C' })
+      live.apply({ type: 'pitch', call: 'C' })
+      await openThenRevoke(live)
+      const more = props().moreControl as React.ReactElement<{
+        onChoose: (input: { action: string }) => void
+      }>
+      await step(() => {
+        more.props.onChoose({ action: 'Dropped Third Strike' })
+      })
+      await settle()
+      expect(
+        document.querySelector('[aria-label="Runner decision for Mookie B"]')
+      ).not.equals(null)
+      await click('Out')
+      await settle()
+      expect(fullNamesShown()).deep.equals([])
+      expect(live.state.gameData.players[1].fullName).equals('Mookie Betts')
+    })
+    it('draws the error credit sheet by public labels, and credits the player', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session())
+      await openThenRevoke(live)
+      const outcome = props().ballInPlayControl as React.ReactElement<{
+        onChoose: (outcome: string, contact?: string) => void
+      }>
+      await step(() => {
+        outcome.props.onChoose('Error')
+      })
+      const fielder = players().find(
+        player => player.playerId === 10 && player.team !== 'offense'
+      )!
+      await step(() => field().onLandingPreview?.({ x: 0, z: -30 }))
+      await step(() => field().onFieldPlacement?.(placement(fielder.id)))
+      await step(() => field().onTrajectoryAccepted?.(25, 0))
+      await settle()
+      await step(() => field().onFieldPlacement?.(placement(fielder.id)))
+      await step(() => props().onFinish?.())
+      expect(
+        document.querySelector('[aria-label="Error by 1 Shohei O"]')
+      ).not.equals(null)
+      expect(fullNamesShown()).deep.equals([])
+      await click('Error by 1 Shohei O')
+      await settle()
+      expect(
+        document.querySelector('[aria-label="Error by 1 Shohei O"]')
+      ).equals(null)
+      expect(fullNamesShown()).deep.equals([])
+      expect(live.state.gameData.players[10].fullName).equals('Shohei Ohtani')
+    })
+    it('logs a dictated play by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session())
+      await openThenRevoke(live)
+      await step(() => {
+        dictate('Strike three', [
+          { type: 'pitch', call: 'C' },
+          { type: 'pitch', call: 'C' },
+          { type: 'pitch', call: 'C' }
+        ])
+      })
+      await settle()
+      // The dictation log's lines, as the panel holds them.
+      const panel = find(
+        (
+          container as unknown as Record<
+            string,
+            Fiber & { stateNode?: { current?: Fiber } }
+          >
+        )[
+          Object.keys(container ?? {}).find(name =>
+            name.startsWith('__reactContainer$')
+          )!
+        ].stateNode?.current,
+        'ScoringPanel'
+      )!
+      const lines: string[] = []
+      for (let hook = panel.memoizedState; hook != null; hook = hook.next) {
+        const value: unknown = hook.memoizedState
+        if (
+          Array.isArray(value) &&
+          value.some(
+            (entry: unknown) =>
+              (entry as { kind?: string } | null)?.kind === 'play'
+          )
+        )
+          for (const entry of value as Array<{ kind: string; text: string }>)
+            if (entry.kind === 'play') lines.push(entry.text)
+      }
+      expect(lines.join(' ')).includes('Mookie B')
+      expect(lines.join(' ')).not.includes('Mookie Betts')
+      expect(live.state.gameData.players[1].fullName).equals('Mookie Betts')
+    })
+    it('draws a per-event History row by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session(), {
+        requireCurrentSetup: true
+      })
+      live.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 2,
+        base: '1B'
+      })
+      live.apply({ type: 'baseRunning', kind: 'steal', runner: 2, to: '2B' })
+      await openThenRevoke(live, {
+        saveTag: async (_game, targetId, tag) => ({
+          targetId,
+          tag,
+          revision: '1'
+        })
+      })
+      await step(() => {
+        props().onHistoryOpen?.()
+      })
+      const rows = props().historyRows ?? []
+      const stolen = rows.find(row => row.title.includes('Aaron'))
+      expect(stolen, JSON.stringify(rows)).not.equals(undefined)
+      expect(stolen!.title).includes('Aaron J')
+      expect(JSON.stringify(rows)).not.includes('Aaron Judge')
+      await step(() => {
+        props().onTagSelect?.(stolen!)
+      })
+      expect(fullNamesShown()).deep.equals([])
+      expect(live.state.gameData.players[2].fullName).equals('Aaron Judge')
+    })
+    it('draws the Overrides batter and pitcher lists by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session())
+      await openThenRevoke(live)
+      await click('Open scoring menu')
+      await click('Overrides')
+      await click('Batter')
+      expect(
+        document.querySelector('[aria-label="Choose Batter Mookie B"]')
+      ).not.equals(null)
+      await click('Pitcher')
+      expect(
+        document.querySelector('[aria-label="Choose Pitcher Shohei O"]')
+      ).not.equals(null)
+      expect(fullNamesShown()).deep.equals([])
+    })
+  })
+  it('keeps the short name on the diamond and the board for a batter its reader reads in full', async function () {
+    const initial = scoringSession(gameFixture)
+    const batter = initial.liveData.linescore.offense.batter
+    if (batter == null) throw new Error('Missing batter')
+    const person = initial.gameData.players[batter.id]
+    person.local = false
+    person.fullName = 'Mookie B'
+    const live = ScoringSession.start(memoryStore(), 'g1', initial)
+    await mount(
+      { open: async () => live },
+      {
+        [person.teamId]: [
+          asRosterEntry({
+            userId: userIdOfGumbo(batter.id),
+            gumboId: batter.id,
+            shortName: 'Mookie Betts',
+            nameFormat: 'full',
+            compactName: 'Mookie B',
+            jersey: person.jersey,
+            positions: [],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          })
+        ]
+      }
+    )
+    const drawn = field().players.find(player => player.playerId === batter.id)
+    expect(drawn?.displayName).equals('Mookie B')
+    expect(field().scoreboard?.batter).deep.equals({
+      firstName: 'Mookie',
+      lastName: 'B'
+    })
+    // The spoken summary names him as the lineup does.
+    expect(props().accessibilitySummary).includes('Batter Mookie Betts')
+    expect(live.state.gameData.players[batter.id].fullName).equals('Mookie B')
+  })
   for (const route of ['menu', 'lineup'] as const)
     for (const jersey of ['99', null])
       it(`keeps saved player details when saving ${route} with current jersey ${String(jersey)}`, async function () {

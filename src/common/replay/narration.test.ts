@@ -23,6 +23,8 @@ import {
 } from '../../test/scoringGames'
 import type { ScoringAction } from '../scoring/actions'
 import { applyAction } from '../scoring/apply'
+import { withReaderNames } from '../scoring/readerNames'
+import type { StoredGame } from '../scoring/session'
 import { type GameState, setupOf } from '../scoring/state'
 import type { Transition } from '../scoring/transitions'
 import {
@@ -36,6 +38,7 @@ import {
   spoken,
   stepsWithStates
 } from './narration'
+import { namesOf } from './replayNames'
 import { type ReplayStep, replayTimelineOf } from './replayTimeline'
 
 /** What the announcer says for `actions` taken on `state`, as one step. */
@@ -234,6 +237,24 @@ describe('replay narration of a whole game', function () {
         expect(text, player.last).not.match(new RegExp(`\\b${player.last}\\b`))
     expect(texts.join(' ')).includes('Luis Ga').and.includes('Luis Gi')
     for (const text of texts) expect(text.length).lessThanOrEqual(MAX_NARRATION)
+  })
+
+  it('narrates the card from the public labels for a reader who reads a player in full, as the announcer does', async function () {
+    // The game as the public reads it, and as a reader who may read Mookie
+    // Betts in full reads it: the announcer's audio is the public one.
+    const shared = JSON.parse(
+      JSON.stringify(await finalGame()).replaceAll('Mookie Betts', 'Mookie B')
+    ) as StoredGame
+    const read = withReaderNames(shared, { 9201: 'Mookie Betts' })
+    const readTimeline = replayTimelineOf(read, replayContext())
+    expect(namesOf(readTimeline.end).get(9201)).equals('Mookie Betts')
+    const card = narrateTimeline(readTimeline)
+    const audio = narrateTimeline(replayTimelineOf(shared, replayContext()))
+    expect([...card.keys()]).deep.equals([...audio.keys()])
+    for (const [key, said] of audio)
+      expect(card.get(key)?.text, key).equals(said.text)
+    const texts = [...card.values()].map(said => said.text).join(' ')
+    expect(texts).includes('Mookie B').and.not.includes('Betts')
   })
 
   it('narrates a grown step whole, and a ball in play saved before its result as in play', async function () {

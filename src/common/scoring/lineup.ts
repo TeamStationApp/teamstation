@@ -1222,6 +1222,10 @@ export interface RosterPlayer {
   shortName: string
   /** The public format `shortName` was written in, unless the built-in one. */
   nameFormat?: PlayerNamePrivacy
+  /** The public label, when `shortName` is full only for its reader. */
+  compactName?: string
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat?: PlayerNamePrivacy
   jersey?: string | null
   bats?: 'left' | 'right' | 'switch' | null
   throws?: 'left' | 'right' | null
@@ -1346,6 +1350,10 @@ export function newSetup(
         teamId: teams[side].id,
         fullName: row.shortName,
         ...(row.nameFormat == null ? {} : { nameFormat: row.nameFormat }),
+        ...(row.compactName == null ? {} : { compactName: row.compactName }),
+        ...(row.compactFormat == null
+          ? {}
+          : { compactFormat: row.compactFormat }),
         jersey: row.jersey ?? '',
         bats: row.bats ?? 'right',
         throws: row.throws ?? null,

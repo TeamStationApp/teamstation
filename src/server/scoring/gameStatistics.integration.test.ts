@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { asGameStatistics } from '../../common/api'
 import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { userIdOfGumbo } from '../../common/userId'
@@ -21,6 +22,7 @@ describe("a game's playback statistics, named for their reader", function () {
   let db: Kysely<Database>
   let drop: () => Promise<void>
   let gameId: string
+  let pitcher: number
   const coach = mintUserId(() => false)
   const stranger = mintUserId(id => id === coach.userId)
 
@@ -31,7 +33,7 @@ describe("a game's playback statistics, named for their reader", function () {
       away: 'Herons'
     })
     // The home pitcher, a player of the team the coach coaches.
-    const pitcher = context.setup.sides.home.defense.P!
+    pitcher = context.setup.sides.home.defense.P!
     await db
       .updateTable('users')
       .set({
@@ -91,7 +93,7 @@ describe("a game's playback statistics, named for their reader", function () {
     await drop?.()
   })
 
-  it('names the source and boxes in full for the coach, and the board for everybody', async function () {
+  it('names the boxes in full for the coach, the source apart, and the board for everybody', async function () {
     const read = async (userId: number): ReturnType<typeof gameStatistics> =>
       await gameStatistics(
         db,
@@ -101,8 +103,30 @@ describe("a game's playback statistics, named for their reader", function () {
       )
     const forCoach = await read(coach.userId)
     const forStranger = await read(stranger.userId)
-    expect(JSON.stringify(forCoach.source)).include('"fullName":"Mookie Betts"')
+    // The source is the public's, and whom the coach reads in full comes
+    // beside it, as the events read answers it.
+    expect(JSON.stringify(forCoach.source)).not.include('Betts')
+    expect(forCoach.readerNames).deep.equals({ [pitcher]: 'Mookie Betts' })
+    expect(forStranger).not.have.property('readerNames')
     expect(JSON.stringify(forCoach.boxes)).include('Mookie Betts')
+    // The client names him in full with the public label beside, which the
+    // replay diamond draws.
+    const cleaned = asGameStatistics(JSON.parse(JSON.stringify(forCoach)))
+    expect(cleaned).not.have.property('readerNames')
+    const setup = (
+      (cleaned.source.plays[0] ?? cleaned.source.currentPlay) as unknown as {
+        teamStation: { setupBefore: { players: Record<string, object> } }
+      }
+    ).teamStation.setupBefore
+    expect(
+      Object.values(setup.players).find(
+        player => (player as { id?: number }).id === pitcher
+      )
+    ).include({
+      fullName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'Mookie B'
+    })
     expect(JSON.stringify(forStranger.source)).not.include('Betts')
     expect(JSON.stringify(forStranger.source)).include('"fullName":"Mookie B"')
     expect(JSON.stringify(forStranger.boxes)).not.include('Betts')

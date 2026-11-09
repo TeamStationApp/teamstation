@@ -715,10 +715,14 @@ describe('a game named in player name privacy', function () {
       expect(await name(`/games/${gameId}/box-score`, SCORER)).include(
         '"shortName":"Alex Lee"'
       )
-      // So is its playback; its board, the public timeline, is not.
-      expect(
-        await name(`/games/${gameId}/box-score?view=playback`, SCORER)
-      ).include('"fullName":"Alex Lee"')
+      // So is its playback, its replay documents the public's with whom he
+      // reads in full beside them; its board, the public timeline, is not.
+      const playback = await name(
+        `/games/${gameId}/box-score?view=playback`,
+        SCORER
+      )
+      expect(playback).include(`"readerNames":{"${ALEX}":"Alex Lee"`)
+      expect(playback).not.include('"fullName":"Alex Lee"')
       expect(
         await name(`/games/${gameId}/box-score?view=playback`, TEAMMATE)
       ).not.include('Alex Lee')

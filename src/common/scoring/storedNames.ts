@@ -140,13 +140,20 @@ function eachPlayer(
 }
 
 function unnamedPlayer(player: Json): Json {
-  if (!NAME_KEYS.some(key => key in player) && !('nameFormat' in player))
+  if (
+    !NAME_KEYS.some(key => key in player) &&
+    !('nameFormat' in player) &&
+    !('compactName' in player) &&
+    !('compactFormat' in player)
+  )
     return player
   const {
     fullName: _f,
     firstName: _a,
     lastName: _b,
     nameFormat: _c,
+    compactName: _d,
+    compactFormat: _e,
     ...out
   } = player
   return out

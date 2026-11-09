@@ -45,6 +45,38 @@ describe('a dictated player on a team with a chosen format', () => {
       nameFormat: 'initialLast'
     })
   })
+
+  it('keeps the public label beside a name full only for its reader', async () => {
+    const draft = scoringSession(gameFixture)
+    const result = await createDictatedPlayers(
+      draft,
+      [{ type: 'addPlayer', side: 'home', name: 'Alex Lee', jersey: '17' }],
+      rosterSituation(draft),
+      async () =>
+        asRosterEntry({
+          userId: userIdOfGumbo(7001),
+          gumboId: 7001,
+          shortName: 'Alex Lee',
+          nameFormat: 'full',
+          compactName: 'Alex L',
+          isPlayer: true,
+          role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null,
+          jersey: '17',
+          positions: [],
+          bats: 'right',
+          throws: 'right'
+        })
+    )
+    if ('problem' in result) throw new Error(result.problem)
+    expect(result.draft.gameData.players[7001]).includes({
+      fullName: 'Alex Lee',
+      nameFormat: 'full',
+      compactName: 'Alex L'
+    })
+  })
 })
 
 describe('persistent dictated player creation', () => {

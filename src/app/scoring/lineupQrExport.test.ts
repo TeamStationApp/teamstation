@@ -137,6 +137,46 @@ describe('lineup QR export', function () {
     expect(second).deep.include({ f: 'Ichiro', l: '' })
   })
 
+  it('tells GameChanger the public label of a player named in full only for this reader', function () {
+    const state = session()
+    const id = state.liveData.boxscore.teams.away.battingOrder[0]
+    Object.assign(state.gameData.players[id], {
+      fullName: 'Mookie Betts',
+      firstName: undefined,
+      lastName: undefined,
+      nameFormat: 'full',
+      compactName: 'Mookie B'
+    })
+    expect(lineupQrOf(state, 'away').h[0]).deep.include({
+      f: 'Mookie',
+      l: 'B'
+    })
+  })
+
+  it('tells GameChanger the public label over full parts a player added in full holds', function () {
+    const state = session()
+    const [first, second] = state.liveData.boxscore.teams.away.battingOrder
+    // Added from a candidate this reader reads in full: full parts beside it.
+    Object.assign(state.gameData.players[first], {
+      fullName: 'Cliff Lee',
+      firstName: 'Cliff',
+      lastName: 'Lee',
+      nameFormat: 'full',
+      compactName: 'Cliff L'
+    })
+    Object.assign(state.gameData.players[second], {
+      fullName: 'Corey Seager',
+      firstName: 'Corey',
+      lastName: 'Seager',
+      nameFormat: 'full',
+      compactName: 'C Seager',
+      compactFormat: 'initialLast'
+    })
+    const [lee, seager] = lineupQrOf(state, 'away').h
+    expect(lee).deep.include({ f: 'Cliff', l: 'L' })
+    expect(seager).deep.include({ f: 'C', l: 'Seager' })
+  })
+
   it('shares an empty side as an empty lineup', function () {
     const state = session()
     const team = state.liveData.boxscore.teams.away

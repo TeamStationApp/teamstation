@@ -27,6 +27,8 @@ import {
   PLAYER_POSITIONS as STORED_POSITIONS
 } from '../../common/playerSettings'
 import { pitchThrown } from '../../common/scoring/lineup'
+import { withoutReaderNames } from '../../common/scoring/readerNames'
+import { gameRosterEntries } from '../../common/scoring/rosterAvailability'
 import {
   type ChosenRosterCommand,
   ROSTER_TAB,
@@ -200,6 +202,7 @@ export function RosterEditor({
   defaultSide,
   scorekeeperSide,
   rosters,
+  hiddenTeams,
   guests = [],
   unaccepted = false,
   conflict = false,
@@ -269,6 +272,11 @@ export function RosterEditor({
   scorekeeperSide?: Side
   /** Current labels only; roster edits retain the game's saved player details. */
   rosters?: Readonly<Record<string, readonly RosterEntry[]>>
+  /**
+   * The teams whose players the game names in full for a reader who may no
+   * longer read them: the sheet draws their public label.
+   */
+  hiddenTeams?: readonly string[]
   /**
    * The game does not hold this lineup yet: a scorekeeper's game that has
    * recorded nothing, opened on the teams' default lineups or rosters, or a
@@ -397,7 +405,14 @@ export function RosterEditor({
     setImportNote({ draft, ...held })
   }, [draft])
   const [created, setCreated] = useState<Record<string, RosterEntry[]>>({})
-  const [editingLocal, setEditingLocal] = useState<number>()
+  // The game-only player whose sheet is open, with the draft it opened on
+  // and, if that was his public label, that label: the sheet keeps what
+  // it opened on, though his name may be read in full or hidden since.
+  const [editingLocal, setEditingLocal] = useState<{
+    id: number
+    opened: PlayerDraft
+    shownAs?: PlayerDraft
+  }>()
   // People added here through Add Existing Player, by user id: on the
   // roster or in the game now, though their ids may still be the phone's.
   const [joined, setJoined] = useState<ReadonlySet<string>>(new Set())
@@ -435,22 +450,7 @@ export function RosterEditor({
   ): ScoringSessionState => {
     const next = copyState(previous)
     const entries = (of: Side, local: boolean): ScoringRosterEntry[] =>
-      next.liveData.boxscore.teams[of].players
-        .map(id => next.gameData.players[id])
-        .filter(player => player.local === local)
-        .map(player => ({
-          gumboId: player.id,
-          shortName: player.fullName,
-          jersey: player.jersey,
-          positions: player.positions,
-          bats: player.bats,
-          throws: player.throws,
-          isPlayer: true,
-          role: 'player',
-          section: 'player',
-          staffRoles: [],
-          inheritedFrom: null
-        }))
+      gameRosterEntries(next, of, local)
     const roster = (of: Side): readonly ScoringRosterEntry[] =>
       rosters?.[next.gameData.teams[of].id] ?? entries(of, false)
     const setup = reconcileRoster(
@@ -689,12 +689,20 @@ export function RosterEditor({
       }
     return ids
   }, [draft.gameData.players, joined])
+  // The draft as its reader may read it now, for what the sheet draws.
+  const readable = useMemo(
+    () =>
+      hiddenTeams == null || hiddenTeams.length === 0
+        ? draft
+        : withoutReaderNames(draft, teamId => hiddenTeams.includes(teamId)),
+    [draft, hiddenTeams]
+  )
   const names = useMemo(
     () =>
       rosters == null
-        ? draft.gameData.players
-        : withRosterDetails(draft, rosters).gameData.players,
-    [draft, rosters]
+        ? readable.gameData.players
+        : withRosterDetails(readable, rosters).gameData.players,
+    [readable, rosters]
   )
   const display = (id: number): string =>
     `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
@@ -826,7 +834,7 @@ export function RosterEditor({
       entry => !heldRoster.some(held => held.userId === entry.userId)
     )
   ]
-  const rosterRows = editRosterRows(teamRoster, draft, side)
+  const rosterRows = editRosterRows(teamRoster, readable, side)
   const imported = (result: LineupQrResult): void => {
     const count = result.added.length + result.reused.length
     setDraft(result.draft)
@@ -998,7 +1006,18 @@ export function RosterEditor({
           onEditLocal={
             canEditLocal
               ? id => {
-                  setEditingLocal(id)
+                  const opened = draftOfLocalPlayer(
+                    readable.gameData.players[id]
+                  )
+                  setEditingLocal({
+                    id,
+                    opened,
+                    // Drawn by his public label: left so, his name stays his.
+                    ...(readable.gameData.players[id] ===
+                    draft.gameData.players[id]
+                      ? {}
+                      : { shownAs: opened })
+                  })
                 }
               : undefined
           }
@@ -1372,27 +1391,26 @@ export function RosterEditor({
       )}
       {editingLocal != null && state.readOnly !== true && (
         <PlayerEntrySheet
-          key={`edit:${side}:${editingLocal}`}
+          key={`edit:${side}:${editingLocal.id}`}
           ownIdentity={
-            pooled.has(editingLocal) ||
+            pooled.has(editingLocal.id) ||
             guests.some(
-              guest => guest.pool === true && guest.gumboId === editingLocal
+              guest => guest.pool === true && guest.gumboId === editingLocal.id
             )
           }
           ownBats={
-            pooled.get(editingLocal) ??
-            guests.find(guest => guest.gumboId === editingLocal)?.bats ??
+            pooled.get(editingLocal.id) ??
+            guests.find(guest => guest.gumboId === editingLocal.id)?.bats ??
             null
           }
-          initialDraft={draftOfLocalPlayer(
-            draft.gameData.players[editingLocal]
-          )}
+          initialDraft={editingLocal.opened}
           onClose={() => {
             setEditingLocal(undefined)
           }}
           onAdd={player => {
+            const { id, shownAs } = editingLocal
             edit(next => {
-              editLocalPlayerDraft(next, side, editingLocal, player)
+              editLocalPlayerDraft(next, side, id, player, shownAs)
             })
           }}
         />

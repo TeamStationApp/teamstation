@@ -63,6 +63,39 @@ describe('owned runner animations', function () {
       await renderer.unmount()
     }
   })
+  it('names a runner named in full for this reader by his public label', function () {
+    let state = initialScoringState(scoringSession(gameFixture))
+    for (const id of [1, 3])
+      Object.assign(state.session.gameData.players[id], {
+        fullName: id === 1 ? 'Mookie Betts' : 'Freddie Freeman',
+        nameFormat: 'full',
+        compactName: id === 1 ? 'Mookie B' : 'Freddie F'
+      })
+    state.session.liveData.linescore.offense.second = playerRef(
+      state.session,
+      3
+    )
+    state = scoringReducer(state, { type: 'OUTCOME', outcome: 'Home Run' })
+    state = scoringReducer(state, {
+      type: 'LANDING',
+      point: { x: 5, z: -50 },
+      generation: 0
+    })
+    state = scoringReducer(state, {
+      type: 'TRAJECTORY',
+      angle: 45,
+      generation: 0
+    })
+    const players = scoringFieldPlayers(state)
+    const batter = players.find(player => player.playerId === 1)!
+    const runner = players.find(player => player.playerId === 3)!
+    expect([batter.name, batter.displayName]).deep.equals([
+      'Mookie B',
+      'Mookie B'
+    ])
+    expect(runner.displayName).equals('Freddie F')
+    expect(JSON.stringify(players)).not.include('Betts')
+  })
   it('places home arrivals two feet apart, clears departed players and restores the correct dugout side', function () {
     let state = initialScoringState(scoringSession(gameFixture))
     state.session.liveData.linescore.offense.second = playerRef(

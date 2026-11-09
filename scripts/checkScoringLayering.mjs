@@ -52,9 +52,14 @@ function sources(dir) {
 // These exports only inspect a game. Other exports in these modules mutate it.
 // `storedNames` reads the names a document carries and names a copy of one,
 // as a phone's copy of a game is named; making the stored form is the
-// session's and the server's.
+// session's and the server's. `rosterAvailability`'s `gameRosterEntries`
+// reads a side's players back as roster rows. `readerNames`'
+// `withoutReaderNames` names a copy of a game by its players' public labels,
+// for a reader who may no longer read their full names.
 const READ_ONLY_EXPORTS = {
   lineup: ['ordinal', 'begun', 'pitchThrown'],
+  readerNames: ['withoutReaderNames'],
+  rosterAvailability: ['gameRosterEntries'],
   lineupHistory: ['revealedSides', 'confirmedSides'],
   storedNames: ['namesIn', 'withNames']
 }

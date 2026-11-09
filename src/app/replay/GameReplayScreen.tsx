@@ -21,7 +21,7 @@ import {
   type GameStatistics,
   statisticsForCount
 } from '../../common/gameStatistics'
-import { namesOf } from '../../common/replay/replayNames'
+import { publicNamesOf } from '../../common/replay/replayNames'
 import {
   readReplaySource,
   replaySourceOf
@@ -494,7 +494,7 @@ function ReplayView(props: {
   const roster = session.gameData.players
   // Names change only with the roster, not with every step.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const names = useMemo(() => namesOf(session), [roster])
+  const names = useMemo(() => publicNamesOf(session), [roster])
   const previousPlayers = useRef<FieldPlayer[]>([])
   const { phase, pendingPlay, motions, runnerAction, presentation } =
     state.scoring

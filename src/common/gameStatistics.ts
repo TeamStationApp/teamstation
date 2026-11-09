@@ -22,7 +22,13 @@ export interface GameStatistics {
   line: LineScoreTimeline
   initial: ReplayBoxScore | null
   boxes: StatisticsStep[]
+  /** The replay documents, named as the public reads them. */
   source: StoredGame
+  /**
+   * The players of `source` its reader reads in full, by gumbo id: the
+   * client names them so (`withReaderNames`). Absent for nobody.
+   */
+  readerNames?: Record<string, string>
 }
 
 export interface StatisticsQuery {

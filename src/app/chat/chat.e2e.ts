@@ -769,7 +769,8 @@ describe('chat scenarios in the browser', function () {
 
       // The aunt has no account: an invitation is mailed (logged).
       await press(coach, 'Change guardians and family')
-      await waitForText(coach, 'Guardians and family of Pat P')
+      // The player page names Pat in full to his coach.
+      await waitForText(coach, 'Guardians and family of Pat Player')
       const auntAddress = 'aunt@chat.example.com'
       const before = logLength()
       await typeInto(coach, 'E-mail address or name', auntAddress)
