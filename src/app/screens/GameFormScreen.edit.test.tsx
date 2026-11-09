@@ -17,6 +17,7 @@ import {
   text,
   unmount
 } from '../../test/gameFormDom'
+import { CachingClient } from '../sync/cachingClient'
 import { GameFormScreen, type GameSettingsResult } from './GameFormScreen'
 
 const home = asPublicGroup({
@@ -317,6 +318,58 @@ describe('game settings in the shared game scene', () => {
     await press('Reset and Swap')
     expect(reset).length(1)
     expect(begun.sent).length(0)
+  })
+
+  it('on a phone, still sends its swap to the server and reports the server’s answer', async () => {
+    const f = fixture([])
+    f.client.gameScheduling = async () => scorer()
+    const posts: Array<{ url: string; body: unknown }> = []
+    const phone = new CachingClient({
+      baseUrl: '/api/v1',
+      openCache: async () => {
+        throw new Error('No cache in this test')
+      },
+      outbox: { setTimer: () => 0, clearTimer: () => undefined },
+      fetch: (async (url: unknown, init: RequestInit) => {
+        if (init.method === 'POST')
+          posts.push({
+            url: String(url),
+            body: JSON.parse(init.body as string) as unknown
+          })
+        return new Response(
+          JSON.stringify({
+            homeTeamId: away.id,
+            awayTeamId: home.id,
+            generation: 3,
+            reset: { atBats: 0, innings: 0 }
+          })
+        )
+      }) as unknown as typeof fetch
+    })
+    phone.openFor('usr_settings')
+    // The fixture's server, but the swap itself, which goes out as it is.
+    for (const [name, value] of Object.entries(f.client))
+      if (typeof value === 'function' && name in TeamStationClient.prototype)
+        (phone as unknown as Record<string, unknown>)[name] = value
+    await mount({ ...f, client: phone })
+    await press('Swap home and away')
+    await press('Save')
+    expect(posts).deep.equals([
+      {
+        url: '/api/v1/games/game_demo/swap-sides',
+        body: {
+          homeTeamId: home.id,
+          awayTeamId: away.id,
+          generation: 3,
+          playsDigest: 'digest'
+        }
+      }
+    ])
+    expect((await phone.outboxSummary()).count).equals(0)
+    expect(f.saved[0]).deep.include({
+      status: 'accepted',
+      notice: 'Home and away swapped: Demo Eagles vs Demo Hawks'
+    })
   })
 
   it('asks before a swap that resets the game though it loses no at-bat', async () => {

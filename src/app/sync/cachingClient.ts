@@ -9,16 +9,22 @@ import {
   asSeasonGame,
   asStoredGameAnswer,
   type ClientOptions,
+  type GameDetail,
   type HomeLists,
   IDEMPOTENCY_HEADER,
   type MyRoles,
   type Page,
   type RequestOptions,
   type SeasonGame,
+  type StoredChange,
+  storedGameOfEvents,
+  type SwapSidesAnswer,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { managesRoster } from '../../common/roles'
+import type { StoredGame } from '../../common/scoring/session'
+import type { SwapDocumentsEffect } from '../../common/scoring/swapDocuments'
 import {
   defaultsOf,
   olderSaveFoldsAlike,
@@ -39,10 +45,13 @@ import {
   candidatesWordsOf,
   documentKeyOf,
   fallbackKeyOf,
+  gameKey,
   HOME_LISTS
 } from './documentKeys'
 import { type PictureDirectories, pictureDirectories } from './imageCache'
 import {
+  confirmedPlays,
+  type GivenUp,
   Outbox,
   type OutboxListener,
   type OutboxNoticeListener,
@@ -130,6 +139,50 @@ function isGone(error: unknown): boolean {
   )
 }
 
+/** The game a stored-first read is of, or none for a person's or a team's. */
+function gameOfPath(path: string): string | undefined {
+  const match = /^\/games\/([^/?]+)/.exec(path)
+  if (match == null) return undefined
+  try {
+    return decodeURIComponent(match[1])
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * A swap queued on the phone: its answer, and the game and plays it wrote
+ * swapped onto the phone, which the scoring screen opens again on at once.
+ */
+export interface QueuedSwap {
+  answer: SwapSidesAnswer
+  /** None when what it wrote is not a whole game: the screen reads it. */
+  swapped?: { game: GameDetail; events: StoredGame }
+}
+
+/** A swap's answer as the queue gives it, with the documents it wrote. */
+const asQueuedSwap: Cleaner<QueuedSwap> = raw => {
+  const { documents, ...answer } = raw as SwapSidesAnswer & {
+    documents?: { game: unknown; events: unknown }
+  }
+  // The swap is queued whatever its documents hold.
+  try {
+    return {
+      answer,
+      ...(documents == null
+        ? {}
+        : {
+            swapped: {
+              game: asGameDetail(documents.game),
+              events: storedGameOfEvents(documents.events)
+            }
+          })
+    }
+  } catch {
+    return { answer }
+  }
+}
+
 /** The digest a stored answer carries, for a queued write to build on. */
 function digestOf(raw: unknown): string | null {
   if (raw == null || typeof raw !== 'object') return null
@@ -137,6 +190,61 @@ function digestOf(raw: unknown): string | null {
   if (typeof lineupsDigest === 'string') return lineupsDigest
   if (typeof digest === 'string') return digest
   return null
+}
+
+/**
+ * `work`, or an abort once `signal` aborts first: for work that takes no
+ * signal itself, such as a read of the defaults.
+ */
+export async function untilAborted<T>(
+  work: Promise<T>,
+  signal: AbortSignal | undefined
+): Promise<T> {
+  if (signal == null) return await work
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError')
+  let stop = (): void => undefined
+  const aborted = new Promise<never>((_resolve, reject) => {
+    stop = () => {
+      reject(new DOMException('Aborted', 'AbortError'))
+    }
+    signal.addEventListener('abort', stop, { once: true })
+  })
+  try {
+    return await Promise.race([work, aborted])
+  } finally {
+    signal.removeEventListener('abort', stop)
+  }
+}
+
+/** A presigned URL's query: its signature, which carries the time it was made. */
+const SIGNED_QUERY = /\?[^"\\\s]*X-Amz-Signature=[^"\\\s]*/g
+
+/**
+ * A stored body with every presigned URL's signature taken off. A picture the
+ * server signs is signed again on each read, at that moment, so two answers
+ * that differ only by it say the same thing.
+ */
+export function unsignedBody(body: string): string {
+  return body.replace(SIGNED_QUERY, '')
+}
+
+/**
+ * Whether a presigned URL in `body` has expired by `now` (its `X-Amz-Date`
+ * plus `X-Amz-Expires`): a picture drawn from it no longer downloads, so a
+ * body signed again is news, however alike.
+ */
+export function expiredSignature(body: string, now: number): boolean {
+  for (const [query] of body.matchAll(SIGNED_QUERY)) {
+    const date = /X-Amz-Date=(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z/.exec(
+      query
+    )
+    const expires = /X-Amz-Expires=(\d+)/.exec(query)
+    if (date == null || expires == null) continue
+    const [, y, mo, d, h, mi, se] = date.map(Number)
+    const signed = Date.UTC(y, mo - 1, d, h, mi, se)
+    if (signed + Number(expires[1]) * 1000 <= now) return true
+  }
+  return false
 }
 
 /**
@@ -160,6 +268,20 @@ export class CachingClient extends TeamStationClient {
 
   private prefetching: Promise<void> | undefined
   private readonly outbox: Outbox
+  /** Who hears that a stored-first read came back different, by game. */
+  private readonly storedListeners = new Map<
+    string,
+    Set<(change: StoredChange) => void>
+  >()
+
+  /**
+   * What came back different while nobody listened for it, by game, and for
+   * every game (`details`): a screen that opened on the stored copies
+   * subscribes once it has drawn them, after its reads' refreshes may have
+   * landed. Its first listener hears it then.
+   */
+  private readonly missedChanges = new Map<string, StoredChange>()
+  private missedDetails = false
 
   /** The signed-in person's picture files, opened and deleted with the cache. */
   readonly pictureFiles: PictureDirectories
@@ -175,17 +297,22 @@ export class CachingClient extends TeamStationClient {
     })
     this.outbox = new Outbox({
       store: async () => await this.owned?.store,
+      // A give-up's deadline cut off a request with no answer: as for any
+      // request that misses its deadline.
+      onCutOff: () => {
+        this.deadlineMissed()
+      },
       // Checked again just before each send: a sign-in that set another
       // person's token while the queue read its file sends nothing of it.
       owns: () => this.owned != null,
-      send: async (method, path, body, key) =>
-        await super.request(
-          method,
-          path,
-          asRaw,
-          body,
-          key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }
-        ),
+      // Every send of the queue gives up as no signal at the deadline, and
+      // is aborted once a game given up stops waiting for it.
+      send: async (method, path, body, key, signal) =>
+        await super.request(method, path, asRaw, body, {
+          deadline: true,
+          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }),
+          ...(signal == null ? {} : { signal })
+        }),
       token: () => this.token,
       // A re-read is the server's copy, never the phone's pending one.
       read: async path => {
@@ -194,7 +321,7 @@ export class CachingClient extends TeamStationClient {
       // The game and its rosters from the phone's copy; its plays from the
       // server, past this client, which answers the phone's copy while a save
       // of them is queued.
-      rebuildEvents: async (gameId, log) => {
+      rebuildEvents: async (gameId, log, signal) => {
         const kept = async <T>(
           path: string,
           cleaner: Cleaner<T>
@@ -214,16 +341,19 @@ export class CachingClient extends TeamStationClient {
               )) ?? (await kept(path, asArray(asRosterEntry)))
             )
           },
-          defaults: async game => await defaultsOf(this, game),
+          defaults: async game =>
+            await untilAborted(defaultsOf(this, game), signal),
           server: async () =>
             await super.request(
               'GET',
               `/games/${id}/events`,
-              asStoredGameAnswer
+              asStoredGameAnswer,
+              undefined,
+              signal == null ? {} : { signal }
             )
         })
       },
-      olderSave: async (gameId, foldVersion) => {
+      olderSave: async (gameId, foldVersion, signal) => {
         const id = encodeURIComponent(gameId)
         const key = documentKeyOf(`/games/${id}/events`)
         return await olderSaveFoldsAlike(foldVersion, {
@@ -235,22 +365,28 @@ export class CachingClient extends TeamStationClient {
             await super.request(
               'GET',
               `/games/${id}/events`,
-              asStoredGameAnswer
+              asStoredGameAnswer,
+              undefined,
+              signal == null ? {} : { signal }
             )
         })
       },
-      readCanonical: async gameId => ({
-        game: await super.request(
-          'GET',
-          `/games/${encodeURIComponent(gameId)}`,
-          asRaw
-        ),
-        events: await super.request(
-          'GET',
-          `/games/${encodeURIComponent(gameId)}/events`,
-          asRaw
-        )
-      }),
+      readCanonical: async (gameId, signal) => {
+        const read = async (path: string): Promise<unknown> =>
+          await super.request(
+            'GET',
+            path,
+            asRaw,
+            undefined,
+            signal == null ? {} : { signal }
+          )
+        const id = encodeURIComponent(gameId)
+        const [game, events] = await Promise.all([
+          read(`/games/${id}`),
+          read(`/games/${id}/events`)
+        ])
+        return { game, events }
+      },
       ...options.outbox
     })
   }
@@ -297,6 +433,94 @@ export class CachingClient extends TeamStationClient {
    */
   async discardGame(gameId: string): Promise<boolean> {
     return await this.outbox.discard(`game:${gameId}`)
+  }
+
+  /**
+   * Gives up every write the phone holds for a game another device swapped
+   * or reset, once those of them already on their way are answered: the
+   * queue sends no more of them from the call on, a send in flight lands as
+   * the server judges it, and every one left is dropped and its documents
+   * read again. Answers how many were given up: those the server did not
+   * take, and those sent with no answer that its copy does not tell of.
+   */
+  async giveUpGame(gameId: string): Promise<GivenUp> {
+    return await this.outbox.giveUp(`game:${gameId}`)
+  }
+
+  /**
+   * Queues a swap of the game's home and away behind every write already
+   * queued for it, and answers it at once from the phone's copy of the game
+   * (`swappedDocuments`): the stored game, lineups and plays are written
+   * swapped, and with `reset` the plays are gone; those swapped documents
+   * come back with the answer, so the screen opens on them without reading
+   * them again. Refused when the game is not on the phone, which it is once
+   * scoring has opened it.
+   */
+  async queueSwap(
+    gameId: string,
+    effect: SwapDocumentsEffect
+  ): Promise<QueuedSwap> {
+    const game = await this.cached(gameKey(gameId), asRaw)
+    const sides = (game ?? {}) as { homeTeamId?: unknown; awayTeamId?: unknown }
+    if (
+      typeof sides.homeTeamId !== 'string' ||
+      typeof sides.awayTeamId !== 'string'
+    )
+      throw new HttpError(
+        'unavailable',
+        'This game is not on the phone yet. Try again in a moment.'
+      )
+    // A reset names the plays it confirmed losing: the digest and
+    // generation of the server's last answer. The queue puts the ones the
+    // writes ahead of it answered in their place when it sends; these go
+    // when it cannot read the file then.
+    const confirmed =
+      effect === 'reset'
+        ? await confirmedPlays(async key => await this.read(key), gameId)
+        : {}
+    return await this.request(
+      'POST',
+      `/games/${encodeURIComponent(gameId)}/swap-sides`,
+      asQueuedSwap,
+      {
+        homeTeamId: sides.homeTeamId,
+        awayTeamId: sides.awayTeamId,
+        ...confirmed,
+        effect
+      },
+      { queue: 'swap' }
+    )
+  }
+
+  /**
+   * Tells `listener` when a read scoring took stored-first for `gameId`
+   * (the game, its plays, its rosters, the person's roles, the defaults)
+   * came back from the server different from what the phone showed, until
+   * unsubscribed: the screen reads the game again, as after a socket notice.
+   */
+  override onStoredChanged(
+    gameId: string,
+    listener: (change: StoredChange) => void
+  ): () => void {
+    let listeners = this.storedListeners.get(gameId)
+    if (listeners == null) {
+      listeners = new Set()
+      this.storedListeners.set(gameId, listeners)
+    }
+    listeners.add(listener)
+    const missed = this.missedDetails
+      ? 'details'
+      : this.missedChanges.get(gameId)
+    this.missedChanges.delete(gameId)
+    this.missedDetails = false
+    if (missed != null)
+      queueMicrotask(() => {
+        if (listeners.has(listener)) listener(missed)
+      })
+    return () => {
+      listeners.delete(listener)
+      if (listeners.size === 0) this.storedListeners.delete(gameId)
+    }
   }
 
   /** Sends a game's held edits again, as they are, from the one refused. */
@@ -557,7 +781,8 @@ export class CachingClient extends TeamStationClient {
             body,
             options?.deviceNames,
             background,
-            options?.deviceLog
+            options?.deviceLog,
+            options?.queue
           )
     if (queued?.kind === 'events')
       queued.lineupRecovery = options?.deviceLineupRecovery
@@ -565,7 +790,7 @@ export class CachingClient extends TeamStationClient {
       return cleaner(
         background
           ? await this.outbox.submitBackground(queued)
-          : await this.outbox.submit(queued)
+          : await this.outbox.submit(queued, options?.handoff)
       )
     const schedule =
       method === 'GET' && opened != null ? scheduleReadOf(path) : undefined
@@ -579,6 +804,22 @@ export class CachingClient extends TeamStationClient {
         options
       )
     const key = method === 'GET' ? documentKeyOf(path) : undefined
+    if (key != null && opened != null && options?.storedFirst === true) {
+      const shown = await this.readFrom(opened.store, key)
+      let value: { cleaned: T } | undefined
+      try {
+        if (shown != null) value = { cleaned: cleaner(JSON.parse(shown.body)) }
+      } catch {
+        value = undefined
+      }
+      if (shown != null && value != null) {
+        const { storedFirst: _first, ...rest } = options
+        this.refreshStored(opened, key, path, shown.body, rest).catch(
+          () => undefined
+        )
+        return value.cleaned
+      }
+    }
     if (key == null || opened == null) {
       const value = await super.request(method, path, cleaner, body, options)
       this.outbox.wake(true)
@@ -649,6 +890,49 @@ export class CachingClient extends TeamStationClient {
     } catch {
       return value
     }
+  }
+
+  /**
+   * The read behind a stored-first answer: to the server, stored as any
+   * read is, and told to the game's listeners when what the phone now holds
+   * differs from what it showed. A read that fails changes nothing.
+   */
+  private async refreshStored(
+    opened: Opened,
+    key: string,
+    path: string,
+    shown: string,
+    options: RequestOptions
+  ): Promise<void> {
+    try {
+      await this.request('GET', path, asRaw, undefined, options)
+    } catch {
+      return
+    }
+    // Tag choices change no game.
+    if (this.owned !== opened || path.startsWith('/tags')) return
+    const now = await this.readFrom(opened.store, key)
+    if (
+      now == null ||
+      (unsignedBody(now.body) === unsignedBody(shown) &&
+        !expiredSignature(shown, Date.now()))
+    )
+      return
+    const gameId = gameOfPath(path)
+    const told =
+      gameId == null
+        ? [...this.storedListeners.values()].flatMap(set => [...set])
+        : [...(this.storedListeners.get(gameId) ?? [])]
+    // Roles, rosters and default lineups are no one game's.
+    const change: StoredChange = gameId == null ? 'details' : 'game'
+    if (told.length === 0) {
+      // Kept for the screen that is still opening on what it showed.
+      if (gameId == null) this.missedDetails = true
+      else if (this.missedChanges.get(gameId) !== 'details')
+        this.missedChanges.set(gameId, change)
+      return
+    }
+    for (const listener of told) listener(change)
   }
 
   private async prefetchOnce(): Promise<void> {

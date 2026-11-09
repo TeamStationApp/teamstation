@@ -9,7 +9,13 @@ import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { pageOf } from '../../test/pageOf'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
-import { CachingClient, PREFETCH_CONCURRENCY } from './cachingClient'
+import {
+  CachingClient,
+  expiredSignature,
+  PREFETCH_CONCURRENCY,
+  unsignedBody,
+  untilAborted
+} from './cachingClient'
 import {
   CANDIDATES_KEPT,
   candidatesKey,
@@ -357,6 +363,205 @@ describe('CachingClient', function () {
     expect(
       (await cold.cached('home.teams', raw => raw as unknown[]))?.length
     ).equals(1)
+  })
+
+  it('answers a stored-first read from the phone before its held request settles, and tells the game once when the answer differs', async function () {
+    const roles = (team: string): Answer => ({
+      body: { teams: { [team]: ['scorekeeper'] }, guardianOf: [] }
+    })
+    const routes: Record<string, Answer | undefined> = {
+      '/me/roles': roles('tem_a')
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    // Nothing stored yet: a stored-first read goes to the server.
+    await client.myRoles({ storedFirst: true })
+    expect(net.calls).deep.equals(['/me/roles'])
+    let release: () => void = () => undefined
+    net.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const told: string[] = []
+    const stop = client.onStoredChanged('g1', change =>
+      told.push(`g1:${change}`)
+    )
+    const other = client.onStoredChanged('g2', change =>
+      told.push(`g2:${change}`)
+    )
+    // Another device gave this person another team since.
+    routes['/me/roles'] = roles('tem_c')
+    const shown = await client.myRoles({ storedFirst: true })
+    expect(shown.teams).deep.equals({ tem_a: ['scorekeeper'] })
+    expect(net.calls).deep.equals(['/me/roles', '/me/roles'])
+    expect(told).deep.equals([])
+    release()
+    net.gate = undefined
+    for (let i = 0; i < 20 && told.length < 2; i++)
+      await new Promise(resolve => setTimeout(resolve, 2))
+    // A person's roles are no one game's: every open game hears it, once,
+    // as a change to the details it opened on.
+    expect(told.sort()).deep.equals(['g1:details', 'g2:details'])
+    expect((await client.myRoles({ storedFirst: true })).teams).deep.equals({
+      tem_c: ['scorekeeper']
+    })
+    await new Promise(resolve => setTimeout(resolve, 10))
+    // The same answer again changes nothing.
+    expect(told).length(2)
+    other()
+    // A read without the option is the server's, with a row stored.
+    routes['/me/roles'] = roles('tem_d')
+    expect((await client.myRoles()).teams).deep.equals({
+      tem_d: ['scorekeeper']
+    })
+    stop()
+  })
+
+  it('stops waiting for work that takes no signal once the signal aborts (2.harness-review.1)', async function () {
+    expect(await untilAborted(Promise.resolve(1), undefined)).equals(1)
+    const controller = new AbortController()
+    expect(await untilAborted(Promise.resolve(2), controller.signal)).equals(2)
+    const never = new Promise<number>(() => undefined)
+    const waiting = untilAborted(never, controller.signal)
+    controller.abort()
+    expect(
+      await waiting.then(
+        () => 'answered',
+        (error: unknown) => (error as Error).name
+      )
+    ).equals('AbortError')
+    expect(
+      await untilAborted(never, controller.signal).then(
+        () => 'answered',
+        (error: unknown) => (error as Error).name
+      )
+    ).equals('AbortError')
+  })
+
+  it('tells the first listener of a change that came back before anyone listened (3.harness-review.1)', async function () {
+    const roles = (team: string): Answer => ({
+      body: { teams: { [team]: ['scorekeeper'] }, guardianOf: [] }
+    })
+    const routes: Record<string, Answer | undefined> = {
+      '/me/roles': roles('tem_a'),
+      '/games/g1/events': { body: { plays: [], currentPlay: null } }
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.myRoles()
+    await client.gameEvents('g1')
+    // The screen opens on the stored copies; their refreshes land before
+    // it subscribes.
+    routes['/me/roles'] = roles('tem_b')
+    routes['/games/g1/events'] = {
+      body: { plays: [], currentPlay: null, playsDigest: 'P2' }
+    }
+    await client.myRoles({ storedFirst: true })
+    await client.gameEvents('g1', { storedFirst: true })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const told: string[] = []
+    const stop = client.onStoredChanged('g1', change => told.push(change))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    // Once, as the stronger of the two: the details read again too.
+    expect(told).deep.equals(['details'])
+    stop()
+    client.onStoredChanged('g1', change => told.push(`again:${change}`))
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(told).deep.equals(['details'])
+  })
+
+  it('tells no game when a stored-first read differs only by a picture’s new signature', async function () {
+    const signed = (date: string, signature: string): string =>
+      `https://media.example/images/user/a-192.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Date=${date}&X-Amz-Expires=3600&X-Amz-Signature=${signature}`
+    const events = (url: string, digest?: string): Answer => ({
+      body: {
+        plays: [],
+        currentPlay: null,
+        avatarUrl: url,
+        ...(digest == null ? {} : { playsDigest: digest })
+      }
+    })
+    const routes: Record<string, Answer | undefined> = {
+      '/games/g1/events': events(signed('20991112T000000Z', 'aa'))
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.gameEvents('g1')
+    const told: string[] = []
+    client.onStoredChanged('g1', change => told.push(change))
+    routes['/games/g1/events'] = events(signed('20991112T000001Z', 'bb'))
+    await client.gameEvents('g1', { storedFirst: true })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals([])
+    // Anything else that changed is still told.
+    routes['/games/g1/events'] = events(signed('20991112T000002Z', 'cc'), 'P2')
+    await client.gameEvents('g1', { storedFirst: true })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals(['game'])
+    // A copy whose signature has expired draws no picture: one signed again
+    // is told, however alike (2.harness-review.2).
+    routes['/games/g1/events'] = events(signed('20200101T000000Z', 'ee'), 'P2')
+    await client.gameEvents('g1')
+    routes['/games/g1/events'] = events(signed('20991112T000004Z', 'ff'), 'P2')
+    await client.gameEvents('g1', { storedFirst: true })
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals(['game', 'game'])
+    expect(
+      expiredSignature(signed('20200101T000000Z', 'gg'), Date.now())
+    ).equals(true)
+    expect(
+      expiredSignature(signed('20991112T000000Z', 'gg'), Date.now())
+    ).equals(false)
+    expect(expiredSignature('https://x/a.png?X-Amz-Signature=1', 0)).equals(
+      false
+    )
+    expect(
+      unsignedBody(`{"a":"${signed('20261112T000003Z', 'dd')}","b":"x?y=1"}`)
+    ).equals('{"a":"https://media.example/images/user/a-192.png","b":"x?y=1"}')
+    // Text around a signed URL in free text stays (2.harness-review.6).
+    expect(
+      unsignedBody(`{"note":"Who? ${signed('20261112T000003Z', 'dd')} then"}`)
+    ).equals('{"note":"Who? https://media.example/images/user/a-192.png then"}')
+  })
+
+  it('tells only the game a stored-first read of it changed, and none for tag choices or a read that fails', async function () {
+    const routes: Record<string, Answer | undefined> = {
+      '/games/g1/events': { body: { plays: [], currentPlay: null } },
+      '/tags': { body: { recent: ['a'], popular: [] } }
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.gameEvents('g1')
+    await client.tagChoices()
+    const told: string[] = []
+    client.onStoredChanged('g1', change => told.push(`g1:${change}`))
+    client.onStoredChanged('g2', change => told.push(`g2:${change}`))
+    routes['/games/g1/events'] = {
+      body: { plays: [], currentPlay: null, playsDigest: 'P2' }
+    }
+    routes['/tags'] = { body: { recent: ['b'], popular: [] } }
+    expect(
+      (await client.gameEvents('g1', { storedFirst: true })).playsDigest
+    ).equals(undefined)
+    expect((await client.tagChoices({ storedFirst: true })).recent).deep.equals(
+      ['a']
+    )
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals(['g1:game'])
+    // With no signal the phone keeps showing what it has, and says nothing.
+    net.offline = true
+    expect(
+      (await client.gameEvents('g1', { storedFirst: true })).playsDigest
+    ).equals('P2')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(told).deep.equals(['g1:game'])
+    // The web stores nothing: its subscription never tells.
+    const web = new TeamStationClient({ baseUrl: 'http://x/api/v1' })
+    const stop = web.onStoredChanged('g1', () => told.push('web'))
+    stop()
   })
 
   it('throws the offline error for a document never stored (Cache miss)', async function () {

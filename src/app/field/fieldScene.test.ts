@@ -10,7 +10,11 @@ import { fieldingLocation } from './fieldingLocation'
 import { createPlayers } from './fieldModel'
 import { FieldScene, whenDrawn } from './FieldScene'
 import type { BaseProjection, FieldPlacement } from './fieldTypes'
-import { nameplateSize, projectPlayerLabel } from './playerPresentation'
+import {
+  figureKeys,
+  nameplateSize,
+  projectPlayerLabel
+} from './playerPresentation'
 import { TERRAIN } from './terrain'
 
 describe('where the field says the catcher is', function () {
@@ -111,6 +115,46 @@ describe('rendered field interaction', function () {
       expect(reports.length).greaterThan(count)
       expect(reports.at(-1)).deep.equals(projectBases(camera!, 402, 579))
       expect(reports.at(-1)!.heads![2].y).lessThan(reports.at(-1)!.feet![2].y)
+    } finally {
+      await renderer.unmount()
+    }
+  })
+  it('keeps each fielder’s figure for whoever fields that position next, as after a swap', async function () {
+    const players = createPlayers()
+    const props = {
+      players,
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1,
+      presentationPaused: true,
+      movementRevision: 0
+    }
+    const renderer = await create(React.createElement(FieldScene, props))
+    try {
+      const fielders = players.filter(player => player.team === 'defense')
+      expect(fielders.length).greaterThan(5)
+      const before = fielders.map(
+        player =>
+          renderer.scene.findByProps({ name: `player-${player.id}` }).instance
+      )
+      // The other side takes the field: every fielder is someone else.
+      const swapped = players.map(player =>
+        player.team === 'defense'
+          ? { ...player, id: `${player.id}-other`, jersey: '99' }
+          : player
+      )
+      await renderer.update(
+        React.createElement(FieldScene, { ...props, players: swapped })
+      )
+      await renderer.advanceFrames(1, 1 / 60)
+      fielders.forEach((player, index) => {
+        expect(
+          renderer.scene.findByProps({ name: `player-${player.id}-other` })
+            .instance,
+          player.label
+        ).equals(before[index])
+      })
     } finally {
       await renderer.unmount()
     }
@@ -813,5 +857,25 @@ describe('when the field has been drawn', function () {
     } finally {
       await renderer.unmount()
     }
+  })
+})
+
+describe('the key a player’s figure is drawn under', function () {
+  it('is a fielder’s position, the first time it is taken, and anyone else’s id', function () {
+    const base = createPlayers()[0]
+    const as = (
+      id: string,
+      team: 'defense' | 'runner',
+      label: string
+    ): typeof base => ({ ...base, id, team, label })
+    expect(
+      figureKeys([
+        as('a', 'defense', 'P'),
+        as('b', 'defense', 'C'),
+        as('c', 'defense', 'P'),
+        as('d', 'defense', ''),
+        as('e', 'runner', '1B')
+      ])
+    ).deep.equals(['defense:P', 'defense:C', 'c', 'd', 'e'])
   })
 })

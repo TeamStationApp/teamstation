@@ -63,6 +63,19 @@ export interface StoredDocument {
 
 export type ServerDocument = Omit<StoredDocument, 'pending' | 'serverBody'>
 
+/**
+ * The server's last answer a stored document holds: its own column, or the
+ * body of a document no queued write holds. A document an earlier build
+ * stored, before the column, or one a queued write first inserted and a
+ * landing has since let go, keeps none in the column.
+ */
+export function serverBodyOf(
+  document: StoredDocument | undefined
+): string | null {
+  if (document == null) return null
+  return document.serverBody ?? (document.pending ? null : document.body)
+}
+
 /** Everything a stored schedule page carried besides its games. */
 export interface SchedulePageMeta {
   nextCursor: string | null
