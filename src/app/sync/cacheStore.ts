@@ -1,3 +1,20 @@
+import {
+  GAMES_ALL,
+  GAMES_ALL_PAGE,
+  GAMES_PAST,
+  GAMES_PAST_PAGE,
+  GAMES_UPCOMING,
+  GAMES_UPCOMING_PAGE,
+  GAMES_VIDEOS_PAGE
+} from './documentKeys'
+import {
+  FIRST_PAGE,
+  ME_SCOPE,
+  type ScheduleShape,
+  WHOLE_LIST,
+  windowName
+} from './scheduleReads'
+
 /**
  * The phone's document cache: the SQL, and where each transaction begins and
  * ends, over whatever runs the statements. On the phone that is op-sqlite
@@ -37,9 +54,39 @@ export interface StoredDocument {
   serverDigest: string | null
   /** A queued write holds this document: a server answer does not replace it. */
   pending: boolean
+  /**
+   * The server's own last answer for the key, kept beside a pending `body`
+   * (`DocumentStore.storeServer`); null when none was kept.
+   */
+  serverBody?: string | null
 }
 
-export type ServerDocument = Omit<StoredDocument, 'pending'>
+export type ServerDocument = Omit<StoredDocument, 'pending' | 'serverBody'>
+
+/** Everything a stored schedule page carried besides its games. */
+export interface SchedulePageMeta {
+  nextCursor: string | null
+  prevCursor: string | null
+  anchorId: string | null
+  counts: unknown
+}
+
+/** What one schedule read returned: its games in order, and its page. */
+export interface SchedulePage {
+  scope: string
+  window: string
+  /** The request's cursor, `first`, or `list`. */
+  cursor: string
+  gameIds: string[]
+  meta: SchedulePageMeta
+}
+
+/** One game of a schedule, as its read answered it. */
+export interface ScheduleGameRow {
+  id: string
+  /** The game's JSON. */
+  body: string
+}
 
 /** Where a queued write is: waiting, being sent, held, or refused. */
 export type OutboxState = 'pending' | 'inflight' | 'parked' | 'dead'
@@ -139,6 +186,27 @@ export interface CacheTransaction {
   forgetLocalPlayer: (localId: number) => Promise<void>
   /** Records the server's id and entry for a player the phone made. */
   landPlayer: (localId: number, serverId: number, body: string) => Promise<void>
+  /**
+   * Stores what one schedule read returned: each game as its shape's row,
+   * replacing the row's body, and the page, replacing the page it was.
+   */
+  writeSchedule: (
+    shape: ScheduleShape,
+    page: SchedulePage,
+    games: ScheduleGameRow[]
+  ) => Promise<void>
+  /** Every stored page of `scope` in one of `windows`. */
+  schedulePages: (scope: string, windows: string[]) => Promise<SchedulePage[]>
+  /** The stored rows of `ids` in `shape`, those there are. */
+  scheduleRows: (
+    shape: ScheduleShape,
+    ids: string[]
+  ) => Promise<ScheduleGameRow[]>
+  /** The window of the stored page of `scope` that issued `cursor`. */
+  scheduleWindowOf: (
+    scope: string,
+    cursor: string
+  ) => Promise<string | undefined>
 }
 
 /** The cache as the client uses it. */
@@ -149,6 +217,15 @@ export interface DocumentStore {
    * answers what the key holds afterwards.
    */
   store: (key: string, document: ServerDocument) => Promise<StoredDocument>
+  /**
+   * Records a server answer for `key` as the server's (`serverDigest`,
+   * `serverBody`) even while a queued write holds it; the body too when
+   * none does. Answers what the key holds afterwards.
+   */
+  storeServer: (
+    key: string,
+    document: ServerDocument
+  ) => Promise<StoredDocument>
   /** Runs `work` as one transaction, after any other. */
   atomically: <T>(work: (tx: CacheTransaction) => Promise<T>) => Promise<T>
   close: () => Promise<void>
@@ -189,6 +266,25 @@ const SCHEMA = [
     server_id integer,
     team_id text NOT NULL,
     body text NOT NULL
+  )`,
+  // One row per game and shape, from whichever schedule read returned it.
+  `CREATE TABLE IF NOT EXISTS schedule_games (
+    shape text NOT NULL,
+    game_id text NOT NULL,
+    body text NOT NULL,
+    PRIMARY KEY (shape, game_id)
+  )`,
+  // What one schedule read returned. A later page's read that sends only
+  // its cursor finds its window through `next_cursor` and `prev_cursor`.
+  `CREATE TABLE IF NOT EXISTS schedule_pages (
+    scope text NOT NULL,
+    "window" text NOT NULL,
+    cursor text NOT NULL,
+    game_ids text NOT NULL,
+    page_meta text NOT NULL,
+    next_cursor text,
+    prev_cursor text,
+    PRIMARY KEY (scope, "window", cursor)
   )`
 ]
 
@@ -196,8 +292,166 @@ const SCHEMA = [
 const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'message', 'text'],
   ['outbox', 'names', 'text'],
-  ['outbox', 'background', 'integer NOT NULL DEFAULT 0']
+  ['outbox', 'background', 'integer NOT NULL DEFAULT 0'],
+  ['documents', 'server_body', 'text'],
+  ['documents', 'stored_at', 'integer']
 ]
+
+/**
+ * How many documents kept under a path with a query (`/locations?query=a`,
+ * `/me/notifications?before=…`) one path keeps: the most recently stored.
+ * Each search word and cursor is its own key, so without a bound the file
+ * grows with every keystroke. A short key (`events.<id>`), a path with no
+ * query, and a pending document are never evicted.
+ */
+export const QUERY_DOCUMENTS_KEPT = 20
+
+/** The path a query-keyed document's key names, or none for any other key. */
+function queriedPathOf(key: string): string | undefined {
+  if (!key.startsWith('/')) return undefined
+  const at = key.indexOf('?')
+  return at < 0 ? undefined : key.slice(0, at)
+}
+
+/** Drops all but the `QUERY_DOCUMENTS_KEPT` newest documents of `key`'s path. */
+async function evictQueried(tx: SqlTransaction, key: string): Promise<void> {
+  const path = queriedPathOf(key)
+  if (path == null) return
+  // `substr` rather than LIKE: a path may hold `%` or `_`.
+  const prefix = `${path}?`
+  await tx.execute(
+    `DELETE FROM documents WHERE key IN (
+       SELECT key FROM documents
+       WHERE pending = 0 AND substr(key, 1, ?) = ?
+       ORDER BY COALESCE(stored_at, 0) DESC, key
+       LIMIT -1 OFFSET ?
+     )`,
+    [prefix.length, prefix, QUERY_DOCUMENTS_KEPT]
+  )
+}
+
+/** The schedule list documents an older build kept, and the page each is. */
+const LEGACY_SCHEDULE: Array<[key: string, window: string, cursor: string]> = [
+  [GAMES_UPCOMING, windowName({ when: 'upcoming' }), WHOLE_LIST],
+  [GAMES_PAST, windowName({ when: 'past' }), WHOLE_LIST],
+  [GAMES_ALL, windowName({}), WHOLE_LIST],
+  [GAMES_UPCOMING_PAGE, windowName({ when: 'upcoming' }), FIRST_PAGE],
+  [GAMES_PAST_PAGE, windowName({ when: 'past' }), FIRST_PAGE],
+  [GAMES_ALL_PAGE, windowName({}), FIRST_PAGE],
+  [GAMES_VIDEOS_PAGE, windowName({ videos: true }), FIRST_PAGE]
+]
+
+const nullableString = (value: unknown): string | null =>
+  typeof value === 'string' ? value : null
+
+/** A stored list's games and page, or none for a body that is neither. */
+export function schedulePageOf(
+  raw: unknown,
+  at: Pick<SchedulePage, 'scope' | 'window' | 'cursor'>
+): { page: SchedulePage; games: ScheduleGameRow[] } | undefined {
+  const list = Array.isArray(raw)
+    ? { items: raw as unknown[] }
+    : raw != null && typeof raw === 'object'
+      ? (raw as Record<string, unknown>)
+      : undefined
+  if (list == null || !Array.isArray(list.items)) return undefined
+  const games: ScheduleGameRow[] = []
+  for (const item of list.items as unknown[]) {
+    const id =
+      item != null && typeof item === 'object'
+        ? (item as { id?: unknown }).id
+        : undefined
+    if (typeof id !== 'string') return undefined
+    games.push({ id, body: JSON.stringify(item) })
+  }
+  return {
+    page: {
+      ...at,
+      gameIds: games.map(game => game.id),
+      meta: {
+        nextCursor: nullableString(list.nextCursor),
+        prevCursor: nullableString(list.prevCursor),
+        anchorId: nullableString(list.anchorId),
+        counts: list.counts ?? null
+      }
+    },
+    games
+  }
+}
+
+async function writeScheduleIn(
+  tx: SqlTransaction,
+  shape: ScheduleShape,
+  page: SchedulePage,
+  games: ScheduleGameRow[]
+): Promise<void> {
+  for (const game of games)
+    await tx.execute(
+      `INSERT INTO schedule_games (shape, game_id, body) VALUES (?, ?, ?)
+       ON CONFLICT (shape, game_id) DO UPDATE SET body = excluded.body`,
+      [shape, game.id, game.body]
+    )
+  await tx.execute(
+    `INSERT INTO schedule_pages
+       (scope, "window", cursor, game_ids, page_meta, next_cursor, prev_cursor)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (scope, "window", cursor) DO UPDATE SET
+       game_ids = excluded.game_ids,
+       page_meta = excluded.page_meta,
+       next_cursor = excluded.next_cursor,
+       prev_cursor = excluded.prev_cursor`,
+    [
+      page.scope,
+      page.window,
+      page.cursor,
+      JSON.stringify(page.gameIds),
+      JSON.stringify(page.meta),
+      page.meta.nextCursor,
+      page.meta.prevCursor
+    ]
+  )
+}
+
+function schedulePageOfRow(row: SqlRow): SchedulePage {
+  const ids: unknown = JSON.parse(String(row.game_ids))
+  const meta = JSON.parse(String(row.page_meta)) as Partial<SchedulePageMeta>
+  return {
+    scope: String(row.scope),
+    window: String(row.window),
+    cursor: String(row.cursor),
+    gameIds: Array.isArray(ids) ? ids.map(String) : [],
+    meta: {
+      nextCursor: nullableString(meta.nextCursor),
+      prevCursor: nullableString(meta.prevCursor),
+      anchorId: nullableString(meta.anchorId),
+      counts: meta.counts ?? null
+    }
+  }
+}
+
+/**
+ * Once, on a file with no schedule rows yet: the list documents an older
+ * build stored become `me` pages and `SeasonGame` rows. The documents stay.
+ */
+async function upgradeSchedule(tx: SqlTransaction): Promise<void> {
+  const [pages] = await tx.execute(
+    'SELECT (SELECT COUNT(*) FROM schedule_pages) + (SELECT COUNT(*) FROM schedule_games) AS n'
+  )
+  if (Number(pages.n) > 0) return
+  for (const [key, window, cursor] of LEGACY_SCHEDULE) {
+    const held = await readIn(tx, key)
+    if (held == null) continue
+    let raw: unknown
+    try {
+      raw = JSON.parse(held.body)
+    } catch {
+      continue
+    }
+    const stored = schedulePageOf(raw, { scope: ME_SCOPE, window, cursor })
+    if (stored == null) continue
+    await writeScheduleIn(tx, 'SeasonGame', stored.page, stored.games)
+  }
+}
 
 function outboxRowOf(row: SqlRow): OutboxRow {
   const dependsOn: unknown = JSON.parse(String(row.depends_on))
@@ -237,20 +491,24 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
       ])
     },
     write: async (key, document) => {
+      // The server's own body is kept unless the write names one.
       await tx.execute(
-        `INSERT INTO documents (key, body, revision, server_digest, pending)
-         VALUES (?, ?, ?, ?, ?)
+        `INSERT INTO documents
+           (key, body, revision, server_digest, pending, server_body)
+         VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT (key) DO UPDATE SET
            body = excluded.body,
            revision = excluded.revision,
            server_digest = excluded.server_digest,
-           pending = excluded.pending`,
+           pending = excluded.pending,
+           server_body = COALESCE(excluded.server_body, documents.server_body)`,
         [
           key,
           document.body,
           document.revision,
           document.serverDigest,
-          document.pending ? 1 : 0
+          document.pending ? 1 : 0,
+          document.serverBody ?? null
         ]
       )
     },
@@ -341,6 +599,40 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
         'UPDATE local_players SET server_id = ?, body = ? WHERE local_id = ?',
         [serverId, body, localId]
       )
+    },
+    writeSchedule: async (shape, page, games) => {
+      await writeScheduleIn(tx, shape, page, games)
+    },
+    schedulePages: async (scope, windows) =>
+      windows.length === 0
+        ? []
+        : (
+            await tx.execute(
+              `SELECT * FROM schedule_pages WHERE scope = ? AND "window" IN (${windows
+                .map(() => '?')
+                .join(', ')})`,
+              [scope, ...windows]
+            )
+          ).map(schedulePageOfRow),
+    scheduleRows: async (shape, ids) => {
+      const rows: ScheduleGameRow[] = []
+      for (const id of new Set(ids)) {
+        const [row] = await tx.execute(
+          'SELECT body FROM schedule_games WHERE shape = ? AND game_id = ?',
+          [shape, id]
+        )
+        if (row != null) rows.push({ id, body: String(row.body) })
+      }
+      return rows
+    },
+    scheduleWindowOf: async (scope, cursor) => {
+      const [row] = await tx.execute(
+        `SELECT "window" FROM schedule_pages
+         WHERE scope = ? AND (next_cursor = ? OR prev_cursor = ?)
+         LIMIT 1`,
+        [scope, cursor, cursor]
+      )
+      return row == null ? undefined : String(row.window)
     }
   }
 }
@@ -351,7 +643,8 @@ function documentOf(row: SqlRow): StoredDocument {
     revision: String(row.revision),
     serverDigest:
       typeof row.server_digest === 'string' ? row.server_digest : null,
-    pending: Number(row.pending) !== 0
+    pending: Number(row.pending) !== 0,
+    serverBody: typeof row.server_body === 'string' ? row.server_body : null
   }
 }
 
@@ -360,7 +653,8 @@ async function readIn(
   key: string
 ): Promise<StoredDocument | undefined> {
   const rows = await tx.execute(
-    'SELECT body, revision, server_digest, pending FROM documents WHERE key = ?',
+    `SELECT body, revision, server_digest, pending, server_body
+     FROM documents WHERE key = ?`,
     [key]
   )
   const row = rows[0]
@@ -405,6 +699,7 @@ export async function openCacheStore(
        WHERE state = 'inflight' AND (lease_until IS NULL OR lease_until < ?)`,
       [now()]
     )
+    await upgradeSchedule(tx)
   })
 
   let closed: Promise<void> | undefined
@@ -422,15 +717,55 @@ export async function openCacheStore(
         const held = await readIn(tx, key)
         if (held?.pending === true) return held
         await tx.execute(
-          `INSERT INTO documents (key, body, revision, server_digest, pending)
-           VALUES (?, ?, ?, ?, 0)
+          `INSERT INTO documents
+             (key, body, revision, server_digest, pending, server_body,
+              stored_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)
            ON CONFLICT (key) DO UPDATE SET
              body = excluded.body,
              revision = excluded.revision,
-             server_digest = excluded.server_digest`,
-          [key, document.body, document.revision, document.serverDigest]
+             server_digest = excluded.server_digest,
+             server_body = excluded.server_body,
+             stored_at = excluded.stored_at`,
+          [
+            key,
+            document.body,
+            document.revision,
+            document.serverDigest,
+            document.body,
+            now()
+          ]
         )
-        return { ...document, pending: false }
+        await evictQueried(tx, key)
+        return { ...document, pending: false, serverBody: document.body }
+      }),
+    storeServer: async (key, document) =>
+      await serially(async tx => {
+        // A pending body is the phone's; only the server's columns change.
+        await tx.execute(
+          `INSERT INTO documents
+             (key, body, revision, server_digest, pending, server_body,
+              stored_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)
+           ON CONFLICT (key) DO UPDATE SET
+             body = CASE WHEN documents.pending = 0
+               THEN excluded.body ELSE documents.body END,
+             revision = CASE WHEN documents.pending = 0
+               THEN excluded.revision ELSE documents.revision END,
+             server_digest = excluded.server_digest,
+             server_body = excluded.server_body,
+             stored_at = excluded.stored_at`,
+          [
+            key,
+            document.body,
+            document.revision,
+            document.serverDigest,
+            document.body,
+            now()
+          ]
+        )
+        await evictQueried(tx, key)
+        return (await readIn(tx, key))!
       }),
     atomically: async work =>
       await serially(async tx => await work(transactionOf(tx))),

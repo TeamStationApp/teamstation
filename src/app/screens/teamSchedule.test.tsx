@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -11,6 +15,7 @@ import type {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { userIdOfGumbo } from '../../common/userId'
+import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import {
   listProps,
   reachEnd,
@@ -30,7 +35,10 @@ import {
 } from '../../test/teamScheduleFixture'
 import { Screen } from '../components/Screen'
 import { type PagedRows, usePagedList } from '../hooks/usePagedList'
+import { cacheFileName, openCacheStore } from '../sync/cacheStore'
+import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { TeamPage } from './TeamPage'
 import { rowsKeptDrawn, ScheduleRows, TeamScreen } from './TeamScreen'
 
 /**
@@ -1007,5 +1015,163 @@ describe('TeamScreen’s lists, a page at a time', function () {
       }
     ).data.find(row => row.id === game.id)!
     expect(after.playerRsvps).deep.equals({ yes: 1, unknown: 0, no: 0 })
+  })
+})
+
+describe('a team’s schedule with no signal', function () {
+  let dir: string
+  let executors: Array<ReturnType<typeof nodeSqliteExecutor>>
+
+  beforeEach(function () {
+    dir = mkdtempSync(join(tmpdir(), 'teamstation-team-'))
+    executors = []
+  })
+  afterEach(async function () {
+    for (const executor of executors) await executor.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('is the team’s stored schedule and roster when those requests fail offline', async function () {
+    const net = { offline: false, calls: [] as string[] }
+    const client = new CachingClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: async (url: unknown) => {
+        const path = String(url).replace('http://x/api/v1', '')
+        net.calls.push(path)
+        if (net.offline) throw new TypeError('Load failed')
+        const answer = teamScheduleAnswer('GET', `/api/v1${path}`, NOW)
+        return new Response(JSON.stringify(answer.body), {
+          status: answer.status
+        })
+      },
+      openCache: async userId => {
+        const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+        executors.push(executor)
+        return await openCacheStore(executor)
+      }
+    })
+    client.openFor('usr_1')
+    await mount('normal', 'schedule', client)
+    const online = rows().map(linesOf)
+    expect(online.length).greaterThan(0)
+    expect(
+      net.calls.some(path => path.startsWith(`/teams/${TEAM_ID}/roster`))
+    ).equals(true)
+    await act(async () => {
+      root?.unmount()
+    })
+    host?.remove()
+
+    net.offline = true
+    net.calls.length = 0
+    await mount('normal', 'schedule', client)
+    expect(client.offline).equals(true)
+    expect(rows().map(linesOf)).deep.equals(online)
+    // The schedule did not throw the roster away: it was asked for too.
+    expect(
+      net.calls.some(path => path.startsWith(`/teams/${TEAM_ID}/roster`))
+    ).equals(true)
+    expect(document.body.textContent).not.includes('Retry')
+  })
+})
+
+describe('a team opened before, with every request held', function () {
+  let dir: string
+  let executors: Array<ReturnType<typeof nodeSqliteExecutor>>
+
+  beforeEach(function () {
+    dir = mkdtempSync(join(tmpdir(), 'teamstation-held-'))
+    executors = []
+  })
+  afterEach(async function () {
+    for (const executor of executors) await executor.close()
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('paints its pills, schedule and roster from the phone, no request settled', async function () {
+    const net = { held: false, sent: [] as string[], settled: 0 }
+    const client = new CachingClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: async (url: unknown) => {
+        const path = String(url).replace('http://x/api/v1', '')
+        net.sent.push(path)
+        // No signal: the request goes and nothing ever comes back.
+        if (net.held) return await new Promise<Response>(() => undefined)
+        net.settled++
+        const answer = teamScheduleAnswer('GET', `/api/v1${path}`, NOW)
+        return new Response(JSON.stringify(answer.body), {
+          status: answer.status
+        })
+      },
+      openCache: async userId => {
+        const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+        executors.push(executor)
+        return await openCacheStore(executor)
+      }
+    })
+    client.openFor('usr_1')
+    const open = async (tab: string): Promise<void> => {
+      host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root?.render(
+          <ThemeProvider>
+            <TeamPage
+              client={client}
+              id={TEAM_ID}
+              initialTab={tab}
+              onOpenGame={() => undefined}
+            />
+          </ThemeProvider>
+        )
+        await delay(50)
+      })
+    }
+    const close = async (): Promise<void> => {
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+      host = undefined
+    }
+    const pills = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('[role="tab"]')].map(
+        tab => tab.textContent ?? ''
+      )
+    const players = (): boolean =>
+      document.body.textContent?.includes('Nobody has been added') === false
+
+    // Online: the team, its schedule and its roster, each read once.
+    await open('schedule')
+    const online = rows().map(linesOf)
+    expect(online.length).greaterThan(0)
+    const onlinePills = pills()
+    expect(onlinePills).includes('Schedule')
+    expect(net.sent).includes(`/teams/${TEAM_ID}`)
+    await close()
+
+    net.held = true
+    net.sent.length = 0
+    const settledBefore = net.settled
+    await open('schedule')
+    // Every read is out and none has answered or reached its deadline.
+    expect(net.sent).includes(`/teams/${TEAM_ID}`)
+    expect(
+      net.sent.some(path => path.startsWith(`/teams/${TEAM_ID}/games?`))
+    ).equals(true)
+    expect(net.settled).equals(settledBefore)
+    expect(client.offline).equals(false)
+    expect(pills()).deep.equals(onlinePills)
+    expect(document.body.textContent).not.includes('Loading…')
+    expect(rows().map(linesOf)).deep.equals(online)
+    await close()
+
+    // The roster the phone stored shows on Team, its read still out.
+    await open('team')
+    expect(players()).equals(true)
+    expect(document.body.textContent).not.includes('Loading…')
+    await close()
   })
 })

@@ -2028,6 +2028,22 @@ export interface GamesPageQuery {
   limit?: number
 }
 
+/** The read of a league's, season's or team's page. */
+export function groupPath(ref: GroupRef): string {
+  const collection =
+    ref.kind === 'league'
+      ? 'leagues'
+      : ref.kind === 'season'
+        ? 'seasons'
+        : 'teams'
+  return `/${collection}/${encodeURIComponent(ref.id)}`
+}
+
+/** The read of an event's Info section, for one team's attendance or none. */
+export function eventInfoPath(eventId: string, teamId?: string): string {
+  return `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`
+}
+
 function gamesPageParams(query: GamesPageQuery): string {
   const params = ['paged=1']
   if (query.when != null && query.when !== 'all')
@@ -4007,6 +4023,12 @@ export class TeamStationClient {
    * nothing: the request it finishes may be waiting in another tab.
    */
   private askedSignIn?: string
+  /**
+   * The token this client held when it asked for that sign-in. A claim takes
+   * its session only while the client still holds it: once the code, a
+   * password, a link or an earlier claim has signed in, the wait is over.
+   */
+  private askedSignInAs?: { requestId: string; token: string | undefined }
   token: string | undefined
   /** Captures the current analytics identity before a request starts. */
   captureAnalytics?: () => AnalyticsSink
@@ -4310,6 +4332,7 @@ export class TeamStationClient {
       appOrigin: options.appOrigin
     })
     this.askedSignIn = wait.requestId
+    this.askedSignInAs = { requestId: wait.requestId, token: this.token }
     return wait
   }
 
@@ -4380,6 +4403,14 @@ export class TeamStationClient {
    * `undefined` means not yet, which is the ordinary answer and not an error.
    */
   async claimSignIn(wait: SignInWait): Promise<Session | undefined> {
+    // Signed in since the wait was asked for, by any door: the claim would
+    // mint a second session and put it under the one the app already took,
+    // whose token the phone kept and its offline file was opened for.
+    const asked =
+      this.askedSignInAs?.requestId === wait.requestId
+        ? this.askedSignInAs.token
+        : this.token
+    if (this.token !== asked) return undefined
     const answer = await this.request(
       'POST',
       '/auth/request/claim',
@@ -4387,6 +4418,8 @@ export class TeamStationClient {
       { requestId: wait.requestId, clientSecret: wait.clientSecret }
     )
     if (!('token' in answer)) return undefined
+    // A sign-in that landed while the claim was out is the one in use.
+    if (this.token !== asked) return undefined
     this.token = answer.token
     return answer
   }
@@ -4663,17 +4696,7 @@ export class TeamStationClient {
   }
 
   async group(ref: GroupRef): Promise<GroupDetail> {
-    const collection =
-      ref.kind === 'league'
-        ? 'leagues'
-        : ref.kind === 'season'
-          ? 'seasons'
-          : 'teams'
-    return await this.request(
-      'GET',
-      `/${collection}/${encodeURIComponent(ref.id)}`,
-      asGroupDetail
-    )
+    return await this.request('GET', groupPath(ref), asGroupDetail)
   }
 
   async createGroup(body: CreateGroup): Promise<{
@@ -5461,7 +5484,7 @@ export class TeamStationClient {
   async eventInfo(eventId: string, teamId?: string): Promise<EventInfo> {
     return await this.request(
       'GET',
-      `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`,
+      eventInfoPath(eventId, teamId),
       asEventInfo
     )
   }
@@ -7013,6 +7036,7 @@ export class TeamStationClient {
       { ...options, origin: options.origin ?? 'web' }
     )
     this.askedSignIn = wait.requestId
+    this.askedSignInAs = { requestId: wait.requestId, token: this.token }
     return wait
   }
 
@@ -7252,6 +7276,26 @@ export class TeamStationClient {
    */
   async cached<T>(_key: string, _cleaner: Cleaner<T>): Promise<T | undefined> {
     return undefined
+  }
+
+  /**
+   * The games this client keeps on the device for one schedule's window
+   * (`scope` such as `me` or `team:<id>`), as the page its screen paints
+   * before its read returns. The web keeps none: an empty page, which a
+   * screen does not paint.
+   */
+  async scheduleGames<T>(
+    _scope: string,
+    _window: string,
+    _cleaner: Cleaner<T>
+  ): Promise<Page<T>> {
+    return {
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    }
   }
 
   /**

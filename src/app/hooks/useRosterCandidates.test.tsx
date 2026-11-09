@@ -15,6 +15,7 @@ import { heldTimers } from '../../test/fakeScreenScope'
 import {
   CANDIDATE_PAGE,
   candidateMatches,
+  type KeptCandidate,
   type RosterCandidates,
   useRosterCandidates
 } from './useRosterCandidates'
@@ -375,6 +376,80 @@ describe('useRosterCandidates', function () {
       expect(candidateMatches(mookie, 'MOOKIE b')).equals(true)
       expect(candidateMatches(mookie, 'ookie')).equals(false)
       expect(candidateMatches(mookie, 'moo x')).equals(false)
+    })
+
+    it('matches a kept person by the words of a search that found him, which his short name hides', () => {
+      // The server found "Jordan Q" for "Quill": his last name starts so.
+      const jordan = { ...candidate('Jordan Quillfeather'), matched: ['quill'] }
+      expect(
+        candidateMatches(candidate('Jordan Quillfeather'), 'Quill')
+      ).equals(false)
+      expect(candidateMatches(jordan, 'Quill')).equals(true)
+      expect(candidateMatches(jordan, 'qui')).equals(true)
+      expect(candidateMatches(jordan, 'jor QUILL')).equals(true)
+      // A longer word than the server matched is not known to match.
+      expect(candidateMatches(jordan, 'quillf')).equals(false)
+      expect(candidateMatches(jordan, 'quill x')).equals(false)
+    })
+
+    it('finds offline, by the search that found him, a person the phone kept', async () => {
+      const fake = new FakeCandidateClient()
+      // As the phone stored him: his search words beside his row.
+      const jordan: KeptCandidate = {
+        ...candidate('Jordan Quillfeather'),
+        matched: ['quill']
+      }
+      fake.kept.tem_falcons = [jordan, ...kept]
+      fake.offline = true
+      timers = heldTimers(500)
+      root = createRoot(document.createElement('div'))
+      await show(fake, 'Quill', undefined, true)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      await settle()
+      expect(fake.asks).has.length(0)
+      expect(state.rows.map(row => row.shortName)).deep.equals(['Jordan Q'])
+      // Listed as the server lists him: no search words on the row.
+      expect(state.rows[0]).not.has.property('matched')
+    })
+
+    it('keeps this session’s search words with what it found, beside the phone’s', async () => {
+      const fake = new FakeCandidateClient()
+      const jordan: KeptCandidate = {
+        ...candidate('Jordan Quillfeather'),
+        matched: ['jor']
+      }
+      fake.kept.tem_falcons = [jordan]
+      timers = heldTimers(500)
+      root = createRoot(document.createElement('div'))
+      await show(fake, 'Quill', undefined, true)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      await settle()
+      await answer(fake.last(), [candidate('Jordan Quillfeather')])
+      await act(async () => {
+        root!.unmount()
+      })
+      // Opened again with no signal: found by either search's words.
+      fake.offline = true
+      for (const typed of ['Quill', 'jor']) {
+        root = createRoot(document.createElement('div'))
+        await show(fake, typed, undefined, true)
+        await act(async () => {
+          await Promise.resolve()
+        })
+        await settle()
+        expect(
+          state.rows.map(row => row.shortName),
+          typed
+        ).deep.equals(['Jordan Q'])
+        await act(async () => {
+          root!.unmount()
+        })
+      }
+      expect(fake.asks).has.length(1)
     })
   })
 })
