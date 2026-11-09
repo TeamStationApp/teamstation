@@ -30,7 +30,12 @@ export function pictureRoutes(
       const actor = req.actor
       if (actor == null || isMachine(actor)) throw unauthorized()
       try {
-        await selectAccountCatalogPicture(db, actor.userId, req.body?.catalogId)
+        await selectAccountCatalogPicture(
+          db,
+          space,
+          actor.userId,
+          req.body?.catalogId
+        )
       } catch (error) {
         if (error instanceof TypeError) throw badRequest(error.message)
         throw error

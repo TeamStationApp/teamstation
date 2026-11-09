@@ -16,6 +16,7 @@ import {
   UnreadableImage
 } from '../media/images'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
+import { releaseReplacedPicture } from '../media/republishImages'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { noteScopeChange } from '../socket/syncRevision'
 
@@ -192,7 +193,6 @@ async function storePicture(
       ffmpegPath: store.ffmpegPath,
       space: store.space,
       kind,
-      entityId,
       source: picture.bytes,
       knownSha256: held.path == null ? null : held.sha256
     })
@@ -223,6 +223,21 @@ async function storePicture(
   return { stored: true, url }
 }
 
+/**
+ * A write that recorded nothing: the row is gone, or an upload guarded it.
+ * The objects `stored` just uploaded under their random prefix are named by
+ * no row, so they are released once the transaction ends.
+ */
+async function unwritten(
+  trx: Kysely<Database>,
+  store: PictureStore,
+  stored: StoredImage | undefined
+): Promise<false> {
+  if (stored != null)
+    await releaseReplacedPicture(trx, store.space, stored.pathPrefix)
+  return false
+}
+
 /** A team's logo, which is its administrators' to upload over. */
 export async function storeTeamLogo(
   db: Kysely<Database>,
@@ -247,6 +262,15 @@ export async function storeTeamLogo(
     mayReplaceUpload: true,
     write: async (stored, guarded) =>
       await atomic(db, async trx => {
+        const before = await trx
+          .selectFrom('teams')
+          .select('logo_path')
+          .where('id', '=', teamId)
+          .forUpdate()
+          .executeTakeFirst()
+        // Gone while the picture was being stored: nothing to write, and
+        // nothing will ever name the objects just uploaded.
+        if (before == null) return await unwritten(trx, store, stored)
         let update = trx
           .updateTable('teams')
           .set({
@@ -267,8 +291,11 @@ export async function storeTeamLogo(
           )
         }
         const written = await update.executeTakeFirst()
-        if (Number(written.numUpdatedRows) === 0) return false
+        if (Number(written.numUpdatedRows) === 0)
+          return await unwritten(trx, store, stored)
         noteScopeChange(trx, { teamId })
+        if (stored != null)
+          await releaseReplacedPicture(trx, store.space, before.logo_path)
         return true
       })
   })
@@ -302,31 +329,45 @@ export async function storePlayerAvatar(
     },
     picture,
     mayReplaceUpload: callerIsAdmin,
-    write: async (stored, guarded) => {
-      let update = db
-        .updateTable('users')
-        .set({
-          ...(stored == null
-            ? {}
-            : {
-                avatar_path: stored.pathPrefix,
-                avatar_sha256: stored.sha256
-              }),
-          avatar_source: picture.source,
-          picture_catalog_id: null,
-          avatar_updated_at: new Date()
-        })
-        .where('id', '=', userId)
-      if (guarded) {
-        update = update.where(eb =>
-          eb.or([
-            eb('avatar_source', 'is distinct from', 'upload'),
-            eb('avatar_path', 'is', null)
-          ])
-        )
-      }
-      const written = await update.executeTakeFirst()
-      return Number(written.numUpdatedRows) > 0
-    }
+    write: async (stored, guarded) =>
+      await atomic(db, async trx => {
+        const before = await trx
+          .selectFrom('users')
+          .select('avatar_path')
+          .where('id', '=', userId)
+          .forUpdate()
+          .executeTakeFirst()
+        // Gone while the picture was being stored: nothing to write, and
+        // nothing will ever name the objects just uploaded.
+        if (before == null) return await unwritten(trx, store, stored)
+        let update = trx
+          .updateTable('users')
+          .set({
+            ...(stored == null
+              ? {}
+              : {
+                  avatar_path: stored.pathPrefix,
+                  avatar_sha256: stored.sha256
+                }),
+            avatar_source: picture.source,
+            picture_catalog_id: null,
+            avatar_updated_at: new Date()
+          })
+          .where('id', '=', userId)
+        if (guarded) {
+          update = update.where(eb =>
+            eb.or([
+              eb('avatar_source', 'is distinct from', 'upload'),
+              eb('avatar_path', 'is', null)
+            ])
+          )
+        }
+        const written = await update.executeTakeFirst()
+        if (Number(written.numUpdatedRows) === 0)
+          return await unwritten(trx, store, stored)
+        if (stored != null)
+          await releaseReplacedPicture(trx, store.space, before.avatar_path)
+        return true
+      })
   })
 }
