@@ -16,7 +16,11 @@ import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import { createSession } from '../server/auth/sessions'
 import { makeDatabase } from '../server/db/database'
+import { imageKey, storeImage } from '../server/media/images'
 import { insertFixtureUsers } from './insertFixtureUsers'
+
+const OLD_LOGO = 'demo-startup/hosts'
+const PUBLIC_TEAM_LOGO = /^images\/team\/[0-9a-f]{32}$/
 
 /** Real entry-point smoke: isolated configuration, database, Redis and object endpoint. */
 async function availablePort(): Promise<number> {
@@ -140,12 +144,14 @@ async function startupSmoke(): Promise<void> {
         {
           id: 'tem_startup_home',
           name: 'Demo Hosts',
-          logo_path: 'demo-startup/hosts'
+          logo_path: null
         },
         {
+          // A prefix from before names were random, which the server's
+          // startup moves to a public one.
           id: 'tem_startup_away',
           name: 'Demo Visitors',
-          logo_path: 'demo-startup/visitors'
+          logo_path: OLD_LOGO
         }
       ])
       .execute()
@@ -195,14 +201,19 @@ async function startupSmoke(): Promise<void> {
     ).token
     const port = await availablePort()
     const redisPort = await availablePort()
-    objectServer = createServer((_req, res) => {
-      res.writeHead(200, { 'content-type': 'image/png' })
-      res.end(
-        Buffer.from(
-          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN2kAAAAASUVORK5CYII=',
-          'base64'
-        )
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aN2kAAAAASUVORK5CYII=',
+      'base64'
+    )
+    /** Every request the object server answered, as `<method> <path>`. */
+    const objectRequests: string[] = []
+    objectServer = createServer((req, res) => {
+      objectRequests.push(
+        `${req.method ?? ''} ${new URL(req.url ?? '/', 'http://objects').pathname}`
       )
+      req.resume()
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(png)
     })
     await new Promise<void>(resolve =>
       objectServer!.listen(0, '127.0.0.1', resolve)
@@ -210,6 +221,29 @@ async function startupSmoke(): Promise<void> {
     const objectAddress = objectServer.address()
     assert(objectAddress != null && typeof objectAddress !== 'string')
     const objectOrigin = `http://127.0.0.1:${objectAddress.port}`
+    const space = {
+      endpoint: objectOrigin,
+      region: 'demo',
+      bucket: 'demo-startup',
+      accessKeyId: randomBytes(12).toString('hex'),
+      secretAccessKey: randomBytes(32).toString('hex'),
+      pathStyle: true
+    }
+    // The hosts' logo, as an upload stores it now: public, under a random name.
+    const stored = await storeImage({
+      ffmpegPath: process.env.TS_FFMPEG ?? 'ffmpeg',
+      space,
+      kind: 'team',
+      source: png
+    })
+    assert(stored != null)
+    const hostsLogo = stored.pathPrefix
+    assert.match(hostsLogo, PUBLIC_TEAM_LOGO)
+    await db
+      .updateTable('teams')
+      .set({ logo_path: hostsLogo })
+      .where('id', '=', 'tem_startup_home')
+      .execute()
     await writeFile(
       path.join(support, 'serverConfig.json'),
       JSON.stringify({
@@ -234,14 +268,7 @@ async function startupSmoke(): Promise<void> {
           prefix: `${name}:`,
           caFile: ''
         },
-        space: {
-          endpoint: objectOrigin,
-          region: 'demo',
-          bucket: 'demo-startup',
-          accessKeyId: randomBytes(12).toString('hex'),
-          secretAccessKey: randomBytes(32).toString('hex'),
-          pathStyle: true
-        }
+        space
       }),
       { mode: 0o600 }
     )
@@ -329,11 +356,42 @@ async function startupSmoke(): Promise<void> {
       standings.every(row => row.logoUrl != null),
       'Production stats routing must receive its media context'
     )
-    for (const row of standings) {
-      const logo = new URL(row.logoUrl!)
-      assert.equal(logo.origin, objectOrigin)
-      assert(logo.searchParams.has('X-Amz-Signature'))
-      assert.equal((await fetch(logo)).status, 200)
+    const logoOf = (teamId: string): URL =>
+      new URL(standings.find(row => row.teamId === teamId)!.logoUrl!)
+    const hosts = logoOf('tem_startup_home')
+    assert.equal(
+      hosts.href,
+      `${objectOrigin}/${space.bucket}/${imageKey(hostsLogo, 96)}`
+    )
+    assert.equal(hosts.search, '')
+    assert.equal((await fetch(hosts)).status, 200)
+    // The startup republish moved the visitors' old prefix before health.
+    const moved = (
+      await db
+        .selectFrom('teams')
+        .select('logo_path')
+        .where('id', '=', 'tem_startup_away')
+        .executeTakeFirstOrThrow()
+    ).logo_path
+    assert(moved != null)
+    assert.match(moved, PUBLIC_TEAM_LOGO)
+    const visitors = logoOf('tem_startup_away')
+    assert.equal(visitors.origin, objectOrigin)
+    assert.equal(visitors.search, '')
+    assert.equal(visitors.pathname, `/${space.bucket}/${imageKey(moved, 96)}`)
+    for (const size of [96, 192] as const) {
+      assert(
+        objectRequests.includes(
+          `PUT /${space.bucket}/${imageKey(moved, size)}`
+        ),
+        `the ${size} copy was written`
+      )
+      assert(
+        objectRequests.includes(
+          `DELETE /${space.bucket}/${imageKey(OLD_LOGO, size)}`
+        ),
+        `the old ${size} object was deleted`
+      )
     }
     const statsResponse = await fetch(
       `${origin}/api/v1/seasons/sea_startup/stats`,
@@ -349,7 +407,7 @@ async function startupSmoke(): Promise<void> {
     })
     assert.equal(refused.status, 404)
     console.log(
-      'Production entry smoke passed: health, season standings, signed local logos, authorized season stats and outsider refusal.'
+      'Production entry smoke passed: health, season standings, public local logos, the startup picture republish, authorized season stats and outsider refusal.'
     )
     console.log(`Startup V8 coverage: ${coverage}`)
     await writeFile(

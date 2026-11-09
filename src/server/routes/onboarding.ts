@@ -6,8 +6,10 @@ import { badRequest, conflict, unauthorized } from '../../common/errors'
 import { isMachine } from '../auth/sessions'
 import { onboardingFor } from '../auth/settleAccount'
 import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { selectAccountCatalogPicture } from '../media/pictureCatalog'
+import { releaseReplacedPicture } from '../media/republishImages'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { notifyLiveGamesRenamed } from '../socket/gameChanges'
@@ -92,11 +94,11 @@ export function onboardingRoutes(
         body.initials === true
       ].filter(Boolean).length
       if (choices !== 1) throw badRequest('Choose one picture or use initials')
-      await db.transaction().execute(async trx => {
+      await atomic(db, async trx => {
         await lockKeys(trx, [`account:${actor.userId}`])
         const user = await trx
           .selectFrom('users')
-          .select('onboarding_step')
+          .select(['onboarding_step', 'avatar_path'])
           .where('id', '=', actor.userId)
           .forUpdate()
           .executeTakeFirstOrThrow()
@@ -105,7 +107,12 @@ export function onboardingRoutes(
           throw conflict('Save your name first')
         if (body.catalogId != null) {
           try {
-            await selectAccountCatalogPicture(trx, actor.userId, body.catalogId)
+            await selectAccountCatalogPicture(
+              trx,
+              store.space,
+              actor.userId,
+              body.catalogId
+            )
           } catch (error) {
             if (error instanceof TypeError) throw badRequest(error.message)
             throw error
@@ -118,7 +125,7 @@ export function onboardingRoutes(
             asPictureBody({ image: body.image, source: 'upload' }),
             true
           )
-        else
+        else {
           await trx
             .updateTable('users')
             .set({
@@ -129,6 +136,8 @@ export function onboardingRoutes(
             })
             .where('id', '=', actor.userId)
             .execute()
+          await releaseReplacedPicture(trx, store.space, user.avatar_path)
+        }
         await trx
           .updateTable('users')
           .set({
