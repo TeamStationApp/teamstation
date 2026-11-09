@@ -17,6 +17,7 @@ import { App } from './App'
 import { ensureEnrolled, holdsStore } from './chat/engine/links'
 import { recordFromJson } from './chat/keyRecord'
 import { keyStore } from './chat/keyStore'
+import { FLOATING_BOTTOM_REM, NAV_CLEARANCE_REM } from './components/AppNav'
 import { showRoute } from './navigation/useAddressBar'
 import type { StoredUser } from './platform/storedUser'
 import {
@@ -26,6 +27,7 @@ import {
 } from './sync/cacheStore'
 import { CachingClient, OFFLINE_CREATE_MESSAGE } from './sync/cachingClient'
 import { OFFLINE_BANNER } from './sync/useOffline'
+import { tsBallpark } from './theme/tsBallpark'
 
 const BETTS: StoredUser = {
   id: userIdOfGumbo(50),
@@ -57,6 +59,52 @@ const banner = (): HTMLElement | null =>
 const bannerText = (): string | undefined =>
   document.querySelector('[data-testid="offlineBannerText"]')?.textContent ??
   undefined
+/** The floating capsule: the tab list over the content, not a screen's. */
+const capsule = (): HTMLElement | undefined =>
+  [...document.querySelectorAll<HTMLElement>('[role="tablist"]')].find(
+    node => node.parentElement?.dataset.chrome === 'true'
+  )
+const bottomOf = (node: HTMLElement): string => getComputedStyle(node).bottom
+
+/** Reports the banner's layout, as a phone would once it is drawn. */
+async function layOutBanner(height: number): Promise<void> {
+  const node = banner() as unknown as {
+    __reactLayoutHandler: (event: object) => void
+  }
+  await act(async () => {
+    node.__reactLayoutHandler({
+      nativeEvent: { layout: { x: 0, y: 0, width: 390, height } }
+    })
+  })
+}
+
+/** Sizes the window, as the breakpoint reads it. */
+function windowWidth(width: number): () => void {
+  const old = Object.getOwnPropertyDescriptor(
+    document.documentElement,
+    'clientWidth'
+  )
+  Object.defineProperty(document.documentElement, 'clientWidth', {
+    configurable: true,
+    get: () => width
+  })
+  window.dispatchEvent(new window.Event('resize'))
+  return () => {
+    if (old != null)
+      Object.defineProperty(document.documentElement, 'clientWidth', old)
+    else
+      delete (document.documentElement as unknown as Record<string, unknown>)
+        .clientWidth
+    window.dispatchEvent(new window.Event('resize'))
+  }
+}
+
+/** Whether some element of the page leaves `px` under its last row. */
+const anyPaddedBottom = (px: number): boolean =>
+  [...document.querySelectorAll<HTMLElement>('div')].some(
+    node => getComputedStyle(node).paddingBottom === `${px}px`
+  )
+
 const refusal = (): string | undefined =>
   document.querySelector('[data-testid="offlineCreateMessage"]')?.textContent ??
   undefined
@@ -201,6 +249,101 @@ describe('the phone shell offline', () => {
     await settle(200)
     expect(net.posts).deep.equals(['/api/v1/teams/tem_hawks/roster-players'])
     expect(banner(), 'nothing to say').equals(null)
+  })
+
+  it('draws the banner after the tab bar, on the inset, with the capsule on top of it', async () => {
+    await earlierLaunch()
+    showRoute({ name: 'home' }, true)
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={BETTS}
+        documentCache={openCache}
+      />
+    )
+    await settle(100)
+    await layOutBanner(40)
+
+    const nav = capsule()!
+    const strip = banner()!
+    expect(
+      nav.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING,
+      'the banner follows the tab bar'
+    ).not.equals(0)
+    expect(
+      strip.parentElement?.dataset.chrome,
+      'chrome of its own, not in the header layer'
+    ).equals('true')
+    expect(
+      strip.parentElement!.lastElementChild,
+      'the last of the chrome'
+    ).equals(strip)
+    // The safe area's inset is 0 in a browser: the banner sits on it, and the
+    // capsule sits on the banner.
+    expect(bottomOf(strip)).equals('0px')
+    expect(getComputedStyle(strip).position).equals('absolute')
+    expect(bottomOf(nav)).equals('40px')
+    // The screen's last row clears the capsule and the banner.
+    const clearance = tsBallpark.rem(NAV_CLEARANCE_REM) + 40
+    expect(anyPaddedBottom(clearance), `a ${clearance}px clearance`).equals(
+      true
+    )
+
+    // The queue goes: no banner, and the capsule is back on its own margin.
+    net.offline = false
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[role="tab"][aria-label="Schedule"]')!
+        .click()
+    })
+    await settle(200)
+    expect(banner()).equals(null)
+    expect(bottomOf(capsule()!)).equals(
+      `${tsBallpark.rem(FLOATING_BOTTOM_REM)}px`
+    )
+  })
+
+  it('leaves the capsule on its own margin with nothing to say', async () => {
+    showRoute({ name: 'home' }, true)
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={BETTS}
+        documentCache={openCache}
+      />
+    )
+    await settle(100)
+    expect(banner()).equals(null)
+    expect(bottomOf(capsule()!)).equals(
+      `${tsBallpark.rem(FLOATING_BOTTOM_REM)}px`
+    )
+    expect(anyPaddedBottom(tsBallpark.rem(NAV_CLEARANCE_REM))).equals(true)
+  })
+
+  it('keeps the banner on the bottom inset of a wide window, which has no capsule', async () => {
+    await earlierLaunch()
+    const restore = windowWidth(1440)
+    try {
+      showRoute({ name: 'home' }, true)
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={BETTS}
+          documentCache={openCache}
+        />
+      )
+      await settle(100)
+      await layOutBanner(40)
+      expect(bannerText()).equals(`${OFFLINE_BANNER} · 1 edit waiting`)
+      expect(bottomOf(banner()!)).equals('0px')
+      expect(capsule(), 'no capsule').equals(undefined)
+      const clearance = tsBallpark.rem(tsBallpark.spaceLgRem) + 40
+      expect(anyPaddedBottom(clearance), `a ${clearance}px clearance`).equals(
+        true
+      )
+    } finally {
+      restore()
+    }
   })
 
   it('shows no banner on the web, which keeps no queue', async () => {
