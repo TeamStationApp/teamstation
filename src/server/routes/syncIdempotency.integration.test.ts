@@ -8,12 +8,18 @@ import {
   asRosterEntry,
   type SaveLineupsBody
 } from '../../common/api'
+import { conflict } from '../../common/errors'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
-import { KEY_RETENTION_DAYS, purgeExpiredKeys } from '../db/syncIdempotency'
+import {
+  answerOnce,
+  type IdempotentCall,
+  KEY_RETENTION_DAYS,
+  purgeExpiredKeys
+} from '../db/syncIdempotency'
 import { startingContext } from './lineups'
 
 /** A play the game takes from anybody who may score it. */
@@ -468,6 +474,70 @@ describe('Idempotency-Key on the writes a phone queues', function () {
     expect(
       await f.h.db.selectFrom('sync_idempotency').select('key').execute()
     ).deep.equals([])
+  })
+
+  it('answers a retry that overlapped its first send as the first, even when its own write is refused once the first committed', async function () {
+    const call = (key: string, hash = 'h-1'): IdempotentCall => ({
+      userId: userIdOfGumbo(101),
+      key,
+      method: 'POST',
+      path: '/api/v1/games/g/lineups',
+      hash
+    })
+    const rebuild = async (): Promise<never> => {
+      throw new Error('not rebuilt')
+    }
+    for (const [key, retryHash] of [
+      ['k-overlap', 'h-1'],
+      ['k-overlap-other', 'h-2']
+    ] as const) {
+      let open!: () => void
+      const gate = new Promise<void>(resolve => {
+        open = resolve
+      })
+      // The first send: still committing when the phone gives up on it.
+      const first = answerOnce(f.h.db, call(key), {
+        write: async claim => {
+          await gate
+          await f.h.db.transaction().execute(async trx => {
+            await claim!(trx, {
+              answer: { status: 200, body: { digest: 'D1' } }
+            })
+          })
+          return { status: 200, body: { digest: 'D1' } }
+        },
+        rebuild
+      })
+      // The retry, sent with the same key: it finds no key yet, and its
+      // write is refused because the first moved the lineups on meanwhile.
+      const retry = answerOnce(f.h.db, call(key, retryHash), {
+        write: async () => {
+          open()
+          await first
+          throw conflict('Somebody else changed the lineups', { stale: true })
+        },
+        rebuild
+      })
+      if (retryHash === 'h-1') {
+        expect(await retry).deep.equals({ status: 200, body: { digest: 'D1' } })
+      } else {
+        // Sent with another body: the key's own 409, never the stale one.
+        const refused = await retry.catch((error: unknown) => error)
+        expect(refused).property('code').equals('conflict')
+        expect(String((refused as Error).message)).contains('Idempotency-Key')
+      }
+      expect(await first).deep.equals({ status: 200, body: { digest: 'D1' } })
+    }
+    // A refused write whose key nobody holds is refused as it was.
+    const alone = await answerOnce(f.h.db, call('k-alone'), {
+      write: async () => {
+        throw conflict('Somebody else changed the lineups', { stale: true })
+      },
+      rebuild
+    }).catch((error: unknown) => error)
+    expect(String((alone as Error).message)).equals(
+      'Somebody else changed the lineups'
+    )
   })
 
   it('answers two posts sent at once with one key as one, and stores one play', async function () {

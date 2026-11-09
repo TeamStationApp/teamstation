@@ -11,13 +11,14 @@ import type { CreateGroup } from '../../common/groupCreation'
 import type { GumboPlay } from '../../common/gumboPlay'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FOLD_VERSION } from '../../common/scoring/actions'
-import { FINAL_INDEX } from '../../common/scoring/gumbo'
+import { FINAL_INDEX, recordOf } from '../../common/scoring/gumbo'
 import {
   type SaveChange,
   ScoringSession,
   type SessionLog
 } from '../../common/scoring/session'
 import { copyState, setupOf } from '../../common/scoring/state'
+import { playForWire } from '../../common/scoring/wireRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { scoringSession } from '../../test/scoringSession'
@@ -56,7 +57,6 @@ import {
   BACKOFF_MS,
   chainOf,
   JITTER,
-  LEASE_MS,
   LOST_PLAYER_MESSAGE,
   NEWER_LINEUP_MESSAGE,
   OLDER_SAVE_HELD,
@@ -64,6 +64,7 @@ import {
   type OutboxOptions,
   type OutboxSummary,
   PENDING_APPROVAL_MESSAGE,
+  preparedWithoutStore,
   queuedCallOf,
   STAND_IN_MESSAGE,
   UNVERIFIED_SCORING_HELD
@@ -198,12 +199,15 @@ describe('the phone outbox', function () {
     /** Stands between the client and its file, when given. */
     wrap?: (store: DocumentStore) => DocumentStore,
     /** The queue's other options: how it judges an older build's save. */
-    outbox: Pick<OutboxOptions, 'olderSave' | 'rebuildEvents'> = {}
+    outbox: Pick<OutboxOptions, 'olderSave' | 'rebuildEvents'> = {},
+    /** How long a send waits for an answer to begin, when not the app's. */
+    requestDeadlineMs?: number
   ): {
     client: CachingClient
     sent: Sent[]
     posts: () => Sent[]
-    timers: Array<{ run: () => void; ms: number }>
+    /** Each timer the queue set: when, for how long, and whether cleared. */
+    timers: Array<{ run: () => void; ms: number; at: number; cleared?: true }>
     clock: { now: number }
     rows: () => Array<Record<string, unknown>>
     /** Runs a statement on the phone's file, as an older build left it. */
@@ -212,7 +216,12 @@ describe('the phone outbox', function () {
     summaries: OutboxSummary[]
   } {
     const sent: Sent[] = []
-    const timers: Array<{ run: () => void; ms: number }> = []
+    const timers: Array<{
+      run: () => void
+      ms: number
+      at: number
+      cleared?: true
+    }> = []
     const clock = { now: 1_000_000 }
     const fetch = (async (url: unknown, init: RequestInit) => {
       const headers = init.headers as Record<string, string>
@@ -244,14 +253,18 @@ describe('the phone outbox', function () {
       token: 'token-1',
       fetch,
       openCache,
+      ...(requestDeadlineMs == null ? {} : { requestDeadlineMs }),
       outbox: {
         now: () => clock.now,
         random: () => 0.5,
         setTimer: (run, ms) => {
-          timers.push({ run, ms })
+          timers.push({ run, ms, at: clock.now })
           return timers.length
         },
-        clearTimer: () => undefined,
+        clearTimer: handle => {
+          const timer = timers[Number(handle) - 1]
+          if (timer != null) timer.cleared = true
+        },
         ...outbox
       }
     })
@@ -503,6 +516,8 @@ describe('the phone outbox', function () {
       remove: [],
       lineupsBase: first.lineupsDigest
     })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -548,6 +563,8 @@ describe('the phone outbox', function () {
     })
     // Built on the phone's lineups: their digest is the phone's.
     expect(posted.lineupsDigest).equals(saved.digest)
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -569,6 +586,7 @@ describe('the phone outbox', function () {
       remove: [],
       lineupsBase: saved.digest
     })
+    await p.client.drainOutbox()
     const last = p.posts()[p.posts().length - 1]
     expect((last.body as { lineupsBase: string }).lineupsBase).equals('L1')
     // With no digest from the server at all, a live post names none, and a
@@ -600,6 +618,7 @@ describe('the phone outbox', function () {
       lineupsBase: 'local-abc'
     })
     await bare.client.saveLineups('g2', lineupSave('local-abc'))
+    await bare.client.drainOutbox()
     const [events, lineup] = bare.posts()
     expect(events.body).not.have.property('lineupsBase')
     expect((lineup.body as { base: string }).base).equals('')
@@ -672,6 +691,8 @@ describe('the phone outbox', function () {
     // The create's body names nobody.
     expect(bodyOf(rows[0])).deep.equals(newPlayer('Yadier'))
 
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -705,6 +726,7 @@ describe('the phone outbox', function () {
     )
     // And a lineup naming one made on the phone is sent with his server id.
     await p.client.saveLineups('g1', lineupSave('D1', [one.gumboId!]))
+    await p.client.drainOutbox()
     const now = p.posts()[p.posts().length - 1].body as SaveLineupsBody
     expect(now.players[0].gumboId).equals(made.get('Yadier'))
   })
@@ -1352,6 +1374,8 @@ describe('the phone outbox', function () {
     await p.client.gameEvents('g1')
     await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
     await p.client.saveGameEvents('g1', { plays: [play(2)], remove: [] })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     // The first lands while the second is held at the server.
@@ -1452,6 +1476,8 @@ describe('the phone outbox', function () {
     })
     await p.client.saveGameEvents('g1', { plays: [play(2)], remove: [] })
     await p.client.saveGameEvents('g2', { plays: [play(1)], remove: [] })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1519,6 +1545,8 @@ describe('the phone outbox', function () {
     expect(queued).length(2)
     for (const row of queued)
       expect(JSON.parse(String(row.body))).deep.include({ generation: 0 })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1560,6 +1588,8 @@ describe('the phone outbox', function () {
       newPlayer('Ronald')
     )
     await p.client.saveLineups('g1', lineupSave('D0', [made.gumboId!]))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1619,6 +1649,8 @@ describe('the phone outbox', function () {
       remove: []
     })
     await p.client.saveGameEvents('g1', { plays: [play(2)], remove: [] })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1660,6 +1692,8 @@ describe('the phone outbox', function () {
       plays: [play(1, second.gumboId!)],
       remove: []
     })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1704,6 +1738,8 @@ describe('the phone outbox', function () {
     await p.client.gameLineups('g2')
     await p.client.saveLineups('g1', lineupSave('D0'))
     await p.client.saveLineups('g2', lineupSave('E0'))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1738,6 +1774,8 @@ describe('the phone outbox', function () {
     await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
     await p.client.saveGameEvents('g1', { plays: [play(2)], remove: [] })
     await p.client.saveGameEvents('g2', { plays: [play(1)], remove: [] })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1793,6 +1831,8 @@ describe('the phone outbox', function () {
       newPlayer('Ronald')
     )
     await p.client.saveLineups('g1', lineupSave('D0', [made.gumboId!]))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1818,6 +1858,8 @@ describe('the phone outbox', function () {
       newPlayer('Ronald')
     )
     await p.client.saveLineups('g1', lineupSave('D1', [again.gumboId!]))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1858,6 +1900,8 @@ describe('the phone outbox', function () {
     await p.client.roster('tem_home', { includeFullNames: true })
     await p.client.createRosterPlayer('tem_home', newPlayer('Ronald'))
     await p.client.createRosterPlayer('tem_home', newPlayer('Wander'))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1885,6 +1929,8 @@ describe('the phone outbox', function () {
     // And a refusal that may not repeat goes again from where it stopped.
     online = false
     await p.client.createRosterPlayer('tem_home', newPlayer('Ronald'))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1923,6 +1969,8 @@ describe('the phone outbox', function () {
     )
     await p.client.saveLineups('g1', lineupSave('D0', [made.gumboId!]))
     await p.client.saveLineups('g2', lineupSave('E0', [made.gumboId!]))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1956,6 +2004,8 @@ describe('the phone outbox', function () {
       newPlayer('Wander')
     )
     await p.client.saveLineups('g1', lineupSave('D1', [again.gumboId!]))
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -1984,6 +2034,8 @@ describe('the phone outbox', function () {
     )
     await p.client.gameEvents('g1')
     await p.client.saveGameEvents('g1', { plays: [play(1, 42)], remove: [] })
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -2071,6 +2123,7 @@ describe('the phone outbox', function () {
       remove: [],
       lineupsBase: 'local-made-here'
     })
+    await p.client.drainOutbox()
     const [sent] = p.posts()
     expect((sent.body as { lineupsBase?: string }).lineupsBase).equals('D0')
     const [row] = p.rows()
@@ -2094,6 +2147,8 @@ describe('the phone outbox', function () {
     await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
     // The play landed the first time, as the server now has it.
     served = eventsDoc('g1', 'D2', [play(0), play(1, 55)])
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -3032,6 +3087,7 @@ describe('the phone outbox', function () {
     )
     await p.client.gameLineups('g1')
     await p.client.saveLineups('g1', lineupSave('D0'))
+    await p.client.drainOutbox()
     // Another person signs in while the queue reads the file: their token
     // is set before their own file is opened.
     const store = await (
@@ -3093,6 +3149,7 @@ describe('the phone outbox', function () {
     )
     await p.client.gameLineups('g1')
     await p.client.saveLineups('g1', lineupSave('D0'))
+    await p.client.drainOutbox()
     const waits: number[] = []
     for (let attempt = 0; attempt < 6; attempt++) {
       const timer = p.timers[p.timers.length - 1]
@@ -3114,12 +3171,13 @@ describe('the phone outbox', function () {
         BACKOFF_MS[Math.min(index, 4)] * (1 + JITTER)
       )
     expect(p.rows()[0].attempts).equals(6)
-    // A 5xx waits as no signal does; a request that works ends neither.
+    // A 5xx is the game's own trouble: its chain waits on a backoff of its
+    // own, from the first wait; a request that works ends neither.
     answer = refusal(500, 'internal', 'Something went wrong')
     p.clock.now += 20_000
     await p.client.drainOutbox()
     const wait = p.timers[p.timers.length - 1].ms
-    expect(wait).equals(15000 * (1 + 0.5 * JITTER))
+    expect(wait).equals(1000 * (1 + 0.5 * JITTER))
     await p.client.gameLineups('g1')
     await p.client.drainOutbox()
     expect(p.rows()[0].attempts).equals(7)
@@ -3130,7 +3188,170 @@ describe('the phone outbox', function () {
     expect(p.rows()).deep.equals([])
     answer = 'offline'
     await p.client.saveLineups('g1', lineupSave('D1'))
+    await p.client.drainOutbox()
     expect(p.timers[p.timers.length - 1].ms).equals(1000 * (1 + 0.5 * JITTER))
+  })
+
+  /**
+   * Lets the queue's own timers run, each when it is due, the clock moved to
+   * it, until `ms` from now: nothing else wakes the queue.
+   */
+  async function timersOnly(
+    p: ReturnType<typeof phone>,
+    ms: number
+  ): Promise<void> {
+    const until = p.clock.now + ms
+    const ran = new Set<number>()
+    const rest = async (): Promise<void> => {
+      for (let i = 0; i < 10; i++)
+        await new Promise(resolve => setTimeout(resolve, 2))
+    }
+    await rest()
+    for (;;) {
+      const live = p.timers
+        .map((timer, index) => ({ timer, index }))
+        .filter(({ timer, index }) => timer.cleared == null && !ran.has(index))
+        .sort((a, b) => a.timer.at + a.timer.ms - (b.timer.at + b.timer.ms))
+      const next = live[0]
+      if (next == null || next.timer.at + next.timer.ms > until) break
+      ran.add(next.index)
+      p.clock.now = Math.max(p.clock.now, next.timer.at + next.timer.ms)
+      next.timer.run()
+      await rest()
+    }
+  }
+
+  it('sends a game’s write that a 5xx sent back on its own backoff, while another chain’s send holds a lease, with nothing else waking the queue (Q9)', async function () {
+    let failing = true
+    let landRoster: (() => void) | undefined
+    const p = phone(
+      server(
+        {
+          '/games/g1/lineups': lineupsDoc('D0'),
+          '/teams/tem_home/roster': [],
+          '/teams/tem_home/roster?includeFullNames=true': []
+        },
+        async sent => {
+          if (sent.path === '/teams/tem_home/roster-players') {
+            await new Promise<void>(resolve => {
+              landRoster = resolve
+            })
+            return { status: 201, body: serverEntry(901, 'Jordan') }
+          }
+          if (failing)
+            return refusal(500, 'internal', 'BadRequestError: request aborted')
+          return { body: lineupsDoc('D1') }
+        }
+      )
+    )
+    await p.client.gameLineups('g1')
+    await p.client.roster('tem_home')
+    await p.client.roster('tem_home', { includeFullNames: true })
+    // A roster add goes out at once and stays out, holding its chain.
+    const adding = p.client.createRosterPlayer('tem_home', newPlayer('Jordan'))
+    await new Promise(resolve => setTimeout(resolve, 20))
+    expect(landRoster).not.equals(undefined)
+    // The game's write is queued and its first send gets a 5xx.
+    await p.client.saveLineups('g1', lineupSave('D0'))
+    await p.client.drainOutbox()
+    expect(p.posts().map(call => call.path)).deep.equals([
+      '/teams/tem_home/roster-players',
+      '/games/g1/lineups'
+    ])
+    expect(p.rows().map(row => row.chain)).includes('game:g1')
+    // The server is back, and the roster add lands.
+    failing = false
+    landRoster!()
+    await adding
+    // Only the queue's own timers from here, for less than one lease.
+    await timersOnly(p, BACKOFF_MS[0] * (1 + JITTER) + 1)
+    expect(p.posts().map(call => call.path)).deep.equals([
+      '/teams/tem_home/roster-players',
+      '/games/g1/lineups',
+      '/games/g1/lineups'
+    ])
+    expect(p.rows()).deep.equals([])
+  })
+
+  it('keeps a failing game’s backoff its own, growing, while another game’s writes land beside it', async function () {
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': eventsDoc('g1', 'D0'),
+          '/games/g2/events': eventsDoc('g2', 'E0')
+        },
+        sent => {
+          const gameId = sent.path.split('/')[2]
+          if (gameId === 'g1') return refusal(503, 'unavailable', 'Back soon')
+          return { body: eventsDoc(gameId, `${gameId}-next`) }
+        }
+      )
+    )
+    const sentOf = (gameId: string): number =>
+      p.posts().filter(call => call.path === `/games/${gameId}/events`).length
+    const busy = async (): Promise<void> => {
+      for (let i = 0; i < 3; i++) {
+        await p.client.saveGameEvents('g2', {
+          plays: [play(i + 1)],
+          remove: []
+        })
+        await p.client.drainOutbox()
+      }
+    }
+    await p.client.gameEvents('g1')
+    await p.client.gameEvents('g2')
+    await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
+    await p.client.drainOutbox()
+    expect(sentOf('g1')).equals(1)
+    // The other game's sends land, and neither send the failing one again
+    // at once nor end its wait.
+    const before = sentOf('g2')
+    await busy()
+    expect(sentOf('g2')).equals(before + 3)
+    expect(sentOf('g1')).equals(1)
+    await timersOnly(p, BACKOFF_MS[0] * (1 + JITTER) + 1)
+    expect(sentOf('g1')).equals(2)
+    await busy()
+    expect(sentOf('g1')).equals(2)
+    // Its second wait is the second backoff, not the first again.
+    await timersOnly(p, BACKOFF_MS[0] * (1 + JITTER) + 1)
+    expect(sentOf('g1')).equals(2)
+    await timersOnly(p, BACKOFF_MS[1] * (1 + JITTER) + 1)
+    expect(sentOf('g1')).equals(3)
+  })
+
+  it('sends a game’s write a 5xx sent back once another send succeeds, its backoff passed, with nothing else waking the queue (Q9)', async function () {
+    let failing = true
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': eventsDoc('g1', 'D0'),
+          '/games/g2/events': eventsDoc('g2', 'E0')
+        },
+        sent => {
+          const gameId = sent.path.split('/')[2]
+          if (gameId === 'g1' && failing)
+            return refusal(503, 'unavailable', 'Back soon')
+          return { body: eventsDoc(gameId, `${gameId}-next`) }
+        }
+      )
+    )
+    await p.client.gameEvents('g1')
+    await p.client.gameEvents('g2')
+    await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
+    await p.client.drainOutbox()
+    expect(p.rows()).length(1)
+    failing = false
+    // Another game's write lands: the skipped chain goes on its backoff.
+    await p.client.saveGameEvents('g2', { plays: [play(1)], remove: [] })
+    await timersOnly(p, BACKOFF_MS[0] * (1 + JITTER) + 1)
+    expect(p.rows()).deep.equals([])
+    expect(
+      p
+        .posts()
+        .map(call => call.path)
+        .filter(path => path === '/games/g1/events')
+    ).length(2)
   })
 
   it('ends a wait no signal began once a request works', async function () {
@@ -3160,6 +3381,8 @@ describe('the phone outbox', function () {
     await p.client.gameLineups('g1')
     await p.client.saveLineups('g1', lineupSave('D0'))
     p.client.setActive(false)
+    // The send the drain made offline has failed by now.
+    await p.client.drainOutbox()
     online = true
     p.client.wakeOutbox(true)
     await p.client.drainOutbox()
@@ -3425,6 +3648,7 @@ describe('the phone outbox', function () {
       id: 901,
       fullName: 'George R'
     })
+    await p.client.drainOutbox()
     const before = p.sent.length
     online = true
     p.clock.now += 60_000
@@ -3564,6 +3788,7 @@ describe('the phone outbox', function () {
       id: 901,
       fullName: 'Herman R'
     })
+    await p.client.drainOutbox()
     const before = p.sent.length
     online = true
     p.clock.now += 60_000
@@ -3857,20 +4082,28 @@ describe('the phone outbox', function () {
       })
     })
 
-    it('sends a player it cannot find on the phone as a plain request', async function () {
+    it('refuses a player it cannot find on the phone, and sends nothing', async function () {
       const p = phone(
         server({ '/games/g1': gameDoc }, () => ({
           body: { away: [], home: [999] }
         }))
       )
       await p.client.game('g1')
-      expect(
+      const before = p.sent.length
+      let refused: unknown
+      try {
         await p.client.setRostered(
           'g1',
           { side: 'home', userId: userIdOfGumbo(999), rostered: false },
           { background: true }
         )
-      ).deep.equals({ away: [], home: [999] })
+      } catch (error) {
+        refused = error
+      }
+      // Scoring has the game on the phone: a write it cannot answer from
+      // there is not sent to wait on the server instead.
+      expect(refused).property('code').equals('unavailable')
+      expect(p.sent.slice(before)).deep.equals([])
       expect(p.rows()).deep.equals([])
     })
 
@@ -4088,6 +4321,8 @@ describe('the phone outbox', function () {
         { gumboId: 888, pool: true, shortName: 'Aaron J' }
       )
       expect(p.rows().map(row => row.chain)).deep.equals(['game:g1'])
+      // The send the drain made offline has failed by now.
+      await p.client.drainOutbox()
       online = true
       p.client.wakeOutbox(true)
       await p.client.drainOutbox()
@@ -4235,7 +4470,7 @@ describe('the phone outbox', function () {
       expect(p.rows()).deep.equals([])
     })
 
-    it('sends a background change with no answer of the phone’s after a pitch post of its game still in flight', async function () {
+    it('refuses a background change with no answer of the phone’s at once, while a pitch post of its game is out', async function () {
       let release: (() => void) | undefined
       const p = phone(
         server({ '/games/g1/events': eventsDoc('g1', 'D0') }, async sent => {
@@ -4249,27 +4484,32 @@ describe('the phone outbox', function () {
         })
       )
       // The game itself is not on the phone: leaving a player off it has no
-      // answer of the phone's, and goes direct.
+      // answer of the phone's.
       await p.client.gameEvents('g1')
-      const pitch = p.client.saveGameEvents('g1', {
+      // The pitch goes to the server at once, and is held there.
+      const pitched = p.client.saveGameEvents('g1', {
         plays: [play(1)],
         remove: []
       })
       const held = (): boolean => release != null
       for (let tries = 0; !held() && tries < 100; tries++)
         await new Promise(resolve => setTimeout(resolve, 5))
-      const change = p.client.setRostered(
-        'g1',
-        { side: 'home', userId: userIdOfGumbo(201), rostered: false },
-        { background: true }
-      )
-      for (let tries = 0; tries < 10; tries++)
-        await new Promise(resolve => setTimeout(resolve, 5))
+      let refused: unknown
+      try {
+        await p.client.setRostered(
+          'g1',
+          { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+          { background: true }
+        )
+      } catch (error) {
+        refused = error
+      }
+      expect(refused).property('code').equals('unavailable')
       expect(writes(p)).deep.equals(['/games/g1/events'])
       release!()
-      await pitch
-      expect(await change).deep.equals({ away: [], home: [201] })
-      expect(writes(p)).deep.equals(['/games/g1/events', '/games/g1/unroster'])
+      await pitched
+      await p.client.drainOutbox()
+      expect(writes(p)).deep.equals(['/games/g1/events'])
       expect(p.rows()).deep.equals([])
     })
 
@@ -4808,59 +5048,40 @@ describe('the phone outbox', function () {
       ])
     })
 
-    it('keeps a background write that fell back to a direct send readable, in flight and after a restart', async function () {
-      // g1 is not on the phone, so leaving a player off it goes direct, and
-      // the server holds it; g2 is.
+    it('refuses a background write of a game not on the phone, and lands another game’s beside it', async function () {
+      // g1 is not on the phone, so leaving a player off it has no answer of
+      // the phone's; g2 is.
       const p = phone(
         server(
           {
             '/games/g2': { ...gameFixture, id: 'g2' },
             '/teams/home/roster': homeRoster
           },
-          async sent => {
-            if (sent.path === '/games/g1/unroster')
-              return await new Promise<Answer>(() => undefined)
-            return { body: { away: [], home: [201] } }
-          }
+          () => ({ body: { away: [], home: [201] } })
         )
       )
       await p.client.game('g2')
       await p.client.roster('home')
-      const held = p.client.setRostered(
-        'g1',
-        { side: 'home', userId: userIdOfGumbo(201), rostered: false },
-        { background: true }
-      )
-      held.catch(() => undefined)
-      const out = (): boolean =>
-        p.rows().some(row => row.path === '/games/g1/unroster')
-      for (let tries = 0; !out() && tries < 100; tries++)
-        await new Promise(resolve => setTimeout(resolve, 5))
-      expect(
-        p.rows().map(row => [row.path, row.state, row.background])
-      ).deep.equals([['/games/g1/unroster', 'inflight', 1]])
-      // Another game's write lands beside it.
+      let refused: unknown
+      try {
+        await p.client.setRostered(
+          'g1',
+          { side: 'home', userId: userIdOfGumbo(201), rostered: false },
+          { background: true }
+        )
+      } catch (error) {
+        refused = error
+      }
+      expect(refused).property('code').equals('unavailable')
       await p.client.setRostered(
         'g2',
         { side: 'home', userId: userIdOfGumbo(201), rostered: false },
         { background: true }
       )
       await p.client.drainOutbox()
-      expect(p.rows().map(row => row.path)).deep.equals(['/games/g1/unroster'])
+      expect(p.rows()).deep.equals([])
       expect(p.document(gameKey('g2'))!.pending).equals(0)
-      // The app was killed with it out: the next launch sends it.
-      const again = phone(
-        server({}, () => ({ body: { away: [], home: [201] } }))
-      )
-      again.clock.now += 2 * LEASE_MS
-      again.client.wakeOutbox(true)
-      await again.client.drainOutbox()
-      await again.client.drainOutbox()
-      expect(again.rows()).deep.equals([])
-      expect(
-        again.posts().length +
-          again.sent.filter(call => call.method === 'PUT').length
-      ).greaterThan(0)
+      expect(writes(p)).deep.equals(['/games/g2/unroster'])
     })
 
     it('sends a background write with no file to keep it in as a plain request', async function () {
@@ -4880,6 +5101,829 @@ describe('the phone outbox', function () {
           { background: true }
         )
       ).deep.equals({ away: [], home: [3] })
+    })
+  })
+
+  describe('scoring that never waits (M5)', function () {
+    const tagged = (atBatIndex: number, tag: string | null): GumboPlay =>
+      ({
+        ...(play(atBatIndex) as object),
+        tagTargets: {
+          version: 1,
+          play: { id: `target_${atBatIndex}`, signature: 's', tag },
+          events: []
+        }
+      }) as unknown as GumboPlay
+    const tagOf = (document: Record<string, unknown> | undefined): unknown =>
+      (
+        JSON.parse(String(document?.body)) as {
+          plays: Array<{ gumbo: { tagTargets: { play: { tag: unknown } } } }>
+        }
+      ).plays[0].gumbo.tagTargets.play.tag
+    /** Waits for `ready`, letting the drain run between looks. */
+    const until = async (ready: () => boolean): Promise<void> => {
+      for (let tries = 0; !ready() && tries < 200; tries++)
+        await new Promise(resolve => setTimeout(resolve, 2))
+    }
+
+    it('gives a send of the queue the deadline: a send that never answers is no signal, and waits', async function () {
+      const p = phone(
+        server({ '/games/g1/lineups': lineupsDoc('D0') }, async () => {
+          return await new Promise<Answer>(() => undefined)
+        }),
+        undefined,
+        {},
+        20
+      )
+      await p.client.gameLineups('g1')
+      // Sent at once, it never answers: past the deadline it is queued as
+      // sent, and the queue waits for the signal.
+      await p.client.saveLineups('g1', lineupSave('D0'))
+      await p.client.drainOutbox()
+      expect(p.client.offline).equals(true)
+      expect(p.rows().map(row => [row.state, row.attempts])).deep.equals([
+        ['pending', 0]
+      ])
+    })
+
+    it('lands a save whose first send committed after the deadline, when its retry overlapped it', async function () {
+      // As the server's Idempotency-Key does: a request with a key already
+      // committed is answered as it was, and one whose key is still being
+      // written waits for it. There is no in-progress refusal.
+      const committed = new Map<string, Answer>()
+      const writing = new Map<string, Promise<void>>()
+      let digest = 'D0'
+      const p = phone(
+        async sent => {
+          if (sent.method === 'GET') return { body: lineupsDoc(digest) }
+          const key = sent.key!
+          const running = writing.get(key)
+          if (running != null) await running
+          const held = committed.get(key)
+          if (held != null) return held
+          let done!: () => void
+          writing.set(
+            key,
+            new Promise<void>(resolve => {
+              done = resolve
+            })
+          )
+          // Committing well past the phone's deadline.
+          await new Promise(resolve => setTimeout(resolve, 80))
+          digest = 'D1'
+          committed.set(key, { body: lineupsDoc('D1') })
+          done()
+          return committed.get(key)!
+        },
+        undefined,
+        {},
+        20
+      )
+      await p.client.gameLineups('g1')
+      await p.client.saveLineups('g1', lineupSave('D0'))
+      await p.client.drainOutbox()
+      expect(p.client.offline).equals(true)
+      // Sent again while the first is still being written: it waits too,
+      // past the deadline, and is no signal again, never a refusal.
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows().map(row => row.state)).deep.equals(['pending'])
+      await new Promise(resolve => setTimeout(resolve, 100))
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      const posts = p.posts()
+      expect(posts.length).greaterThanOrEqual(3)
+      expect(new Set(posts.map(call => call.key)).size).equals(1)
+      const doc = p.document(lineupsKey('g1'))!
+      expect([doc.pending, doc.server_digest]).deep.equals([0, 'D1'])
+      expect((await p.client.outboxSummary()).count).equals(0)
+    })
+
+    it('queues a swap only when asked, and sends Game Settings’ to the server', async function () {
+      expect(queuedCallOf('POST', '/games/g1/swap-sides', {})).equals(undefined)
+      expect(
+        queuedCallOf(
+          'POST',
+          '/games/g%201/swap-sides',
+          {},
+          undefined,
+          false,
+          undefined,
+          'swap'
+        )
+      ).deep.equals({
+        kind: 'swapSides',
+        gameId: 'g 1',
+        path: '/games/g%201/swap-sides',
+        body: {}
+      })
+      expect(
+        queuedCallOf(
+          'PUT',
+          '/games/g1/swap-sides',
+          {},
+          undefined,
+          false,
+          undefined,
+          'swap'
+        )
+      ).equals(undefined)
+      const p = phone(
+        server({ '/games/g1': { id: 'g1' } }, () => ({
+          body: {
+            homeTeamId: 'tem_away',
+            awayTeamId: 'tem_home',
+            generation: 0,
+            reset: { atBats: 0, innings: 0 }
+          }
+        }))
+      )
+      const answer = await p.client.swapGameSides('g1', {
+        homeTeamId: 'tem_home',
+        awayTeamId: 'tem_away'
+      })
+      expect(answer.homeTeamId).equals('tem_away')
+      expect(p.posts().map(call => [call.path, call.key])).deep.equals([
+        ['/games/g1/swap-sides', undefined]
+      ])
+      expect(p.rows()).deep.equals([])
+      // A swap the phone queues needs the game on the phone.
+      let refused: unknown
+      try {
+        await p.client.queueSwap('g9', 'swap')
+      } catch (error) {
+        refused = error
+      }
+      expect(refused).property('code').equals('unavailable')
+    })
+
+    /**
+     * A game's server: its sides, lineups and plays as the writes the phone
+     * sends change them, and every request in the order it came.
+     */
+    function gameServer(
+      options: {
+        /** The swap's answer names the new sides' lineups digest. */
+        swapDigest?: boolean
+        /** Another device saves the lineups once the swap has landed. */
+        otherDevice?: boolean
+      } = {}
+    ): {
+      handler: Handler
+      online: { value: boolean }
+      refuse: { swap?: Answer }
+      order: () => string[]
+    } {
+      const online = { value: false }
+      const refuse: { swap?: Answer } = {}
+      const log: string[] = []
+      let swapped = false
+      let generation = 1
+      let plays = [play(0)]
+      let digest = 'D0'
+      const events = (): unknown => ({
+        plays: plays.map((gumbo, index) => ({
+          id: `e${index}`,
+          gameId: 'g1',
+          gumbo
+        })),
+        currentPlay: null,
+        playsDigest: `plays-${plays.length}`,
+        lineupsDigest: digest,
+        generation
+      })
+      const game = (): unknown => ({
+        ...gameFixture,
+        id: 'g1',
+        homeTeamId: swapped ? 'tem_away' : 'tem_home',
+        awayTeamId: swapped ? 'tem_home' : 'tem_away',
+        homeTeamName: swapped ? 'Away' : 'Home',
+        awayTeamName: swapped ? 'Home' : 'Away',
+        generation
+      })
+      const lineups = (): unknown => ({
+        away: side(swapped ? 'tem_home' : 'tem_away'),
+        home: side(swapped ? 'tem_away' : 'tem_home'),
+        digest,
+        generation
+      })
+      const handler: Handler = sent => {
+        if (sent.method !== 'GET' && !online.value) return 'offline'
+        log.push(`${sent.method} ${sent.path}`)
+        if (sent.method === 'GET') {
+          // Saved from the other device between the swap and the next read.
+          if (options.otherDevice === true && digest === 'S1') digest = 'X1'
+          if (sent.path === '/games/g1') return { body: game() }
+          if (sent.path === '/games/g1/lineups') return { body: lineups() }
+          if (sent.path === '/games/g1/events') return { body: events() }
+          return refusal(404, 'notFound', 'Not found')
+        }
+        if (sent.path === '/games/g1/swap-sides') {
+          if (refuse.swap != null) return refuse.swap
+          const body = sent.body as Record<string, unknown>
+          if (
+            body.playsDigest !== `plays-${plays.length}` ||
+            body.generation !== generation
+          )
+            return refusal(
+              409,
+              'conflict',
+              "This game's plays changed. Open it again."
+            )
+          const lost = plays.length
+          swapped = true
+          plays = []
+          generation++
+          digest = 'S1'
+          return {
+            body: {
+              homeTeamId: 'tem_away',
+              awayTeamId: 'tem_home',
+              generation,
+              reset: { atBats: lost, innings: 1 },
+              ...(options.swapDigest === true ? { lineupsDigest: digest } : {})
+            }
+          }
+        }
+        const body = sent.body as {
+          plays: GumboPlay[]
+          lineupsBase?: string
+          generation?: number
+        }
+        if (body.lineupsBase != null && body.lineupsBase !== digest)
+          return refusal(409, 'conflict', 'Somebody else changed the lineups', {
+            stale: true
+          })
+        plays = [...plays, ...body.plays]
+        return { body: events() }
+      }
+      return { handler, online, refuse, order: () => log }
+    }
+
+    it('sends a swap after the plays queued ahead of it, with their digest and generation, and reads the game again before the next write', async function () {
+      const g = gameServer()
+      const p = phone(g.handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      // Offline: a pitch, then Reset and Swap, then a pitch on the new sides.
+      await p.client.saveGameEvents('g1', {
+        plays: [play(1)],
+        remove: [],
+        lineupsBase: 'D0',
+        generation: 1
+      })
+      const { answer, swapped } = await p.client.queueSwap('g1', 'reset')
+      // The swapped game and plays it wrote, for the screen to open on.
+      expect([swapped?.game.homeTeamId, swapped?.game.awayTeamId]).deep.equals([
+        'tem_away',
+        'tem_home'
+      ])
+      expect(swapped?.events.plays).deep.equals([])
+      expect(swapped?.events.generation).equals(2)
+      expect(answer).deep.equals({
+        homeTeamId: 'tem_away',
+        awayTeamId: 'tem_home',
+        generation: 2,
+        reset: { atBats: 2, innings: 1 }
+      })
+      // The phone's copy is swapped and reset at once, held until it lands.
+      const game = p.document(gameKey('g1'))!
+      expect(JSON.parse(String(game.body))).deep.include({
+        homeTeamId: 'tem_away',
+        generation: 2
+      })
+      expect(game.pending).equals(1)
+      expect(atBatsOf(p.document(eventsKey('g1')))).deep.equals([])
+      const local = JSON.parse(String(p.document(lineupsKey('g1'))!.body))
+        .digest as string
+      expect(local).match(/^local-/)
+      await p.client.saveGameEvents('g1', {
+        plays: [play(0, 9)],
+        remove: [],
+        lineupsBase: local,
+        generation: 2
+      })
+      expect(p.rows().map(row => row.path)).deep.equals([
+        '/games/g1/events',
+        '/games/g1/swap-sides',
+        '/games/g1/events'
+      ])
+      await p.client.drainOutbox()
+      g.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const order = g.order()
+      const swapAt = order.indexOf('POST /games/g1/swap-sides')
+      expect(
+        order.slice(0, swapAt).filter(line => line.startsWith('POST'))
+      ).deep.equals(['POST /games/g1/events'])
+      // Read again after the swap, before the next play is sent.
+      const after = order.slice(swapAt + 1)
+      const nextPost = after.indexOf('POST /games/g1/events')
+      expect(new Set(after.slice(0, nextPost))).deep.equals(
+        new Set([
+          'GET /games/g1',
+          'GET /games/g1/lineups',
+          'GET /games/g1/events'
+        ])
+      )
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      // The digest and generation the play ahead of it answered.
+      expect(sentSwap.body).deep.equals({
+        homeTeamId: 'tem_home',
+        awayTeamId: 'tem_away',
+        playsDigest: 'plays-2',
+        generation: 1
+      })
+      const last = p.posts()[p.posts().length - 1]
+      expect(last.body).deep.include({ lineupsBase: 'S1', generation: 2 })
+      expect(p.rows()).deep.equals([])
+      for (const key of [gameKey('g1'), lineupsKey('g1'), eventsKey('g1')])
+        expect(p.document(key)!.pending, key).equals(0)
+      expect(JSON.parse(String(p.document(gameKey('g1'))!.body))).deep.include({
+        homeTeamId: 'tem_away'
+      })
+    })
+
+    it('builds the write after a swap on the digest the swap answered, so another device’s lineups since park it', async function () {
+      const g = gameServer({ swapDigest: true, otherDevice: true })
+      const p = phone(g.handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      await p.client.queueSwap('g1', 'reset')
+      const local = JSON.parse(String(p.document(lineupsKey('g1'))!.body))
+        .digest as string
+      expect(local).match(/^local-/)
+      await p.client.saveGameEvents('g1', {
+        plays: [play(0, 9)],
+        remove: [],
+        lineupsBase: local,
+        generation: 2
+      })
+      await p.client.drainOutbox()
+      g.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      // Read again after the swap, the other device's digest is the server's;
+      // the play still names the swap's, and is refused as stale.
+      expect(g.order()).includes('GET /games/g1/lineups')
+      const last = p.posts()[p.posts().length - 1]
+      expect(last.path).equals('/games/g1/events')
+      expect(last.body).deep.include({ lineupsBase: 'S1', generation: 2 })
+      expect(
+        p.rows().map(row => [row.path, row.state, row.message])
+      ).deep.equals([
+        ['/games/g1/events', 'parked', 'Somebody else changed the lineups']
+      ])
+      expect((await p.client.outboxSummary()).games.g1.state).equals('parked')
+    })
+
+    it('sends a reset the file cannot queue with its digest and generation, and never its effect', async function () {
+      const g = gameServer()
+      let broken = false
+      const p = phone(g.handler, store => ({
+        ...store,
+        atomically: async work => {
+          if (broken) throw new Error('database is locked')
+          return await store.atomically(work)
+        }
+      }))
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      g.online.value = true
+      broken = true
+      const { answer } = await p.client.queueSwap('g1', 'reset')
+      expect(answer).deep.include({ homeTeamId: 'tem_away', generation: 2 })
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      expect(sentSwap.body).deep.equals({
+        homeTeamId: 'tem_home',
+        awayTeamId: 'tem_away',
+        playsDigest: 'plays-1',
+        generation: 1
+      })
+      expect(sentSwap.key).equals(undefined)
+    })
+
+    it('sends a reset with the digest and generation of documents an earlier build stored, with no server copy column', async function () {
+      const g = gameServer()
+      const p = phone(g.handler)
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      // Stored before the server_body column: the upgrade left it NULL.
+      p.sql('UPDATE documents SET server_body = NULL')
+      expect(p.document(eventsKey('g1'))!.server_body).equals(null)
+      g.online.value = false
+      await p.client.queueSwap('g1', 'reset')
+      g.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      expect(sentSwap.body).deep.equals({
+        homeTeamId: 'tem_home',
+        awayTeamId: 'tem_away',
+        playsDigest: 'plays-1',
+        generation: 1
+      })
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('sends a reset the file cannot queue with the digest and generation an earlier build stored', async function () {
+      const g = gameServer()
+      let broken = false
+      const p = phone(g.handler, store => ({
+        ...store,
+        atomically: async work => {
+          if (broken) throw new Error('database is locked')
+          return await store.atomically(work)
+        }
+      }))
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      p.sql('UPDATE documents SET server_body = NULL')
+      broken = true
+      await p.client.queueSwap('g1', 'reset')
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      expect(sentSwap.body).deep.include({
+        playsDigest: 'plays-1',
+        generation: 1
+      })
+    })
+
+    it('prepares a body it sends without the file as the queue would', function () {
+      expect(
+        preparedWithoutStore(
+          {
+            kind: 'swapSides',
+            gameId: 'g1',
+            path: '/games/g1/swap-sides',
+            body: {}
+          },
+          { homeTeamId: 'h', awayTeamId: 'a', effect: 'swap' }
+        )
+      ).deep.equals({ homeTeamId: 'h', awayTeamId: 'a' })
+      const sides = { homeTeamId: 'h', awayTeamId: 'a' }
+      expect(
+        preparedWithoutStore(
+          {
+            kind: 'swapSides',
+            gameId: 'g1',
+            path: '/games/g1/swap-sides',
+            body: {}
+          },
+          sides
+        )
+      ).equals(sides)
+      const events = queuedCallOf('POST', '/games/g1/events', { mode: 'live' })!
+      expect(
+        preparedWithoutStore(events, { plays: [], lineupsBase: 'local-1' })
+      ).deep.equals({ plays: [] })
+      const kept = { plays: [], lineupsBase: 'D0' }
+      expect(preparedWithoutStore(events, kept)).equals(kept)
+      const lineups = queuedCallOf('POST', '/games/g1/lineups', {})!
+      expect(lineups.kind).equals('lineups')
+      expect(
+        preparedWithoutStore(lineups, { away: {}, base: 'local-2' })
+      ).deep.equals({ away: {}, base: '' })
+      expect(preparedWithoutStore(lineups, 'raw')).equals('raw')
+      const rename = queuedCallOf('PUT', '/games/g1/guest-players/7', {})!
+      const named = { name: 'x' }
+      expect(preparedWithoutStore(rename, named)).equals(named)
+    })
+
+    it('holds the game on a refused swap: a dead row, the held game’s notice', async function () {
+      const g = gameServer()
+      g.refuse.swap = refusal(
+        409,
+        'conflict',
+        "This game's teams changed. Open it again."
+      )
+      const p = phone(g.handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      await p.client.queueSwap('g1', 'swap')
+      g.online.value = true
+      await p.client.drainOutbox()
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(
+        p.rows().map(row => [row.path, row.state, row.message])
+      ).deep.equals([
+        [
+          '/games/g1/swap-sides',
+          'dead',
+          "This game's teams changed. Open it again."
+        ]
+      ])
+      expect((await p.client.outboxSummary()).games.g1).deep.equals({
+        state: 'dead',
+        message: "This game's teams changed. Open it again."
+      })
+      // Use Server's Copy gives it up and reads the server's sides back.
+      expect(await p.client.discardGame('g1')).equals(true)
+      expect(JSON.parse(String(p.document(gameKey('g1'))!.body))).deep.include({
+        homeTeamId: 'tem_home'
+      })
+    })
+
+    /** The fixture's teams by side, and the same exchanged. */
+    const FIXTURE_TEAMS = {
+      away: { id: gameFixture.awayTeamId, name: gameFixture.awayTeamName },
+      home: { id: gameFixture.homeTeamId, name: gameFixture.homeTeamName }
+    }
+    const SWAPPED_TEAMS = { away: FIXTURE_TEAMS.home, home: FIXTURE_TEAMS.away }
+    const NINE = (from: number): number[] =>
+      Array.from({ length: 9 }, (_, i) => from + i)
+
+    /**
+     * A game scored for real, as the server answers it (each record by side,
+     * version 2): lineups saved with the Owls' (away, batting 1–9) confirmed
+     * and the Hawks' (home, 10–18) unseen, a strikeout, then a ball.
+     */
+    async function recorded(): Promise<{
+      plays: unknown[]
+      currentPlay: unknown
+    }> {
+      const kept = memoryStore()
+      const session = ScoringSession.start(
+        kept,
+        'g1',
+        scoringSession(gameFixture)
+      )
+      expect(
+        session.apply({
+          type: 'lineup',
+          kind: 'roster',
+          setup: setupOf(session.state),
+          confirmed: ['away'],
+          unseen: ['home']
+        }).problems
+      ).deep.equals([])
+      for (const call of ['C', 'C', 'C', 'B'] as const)
+        expect(session.apply({ type: 'pitch', call }).problems).deep.equals([])
+      await session.flush()
+      const stored = kept.games.get('g1')!
+      const wire = (play: unknown): unknown => playForWire(play, FIXTURE_TEAMS)
+      return {
+        plays: stored.plays.map(wire),
+        currentPlay: wire(stored.currentPlay)
+      }
+    }
+
+    /**
+     * A phone that scored a pitch offline and queued `effect` behind it; the
+     * link comes back for the pitch, and the swap is held by a 503.
+     */
+    async function pitchLandsSwapHeld(effect: 'swap' | 'reset'): Promise<{
+      p: ReturnType<typeof phone>
+      answered: { plays: unknown[]; currentPlay: unknown }
+    }> {
+      const answered = await recorded()
+      let online = false
+      const events = (body: {
+        plays: unknown[]
+        currentPlay: unknown
+      }): Record<string, unknown> => ({
+        plays: body.plays.map((gumbo, index) => ({
+          id: `e${index}`,
+          gameId: 'g1',
+          gumbo
+        })),
+        currentPlay: body.currentPlay,
+        playsDigest: `plays-${body.plays.length}`,
+        lineupsDigest: 'D0',
+        generation: 1
+      })
+      const handler: Handler = sent => {
+        if (sent.method === 'GET') {
+          if (sent.path === '/games/g1')
+            return { body: { ...gameFixture, generation: 1 } }
+          if (sent.path === '/games/g1/lineups')
+            return {
+              body: {
+                away: side('away'),
+                home: side('home'),
+                digest: 'D0',
+                generation: 1
+              }
+            }
+          if (sent.path === '/games/g1/events')
+            return { body: events({ plays: [], currentPlay: null }) }
+          return refusal(404, 'notFound', 'Not found')
+        }
+        if (!online) return 'offline'
+        if (sent.path === '/games/g1/swap-sides')
+          return refusal(503, 'unavailable', 'Try again')
+        return { body: events(answered) }
+      }
+      const p = phone(handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      await p.client.saveGameEvents('g1', {
+        plays: [play(1)],
+        remove: [],
+        lineupsBase: 'D0',
+        generation: 1
+      })
+      await p.client.queueSwap('g1', effect)
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      // The pitch landed; the swap is still queued over the server's answer.
+      expect(p.rows().map(row => row.path)).deep.equals([
+        '/games/g1/swap-sides'
+      ])
+      expect(JSON.parse(String(p.document(gameKey('g1'))!.body))).deep.include({
+        homeTeamId: 'away',
+        awayTeamId: 'home'
+      })
+      return { p, answered }
+    }
+
+    /** The stored events' plays and at-bat, by the swapped sides. */
+    function storedBySide(p: ReturnType<typeof phone>): {
+      plays: unknown[]
+      currentPlay: unknown
+    } {
+      const held = p.document(eventsKey('g1'))!
+      expect(held.pending).equals(1)
+      const body = JSON.parse(String(held.body)) as {
+        plays: Array<{ gumbo: unknown }>
+        currentPlay: unknown
+      }
+      return {
+        plays: body.plays.map(row => row.gumbo),
+        currentPlay: body.currentPlay
+      }
+    }
+
+    /** The scoring screen opened again from the phone's copy, by its sides. */
+    async function reopened(
+      p: ReturnType<typeof phone>
+    ): Promise<ReturnType<typeof setupOf>> {
+      const game = {
+        ...gameFixture,
+        homeTeamId: gameFixture.awayTeamId,
+        awayTeamId: gameFixture.homeTeamId,
+        homeTeamName: gameFixture.awayTeamName,
+        awayTeamName: gameFixture.homeTeamName
+      }
+      const session = await ScoringSession.open(
+        {
+          load: async (gameId: string) => await p.client.gameEvents(gameId),
+          save: async (gameId: string, change: SaveChange) =>
+            await p.client.saveGameEvents(gameId, change)
+        },
+        'g1',
+        {
+          gamePk: 'g1',
+          teams: SWAPPED_TEAMS,
+          setup: setupOf(scoringSession(game))
+        }
+      )
+      return setupOf(session.state)
+    }
+
+    it('re-applies a held swap over the plays that landed ahead of it with each team’s lineup on its new side', async function () {
+      const { p, answered } = await pitchLandsSwapHeld('swap')
+      const stored = storedBySide(p)
+      expect(stored.plays.length).equals(answered.plays.length)
+      for (const [i, gumbo] of stored.plays.entries()) {
+        const before = recordOf(answered.plays[i], FIXTURE_TEAMS)!
+        const after = recordOf(gumbo, SWAPPED_TEAMS)!
+        expect(after.setupBefore.sides).deep.equals({
+          away: before.setupBefore.sides.home,
+          home: before.setupBefore.sides.away
+        })
+      }
+      const first = recordOf(stored.plays[0], SWAPPED_TEAMS)!
+      const [saved] = first.actions as Array<{
+        type: string
+        confirmed?: string[]
+        unseen?: string[]
+      }>
+      expect(saved.type).equals('lineup')
+      // The Owls confirmed theirs and are home now; the Hawks', unseen, away.
+      expect(saved.confirmed).deep.equals(['home'])
+      expect(saved.unseen).deep.equals(['away'])
+      expect(
+        recordOf(stored.currentPlay, SWAPPED_TEAMS)!.setupBefore.sides.away
+          .battingOrder
+      ).deep.equals(NINE(10))
+      // Opened again from that copy, each team bats its own lineup.
+      const setup = await reopened(p)
+      expect(setup.sides.away.battingOrder).deep.equals(NINE(10))
+      expect(setup.sides.home.battingOrder).deep.equals(NINE(1))
+    })
+
+    it('re-applies a held Reset and Swap over the plays that landed ahead of it, rewound to each team’s lineup on its new side', async function () {
+      const { p } = await pitchLandsSwapHeld('reset')
+      const stored = storedBySide(p)
+      expect(stored.plays).deep.equals([])
+      const pregame = recordOf(stored.currentPlay, SWAPPED_TEAMS)!
+      expect(pregame.setupBefore.sides.away.battingOrder).deep.equals(NINE(10))
+      expect(pregame.setupBefore.sides.home.battingOrder).deep.equals(NINE(1))
+      const [saved] = pregame.actions as Array<{
+        confirmed?: string[]
+        unseen?: string[]
+      }>
+      expect(saved.confirmed).deep.equals(['home'])
+      expect(saved.unseen).deep.equals(['away'])
+      const setup = await reopened(p)
+      expect(setup.sides.away.battingOrder).deep.equals(NINE(10))
+      expect(setup.sides.home.battingOrder).deep.equals(NINE(1))
+    })
+
+    it('answers a tag from the phone, and sends it and its removal in order, the removal with no body', async function () {
+      let online = false
+      const p = phone(
+        server(
+          { '/games/g1/events': eventsDoc('g1', 'D0', [tagged(0, null)]) },
+          sent =>
+            online
+              ? {
+                  body: {
+                    targetId: 'target_0',
+                    tag: sent.method === 'DELETE' ? null : 'great catch',
+                    revision: '7'
+                  }
+                }
+              : 'offline'
+        )
+      )
+      await p.client.gameEvents('g1')
+      const put = await p.client.saveEventTag('g1', 'target_0', 'great catch')
+      expect(put).deep.include({ targetId: 'target_0', tag: 'great catch' })
+      expect(put.revision.length).greaterThan(1)
+      expect(tagOf(p.document(eventsKey('g1')))).equals('great catch')
+      const removed = await p.client.saveEventTag('g1', 'target_0', null)
+      expect(removed).deep.include({ targetId: 'target_0', tag: null })
+      // Each later than the last, so the screen keeps the newest.
+      expect(removed.revision > put.revision).equals(true)
+      expect(tagOf(p.document(eventsKey('g1')))).equals(null)
+      expect(p.rows().map(row => [row.method, row.chain])).deep.equals([
+        ['PUT', 'game:g1'],
+        ['DELETE', 'game:g1']
+      ])
+      await p.client.drainOutbox()
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const writes = p.sent.filter(call => call.key != null)
+      expect(
+        writes.map(call => [call.method, call.path, call.body]).slice(-2)
+      ).deep.equals([
+        ['PUT', '/games/g1/tags/target_0', { tag: 'great catch' }],
+        ['DELETE', '/games/g1/tags/target_0', undefined]
+      ])
+      expect(p.rows()).deep.equals([])
+      expect(p.document(eventsKey('g1'))!.pending).equals(0)
+    })
+
+    it('writes a tag queued behind a play onto that play’s answer once it lands', async function () {
+      let online = false
+      const p = phone(
+        server(
+          { '/games/g1/events': eventsDoc('g1', 'D0', [tagged(0, null)]) },
+          sent => {
+            if (!online) return 'offline'
+            if (sent.path.includes('/tags/'))
+              return {
+                body: { targetId: 'target_0', tag: 'nice', revision: '8' }
+              }
+            return { body: eventsDoc('g1', 'D1', [tagged(0, null), play(1)]) }
+          }
+        )
+      )
+      await p.client.gameEvents('g1')
+      await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
+      await p.client.saveEventTag('g1', 'target_0', 'nice')
+      await p.client.drainOutbox()
+      online = true
+      // The play lands first: the tag behind it is written over its answer.
+      p.client.wakeOutbox(true)
+      await until(() => p.rows().length < 2)
+      expect(tagOf(p.document(eventsKey('g1')))).equals('nice')
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      expect(tagOf(p.document(eventsKey('g1')))).equals('nice')
     })
   })
 })

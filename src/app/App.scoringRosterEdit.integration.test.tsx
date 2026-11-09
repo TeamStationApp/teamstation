@@ -284,46 +284,25 @@ describe('actual App scoring player Settings return', function () {
       TeamStationClient.prototype.roster = roster
     }
   })
-  it('shares one leave decision across repeated Home taps and recovers after Cancel', async function () {
+  it('leaves for Home at once with scoring writes still out, and asks nothing', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
       await openEditor()
-      await press('Lineup')
-      const was = await moveDown('Aaron Judge')
       await press('Roster')
       await press('Mookie Betts,')
       await waitFor(
         () => document.body.textContent?.includes('JERSEY NUMBER') === true
       )
+      // The web goes on sending the pitch once the screen has closed.
       await press('Home')
       await press('Home')
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Cancel')
+      await waitFor(() => currentRoute().name === 'home')
       expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
         null
       )
-      expect(currentRoute()).includes({
-        name: 'player',
-        userId: userIdOfGumbo(100)
-      })
-      expect(document.body.textContent).includes('JERSEY NUMBER')
-      await press('Back')
-      await press('Lineup')
-      expect(slotOf('Aaron Judge')).not.equals(was)
-      await press('Roster')
-      await press('Mookie Betts,')
-      await waitFor(
-        () => document.body.textContent?.includes('JERSEY NUMBER') === true
-      )
-      await press('Home')
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Discard and Exit')
-      await waitFor(() => currentRoute().name === 'home')
+      fixture.pauseWrites(false)
+      await settle()
     })
   })
   const openNotifications = async (): Promise<void> => {
@@ -339,33 +318,24 @@ describe('actual App scoring player Settings return', function () {
     await press('Notifications')
   }
 
-  it('protects Notifications navigation while scoring writes are pending', async function () {
+  it('opens Notifications at once while scoring writes are pending', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
       await openEditor()
       await press('Mookie Betts,')
       await openNotifications()
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Cancel')
-      expect(currentRoute()).includes({
-        name: 'player',
-        userId: userIdOfGumbo(100)
-      })
-      expect(document.body.textContent).includes('JERSEY NUMBER')
-      await openNotifications()
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Discard and Exit')
       await waitFor(() => currentRoute().name === 'notifications')
+      expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
+        null
+      )
       await press('Back')
       await waitFor(() => currentRoute().name === 'home')
       expect(document.querySelector('[aria-label="Open scoring menu"]')).equals(
         null
       )
+      fixture.pauseWrites(false)
+      await settle()
     })
   })
   it('ignores a prior scorer lifetime reply after reopening the same game', async function () {
@@ -431,15 +401,19 @@ describe('actual App scoring player Settings return', function () {
         await press('Cancel')
         await openEditor()
         await press('Home')
+        // The sheet reads the roles again behind the rosters it shows, with
+        // no loading view: the home row turns editable once that read lands.
+        // Role reads are held only after it, or the hold catches it.
         await waitFor(
           () =>
-            document.querySelector('[aria-label="Loading team roster"]') == null
+            document.querySelector('[aria-label="Loading team roster"]') ==
+              null &&
+            [...document.querySelectorAll('[role="button"][aria-label]')].some(
+              node =>
+                node.getAttribute('aria-label')?.startsWith('Mookie Betts,') ===
+                  true && node.getAttribute('aria-disabled') !== 'true'
+            )
         )
-        expect(
-          document
-            .querySelector('[aria-label^="Mookie Betts,"]')
-            ?.getAttribute('aria-disabled')
-        ).not.equals('true')
         fixture.pauseRoleReads(true)
         await press('Mookie Betts,')
         expect(currentRoute()).includes({
@@ -466,13 +440,14 @@ describe('actual App scoring player Settings return', function () {
       await fixture.roles(['scorekeeper'], 'team', ['away'])
       await openEditor()
       // Anybody signed in reads another team's roster, short names only, so
-      // the opponent's is there without the right to manage it.
-      expect(
+      // the opponent's is there without the right to manage it. The sheet
+      // reads it behind the rosters it shows, with no loading view.
+      await waitFor(() =>
         fixture.trace.some(
           line =>
             line.includes('/teams/home/roster ') && line.includes('-> 200')
         )
-      ).equals(true)
+      )
       expect(
         document
           .querySelector('[aria-label^="Mookie Betts,"]')
@@ -684,7 +659,7 @@ describe('actual App scoring player Settings return', function () {
         })
       }
     )
-  it('keeps the browser exit guard live through Discard and cancels back to the same roster', async function () {
+  it('goes Back from scoring at once with writes still out', async function () {
     await withScoringApp(async fixture => {
       fixture.pauseWrites(true)
       await press('Ball')
@@ -692,23 +667,16 @@ describe('actual App scoring player Settings return', function () {
       await act(async () => {
         window.history.back()
       })
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Cancel')
-      expect(document.body.textContent).includes('Tap player to edit.')
-      await act(async () => {
-        window.history.back()
-      })
-      await waitFor(
-        () => document.querySelector('[aria-label="Discard and Exit"]') != null
-      )
-      await press('Discard and Exit')
       await waitFor(() => currentRoute().name === 'scoreOptions')
       expect(currentRoute()).includes({
         name: 'scoreOptions',
         gameId: fixture.gameId
       })
+      expect(document.querySelector('[aria-label="Discard and Exit"]')).equals(
+        null
+      )
+      fixture.pauseWrites(false)
+      await settle()
     })
   })
   it('keeps names hidden when Save finishes during a revoked-role recheck', async function () {
@@ -721,13 +689,10 @@ describe('actual App scoring player Settings return', function () {
       await act(async () => {
         root.render(<App apiBaseUrl={fixture.url + '/api/v1'} />)
       })
-      for (
-        let count = 0;
-        count < 30 &&
-        document.querySelector('[aria-label="Open scoring menu"]') == null;
-        count++
+      // However long a loaded machine takes.
+      await waitFor(
+        () => document.querySelector('[aria-label="Open scoring menu"]') != null
       )
-        await settle()
       await press('Open scoring menu')
       await press('Set Team Rosters')
       await press('Roster')
@@ -735,25 +700,18 @@ describe('actual App scoring player Settings return', function () {
       await type('Jersey number', '16')
       fixture.pauseSettingsResponses(true)
       await press('Save')
-      for (
-        let count = 0;
-        count < 30 &&
-        !fixture.trace.some(line => line.startsWith('Captured settings PUT'));
-        count++
+      // However long a loaded machine takes.
+      await waitFor(() =>
+        fixture.trace.some(line => line.startsWith('Captured settings PUT'))
       )
-        await settle()
       expect(
         fixture.trace.some(line => line.startsWith('Captured settings PUT'))
       ).equals(true)
       await fixture.roles([])
       fixture.pauseRoleReads(true)
       await press('Back')
-      for (
-        let count = 0;
-        count < 30 && !fixture.trace.includes('Captured roles GET');
-        count++
-      )
-        await settle()
+      // However long a loaded machine takes.
+      await waitFor(() => fixture.trace.includes('Captured roles GET'))
       expect(fixture.trace.includes('Captured roles GET')).equals(true)
       fixture.pauseSettingsResponses(false)
       await waitFor(() =>
@@ -801,13 +759,10 @@ describe('actual App scoring player Settings return', function () {
       await act(async () => {
         root.render(<App apiBaseUrl={fixture.url + '/api/v1'} />)
       })
-      for (
-        let count = 0;
-        count < 30 &&
-        document.querySelector('[aria-label="Open scoring menu"]') == null;
-        count++
+      // However long a loaded machine takes.
+      await waitFor(
+        () => document.querySelector('[aria-label="Open scoring menu"]') != null
       )
-        await settle()
       await press('Open scoring menu')
       await press('Set Team Rosters')
       await press('Roster')
@@ -817,27 +772,22 @@ describe('actual App scoring player Settings return', function () {
       await press('Save')
       fixture.pauseRosterReads(true)
       await press('Back')
-      for (
-        let count = 0;
-        count < 30 &&
-        !fixture.trace.some(line => line.startsWith('Captured roster GET'));
-        count++
+      // However long a loaded machine takes.
+      await waitFor(() =>
+        fixture.trace.some(line => line.startsWith('Captured roster GET'))
       )
-        await settle()
       expect(
         fixture.trace.some(line => line.startsWith('Captured roster GET'))
       ).equals(true)
       // Keep the captured stale read held while permitting fresh reads.
       fixture.pauseRosterReads(false, false)
       fixture.pauseSettings(false)
-      for (
-        let count = 0;
-        count < 30 &&
-        document.querySelector('[aria-label^="Mookie Betts, jersey 15"]') ==
-          null;
-        count++
+      // However long a loaded machine takes.
+      await waitFor(
+        () =>
+          document.querySelector('[aria-label^="Mookie Betts, jersey 15"]') !=
+          null
       )
-        await settle()
       expect(
         document.querySelector('[aria-label^="Mookie Betts, jersey 15"]')
       ).not.equals(null)
@@ -904,13 +854,10 @@ describe('actual App scoring player Settings return', function () {
       await act(async () => {
         root.render(<App apiBaseUrl={fixture.url + '/api/v1'} />)
       })
-      for (
-        let count = 0;
-        count < 30 &&
-        document.querySelector('[aria-label="Open scoring menu"]') == null;
-        count++
+      // However long a loaded machine takes.
+      await waitFor(
+        () => document.querySelector('[aria-label="Open scoring menu"]') != null
       )
-        await settle()
       expect(opens).equals(1)
       await press('Ball')
       await press('Open scoring menu')
