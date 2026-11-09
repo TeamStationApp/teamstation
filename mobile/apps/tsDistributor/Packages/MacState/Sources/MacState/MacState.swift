@@ -5,11 +5,31 @@ import Foundation
 /// here, written whole and atomically, so a crash leaves the old file or the new one and never
 /// half of either.
 public final class MacState: @unchecked Sendable {
-  public static let keychainPrefix = "app.teamstation.distributor"
+  /// TS Distributor's own bundle id. A build under another id, the develop app, keeps its folder,
+  /// its Keychain items and its API port apart, so it can run beside this one.
+  public static let productionBundleID = "app.teamstation.distributor"
+
+  /// Whether a build with this bundle id is TS Distributor itself; one with none is.
+  public static func isProduction(bundleID: String?) -> Bool {
+    bundleID == nil || bundleID == productionBundleID
+  }
+
+  /// What this build's Keychain services start with: its bundle id.
+  public static func keychainPrefix(bundleID: String?) -> String {
+    bundleID ?? productionBundleID
+  }
+
+  public static var keychainPrefix: String { keychainPrefix(bundleID: Bundle.main.bundleIdentifier) }
+
+  /// The folder's name in Application Support: `TS Distributor`, or the bundle id of another build.
+  public static func folderName(bundleID: String?) -> String {
+    guard let bundleID, !isProduction(bundleID: bundleID) else { return "TS Distributor" }
+    return bundleID
+  }
 
   public static var standardFolder: URL {
     FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-      .appendingPathComponent("TS Distributor", isDirectory: true)
+      .appendingPathComponent(folderName(bundleID: Bundle.main.bundleIdentifier), isDirectory: true)
   }
 
   public let folder: URL
