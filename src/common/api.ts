@@ -2028,6 +2028,11 @@ export interface GamesPageQuery {
   limit?: number
 }
 
+/** The read of an event's Info section, for one team's attendance or none. */
+export function eventInfoPath(eventId: string, teamId?: string): string {
+  return `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`
+}
+
 function gamesPageParams(query: GamesPageQuery): string {
   const params = ['paged=1']
   if (query.when != null && query.when !== 'all')
@@ -5501,11 +5506,7 @@ export class TeamStationClient {
   }
 
   async eventInfo(eventId: string, teamId?: string): Promise<EventInfo> {
-    return await this.request(
-      'GET',
-      `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`,
-      asEventInfo
-    )
+    return await this.request('GET', eventInfoPath(eventId, teamId), asEventInfo)
   }
 
   async eventLocation(
