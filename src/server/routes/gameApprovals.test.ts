@@ -28,6 +28,7 @@ import {
   WITHDRAWN_GAME
 } from '../games/resetSwap'
 import { SWAP_REFUSED } from '../games/swapSides'
+import { setRostered } from '../games/unroster'
 import { realClock } from '../groups/requests'
 import { setScopeRoles } from '../invites/people'
 import { SCORER_SWAP_BEGUN } from '../schedule/gameApprovals'
@@ -426,12 +427,15 @@ describe('swapping home and away from the scoring screen', function () {
     expect((await events(gameId)).swap).equals('swap')
     const answer = await swap(gameId, 104)
     expect(answer.status).equals(200)
-    expect(await json(answer)).deep.equals({
+    // With the lineups digest the new sides are read with.
+    const swapped = {
       homeTeamId: f.teamA,
       awayTeamId: f.teamB,
       generation: 0,
-      reset: { atBats: 0, innings: 0 }
-    })
+      reset: { atBats: 0, innings: 0 },
+      lineupsDigest: (await events(gameId)).lineupsDigest
+    }
+    expect(await json(answer)).deep.equals(swapped)
     const game = await row(gameId)
     expect([game.home_team_id, game.away_team_id]).deep.equals([
       f.teamA,
@@ -450,12 +454,7 @@ describe('swapping home and away from the scoring screen', function () {
       awayTeamId: f.teamA
     })
     expect(again.status).equals(200)
-    expect(await json(again)).deep.equals({
-      homeTeamId: f.teamA,
-      awayTeamId: f.teamB,
-      generation: 0,
-      reset: { atBats: 0, innings: 0 }
-    })
+    expect(await json(again)).deep.equals(swapped)
     expect(await row(gameId)).deep.equals(game)
     expect(written).deep.equals([gameId])
 
@@ -466,6 +465,52 @@ describe('swapping home and away from the scoring screen', function () {
     })
     expect(elsewhere.status).equals(409)
     expect(await row(gameId)).deep.equals(game)
+  })
+
+  it('answers a swap with the new sides’ lineups digest, so a save built on it is refused as stale once another device changed the lineups', async function () {
+    const gameId = await published('menu-swap-digest')
+    await saveLineups(gameId)
+    await giveRoles()
+    const answer = await json(await swap(gameId, 104))
+    const digest = answer.lineupsDigest
+    expect(digest).a('string')
+    // The digest a read right after the swap gives.
+    expect((await events(gameId)).lineupsDigest).equals(digest)
+    // Another device leaves a player of team A's, home now, off.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(players - 18),
+        team_id: f.teamA,
+        role: 'member',
+        is_player: true,
+        jersey: '1'
+      })
+      .execute()
+    await setRostered(
+      f.h.db,
+      { userId: userIdOfGumbo(101), isAdmin: false, scopes: [] },
+      gameId,
+      { side: 'home', userId: userIdOfGumbo(players - 18), rostered: false }
+    )
+    const read = await events(gameId)
+    expect(read.lineupsDigest).not.equals(digest)
+    // The scorer's first save after the swap, on the swap's digest.
+    const saved = await f.h.request(
+      'POST',
+      `/hooked/games/${gameId}/events`,
+      {
+        mode: 'live',
+        source: { system: 'teamstation' },
+        lineupsBase: digest,
+        plays: [],
+        currentPlay: read.currentPlay
+      },
+      104
+    )
+    expect(saved.status).equals(409)
+    expect(JSON.stringify(await json(saved))).contains('"stale":true')
   })
 
   it('refuses whoever may not score the game, and a game that is not there', async function () {
@@ -625,7 +670,8 @@ describe('swapping home and away from the scoring screen', function () {
       homeTeamId: f.teamA,
       awayTeamId: f.teamB,
       generation: 1,
-      reset: { atBats: 7, innings: 2 }
+      reset: { atBats: 7, innings: 2 },
+      lineupsDigest: (await events(gameId)).lineupsDigest
     })
     // Every screen holding the plays reads them again.
     expect(readAgain).not.deep.equals([])
@@ -730,7 +776,8 @@ describe('swapping home and away from the scoring screen', function () {
       homeTeamId: f.teamA,
       awayTeamId: f.teamB,
       generation: 1,
-      reset: { atBats: 0, innings: 0 }
+      reset: { atBats: 0, innings: 0 },
+      lineupsDigest: (await events(gameId)).lineupsDigest
     })
     expect(await gameRow(gameId)).deep.equals(after)
     expect(written).deep.equals([gameId])
