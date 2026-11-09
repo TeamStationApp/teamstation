@@ -57,6 +57,7 @@ export function GroupRelationshipRow({
                 accessibilityLabel={`Open ${link.label}`}
                 kind="text"
                 small
+                wrapLabel
                 onPress={() => {
                   link.onPress()
                 }}

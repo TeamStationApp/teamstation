@@ -28,6 +28,8 @@ const palette = {
 
   emeraldGreen: '#22c55e',
   coralRed: '#ef4444',
+  crimson: '#BA1A1A',
+  deepGreen: '#24713D',
   amber: '#ffa500',
   gold: '#DAA520',
   scoreBlue: '#1D4ED8',
@@ -65,6 +67,7 @@ export const tsDark: Theme = {
   cardBackgroundColor: palette.tsBeige,
   cardBackgroundDark: palette.tsDarkOlive,
   containerBackgroundColor: palette.tsVeryDarkGreen,
+  textButtonPressedColor: palette.tsVeryDarkGreen,
   inactiveBackgroundColor: palette.tsDarkOlive,
   overlayBackgroundColor: palette.blackOp70,
 
@@ -100,6 +103,8 @@ export const tsDark: Theme = {
   inputTextColor: palette.tsVeryDarkGreen,
 
   activeColor: palette.coralRed,
+  emblemColor: palette.coralRed,
+  plateIconColor: palette.tsBeige,
   scoringInstructionBackground: '#665016',
   scoringInstructionBorder: '#c5a13c',
   scoringStatusText: '#665016',
@@ -115,6 +120,9 @@ export const tsDark: Theme = {
   successColor: palette.tsLightOlive,
   warningColor: palette.amber,
   dangerColor: palette.coralRed,
+  cardDangerColor: palette.crimson,
+  cardSuccessColor: palette.deepGreen,
+  cardDetailColor: palette.selectorGray,
   addEventCardColor: palette.blue,
   addEventCardTextColor: '#000000',
   linkTextColor: palette.blue,

@@ -65,12 +65,12 @@ export function Emblem(props: EmblemProps): React.ReactElement {
         style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
       >
         {icon != null ? (
-          <Icon name={icon} size={size / 2} color={theme.activeColor} />
+          <Icon name={icon} size={size / 2} color={theme.emblemColor} />
         ) : props.fitInitials === true ? (
           <FittedInitials
             letters={fallback}
             size={size}
-            color={tint != null ? '#FFFFFF' : theme.activeColor}
+            color={tint != null ? '#FFFFFF' : theme.emblemColor}
           />
         ) : (
           <Text
@@ -117,7 +117,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1),
     fontWeight: '700',
-    color: theme.activeColor
+    color: theme.emblemColor
   },
   lettersOnTint: {
     color: '#FFFFFF'

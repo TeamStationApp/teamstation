@@ -15,6 +15,7 @@ export function scoringSheetTheme(theme: Theme): Theme {
     backgroundColor: surface.canvas,
     cardBackgroundColor: surface.idle,
     containerBackgroundColor: surface.canvas,
+    textButtonPressedColor: surface.canvas,
     inactiveBackgroundColor: surface.idle,
     primaryTextColor: surface.text,
     secondaryTextColor: surface.secondaryText,
@@ -40,7 +41,13 @@ export function scoringSheetTheme(theme: Theme): Theme {
     pillActiveTextColor: surface.activeText,
     successColor: surface.accent,
     activeColor: surface.accent,
-    dangerColor: surface.danger
+    emblemColor: surface.accent,
+    plateIconColor: surface.secondaryText,
+    dangerColor: surface.danger,
+    // The sheet's own card, so its on-card colours follow the sheet too.
+    cardDangerColor: surface.danger,
+    cardSuccessColor: surface.accent,
+    cardDetailColor: surface.secondaryText
   }
   sheetThemes.set(theme, derived)
   return derived

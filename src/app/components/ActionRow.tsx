@@ -1,7 +1,12 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  cacheStyles,
+  ScopedThemeProvider,
+  type Theme,
+  useTheme
+} from '../theme/ThemeContext'
 import { CardDivider } from './Card'
 import { Icon } from './Icon'
 import { ListCard } from './ListCard'
@@ -71,7 +76,52 @@ export function ActionRow({
   )
 }
 
-/** Long lists have no bounding card; a short settings list can share one. */
+const cardThemes = new WeakMap<Theme, Theme>()
+
+const sameColor = (a: string, b: string): boolean =>
+  a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * Some themes use a light card surface with light canvas text. Their card
+ * tokens (`cardDangerColor`, `cardSuccessColor`, `cardDetailColor`), and their
+ * `secondaryTextColor`, `tertiaryTextColor` and `clearButtonColor`, must read
+ * on that light card.
+ */
+function cardThemeOf(theme: Theme): Theme {
+  if (!sameColor(theme.primaryTextColor, theme.cardBackgroundColor))
+    return theme
+  let cardTheme = cardThemes.get(theme)
+  if (cardTheme == null) {
+    cardTheme = {
+      ...theme,
+      // A light surface: its own dark variants, and links set apart from titles.
+      isDark: false,
+      primaryTextColor: theme.secondaryTextColor,
+      secondaryTextColor: theme.cardDetailColor,
+      activeColor: theme.tertiaryTextColor,
+      textButtonPressedColor: theme.clearButtonColor,
+      dangerColor: theme.cardDangerColor,
+      successColor: theme.cardSuccessColor
+    }
+    cardThemes.set(theme, cardTheme)
+  }
+  return cardTheme
+}
+
+/** A shared card's contents, in colours that read on the card. */
+export function CardThemeScope({
+  children
+}: {
+  children: React.ReactNode
+}): React.ReactElement {
+  return (
+    <ScopedThemeProvider theme={cardThemeOf(useTheme())}>
+      {children}
+    </ScopedThemeProvider>
+  )
+}
+
+/** A bounded list's rows share one card; an unbounded list has none. */
 export function ActionList({
   children,
   bounded = false,
@@ -81,7 +131,12 @@ export function ActionList({
   bounded?: boolean
   testID?: string
 }): React.ReactElement {
-  if (bounded) return <ListCard testID={testID}>{children}</ListCard>
+  if (bounded)
+    return (
+      <CardThemeScope>
+        <ListCard testID={testID}>{children}</ListCard>
+      </CardThemeScope>
+    )
   return (
     <View testID={testID}>
       {React.Children.toArray(children).map((child, index) => (
