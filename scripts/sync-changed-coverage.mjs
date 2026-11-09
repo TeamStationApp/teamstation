@@ -92,6 +92,8 @@ const SPECS = [
   'src/server/routes/account.chatAge.integration.test.ts',
   'src/server/dev/fakeSpace.test.ts',
   'src/server/routes/pictures.integration.test.ts',
+  // The development request recorder the device scenario reads.
+  'src/server/dev/requestRecorder.test.ts',
   'src/app/sync/**/*.test.ts'
 ].filter(spec => spec.includes('*') || existsSync(spec))
 

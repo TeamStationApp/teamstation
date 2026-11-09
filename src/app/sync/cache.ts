@@ -11,7 +11,9 @@ export async function openDocumentCache(
   return {
     read: async () => undefined,
     store: async (_key, document) => ({ ...document, pending: false }),
-    // The browser queues nothing: a write it cannot send fails as before.
+    storeServer: async (_key, document) => ({ ...document, pending: false }),
+    // The browser queues nothing, and keeps no schedule set: a write it
+    // cannot send fails as before, and a schedule read misses.
     atomically: async () => {
       throw new Error('The web keeps no outbox')
     },

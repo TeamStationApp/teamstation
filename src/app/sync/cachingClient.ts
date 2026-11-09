@@ -12,6 +12,7 @@ import {
   type HomeLists,
   IDEMPOTENCY_HEADER,
   type MyRoles,
+  type Page,
   type RequestOptions,
   type SeasonGame,
   TeamStationClient
@@ -23,14 +24,21 @@ import {
   olderSaveFoldsAlike,
   rebuildGameEvents
 } from '../scoring/scoringSource'
-import type { DocumentStore, StoredDocument } from './cacheStore'
+import {
+  type CacheTransaction,
+  type DocumentStore,
+  type SchedulePage,
+  schedulePageOf,
+  type ServerDocument,
+  type StoredDocument
+} from './cacheStore'
 import {
   CANDIDATES_KEPT,
   candidatesKey,
   candidatesTeamOf,
+  candidatesWordsOf,
   documentKeyOf,
   fallbackKeyOf,
-  GAMES_UPCOMING,
   HOME_LISTS
 } from './documentKeys'
 import { type PictureDirectories, pictureDirectories } from './imageCache'
@@ -42,6 +50,16 @@ import {
   type OutboxSummary,
   queuedCallOf
 } from './outbox'
+import {
+  FIRST_PAGE,
+  ME_SCOPE,
+  type ScheduleRead,
+  scheduleReadOf,
+  type ScheduleShape,
+  shapeOfScope,
+  WHOLE_LIST,
+  windowName
+} from './scheduleReads'
 
 /** One person's file, open or opening. */
 interface Opened {
@@ -70,6 +88,35 @@ export const OFFLINE_CREATE_MESSAGE = "Available when you're back online."
 export const PREFETCH_CONCURRENCY = 4
 
 const asRaw: Cleaner<unknown> = raw => raw
+
+/** A page as the server sends one, before its items are cleaned. */
+type RawPage = Omit<Page<unknown>, 'counts'> & { counts: unknown }
+
+const emptyPage = (): RawPage => ({
+  items: [],
+  nextCursor: null,
+  prevCursor: null,
+  anchorId: null,
+  counts: null
+})
+
+/** When a game starts, for the All and Videos stand-ins; none sorts last. */
+function startOf(game: unknown): number | undefined {
+  const startAt =
+    game != null && typeof game === 'object'
+      ? (game as { startAt?: unknown }).startAt
+      : undefined
+  const time = typeof startAt === 'string' ? Date.parse(startAt) : NaN
+  return Number.isNaN(time) ? undefined : time
+}
+
+/** Newest first, as the server orders All and Videos; no start time last. */
+function newestFirst(a: unknown, b: unknown): number {
+  const at = startOf(a)
+  const bt = startOf(b)
+  if (at == null || bt == null) return at == null ? (bt == null ? 0 : 1) : -1
+  return bt - at
+}
 
 function isOffline(error: unknown): boolean {
   return error instanceof HttpError && error.code === 'offline'
@@ -140,8 +187,9 @@ export class CachingClient extends TeamStationClient {
           key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }
         ),
       token: () => this.token,
+      // A re-read is the server's copy, never the phone's pending one.
       read: async path => {
-        await this.request('GET', path, asRaw)
+        await this.serverRead(path)
       },
       // The game and its rosters from the phone's copy; its plays from the
       // server, past this client, which answers the phone's copy while a save
@@ -415,6 +463,61 @@ export class CachingClient extends TeamStationClient {
   }
 
   /**
+   * The games the phone stored for one schedule's window, as the `Page` its
+   * screen paints before its own read returns: the stored first page and
+   * every stored page its cursors reach, in order, each game once, with the
+   * first page's counts and anchor. With no first page, the whole list
+   * stored for it. Personal All and Videos, never read, stand in with the
+   * games Upcoming and Past stored. Anything else stored nothing: an empty
+   * page.
+   */
+  override async scheduleGames<T>(
+    scope: string,
+    window: string,
+    cleaner: Cleaner<T>
+  ): Promise<Page<T>> {
+    const opened = this.owned
+    const raw =
+      opened == null
+        ? undefined
+        : await this.inStore(
+            opened.store,
+            async tx => await chainOf(tx, scope, window)
+          )
+    try {
+      return asPage(cleaner)(raw ?? emptyPage())
+    } catch {
+      return asPage(cleaner)(emptyPage())
+    }
+  }
+
+  /**
+   * The outbox's read: always the server, whatever the phone holds. The
+   * answer is recorded as the server's (`storeServer`), beside a body a
+   * queued write still holds, and returned.
+   */
+  async serverRead(path: string): Promise<unknown> {
+    const opened = this.owned
+    const key = documentKeyOf(path)
+    let raw: unknown
+    try {
+      raw = await super.request('GET', path, asRaw)
+    } catch (error: unknown) {
+      if (isGone(error) && opened != null && key != null)
+        await this.forgetIn(opened.store, key)
+      throw error
+    }
+    this.outbox.wake(true)
+    if (opened != null && key != null && raw !== undefined)
+      await this.storeServerTo(opened.store, key, {
+        body: JSON.stringify(raw),
+        revision: '0',
+        serverDigest: digestOf(raw)
+      })
+    return raw
+  }
+
+  /**
    * Reads into the cache what the phone needs to score an upcoming game
    * with no signal, beside what Home stored: the person's roles, every
    * team's roster (whole names only where they manage it), and for each
@@ -464,13 +567,29 @@ export class CachingClient extends TeamStationClient {
           ? await this.outbox.submitBackground(queued)
           : await this.outbox.submit(queued)
       )
+    const schedule =
+      method === 'GET' && opened != null ? scheduleReadOf(path) : undefined
+    if (schedule != null && opened != null)
+      return await this.scheduleRequest(
+        opened,
+        schedule,
+        path,
+        cleaner,
+        body,
+        options
+      )
     const key = method === 'GET' ? documentKeyOf(path) : undefined
     if (key == null || opened == null) {
       const value = await super.request(method, path, cleaner, body, options)
       this.outbox.wake(true)
       const team = method === 'GET' ? candidatesTeamOf(path) : undefined
       if (team != null && opened != null)
-        await this.keepCandidates(opened.store, team, value)
+        await this.keepCandidates(
+          opened.store,
+          team,
+          value,
+          candidatesWordsOf(path)
+        )
       return value
     }
 
@@ -509,6 +628,14 @@ export class CachingClient extends TeamStationClient {
       }
     }
     this.outbox.wake(true)
+    const team = candidatesTeamOf(path)
+    if (team != null)
+      await this.keepCandidates(
+        opened.store,
+        team,
+        value,
+        candidatesWordsOf(path)
+      )
     if (answered?.raw === undefined) return value
     const kept = await this.storeTo(opened.store, key, {
       body: JSON.stringify(answered.raw),
@@ -548,7 +675,14 @@ export class CachingClient extends TeamStationClient {
     ])
     // The games last stored stand in for a list that would not load.
     const upcoming =
-      fetched ?? (await this.cached(GAMES_UPCOMING, asArray(asSeasonGame)))
+      fetched ??
+      (
+        await this.scheduleGames(
+          ME_SCOPE,
+          windowName({ when: 'upcoming' }),
+          asSeasonGame
+        )
+      ).items
 
     const paths = new Set<string>()
     const team = (teamId: string): void => {
@@ -584,6 +718,80 @@ export class CachingClient extends TeamStationClient {
         await worker()
       })
     )
+  }
+
+  /**
+   * A schedule read: to the server as before, its answer kept as one row per
+   * game and the page it returned. With no signal, a first page answers
+   * what `scheduleGames` paints (an empty page, not an error, when nothing
+   * was stored), another page the stored page of that cursor, and a later
+   * page never stored the offline error, for the list's Retry.
+   */
+  private async scheduleRequest<T>(
+    opened: Opened,
+    read: ScheduleRead,
+    path: string,
+    cleaner: Cleaner<T>,
+    body: unknown,
+    options: RequestOptions | undefined
+  ): Promise<T> {
+    const linked = read.cursorOnly
+      ? await this.inStore(
+          opened.store,
+          async tx => await tx.scheduleWindowOf(read.scope, read.cursor)
+        )
+      : undefined
+    const at = {
+      scope: read.scope,
+      window: linked ?? read.window,
+      cursor: read.cursor
+    }
+    let answered: { raw: unknown } | undefined
+    let value: T
+    try {
+      value = await super.request(
+        'GET',
+        path,
+        raw => {
+          const cleaned = cleaner(raw)
+          answered = { raw }
+          return cleaned
+        },
+        body,
+        options
+      )
+    } catch (error: unknown) {
+      if (!isOffline(error)) throw error
+      const stored = await this.inStore(
+        opened.store,
+        async tx => await storedAnswer(tx, read, at.window)
+      )
+      if (stored === undefined) throw error
+      try {
+        return cleaner(stored)
+      } catch {
+        throw error
+      }
+    }
+    this.outbox.wake(true)
+    const kept = answered == null ? undefined : schedulePageOf(answered.raw, at)
+    if (kept != null)
+      await this.inStore(opened.store, async tx => {
+        await tx.writeSchedule(read.shape, kept.page, kept.games)
+      })
+    return value
+  }
+
+  /** Runs `work` in the file; a file that cannot be read or written misses. */
+  private async inStore<R>(
+    store: Promise<DocumentStore | undefined>,
+    work: (tx: CacheTransaction) => Promise<R>
+  ): Promise<R | undefined> {
+    try {
+      return await (await store)?.atomically(work)
+    } catch {
+      return undefined
+    }
   }
 
   private async read(key: string): Promise<StoredDocument | undefined> {
@@ -639,15 +847,33 @@ export class CachingClient extends TeamStationClient {
     }
   }
 
+  /** A cache that cannot be written leaves the server's answer as it was. */
+  private async storeServerTo(
+    store: Promise<DocumentStore | undefined>,
+    key: string,
+    document: ServerDocument
+  ): Promise<void> {
+    try {
+      await (await store)?.storeServer(key, document)
+    } catch {
+      // Kept as it was: the next answer from the server replaces it.
+    }
+  }
+
   /**
    * Adds the people a search for `teamId` found to the ones the phone keeps
    * for it, each once, the newest answer's first: what Add Existing Player
-   * lists at once, and offline.
+   * lists at once, and offline. Every answer counts, a typed search's as
+   * much as the list with nothing typed, up to `CANDIDATES_KEPT`. Each
+   * person keeps, as `matched`, the words of every search that found him
+   * (`words`), so the phone finds him again by them offline although his
+   * short name may not show the name they matched.
    */
   private async keepCandidates(
     store: Promise<DocumentStore | undefined>,
     teamId: string,
-    found: unknown
+    found: unknown,
+    words: readonly string[] = []
   ): Promise<void> {
     if (!Array.isArray(found) || found.length === 0) return
     const key = candidatesKey(teamId)
@@ -667,9 +893,29 @@ export class CachingClient extends TeamStationClient {
           raw != null && typeof raw === 'object'
             ? (raw as { userId?: unknown }).userId
             : undefined
+        const matchedOf = (raw: unknown): string[] => {
+          const matched =
+            raw != null && typeof raw === 'object'
+              ? (raw as { matched?: unknown }).matched
+              : undefined
+          return Array.isArray(matched)
+            ? matched.filter(word => typeof word === 'string')
+            : []
+        }
+        const before = new Map(kept.map(entry => [idOf(entry), entry]))
+        const answered = found.map(entry => {
+          const matched = [
+            ...new Set([...matchedOf(before.get(idOf(entry))), ...words])
+          ]
+          return matched.length === 0 ||
+            entry == null ||
+            typeof entry !== 'object'
+            ? entry
+            : { ...entry, matched }
+        })
         const fresh = new Set(found.map(idOf))
         const next = [
-          ...found,
+          ...answered,
           ...kept.filter(entry => !fresh.has(idOf(entry)))
         ].slice(0, CANDIDATES_KEPT)
         await tx.write(key, {
@@ -693,4 +939,132 @@ export class CachingClient extends TeamStationClient {
       // A file that will not close is let go.
     }
   }
+}
+
+/** The stored games of `ids` in `shape`, in that order, each once. */
+async function gamesOf(
+  tx: CacheTransaction,
+  shape: ScheduleShape,
+  ids: string[]
+): Promise<unknown[]> {
+  const order = [...new Set(ids)]
+  const rows = new Map(
+    (await tx.scheduleRows(shape, order)).map(row => [row.id, row.body])
+  )
+  const games: unknown[] = []
+  for (const id of order) {
+    const body = rows.get(id)
+    if (body == null) continue
+    try {
+      games.push(JSON.parse(body))
+    } catch {
+      // A row this version cannot read is no row.
+    }
+  }
+  return games
+}
+
+/** One stored page as the `Page` its read answered. */
+async function pageOf(
+  tx: CacheTransaction,
+  shape: ScheduleShape,
+  page: SchedulePage
+): Promise<RawPage> {
+  return { ...page.meta, items: await gamesOf(tx, shape, page.gameIds) }
+}
+
+/**
+ * The stored first page of `scope`'s `window` and every stored page its
+ * cursors lead to, as one page; else its whole list; else, for personal All
+ * and Videos, the games Upcoming and Past stored; else an empty page.
+ */
+async function chainOf(
+  tx: CacheTransaction,
+  scope: string,
+  window: string
+): Promise<RawPage> {
+  const shape = shapeOfScope(scope)
+  const pages = new Map(
+    (await tx.schedulePages(scope, [window])).map(page => [page.cursor, page])
+  )
+  const first = pages.get(FIRST_PAGE)
+  if (first != null) {
+    const seen = new Set<SchedulePage>([first])
+    const follow = (
+      from: SchedulePage,
+      next: (page: SchedulePage) => string | null
+    ): SchedulePage[] => {
+      const reached: SchedulePage[] = []
+      for (
+        let page = pages.get(next(from) ?? '');
+        page != null && !seen.has(page);
+        page = pages.get(next(page) ?? '')
+      ) {
+        seen.add(page)
+        reached.push(page)
+      }
+      return reached
+    }
+    const after = follow(first, page => page.meta.nextCursor)
+    const before = follow(first, page => page.meta.prevCursor).reverse()
+    const chain = [...before, first, ...after]
+    return {
+      items: await gamesOf(
+        tx,
+        shape,
+        chain.flatMap(page => page.gameIds)
+      ),
+      nextCursor: (after.at(-1) ?? first).meta.nextCursor,
+      prevCursor: (before[0] ?? first).meta.prevCursor,
+      anchorId: first.meta.anchorId,
+      counts: first.meta.counts
+    }
+  }
+  const list = pages.get(WHOLE_LIST)
+  if (list != null)
+    return { ...emptyPage(), items: await gamesOf(tx, shape, list.gameIds) }
+  const all = windowName({})
+  const videos = windowName({ videos: true })
+  if (scope !== ME_SCOPE || (window !== all && window !== videos))
+    return emptyPage()
+  // Never read: what Upcoming and Past stored, newest first.
+  const shown = await tx.schedulePages(ME_SCOPE, [
+    windowName({ when: 'upcoming' }),
+    windowName({ when: 'past' })
+  ])
+  const games = (
+    await gamesOf(
+      tx,
+      shape,
+      shown.flatMap(page => page.gameIds)
+    )
+  ).filter(
+    game =>
+      window === all ||
+      (game != null &&
+        typeof game === 'object' &&
+        Number((game as { videoCount?: unknown }).videoCount) > 0)
+  )
+  return { ...emptyPage(), items: games.sort(newestFirst) }
+}
+
+/**
+ * What a schedule read answers with no signal: a first page as the screen
+ * paints it, empty when nothing was stored; another page as stored, or none,
+ * so that a list read past its last stored page fails as offline and offers
+ * its Retry; a whole list as stored or none.
+ */
+async function storedAnswer(
+  tx: CacheTransaction,
+  read: ScheduleRead,
+  window: string
+): Promise<unknown> {
+  if (read.paged && read.cursor === FIRST_PAGE)
+    return await chainOf(tx, read.scope, window)
+  const page = (await tx.schedulePages(read.scope, [window])).find(
+    stored => stored.cursor === read.cursor
+  )
+  if (page == null) return undefined
+  const stored = await pageOf(tx, read.shape, page)
+  return read.paged ? stored : stored.items
 }
