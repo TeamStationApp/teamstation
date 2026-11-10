@@ -11,6 +11,7 @@ import { settingRowStyles } from './settingRowStyles'
 export function SettingToggleRow({
   label,
   subtitle,
+  accessibilityLabel = label,
   value,
   onChange,
   disabled = false,
@@ -18,6 +19,8 @@ export function SettingToggleRow({
 }: {
   label: string
   subtitle?: string
+  /** The switch's name, where the row's alone would repeat another row's. */
+  accessibilityLabel?: string
   value: boolean
   onChange: (value: boolean) => void
   disabled?: boolean
@@ -36,7 +39,7 @@ export function SettingToggleRow({
         {subtitle != null && <Text style={styles.subtitle}>{subtitle}</Text>}
       </View>
       <Switch
-        accessibilityLabel={label}
+        accessibilityLabel={accessibilityLabel}
         value={value}
         disabled={disabled}
         onValueChange={onChange}

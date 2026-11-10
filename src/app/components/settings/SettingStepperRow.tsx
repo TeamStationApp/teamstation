@@ -9,10 +9,12 @@ import { settingRowStyles } from './settingRowStyles'
  * A setting that is one of a run of values, stepped through with − and +:
  * `Max Sits Per Game  − 1 +`. The steps are in order, so a run can end in a
  * word, as 2 to 6 then Unlimited does, or start with one, as Off, 1, 2 does.
- * Each button stops at its end of the run.
+ * Each button stops at its end of the run. Where − and + would leave the
+ * name less than `SETTING_NAME_MIN_REM`, they take their own line under it.
  */
 export function SettingStepperRow<Value extends string | number>({
   label,
+  accessibilityLabel = label,
   steps,
   value,
   format = String,
@@ -21,6 +23,8 @@ export function SettingStepperRow<Value extends string | number>({
 }: {
   /** The name, which may carry the value: `When ≥ 15 players present`. */
   label: string
+  /** Its name to − and +, where the label alone would repeat another row's. */
+  accessibilityLabel?: string
   steps: readonly Value[]
   value: Value
   format?: (value: Value) => string
@@ -37,7 +41,7 @@ export function SettingStepperRow<Value extends string | number>({
     return (
       <Pressable
         accessibilityRole="button"
-        accessibilityLabel={sprintf(word, label)}
+        accessibilityLabel={sprintf(word, accessibilityLabel)}
         accessibilityState={{ disabled: inert }}
         aria-disabled={inert}
         disabled={inert}
@@ -60,9 +64,9 @@ export function SettingStepperRow<Value extends string | number>({
     <View
       accessibilityState={{ disabled }}
       aria-disabled={disabled}
-      style={[row.row, disabled && row.gated]}
+      style={[row.row, row.wrapping, disabled && row.gated]}
     >
-      <View style={row.text}>
+      <View style={row.wrappingText}>
         <Text style={row.title}>{label}</Text>
       </View>
       <View style={styles.stepper}>
@@ -70,7 +74,7 @@ export function SettingStepperRow<Value extends string | number>({
         <Text
           accessibilityLabel={sprintf(
             lstrings.setting_stepper_value,
-            label,
+            accessibilityLabel,
             format(value)
           )}
           style={styles.value}

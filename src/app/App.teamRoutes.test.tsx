@@ -154,7 +154,7 @@ describe('team route frames', () => {
           await press('Playing Time Rules')
           expect(window.location.pathname).equals(`${settings}/playing-time`)
           if (kind === 'team') await press('Override season rules')
-          else await press('Mandatory Play')
+          else await press('Require Defensive Playing Time')
           const before = reads
           await press('Save')
           expect(saved).deep.equals([

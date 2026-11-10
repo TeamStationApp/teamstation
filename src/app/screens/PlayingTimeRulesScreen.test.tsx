@@ -119,11 +119,11 @@ async function press(label: string): Promise<void> {
   })
   await settle(0)
 }
-/** The option of a pill row, by the row's label and the option's. */
+/** The option of a pill row, by the pill's name and the option's label. */
 function option(row: string, label: string): HTMLElement {
   const node = document
-    .querySelector(`[role="radiogroup"][aria-label="${row}"]`)
-    ?.querySelector<HTMLElement>(`[role="radio"][aria-label="${label}"]`)
+    .querySelector(`[role="tablist"][aria-label="${row}"]`)
+    ?.querySelector<HTMLElement>(`[role="tab"][aria-label="${label}"]`)
   expect(node, `${row}: ${label}`).not.equals(undefined)
   return node!
 }
@@ -135,7 +135,20 @@ async function choose(row: string, label: string): Promise<void> {
   await settle(0)
 }
 const chosen = (row: string, label: string): boolean =>
-  option(row, label).getAttribute('aria-checked') === 'true'
+  option(row, label).getAttribute('aria-selected') === 'true'
+/** Whether a row, by its control's name, is on the screen at all. */
+const shows = (label: string): boolean =>
+  document.querySelector(`[aria-label="${label}"]`) != null
+/** Where these strings first appear in the screen's text, in order. */
+const inOrder = (labels: string[]): void => {
+  const at = labels.map(label => text().indexOf(label))
+  labels.forEach((label, i) => expect(at[i], label).greaterThanOrEqual(0))
+  expect(
+    [...at].sort((a, b) => a - b),
+    labels.join(' / ')
+  ).deep.equals(at)
+}
+const LARGE = (label: string): string => `${label} (large rosters)`
 /** The value a stepper shows between its − and +. */
 const stepped = (label: string): string => control(label).textContent ?? ''
 const save = async (): Promise<void> => {
@@ -155,22 +168,28 @@ describe('Playing Time Rules screen', function () {
     )
     expect(text()).not.includes('Override season rules')
     // The issue's groups, in its order.
-    const order = [
-      'MANDATORY PLAY',
-      'TOTAL DEFENSIVE PLAYING TIME',
+    inOrder([
+      'DEFENSIVE PLAYING TIME',
       'INFIELD AND OUTFIELD',
       'SITTING AND BENCH EQUITY',
       'POSITION LIMITS AND ROTATION',
       'PITCHER AND CATCHER',
       'BATTING ORDER'
-    ].map(heading => text().indexOf(heading))
-    expect(order.every(at => at >= 0)).equals(true)
-    expect([...order].sort((a, b) => a - b)).deep.equals(order)
-    expect(disabled('Mandatory Play')).equals(false)
-    await press('Mandatory Play')
-    // Innings is the default unit; the outs rows wait for Defensive Outs.
+    ])
+    for (const gone of ['MANDATORY PLAY', 'TOTAL DEFENSIVE PLAYING TIME'])
+      expect(text(), gone).not.includes(gone)
+    expect(disabled('Require Defensive Playing Time')).equals(false)
+    await press('Require Defensive Playing Time')
+    // Innings is the default unit, the left option; the outs rows wait for
+    // Defensive Outs.
+    const units = [
+      ...document.querySelectorAll(
+        '[role="tablist"][aria-label="Playing time measured in"] [role="tab"]'
+      )
+    ].map(tab => tab.textContent)
+    expect(units).deep.equals(['Innings', 'Defensive Outs'])
     expect(chosen('Playing time measured in', 'Innings')).equals(true)
-    expect(disabled('Defensive Outs Required')).equals(true)
+    expect(shows('Defensive Outs Required')).equals(false)
     await choose('Playing time measured in', 'Defensive Outs')
     expect(chosen('Defensive Outs Required', '6')).equals(true)
     await choose('Defensive Outs Required', '9')
@@ -197,10 +216,10 @@ describe('Playing Time Rules screen', function () {
     expect(on('Override season rules')).equals(false)
     expect(text()).includes('Following Demo Regular')
     // Every row is the season's, and none can be changed.
-    expect(on('Mandatory Play')).equals(true)
+    expect(on('Require Defensive Playing Time')).equals(true)
     expect(stepped('Max Sits Per Game: 2')).equals('2')
     for (const label of [
-      'Mandatory Play',
+      'Require Defensive Playing Time',
       'Reduced Requirement for Large Rosters',
       'Require Minimum Infield',
       'Enforce Sitting Limits',
@@ -210,7 +229,9 @@ describe('Playing Time Rules screen', function () {
       expect(disabled(label), label).equals(true)
     expect(
       window.getComputedStyle(
-        control('Mandatory Play').closest('[aria-disabled="true"]')!
+        control('Require Defensive Playing Time').closest(
+          '[aria-disabled="true"]'
+        )!
       ).opacity
     ).equals('0.4')
     // Following, with nothing changed, there is nothing to save, and a team
@@ -222,9 +243,9 @@ describe('Playing Time Rules screen', function () {
     expect(disabled('Save')).equals(false)
     expect(on('Override season rules')).equals(true)
     expect(text()).not.includes('Following Demo Regular')
-    expect(disabled('Mandatory Play')).equals(false)
+    expect(disabled('Require Defensive Playing Time')).equals(false)
     expect(disabled('Reduced Requirement for Large Rosters')).equals(false)
-    expect(on('Mandatory Play')).equals(true)
+    expect(on('Require Defensive Playing Time')).equals(true)
     await press('Enforce Sitting Limits')
     await press('Increase Max Sits Per Game')
     expect(stepped('Max Sits Per Game: 3')).equals('3')
@@ -244,7 +265,7 @@ describe('Playing Time Rules screen', function () {
     await press('Override season rules')
     expect(on('Enforce Sitting Limits')).equals(false)
     expect(stepped('Max Sits Per Game: 2')).equals('2')
-    expect(disabled('Mandatory Play')).equals(true)
+    expect(disabled('Require Defensive Playing Time')).equals(true)
     // On again, the team starts over from the season's.
     await press('Override season rules')
     expect(on('Enforce Sitting Limits')).equals(false)
@@ -256,7 +277,7 @@ describe('Playing Time Rules screen', function () {
     await open('team', f)
     expect(on('Override season rules')).equals(true)
     expect(on('Continuous Batting Order')).equals(true)
-    expect(on('Mandatory Play')).equals(false)
+    expect(on('Require Defensive Playing Time')).equals(false)
     expect(disabled('Late Arrivals Added to End')).equals(false)
     expect(text()).not.includes('Turn Off Playing Time Rules')
     // Turning the override off is the change: the team follows again.
@@ -277,10 +298,10 @@ describe('Playing Time Rules screen', function () {
     expect(text()).not.includes('Turn Off Playing Time Rules')
     await save()
     expect(f.saved).deep.equals([])
-    await press('Mandatory Play')
+    await press('Require Defensive Playing Time')
     expect(disabled('Save')).equals(false)
     // Back where it started, there is again nothing to save.
-    await press('Mandatory Play')
+    await press('Require Defensive Playing Time')
     expect(disabled('Save')).equals(true)
     await unmount()
 
@@ -318,7 +339,7 @@ describe('Playing Time Rules screen', function () {
     expect(document.querySelector('[aria-label="Confirm change"]')).equals(null)
     expect(f.saved).deep.equals([])
     expect(events).deep.equals([])
-    expect(on('Mandatory Play')).equals(true)
+    expect(on('Require Defensive Playing Time')).equals(true)
 
     await press('Turn Off Playing Time Rules')
     await pressInSheet('Turn Off')
@@ -347,7 +368,7 @@ describe('Playing Time Rules screen', function () {
     const f = fake(detail('team', null, null))
     await open('team', f)
     expect(text()).not.includes('Override season rules')
-    expect(disabled('Mandatory Play')).equals(false)
+    expect(disabled('Require Defensive Playing Time')).equals(false)
     await press('Continuous Batting Order')
     await save()
     expect(f.saved).deep.equals([
@@ -365,12 +386,12 @@ describe('Playing Time Rules screen', function () {
     // on with the outfield minimum alone.
     const pairs: Array<[string, string[]]> = [
       [
-        'Mandatory Play',
+        'Require Defensive Playing Time',
         [
           'Playing time measured in',
           'Reduced Requirement for Large Rosters',
           'Increase Minimum Full Innings',
-          'Must Complete By Inning',
+          'Must Complete by Inning',
           'Count Partial Innings'
         ]
       ],
@@ -380,8 +401,8 @@ describe('Playing Time Rules screen', function () {
           'Increase Infield Innings Required',
           'Pitcher counts as infield',
           'Catcher counts as',
-          'Must Complete Infield By Inning',
-          'Starting P/C Exempt from Infield/Outfield Mins'
+          'Complete infield by inning',
+          'Starting pitcher and catcher exempt from minimums'
         ]
       ],
       [
@@ -389,8 +410,8 @@ describe('Playing Time Rules screen', function () {
         [
           'Increase Outfield Innings Required',
           'Catcher counts as',
-          'Must Complete Outfield By Inning',
-          'Starting P/C Exempt from Infield/Outfield Mins'
+          'Complete outfield by inning',
+          'Starting pitcher and catcher exempt from minimums'
         ]
       ],
       [
@@ -421,31 +442,127 @@ describe('Playing Time Rules screen', function () {
       for (const child of children)
         expect(disabled(child), `${child} after ${parent}`).equals(true)
     }
-    // The outs rows need Defensive Outs, and the innings rows Innings.
-    const outs = ['Defensive Outs Required', 'Must Be Consecutive']
-    const innings = ['Increase Minimum Full Innings', 'Count Partial Innings']
-    await press('Mandatory Play')
-    for (const row of outs) expect(disabled(row), row).equals(true)
-    await choose('Playing time measured in', 'Defensive Outs')
-    for (const row of outs) expect(disabled(row), row).equals(false)
-    for (const row of innings) expect(disabled(row), row).equals(true)
-    // The large-roster pair needs Defensive Playing Time and Reduced
-    // Requirement, and its outs the unit too.
-    const players = 'Increase When ≥ 15 players present'
-    const largeOuts = 'Require only 3 outs'
-    await choose('Playing time measured in', 'Innings')
-    expect(disabled(players)).equals(true)
+    // The large roster's rows need Defensive Playing Time and Reduced
+    // Requirement, in the unit chosen.
+    const players = 'Increase Following requirements when ≥ 15 players present'
+    const largeInnings = [
+      `Increase ${LARGE('Minimum Full Innings')}`,
+      LARGE('Must Complete by Inning'),
+      LARGE('Count Partial Innings')
+    ]
+    await press('Require Defensive Playing Time')
+    for (const row of [players, ...largeInnings])
+      expect(disabled(row), row).equals(true)
     await press('Reduced Requirement for Large Rosters')
-    expect(disabled(players)).equals(false)
-    expect(disabled(largeOuts)).equals(true)
+    for (const row of [players, ...largeInnings])
+      expect(disabled(row), row).equals(false)
     await choose('Playing time measured in', 'Defensive Outs')
-    expect(disabled(largeOuts)).equals(false)
-    await press('Mandatory Play')
-    for (const row of [players, largeOuts])
+    const largeOuts = [
+      LARGE('Defensive Outs Required'),
+      LARGE('Must Be Consecutive')
+    ]
+    for (const row of largeOuts) expect(disabled(row), row).equals(false)
+    await press('Require Defensive Playing Time')
+    for (const row of [players, ...largeOuts])
       expect(disabled(row), row).equals(true)
     // The catcher's rows have no parent.
     expect(disabled('Catcher Inning Limit')).equals(false)
-    expect(disabled('Catcher Blocks Pitching Same Day')).equals(false)
+    expect(disabled('Catching Blocks Pitching')).equals(false)
+  })
+
+  it('shows the rows of the unit Defensive Playing Time is measured in, its own and a large roster’s', async function () {
+    const f = fake(detail('season', null, null))
+    await open('season', f)
+    const inningsRows = [
+      'Minimum Full Innings',
+      'Must Complete by Inning',
+      'Count Partial Innings'
+    ]
+    const outsRows = ['Defensive Outs Required', 'Must Be Consecutive']
+    // Innings by default: its rows, grayed until the rule is on, then the
+    // large roster's toggle and count, then the large roster's own.
+    inOrder([
+      'Require Defensive Playing Time',
+      'Playing time measured in',
+      ...inningsRows,
+      'Reduced Requirement for Large Rosters',
+      'Following requirements when ≥ 15 players present'
+    ])
+    const large = text().slice(text().indexOf('Following requirements'))
+    let after = 0
+    for (const row of inningsRows) {
+      expect(large.indexOf(row, after), row).greaterThan(after)
+      after = large.indexOf(row, after)
+    }
+    for (const row of [
+      'Increase Minimum Full Innings',
+      'Must Complete by Inning',
+      'Count Partial Innings',
+      `Increase ${LARGE('Minimum Full Innings')}`,
+      LARGE('Must Complete by Inning'),
+      LARGE('Count Partial Innings')
+    ])
+      expect(shows(row), row).equals(true)
+    for (const row of [...outsRows, ...outsRows.map(LARGE)])
+      expect(shows(row), row).equals(false)
+    expect(text()).includes('Require 2 full innings')
+    await press('Require Defensive Playing Time')
+    await press('Reduced Requirement for Large Rosters')
+    await choose('Must Complete by Inning', '4th')
+    expect(text()).includes('Require 2 full innings by the 4th')
+    await press('Decrease Minimum Full Innings')
+    expect(text()).includes('Require 1 full inning by the 4th')
+    await choose('Must Complete by Inning', 'n/a')
+    expect(text()).includes('Require 1 full inning')
+    await press('Increase Minimum Full Innings')
+    expect(text()).includes('Require 2 full innings')
+    // The large roster's innings: 1, by its own deadline.
+    expect(stepped(`${LARGE('Minimum Full Innings')}: 1`)).equals('1')
+    await choose(LARGE('Must Complete by Inning'), '5th')
+    await choose(LARGE('Count Partial Innings'), 'Full only')
+
+    // Defensive Outs: the outs rows, 6 by default and 3 for a large roster,
+    // in place of the innings rows.
+    await choose('Playing time measured in', 'Defensive Outs')
+    for (const row of [...outsRows, ...outsRows.map(LARGE)])
+      expect(shows(row), row).equals(true)
+    for (const row of [
+      'Increase Minimum Full Innings',
+      'Must Complete by Inning',
+      'Count Partial Innings',
+      LARGE('Count Partial Innings')
+    ])
+      expect(shows(row), row).equals(false)
+    expect(text()).includes('Require 6 defensive outs')
+    expect(chosen('Defensive Outs Required', '6')).equals(true)
+    expect(chosen(LARGE('Defensive Outs Required'), '3')).equals(true)
+    inOrder([
+      'Playing time measured in',
+      'Defensive Outs Required',
+      'Must Be Consecutive',
+      'Reduced Requirement for Large Rosters',
+      'Following requirements when ≥ 15 players present'
+    ])
+    await choose(LARGE('Defensive Outs Required'), '6')
+    await press(LARGE('Must Be Consecutive'))
+    await press('Increase Following requirements when ≥ 15 players present')
+    await save()
+    expect(f.saved[0][1].playingTimeRules).deep.include({
+      defensivePlayingTime: true,
+      measuredIn: 'outs',
+      outs: { required: 6, consecutive: false },
+      innings: {
+        minimum: 2,
+        completeBy: 'none',
+        countPartial: 'anyAppearance'
+      },
+      largeRoster: {
+        enabled: true,
+        players: 16,
+        outs: { required: 6, consecutive: true },
+        innings: { minimum: 1, completeBy: 5, countPartial: 'fullOnly' }
+      }
+    })
   })
 
   it('stops each stepper at its ends, Unlimited and Off included, and saves what it shows', async function () {
@@ -477,13 +594,17 @@ describe('Playing Time Rules screen', function () {
     expect(stepped('Rotate Every N Innings: 2')).equals('2')
     expect(disabled('Increase Rotate Every N Innings')).equals(true)
 
-    // The label carries the value: "When ≥ 15 players present".
-    await press('Mandatory Play')
+    // The label carries the value: "… when ≥ 15 players present".
+    await press('Require Defensive Playing Time')
     await press('Reduced Requirement for Large Rosters')
     for (let i = 0; i < 11; i++)
-      await press(`Increase ${/When ≥ (\d+) players present/.exec(text())![0]}`)
-    expect(text()).includes('When ≥ 25 players present')
-    expect(disabled('Increase When ≥ 25 players present')).equals(true)
+      await press(
+        `Increase ${/Following requirements when ≥ (\d+) players present/.exec(text())![0]}`
+      )
+    expect(text()).includes('when ≥ 25 players present')
+    expect(
+      disabled('Increase Following requirements when ≥ 25 players present')
+    ).equals(true)
     for (let i = 0; i < 5; i++) await press('Increase Minimum Full Innings')
     expect(stepped('Minimum Full Innings: 6')).equals('6')
     expect(disabled('Increase Minimum Full Innings')).equals(true)
@@ -501,37 +622,115 @@ describe('Playing Time Rules screen', function () {
   it('chooses a long choice from rows, and a short one from the pill', async function () {
     const f = fake(detail('season', null, null))
     await open('season', f)
-    await press('Mandatory Play')
-    expect(control('Must Complete By Inning').textContent).includes(
-      'By end of game'
+    await press('Enforce Sitting Limits')
+    expect(control('Equal Sitting Order').textContent).includes(
+      'No 2nd sit until all have sat once'
     )
-    await press('Must Complete By Inning')
+    await press('Equal Sitting Order')
     // The sheet marks what the row holds.
-    expect(control('By end of game').getAttribute('aria-selected')).equals(
-      'true'
+    expect(
+      control('No 2nd sit until all have sat once').getAttribute(
+        'aria-selected'
+      )
+    ).equals('true')
+    await press('No 3rd until all have sat twice')
+    expect(control('Equal Sitting Order').textContent).includes(
+      'No 3rd until all have sat twice'
     )
-    expect(control('By 4th').getAttribute('aria-selected')).equals('false')
-    await press('By 4th')
-    expect(control('Must Complete By Inning').textContent).includes('By 4th')
     // The same one again changes nothing.
-    await press('Must Complete By Inning')
-    await press('By 4th')
-    await press('Any appearance')
-    expect(control('Full only').getAttribute('aria-checked')).equals('false')
-    await press('Full only')
-    expect(control('Full only').getAttribute('aria-checked')).equals('true')
+    await press('Equal Sitting Order')
+    await press('No 3rd until all have sat twice')
+    await press('Require Defensive Playing Time')
+    expect(chosen('Count Partial Innings', 'Any appearance')).equals(true)
+    await choose('Count Partial Innings', 'Full only')
+    expect(chosen('Count Partial Innings', 'Full only')).equals(true)
+    // The same one again changes nothing.
+    await choose('Count Partial Innings', 'Full only')
     await press('Require Minimum Infield')
+    await press('Require Minimum Outfield')
     // The pitcher counts as infield until turned off; 1B to 3B always do.
     expect(on('Pitcher counts as infield')).equals(true)
     await press('Pitcher counts as infield')
     expect(chosen('Catcher counts as', 'Infield')).equals(true)
     await choose('Catcher counts as', 'Outfield')
+    // Each deadline is 3rd, 4th, 5th or n/a, n/a (none) by default.
+    for (const row of [
+      'Complete infield by inning',
+      'Complete outfield by inning'
+    ]) {
+      const labels = [
+        ...document.querySelectorAll(
+          `[role="tablist"][aria-label="${row}"] [role="tab"]`
+        )
+      ].map(tab => tab.textContent)
+      expect(labels, row).deep.equals(['3rd', '4th', '5th', 'n/a'])
+      expect(chosen(row, 'n/a'), row).equals(true)
+    }
+    await choose('Complete infield by inning', '3rd')
+    await choose('Complete outfield by inning', '5th')
+    // A pill row wraps, its name keeping 120 points beside the pill: on a
+    // narrow screen the pill takes its own line, still at the right.
+    const row = document.querySelector<HTMLElement>(
+      '[role="tablist"][aria-label="Count Partial Innings"]'
+    )!.parentElement!
+    expect(getComputedStyle(row).flexWrap).equals('wrap')
+    expect(getComputedStyle(row).justifyContent).equals('flex-end')
+    const name = getComputedStyle(row.firstElementChild!)
+    expect([name.flexGrow, name.flexShrink, name.flexBasis]).deep.equals([
+      '1',
+      '1',
+      '120px'
+    ])
+    // So does a stepper row, − and + moving under the name.
+    const stepper = document.querySelector<HTMLElement>(
+      '[role="button"][aria-label="Increase Max Sits Per Game"]'
+    )!.parentElement!.parentElement!
+    expect(getComputedStyle(stepper).flexWrap).equals('wrap')
+    expect(getComputedStyle(stepper.firstElementChild!).flexBasis).equals(
+      '120px'
+    )
     await save()
     expect(f.saved[0][1].playingTimeRules).deep.include({
-      innings: { minimum: 2, completeBy: 4, countPartial: 'fullOnly' },
+      equalSittingOrder: 'thirdAfterAll',
+      innings: { minimum: 2, completeBy: 'none', countPartial: 'fullOnly' },
       pitcherCountsAsInfield: false,
-      catcherCountsAs: 'outfield'
+      catcherCountsAs: 'outfield',
+      infieldBy: 3,
+      outfieldBy: 5
     })
+  })
+
+  it('orders Infield and Outfield’s rows, the exemption last, and describes the sitting exemption', async function () {
+    const f = fake(detail('season', null, null))
+    await open('season', f)
+    inOrder([
+      'INFIELD AND OUTFIELD',
+      'Require Minimum Infield',
+      'Infield Innings Required',
+      'Pitcher counts as infield',
+      'Catcher counts as',
+      'Complete infield by inning',
+      'Require Minimum Outfield',
+      'Outfield Innings Required',
+      'Complete outfield by inning',
+      'Starting pitcher and catcher exempt from minimums',
+      'SITTING AND BENCH EQUITY',
+      'Enforce Sitting Limits',
+      'Starting Pitcher / Catcher Exempt',
+      'Starting pitcher and catcher may sit with none of the above restrictions.',
+      'POSITION LIMITS AND ROTATION',
+      'Limit Innings at One Position',
+      'Max Innings per Position',
+      'Rotate Every N Innings',
+      'PITCHER AND CATCHER',
+      'Catcher Inning Limit',
+      'Catching Blocks Pitching',
+      'BATTING ORDER'
+    ])
+    // The bench note went with the dash.
+    expect(text()).not.includes('A dash in the plan')
+    // Must Play Both Infield and Outfield is gone: the two minimums say it.
+    expect(text()).not.includes('Must Play Both')
   })
 
   it('limits the catcher at 3, 4, 5 or None, and blocks pitching at 3, 4, 5 or Disable, both off by default', async function () {
@@ -542,11 +741,19 @@ describe('Playing Time Rules screen', function () {
         label === 'None'
       )
     for (const label of ['3', '4', '5', 'Disable'])
-      expect(chosen('Catcher Blocks Pitching Same Day', label), label).equals(
+      expect(chosen('Catching Blocks Pitching', label), label).equals(
         label === 'Disable'
       )
+    // Disabled, the subtext names no number; chosen, it names the one.
+    expect(text()).includes(
+      'After N innings catching, no pitching that calendar day'
+    )
     await choose('Catcher Inning Limit', '4')
-    await choose('Catcher Blocks Pitching Same Day', '3')
+    await choose('Catching Blocks Pitching', '3')
+    expect(text()).includes(
+      'After 3 innings catching, no pitching that calendar day'
+    )
+    expect(text()).not.includes('After N innings')
     await save()
     expect(f.saved[0][1].playingTimeRules).deep.include({
       catcherMaxInnings: 4,
@@ -557,8 +764,12 @@ describe('Playing Time Rules screen', function () {
       'Also block if catcher catches any part of 4th inning',
       'Apply in Shortened Games',
       'Season Tracking',
+      'SEASON TRACKING',
+      'Track Season Infield Balance',
       'Rotate Leadoff Spot',
-      'Infield Positions'
+      'Must Play Next',
+      'Infield Positions',
+      'at-bat'
     ])
       expect(text(), gone).not.includes(gone)
   })
@@ -575,7 +786,7 @@ describe('Playing Time Rules screen', function () {
     const events: string[] = []
     await open('season', f, events)
     f.fail.save = true
-    await press('Mandatory Play')
+    await press('Require Defensive Playing Time')
     await save()
     expect(text()).includes('The rules could not be saved')
     expect(events).deep.equals([])

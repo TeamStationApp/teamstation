@@ -47,11 +47,16 @@ type KeysOf<Value> = {
 const run = ({ min, max }: { min: number; max: number }): number[] =>
   Array.from({ length: max - min + 1 }, (unused, i) => min + i)
 
-const deadlineLabel = (deadline: InningDeadline): string =>
-  deadline === 'none'
-    ? lstrings.playing_time_by_end
-    : lstrings[`playing_time_by_${deadline}`]
-const DEADLINES = INNING_DEADLINES.map(id => ({ id, label: deadlineLabel(id) }))
+const DEADLINE_LABELS: Record<InningDeadline, string> = {
+  3: lstrings.playing_time_inning_3,
+  4: lstrings.playing_time_inning_4,
+  5: lstrings.playing_time_inning_5,
+  none: lstrings.playing_time_no_deadline
+}
+const DEADLINES = INNING_DEADLINES.map(id => ({
+  id,
+  label: DEADLINE_LABELS[id]
+}))
 const OUTS = DEFENSIVE_OUTS.map(id => ({ id, label: String(id) }))
 const MEASURED_IN_LABELS: Record<(typeof MEASURED_IN_CHOICES)[number], string> =
   {
@@ -86,6 +91,27 @@ const SITTING_ORDER_LABELS: Record<
   thirdAfterAll: lstrings.playing_time_third_after_all,
   off: lstrings.playing_time_off
 }
+/** What Require Defensive Playing Time requires, in its unit. */
+function requirement(rules: PlayingTimeRules): string {
+  if (rules.measuredIn === 'outs')
+    return sprintf(lstrings.playing_time_require_outs, rules.outs.required)
+  const { minimum, completeBy } = rules.innings
+  if (completeBy === 'none')
+    return minimum === 1
+      ? lstrings.playing_time_require_inning
+      : sprintf(lstrings.playing_time_require_innings, minimum)
+  return minimum === 1
+    ? sprintf(
+        lstrings.playing_time_require_inning_by,
+        DEADLINE_LABELS[completeBy]
+      )
+    : sprintf(
+        lstrings.playing_time_require_innings_by,
+        minimum,
+        DEADLINE_LABELS[completeBy]
+      )
+}
+
 const choices = <Id extends string>(
   ids: readonly Id[],
   labels: Record<Id, string>
@@ -183,12 +209,14 @@ export function PlayingTimeRulesScreen({
   const toggle = (
     key: KeysOf<boolean>,
     label: string,
-    subtitle?: string
+    subtitle?: string,
+    accessibilityLabel?: string
   ): React.ReactElement => (
     <SettingToggleRow
       key={key}
       label={label}
       subtitle={subtitle}
+      accessibilityLabel={accessibilityLabel}
       value={ruleValue(shown, key)}
       disabled={!enabled(key)}
       onChange={value => {
@@ -200,11 +228,13 @@ export function PlayingTimeRulesScreen({
     key: Key,
     label: string,
     steps: ReadonlyArray<PlayingTimeRowValues[Key]>,
-    format?: (value: PlayingTimeRowValues[Key]) => string
+    format?: (value: PlayingTimeRowValues[Key]) => string,
+    accessibilityLabel?: string
   ): React.ReactElement => (
     <SettingStepperRow
       key={key}
       label={label}
+      accessibilityLabel={accessibilityLabel}
       steps={steps}
       value={ruleValue(shown, key)}
       format={format}
@@ -217,11 +247,15 @@ export function PlayingTimeRulesScreen({
   const segment = <Key extends KeysOf<string | number>>(
     key: Key,
     label: string,
-    options: ReadonlyArray<{ id: PlayingTimeRowValues[Key]; label: string }>
+    options: ReadonlyArray<{ id: PlayingTimeRowValues[Key]; label: string }>,
+    subtitle?: string,
+    accessibilityLabel?: string
   ): React.ReactElement => (
     <SettingSegmentRow
       key={key}
       label={label}
+      subtitle={subtitle}
+      accessibilityLabel={accessibilityLabel}
       options={options}
       selected={ruleValue(shown, key)}
       disabled={!enabled(key)}
@@ -246,17 +280,63 @@ export function PlayingTimeRulesScreen({
       }}
     />
   )
-  const group = (
-    title: string,
-    rows: React.ReactNode,
-    note?: string
-  ): React.ReactElement => (
+  const group = (title: string, rows: React.ReactNode): React.ReactElement => (
     <View style={styles.section}>
       <SectionHeader title={title} />
-      {note != null && <Text style={styles.hint}>{note}</Text>}
       <ListCard>{rows}</ListCard>
     </View>
   )
+  /**
+   * Defensive Playing Time's own rows (`block` '') or a large roster's
+   * ('largeRoster.'), in the unit it is measured in: outs, or innings.
+   */
+  const requirementRows = (
+    block: '' | 'largeRoster.'
+  ): React.ReactElement[] => {
+    const name = (label: string): string | undefined =>
+      block === ''
+        ? undefined
+        : sprintf(lstrings.playing_time_large_roster_row, label)
+    return shown.measuredIn === 'outs'
+      ? [
+          segment(
+            `${block}outs.required`,
+            lstrings.playing_time_outs_required,
+            OUTS,
+            undefined,
+            name(lstrings.playing_time_outs_required)
+          ),
+          toggle(
+            `${block}outs.consecutive`,
+            lstrings.playing_time_consecutive,
+            undefined,
+            name(lstrings.playing_time_consecutive)
+          )
+        ]
+      : [
+          stepper(
+            `${block}innings.minimum`,
+            lstrings.playing_time_minimum_innings,
+            run(PLAYING_TIME_RANGES.minimumInnings),
+            undefined,
+            name(lstrings.playing_time_minimum_innings)
+          ),
+          segment(
+            `${block}innings.completeBy`,
+            lstrings.playing_time_minimum_by,
+            DEADLINES,
+            undefined,
+            name(lstrings.playing_time_minimum_by)
+          ),
+          segment(
+            `${block}innings.countPartial`,
+            lstrings.playing_time_partial,
+            choices(PARTIAL_INNING_CHOICES, PARTIAL_LABELS),
+            undefined,
+            name(lstrings.playing_time_partial)
+          )
+        ]
+  }
   const save = async (): Promise<void> => {
     if (loaded == null || saving) return
     setSaving(true)
@@ -330,23 +410,18 @@ export function PlayingTimeRulesScreen({
                 />
               </ListCard>
             )}
-            {group(lstrings.playing_time_group_mandatory, [
+            {group(lstrings.playing_time_group_defensive, [
               toggle(
                 'defensivePlayingTime',
-                lstrings.playing_time_mandatory_play,
-                lstrings.playing_time_mandatory_play_detail
+                lstrings.playing_time_require,
+                requirement(shown)
               ),
               segment(
                 'measuredIn',
                 lstrings.playing_time_measured_in,
                 choices(MEASURED_IN_CHOICES, MEASURED_IN_LABELS)
               ),
-              segment(
-                'outs.required',
-                lstrings.playing_time_outs_required,
-                OUTS
-              ),
-              toggle('outs.consecutive', lstrings.playing_time_consecutive),
+              ...requirementRows(''),
               toggle(
                 'largeRoster.enabled',
                 lstrings.playing_time_large_rosters
@@ -359,31 +434,7 @@ export function PlayingTimeRulesScreen({
                 ),
                 run(PLAYING_TIME_RANGES.largeRosterPlayers)
               ),
-              segment(
-                'largeRoster.outs.required',
-                sprintf(
-                  lstrings.playing_time_large_roster_outs,
-                  shown.largeRoster.outs.required
-                ),
-                OUTS
-              )
-            ])}
-            {group(lstrings.playing_time_group_total, [
-              stepper(
-                'innings.minimum',
-                lstrings.playing_time_minimum_innings,
-                run(PLAYING_TIME_RANGES.minimumInnings)
-              ),
-              choice(
-                'innings.completeBy',
-                lstrings.playing_time_minimum_by,
-                DEADLINES
-              ),
-              segment(
-                'innings.countPartial',
-                lstrings.playing_time_partial,
-                choices(PARTIAL_INNING_CHOICES, PARTIAL_LABELS)
-              )
+              ...requirementRows('largeRoster.')
             ])}
             {group(lstrings.playing_time_group_fields, [
               toggle('requireMinimumInfield', lstrings.playing_time_infield),
@@ -401,40 +452,45 @@ export function PlayingTimeRulesScreen({
                 lstrings.playing_time_catcher_counts_as,
                 choices(CATCHER_COUNTS_AS_CHOICES, CATCHER_COUNTS_AS_LABELS)
               ),
-              choice('infieldBy', lstrings.playing_time_infield_by, DEADLINES),
+              segment('infieldBy', lstrings.playing_time_infield_by, DEADLINES),
               toggle('requireMinimumOutfield', lstrings.playing_time_outfield),
               stepper(
                 'outfieldInningsRequired',
                 lstrings.playing_time_outfield_innings,
                 run(PLAYING_TIME_RANGES.outfieldInningsRequired)
               ),
-              choice('outfieldBy', lstrings.playing_time_outfield_by, DEADLINES)
+              segment(
+                'outfieldBy',
+                lstrings.playing_time_outfield_by,
+                DEADLINES
+              ),
+              toggle(
+                'startingBatteryExemptFromMinimums',
+                lstrings.playing_time_battery_minimums
+              )
             ])}
-            {group(
-              lstrings.playing_time_group_sitting,
-              [
-                toggle('enforceSittingLimits', lstrings.playing_time_sitting),
-                toggle(
-                  'noConsecutiveSits',
-                  lstrings.playing_time_no_consecutive_sits
-                ),
-                choice(
-                  'equalSittingOrder',
-                  lstrings.playing_time_sitting_order,
-                  choices(SITTING_ORDER_CHOICES, SITTING_ORDER_LABELS)
-                ),
-                stepper(
-                  'maxSitsPerGame',
-                  lstrings.playing_time_max_sits,
-                  run(PLAYING_TIME_RANGES.maxSitsPerGame)
-                ),
-                toggle(
-                  'startingBatteryExemptFromSitting',
-                  lstrings.playing_time_battery_sitting
-                )
-              ],
-              lstrings.playing_time_bench_note
-            )}
+            {group(lstrings.playing_time_group_sitting, [
+              toggle('enforceSittingLimits', lstrings.playing_time_sitting),
+              toggle(
+                'noConsecutiveSits',
+                lstrings.playing_time_no_consecutive_sits
+              ),
+              choice(
+                'equalSittingOrder',
+                lstrings.playing_time_sitting_order,
+                choices(SITTING_ORDER_CHOICES, SITTING_ORDER_LABELS)
+              ),
+              stepper(
+                'maxSitsPerGame',
+                lstrings.playing_time_max_sits,
+                run(PLAYING_TIME_RANGES.maxSitsPerGame)
+              ),
+              toggle(
+                'startingBatteryExemptFromSitting',
+                lstrings.playing_time_battery_sitting,
+                lstrings.playing_time_battery_sitting_detail
+              )
+            ])}
             {group(lstrings.playing_time_group_positions, [
               toggle(
                 'limitInningsAtPosition',
@@ -469,11 +525,13 @@ export function PlayingTimeRulesScreen({
               segment(
                 'catcherBlocksPitching',
                 lstrings.playing_time_catcher_pitching,
-                catcherInnings(lstrings.playing_time_disable)
-              ),
-              toggle(
-                'startingBatteryExemptFromMinimums',
-                lstrings.playing_time_battery_minimums
+                catcherInnings(lstrings.playing_time_disable),
+                sprintf(
+                  lstrings.playing_time_catcher_pitching_detail,
+                  shown.catcherBlocksPitching === 'none'
+                    ? lstrings.playing_time_catcher_pitching_n
+                    : shown.catcherBlocksPitching
+                )
               )
             ])}
             {group(lstrings.playing_time_group_batting, [
