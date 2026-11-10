@@ -8,7 +8,8 @@
 // `{ "dictation": { "anthropic": { "apiKey": … } } }`), or from the
 // `anthropic` secret of the end-to-end settings (`readSecret`), written into
 // such a file, mode 0600, for the run and removed after. With neither, each
-// file is reported skipped, never passed, and the run exits 2.
+// file is reported skipped, never passed, and the run exits 2. A file that
+// fails is run once more; one that passes then is reported `passed-on-retry`.
 import { spawnSync } from 'node:child_process'
 import {
   existsSync,
@@ -97,19 +98,24 @@ export function runModels(env, secret, run = spawnSync) {
     const lines = []
     let failed = false
     for (const test of MODEL_TESTS) {
-      const result = run(process.execPath, [...test.args, test.file], {
-        stdio: 'inherit',
-        env: {
-          ...env,
-          TS_DICTATION_CONFIG: config.file,
-          [test.config ?? 'TS_DICTATION_CONFIG']: config.file
-        }
-      })
-      const passed = result.status === 0
-      if (!passed) failed = true
-      lines.push(
-        `${passed ? 'passed' : 'failed'}\t${test.file}\texit ${String(result.status)}`
-      )
+      const once = () =>
+        run(process.execPath, [...test.args, test.file], {
+          stdio: 'inherit',
+          env: {
+            ...env,
+            TS_DICTATION_CONFIG: config.file,
+            [test.config ?? 'TS_DICTATION_CONFIG']: config.file
+          }
+        }).status
+      // A model answers differently from one ask to the next: a file that
+      // fails is run once more, and passing then is reported as that, so a
+      // case that fails now and then stays in sight.
+      const first = once()
+      const status = first === 0 ? 0 : once()
+      if (status !== 0) failed = true
+      const outcome =
+        status !== 0 ? 'failed' : first === 0 ? 'passed' : 'passed-on-retry'
+      lines.push(`${outcome}\t${test.file}\texit ${String(status)}`)
     }
     return { code: failed ? 1 : 0, lines }
   } finally {

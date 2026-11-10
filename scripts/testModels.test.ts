@@ -51,15 +51,30 @@ describe('testModels', function () {
         options: { env: Record<string, string> }
       ) => {
         seen.push({ file: args.at(-1) ?? '', env: options.env })
-        return { status: args.at(-1)?.includes('promptCases') === true ? 1 : 0 }
+        const file = args.at(-1) ?? ''
+        // promptCases fails both times; dictatedDefense fails once, then passes.
+        if (file.includes('promptCases')) return { status: 1 }
+        if (file.includes('dictatedDefense'))
+          return {
+            status: seen.filter(run => run.file === file).length === 1 ? 1 : 0
+          }
+        return { status: 0 }
       }
     )
+    // Each failed file ran a second time, right after the first.
     expect(seen.map(run => run.file)).deep.equals(
-      MODEL_TESTS.map(test => test.file)
+      MODEL_TESTS.flatMap(({ file }) =>
+        file.includes('promptCases') || file.includes('dictatedDefense')
+          ? [file, file]
+          : [file]
+      )
     )
     expect(seen.at(-1)?.env.TS_TESS_CONFIG).equals('/keys/dictation.json')
     expect(result.code).equals(1)
-    expect(result.lines.filter(line => line.startsWith('failed'))).lengthOf(1)
+    expect(result.lines.filter(line => line.startsWith('failed\t'))).lengthOf(1)
+    expect(
+      result.lines.filter(line => line.startsWith('passed-on-retry\t'))
+    ).lengthOf(1)
   })
 
   it('writes the secret into a private config for the run and removes it', function () {
