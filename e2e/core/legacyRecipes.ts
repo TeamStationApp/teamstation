@@ -225,6 +225,8 @@ export const BLOCKED: Record<string, string> = {
     'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
   'src/app/passwordNative.e2e.ts':
     'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
+  'scripts/e2e/observability/run.ts':
+    'checks what reaches a deployed log collector: OBSERVABILITY_LOG_URL is that https collector and OBSERVABILITY_SECRETS its credentials, neither of which a local stack has',
   'src/app/settingsPillSweep.e2e.ts':
     'compares against support/pill-sweep-before.json and before-fixture.json, captured once for an earlier task; nothing in the repository makes them',
   'scripts/e2e/playbackReliability/playbackReliability.e2e.ts':
