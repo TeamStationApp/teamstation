@@ -853,7 +853,8 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       clientCount: serverStatus.clientCount,
       currentBitrate: adaptiveBitrate?.status.controller.bitrate,
       frameDelivery: frameThrottle.delivery,
-      deliveredFrameRate: frameThrottle.deliveredFrameRate
+      deliveredFrameRate: frameThrottle.deliveredFrameRate,
+      focus: cameraState.focus
     )
   }
 
@@ -874,6 +875,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
     case .set:
       switch CameraParameters.parseSet(body: request.body, snapshot: current) {
       case .success(let write):
+        if let focus = write.focus { camera.setFocus(focus) }
         if let name = write.name { rename(to: name) }
         if let position = write.position, position != cameraState.position { flip() }
         if let zoom = write.displayedZoom { setDisplayedZoom(zoom) }
@@ -1208,6 +1210,7 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
       noteSettingsApplied()
       reconfigureVideoEncoder(settings)
       camera.configure(position: .back, settings: settings)
+      camera.resetControls()
       return ok()
 
     case .showSettings:
@@ -1326,10 +1329,23 @@ public final class AppEnvironment: RadarControlling, BroadcastControlling, Score
 /// of this is forwarding; `apply` is the Done-button pair that already existed.
 ///
 /// The harness `set-codec` / `set-format` cases deliberately do not go through `apply`: they
-/// reconfigure only the encoder so a flow can change them mid-run without the capture device being
-/// reopened and the zoom reset, which `applySettings()` does on purpose for the operator's Done.
+/// reconfigure only the encoder. Done also applies capture settings, preserving zoom and focus
+/// when the same healthy camera can be reused. The harness reset explicitly restores 1x.
 /// `set-bitrate` needs neither: a rate is a live change to the running encoder.
 extension AppEnvironment: CameraControlling {
+  public var focus: CameraFocus { cameraState.focus }
+  public var focusPending: Bool { false }
+  public func focus(at point: FocusPoint) { requestFocus(point) }
+  public func focusPreview(at point: FocusPoint) {
+    guard let command = FocusCommand(generation: focus.generation, token: UUID().uuidString, point: point) else { return }
+    camera.setPreviewFocus(command)
+  }
+  public func autoFocus() { requestFocus(nil) }
+  private func requestFocus(_ point: FocusPoint?) {
+    guard let command = FocusCommand(generation: focus.generation, token: UUID().uuidString, point: point) else { return }
+    camera.setFocus(command)
+  }
+
   public var name: String { identity.name }
   public var cname: String { identity.cname }
   public var position: CameraPosition { cameraState.position }

@@ -39,6 +39,11 @@ public protocol CameraControlling: AnyObject, Observable {
   /// and the screen dims its controls rather than dismissing itself.
   var isResponding: Bool { get }
 
+  var focus: CameraFocus { get }
+  var focusPending: Bool { get }
+  func focus(at point: FocusPoint)
+  func autoFocus()
+
   func setDisplayedZoom(_ displayed: Double)
   func setDeviceZoom(_ device: Double)
   func flip()
@@ -47,4 +52,11 @@ public protocol CameraControlling: AnyObject, Observable {
   func apply(_ settings: StreamSettings)
   /// Settings "Test thermal". Overlay-only on the phone; a remote model may ignore it.
   func previewThermal(_ state: ProcessInfo.ThermalState)
+}
+
+public extension CameraControlling {
+  var focusStatusLabel: String {
+    guard isResponding else { return "Focus unavailable" }
+    return focusPending ? "Requesting focus" : focus.phase.label
+  }
 }
