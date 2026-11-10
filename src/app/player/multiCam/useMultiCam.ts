@@ -1931,11 +1931,17 @@ export function useMultiCam(
     (asked: number): void => {
       // The opening cushion chooses where playback starts, not where a
       // viewer may seek. Match the available end shown by the timeline.
+      // Never behind where the grid already is, though: that end moves a
+      // segment at a time while the pictures play on, so a move forward
+      // from past it would have jumped back.
       const limit = chosenRef.current.some(video => video.status === 'live')
         ? (takeRef.current?.toMs ?? null)
         : null
       const here = gameNowRef.current('') ?? atWallRef.current
-      const wallMs = limit == null ? asked : Math.min(asked, limit)
+      const wallMs =
+        limit == null || asked <= limit
+          ? asked
+          : Math.max(limit, Math.min(asked, here ?? limit))
       playerTrace('grid.seek', { asked, accepted: wallMs, limit, here })
       atWallRef.current = wallMs
       setAtWallMs(wallMs)

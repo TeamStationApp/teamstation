@@ -2279,7 +2279,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       A: dated(300),
       B: dated(300)
     }
-    const { mc } = await grid(
+    const { mc, tiles } = await grid(
       {
         videos: [liveVideo('A', 0), liveVideo('B', 0)],
         order: ['A', 'B'],
@@ -2308,6 +2308,12 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       mc().goTo(T0 + 220_000)
     })
     expect(mc().atWallMs).equals(T0 + 220_000)
+    // Pictures decoded past the bar's end: a move forward stays where they are.
+    for (const tile of Object.values(tiles)) tile.currentTime = 265
+    await act(async () => {
+      mc().goTo(T0 + 280_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 265_000)
   })
 
   it('keeps the bar’s end and the live point while every tile seeks out of what it holds', async function () {
