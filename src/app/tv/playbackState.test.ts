@@ -95,7 +95,7 @@ describe('TV playback composition and remote state', () => {
     'gap',
     'expired footage'
   ])
-    it(`keeps a late live camera covered when shared seeking has ${obstacle}`, () => {
+    it(`rejoins a late live camera with the master, leaving out a covered camera whose shared seeking has ${obstacle}`, () => {
       const clock = new PlaybackClock()
       const seeks: number[] = []
       for (let i = 0; i < 3; i++)
@@ -115,9 +115,10 @@ describe('TV playback composition and remote state', () => {
       if (obstacle === 'expired footage') third.seekableStart = 108
       seeks.length = 0
       clock.progress(1, 108, 108, 0)
-      expect(clock.wall).equals(208600)
-      expect(clock.available(1)).equals(false)
-      expect(seeks).deep.equals([])
+      // The covered third camera no longer holds the others back.
+      expect(clock.wall).equals(207900)
+      expect(seeks).contains(107.9)
+      expect(clock.available(2)).equals(false)
     })
   it('keeps the others playing while a live camera whose feed stopped waits for its footage', () => {
     const clock = new PlaybackClock()
@@ -176,6 +177,67 @@ describe('TV playback composition and remote state', () => {
     expect(clock.wall, 'not sent back before the gap').equals(372000)
     expect(seeks[0].concat(seeks[1])).deep.equals([])
     expect(clock.available(2)).equals(false)
+  })
+  it('rejoins a reopened healthy camera while a stalled camera stays covered', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1, 2]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 296, 0)
+      clock.settled(i)
+    }
+    // The third camera's feed stops at 296 s; it stays loaded, stuck.
+    let second = 300
+    const edge = (): number => 296 + 4 * Math.floor((second - 300) / 4)
+    for (second = 301; second <= 310; second++) {
+      for (const i of [0, 1]) clock.progress(i, second, edge(), 0)
+      clock.progress(2, 300, 296, 0)
+    }
+    expect(clock.available(2)).equals(false)
+    // The second camera fails and reopens decoding 3 s behind the moment.
+    clock.fail(1)
+    clock.load(1, Infinity)
+    for (const i of [0, 1, 2]) seeks[i].length = 0
+    clock.progress(1, 307, edge(), 0)
+    const shared = edge() - 0.1
+    expect(clock.wall, 'the stalled camera does not hold it back').equals(
+      100000 + shared * 1000
+    )
+    expect(seeks[0].at(-1)).closeTo(shared, 0.001)
+    expect(seeks[1].at(-1)).closeTo(shared, 0.001)
+    expect(clock.available(2)).equals(false)
+  })
+  it('rejoins a healthy camera whose 6-second edge lags out of phase once its edge moves', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    clock.load(0, Infinity)
+    let seconds = 120
+    const edge = (): number => 6 * Math.floor((seconds - 9) / 6)
+    for (; seconds <= 150; seconds += 0.25)
+      clock.progress(0, seconds, edge(), 0)
+    // A segment out of phase, a reload late, and a second of uplink: its edge
+    // stays 13 s behind the master's, which a healthy feed on 6-second
+    // segments can be.
+    clock.load(1, Infinity)
+    clock.progress(1, edge() - 19, edge() - 19, 0)
+    expect(seeks[1], 'held until its edge proves current').deep.equals([])
+    expect(clock.available(1)).equals(false)
+    clock.progress(1, edge() - 18.5, edge() - 13, 0)
+    const shared = edge() - 13 - 0.1
+    expect(seeks[0].at(-1), 'rejoined once its edge moved').closeTo(
+      shared,
+      0.001
+    )
+    expect(seeks[1].at(-1)).closeTo(shared, 0.001)
+    for (let i = 0; i < 2; i++) {
+      clock.settled(i)
+      clock.progress(i, shared, edge() - (i === 0 ? 0 : 13), 0)
+      expect(clock.available(i)).equals(true)
+    }
   })
   it('rejoins a live follower within the required half-second wall tolerance', () => {
     const clock = new PlaybackClock()

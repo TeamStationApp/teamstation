@@ -14,12 +14,14 @@ interface ClockPort {
   pendingWall: number | null
   seekableEnd: number | null
   seekableStart: number
+  /** The live seekable edge has advanced since this source loaded: its feed is current. */
+  edgeMoved: boolean
 }
 /**
- * How far apart live cameras' safe edges may be while every feed is current:
- * one segment, at most the longest `EXT-X-TARGETDURATION` a playlist runs.
+ * How far behind the other cameras' safe edges a reopened live camera may be
+ * and still rejoin before its own edge has moved: two 4-second segments.
  */
-const EDGE_SPREAD_MS = 12_000
+const EDGE_SPREAD_MS = 8000
 
 /** Native ports stay registered until the entire player closes, including hidden angles. */
 export class PlaybackClock {
@@ -43,7 +45,8 @@ export class PlaybackClock {
       target: null,
       pendingWall: null,
       seekableEnd: null,
-      seekableStart: 0
+      seekableStart: 0,
+      edgeMoved: false
     }
   }
 
@@ -58,6 +61,7 @@ export class PlaybackClock {
     port.duration = duration > 0 ? duration : Infinity
     port.seekableEnd = null
     port.seekableStart = 0
+    port.edgeMoved = false
     if (this.wall !== null) this.seekPort(port, this.wall, true)
     if (!this.available(this.master) && this.available(index))
       this.master = index
@@ -183,8 +187,11 @@ export class PlaybackClock {
       seekableEnd != null &&
       Number.isFinite(seekableEnd) &&
       seekableEnd > 0
-    )
+    ) {
+      if (port.seekableEnd !== null && seekableEnd > port.seekableEnd)
+        port.edgeMoved = true
       port.seekableEnd = seekableEnd
+    }
     if (port === undefined || port.failed || port.ended) return this.wall
     // A replacement live source may open at the live edge. Restore the selected
     // moment only once its new seekable bounds arrive, and ignore that first frame.
@@ -212,7 +219,7 @@ export class PlaybackClock {
         // A camera whose feed stopped, or has only just come back after a
         // gap, is not one of them: it stays covered until its footage reaches
         // the moment rather than pulling the others back to its last picture
-        // (`rejoinSeekable` refuses both).
+        // (`rejoinSeekable` refuses both, and leaves covered cameras out).
         if (
           playing &&
           !Number.isFinite(port.duration) &&
@@ -222,7 +229,7 @@ export class PlaybackClock {
           decodedWall !== null &&
           decodedWall < port.pendingWall - 500 &&
           this.available(this.master) &&
-          this.rejoinSeekable()
+          this.rejoinSeekable(port)
         )
           return this.wall
         this.seekPort(port, port.pendingWall, true)
@@ -273,28 +280,41 @@ export class PlaybackClock {
     return this.wall
   }
 
-  private rejoinSeekable(): boolean {
+  /**
+   * Seeks the joining camera and the cameras on screen to footage they can
+   * all seek. A camera already covered (its feed stopped) is left out.
+   */
+  private rejoinSeekable(joining: ClockPort): boolean {
     if (this.wall === null) return false
-    const active = this.ports.filter(p => p.loaded && !p.failed && !p.ended)
-    let shared = this.wall
-    const liveEdges: number[] = []
-    for (const port of active) {
-      const live = !Number.isFinite(port.duration)
-      const end = live ? port.seekableEnd : port.duration
+    const together = this.ports.filter(
+      (p, i) =>
+        p === joining ||
+        (p.loaded && !p.failed && !p.ended && this.available(i))
+    )
+    const edges = new Map<ClockPort, number>()
+    for (const port of together) {
+      const end = Number.isFinite(port.duration)
+        ? port.duration
+        : port.seekableEnd
       if (end === null) return false
-      // Just inside the edge on the wall clock: in media time, stepping back
-      // could cross an anchor into footage from before a gap.
       const edge = wallAt(port.timeline.anchors, end * 1000)
       if (edge === null) return false
-      if (live) liveEdges.push(edge)
-      shared = Math.min(shared, edge - 100)
+      edges.set(port, edge)
     }
-    // Current feeds' safe edges are within a segment of each other. A camera
-    // further behind is missing footage: its feed stopped, and the others stay.
-    if (Math.max(...liveEdges) - Math.min(...liveEdges) > EDGE_SPREAD_MS)
-      return false
+    // A reopened camera far behind the others may be one whose feed stopped:
+    // it rejoins once its own edge has moved, which a stopped feed never does.
+    const own = edges.get(joining)!
+    const newest = Math.max(
+      ...together.flatMap(p =>
+        p === joining || Number.isFinite(p.duration) ? [] : [edges.get(p)!]
+      )
+    )
+    if (!joining.edgeMoved && newest - own > EDGE_SPREAD_MS) return false
+    // Just inside each edge on the wall clock: in media time, stepping back
+    // could cross an anchor into footage from before a gap.
+    const shared = Math.min(this.wall, ...[...edges.values()].map(e => e - 100))
     if (
-      active.some(port => {
+      together.some(port => {
         const target = targetTime(port.timeline, shared, port.duration)
         return (
           target?.available !== true ||
