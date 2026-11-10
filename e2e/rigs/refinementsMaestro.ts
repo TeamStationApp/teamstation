@@ -235,7 +235,7 @@ async function scheduleValue(m: MaestroHandle, field: string): Promise<string> {
 /**
  * Picks `date` (YYYY-MM-DD) for the event schedule row `field` ("Date",
  * "End date"): opens its calendar, steps from the month it shows to the
- * date's, and chooses the day.
+ * date's, chooses the day and uses it.
  */
 export async function chooseDate(
   m: MaestroHandle,
@@ -258,6 +258,7 @@ export async function chooseDate(
     await m.waitForAnimationToEnd()
   }
   await m.tapOn({ text: `Choose ${date}`, role: 'button', timeout: 10000 })
+  await m.tapOn({ text: 'Use date', role: 'button', timeout: 10000 })
   await rowShows(m, field, date)
 }
 
@@ -288,6 +289,26 @@ export async function chooseTime(
     field,
     `${twelve}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`
   )
+}
+
+/**
+ * Picks the IANA `zone` for the event schedule's Time zone row: searches for
+ * it in the picker and uses it. The row shows the zone with spaces.
+ */
+export async function chooseTimezone(
+  m: MaestroHandle,
+  zone: string
+): Promise<void> {
+  const shown = await scheduleValue(m, 'Time zone')
+  await m.tapOn({ text: `Time zone: ${shown}`, role: 'button', timeout: 15000 })
+  await m.waitForAnimationToEnd()
+  await fill(m, 'Find time zone', zone)
+  await m.tapOn({
+    text: `Use time zone ${zone}`,
+    role: 'button',
+    timeout: 10000
+  })
+  await rowShows(m, 'Time zone', zone.replace(/_/g, ' '))
 }
 
 export async function show(m: MaestroHandle, text: string): Promise<void> {
