@@ -3,20 +3,24 @@
 # of several players one camera's failed item raised an error, and its stall
 # a stall, in every player.
 def patch_video_item_notifications(root)
+  observers = {
+    'handlePlaybackStalled' => 'AVPlayerItemPlaybackStalled',
+    'handleDidFailToFinishPlaying' => 'AVPlayerItemFailedToPlayToEndTime'
+  }
   path = File.join(root, 'ios/Video/Features/RCTPlayerObserver.swift')
-  source = File.read(path)
-  %w[handlePlaybackStalled handleDidFailToFinishPlaying].each do |handler|
-    name = handler == 'handlePlaybackStalled' ? 'AVPlayerItemPlaybackStalled' : 'AVPlayerItemFailedToPlayToEndTime'
+  original = File.read(path)
+  source = observers.reduce(original) do |text, (handler, name)|
     head = "selector: #selector(RCTPlayerObserverHandler.#{handler}(notification:)),\n" \
            "                                               name: NSNotification.Name.#{name},\n" \
            '                                               object: '
     after = "#{head}player?.currentItem)"
-    next if source.include?(after)
+    next text if text.include?(after)
     before = "#{head}nil)"
-    raise 'react-native-video item notifications changed; review the observers' unless source.scan(before).length == 1
-    source = source.sub(before, after)
+    raise 'react-native-video item notifications changed; review the observers' unless text.scan(before).length == 1
+    text.sub(before, after)
   end
-  File.write(path, source)
+  # Unchanged bytes keep their mtime, so a repeat install recompiles nothing.
+  File.write(path, source) unless source == original
 end
 
 patch_video_item_notifications(ARGV.fetch(0)) if $PROGRAM_NAME == __FILE__

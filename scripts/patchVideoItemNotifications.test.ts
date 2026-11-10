@@ -4,6 +4,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -62,8 +63,10 @@ describe('native per-item notification patch', () => {
       expect(once.split('object: nil)').length).equals(
         original.split('object: nil)').length - 2
       )
+      const written = statSync(observer).mtimeMs
       patch()
       expect(readFileSync(observer, 'utf8')).equals(once)
+      expect(statSync(observer).mtimeMs, 'not rewritten').equals(written)
       writeFileSync(observer, 'changed dependency')
       expect(patch).throws('review the observers')
     } finally {
