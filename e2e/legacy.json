@@ -145,8 +145,6 @@
     "src/app/stream/uploadReminder.e2e.ts",
     "src/app/teamRestoration.e2e.ts",
     "src/app/teamRestorationIOS.e2e.ts",
-    "src/app/tess/tess.e2e.ts",
-    "src/app/tess/tessNative.e2e.ts",
     "src/app/tess/tessSpaceHold.e2e.ts",
     "src/app/uiFixes.e2e.ts",
     "src/app/uiTweaks.e2e.ts",
@@ -183,7 +181,6 @@
     "src/app/chat/declaredAge.e2e.ts",
     "src/app/headCoach.e2e.ts",
     "src/app/headerMenus.e2e.ts",
-    "src/app/headerMenusNative.e2e.ts",
     "src/app/mapFramePolicy.e2e.ts",
     "src/app/schedulerWeekParts.e2e.ts",
     "src/app/screens/homeCoalesce.e2e.ts",
@@ -195,8 +192,7 @@
     "src/server/director/cancelInterrupted.e2e.ts",
     "src/server/live/localTail.e2e.ts",
     "src/server/media/secretPaths.e2e.ts",
-    "src/server/umpires/leaderboardPages.e2e.ts",
-    "src/test/longLists.e2e.ts"
+    "src/server/umpires/leaderboardPages.e2e.ts"
   ],
   "helpers": [
     "src/test/stackTransitionsFixture.e2e.ts",
@@ -404,8 +400,6 @@
     "src/app/stream/uploadReminder.e2e.ts": "streaming",
     "src/app/teamRestoration.e2e.ts": "people",
     "src/app/teamRestorationIOS.e2e.ts": "people",
-    "src/app/tess/tess.e2e.ts": "assistant",
-    "src/app/tess/tessNative.e2e.ts": "assistant",
     "src/app/tess/tessSpaceHold.e2e.ts": "assistant",
     "src/app/uiFixes.e2e.ts": "app-shell",
     "src/app/uiTweaks.e2e.ts": "app-shell",
@@ -441,7 +435,6 @@
     "src/app/chat/declaredAge.e2e.ts": "messaging",
     "src/app/headCoach.e2e.ts": "people",
     "src/app/headerMenus.e2e.ts": "app-shell",
-    "src/app/headerMenusNative.e2e.ts": "app-shell",
     "src/app/mapFramePolicy.e2e.ts": "app-shell",
     "src/app/schedulerWeekParts.e2e.ts": "schedule",
     "src/app/screens/homeCoalesce.e2e.ts": "app-shell",
@@ -453,7 +446,6 @@
     "src/server/director/cancelInterrupted.e2e.ts": "platform",
     "src/server/live/localTail.e2e.ts": "playback",
     "src/server/media/secretPaths.e2e.ts": "platform",
-    "src/server/umpires/leaderboardPages.e2e.ts": "umpires",
-    "src/test/longLists.e2e.ts": "app-shell"
+    "src/server/umpires/leaderboardPages.e2e.ts": "umpires"
   }
 }
