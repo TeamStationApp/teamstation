@@ -10,11 +10,11 @@ import {
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
 import { CARD_HIDE_MS } from '../cardScrub'
-import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { notifyExplicitSeek } from '../explicitSeek'
+import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
-import type { PlayIntent } from '../playIntent'
 import { playerTrace } from '../playerTrace'
+import type { PlayIntent } from '../playIntent'
 import {
   type GridZone,
   type PlacedIcon,
@@ -1080,7 +1080,7 @@ export function useMultiCam(
           return
         }
         if (now < there) return
-        const ready = element.seeking !== true && element.readyState >= 3
+        const ready = element.readyState >= 3
         if (ready) {
           start()
         } else if (now - there > 250) {
@@ -1327,9 +1327,9 @@ export function useMultiCam(
    * seconds it holds, which a seek does not fake, so it is taken at its word.
    */
   const runningDry = useCallback(
-    (video: VideoSummary, now: number): boolean => {
+    (video: VideoSummary, now: number, alone: boolean): boolean => {
       const buffer = bufferOf(elements.current.get(video.id))
-      if (!isDry(buffer)) return false
+      if (!isDry(buffer, alone)) return false
       return (
         buffer.aheadSec != null ||
         !isOurSilence(now, seekedAt.current.get(video.id))
@@ -1445,6 +1445,7 @@ export function useMultiCam(
         if (
           !ready &&
           element != null &&
+          element.seeking !== true &&
           readyWhereItStands({
             waitedMs: now - since,
             readyState: element.readyState,
@@ -1526,7 +1527,10 @@ export function useMultiCam(
     const instant = atWallRef.current
     if (instant == null) return
     const now = Date.now()
-    const dry = awaited(instant).some(video => runningDry(video, now))
+    const waitingFor = awaited(instant)
+    const dry = waitingFor.some(video =>
+      runningDry(video, now, waitingFor.length === 1)
+    )
     if (!dry) return
     hold()
     setWaiting(anyPicture())
@@ -1807,8 +1811,9 @@ export function useMultiCam(
      */
     const waitingNow = playing && covering.length > 0 && showing.length === 0
     if (playing && instant != null) {
-      const dry = awaited(instant, finishedNow).some(video =>
-        runningDry(video, now)
+      const waitingFor = awaited(instant, finishedNow)
+      const dry = waitingFor.some(video =>
+        runningDry(video, now, waitingFor.length === 1)
       )
       if (flowing.current && (waitingNow || dry)) hold()
       if (!flowing.current) {

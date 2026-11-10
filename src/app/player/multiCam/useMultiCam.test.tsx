@@ -1474,14 +1474,14 @@ describe('useMultiCam buffering', function () {
         loads++
       }
     } as unknown as Parameters<NativeVideoHandle['attach']>[0])
-    const load = {
+    const load: Parameters<NativeVideoHandle['handleLoad']>[0] = {
       currentTime: 190,
       duration: 600,
       naturalSize: { width: 640, height: 360, orientation: 'landscape' },
       audioTracks: [],
       textTracks: [],
       videoTracks: []
-    } as Parameters<NativeVideoHandle['handleLoad']>[0]
+    }
     handle.handleLoad(load)
     handle.handleReadyForDisplay()
     handle.handleProgress({
@@ -1500,14 +1500,16 @@ describe('useMultiCam buffering', function () {
       buffer: { aheadSec: 30 }
     })
     try {
-      await act(async () =>
+      await act(async () => {
         handle.handleError({
           error: { errorString: 'Temporary network interruption' }
         })
-      )
+      })
       await until(() => loads > 0, 2000)
       expect(loads).equals(1)
-      await act(async () => mc().goTo(T0 + 80_000))
+      await act(async () => {
+        mc().goTo(T0 + 80_000)
+      })
       await act(async () => {
         opening = false
         handle.handleLoad({ ...load, currentTime: 0 })
@@ -1648,6 +1650,33 @@ describe('useMultiCam buffering', function () {
     expect(tiles.A.paused).equals(false)
     expect(mc().waiting).equals(false)
   })
+
+  for (const ahead of [0.1, 0.5015])
+    it(`resumes a lone cold seek with ${ahead}s buffered without pausing it again`, async function () {
+      this.timeout(8000)
+      const { mc, tiles } = await grid({
+        videos: [video('A', 0)],
+        order: ['A'],
+        atMs: T0 + 120_000
+      })
+      await act(async () => {
+        fill(tiles.A)
+        tiles.A.readyState = 2
+        mc().goTo(T0 + 434_188)
+      })
+      await ticks(1)
+      expect(tiles.A.paused).equals(true)
+      await act(async () => {
+        fill(tiles.A, [430, 434.188 + ahead])
+        tiles.A.readyState = 4
+      })
+      await ticks(1)
+      expect(tiles.A.currentTime).closeTo(434.188, 0.001)
+      expect(tiles.A.paused).equals(false)
+      expect(mc().waiting).equals(false)
+      await ticks(1)
+      expect(tiles.A.paused).equals(false)
+    })
 
   it('holds a grid of several angles for two seconds before trusting a player that stands ready', async function () {
     this.timeout(8000)
@@ -1822,7 +1851,9 @@ describe('useMultiCam buffering', function () {
     Object.assign(tiles.B, { seeking: true })
     await ticks(1)
     expect(tiles.B.currentTime).equals(60)
-    await act(async () => mc().goTo(T0 + 140_000))
+    await act(async () => {
+      mc().goTo(T0 + 140_000)
+    })
     expect(tiles.B.currentTime).equals(80)
   })
 
