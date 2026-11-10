@@ -174,7 +174,6 @@ export function attachHls(
     if (recovering && (intent?.wantsToPlay() ?? wantsToPlay) && handle.paused)
       handle.play().catch(() => undefined)
     if (hasFailed()) return
-    failed = false
     // A reload still due belongs to trouble that has passed. Left to fire, it
     // would find no failure on the books and read that as patience run out.
     if (timer != null) clearTimeout(timer)

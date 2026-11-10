@@ -1,4 +1,5 @@
 import {
+  gapMinimumMs,
   inWallGap,
   mediaAt,
   type WallAnchor,
@@ -91,7 +92,7 @@ export function fromFragments(
       return (
         next != null &&
         next.programDateTime - (found.programDateTime + found.duration * 1000) >
-          250 &&
+          gapMinimumMs() &&
         wallMs >= found.programDateTime + found.duration * 1000 &&
         wallMs < next.programDateTime
       )
