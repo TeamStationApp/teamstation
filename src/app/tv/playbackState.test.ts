@@ -41,27 +41,53 @@ describe('TV playback composition and remote state', () => {
       }
     }
   })
-  it('rejoins healthy cameras decoding a segment past 6-second safe edges', () => {
-    const clock = new PlaybackClock()
-    const seeks: number[][] = [[], []]
-    for (let i = 0; i < 2; i++)
-      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
-    clock.load(0, Infinity)
+  it('rejoins healthy cameras decoding a segment past 6-second safe edges, at every phase of the edge', () => {
     // The first camera decodes 9 s past its safe edge, which advances 6 s at
-    // a time.
-    let seconds = 120
-    const edge = (): number => 6 * Math.floor((seconds - 9) / 6)
-    for (; seconds < 150; seconds += 0.25) clock.progress(0, seconds, edge(), 0)
-    clock.load(1, Infinity)
-    clock.progress(1, edge(), edge(), 0)
-    const shared = edge() - 0.1
-    expect(seeks[0].at(-1), 'rejoined, not refused').closeTo(shared, 0.001)
-    expect(seeks[1].at(-1)).closeTo(shared, 0.001)
-    for (let i = 0; i < 2; i++) {
-      clock.settled(i)
-      clock.progress(i, shared, edge(), 0)
-      expect(clock.available(i)).equals(true)
+    // a time; the second opens at that edge. Every stop across one whole edge
+    // cycle rejoins them.
+    for (let stop = 150; stop <= 156; stop += 0.5) {
+      const clock = new PlaybackClock()
+      const seeks: number[][] = [[], []]
+      for (let i = 0; i < 2; i++)
+        clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+      clock.load(0, Infinity)
+      let seconds = 120
+      const edge = (): number => 6 * Math.floor((seconds - 9) / 6)
+      for (; seconds <= stop; seconds += 0.25)
+        clock.progress(0, seconds, edge(), 0)
+      clock.load(1, Infinity)
+      clock.progress(1, edge(), edge(), 0)
+      const shared = edge() - 0.1
+      expect(seeks[0].at(-1), `rejoined at ${stop}`).closeTo(shared, 0.001)
+      expect(seeks[1].at(-1)).closeTo(shared, 0.001)
+      for (let i = 0; i < 2; i++) {
+        clock.settled(i)
+        clock.progress(i, shared, edge(), 0)
+        expect(clock.available(i)).equals(true)
+      }
     }
+  })
+  it('refuses a rejoin to a camera whose edge trails by more than a segment, after any edge jump', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1, 2]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 296, 0)
+      clock.settled(i)
+    }
+    // One reload lists three 4-second segments at once.
+    clock.progress(0, 301, 308, 0)
+    clock.progress(1, 301, 300, 0)
+    // The third camera's feed stopped; it opens again 13 s behind the edge.
+    clock.fail(2)
+    clock.load(2, Infinity)
+    for (const i of [0, 1]) seeks[i].length = 0
+    clock.progress(2, 295, 295, 0)
+    expect(clock.wall).equals(401000)
+    expect(seeks[0].concat(seeks[1])).deep.equals([])
+    expect(clock.available(2)).equals(false)
   })
   for (const obstacle of [
     'unknown bounds',
