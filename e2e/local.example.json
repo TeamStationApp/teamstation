@@ -1,15 +1,15 @@
 {
   "seats": { "tester": { "origin": "https://tester.example.test" } },
-  "seatCommand": "/Users/dev/git/deploy-tools/src/deploy/testerSeat.sh",
-  "goldenStore": "/Users/dev/git/teamstation-e2e-goldens",
+  "seatCommand": "~/git/deploy-tools/src/deploy/testerSeat.sh",
+  "goldenStore": "~/git/teamstation-e2e-goldens",
   "mailbox": "testmailbox@example.test",
-  "seatManifest": "/Users/dev/e2e-runs/tester-manifest.json",
-  "gogEnvFile": "/Users/dev/.keys/gog-keyring.env",
-  "maestroClientRoot": "/Users/dev/git/maestro-d/npm/maestro-d",
-  "maestroBin": "/Users/dev/.maestro-d/bin/maestro-d",
-  "maestroHome": "/Users/dev/.maestro-d",
-  "secretsFile": "/Users/dev/.keys/e2e-secrets.json",
+  "seatManifest": "~/e2e-runs/tester-manifest.json",
+  "gogEnvFile": "~/.keys/gog-keyring.env",
+  "maestroClientRoot": "~/git/maestro-d/npm/maestro-d",
+  "maestroBin": "~/.maestro-d/bin/maestro-d",
+  "maestroHome": "~/.maestro-d",
+  "secretsFile": "~/.keys/e2e-secrets.json",
   "judgeBudgetUsd": 1,
   "sweepRef": "origin/master",
-  "ledger": "/Users/dev/.config/teamstation-e2e/ledger.jsonl"
+  "ledger": "~/.config/teamstation-e2e/ledger.jsonl"
 }
