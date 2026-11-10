@@ -156,6 +156,7 @@ function Fixture(): React.ReactElement {
   const recording = useGameRecording(
     client,
     game.id,
+    true,
     phone,
     async () => DEVICE,
     Camera
@@ -165,6 +166,7 @@ function Fixture(): React.ReactElement {
       {coach && <Text>Coach opened</Text>}
       {mode.has('videos') ? (
         <CameraAnglesPanel
+          signedIn
           client={client}
           gameId={game.id}
           phone={phone}
@@ -174,6 +176,7 @@ function Fixture(): React.ReactElement {
         />
       ) : (
         <GameScreen
+          signedIn
           client={client}
           gameId={game.id}
           initialTab="watch"

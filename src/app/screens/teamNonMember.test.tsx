@@ -13,6 +13,8 @@ import {
   asVideoSummary,
   TeamStationClient
 } from '../../common/api'
+import { asEventInfo } from '../../common/eventInfo'
+import { asGameScheduling } from '../../common/gameApprovals'
 import { userIdOfGumbo } from '../../common/userId'
 import { pageOfGames } from '../../test/pageOf'
 import { gameFixture } from '../scoring/isUnscoredGame.test'
@@ -411,17 +413,20 @@ describe('a non-member’s game page', function () {
   const STILL = 'https://example.com/stills/20.jpg'
 
   async function page(
-    signedIn = true,
-    onSignIn = () => undefined
+    signedIn: boolean | null = true,
+    onSignIn = () => undefined,
+    projectionNonMember = true
   ): Promise<{
     asked: string[]
     moments: Array<[string, number]>
+    rerenderSignedIn: (state: boolean | null) => Promise<void>
   }> {
     const asked: string[] = []
+    let currentSession = signedIn
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async () => ({
       ...gameFixture,
-      nonMemberView: true,
+      nonMemberView: projectionNonMember,
       canScore: false,
       status: 'final',
       awayScore: 3,
@@ -453,8 +458,20 @@ describe('a non-member’s game page', function () {
       // Two angles, so the strip under the picture is drawn.
       videos: [video, { ...video, id: 'v2', title: 'Game — Outfield' }]
     })
-    client.teams = async () => []
+    client.teams = async () => {
+      if (currentSession !== true) asked.push('teams')
+      return []
+    }
+    client.seasonTeams = async () => {
+      if (currentSession !== true) asked.push('seasonTeams')
+      return []
+    }
+    client.eventInfo = async () => {
+      if (currentSession !== true) asked.push('eventInfo')
+      throw new Error('not an event manager')
+    }
     client.gameScheduling = async () => {
+      if (currentSession !== true) asked.push('guest scheduling')
       throw new Error('not a scheduler')
     }
     client.highlights = async () =>
@@ -483,24 +500,166 @@ describe('a non-member’s game page', function () {
       asked.push('boxScore')
       throw new Error('kept for members')
     }
+    client.wallTimeline = async () => {
+      asked.push('wallTimeline')
+      throw new Error('kept for members')
+    }
     const moments: Array<[string, number]> = []
-    await render(
+    const screen = (state: boolean | null): React.ReactElement => (
       <GameScreen
         client={client}
         gameId="g1"
         autoPlay
-        signedIn={signedIn}
+        signedIn={state}
         onSignIn={onSignIn}
         onMoment={(id, sec) => {
           moments.push([id, sec])
         }}
       />
     )
-    await act(async () => {
-      await delay(10)
-    })
-    return { asked, moments }
+    await render(screen(signedIn))
+    const rerenderSignedIn = async (state: boolean | null): Promise<void> => {
+      currentSession = state
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <GestureHandlerRootView>{screen(state)}</GestureHandlerRootView>
+          </ThemeProvider>
+        )
+        await delay(10)
+      })
+    }
+    return { asked, moments, rerenderSignedIn }
   }
+
+  it('does not offer sign-in while the session is unknown on video or box score', async () => {
+    const { asked, rerenderSignedIn } = await page(null, () => {
+      throw new Error('unexpected sign-in')
+    })
+    expect(
+      document
+        .querySelector('[aria-label="Play game video"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    expect(
+      document
+        .querySelector('[aria-label^="Play highlight:"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    await press('Play game video')
+    expect(text()).not.includes('Log in / Sign up')
+    expect(document.querySelector('[data-testid="warningSheet"]')).equals(null)
+    await press('Box score')
+    expect(text()).not.includes('Log in / Sign up')
+    expect(document.querySelector('[aria-label="Loading session"]')).not.equals(
+      null
+    )
+    expect(asked).deep.equals([])
+    await press('Videos')
+    expect(
+      document
+        .querySelector('[aria-label^="Play highlight:"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    await rerenderSignedIn(false)
+    expect(document.querySelector('[data-testid="warningSheet"]')).equals(null)
+    expect(
+      document
+        .querySelector('[aria-label^="Play highlight:"]')
+        ?.getAttribute('aria-disabled')
+    ).not.equals('true')
+    await rerenderSignedIn(null)
+    expect(
+      document
+        .querySelector('[aria-label^="Play highlight:"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    await rerenderSignedIn(true)
+    expect(
+      document
+        .querySelector('[aria-label^="Play highlight:"]')
+        ?.getAttribute('aria-disabled')
+    ).not.equals('true')
+    await press('Play highlight:')
+    expect(document.querySelector('[data-testid="warningSheet"]')).not.equals(
+      null
+    )
+  })
+
+  it('waits for confirmed sign-in before reading a cached member game media', async () => {
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    const asked: string[] = []
+    client.game = async () => ({
+      ...gameFixture,
+      nonMemberView: false,
+      videos: [video]
+    })
+    client.teams = async () => []
+    client.highlights = async () =>
+      asHighlightsResponse({ withheld: null, droppedCount: 0, highlights: [] })
+    client.playback = async () => {
+      asked.push('playback')
+      throw new Error('no media')
+    }
+    client.boxScore = async () => {
+      asked.push('boxScore')
+      throw new Error('no box')
+    }
+    client.wallTimeline = async () => {
+      asked.push('wallTimeline')
+      throw new Error('no timeline')
+    }
+    const screen = (
+      signedIn: boolean | null,
+      initialTab: 'watch' | 'boxScore'
+    ): React.ReactElement => (
+      <GameScreen
+        signedIn={signedIn}
+        client={client}
+        gameId="g1"
+        initialTab={initialTab}
+        angles={[video.id]}
+      />
+    )
+    await render(screen(null, 'watch'))
+    expect(asked).deep.equals([])
+    const show = async (
+      signedIn: boolean | null,
+      tab: 'watch' | 'boxScore'
+    ): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <GestureHandlerRootView>
+              {screen(signedIn, tab)}
+            </GestureHandlerRootView>
+          </ThemeProvider>
+        )
+        await delay(30)
+      })
+    }
+    await show(null, 'boxScore')
+    expect(
+      document.querySelector('[role="tab"][aria-selected="true"]')?.textContent
+    ).equals('Box score')
+    expect(asked).deep.equals([])
+    await show(true, 'boxScore')
+    expect(asked).includes('playback').and.includes('boxScore')
+    await show(true, 'watch')
+    expect(asked).includes('wallTimeline')
+  })
+
+  it('offers sign-in after true to false with a retained member projection and no protected reads', async () => {
+    const { asked, rerenderSignedIn } = await page(true, () => undefined, false)
+    asked.length = 0
+    await rerenderSignedIn(false)
+    await press('Play highlight:')
+    expect(document.querySelector('[data-testid="warningSheet"]')).not.equals(
+      null
+    )
+    expect(text()).includes('Log in / Sign up')
+    expect(asked).deep.equals([])
+  })
 
   for (const signedIn of [false, true])
     it(`shows posters and blocks main and highlight playback for ${signedIn ? 'nonmembers' : 'guests'}`, async function () {
@@ -546,6 +705,154 @@ describe('a non-member’s game page', function () {
       expect(asked).deep.equals([])
     })
 
+  for (const signedIn of [false, true])
+    it(`keeps scheduling permissions correct through refresh for ${signedIn ? 'a signed-in nonmember with season rights' : 'a guest'}`, async () => {
+      const game = {
+        ...gameFixture,
+        // Do not let a false projection flag authorize a signed-out viewer.
+        nonMemberView: signedIn,
+        canScore: false,
+        venue: 'Demo Public Field',
+        seasonId: 'demo-season',
+        startAt: new Date(Date.now() + 86400000).toISOString()
+      }
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
+      const asked: string[] = []
+      let reads = 0
+      client.game = async () => {
+        reads += 1
+        return { ...game }
+      }
+      client.teams = async () => {
+        asked.push('teams')
+        return []
+      }
+      client.seasonTeams = async () => {
+        asked.push('seasonTeams')
+        return []
+      }
+      client.gameScheduling = async () => {
+        asked.push('scheduling')
+        return asGameScheduling({
+          game: {
+            homeTeamId: 'home',
+            awayTeamId: 'away',
+            seasonId: null,
+            startAt: game.startAt,
+            venue: null,
+            outsideTournament: null,
+            status: 'scheduled',
+            exhibition: false,
+            timezone: 'UTC'
+          },
+          version: 'a'.repeat(64),
+          canPropose: true,
+          withdrawTeamIds: ['home']
+        })
+      }
+      client.eventInfo = async () => {
+        asked.push('eventInfo')
+        return asEventInfo({
+          id: 'g1',
+          eventKind: game.eventKind ?? 'game',
+          title: null,
+          teamId: 'home',
+          teamName: 'Hawks',
+          startAt: game.startAt,
+          endAt: null,
+          timezone: 'UTC',
+          venue: null,
+          address: null,
+          latitude: null,
+          longitude: null,
+          status: game.status,
+          canManage: false,
+          attendees: [],
+          replyUserIds: []
+        })
+      }
+      let openedSettings = 0
+      let signIns = 0
+      const screen = (session: boolean | null): React.ReactElement => (
+        <GameScreen
+          client={client}
+          gameId="g1"
+          signedIn={session}
+          initialTab="info"
+          onSignIn={() => {
+            signIns += 1
+          }}
+          onSettings={() => {
+            openedSettings += 1
+          }}
+        />
+      )
+      await render(screen(null))
+      expect(asked).deep.equals([])
+      expect(
+        document.querySelector('[aria-label="Loading session"]')
+      ).not.equals(null)
+      expect(document.body.textContent).not.includes(
+        'Sign in to view event information'
+      )
+      expect(document.body.textContent).not.includes('Log in / Sign up')
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <GestureHandlerRootView>{screen(signedIn)}</GestureHandlerRootView>
+          </ThemeProvider>
+        )
+        await delay(30)
+      })
+      expect(document.querySelector('[aria-label="Loading session"]')).equals(
+        null
+      )
+      const settings = (): Element | null =>
+        document.querySelector('[aria-label="Event settings"][role="button"]')
+      if (signedIn) {
+        expect(asked.filter(path => path === 'teams')).deep.equals(['teams'])
+        expect(asked.filter(path => path === 'seasonTeams')).deep.equals([
+          'seasonTeams'
+        ])
+        expect(asked.filter(path => path === 'scheduling')).deep.equals([
+          'scheduling'
+        ])
+        expect(settings()).not.equals(null)
+        await press('Event settings')
+        expect(openedSettings).equals(1)
+      } else {
+        expect(asked).deep.equals([])
+        expect(settings()).equals(null)
+      }
+      const previousReads = reads
+      game.status = 'cancelled'
+      // Refresh into a different kind of public projection as well: neither
+      // authenticated permissions endpoint is appropriate for the guest.
+      if (!signedIn) game.eventKind = 'event'
+      await act(async () => {
+        window.dispatchEvent(new window.Event('focus'))
+        await delay(30)
+      })
+      expect(reads).greaterThan(previousReads)
+      if (signedIn) {
+        expect(asked.filter(path => path === 'teams')).deep.equals(['teams'])
+        expect(asked.filter(path => path === 'seasonTeams')).deep.equals([
+          'seasonTeams'
+        ])
+        expect(asked.filter(path => path === 'scheduling')).deep.equals([
+          'scheduling',
+          'scheduling'
+        ])
+        expect(settings()).not.equals(null)
+      } else {
+        expect(asked).deep.equals([])
+        expect(settings()).equals(null)
+        expect(text()).includes('Demo Public Field')
+        await press('Log in / Sign up')
+        expect(signIns).equals(1)
+      }
+    })
+
   it('switches angles without asking for the video', async function () {
     const { asked } = await page()
     await press('Outfield')
@@ -581,7 +888,7 @@ describe('a member’s game Videos tab', function () {
       // Still on its way: the box shows its spinner meanwhile.
       return await new Promise(() => undefined)
     }
-    await render(<GameScreen client={client} gameId="g1" autoPlay />)
+    await render(<GameScreen signedIn client={client} gameId="g1" autoPlay />)
     await act(async () => {
       await delay(10)
     })

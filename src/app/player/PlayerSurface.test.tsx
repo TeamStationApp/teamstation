@@ -1009,6 +1009,7 @@ describe('the game page’s player', function () {
     // the page is opened on Videos the way `?video=` or `?angles=` opens it.
     await render(
       <GameScreen
+        signedIn
         client={client}
         gameId={gameFixture.id}
         initialTab="watch"

@@ -220,6 +220,7 @@ describe('the game Record button', function () {
     let opened = 0
     await render(
       <GameScreen
+        signedIn
         client={client(true)}
         gameId="g1"
         recording={{
@@ -246,6 +247,7 @@ describe('the game Record button', function () {
     for (const status of ['scheduled', 'inProgress', 'final']) {
       await render(
         <GameScreen
+          signedIn
           client={client(false, status)}
           gameId="g1"
           recording={{ open: () => undefined }}
@@ -257,7 +259,7 @@ describe('the game Record button', function () {
       })
     }
     for (const canDj of [false, true]) {
-      await render(<GameScreen client={client(canDj)} gameId="g1" />)
+      await render(<GameScreen signedIn client={client(canDj)} gameId="g1" />)
       expect(labelled('Record'), `${canDj}`).equals(null)
       await act(async () => {
         root?.unmount()

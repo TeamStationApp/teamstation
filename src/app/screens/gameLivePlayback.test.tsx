@@ -126,6 +126,7 @@ async function page(
       <ThemeProvider>
         <GestureHandlerRootView>
           <GameScreen
+            signedIn
             client={client}
             gameId="g1"
             initialTab="watch"

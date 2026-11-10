@@ -12,9 +12,16 @@ import type {
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
 import type { CameraLinks } from './cameraDeepLinks'
-import { fakePhoneStreamModule, RECORDING } from './fakePhoneStreamModule'
+import {
+  fakePhoneStreamModule,
+  RECORDING,
+  STATUS_EVENT
+} from './fakePhoneStreamModule'
 import { makePhoneStream } from './phoneStreamClient'
-import type { StreamingScreenProps } from './StreamingScreen.native'
+import {
+  StreamingScreen,
+  type StreamingScreenProps
+} from './StreamingScreen.native'
 import { useGameRecording } from './useGameRecording.native'
 
 const DEVICE = '00000000-0000-4000-8000-000000000001'
@@ -101,6 +108,7 @@ async function mount(
     const recording = useGameRecording(
       fake.client,
       'gam_1',
+      true,
       phone,
       async () => DEVICE,
       Camera,
@@ -638,5 +646,182 @@ describe('recording from the game hero', () => {
       await pause()
     })
     expect(opened).equals(undefined)
+  })
+})
+
+describe('recording session boundary', () => {
+  it('does not read cameras until signed in and removes Record on sign-out', async () => {
+    const fake = fixture()
+    const phone = makePhoneStream(fake.module)
+    function Harness({
+      signedIn
+    }: {
+      signedIn: boolean | null
+    }): React.ReactElement {
+      const recording = useGameRecording(fake.client, 'gam_1', signedIn, phone)
+      return <span>{recording.open == null ? 'unavailable' : 'Record'}</span>
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const show = async (signedIn: boolean | null): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <Harness signedIn={signedIn} />
+          </ThemeProvider>
+        )
+        await pause()
+      })
+    }
+    await show(null)
+    await show(false)
+    expect(fake.reads).equals(0)
+    expect(host.textContent).equals('unavailable')
+    await show(true)
+    expect(fake.reads).equals(1)
+    expect(host.textContent).equals('Record')
+    await show(false)
+    expect(host.textContent).equals('unavailable')
+    expect(fake.reads).equals(1)
+  })
+})
+
+describe('active recording session boundary', () => {
+  it('closes the active native engine on sign-out without deleting its local take', async () => {
+    const fake = fixture()
+    fake.mine = [held]
+    let take: typeof RECORDING | undefined
+    let taking = false
+    let closedWhileRecording = false
+    const begin = fake.module.startRecording.bind(fake.module)
+    const close = fake.module.close.bind(fake.module)
+    fake.module.startRecording = async (...args) => {
+      await begin(...args)
+      take = {
+        ...RECORDING,
+        liveStreamId: held.id,
+        gameId: 'gam_1',
+        endedAt: undefined
+      }
+      taking = true
+    }
+    // Model the native close contract: stop and finish before releasing the engine.
+    fake.module.close = async () => {
+      closedWhileRecording = taking
+      if (taking) {
+        await fake.module.stopRecording()
+        take = { ...take!, endedAt: 1790000001000 }
+        taking = false
+      }
+      await close()
+    }
+    fake.module.recordings = async () => (take == null ? [] : [take])
+    const phone = makePhoneStream(fake.module)
+    const rotation = {
+      allow: () => {},
+      lockLandscape: () => {},
+      restore: () => {}
+    }
+    const orientation = {
+      landscape: () => {},
+      any: () => {},
+      portrait: () => {}
+    }
+    const Screen = (props: StreamingScreenProps): React.ReactElement => (
+      <StreamingScreen
+        {...props}
+        rotation={rotation}
+        cameraOrientation={orientation}
+      />
+    )
+    function Harness({ signedIn }: { signedIn: boolean }): React.ReactElement {
+      const recording = useGameRecording(
+        fake.client,
+        'gam_1',
+        signedIn,
+        phone,
+        async () => DEVICE,
+        Screen
+      )
+      return (
+        <>
+          {recording.open != null && (
+            <button
+              onClick={() => {
+                recording.open?.()
+              }}
+            >
+              Record
+            </button>
+          )}
+          {recording.screen}
+        </>
+      )
+    }
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const show = async (signedIn: boolean): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <Harness signedIn={signedIn} />
+          </ThemeProvider>
+        )
+        await pause()
+      })
+    }
+    await show(true)
+    await press('Record')
+    await act(async () => {
+      fake.module.emitStatus({
+        ...STATUS_EVENT,
+        phase: 'preview',
+        isRecording: false
+      })
+      await pause()
+    })
+    const button = document.querySelector<HTMLElement>(
+      '[data-testid="broadcast-button"]'
+    )!
+    expect(button).not.equals(null)
+    await act(async () => {
+      button.click()
+      await pause()
+    })
+    expect(
+      fake.module.calls.filter(call => call.name === 'startRecording')
+    ).has.length(1)
+    await act(async () => {
+      fake.module.emitStatus({
+        ...STATUS_EVENT,
+        phase: 'live',
+        isRecording: true
+      })
+      await pause()
+    })
+    await show(false)
+    await act(async () => {
+      await pause()
+    })
+    expect(fake.module.calls.filter(call => call.name === 'close')).has.length(
+      1
+    )
+    expect(
+      fake.module.calls.filter(call => call.name === 'deleteRecording')
+    ).has.length(0)
+    expect(closedWhileRecording).equals(true)
+    expect(taking).equals(false)
+    const stopIndex = fake.module.calls.findIndex(
+      call => call.name === 'stopRecording'
+    )
+    const closeIndex = fake.module.calls.findIndex(
+      call => call.name === 'close'
+    )
+    expect(stopIndex).at.least(0)
+    expect(closeIndex).greaterThan(stopIndex)
+    expect((await phone.recordings())[0].endedAt).equals(1790000001000)
+    expect(host.textContent).not.includes('Record')
   })
 })

@@ -5,6 +5,7 @@ import {
   calendarDate,
   gameStatusLine,
   matchupLines,
+  matchupTitle,
   resultFor,
   scheduleDate,
   winnerOf
@@ -170,5 +171,12 @@ describe('a date on a schedule row', function () {
       time: '',
       when: ''
     })
+  })
+})
+
+describe('matchup titles', () => {
+  it('joins games and events without empty title parts', () => {
+    expect(matchupTitle(matchupLines(game))).equals('Alta Hawks @ Bay Stars')
+    expect(matchupTitle({ first: 'Practice', second: '' })).equals('Practice')
   })
 })

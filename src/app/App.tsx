@@ -3648,7 +3648,7 @@ function Shell(props: AppProps): React.ReactElement {
       // DJ Game is an iPhone's: on the web and Android its address shows
       // the game.
       <GameScreen
-        signedIn={session != null}
+        signedIn={askedAboutSession ? session != null : null}
         onSignIn={signInHere}
         socket={gameSocket}
         client={client}
@@ -3740,7 +3740,7 @@ function Shell(props: AppProps): React.ReactElement {
       scoringBody
     ) : top.name === 'game' ? (
       <GameScreen
-        signedIn={session != null}
+        signedIn={askedAboutSession ? session != null : null}
         onSignIn={signInHere}
         socket={gameSocket}
         client={client}

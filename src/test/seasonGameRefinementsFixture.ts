@@ -15,10 +15,11 @@ export interface RefinementsFixture {
   nativePort: number
 }
 
-/** Deterministic synthetic result rows match the frozen predecessor proof. */
+/** Synthetic result rows; dateOf optionally places the reference dates relative to today. */
 export async function refinementsFixture(
   webRoot: string,
-  nativeBindHost: '127.0.0.1' | '0.0.0.0' = '127.0.0.1'
+  nativeBindHost: '127.0.0.1' | '0.0.0.0' = '127.0.0.1',
+  dateOf: (iso: string) => Date = iso => new Date(iso)
 ): Promise<RefinementsFixture> {
   const f = await groupFixture(webRoot)
   for (const [id, name] of [
@@ -152,7 +153,7 @@ export async function refinementsFixture(
         home_team_id: teams[home],
         away_team_id: teams[away],
         season_id: f.seasonA,
-        start_at: new Date(startAt),
+        start_at: dateOf(startAt),
         venue: 'Demo Field',
         status: 'final',
         home_score: hs,
@@ -171,7 +172,7 @@ export async function refinementsFixture(
         home_team_id: f.teamA,
         away_team_id: f.teamB,
         season_id: f.seasonA,
-        start_at: new Date('2026-10-15T18:30:00Z'),
+        start_at: dateOf('2026-10-15T18:30:00Z'),
         venue: 'Demo Field',
         status: 'scheduled'
       },
@@ -180,7 +181,7 @@ export async function refinementsFixture(
         home_team_id: f.teamA,
         away_team_id: teams.Comets,
         season_id: f.seasonA,
-        start_at: new Date('2026-10-16T18:30:00Z'),
+        start_at: dateOf('2026-10-16T18:30:00Z'),
         venue: 'Demo Managed Field',
         status: 'scheduled'
       }
@@ -215,7 +216,7 @@ export async function refinementsFixture(
         homeTeamId: f.teamA,
         awayTeamId: f.standaloneTeam,
         seasonId: f.seasonA,
-        startAt: '2026-10-18T18:00:00Z',
+        startAt: dateOf('2026-10-18T18:00:00Z').toISOString(),
         venue: 'Demo Practice Field',
         outsideTournament: null,
         status: 'scheduled'

@@ -151,6 +151,7 @@ async function page(
                 frame={options.frame == null ? null : { ...options.frame }}
               >
                 <GameScreen
+                  signedIn
                   client={client}
                   gameId="g1"
                   initialTab="watch"

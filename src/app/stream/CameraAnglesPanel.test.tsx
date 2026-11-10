@@ -267,6 +267,7 @@ async function mount(
     root!.render(
       <ThemeProvider>
         <CameraAnglesPanel
+          signedIn
           client={fake.client}
           gameId="gam_1"
           phone={makePhoneStream(native)}
@@ -568,7 +569,7 @@ describe('Record Video on a phone', function () {
     await act(async () => {
       root!.render(
         <ThemeProvider>
-          <StreamFooter client={fake.client} gameId="gam_1" hasVideo />
+          <StreamFooter signedIn client={fake.client} gameId="gam_1" hasVideo />
         </ThemeProvider>
       )
       await delay(20)
@@ -578,6 +579,7 @@ describe('Record Video on a phone', function () {
       root!.render(
         <ThemeProvider>
           <NativeStreamFooter
+            signedIn
             client={fake.client}
             gameId="gam_1"
             hasVideo={false}
@@ -3012,6 +3014,7 @@ describe('web camera management', function () {
       root!.render(
         <ThemeProvider>
           <StreamFooter
+            signedIn
             client={fake.client}
             gameId="gam_1"
             hasVideo={hasVideo}
@@ -3346,4 +3349,46 @@ describe('web camera management', function () {
     })
     expect(text()).equals('')
   })
+})
+
+describe('camera footer session boundary', () => {
+  for (const Footer of [StreamFooter, NativeStreamFooter]) {
+    it(`waits for a session before reading ${Footer === StreamFooter ? 'web' : 'native'} camera access`, async () => {
+      const fake = fakeClient()
+      const asked: string[] = []
+      const access = fake.client.streamAccess.bind(fake.client)
+      fake.client.streamAccess = async id => {
+        asked.push(id)
+        return await access(id)
+      }
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      const show = async (signedIn: boolean | null): Promise<void> => {
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <Footer
+                signedIn={signedIn}
+                client={fake.client}
+                gameId="gam_1"
+                hasVideo={false}
+              />
+            </ThemeProvider>
+          )
+          await delay(30)
+        })
+      }
+      await show(null)
+      expect(host.textContent).equals('')
+      await show(false)
+      expect(host.textContent).contains('No videos')
+      expect(asked).deep.equals([])
+      await show(true)
+      expect(asked).deep.equals(['gam_1'])
+      await show(false)
+      expect(host.textContent).not.contains('Record Video')
+      expect(asked).deep.equals(['gam_1'])
+    })
+  }
 })
