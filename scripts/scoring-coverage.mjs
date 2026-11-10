@@ -60,7 +60,7 @@ const test = spawnSync(
           'src/server/scoring/*.test.ts',
           'src/common/replay/*.test.ts',
           'src/app/replay/*.test.ts',
-          'src/server/routes/lineups.test.ts',
+          'src/server/routes/lineups.integration.test.ts',
           'src/app/sync/*.test.ts',
           ...(rosterEdit
             ? [
@@ -70,11 +70,11 @@ const test = spawnSync(
                 'src/common/playerSettings.test.ts',
                 'src/common/names.test.ts',
                 'src/common/rosterFullName.test.ts',
-                'src/server/access.test.ts',
-                'src/server/routes/players.test.ts',
-                'src/server/routes/rosterManagement.test.ts',
-                'src/server/routes/teams.test.ts',
-                'src/server/teams/teamRoster.test.ts',
+                'src/server/access.integration.test.ts',
+                'src/server/routes/players.integration.test.ts',
+                'src/server/routes/rosterManagement.integration.test.ts',
+                'src/server/routes/teams.integration.test.ts',
+                'src/server/teams/teamRoster.integration.test.ts',
                 'src/server/openapi.test.ts'
               ]
             : [])

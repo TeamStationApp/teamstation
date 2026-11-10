@@ -114,13 +114,13 @@ const unitTests = [
   'scripts/deploy/patchExpoModulesJsi.test.ts'
 ]
 const integrationTests = [
-  'src/server/routes/tvLogin.test.ts',
-  'src/server/serverStart.test.ts',
+  'src/server/routes/tvLogin.integration.test.ts',
+  'src/server/serverStart.integration.test.ts',
   'src/server/routes/appLinks.test.ts',
-  'src/server/routes/appSignIn.test.ts',
-  'src/server/auth/codeDelivery.test.ts',
-  'src/server/auth/emailCodes.test.ts',
-  'src/server/routes/invites.test.ts',
+  'src/server/routes/appSignIn.integration.test.ts',
+  'src/server/auth/codeDelivery.integration.test.ts',
+  'src/server/auth/emailCodes.integration.test.ts',
+  'src/server/routes/invites.integration.test.ts',
   'src/server/openapi.test.ts'
 ]
 for (const [tests, temp] of [

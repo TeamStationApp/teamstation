@@ -36,7 +36,9 @@ describe('no JavaScript crypto', function () {
   })
 
   it('imports none of them anywhere', function () {
-    const pattern = GONE.map(name => name.replace(/[/.]/g, '\\$&')).join('|')
+    const pattern = GONE.map(name =>
+      name.replace(/[\\^$.*+?()[\]{}|/]/g, '\\$&')
+    ).join('|')
     let found = ''
     try {
       found = execFileSync(
@@ -61,7 +63,9 @@ describe('no JavaScript crypto', function () {
     const lines = found
       .split('\n')
       .filter(
-        line => line !== '' && !line.startsWith('src/test/noJsCrypto.test.ts')
+        line =>
+          line !== '' &&
+          !line.startsWith('src/test/noJsCrypto.integration.test.ts')
       )
     expect(lines).deep.equals([])
   })

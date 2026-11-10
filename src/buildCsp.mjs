@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 
 /**
  * The web page's Content-Security-Policy and Subresource Integrity, as pure
- * functions `build.mjs` calls (and `buildCsp.test.ts` checks).
+ * functions `build.mjs` calls (and `buildCsp.integration.test.ts` checks).
  *
  * The page may run only its own script, and compile WebAssembly
  * (`'wasm-unsafe-eval'`, which allows that and no `eval`) for chat's crypto

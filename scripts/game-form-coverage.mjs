@@ -76,19 +76,19 @@ const paths = [
     (phase === 'finished' || (phase === 'ui') === path.startsWith('src/app/'))
 )
 const serverSuites = [
-  'src/server/groups/relatedTeams.test.ts',
-  'src/server/groups/creation.test.ts',
-  'src/server/groups/clientContract.test.ts',
-  'src/server/groups/follows.test.ts',
-  'src/server/groups/leagueDetail.test.ts',
+  'src/server/groups/relatedTeams.integration.test.ts',
+  'src/server/groups/creation.integration.test.ts',
+  'src/server/groups/clientContract.integration.test.ts',
+  'src/server/groups/follows.integration.test.ts',
+  'src/server/groups/leagueDetail.integration.test.ts',
   'src/common/api.test.ts',
   'src/common/gameApprovals.test.ts',
-  'src/server/notifications/requestInformation.test.ts',
+  'src/server/notifications/requestInformation.integration.test.ts',
   'src/server/openapi.test.ts',
   'src/common/eventInfo.test.ts',
-  'src/server/events/eventInfo.test.ts',
-  'src/server/routes/seasonReaders.test.ts',
-  'src/server/schedule/pendingProjection.test.ts'
+  'src/server/events/eventInfo.integration.test.ts',
+  'src/server/routes/seasonReaders.integration.test.ts',
+  'src/server/schedule/pendingProjection.integration.test.ts'
 ].filter(existsSync)
 run('node', ['src/migrate/requirePostgres18.js'])
 if (running.includes('server'))

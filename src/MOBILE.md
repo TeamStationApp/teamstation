@@ -456,7 +456,7 @@ Nothing in the suite depends on the host's free disk any more.
 `server/live/controller.ts` takes `freeBytes` as an option now, defaulting to
 the real one, because it did not: `sync()` asked the **machine** how full it
 was, and a laptop that filled up during an unrelated build failed four
-assertions in `server/live/sync.test.ts` with nothing in the message to
+assertions in `server/live/sync.integration.test.ts` with nothing in the message to
 suggest the code was fine. The test hands it a terabyte; the one case that
 wants the refusal raises the floor instead.
 

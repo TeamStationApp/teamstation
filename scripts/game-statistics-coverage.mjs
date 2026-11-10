@@ -128,13 +128,13 @@ run(
   'node_modules/.bin/mocha',
   [
     ...common,
-    'src/server/routes/gameStatistics.test.ts',
-    'src/server/routes/scoreboard.test.ts',
-    'src/server/routes/lineScore.test.ts',
-    'src/server/routes/boxScore.test.ts',
-    'src/server/routes/events.test.ts',
-    'src/server/scoring/lineTimeline.test.ts',
-    'src/server/scoreboard/boardTimeline.test.ts',
+    'src/server/routes/gameStatistics.integration.test.ts',
+    'src/server/routes/scoreboard.integration.test.ts',
+    'src/server/routes/lineScore.integration.test.ts',
+    'src/server/routes/boxScore.integration.test.ts',
+    'src/server/routes/events.integration.test.ts',
+    'src/server/scoring/lineTimeline.integration.test.ts',
+    'src/server/scoreboard/boardTimeline.integration.test.ts',
     'src/server/stats/replayBoxScoreParity.test.ts'
   ],
   { NODE_V8_COVERAGE: temp }

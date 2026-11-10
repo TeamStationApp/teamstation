@@ -60,7 +60,7 @@ run(
     '--spec',
     'src/server/routes/stills.test.ts',
     '--spec',
-    'src/server/routes/hlsPlayback.test.ts',
+    'src/server/routes/hlsPlayback.integration.test.ts',
     '--spec',
     'src/server/groups/live*.test.ts'
   ],
