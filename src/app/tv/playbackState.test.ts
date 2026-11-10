@@ -71,6 +71,38 @@ describe('TV playback composition and remote state', () => {
       expect(clock.available(1)).equals(false)
       expect(seeks).deep.equals([])
     })
+  it('keeps the others playing while a live camera whose feed stopped waits for its footage', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (let i = 0; i < 3; i++) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 330, 0)
+      clock.settled(i)
+    }
+    expect(clock.wall).equals(400000)
+    // The third camera's feed stopped at 280 s; it is opened again on its
+    // stale playlist, at its safe edge, while the others play on.
+    clock.fail(2)
+    clock.load(2, Infinity)
+    for (const i of [0, 1]) clock.progress(i, 301, 331, 0)
+    for (const i of [0, 1]) seeks[i].length = 0
+    clock.progress(2, 271, 271, 0)
+    expect(clock.wall, 'not pulled back to its last picture').equals(401000)
+    expect(seeks[0].concat(seeks[1])).deep.equals([])
+    expect(clock.available(2)).equals(false)
+    for (let second = 302; second < 320; second++) {
+      for (const i of [0, 1]) clock.progress(i, second, second + 30, 0)
+      clock.progress(2, 271, 271, 0)
+    }
+    expect(clock.wall).equals(419000)
+    // Its feed returns: footage up to the moment and beyond.
+    clock.progress(2, 300, 330, 0)
+    clock.settled(2)
+    clock.progress(2, 320, 330, 0)
+    expect(clock.available(2)).equals(true)
+  })
   it('rejoins a live follower within the required half-second wall tolerance', () => {
     const clock = new PlaybackClock()
     for (let i = 0; i < 2; i++) clock.register(i, timeline(), () => undefined)
