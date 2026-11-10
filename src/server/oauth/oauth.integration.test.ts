@@ -86,7 +86,9 @@ class Browser {
 }
 
 describe('OAuth provider and native approval over HTTPS', function () {
-  this.timeout(process.env.TS_OAUTH_WEB_E2E === '1' ? 180000 : 60000)
+  // The restart test builds the whole server with tsc first, which takes about
+  // a minute on an eight-core Linux droplet.
+  this.timeout(180000)
   let admin: Pool
   let pool: Pool
   let db: Kysely<Database>

@@ -48,18 +48,18 @@ const minimum = unitOnly ? 90 : 95
 const tsSuites = [
   // The rows a player's total is split into (M1).
   'src/common/playerStatSplits.test.ts',
-  'src/server/routes/stats.test.ts',
+  'src/server/routes/stats.integration.test.ts',
   'src/server/stats/playerSplits.test.ts',
   'src/common/api.test.ts',
   'src/common/observability/errors.test.ts',
   'src/server/openapi.test.ts',
-  'src/server/tess/loopback.test.ts',
-  'src/server/graphql/graphql.test.ts',
-  'src/server/graphql/restReader.test.ts',
+  'src/server/tess/loopback.integration.test.ts',
+  'src/server/graphql/graphql.integration.test.ts',
+  'src/server/graphql/restReader.integration.test.ts',
   'src/server/dev/userIdApiCapture.test.ts',
   // The column formats every table shares, and the fixture (M2).
   'src/app/screens/statColumns.test.ts',
-  'src/server/dev/statsTablesSeed.test.ts',
+  'src/server/dev/statsTablesSeed.integration.test.ts',
   // The box score's totals (M4).
   'src/app/screens/boxScoreTotals.test.ts',
   // The replay's totals (M5).

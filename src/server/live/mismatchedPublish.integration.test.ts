@@ -182,6 +182,9 @@ function writerClosed(init: Buffer, initName: string, numbers: number[]): void {
     )
   }
   writeFileSync(join(DIR, WRITER_PLAYLIST_NAME), `${lines.join('\n')}\n`)
+  // A closed segment is listed by the directory watch or by a progress line.
+  // The tick lists it when that watch delivers nothing.
+  tickSamplerForTest()
 }
 
 describe('a publish configured differently from the recording', function () {

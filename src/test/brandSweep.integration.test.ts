@@ -26,11 +26,11 @@ export const OLD_NAME =
 const KEEP: Array<{ path: RegExp; line?: RegExp }> = [
   { path: /^src\/migrate\/migrations\/0(?:[0-3]\d|4[0-6])[A-Za-z]+\.ts$/ },
   { path: /^src\/migrate\/migrations\/047teamStation\.ts$/ },
-  { path: /^src\/migrate\/teamStation\.test\.ts$/ },
+  { path: /^src\/migrate\/teamStation\.integration\.test\.ts$/ },
   { path: /^src\/common\/gumboEventTypes\.ts$/, line: /\bgs_\w+: 'ts_/ },
   { path: /^src\/common\/gumboPlay\.(test\.)?ts$/ },
   { path: /^src\/deploy\/Caddyfile$/ },
-  { path: /^src\/test\/brandSweep\.test\.ts$/ },
+  { path: /^src\/test\/brandSweep\.integration\.test\.ts$/ },
   { path: /./, line: /\btube2?\.gamestation\.co\b/ },
   // Plans, by their file names.
   { path: /./, line: /\.cursor\/plans\/\d{12}-\w+\.md/ },

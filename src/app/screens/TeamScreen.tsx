@@ -82,6 +82,7 @@ import { MembershipAccess } from './MembershipAccess'
 import { PublicTeamContent } from './PublicTeamContent'
 import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import { battingColumns, pitchingColumns } from './statColumns'
+import { nameGoesBelowControls } from './teamCardLayout'
 
 /** The first read of each list, which the screen makes as it opens. */
 const SCHEDULE_OPENS: GamesPageQuery = { around: 'next', order: 'asc' }
@@ -392,12 +393,13 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
   ])
 
   const follows = onManage == null && (publicDetail != null || nonMemberView)
-  // A name needs room of its own when both corner controls are present.
   // Measure the card, since its reading-width cap can differ from the window.
-  const nameBelowControls =
-    place != null &&
-    onManage != null &&
-    (identityWidth ?? width) < theme.rem(24) * fontScale
+  const nameBelowControls = nameGoesBelowControls(
+    place != null,
+    onManage != null || follows,
+    identityWidth ?? width,
+    theme.rem(24) * fontScale
+  )
   const identityWords = (
     <View style={styles.identityText} testID="team-hero-words">
       <Text style={styles.teamName}>{team.name}</Text>

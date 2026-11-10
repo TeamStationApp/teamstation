@@ -100,9 +100,9 @@ export function main(mode, io = {}) {
       'src/server/openapi.test.ts',
       'src/server/chatHistoryWiring.test.ts',
       'src/server/serverConfig.test.ts',
-      'src/test/chatRecoveryControl.test.ts',
+      'src/test/chatRecoveryControl.integration.test.ts',
       'src/test/chatRecoveryFaults.test.ts',
-      'src/test/chatRecoveryFixtureContract.test.ts',
+      'src/test/chatRecoveryFixtureContract.integration.test.ts',
       `${dir}/tests.cjs`
     ]
     run(process.execPath, [

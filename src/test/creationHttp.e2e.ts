@@ -8,44 +8,53 @@ if (artifacts == null)
 const groups: Array<[string, string[]]> = [
   [
     'parent-role-access.log',
-    ['src/server/groups/relationships.test.ts', 'src/server/access.test.ts']
+    [
+      'src/server/groups/relationships.integration.test.ts',
+      'src/server/access.integration.test.ts'
+    ]
   ],
   [
     'invites-node-admin.log',
     [
-      'src/server/invites/personRequests.test.ts',
-      'src/server/admin/nodeAdministration.test.ts'
+      'src/server/invites/personRequests.integration.test.ts',
+      'src/server/admin/nodeAdministration.integration.test.ts'
     ]
   ],
   [
     'notifications-inbox.log',
     [
-      'src/server/groups/linkRequests.test.ts',
-      'src/server/groups/authority.test.ts'
+      'src/server/groups/linkRequests.integration.test.ts',
+      'src/server/groups/authority.integration.test.ts'
     ]
   ],
-  ['parent-unlink.log', ['src/server/groups/relationships.test.ts']],
+  [
+    'parent-unlink.log',
+    ['src/server/groups/relationships.integration.test.ts']
+  ],
   [
     'game-schedule-projections.log',
     [
-      'src/server/schedule/gameApprovals.test.ts',
-      'src/server/schedule/batchApproval.test.ts'
+      'src/server/schedule/gameApprovals.integration.test.ts',
+      'src/server/schedule/batchApproval.integration.test.ts'
     ]
   ],
-  ['public-discovery.log', ['src/server/groups/publicSummary.test.ts']],
+  [
+    'public-discovery.log',
+    ['src/server/groups/publicSummary.integration.test.ts']
+  ],
   [
     'request-lifecycle.log',
     [
-      'src/server/groups/authority.test.ts',
-      'src/server/groups/linkRequests.test.ts'
+      'src/server/groups/authority.integration.test.ts',
+      'src/server/groups/linkRequests.integration.test.ts'
     ]
   ],
-  ['withdrawal.log', ['src/server/schedule/gameApprovals.test.ts']],
+  ['withdrawal.log', ['src/server/schedule/gameApprovals.integration.test.ts']],
   [
     'external-custody.log',
     [
-      'src/server/groups/externalCustody.test.ts',
-      'src/server/schedule/gameApprovals.test.ts'
+      'src/server/groups/externalCustody.integration.test.ts',
+      'src/server/schedule/gameApprovals.integration.test.ts'
     ]
   ]
 ]

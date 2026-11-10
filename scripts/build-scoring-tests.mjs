@@ -12,6 +12,7 @@ import { build } from 'esbuild'
 
 import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
+import { appFiles, tierOf } from './testTiers.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
@@ -36,7 +37,9 @@ const files = currentSetup
       'src/app/hooks/*.test.tsx',
       'src/app/screens/CoachGameScreen.test.tsx'
     ])
-  : globSync('src/**/*.test.tsx')
+  : // `--tier=integration` bundles the app files that need a server; the default
+    // is the unit tier's.
+    appFiles(tierOf(process.argv.slice(2)))
 const extraFiles = rosterEdit
   ? globSync([
       'src/app/App*.test.tsx',

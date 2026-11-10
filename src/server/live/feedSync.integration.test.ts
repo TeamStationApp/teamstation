@@ -522,7 +522,11 @@ describe('the live controller on the change feed', function () {
       'the retargeted camera let go'
     )
     expect(stopped - at).lessThan(200)
-    expect(await fixture!.stateOf(moved.id)).equals('revoked')
+    // The camera is let go first, then its row is written: wait for the write.
+    await until(
+      async () => (await fixture!.stateOf(moved.id)) === 'revoked',
+      'the retargeted stream marked revoked'
+    )
     await settleLiveWork()
     await revokeStreams(fixture!.db, [user.user_id], 'test over')
   })

@@ -710,7 +710,12 @@ describe('the feed relay', function () {
         (await client.query<Record<string, string>>(`show ${name}`)).rows[0][
           name
         ]
-      expect(await show('tcp_user_timeout')).matches(/^(30000|30s)$/)
+      // The startup options ask for 30s. Postgres reports that where the
+      // system has TCP_USER_TIMEOUT, and keeps 0 where it does not.
+      const userTimeout = await show('tcp_user_timeout')
+      expect(userTimeout).matches(
+        process.platform === 'linux' ? /^(30000|30s)$/ : /^(0|30000|30s)$/
+      )
       expect(await show('tcp_keepalives_idle')).equals('10')
       expect(await show('tcp_keepalives_interval')).equals('5')
       expect(await show('tcp_keepalives_count')).equals('3')

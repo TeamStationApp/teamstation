@@ -97,6 +97,29 @@ describe('event address geocoding', function () {
     })
     expect(calls).equals(2)
   })
+  it('leaves no unhandled rejection when a lookup fails with nobody else waiting', async () => {
+    const unhandled: unknown[] = []
+    const record = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', record)
+    try {
+      const geocoder = eventGeocoder(f.h.db, {
+        spacingMs: 0,
+        fetch: async () => new Response('unavailable', { status: 503 })
+      })
+      try {
+        await geocoder.lookup('Nobody else waits')
+        expect.fail('must fail')
+      } catch (error) {
+        expect(String(error)).includes('could not be located')
+      }
+      await new Promise(resolve => setImmediate(resolve))
+      expect(unhandled).deep.equals([])
+    } finally {
+      process.off('unhandledRejection', record)
+    }
+  })
   it('bounds concurrent work and aborts provider requests', async () => {
     const geocoder = eventGeocoder(f.h.db, {
       spacingMs: 1,
@@ -124,6 +147,51 @@ describe('event address geocoding', function () {
         row => row.status === 'rejected' && String(row.reason).includes('busy')
       )
     ).equals(true)
+  })
+  it('answers a stored address while Photon is busy or cooling down after a failure', async () => {
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let calls = 0
+    const geocoder = eventGeocoder(f.h.db, {
+      spacingMs: 0,
+      failureTtlMs: 60000,
+      fetch: async () => {
+        calls++
+        if (calls === 1) return new Response('unavailable', { status: 503 })
+        await held
+        return new Response(JSON.stringify(result))
+      }
+    })
+    // A failure starts the address's cooldown; another process then stores it.
+    await geocoder.lookup('Stored later').catch(() => undefined)
+    await f.h.db
+      .insertInto('event_geocodes')
+      .values({ address: 'stored later', latitude: 1, longitude: 2 })
+      .execute()
+    expect(await geocoder.lookup('Stored later')).deep.equals({
+      latitude: 1,
+      longitude: 2
+    })
+    // Eight lookups waiting on Photon fill its queue.
+    const waiting = Array.from(
+      { length: 8 },
+      async (_, i) => await geocoder.lookup(`Waiting ${i}`)
+    )
+    await new Promise(resolve => setTimeout(resolve, 50))
+    try {
+      await geocoder.lookup('One more')
+      expect.fail('must be busy')
+    } catch (error) {
+      expect(String(error)).includes('busy')
+    }
+    expect(await geocoder.lookup('Stored later')).deep.equals({
+      latitude: 1,
+      longitude: 2
+    })
+    release()
+    await Promise.all(waiting)
   })
   it('queries Google before old fallback cache and never stores Google coordinates there', async () => {
     const stub = await googlePlacesStub()

@@ -59,19 +59,19 @@ const paths = [
 })
 run('node', ['src/migrate/requirePostgres18.js'])
 const suites = [
-  'src/server/schedule/seasonParticipantConsent.test.ts',
-  'src/server/schedule/gameApprovals.test.ts',
-  'src/server/schedule/batchApproval.test.ts',
-  'src/server/schedule/teamSchedulingRoles.test.ts',
-  'src/server/schedule/pendingProjection.test.ts',
-  'src/server/groups/authority.test.ts',
-  'src/server/groups/clientContract.test.ts',
-  'src/server/groups/linkRequests.test.ts',
-  'src/server/groups/directActions.test.ts',
-  'src/server/groups/guardianRequests.test.ts',
-  'src/server/groups/parentTerms.test.ts',
-  'src/server/notifications/requestInformation.test.ts',
-  'src/server/routes/account.test.ts',
+  'src/server/schedule/seasonParticipantConsent.integration.test.ts',
+  'src/server/schedule/gameApprovals.integration.test.ts',
+  'src/server/schedule/batchApproval.integration.test.ts',
+  'src/server/schedule/teamSchedulingRoles.integration.test.ts',
+  'src/server/schedule/pendingProjection.integration.test.ts',
+  'src/server/groups/authority.integration.test.ts',
+  'src/server/groups/clientContract.integration.test.ts',
+  'src/server/groups/linkRequests.integration.test.ts',
+  'src/server/groups/directActions.integration.test.ts',
+  'src/server/groups/guardianRequests.integration.test.ts',
+  'src/server/groups/parentTerms.integration.test.ts',
+  'src/server/notifications/requestInformation.integration.test.ts',
+  'src/server/routes/account.integration.test.ts',
   'src/server/openapi.test.ts'
 ]
 run(

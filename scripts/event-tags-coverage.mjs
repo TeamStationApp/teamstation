@@ -46,9 +46,9 @@ run(
   [
     '-r',
     'sucrase/register',
-    'src/migrate/runner.test.ts',
-    'src/migrate/upgrade.test.ts',
-    'src/migrate/migrations/049expandedStats.test.ts'
+    'src/migrate/runner.integration.test.ts',
+    'src/migrate/upgrade.integration.test.ts',
+    'src/migrate/migrations/049expandedStats.integration.test.ts'
   ],
   testEnv
 )
@@ -63,13 +63,13 @@ run(
     'src/app/scoring/localEventTags.test.ts',
     'src/app/scoring/scoringSource.test.ts',
     'src/app/scoring/playDescription.test.ts',
-    'src/server/routes/events.test.ts',
+    'src/server/routes/events.integration.test.ts',
     'src/server/highlights.test.ts',
-    'src/server/routes/highlightRoutes.test.ts',
-    'src/server/dev/refoldScoredGames.test.ts',
-    'src/server/routes/lineups.test.ts',
-    'src/server/scoreboard/gameSource.test.ts',
-    'src/server/socket/gameSocket.test.ts',
+    'src/server/routes/highlightRoutes.integration.test.ts',
+    'src/server/dev/refoldScoredGames.integration.test.ts',
+    'src/server/routes/lineups.integration.test.ts',
+    'src/server/scoreboard/gameSource.integration.test.ts',
+    'src/server/socket/gameSocket.integration.test.ts',
     'src/server/openapi.test.ts'
   ],
   testEnv
