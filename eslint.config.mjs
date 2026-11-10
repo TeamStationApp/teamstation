@@ -61,6 +61,7 @@ export default [
       'scripts/chat-history-recovery-chat2.ts',
       'scripts/chat-history-recovery-relay.ts',
       'scripts/e2e/**/*.ts',
+      'scripts/testModels.test.ts',
       'scripts/testTiers.test.ts',
       'scripts/testTools.test.ts'
     ],

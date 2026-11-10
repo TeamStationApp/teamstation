@@ -77,6 +77,7 @@ describe('testTiers', function () {
   it('lists each tier’s spec files once, without SERIAL or node_modules', function () {
     expect(specFiles('unit', glob)).deep.equals([
       'e2e/core/c.test.ts',
+      'scripts/testModels.test.ts',
       'scripts/testTiers.test.ts',
       'scripts/testTools.test.ts',
       'src/a.test.ts'
