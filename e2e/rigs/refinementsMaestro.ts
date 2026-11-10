@@ -306,6 +306,48 @@ export async function chooseTimezone(
   await rowShows(m, 'Time zone', zone.replace(/_/g, ' '))
 }
 
+/**
+ * Taps the match of `css` that a tap at its centre reaches. A tab pane or a
+ * scene not on top keeps its controls in the DOM with pointer-events: none,
+ * and Maestro D takes the first match, which can be one of those.
+ */
+export async function tapReachable(
+  m: MaestroHandle,
+  css: string
+): Promise<void> {
+  const page = browserPages.get(m)
+  if (page == null) {
+    await m.tapOn({ css, timeout: 15000 })
+    return
+  }
+  await page.waitForSelector(css, { timeout: 15000 })
+  const marked = await page.evaluate(selector => {
+    for (const node of document.querySelectorAll(selector)) {
+      node.scrollIntoView({ block: 'center' })
+      const rect = node.getBoundingClientRect()
+      const hit = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2
+      )
+      if (hit !== null && node.contains(hit)) {
+        node.setAttribute('data-e2e-tap', 'here')
+        return true
+      }
+    }
+    return false
+  }, css)
+  await m.tapOn({
+    css: marked ? '[data-e2e-tap="here"]' : css,
+    timeout: 15000
+  })
+  if (marked) {
+    await page.evaluate(() => {
+      for (const node of document.querySelectorAll('[data-e2e-tap]'))
+        node.removeAttribute('data-e2e-tap')
+    })
+  }
+}
+
 export async function show(m: MaestroHandle, text: string): Promise<void> {
   await m.assertVisible({ text, timeout: 15000 })
 }
