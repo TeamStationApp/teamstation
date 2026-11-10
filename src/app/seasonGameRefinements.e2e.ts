@@ -2,10 +2,12 @@
 import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
+import { mock } from 'node:test'
 
 import { expect } from 'chai'
 import { sql } from 'kysely'
 
+import { SESSION_COOKIE } from '../server/auth/tokens'
 import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
 import {
   absent,
@@ -37,6 +39,8 @@ async function main(): Promise<void> {
       '<head>' + clock
     )
   )
+  // Keep server date filters aligned with the browser's fixed fixture date.
+  mock.timers.enable({ apis: ['Date'], now: 1791313200000 })
   const seed = await refinementsFixture(web)
   const { f } = seed
   await writeFile(
@@ -91,7 +95,18 @@ async function main(): Promise<void> {
   ): Promise<BrowserSession> => {
     const b = await browserSession(daemon, device, width, height, artifacts)
     sessions.push(b)
-    if (user != null) await login(b, user)
+    if (user != null) {
+      await login(b, user)
+      // The browser cookie jar uses wall time even when the fixture Date is fixed.
+      // Keep the seeded session cookie session-only so it survives navigation.
+      await b.browser.setCookie({
+        name: SESSION_COOKIE,
+        value: f.h.tokens.get(user)!,
+        domain: new URL(f.h.origin).hostname,
+        path: '/',
+        httpOnly: true
+      })
+    }
     return b
   }
   const game = async (id: string): Promise<any> =>
@@ -119,6 +134,45 @@ async function main(): Promise<void> {
     await log(artifacts, 'browser-scenarios.log', `${id} PASS: ${description}`)
   }
   try {
+    const guest = await make('web-public-season-open', 1000, 900)
+    await visit(guest, `/groups/season/${f.seasonA}?tab=schedule&when=all`)
+    await contains(guest.page, 'Demo Hawks')
+    const ordinary = await diagnostic(guest.page, () => {
+      const row = document.querySelector(
+        '[data-testid^="public-game-"] [role="button"]'
+      )
+      if (row == null) return null
+      const wrapper = row.closest('[data-testid^="public-game-"]')
+      const id = wrapper == null ? null : wrapper.getAttribute('data-testid')
+      return {
+        label: row.getAttribute('aria-label'),
+        id: id == null ? null : id.slice('public-game-'.length)
+      }
+    })
+    if (ordinary?.label == null || ordinary.id == null)
+      throw new Error('Public ordinary schedule row missing')
+    await guest.m.scrollUntilVisible({
+      element: { text: ordinary.label },
+      centerElement: true,
+      timeout: 15000
+    })
+    await tap(guest.m, ordinary.label)
+    await guest.page.waitForFunction(() =>
+      location.pathname.includes('/games/')
+    )
+    expect(new URL(guest.page.url()).pathname).equals(`/games/${ordinary.id}`)
+    await contains(guest.page, 'Demo Hawks')
+    expect(
+      await diagnostic(guest.page, () =>
+        [...document.querySelectorAll('video')].every(
+          v => v.paused && v.currentTime === 0
+        )
+      )
+    ).equals(true)
+    await pass(
+      'public-season-game-open',
+      'Guest opens an ordinary season game with no automatic playback'
+    )
     const admin = await make('web-refinements', 1440, 1000, 101)
     await contains(admin.page, 'YOUR LEAGUES')
     const home = await diagnostic(admin.page, () => {
@@ -200,6 +254,11 @@ async function main(): Promise<void> {
         )
     )
     if (pendingLabel == null) throw new Error('Season pending action missing')
+    await admin.m.scrollUntilVisible({
+      element: { text: pendingLabel },
+      centerElement: true,
+      timeout: 15000
+    })
     await tap(admin.m, pendingLabel)
     await contains(admin.page, 'Withdraw invitation')
     expect(new URL(admin.page.url()).pathname).equals(
@@ -328,10 +387,7 @@ async function main(): Promise<void> {
       "These teams are in the season but don't have scheduled games."
     )
     await capture(admin.m, artifacts, 'teams-after.png')
-    const teamPage = await diagnostic(admin.page, () => {
-      const value = document.body.textContent
-      return value === null ? '' : value
-    })
+    const teamPage = await diagnostic(admin.page, () => document.body.innerText)
     expect(teamPage.indexOf('EXHIBITION TEAMS')).greaterThan(
       teamPage.indexOf('Demo Hawks')
     )
@@ -370,6 +426,93 @@ async function main(): Promise<void> {
       'B4',
       'mixed teams appear once upper, exhibition-only and unscheduled are disjoint, placeholder badge and parent-only people verified; sticky tabs remain visible after scroll'
     )
+
+    // The schedule regression pass does not exercise unrelated game-edit forms.
+    if (process.env.TS_REFINEMENTS_SCHEDULE_ONLY === '1') {
+      const proposal = await f.h.request(
+        'POST',
+        '/game-requests',
+        {
+          sender: { kind: 'season', id: f.seasonA },
+          game: {
+            homeTeamId: f.teamB,
+            awayTeamId: f.standaloneTeam,
+            seasonId: f.seasonA,
+            startAt: '2026-10-29T19:00:00Z',
+            venue: 'Demo Host-only Field',
+            status: 'scheduled'
+          },
+          idempotencyKey: 'public-schedule-proposal'
+        },
+        101
+      )
+      expect(proposal.status).equals(201)
+      const proposalId = (await proposal.json()).id
+      expect(
+        (
+          await f.h.request(
+            'POST',
+            `/game-requests/${proposalId}/accept`,
+            {},
+            102
+          )
+        ).status
+      ).equals(200)
+      const visitor = await make('web-public-season-proposal', 1000, 900, 103)
+      await visit(
+        visitor,
+        `/groups/season/${f.seasonA}?tab=schedule&when=upcoming`
+      )
+      await contains(visitor.page, 'Pending approval')
+      const label = await diagnostic(visitor.page, () =>
+        [
+          ...document.querySelectorAll(
+            '[data-testid="schedule-display-row"][role="button"]'
+          )
+        ]
+          .map(n => n.getAttribute('aria-label'))
+          .find(
+            name =>
+              name != null &&
+              name.includes('Demo Visitors @ Demo Eagles') &&
+              name.includes('Pending approval')
+          )
+      )
+      if (label == null) {
+        await capture(visitor.m, artifacts, 'public-proposal-diagnostic.png')
+        throw new Error(
+          'Authorized public proposal row missing: ' +
+            (await diagnostic(visitor.page, () => document.body.innerText))
+        )
+      }
+      await visitor.m.scrollUntilVisible({
+        element: { text: label },
+        centerElement: true,
+        timeout: 15000
+      })
+      await capture(
+        visitor.m,
+        artifacts,
+        'public-season-authorized-proposal.png'
+      )
+      await tap(visitor.m, label)
+      await contains(visitor.page, 'Accept invitation')
+      expect(new URL(visitor.page.url()).pathname).equals(
+        `/notifications/${proposalId}`
+      )
+      await pass(
+        'public-season-proposal-open',
+        'Visiting team opens its authorized proposal from the shared public schedule row'
+      )
+      await recordBrowserCoverage(
+        sessions.map(s => s.page),
+        f.h.origin,
+        process.env.TS_REFINEMENTS_BROWSER_COVERAGE ??
+          resolve('coverage/refinements/browser.json'),
+        web
+      )
+      return
+    }
 
     await visit(admin, `/games/${seed.gameId}`)
     await contains(admin.page, 'Event settings')
@@ -857,38 +1000,30 @@ async function main(): Promise<void> {
       visitors,
       `/groups/season/${f.seasonA}?tab=schedule&when=upcoming`
     )
-    await contains(visitors.page, 'Open game proposal')
+    await contains(visitors.page, 'Pending approval')
+    const publicLabel = await diagnostic(visitors.page, () =>
+      [
+        ...document.querySelectorAll(
+          '[data-testid="schedule-display-row"][role="button"]'
+        )
+      ]
+        .map(n => n.getAttribute('aria-label'))
+        .find(
+          label =>
+            label != null &&
+            label.includes('Demo Visitors @ Demo Eagles') &&
+            label.includes('Pending approval')
+        )
+    )
+    if (publicLabel == null)
+      throw new Error('Public pending schedule row missing')
     await visitors.m.scrollUntilVisible({
-      element: { text: 'Open game proposal for Demo Visitors at Demo Eagles' },
+      element: { text: publicLabel },
       centerElement: true,
       timeout: 15000
     })
-    const placement = await diagnostic(visitors.page, () => {
-      const marker = document.querySelector(
-        '[aria-label="Pending approval for Demo Visitors at Demo Eagles"]'
-      )
-      if (marker === null || marker.parentElement === null) return null
-      const header = marker.parentElement
-      const name = header.firstElementChild
-      if (name === null || name === marker) return null
-      const statusBox = marker.getBoundingClientRect()
-      const nameBox = name.getBoundingClientRect()
-      return {
-        statusLeft: statusBox.left,
-        statusTop: statusBox.top,
-        statusRight: statusBox.right,
-        nameRight: nameBox.right,
-        nameTop: nameBox.top,
-        headerRight: header.getBoundingClientRect().right
-      }
-    })
-    if (placement == null)
-      throw new Error('Public pending status header is missing')
-    expect(placement.statusLeft).greaterThan(placement.nameRight)
-    expect(placement.statusTop).closeTo(placement.nameTop, 1)
-    expect(placement.statusRight).closeTo(placement.headerRight, 1)
     await capture(visitors.m, artifacts, 'public-season-proposal-scenario.png')
-    await tap(visitors.m, 'Open game proposal for Demo Visitors at Demo Eagles')
+    await tap(visitors.m, publicLabel)
     await contains(visitors.page, 'Accept invitation')
     expect(new URL(visitors.page.url()).pathname).equals(
       `/notifications/${hostOnlyId}`
@@ -1030,6 +1165,7 @@ async function main(): Promise<void> {
       })
     )
     await f.h.close()
+    mock.timers.reset()
   }
 }
 main().catch((error: unknown) => {

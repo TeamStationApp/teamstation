@@ -23,7 +23,7 @@ import { pageOfGames } from '../../test/pageOf'
 import type { TabCorrection } from '../chat/ChatAgeGate'
 import { seasonParticipantDestination } from '../navigation/seasonParticipant'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { scheduleDate, shortDate, shortTime } from './format'
+import { scheduleDate, shortTime } from './format'
 import { SeasonScreen } from './SeasonScreen'
 import { battingFixture, pitchingFixture } from './statColumns.test'
 import type { When } from './whenFilter'
@@ -570,7 +570,7 @@ describe('the season screen', function () {
     ])
   })
 
-  it('keeps public approved scores and cancellation history informational without private reads', async function () {
+  it('opens public upcoming, live, completed and cancelled rows without autoplay or private reads', async function () {
     const base = {
       homeTeam: { id: 'tem_home', name: 'Demo Host' },
       awayTeam: { id: 'tem_guest', name: 'Demo Visitor' },
@@ -600,11 +600,21 @@ describe('the season screen', function () {
       canManage: false,
       canViewPrivate: false,
       games: [
+        ...(['scheduled', 'inProgress'] as const).map(status => ({
+          ...base,
+          id: `gam_public_${status}`,
+          status,
+          isGameLive: status === 'inProgress',
+          isUmpire: status === 'inProgress',
+          startAt: daysFromNow(1),
+          videoCount: 2,
+          cancellationReason: null,
+          homeScore: null,
+          awayScore: null
+        })),
         {
           ...base,
           id: 'gam_public_final',
-          isUmpire: true,
-          isGameLive: true,
           status: 'final',
           cancellationReason: null
         },
@@ -632,22 +642,43 @@ describe('the season screen', function () {
       initialTab: 'schedule',
       initialWhen: 'all'
     })
-    expect(text()).includes('final · 2–4')
+    expect(
+      document.querySelectorAll('[data-testid="schedule-display-row"]')
+    ).has.lengthOf(5)
     const badges = [
       ...document.querySelectorAll('[data-testid="settings-pill-badge"]')
     ]
-    expect(badges.map(b => b.textContent)).deep.equals(['UMP', 'LIVE'])
-    expect(badges[0].parentElement).equals(badges[1].parentElement)
-    expect(text()).includes(
-      `${shortDate(base.startAt)} · ${shortTime(base.startAt)} · Demo Public Field`
-    )
-    expect(text()).includes('Canceled — Demo Visitor withdrew')
+    expect(badges.map(b => b.textContent)).includes.members([
+      'UMP',
+      'LIVE',
+      'Canceled'
+    ])
+    expect(text()).includes('2–4')
+    expect(text()).includes('Demo Public Field')
+    expect(text()).includes(shortTime(base.startAt))
+    expect(text()).includes('Demo Visitor withdrew')
     expect(text().match(/Canceled/g)).has.lengthOf(2)
     expect(
       document.querySelector('[aria-label^="Open game proposal for "]')
     ).equals(null)
     expect(calls.loads).deep.equals([])
-    expect(calls.games).deep.equals([])
+    for (const id of [
+      'gam_public_scheduled',
+      'gam_public_inProgress',
+      'gam_public_final',
+      'gam_public_withdrawn',
+      'gam_public_replaced'
+    ]) {
+      const row = document.querySelector<HTMLElement>(
+        `[data-testid="public-game-${id}"] [role="button"]`
+      )!
+      await press(row)
+      expect(calls.games.at(-1)).deep.equals({
+        gameId: id,
+        title: 'Demo Visitor @ Demo Host',
+        options: { autoPlay: false }
+      })
+    }
   })
   for (const pendingRequestId of ['req_visiting_team', null]) {
     it(`keeps visiting-team season request access scoped when private collection access is absent (${pendingRequestId == null ? 'informational' : 'authorized request'})`, async function () {
@@ -697,27 +728,23 @@ describe('the season screen', function () {
         'Chats'
       ])
       expect(text()).includes('Pending approval')
-      expect(text()).includes('Demo Visitor at Demo Host')
-      const marker = document.querySelector(
-        '[aria-label="Pending approval for Demo Visitor at Demo Host"]'
-      )
-      expect(marker).not.equals(null)
-      expect(marker?.parentElement?.textContent).equals(
-        'Demo Visitor at Demo HostPending approval'
-      )
+      expect(text()).includes('Demo Visitor')
+      expect(text()).includes('@ Demo Host')
+      const row = document.querySelector<HTMLElement>(
+        '[data-testid="public-game-gam_visiting_pending"] [data-testid="schedule-display-row"]'
+      )!
+      expect(row).not.equals(null)
       expect(text().match(/Pending approval/g)).has.lengthOf(1)
       expect(text()).not.includes('82–91')
       if (pendingRequestId == null) {
-        expect(
-          document.querySelector('[aria-label^="Open game proposal for "]')
-        ).equals(null)
+        expect(row.getAttribute('role')).not.equals('button')
         expect(calls.games).deep.equals([])
       } else {
-        await press(control('Open game proposal'))
+        await press(row)
         expect(calls.games).deep.equals([
           {
             gameId: 'gam_visiting_pending',
-            title: 'Demo Visitor at Demo Host',
+            title: 'Demo Visitor @ Demo Host',
             options: { pendingRequestId }
           }
         ])
@@ -1484,6 +1511,31 @@ describe('the season screen', function () {
       })
       expect(cursors).deep.equals([undefined, 'more'])
       expect(listProps().data.length).equals(13)
+    })
+
+    it('retries a public read and keeps the empty public schedule free of member data', async function () {
+      let attempts = 0
+      const calls = await mount({
+        publicDetail: visitor(),
+        initialTab: 'schedule',
+        initialWhen: 'upcoming',
+        patch: {
+          publicGamesPage: async () => {
+            if (attempts++ === 0) throw new Error('Public schedule offline')
+            return { ...page, nextCursor: null, items: [] }
+          }
+        }
+      })
+      expect(text()).includes('Public schedule offline')
+      await press(control('Retry season'))
+      expect(attempts).equals(2)
+      expect(text()).not.includes('Public schedule offline')
+      expect(text()).not.includes('Nothing here yet.')
+      expect(
+        document.querySelectorAll('[data-testid="schedule-display-row"]')
+      ).has.lengthOf(0)
+      expect(calls.loads).deep.equals([])
+      expect(calls.whens).deep.equals([])
     })
 
     it('reads a visitor’s pills from the public list', async function () {
