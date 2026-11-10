@@ -1052,8 +1052,23 @@ export function useMultiCam(
           stopJoining(video.id)
           return
         }
-        if (Date.now() - attemptStarted >= 10_000) {
+        const elapsed = Date.now() - attemptStarted
+        // Native's deadline follows completed transfers. Browser seeks get a
+        // bounded download window too, rather than losing their source at 10s.
+        if (
+          element.seeking === true &&
+          (element.checkSeekTimeout != null || elapsed < 120_000)
+        ) {
+          element.checkSeekTimeout?.()
+          seekedAt.current.set(video.id, Date.now())
+          return
+        }
+        if (
+          elapsed >= 10_000 &&
+          (element.seeking === true || element.readyState < 3)
+        ) {
           stopJoining(video.id)
+          seekedAt.current.set(video.id, Date.now() + JOIN_LEAD_SEC * 1000)
           askAgain(video.id)
           return
         }
@@ -1119,6 +1134,7 @@ export function useMultiCam(
           if (mode === 'settle') continue
           stopJoining(video.id)
         }
+        if (mode === 'settle' && element.seeking === true) continue
         const run =
           runAll ??
           (playing && flowing.current && !leftOut.current.has(video.id))
