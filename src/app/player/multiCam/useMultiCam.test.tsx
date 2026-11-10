@@ -1600,6 +1600,20 @@ describe('useMultiCam buffering', function () {
     expect(tiles.B.currentTime).equals(63 + JOIN_LEAD_SEC)
   })
 
+  it('leaves an active download alone during alignment but honors a new user seek', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid()
+    await ticks(1)
+    tiles.A.currentTime = 125
+    tiles.B.currentTime = 60
+    tiles.B.readyState = 2
+    Object.assign(tiles.B, { seeking: true })
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(60)
+    await act(async () => mc().goTo(T0 + 140_000))
+    expect(tiles.B.currentTime).equals(80)
+  })
+
   it('sends a joining tile further ahead when the game passes it before it is ready', async function () {
     this.timeout(8000)
     const { tiles } = await grid()
@@ -1782,7 +1796,11 @@ describe('useMultiCam bounded recovery', () => {
       await tick(2)
       tiles.B.readyState = 2
       Object.assign(tiles.B, { seeking: true })
-      for (let second = 3; second <= 13; second++) await tick(second)
+      const landingAt = tiles.B.currentTime
+      for (let second = 3; second <= 9; second++) await tick(second)
+      expect(tiles.B.currentTime).equals(landingAt)
+      expect(requests.B).equals(1)
+      for (let second = 10; second <= 13; second++) await tick(second)
       expect(requests.B).equals(2)
       expect(requests.A).equals(1)
       expect(mc().urls.B).contains('B-2')

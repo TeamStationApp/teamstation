@@ -1050,7 +1050,13 @@ export function useMultiCam(
         }
         if (Date.now() - attemptStarted >= 10_000) {
           stopJoining(video.id)
+          seekedAt.current.set(video.id, Date.now() + JOIN_LEAD_SEC * 1000)
           askAgain(video.id)
+          return
+        }
+        // Do not restart a download just because the game clock advanced.
+        if (element.seeking === true) {
+          seekedAt.current.set(video.id, Date.now())
           return
         }
         const now = gameNow(video.id)
@@ -1115,6 +1121,7 @@ export function useMultiCam(
           if (mode === 'settle') continue
           stopJoining(video.id)
         }
+        if (mode === 'settle' && element.seeking === true) continue
         const run =
           runAll ??
           (playing && flowing.current && !leftOut.current.has(video.id))
