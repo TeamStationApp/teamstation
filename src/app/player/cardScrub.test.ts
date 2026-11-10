@@ -22,7 +22,7 @@ describe("the event card's scrub line", function () {
     ).equals(null)
   })
 
-  it('hides its controls a second on', function () {
-    expect(CARD_HIDE_MS).equals(1000)
+  it('hides its controls two seconds on', function () {
+    expect(CARD_HIDE_MS).equals(2000)
   })
 })

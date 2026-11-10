@@ -48,7 +48,7 @@ const paths = [
   if (
     !existsSync(path) ||
     !/^src\/.+\.tsx?$/.test(path) ||
-    /\.(test|e2e|integration|smoke)\./.test(path) ||
+    /\.(test|spec|e2e|integration|smoke)\./.test(path) ||
     path.startsWith('src/test/') ||
     // Vendored comparison vocabulary is static data, not executable logic.
     path === 'src/common/chatCrypto/safetyWordList.ts' ||
@@ -173,6 +173,8 @@ run('node_modules/.bin/c8', [
   ...paths.flatMap(path => ['--include', path]),
   '--exclude',
   '**/*.test.*',
+  '--exclude',
+  '**/*.spec.*',
   '--exclude',
   '**/*.e2e.*',
   '--exclude',

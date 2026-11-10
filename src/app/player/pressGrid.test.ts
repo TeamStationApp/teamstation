@@ -8,12 +8,47 @@ import {
   type GridZone,
   gridZoneFor,
   placeIcons,
+  pressInputOf,
+  pressMayAct,
   scrubFraction,
   zoneAt,
   zoneGroup
 } from './pressGrid'
 
 const BOX: Rect = { x: 100, y: 50, w: 800, h: 400 }
+
+describe('fullscreen activation input', function () {
+  it('recognizes Android empty accessibility payloads without an event type', function () {
+    const nativeClick = { nativeEvent: {} }
+    expect(pressInputOf(nativeClick)).equals('virtual')
+    expect(pressMayAct(nativeClick, true, false, false)).equals(false)
+    expect(pressMayAct(nativeClick, false, true, false)).equals(true)
+  })
+
+  it('preserves permission for native touch release and web pointer clicks', function () {
+    for (const event of [
+      { nativeEvent: { touches: [], changedTouches: [{ identifier: 1 }] } },
+      { nativeEvent: { detail: 1 } }
+    ]) {
+      expect(pressInputOf(event)).equals('pointer')
+      expect(pressMayAct(event, false, true, false)).equals(false)
+      expect(pressMayAct(event, true, false, false)).equals(true)
+      expect(pressMayAct(event, null, true, false)).equals(true)
+    }
+  })
+
+  it('keeps keyboard permission through synthetic and raw key events and generated clicks', function () {
+    for (const event of [{ nativeEvent: { key: 'Enter' } }, { key: 'Enter' }]) {
+      expect(pressInputOf(event)).equals('keyboard')
+      expect(pressMayAct(event, false, true, true)).equals(false)
+    }
+    const generatedClick = { nativeEvent: { detail: 0 } }
+    expect(pressMayAct(generatedClick, false, true, true)).equals(false)
+    expect(pressMayAct(generatedClick, true, false, true)).equals(true)
+    expect(pressMayAct(generatedClick, true, false, false)).equals(false)
+    expect(pressInputOf({ nativeEvent: undefined })).equals('virtual')
+  })
+})
 
 /** The zone at the middle of each square, row by row. */
 function grid(box: Rect): GridZone[][] {

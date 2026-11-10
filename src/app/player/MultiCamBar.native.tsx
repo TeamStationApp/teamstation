@@ -7,6 +7,7 @@ import {
   barHeightRem,
   clock,
   getBarStyles,
+  JumpToPresent,
   type MultiCamBarProps,
   TrackStrips
 } from './multiCam/barParts'
@@ -53,12 +54,14 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
         zIndex: 5,
         opacity: visible ? 1 : 0
       }}
-      pointerEvents="none"
+      pointerEvents={visible ? 'box-none' : 'none'}
       accessibilityElementsHidden={!visible}
       importantForAccessibility={visible ? 'auto' : 'no-hide-descendants'}
     >
-      <View style={styles.bar}>
-        <Text style={styles.time}>{clock(atMs - take.fromMs)}</Text>
+      <View pointerEvents="box-none" style={styles.bar}>
+        <Text pointerEvents="none" style={styles.time}>
+          {clock(atMs - take.fromMs)}
+        </Text>
         <View
           accessibilityRole="adjustable"
           accessibilityLabel="Position in the game"
@@ -67,6 +70,7 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
             max: Math.round(span / 1000),
             now: Math.round((atMs - take.fromMs) / 1000)
           }}
+          pointerEvents="none"
           style={{ flex: 1, height: 24 }}
           // The row sits at the bar's left, which is the frame's: the
           // track's place in the press layer is the frame's left plus its own.
@@ -79,7 +83,16 @@ export function MultiCamBar(props: MultiCamBarProps): React.ReactElement {
         >
           <TrackStrips take={take} atMs={atMs} angles={angles} />
         </View>
-        <Text style={styles.time}>{clock(take.toMs - take.fromMs)}</Text>
+        <Text pointerEvents="none" style={styles.time}>
+          {clock(take.toMs - take.fromMs)}
+        </Text>
+        {props.onJumpToPresent != null ? (
+          <JumpToPresent
+            visible={visible}
+            onPress={props.onJumpToPresent}
+            onPressStateChange={props.onPressStateChange}
+          />
+        ) : null}
       </View>
     </View>
   )

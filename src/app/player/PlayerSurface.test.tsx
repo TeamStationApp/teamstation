@@ -115,7 +115,7 @@ function fakeVideo(): VideoHandle & {
 describe('the board over the single player (C2)', function () {
   afterEach(unmount)
 
-  it('is drawn over the picture at single, with one press to open the player and nothing else (U11)', async function () {
+  it('is drawn over the picture at single, with a reveal before opening the player (U11)', async function () {
     const server = overlayServer()
     server.timelines.set('v1', wallTimelineOf([[0, OVERLAY_T0]]))
     server.steps.set('g1', [boardStep(OVERLAY_T0 + 1000, 1)])
@@ -185,6 +185,10 @@ describe('the board over the single player (C2)', function () {
     expect(open.getAttribute('aria-label')).equals(lstrings.game_video_open)
     expect(order.indexOf(open)).greaterThan(order.indexOf(board))
     expect(order.at(-1)).equals(open)
+    await act(async () => {
+      open.click()
+    })
+    expect(opened).equals(0)
     await act(async () => {
       open.click()
     })
@@ -298,7 +302,7 @@ describe("the event card's press grid (U14)", function () {
   const W = 400
   const H = 200
 
-  async function card(): Promise<{
+  async function card(live = false): Promise<{
     video: ReturnType<typeof fakeVideo>
     muted: boolean[]
     opened: () => number
@@ -315,6 +319,7 @@ describe("the event card's press grid (U14)", function () {
       <PlayerSurface
         videoRef={ref}
         player={video}
+        live={live}
         width={W}
         height={H}
         muted={mute}
@@ -385,13 +390,294 @@ describe("the event card's press grid (U14)", function () {
     }
   }
 
+  it('reveals a hidden scrub tap without seeking, then seeks on the visible tap', async function () {
+    const c = await card()
+    await c.press(W * 0.75, H * 0.9)
+    expect(c.video.currentTime).equals(2)
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+    await c.press(W * 0.75, H * 0.9)
+    expect(c.video.currentTime).equals(450)
+  })
+
+  it('consumes the entire hidden scrub drag and permits the next drag', async function () {
+    const c = await card()
+    await c.drag(H * 0.9, W * 0.25, W * 0.75)
+    expect(c.video.currentTime).equals(2)
+    expect(c.video.calls).deep.equals([])
+    await c.drag(H * 0.9, W * 0.25, W * 0.75)
+    expect(c.video.currentTime).equals(450)
+  })
+
+  it('requires the separate fullscreen button to be visible before activation', async function () {
+    const c = await card()
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    const tap = async (): Promise<void> => {
+      for (const type of ['mousedown', 'mouseup']) {
+        await act(async () => {
+          open.dispatchEvent(
+            new window.MouseEvent(type, {
+              bubbles: true,
+              button: 0,
+              buttons: type === 'mousedown' ? 1 : 0
+            })
+          )
+        })
+      }
+      await act(async () => {
+        open.dispatchEvent(
+          new window.MouseEvent('click', { bubbles: true, detail: 1 })
+        )
+      })
+    }
+    await tap()
+    expect(c.opened()).equals(0)
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+    await tap()
+    expect(c.opened()).equals(1)
+  })
+
+  it('keeps hidden fullscreen reachable for accessible reveal and activation', async function () {
+    const c = await card()
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    expect(c.shown()).deep.equals({ icons: false, line: false })
+    expect(open.tabIndex).equals(0)
+    expect(open.getAttribute('aria-hidden')).not.equals('true')
+    await act(async () => {
+      open.focus()
+    })
+    await act(async () => {
+      open.click()
+    })
+    expect(c.opened()).equals(0)
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+    await act(async () => {
+      open.click()
+    })
+    expect(c.opened()).equals(1)
+  })
+
+  it('does not turn a hidden pointer press into an open when it also focuses the button', async function () {
+    const c = await card()
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    await act(async () => {
+      open.dispatchEvent(
+        new window.MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          buttons: 1
+        })
+      )
+      open.focus()
+    })
+    await act(async () => {
+      open.dispatchEvent(
+        new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+      )
+      open.dispatchEvent(
+        new window.MouseEvent('click', { bubbles: true, detail: 1 })
+      )
+    })
+    expect(c.opened()).equals(0)
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+  })
+
+  for (const visibleAtStart of [false, true])
+    it(`uses current visibility for a virtual click after a canceled ${visibleAtStart ? 'visible' : 'hidden'} fullscreen press`, async function () {
+      this.timeout(5000)
+      const c = await card()
+      const open = document.querySelector<HTMLElement>(
+        '[data-testid="gameVideoOpen"]'
+      )!
+      if (visibleAtStart) {
+        await act(async () => {
+          open.click()
+        })
+      }
+      await act(async () => {
+        open.dispatchEvent(
+          new window.MouseEvent('mousedown', {
+            bubbles: true,
+            button: 0,
+            buttons: 1
+          })
+        )
+      })
+      await act(async () => {
+        document.body.dispatchEvent(
+          new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+        )
+      })
+      if (visibleAtStart) {
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 2100))
+        })
+        expect(c.shown().icons).equals(false)
+      }
+      await act(async () => {
+        open.click()
+      })
+      expect(c.opened()).equals(visibleAtStart ? 0 : 1)
+      expect(c.shown()).deep.equals({ icons: true, line: true })
+    })
+
+  it('consumes a hidden fullscreen pointer hold after its revealed controls expire', async function () {
+    this.timeout(5000)
+    const c = await card()
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    await act(async () => {
+      open.dispatchEvent(
+        new window.MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          buttons: 1
+        })
+      )
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 2100))
+    })
+    expect(c.shown().icons).equals(false)
+    await act(async () => {
+      open.dispatchEvent(
+        new window.MouseEvent('mouseup', { bubbles: true, button: 0 })
+      )
+      open.dispatchEvent(
+        new window.MouseEvent('click', { bubbles: true, detail: 1 })
+      )
+    })
+    expect(c.opened()).equals(0)
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+  })
+
+  it('clears keyboard permission when focus leaves before activation', async function () {
+    this.timeout(5000)
+    const c = await card()
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    await act(async () => {
+      open.click()
+      open.focus()
+    })
+    await act(async () => {
+      open.dispatchEvent(
+        new window.KeyboardEvent('keydown', { bubbles: true, key: 'Enter' })
+      )
+    })
+    await act(async () => {
+      open.blur()
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 2100))
+    })
+    expect(c.shown().icons).equals(false)
+    await act(async () => {
+      open.click()
+    })
+    expect(c.opened()).equals(0)
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+  })
+
+  it('opens unavailable video on the first activation when there are no controls to reveal', async function () {
+    let opened = 0
+    await render(
+      <PlayerSurface
+        videoRef={{ current: null }}
+        width={W}
+        height={H}
+        playable={false}
+        onOpen={() => {
+          opened += 1
+        }}
+      >
+        <div />
+      </PlayerSurface>
+    )
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    expect(open.tabIndex).equals(0)
+    expect(open.getAttribute('aria-hidden')).not.equals('true')
+    await act(async () => {
+      open.click()
+    })
+    expect(opened).equals(1)
+  })
+
+  it('jumps live video to its fresh seekable end only when visible', async function () {
+    const c = await card(true)
+    let end: number | null = 500
+    Object.defineProperty(c.video, 'seekableEnd', { get: () => end })
+    const jump = document.querySelector<HTMLElement>(
+      '[data-testid="jumpToPresent"]'
+    )!
+    await act(async () => {
+      jump.click()
+    })
+    expect(c.video.currentTime).equals(2)
+    await c.press(W * 0.5, 10)
+    end = 550
+    await act(async () => {
+      jump.dispatchEvent(
+        new window.MouseEvent('mousedown', {
+          bubbles: true,
+          button: 0,
+          buttons: 1
+        })
+      )
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 2100))
+    })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+    expect(c.video.currentTime).equals(2)
+    await act(async () => {
+      jump.dispatchEvent(
+        new window.MouseEvent('mouseup', {
+          bubbles: true,
+          button: 0,
+          buttons: 0
+        })
+      )
+      jump.click()
+    })
+    expect(c.video.currentTime).equals(550)
+    end = 540
+    await act(async () => {
+      jump.click()
+    })
+    expect(c.video.currentTime).equals(550)
+    for (const missing of [null, NaN, 0, Infinity]) {
+      end = missing
+      await act(async () => {
+        jump.click()
+      })
+      expect(c.video.currentTime).equals(550)
+    }
+  })
+
+  it('omits jump to present on recorded video', async function () {
+    await card()
+    expect(document.querySelector('[data-testid="jumpToPresent"]')).equals(null)
+  })
+
   it('runs each square, away from its icon, and shows the controls above the scrub line together', async function () {
     const c = await card()
     expect(c.shown()).deep.equals({ icons: false, line: false })
     // Top left: the sound. Near the square's corner, not its icon.
     await c.press(5, 5)
+    expect(c.muted).deep.equals([])
+    await c.press(5, 5)
     expect(c.muted).deep.equals([false])
-    expect(c.shown()).deep.equals({ icons: true, line: false })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
     // The two top-centre squares bring the controls up and do nothing else.
     await c.press(W * 0.3, 10)
     await c.press(W * 0.7, 40)
@@ -411,10 +697,10 @@ describe("the event card's press grid (U14)", function () {
     expect(c.video.currentTime).equals(90)
     await c.press(W - 5, H * 0.7)
     expect(c.video.currentTime).equals(100)
-    expect(c.shown()).deep.equals({ icons: true, line: false })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
   })
 
-  it('shows the sound as it is, and hides the controls a second after the press', async function () {
+  it('shows the sound as it is, and hides the controls two seconds after the press', async function () {
     const c = await card()
     expect(
       document.querySelector('[data-testid="zoneIcon-volume_off"]')
@@ -426,27 +712,27 @@ describe("the event card's press grid (U14)", function () {
     await c.press(W * 0.5, 10)
     expect(c.shown().icons).equals(true)
     await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, 1100))
+      await new Promise(resolve => setTimeout(resolve, 2100))
     })
     expect(c.shown().icons).equals(false)
   })
 
-  it('seeks on the bottom row without pausing, with only the scrub line showing', async function () {
+  it('seeks on the bottom row without pausing, with the scrub line and controls showing', async function () {
     const c = await card()
     await c.press(W * 0.5, H * 0.5)
     expect(c.video.paused).equals(false)
     await c.press(W * 0.75, H * 0.9)
     expect(c.video.currentTime).equals(450)
     expect(c.video.paused).equals(false)
-    expect(c.shown()).deep.equals({ icons: false, line: true })
-    // A drag along it follows the finger, the line alone showing.
+    expect(c.shown()).deep.equals({ icons: true, line: true })
+    // A drag along it follows the finger, all controls showing.
     await c.drag(H * 0.95, W * 0.5, W * 0.25)
     expect(c.video.currentTime).equals(150)
-    expect(c.shown()).deep.equals({ icons: false, line: true })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
     expect(c.video.paused).equals(false)
   })
 
-  it('shows the group under a mouse, but not under one dragging with its button down', async function () {
+  it('shows both groups under a mouse, but not under one dragging with its button down', async function () {
     const c = await card()
     const layer = document.querySelector('[data-testid="gameVideoZones"]')!
     const hover = async (x: number, y: number, buttons = 0): Promise<void> => {
@@ -462,11 +748,11 @@ describe("the event card's press grid (U14)", function () {
       })
     }
     await hover(W * 0.5, H * 0.5)
-    expect(c.shown()).deep.equals({ icons: true, line: false })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
     await hover(W * 0.5, H * 0.9, 1)
-    expect(c.shown()).deep.equals({ icons: true, line: false })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
     await hover(W * 0.5, H * 0.9)
-    expect(c.shown()).deep.equals({ icons: false, line: true })
+    expect(c.shown()).deep.equals({ icons: true, line: true })
   })
 
   it('shows where the video is on the scrub line’s left and its length on the right, as full screen does', async function () {
@@ -480,6 +766,7 @@ describe("the event card's press grid (U14)", function () {
         .map(node => node.textContent ?? '')
         .filter(text => text !== '')
     expect(times()).deep.equals(['0:02', '10:00'])
+    await c.press(W * 0.5, 10)
     await c.press(W * 0.75, H * 0.9)
     await act(async () => {
       c.video.emit('timeupdate')
@@ -502,6 +789,7 @@ describe("the event card's press grid (U14)", function () {
         nativeEvent: { layout: { x: 60, y: 0, width: 200, height: 24 } }
       })
     })
+    await c.press(W * 0.5, 10)
     // A quarter and three quarters of the way along the track, not the card.
     await c.press(60 + 50, H * 0.9)
     expect(c.video.currentTime).equals(150)
@@ -513,7 +801,8 @@ describe("the event card's press grid (U14)", function () {
   })
 
   it('follows the finger along the bar while it drags, before the player has got there', async function () {
-    await card()
+    const c = await card()
+    await c.press(W * 0.5, 10)
     const layer = document.querySelector('[data-testid="gameVideoZones"]')!
     const mouse = async (type: string, x: number): Promise<void> => {
       await act(async () => {
@@ -599,6 +888,9 @@ describe("the event card's press grid (U14)", function () {
     await act(async () => {
       layerPress(W * 0.75)
     })
+    await act(async () => {
+      layerPress(W * 0.75)
+    })
     expect(times()).deep.equals(['7:30', '10:00'])
     const next = fakeVideo()
     await act(async () => {
@@ -613,7 +905,8 @@ describe("the event card's press grid (U14)", function () {
 
   it('keeps the slow motion badge clear of the full-screen icon while it is held', async function () {
     this.timeout(5000)
-    await card()
+    const c = await card()
+    await c.press(W * 0.5, 10)
     const layer = document.querySelector('[data-testid="gameVideoZones"]')!
     await act(async () => {
       layer.dispatchEvent(
