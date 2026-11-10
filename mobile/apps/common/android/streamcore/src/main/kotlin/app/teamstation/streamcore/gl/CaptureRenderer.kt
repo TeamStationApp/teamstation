@@ -8,6 +8,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.SystemClock
 import android.view.Surface
+import app.teamstation.streamcore.core.FocusPoint
 import java.util.concurrent.CountDownLatch
 import kotlin.math.roundToLong
 
@@ -29,6 +30,10 @@ internal class CaptureRenderer(
     private val height: Int,
     private val onFrameRendered: () -> Unit
 ) {
+    // These are the SurfaceTexture default buffer dimensions, fixed for this renderer's lifetime.
+    val bufferWidth: Int get() = width
+    val bufferHeight: Int get() = height
+
     private val thread = HandlerThread("cameraman-render").apply { start() }
     private val handler = Handler(thread.looper)
 
@@ -60,6 +65,16 @@ internal class CaptureRenderer(
     private val textureMatrix = FloatArray(16)
     private val mvpMatrix = FloatArray(16)
     private var didLogTransform = false
+
+    private val focusTransform = FocusTransform()
+
+    fun focusPoint(point: FocusPoint): FocusPoint? = focusTransform.point(point)
+
+    private fun rememberFocusTransform() {
+        val scale = fillScale(width, height)
+        focusTransform.update(textureMatrix, scale.first, scale.second,
+            rotationDegrees, digitalZoom, mirrorHorizontally)
+    }
 
     /**
      * The rotation to apply, in degrees. See `CameraSession.captureRotation` for how it is chosen.
@@ -435,6 +450,7 @@ internal class CaptureRenderer(
         transformIsTransposed = transformTransposes()
         didMeasureTransform = true
         logTransformOnce()
+        rememberFocusTransform()
 
         val blank = blankEncoder
         if (blank != wasBlank) {
@@ -491,11 +507,12 @@ internal class CaptureRenderer(
             // nothing else paints the bars.
             GLES20.glClearColor(0f, 0f, 0f, 1f)
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
-            val (scaleX, scaleY) = fitScale(previewWidth, previewHeight)
+            val (scaleX, scaleY) = previewScale()
             // Clip to the unzoomed fit. Software zoom scales the quad past this rectangle; without
             // the scissor that growth paints over the bars and the operator no longer sees the
             // frame that is being broadcast.
-            val frame = fittedFrame(previewWidth, previewHeight, scaleX, scaleY)
+            val fit = encodedFrameFit(previewWidth, previewHeight, width, height)
+            val frame = fittedFrame(previewWidth, previewHeight, fit.first, fit.second)
             GLES20.glEnable(GLES20.GL_SCISSOR_TEST)
             GLES20.glScissor(frame.x, frame.y, frame.width, frame.height)
             buildMvp(scaleX, scaleY)
@@ -548,15 +565,7 @@ internal class CaptureRenderer(
         private set
 
     private fun buildMvp(scaleX: Float, scaleY: Float) {
-        Matrix.setIdentityM(mvpMatrix, 0)
-        // The mirror rides on the destination-space scale, so it is applied after the rotation and
-        // flips the picture the operator sees rather than the axis it is rotated about.
-        val zoom = digitalZoom.takeIf { it.isFinite() && it > 1f } ?: 1f
-        val mirroredX = if (mirrorHorizontally) -scaleX else scaleX
-        Matrix.scaleM(mvpMatrix, 0, mirroredX * zoom, scaleY * zoom, 1f)
-        if (rotationDegrees != 0) {
-            Matrix.rotateM(mvpMatrix, 0, rotationDegrees.toFloat(), 0f, 0f, 1f)
-        }
+        buildCaptureMvp(mvpMatrix, scaleX, scaleY, rotationDegrees, digitalZoom, mirrorHorizontally)
     }
 
     /**
@@ -581,14 +590,12 @@ internal class CaptureRenderer(
      *
      * The same destination-axis rule as [fillScale] applies.
      */
-    private fun fitScale(destinationWidth: Int, destinationHeight: Int): Pair<Float, Float> {
-        val ratio = aspectRatio(destinationWidth, destinationHeight) ?: return 1f to 1f
-        return if (ratio > 1f) {
-            // Destination is wider: fill the height and leave bars either side.
-            (1f / ratio) to 1f
-        } else {
-            1f to ratio
-        }
+    private fun previewScale(): Pair<Float, Float> {
+        // Use the encoder's crop first, then fit that exact image into the preview.
+        // Fitting the uncropped sensor instead can display points absent from the stream.
+        val crop = fillScale(width, height)
+        val fit = encodedFrameFit(previewWidth, previewHeight, width, height)
+        return crop.first * fit.first to crop.second * fit.second
     }
 
     /**
