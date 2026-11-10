@@ -196,7 +196,7 @@ async function main(): Promise<void> {
       await contains(
         b.page,
         label === 'Add Person to Team'
-          ? 'Send invite'
+          ? 'Add people'
           : label === 'Create Invite Link'
             ? 'Invite Spectators'
             : 'City'

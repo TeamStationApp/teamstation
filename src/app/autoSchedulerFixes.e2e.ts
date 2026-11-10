@@ -1440,9 +1440,12 @@ async function f7(run: Run): Promise<void> {
   )
   await new Promise(resolve => setTimeout(resolve, 1000))
   const rows = await b.page.evaluate(() =>
-    [...document.querySelectorAll('[aria-label^="Open "]')].map(node =>
-      String(node.getAttribute('aria-label')).slice('Open '.length)
-    )
+    [...document.querySelectorAll('[aria-label^="Open "]')]
+      .map(node =>
+        String(node.getAttribute('aria-label')).slice('Open '.length)
+      )
+      // The header's link back to the Field Manager is not a venue row.
+      .filter(name => name !== 'the Field Manager')
   )
   expect(rows).deep.equals([EXAMPLE_PARK.name, ...MORE_PARKS])
   expect(rows.length).greaterThanOrEqual(10)

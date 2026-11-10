@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     await press(team, 'Add Person to Team')
     await fill(team, 'E-mail addresses', 'fixture106@example.com')
     await toggle(team, 'Team admin')
-    await press(team, 'Send invite')
+    await press(team, 'Add people')
     await text(team, 'Team management')
     await team.screenshot({
       path: join(artifacts!, 'admin-added-at-once.png')

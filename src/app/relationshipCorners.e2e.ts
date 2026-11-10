@@ -57,7 +57,7 @@ async function main(): Promise<void> {
       [204, 'Willie Mays', 'team', f.teamA, 'admin'],
       [205, 'Jackie Robinson', 'season', f.seasonB, 'admin'],
       [206, 'Roberto Clemente', 'team', f.teamB, 'admin'],
-      [207, 'Ted Williams', 'team', f.teamA, 'coach']
+      [207, 'Ted Williams', 'team', f.teamA, 'scorekeeper']
     ] as const
     for (const [id, name, kind, scope, role] of people) {
       await insertFixtureUsers(f.h.db, {
@@ -185,7 +185,7 @@ async function main(): Promise<void> {
     })
     await text(plain, 'Not found')
     lines.push(
-      'E6 PASS: league-only, regular-season-only, playoff-only and direct-team administrators independently accept a raw guest game; season-only sender records host/owned opponent consent; coach cannot decide; no enrollment is inferred'
+      'E6 PASS: league-only, regular-season-only, playoff-only and direct-team administrators independently accept a raw guest game; season-only sender records host/owned opponent consent; a scorekeeper, who cannot schedule for the team, cannot decide; no enrollment is inferred'
     )
 
     const joinResponse = await f.h.request(

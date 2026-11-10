@@ -896,7 +896,7 @@ async function main(): Promise<void> {
       )
       await shot('discovery-team-tiles')
       await go(settings + '/people', 'Add People')
-      await show('Send invite')
+      await show('Add people')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await note(
@@ -1006,7 +1006,7 @@ async function main(): Promise<void> {
       await shot('cancel-photo')
       await tap(m, 'Cancel')
       await go(settings + '/people', 'Add People')
-      await show('Send invite')
+      await show('Add people')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await go(settings + '/invites', 'Create invite link')
