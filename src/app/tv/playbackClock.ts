@@ -250,8 +250,10 @@ export class PlaybackClock {
         for (const other of this.ports) {
           if (other === port || other.settling) continue
           const target = targetTime(other.timeline, this.wall, other.duration)
+          // A camera with no footage here only plays on under its cover;
+          // its clamped target would pull it back every tick.
           if (
-            target !== null &&
+            target?.available === true &&
             Math.abs(target.seconds - other.position) > 0.75
           )
             this.seekPort(other, this.wall)

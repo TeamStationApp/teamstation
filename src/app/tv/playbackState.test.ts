@@ -549,6 +549,34 @@ describe('TV native playback clock contracts', () => {
     clock.load(3, 0)
     expect(clock.ports[3].duration).equals(Infinity)
   })
+  it('leaves a camera that has not started yet alone until the wall reaches its footage', () => {
+    const seeks: number[][] = [[], []]
+    const clock = new PlaybackClock()
+    clock.register(0, timeline(), value => seeks[0].push(value))
+    clock.register(1, timeline(10_000), value => seeks[1].push(value))
+    clock.load(0, 60)
+    clock.load(1, 60)
+    clock.seek(100_000)
+    expect(seeks[1]).deep.equals([0])
+    expect(clock.available(1)).equals(false)
+    clock.settled(0)
+    clock.settled(1)
+    for (let second = 1; second <= 8; second++) {
+      clock.progress(1, second)
+      clock.progress(0, second)
+    }
+    expect(seeks[1], 'no tick-by-tick reseek during the lead-in').deep.equals([
+      0
+    ])
+    for (let second = 9; second <= 11; second++) {
+      clock.progress(1, second)
+      clock.progress(0, second)
+    }
+    expect(clock.available(1)).equals(true)
+    expect(seeks[1], 'one correction where its footage begins').deep.equals([
+      0, 0
+    ])
+  })
   it('continues longer recordings, seeks beyond a shorter master, and restores exhausted angles on rewind', () => {
     const clock = new PlaybackClock()
     const seeks: number[][] = [[], []]
