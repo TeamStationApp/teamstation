@@ -10,6 +10,7 @@ import {
 } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import type { WallTimeline } from '../../common/wallTimeline'
 import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import { boardStep, SHOWN_OVERLAY } from '../../test/overlayFixtures'
 import { replayContext, scored } from '../../test/replayGameFixture'
@@ -52,6 +53,8 @@ let fail = false
 let pending = false
 let live = false
 let mixed = false
+let anchorless = false
+let timelineOf: ((id: string) => Promise<WallTimeline | undefined>) | undefined
 let closed = false
 const client = {
   game: async () => {
@@ -78,7 +81,12 @@ const client = {
     }
   },
   scoreboardOverlay: async () => SHOWN_OVERLAY,
-  wallTimeline: async () => timelineFor('2026-10-01T00:00:00Z'),
+  wallTimeline: async (id: string) =>
+    (await timelineOf?.(id)) ?? {
+      ...timelineFor('2026-10-01T00:00:00Z'),
+      ...(anchorless ? { anchors: [] } : {}),
+      live
+    },
   gameStatistics: async () => {
     const data = nativeStatistics(
       await client.game('game'),
@@ -264,12 +272,715 @@ afterEach(async () => {
   lineOnly = false
   wide = false
   mixed = false
+  anchorless = false
+  timelineOf = undefined
   fail = false
   pending = false
   live = false
   closed = false
 })
 describe('TV game playback entry', () => {
+  for (const completes of [true, false])
+    it(`coordinates both watchdogs during a slow cold seek (completes=${completes})`, async () => {
+      count = 1
+      const originalInterval = globalThis.setInterval
+      const originalNow = Date.now
+      let now = originalNow()
+      let recover: (() => void) | undefined
+      globalThis.setInterval = ((callback: () => void, delay: number) => {
+        if (delay === 1000) recover = callback
+        return originalInterval(callback, delay)
+      }) as typeof setInterval
+      Date.now = () => now
+      try {
+        await render()
+        const before = document.querySelector('video')!
+        await act(async () => {
+          Object.defineProperty(before, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          before.dispatchEvent(new window.Event('durationchange'))
+          await pause()
+        })
+        await press('Close panel')
+        Object.defineProperty(before, 'duration', {
+          value: 0,
+          configurable: true
+        })
+        await press('+10 seconds')
+        await act(async () => {
+          before.dispatchEvent(new window.Event('waiting'))
+        })
+        now += 45_000
+        await act(async () => {
+          recover!()
+          await pause()
+        })
+        expect(document.querySelector('video')).equals(before)
+        if (completes) {
+          await act(async () => {
+            Object.defineProperty(before, 'duration', {
+              value: 100,
+              configurable: true
+            })
+            before.currentTime = 10
+            before.dispatchEvent(new window.Event('canplay'))
+            before.dispatchEvent(new window.Event('seeked'))
+          })
+          now += 1000
+          await act(async () => {
+            recover!()
+            await pause()
+          })
+          expect(document.querySelector('video')).equals(before)
+        } else {
+          now += 76_000
+          await act(async () => {
+            recover!()
+            await pause()
+          })
+          now += 1001
+          await act(async () => {
+            recover!()
+            await pause()
+          })
+          expect(document.querySelector('video')).not.equals(before)
+        }
+      } finally {
+        globalThis.setInterval = originalInterval
+        Date.now = originalNow
+      }
+    })
+
+  it('allows a slow initial decoder to open before its bounded retry', async () => {
+    count = 1
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const initial = document.querySelector('video')!
+      for (let second = 0; second < 24; second++) {
+        now += 1000
+        await act(async () => {
+          recover!()
+          await pause()
+        })
+        expect(
+          document.querySelector('video'),
+          'initial opening decoder survives'
+        ).equals(initial)
+      }
+      now += 6001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelector('video'),
+        'never-opening initial decoder retries'
+      ).not.equals(initial)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('retries after stale error progress and lets the replacement finish opening', async () => {
+    count = 1
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = document.querySelector('video')!
+      await act(async () => {
+        Object.defineProperty(before, 'duration', {
+          value: 100,
+          configurable: true
+        })
+        before.dispatchEvent(new window.Event('durationchange'))
+        await pause()
+        before.dispatchEvent(new window.Event('seeked'))
+        before.dispatchEvent(new window.Event('timeupdate'))
+        for (const seconds of [10, 11]) {
+          before.currentTime = seconds
+          before.dispatchEvent(new window.Event('timeupdate'))
+        }
+        Object.defineProperty(before, 'error', {
+          value: { code: 2 },
+          configurable: true
+        })
+        before.dispatchEvent(new window.Event('error', { bubbles: true }))
+        before.currentTime = 11.25
+        before.dispatchEvent(new window.Event('timeupdate'))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelector('video'),
+        'failed decoder is replaced'
+      ).not.equals(before)
+      const replacement = document.querySelector('video')!
+      for (let second = 0; second < 24; second++) {
+        now += 1000
+        await act(async () => {
+          recover!()
+          await pause()
+        })
+        expect(
+          document.querySelector('video'),
+          'opening decoder survives'
+        ).equals(replacement)
+      }
+      // A decoder that never opens must still get another bounded attempt.
+      now += 6000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(document.querySelector('video')).not.equals(replacement)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('automatically replaces only the failed camera and refreshes a live archive source', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of before) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(new window.Event('durationchange'))
+        }
+        await pause()
+        for (const video of before) {
+          video.dispatchEvent(new window.Event('seeked'))
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+        before[0].dispatchEvent(new window.Event('ended'))
+        before[0].dispatchEvent(new window.Event('timeupdate'))
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      const retried = [...document.querySelectorAll('video')]
+      expect(retried[0]).not.equals(before[0])
+      expect(retried[1]).equals(before[1])
+      live = false
+      await act(async () => {
+        poll!()
+        await pause()
+        await pause()
+      })
+      const archived = [...document.querySelectorAll('video')]
+      expect(archived[0]).not.equals(retried[0])
+      expect(archived[1]).not.equals(retried[1])
+      expect(
+        document.body.textContent,
+        'a finished live camera is loading its recording, not unavailable'
+      ).not.contains('Angle 1: video unavailable')
+      await act(async () => {
+        poll!()
+        await pause()
+      })
+      expect(document.querySelectorAll('video')[0]).equals(archived[0])
+      await press('Pause')
+      await act(async () => {
+        for (const video of archived) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(new window.Event('durationchange'))
+        }
+        await pause()
+      })
+      now += 30000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelectorAll('video')[0],
+        'a loaded pause is not a silent stall'
+      ).equals(archived[0])
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('keeps a paused live remount that is waiting for its seekable bounds', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      await press('Close panel')
+      await press('Pause')
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      const remounted = document.querySelector('video')!
+      expect(remounted).not.equals(before[0])
+      await act(async () => {
+        load(remounted)
+        await pause()
+      })
+      now += 30_001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelector('video'),
+        'a loaded paused remount is not refreshed again'
+      ).equals(remounted)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('lets a buffering camera keep downloading past the silent-camera deadline', async () => {
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of before) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(
+            new window.Event('durationchange', { bubbles: true })
+          )
+        }
+        await pause()
+        for (const video of before) {
+          video.dispatchEvent(new window.Event('seeked'))
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+        before[1].dispatchEvent(new window.Event('waiting'))
+        await pause()
+      })
+      now += 30_000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelectorAll('video')[1],
+        'a buffering camera is not remounted at twenty seconds'
+      ).equals(before[1])
+      now += 120_000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelectorAll('video')[1],
+        'buffering with no transfer for two minutes is bounded'
+      ).not.equals(before[1])
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('keeps the timeline a refreshed camera opened with over an older periodic fetch', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      // The periodic fetch of camera 0's live timeline is slow to answer.
+      let answerStale: (() => void) | undefined
+      const stale = new Promise<WallTimeline>(resolve => {
+        answerStale = () => {
+          resolve({ ...timelineFor('2026-10-01T00:00:00Z'), live: true })
+        }
+      })
+      timelineOf = async id => (id === '0' ? await stale : undefined)
+      await act(async () => {
+        poll!()
+        await pause()
+      })
+      // Meanwhile camera 0 fails and is reopened as the finished recording,
+      // whose timeline starts twenty seconds earlier.
+      timelineOf = async id =>
+        id === '0'
+          ? { ...timelineFor('2026-09-30T23:59:40Z'), live: false }
+          : undefined
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      const remounted = document.querySelector('video')!
+      expect(remounted).not.equals(before[0])
+      await act(async () => {
+        answerStale!()
+        await pause()
+      })
+      await act(async () => {
+        load(remounted)
+        await pause()
+      })
+      expect(
+        remounted.currentTime,
+        'placed by the recording timeline it opened with'
+      ).equals(22)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('replaces a failed camera even when its timeline cannot be fetched', async () => {
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of before) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(
+            new window.Event('durationchange', { bubbles: true })
+          )
+        }
+        await pause()
+      })
+      timelineOf = async id => {
+        if (id === '0') throw new Error('Timeline unavailable')
+        return undefined
+      }
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelector('video'),
+        'remounted on the timeline it already had'
+      ).not.equals(before[0])
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('replaces a frozen follower that still answers every drift correction', async () => {
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of before) {
+          Object.defineProperty(video, 'duration', {
+            value: 600,
+            configurable: true
+          })
+          video.dispatchEvent(
+            new window.Event('durationchange', { bubbles: true })
+          )
+        }
+        await pause()
+      })
+      // The master plays on; the follower's picture has stopped, though each
+      // seek the clock sends it is answered at once.
+      for (let second = 1; second <= 60; second++) {
+        now += 1000
+        await act(async () => {
+          before[0].currentTime = second
+          before[0].dispatchEvent(new window.Event('timeupdate'))
+          before[1].dispatchEvent(new window.Event('timeupdate'))
+          recover!()
+          await pause()
+        })
+        if (document.querySelectorAll('video')[1] !== before[1]) break
+      }
+      expect(
+        document.querySelectorAll('video')[1],
+        'a follower that never plays is replaced'
+      ).not.equals(before[1])
+      expect(document.querySelectorAll('video')[0]).equals(before[0])
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('swaps a finished live camera onto the newest timeline when its own fetch fails', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      // The periodic refresh sees camera 0 finished, on a recording timeline
+      // twenty seconds earlier; the swap's own fetch then fails.
+      let answered = false
+      timelineOf = async id => {
+        if (id !== '0') return undefined
+        if (answered) throw new Error('Timeline unavailable')
+        answered = true
+        return { ...timelineFor('2026-09-30T23:59:40Z'), live: false }
+      }
+      await act(async () => {
+        poll!()
+        await pause()
+        await pause()
+      })
+      const swapped = document.querySelector('video')!
+      expect(swapped).not.equals(before[0])
+      await act(async () => {
+        load(swapped)
+        await pause()
+      })
+      expect(
+        swapped.currentTime,
+        'placed as a recording, by the timeline the refresh fetched'
+      ).equals(22)
+    } finally {
+      globalThis.setInterval = originalInterval
+    }
+  })
+  it('abandons an unacknowledged seek when replacing a failed source', async () => {
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        before.forEach(video => video.dispatchEvent(new window.Event('seeked')))
+      })
+      await press('Close panel')
+      await press('Pause')
+      // The old decoder cannot reach the request, so its completion is stale.
+      Object.defineProperty(before[0], 'duration', {
+        value: 0,
+        configurable: true
+      })
+      await press('+10 seconds')
+      now += 5001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      const replacement = document.querySelector('video')!
+      expect(replacement).not.equals(before[0])
+      await act(async () => {
+        load(replacement)
+        await pause()
+      })
+      expect(
+        replacement.currentTime,
+        'new player receives retained viewer position'
+      ).equals(10)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
   it('uses the same short camera names as the regular game player', async () => {
     const original = client.game.bind(client)
     client.game = async (...args) => {
@@ -1246,6 +1957,42 @@ describe('TV game playback entry', () => {
     await press('Retry video')
     expect(document.querySelectorAll('video')).length(2)
     expect(document.body.textContent).not.contains('Retry video')
+  })
+  it('keeps a highlight error while the cameras play on', async () => {
+    anchorless = true
+    count = 2
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of videos) {
+        Object.defineProperty(video, 'duration', {
+          value: 60,
+          configurable: true
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    await press('Close panel')
+    await press('Highlights')
+    await press('Home run')
+    expect(document.body.textContent).contains(
+      'This highlight has no video timeline.'
+    )
+    for (const seconds of [1, 2, 3])
+      await act(async () => {
+        for (const video of videos) {
+          video.currentTime = seconds
+          video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+        }
+        await pause()
+      })
+    expect(
+      document.body.textContent,
+      'advancing cameras clear only the error their recovery raised'
+    ).contains('This highlight has no video timeline.')
   })
   it('plays available cameras when another URL fails or is still preparing', async () => {
     mixed = true
