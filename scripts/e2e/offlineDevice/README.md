@@ -82,25 +82,32 @@ failing. Steps:
 
 1. The phone is listed by the shaper; the build is installed and launched.
 2. Sign in, open Upcoming only, and read the request log: no Past, All, Videos
-   or team-games request. Open Past, one team, the season, the league, the
-   upcoming event and scoring, and search Set Team Rosters' Add Existing for
-   the league player. The other team stays unopened, and the log has no
-   games request for it.
+   or team-games request. Open Past and the past game's Videos section (its
+   poster), one team, the season, the league, the upcoming event and
+   scoring, and search Set Team Rosters' Add Existing for the league player.
+   The other team stays unopened, and the log has no games request for it.
 3. Drop the phone's traffic (`lossPct: 100`).
 4. Stop the app and launch it.
 5. Home, Upcoming, Past, All, Videos, the team, the season, the league, the
-   event and scoring paint; the unopened team has no games; the offline
-   banner is below the tab bar, `#6B3E00` with white text.
-6. A pitch, Confirm Swap (the sheet is gone within one second and the sides
-   are exchanged), the next pitch.
-7. Stall the link (`latencyMs: 30000`): a pitch and Confirm Swap close at once
-   and scoring's own offline line shows once the request deadline passes; a
-   pitch is entered to tag, and the tag saves and its editor closes at once; the defensive sheet's Refresh
-   (Create Player, cancelled) leaves the pitch controls on; scoring reopens
-   and Set Team Rosters' Add Existing and Create Player are on. Drop the
-   traffic again: Add Existing finds the player from step 2, Add to Roster
-   puts them on the opened team's side of Set Team Rosters.
-8. Clear the shape: the request log shows the pitches and both swaps in the
+   past game's Videos section (the stored poster drawn, not a black box),
+   the upcoming event and scoring paint; the unopened team has no games; the
+   offline banner is below the tab bar, `#6B3E00` with white text.
+6. A pitch, Confirm Swap, the next pitch. At the first screen read after the
+   tap the sheet is gone, the scorer is drawn (no "Loading game") and the
+   other side's players are on the field.
+7. With the shape cleared and scoring's offline line gone, stall the link
+   (`latencyMs: 30000`) and enter a pitch: the line is absent before the
+   10 s request deadline and shows after it. A pitch and Confirm Swap pass
+   the same first-read checks; the measured swap puts the opened team up to
+   bat. On iOS a pitch is entered to tag, the tag saves and its editor closes
+   at once, and the reopened history shows the tag on its play; on Android
+   the tag history does not open from a hold on Undo (also on the base
+   build), so that part is logged as skipped. The defensive sheet's Refresh
+   (Create Player, cancelled) leaves its controls on; scoring reopens and Set
+   Team Rosters' Add Existing and Create Player are on. Drop the traffic
+   again: Add Existing finds the player from step 2, Add to Roster puts them
+   on the opened team's side of Set Team Rosters.
+8. Clear the shape: the request log shows the pitches and the swaps in the
    order they were entered (`request-log-<platform>.log`) and the queued add
    to the opened team's roster, and the seat has the player on that team.
 

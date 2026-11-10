@@ -828,6 +828,9 @@ async function undoLabel(): Promise<string> {
   return undo == null ? '(no Undo control)' : label(undo)
 }
 
+/** The game's writes in the order this run entered them, for step 8. */
+const entered: Array<'pitch' | 'swap'> = []
+
 async function pitch(): Promise<string> {
   const before = await undoLabel()
   await tap(
@@ -835,6 +838,7 @@ async function pitch(): Promise<string> {
     15000,
     n => (n.type ?? '').includes('Button') || PLATFORM === 'android'
   )
+  entered.push('pitch')
   await pause(800)
   const after = await undoLabel()
   log(`pitch Ball: undo control "${before}" -> "${after}"`)
@@ -848,32 +852,131 @@ async function swapSheetText(): Promise<string | undefined> {
   return text == null ? undefined : label(text)
 }
 
-/**
- * Whether the first screen read after a tap no longer holds `re`, and when
- * that read was asked for. A read of the hierarchy takes several seconds on
- * the iPhone, so "at once" is the first read, not a clock.
- */
-async function goneAtFirstRead(
-  re: RegExp,
-  since: number
-): Promise<{ gone: boolean; askedMs: number }> {
-  const asked = Date.now()
-  const still = await find(re).catch(() => undefined)
-  log(
-    `${re.source} ${still == null ? 'gone from' : 'still in'} the first hierarchy after the tap, asked for ${asked - since} ms after it (answered at ${Date.now() - since} ms)`
+/** The fielders' nameplates on the scorer ("Sam R"), the fielding side's. */
+function fielders(all: Node[]): string[] {
+  return [
+    ...new Set(
+      all
+        .filter(
+          n =>
+            /^[A-Z][a-z]+ [A-Z]$/.test(label(n)) &&
+            onScreen(n) &&
+            (n.bounds?.y ?? 0) > screen.height * 0.2 &&
+            (n.bounds?.y ?? 0) < screen.height * 0.75
+        )
+        .map(label)
+    )
+  ].sort()
+}
+
+/** The scorer itself is drawn: its menu, and no "Loading game" in its place. */
+function scorerPainted(all: Node[]): boolean {
+  return (
+    all.some(n => label(n) === 'Open scoring menu') &&
+    !all.some(n => label(n).startsWith('Loading game'))
   )
-  return { gone: still == null, askedMs: asked - since }
 }
 
 /**
- * Confirm Swap; answers whether the sheet was gone at the first screen read
- * after the tap, and leaves it closed.
+ * Whether a picture is drawn in the area under the game's section pills: the
+ * share of sampled pixels that are bright or coloured. The fixture's poster
+ * is colour bars; a black box with a spinner scores near zero.
+ */
+function pictureDrawn(
+  png: Buffer,
+  pills: Node
+): { drawn: boolean; share: number } {
+  const image = PNG.sync.read(png)
+  const scale = image.width / screen.width
+  const b = pills.bounds!
+  const top = Math.floor((b.y + b.height + 8) * scale)
+  const bottom = Math.min(
+    image.height,
+    Math.floor((b.y + b.height + 8 + screen.height * 0.25) * scale)
+  )
+  const left = Math.floor(screen.width * 0.05 * scale)
+  const right = Math.floor(screen.width * 0.95 * scale)
+  let lit = 0
+  let total = 0
+  for (let y = top; y < bottom; y += 3)
+    for (let x = left; x < right; x += 3) {
+      const i = (y * image.width + x) * 4
+      const [r, g, bl] = [image.data[i], image.data[i + 1], image.data[i + 2]]
+      total++
+      const max = Math.max(r, g, bl)
+      const min = Math.min(r, g, bl)
+      if (max - min > 60 || (max > 200 && min > 200)) lit++
+    }
+  const share = total === 0 ? 0 : lit / total
+  return { drawn: share > 0.2, share }
+}
+
+/**
+ * Opens the past game (the fixture's game with a video) from Past and its
+ * Videos section; answers whether the poster is drawn there.
+ */
+async function openPastGameVideos(name: string): Promise<boolean> {
+  await tab('Schedule')
+  await tryTap(/^Past$/, 10000, upper(0.4))
+  const row = await waitFor(/Offline Owls @ Offline Falcons/, SLOW, aboveTabBar)
+  if (row == null) {
+    log('no past game row')
+    return false
+  }
+  await tapNode(row)
+  const pill = await waitFor(
+    /^Videos$/,
+    SLOW,
+    n =>
+      aboveTabBar(n) &&
+      upper(0.7)(n) &&
+      (n.bounds?.y ?? 0) > screen.height * 0.25
+  )
+  if (pill == null) {
+    log('the past game has no Videos section')
+    return false
+  }
+  await tapNode(pill)
+  let drawn = { drawn: false, share: 0 }
+  const started = Date.now()
+  for (let attempt = 0; attempt < 8 && !drawn.drawn; attempt++) {
+    await pause(attempt === 0 ? 2000 : 2500)
+    const png = await m.screenshot()
+    drawn = pictureDrawn(png, pill)
+    log(
+      `${name}: picture under the Videos section ${Math.round(drawn.share * 100)}% lit, ${Date.now() - started} ms after opening it`
+    )
+  }
+  await shot(name)
+  await dumpHierarchy(name)
+  return drawn.drawn
+}
+
+interface SwapRead {
+  /** The sheet was gone at the first read after the tap. */
+  gone: boolean
+  askedMs: number
+  /** That read showed the scorer, not "Loading game". */
+  painted: boolean
+  /** The fielders at that read are the other side's. */
+  exchanged: boolean
+  before: string[]
+  after: string[]
+}
+
+/**
+ * Confirm Swap; answers what the first screen read after the tap showed
+ * (sheet gone, scorer drawn, sides exchanged by the fielders on the field),
+ * saves that read's screenshot as `<firstReadShot>`, and leaves the sheet
+ * closed.
  */
 async function confirmSwap(
+  firstReadShot: string,
   stalledShot?: string
-): Promise<{ gone: boolean; askedMs: number } | undefined> {
+): Promise<SwapRead | undefined> {
+  const before = fielders(await nodes())
   const sheetText = await swapSheetText()
-  log(`swap sheet: "${sheetText}"`)
+  log(`swap sheet: "${sheetText}"; fielders before: ${before.join(', ')}`)
   const confirm = await waitFor(
     /^(Confirm Swap|Reset and Swap)$/,
     10000,
@@ -885,9 +988,26 @@ async function confirmSwap(
   }
   const tappedAt = Date.now()
   await tapNode(confirm)
-  const first = await goneAtFirstRead(
-    /^(Confirm Swap|Reset and Swap)$/,
-    tappedAt
+  entered.push('swap')
+  const asked = Date.now()
+  const first = await nodes()
+  const answered = Date.now()
+  await shot(firstReadShot)
+  await dumpHierarchy(firstReadShot)
+  const after = fielders(first)
+  const read: SwapRead = {
+    gone: !first.some(n => /^(Confirm Swap|Reset and Swap)$/.test(label(n))),
+    askedMs: asked - tappedAt,
+    painted: scorerPainted(first),
+    exchanged:
+      before.length >= 5 &&
+      after.length >= 5 &&
+      !after.some(name => before.includes(name)),
+    before,
+    after
+  }
+  log(
+    `first read after Confirm Swap (asked ${read.askedMs} ms, answered ${answered - tappedAt} ms after the tap): sheet ${read.gone ? 'gone' : 'still open'}; scorer ${read.painted ? 'drawn' : 'NOT drawn'}${first.some(n => label(n).startsWith('Loading game')) ? ' ("Loading game")' : ''}; fielders ${after.join(', ')}`
   )
   if (stalledShot != null) {
     await pause(Math.max(0, 2000 - (Date.now() - tappedAt)))
@@ -896,12 +1016,12 @@ async function confirmSwap(
       /^(Confirm Swap|Reset and Swap)$/.test(label(n))
     )
     log(
-      `two seconds after Confirm Swap: sheet ${still == null ? 'closed' : 'open'}${still?.enabled === false ? ', Confirm Swap disabled (gray)' : ''}`
+      `two seconds after Confirm Swap: sheet ${still == null ? 'closed' : 'open'}${still?.enabled === false ? ', Confirm Swap disabled (gray)' : ''}; fielders ${fielders(all).join(', ')}`
     )
     await shot(stalledShot)
     await dumpHierarchy(stalledShot)
   }
-  if (!first.gone) {
+  if (!read.gone) {
     const late = await gone(
       /^(Confirm Swap|Reset and Swap)$/,
       MODE === 'before' ? 150000 : 30000
@@ -913,7 +1033,27 @@ async function confirmSwap(
     )
     if (late == null) await tryTap(/^Cancel$/, 3000)
   }
-  return first
+  return read
+}
+
+/** The checks one Confirm Swap must pass at its first read. */
+function checkSwap(prefix: string, read: SwapRead | undefined): void {
+  check(
+    `${prefix}Confirm Swap: the sheet is gone at the first screen read after the tap`,
+    read?.gone === true,
+    read == null
+      ? 'no Confirm Swap button'
+      : `${read.gone ? 'gone' : 'still open'} at the read asked for ${read.askedMs} ms after the tap`
+  )
+  check(
+    `${prefix}Confirm Swap: that first read shows the scorer, not "Loading game"`,
+    read?.painted === true
+  )
+  check(
+    `${prefix}Confirm Swap: at that first read the other side is fielding`,
+    read?.exchanged === true,
+    read == null ? '' : `${read.before.join(', ')} -> ${read.after.join(', ')}`
+  )
 }
 
 /** The side batting first, as the swap sheet says (then the sheet is cancelled). */
@@ -1109,6 +1249,12 @@ async function step2(): Promise<void> {
     'Past shows a row online',
     (await waitFor(/Offline Owls @ Offline Falcons/, 20000, aboveTabBar)) !=
       null
+  )
+  // The past game, the one with a video: open it and its Videos section so
+  // its poster is drawn (and kept) while online.
+  check(
+    'online: the past game opens and its Videos section draws the poster',
+    await openPastGameVideos('pastVideosOnline')
   )
   await openFromHome(
     new RegExp(`^${FIXTURE.teamNames.opened}`),
@@ -1319,12 +1465,18 @@ async function step5(): Promise<void> {
   )
   await shot('league')
   await dumpHierarchy('league')
+  // The past game's event page and its Videos section: the poster drawn
+  // from the stored picture, not a black box with a spinner.
+  check(
+    'the past game opens and its Videos section draws the stored poster',
+    await openPastGameVideos('game')
+  )
   // Event and scoring
   const event = await openUpcomingEvent()
   check('the upcoming event opens', event)
   await pause(1500)
-  await shot('game')
-  await dumpHierarchy('game')
+  await shot('upcomingEvent')
+  await dumpHierarchy('upcomingEvent')
   const scoring = event && (await openScoring())
   check('scoring opens on that event', scoring)
   await pause(2000)
@@ -1346,14 +1498,7 @@ async function step6(): Promise<void> {
   const first = await battingFirst()
   log(`batting first before the swap: ${first}`)
   await pitch()
-  const closed = await confirmSwap()
-  check(
-    'Confirm Swap: the sheet is gone at the first screen read after the tap',
-    closed?.gone === true,
-    closed == null
-      ? 'no Confirm Swap button'
-      : `${closed.gone ? 'gone' : 'still open'} at the read asked for ${closed.askedMs} ms after the tap`
-  )
+  checkSwap('', await confirmSwap('swapOfflineFirstRead'))
   await shot('swapOffline')
   const after = await battingFirst()
   check(
@@ -1368,8 +1513,6 @@ async function step6(): Promise<void> {
 
 async function step7(): Promise<void> {
   log('step 7: stalled link (latencyMs 30000)')
-  clearShape()
-  shape({ latencyMs: 30000 })
   if (
     !(await ensureScoring(7, () => {
       shape({ latencyMs: 30000 })
@@ -1378,34 +1521,89 @@ async function step7(): Promise<void> {
     check('scoring is open for step 7', false)
     return
   }
-  const stalledAt = Date.now()
-  await pitch()
-  const closed = await confirmSwap('swapStalled')
-  check(
-    'stalled: Confirm Swap: the sheet is gone at the first screen read after the tap',
-    closed?.gone === true,
-    closed == null
-      ? 'no Confirm Swap button'
-      : `${closed.gone ? 'gone' : 'still open'} at the read asked for ${closed.askedMs} ms after the tap`
+  // Scoring's own offline line appears only once the request deadline has
+  // passed on a stalled link. From fully online: the line gone, then the
+  // stall, then a pitch whose send stalls. Its accessibility label is "Save
+  // status" on iOS (the text is only in the picture), so it is found by its
+  // id across the top of the scorer.
+  const lineShown = async (): Promise<boolean> =>
+    (await nodes()).some(
+      n =>
+        upper(0.15)(n) &&
+        (n.id === 'scoringSaveStatus' ||
+          label(n) === OFFLINE_LINE ||
+          label(n).startsWith('Offline. Edits'))
+    )
+  clearShape()
+  let online = false
+  const clearedAt = Date.now()
+  while (!online && Date.now() - clearedAt < 120000) {
+    online = !(await lineShown())
+    if (!online) await pause(2000)
+  }
+  log(
+    `offline line ${online ? 'gone' : 'STILL SHOWN'} ${Math.round((Date.now() - clearedAt) / 1000)} s after the shape was cleared`
   )
-  // Scoring's own line (the app's banner is not drawn over the full-screen
-  // scorer): on iOS its accessibility label is "Save status" and the text is
-  // only in the picture, so it is found by its id at the top of the screen.
-  const line = await waitFor(
-    /^scoringSaveStatus$/,
-    Math.max(5000, 45000 - (Date.now() - stalledAt)),
-    n =>
-      upper(0.15)(n) &&
-      (PLATFORM === 'ios' ||
-        label(n) === OFFLINE_LINE ||
-        label(n).startsWith('Offline'))
+  shape({ latencyMs: 30000 })
+  await pause(1000)
+  await tap(
+    /^Ball$/,
+    15000,
+    n => (n.type ?? '').includes('Button') || PLATFORM === 'android'
+  )
+  const stalledAt = Date.now()
+  entered.push('pitch')
+  const reads: Array<{ ms: number; shown: boolean }> = []
+  while (Date.now() - stalledAt < 60000) {
+    const ms = Date.now() - stalledAt
+    const shown = await lineShown()
+    reads.push({ ms, shown })
+    if (shown) break
+  }
+  const firstShown = reads.find(r => r.shown)
+  const early = reads.filter(r => r.ms < 9000)
+  log(
+    `offline line after the stalled pitch: ${reads.map(r => `${r.shown ? 'shown' : 'absent'}@${r.ms}ms`).join(', ')}`
+  )
+  check(
+    "stalled: scoring's offline line is absent before the 10 s request deadline",
+    online && early.length > 0 && early.every(r => !r.shown),
+    early.length === 0
+      ? 'no read before 9 s'
+      : early.map(r => `${r.shown ? 'shown' : 'absent'}@${r.ms}ms`).join(', ')
   )
   check(
     "stalled: scoring's own offline line shows once the request deadline passes",
-    line != null,
-    `${Math.round((Date.now() - stalledAt) / 1000)} s after the stall began${line == null ? '' : `; "${label(line)}" at y ${line.bounds?.y}`}`
+    firstShown != null && firstShown.ms >= 9000,
+    firstShown == null
+      ? 'never shown within 60 s'
+      : `first shown at the read asked ${firstShown.ms} ms after the pitch`
   )
   await shot('offlineLineStalled')
+
+  // The stalled swap must land away from the base build's stalled picture,
+  // which has the opened team fielding: bring the opponent onto the field
+  // first if it is not there, then swap on the stalled link.
+  const battingNow = await battingFirst()
+  if (battingNow === FIXTURE.teamNames.opened) {
+    log(
+      `${battingNow} bat first: a stalled swap first, so the measured one puts them up`
+    )
+    await pitch()
+    checkSwap(
+      'stalled (first): ',
+      await confirmSwap('swapStalledPrepFirstRead')
+    )
+  }
+  await pitch()
+  const closed = await confirmSwap('swapStalledFirstRead', 'swapStalled')
+  checkSwap('stalled: ', closed)
+  const battingAfter = await battingFirst()
+  check(
+    `stalled: after the swap ${FIXTURE.teamNames.opened} bat first`,
+    battingAfter === FIXTURE.teamNames.opened,
+    `${battingAfter}`
+  )
 
   // Event tag
   // A reset swap leaves no play to tag, and its Undo is the roster's
@@ -1415,7 +1613,13 @@ async function step7(): Promise<void> {
   const undo = (await nodes()).find(
     n => label(n).startsWith('Undo ') && (n.type ?? '').includes('Button')
   )
-  if (undo == null) log('no Undo control to hold for the tag editor')
+  if (PLATFORM === 'android')
+    // On Android the tag history never opens from a hold on Undo, on the base
+    // build as well, and there is no other way in: not this branch's change.
+    log(
+      'tag: skipped: pre-existing, history does not open on Android (a hold on Undo opens nothing, on develop as well)'
+    )
+  else if (undo == null) log('no Undo control to hold for the tag editor')
   else {
     await tapNode(undo, 2200)
     // One read of the screen takes 6–8 s on the iPhone: poll for the
@@ -1458,8 +1662,8 @@ async function step7(): Promise<void> {
           log(
             `two seconds after Save tag: ${saving != null ? '"Saving tag…" shown, editor open' : 'no "Saving tag…"'}`
           )
-          await shot('tagStalled')
-          await dumpHierarchy('tagStalled')
+          await shot('tagStalledClosed')
+          await dumpHierarchy('tagStalledClosed')
           if (closed == null) {
             const late = await gone(
               /^(Save tag|Saving tag…)$/,
@@ -1475,6 +1679,25 @@ async function step7(): Promise<void> {
         }
       } else log('tag editor did not open')
     }
+    // The saved tag, where the scorer shows it: reopen the history and find
+    // the tag on its play.
+    if ((await find(/^Tap event to assign a tag\.$/)) == null) {
+      const again = (await nodes()).find(
+        n => label(n).startsWith('Undo ') && (n.type ?? '').includes('Button')
+      )
+      if (again != null) await tapNode(again, 2200)
+    }
+    await waitFor(/^Tap event to assign a tag\.$/, 30000)
+    const shown = await waitFor(new RegExp(`\\b${TAG}\\b`, 'i'), 30000)
+    check(
+      `stalled: the saved tag "${TAG}" shows on its play in the history`,
+      shown != null,
+      shown == null
+        ? 'not in the history'
+        : `"${label(shown)}" at y ${shown.bounds?.y}`
+    )
+    await shot('tagStalled')
+    await dumpHierarchy('tagStalled')
     await tryTap(/^Tap event to assign a tag\.$/, 1000).catch(() => undefined)
     if ((await find(/^Tap event to assign a tag\.$/)) != null)
       await m.tapOnPoint({ x: 20, y: Math.round(screen.height * 0.25) })
@@ -1727,18 +1950,27 @@ async function step8(): Promise<void> {
       )
       .filter((kind): kind is 'swap' | 'pitch' => kind != null)
     const merged = kinds.filter((kind, i) => i === 0 || kind !== kinds[i - 1])
-    // The pitch entered to tag, and a save that follows the reset swap, come
-    // after the last swap; only what came before it is the order entered.
+    // What this run entered, merged the same way. The pitch entered to tag,
+    // and a save that follows a reset swap, come after the last swap; through
+    // the last swap the arrivals must be the order entered.
+    const enteredMerged = entered.filter(
+      (kind, i) => i === 0 || kind !== entered[i - 1]
+    )
+    const expected = enteredMerged.slice(
+      0,
+      enteredMerged.lastIndexOf('swap') + 1
+    )
     const lastSwap = merged.lastIndexOf('swap')
     const order = merged.slice(0, lastSwap + 1)
     log(
       `writes to ${FIXTURE.upcomingGameId}, in arrival order:\n${lines.join('\n')}`
     )
     check(
-      'the request log shows the pitches and both swaps in the order entered',
-      order.join(',') === 'pitch,swap,pitch,swap' &&
+      'the request log shows the pitches and the swaps in the order entered',
+      expected.length > 0 &&
+        order.join(',') === expected.join(',') &&
         merged.slice(lastSwap + 1).every(kind => kind === 'pitch'),
-      `${kinds.join(',')} (repeats merged, through the last swap: ${order.join(',')}; after it: ${lastSwap + 1 < merged.length ? merged.slice(lastSwap + 1).join(',') : 'nothing'})`
+      `entered ${entered.join(',')}; arrived ${kinds.join(',')} (repeats merged, through the last swap: arrived ${order.join(',')}, entered ${expected.join(',')}; after it: ${lastSwap + 1 < merged.length ? merged.slice(lastSwap + 1).join(',') : 'nothing'})`
     )
     // The add queued offline in step 7 reached the server once the shape
     // cleared, and the player is on the opened team.
