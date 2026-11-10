@@ -18,6 +18,21 @@ describe('TV per-camera playback recovery', () => {
     expect(watch.retry(56000, true, false)).equals(false)
     expect(watch.retry(75350, true, false)).equals(true)
   })
+  it('gives a buffering camera two minutes between transfers, and a silent one twenty seconds', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.progress(10, 0)
+    watch.progress(10.25, 250)
+    watch.buffer(true, 5000)
+    expect(watch.retry(30_000, true, false), 'downloading').equals(false)
+    watch.transfer(100_000)
+    expect(watch.retry(219_999, true, false)).equals(false)
+    expect(watch.retry(220_000, true, false), 'no transfer').equals(true)
+    const ready = new PlaybackRecovery(0)
+    ready.buffer(true, 0)
+    ready.buffer(false, 1000)
+    ready.transfer(15_000) // A transfer is no picture while not buffering.
+    expect(ready.retry(21_000, true, false)).equals(true)
+  })
   it('retries a replacement error without waiting out its opening deadline', () => {
     const watch = new PlaybackRecovery(0)
     watch.error(100)

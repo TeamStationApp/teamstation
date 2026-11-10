@@ -7,6 +7,7 @@ export class PlaybackRecovery {
   private due = 0
   private openingUntil = 0
   private began: number | null = null
+  private buffering = false
   exhausted = false
 
   constructor(now: number) {
@@ -36,6 +37,20 @@ export class PlaybackRecovery {
     this.exhausted = false
   }
 
+  /**
+   * A buffering camera is downloading, not stalled. Like a buffering seek
+   * (`NativeSeekQueue`), it gets two minutes between completed transfers,
+   * which can arrive only when a large, slow segment finishes.
+   */
+  buffer(isBuffering: boolean, now: number): void {
+    if (this.buffering !== isBuffering && !this.failed) this.advancedAt = now
+    this.buffering = isBuffering
+  }
+
+  transfer(now: number): void {
+    if (this.buffering && !this.failed) this.advancedAt = now
+  }
+
   /** A fetched URL starts a native attempt, which needs time to open and restore. */
   opening(now: number): void {
     // Native HLS can fetch the playlist twice before requesting its first segment.
@@ -57,7 +72,11 @@ export class PlaybackRecovery {
       this.advancedAt = now
       return false
     }
-    if (!this.failed && now - this.advancedAt < 20_000) return false
+    if (
+      !this.failed &&
+      now - this.advancedAt < (this.buffering ? 120_000 : 20_000)
+    )
+      return false
     this.began ??= now
     if (now - this.began >= 5 * 60_000) {
       this.exhausted = true

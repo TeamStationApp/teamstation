@@ -614,6 +614,64 @@ describe('TV game playback entry', () => {
       Date.now = originalNow
     }
   })
+  it('lets a buffering camera keep downloading past the silent-camera deadline', async () => {
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of before) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(
+            new window.Event('durationchange', { bubbles: true })
+          )
+        }
+        await pause()
+        for (const video of before) {
+          video.dispatchEvent(new window.Event('seeked'))
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+        before[1].dispatchEvent(new window.Event('waiting'))
+        await pause()
+      })
+      now += 30_000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelectorAll('video')[1],
+        'a buffering camera is not remounted at twenty seconds'
+      ).equals(before[1])
+      now += 120_000
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelectorAll('video')[1],
+        'buffering with no transfer for two minutes is bounded'
+      ).not.equals(before[1])
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
   it('abandons an unacknowledged seek when replacing a failed source', async () => {
     count = 2
     const originalInterval = globalThis.setInterval

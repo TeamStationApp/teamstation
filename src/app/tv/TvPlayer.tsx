@@ -1132,6 +1132,7 @@ export function TvPlayer({
                   onBandwidthUpdate={() => {
                     if (anglesRef.current?.[index] !== angle) return
                     seekQueues.current[index]?.transferProgress()
+                    recovery.current.get(index)?.transfer(Date.now())
                   }}
                   onLoad={event => {
                     if (anglesRef.current?.[index] !== angle) return
@@ -1155,6 +1156,9 @@ export function TvPlayer({
                   onBuffer={event => {
                     if (anglesRef.current?.[index] !== angle) return
                     seekQueues.current[index]?.buffer(event.isBuffering)
+                    recovery.current
+                      .get(index)
+                      ?.buffer(event.isBuffering, Date.now())
                     setBuffering(previous =>
                       event.isBuffering
                         ? [...new Set([...previous, index])]
