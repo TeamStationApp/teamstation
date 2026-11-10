@@ -737,6 +737,105 @@ describe('a phone watching a live game whose camera is away', function () {
         }
       })
 
+  /** A grid tile, loaded and showing a picture at a minute in. */
+  function gridTile(intent: {
+    wantsToPlay: () => boolean
+    wantsRecovery?: () => boolean
+  }): {
+    handle: NativeVideoHandle
+    player: ReturnType<typeof androidPlayer>
+    detach: () => void
+    loaded: Parameters<NativeVideoHandle['handleLoad']>[0]
+  } {
+    const handle = new NativeVideoHandle(() => undefined)
+    const player = androidPlayer()
+    handle.attach(player.ref)
+    handle.clearBeforeReload = true
+    handle.source = URL
+    const detach = attachHls(handle, URL, undefined, {
+      ...intent,
+      buffer: { aheadSec: 30 }
+    })
+    const loaded: Parameters<NativeVideoHandle['handleLoad']>[0] = {
+      currentTime: 60,
+      duration: 200,
+      naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+      audioTracks: [],
+      textTracks: [],
+      videoTracks: []
+    }
+    handle.handleLoad(loaded)
+    handle.handleReadyForDisplay()
+    handle.handleProgress({
+      currentTime: 60,
+      playableDuration: 90,
+      seekableDuration: 200
+    })
+    return { handle, player, detach, loaded }
+  }
+
+  it('does not reload a healthy grid tile its grid holds, during or after the hold', async () => {
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    let holding = true
+    const { handle, player, detach } = gridTile({
+      wantsToPlay: () => !holding,
+      wantsRecovery: () => true
+    })
+    try {
+      for (let second = 0; second < 40; second++) {
+        now += 1000
+        for (const run of timers.splice(0)) run()
+      }
+      expect(player.loads(), 'a hold is not a stall').equals(0)
+      holding = false
+      await handle.play()
+      for (let second = 0; second < 5; second++) {
+        now += 1000
+        for (const run of timers.splice(0)) run()
+      }
+      expect(player.loads(), 'the hold is not counted afterwards').equals(0)
+    } finally {
+      detach()
+      Date.now = realNow
+    }
+  })
+
+  it('keeps a failure through a progress report that has not moved', async () => {
+    const { handle, player, detach } = gridTile({ wantsToPlay: () => true })
+    try {
+      await handle.play()
+      handle.handleError(serverDown)
+      handle.handleProgress({
+        currentTime: 60,
+        playableDuration: 90,
+        seekableDuration: 200
+      })
+      await handle.play()
+      expect(player.loads(), 'play on a failed player loads it again').equals(1)
+    } finally {
+      detach()
+    }
+  })
+
+  it('does not put a reload that opened at zero back to zero', () => {
+    const { handle, player, detach, loaded } = gridTile({
+      wantsToPlay: () => true
+    })
+    try {
+      handle.reset()
+      handle.handleLoad({ ...loaded, currentTime: 0 })
+      handle.handleError(serverDown)
+      for (const run of timers.splice(0)) run()
+      expect(player.loads()).equals(1)
+      handle.handleLoad({ ...loaded, currentTime: 30 })
+      expect(player.seeks, 'opened where the player chose').deep.equals([])
+    } finally {
+      detach()
+    }
+  })
+
   it('lets a seek made while the stream reopens stand', async function () {
     const { handle, player } = await watching()
     handle.handleProgress({

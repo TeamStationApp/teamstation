@@ -77,9 +77,10 @@ export function attachHls(
    * **paused**. Nothing would put it back, so a stumble in the stream would
    * stop the picture and leave it stopped until somebody pressed play — which
    * on a game being watched by a parent is indistinguishable from the game
-   * ending. A pause the viewer asked for still has to be honoured, so the two
-   * are kept apart exactly as they are on the web: a pause that arrives while
-   * a recovery is in flight is the recovery's doing, and any other is theirs.
+   * ending. A pause the viewer asked for still has to be honoured, and here
+   * every `pause` is theirs or the end's: a reload pauses the player without
+   * saying so, and a failed player's stop is not reported as one
+   * (`NativeVideoHandle`), so one that arrives mid-recovery is honoured too.
    */
   let wantsToPlay = !handle.paused
   let recovering = false
@@ -124,7 +125,9 @@ export function attachHls(
    * one who was waiting at it.
    */
   const reloadKeepingPlace = (): void => {
-    if (handle.readyState > 0 || handle.seeking || handle.currentTime > 0)
+    // Zero is a place only once something put the player there: a live
+    // source still opening reads zero, which is the start of its window.
+    if (handle.seeking || handle.currentTime > 0)
       resumeAtSec = handle.currentTime
     awaitingLoad = true
     // Opening and restoring a slow native source can take longer than the
@@ -185,7 +188,11 @@ export function attachHls(
     if (wanted) handle.play().catch(() => undefined)
   }
   handle.addEventListener('canplay', recovered)
-  handle.addEventListener('timeupdate', recovered)
+  // Every native sample says `timeupdate`; only one past the failure is news.
+  const progressed = (): void => {
+    if (!hasFailed()) recovered()
+  }
+  handle.addEventListener('timeupdate', progressed)
 
   const giveUp = (): void => {
     if (gaveUp) return
@@ -257,8 +264,12 @@ export function attachHls(
     if (!awaitingLoad && handle.seeking) lastAdvance = now
     const wanted =
       intent?.wantsRecovery?.() ?? intent?.wantsToPlay() ?? wantsToPlay
-    if (!wanted && !failed) lastAdvance = now
-    const silentReadyTile = wanted && handle.readyState >= 3 && !handle.ended
+    // A tile its grid has paused (a buffering hold, a tile left out) cannot
+    // advance, so standing still is no sign of a stall; only a failure is.
+    const held = intent != null && !intent.wantsToPlay() && handle.paused
+    if ((!wanted || held) && !failed) lastAdvance = now
+    const silentReadyTile =
+      wanted && !held && handle.readyState >= 3 && !handle.ended
     if (
       !singleLive &&
       !gaveUp &&
@@ -298,7 +309,7 @@ export function attachHls(
     handle.removeEventListener('play', onPlay)
     handle.removeEventListener('pause', onPause)
     handle.removeEventListener('canplay', recovered)
-    handle.removeEventListener('timeupdate', recovered)
+    handle.removeEventListener('timeupdate', progressed)
     handle.onError = null
   }
 }
