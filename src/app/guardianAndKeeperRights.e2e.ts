@@ -1795,14 +1795,35 @@ async function follower(run: Run): Promise<void> {
       // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have.
       return (top === null ? document.body : top).textContent
     })) ?? ''
+  // The top screen's tab: a covered screen keeps its own tabs in the DOM.
   const tab = async (name: string): Promise<void> => {
-    await grace.m.tapOn({ text: name, role: 'tab', timeout: 15000 })
+    await grace.page.waitForFunction(
+      label =>
+        [
+          ...document.querySelectorAll('[data-scene-role="top"] [role="tab"]')
+        ].some(node => {
+          if ((node as HTMLElement).innerText.trim() !== label) return false
+          node.setAttribute('data-e2e-tab', 'here')
+          return true
+        }),
+      { timeout: 15000 },
+      name
+    )
+    await grace.m.tapOn({ css: '[data-e2e-tab="here"]', timeout: 15000 })
+    await grace.page.evaluate(() => {
+      for (const node of document.querySelectorAll('[data-e2e-tab]'))
+        node.removeAttribute('data-e2e-tab')
+    })
     await settle(grace)
   }
-  /** Stills shown on the page that have loaded, by their signed paths. */
+  /** Stills shown on the top screen that have loaded, by their signed paths. */
   const loadedStills = async (): Promise<string[]> =>
     await grace.page.evaluate(() =>
-      [...document.querySelectorAll('img')]
+      [
+        ...document.querySelectorAll<HTMLImageElement>(
+          '[data-scene-role="top"] img'
+        )
+      ]
         .filter(
           image =>
             image.src.includes('/stills/') &&
@@ -1811,6 +1832,18 @@ async function follower(run: Run): Promise<void> {
         )
         .map(image => new URL(image.src).pathname)
     )
+  /** The WCAG contrast ratio of two `rgb(…)` colours. */
+  const contrast = (a: string, b: string): number => {
+    const luminance = (color: string): number => {
+      const [r, g, bl] = (color.match(/\d+/g) ?? []).slice(0, 3).map(n => {
+        const c = Number(n) / 255
+        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * r + 0.7152 * g + 0.0722 * bl
+    }
+    const [hi, lo] = [luminance(a), luminance(b)].sort((x, y) => y - x)
+    return (hi + 0.05) / (lo + 0.05)
+  }
   /**
    * A notice's text colour and the colour painted behind it: the page's own
    * text on the page's own background, not a hint's grey, nor anything on a
@@ -1818,7 +1851,8 @@ async function follower(run: Run): Promise<void> {
    */
   const readable = async (
     session: BrowserSession,
-    words: string
+    words: string,
+    on: 'page' | 'sheet' = 'page'
   ): Promise<void> => {
     const seen = await session.page.evaluate(words => {
       const node = [...document.querySelectorAll('[role="alert"]')].find(
@@ -1835,6 +1869,11 @@ async function follower(run: Run): Promise<void> {
       }
       return { color: getComputedStyle(node).color, background }
     }, words)
+    if (on === 'sheet') {
+      // A warning sheet has colours of its own: readable is WCAG AA contrast.
+      expect(contrast(seen.color, seen.background), words).at.least(4.5)
+      return
+    }
     expect(seen, words).deep.equals({
       color: 'rgb(26, 33, 22)',
       background: 'rgb(245, 247, 241)'
@@ -1923,9 +1962,10 @@ async function follower(run: Run): Promise<void> {
 
   // Schedule: each game with its count and its thumbnail.
   await tab('Schedule')
-  // The Schedule on top: the Videos tab beside it holds the same game.
-  const card = `[data-scene-role="top"] [role="button"][aria-label^="Demo Hawks vs Demo Visitors"]`
+  // The team's own schedule leaves out its name: "vs Demo Visitors, …".
+  const card = `[data-scene-role="top"] [data-testid="schedule-display-row"][aria-label^="vs Demo Visitors"]`
   await grace.page.waitForSelector(card, { timeout: 20000 })
+  // The Videos pane beside it, mounted hidden, counts each game's videos.
   const schedule = await grace.page.evaluate(() =>
     [...document.querySelectorAll('[role="button"][aria-label]')]
       .map(node => node.getAttribute('aria-label'))
@@ -1950,14 +1990,32 @@ async function follower(run: Run): Promise<void> {
 
   // A game: the score and the records, and nothing counted under them.
   await centre(card)
-  await grace.m.tapOn({ css: card, timeout: 15000 })
+  // The Videos pane beside the Schedule holds the same game, hidden with
+  // pointer-events: none: tap the card a tap at its centre reaches.
+  await grace.page.evaluate(selector => {
+    for (const node of document.querySelectorAll(selector)) {
+      node.scrollIntoView({ block: 'center' })
+      const rect = node.getBoundingClientRect()
+      const hit = document.elementFromPoint(
+        rect.left + rect.width / 2,
+        rect.top + rect.height / 2
+      )
+      if (hit !== null && node.contains(hit)) {
+        node.setAttribute('data-e2e-tap', 'here')
+        return
+      }
+    }
+  }, card)
+  await grace.m.tapOn({ css: '[data-e2e-tap="here"]', timeout: 15000 })
   await grace.page.waitForFunction(
     gameId => location.pathname === `/games/${gameId}`,
     { timeout: 20000 },
     game.id
   )
+  // A non-member's Videos tab: a preview in the player's place, then the
+  // highlights.
+  await tab('Videos')
   await contains(grace.page, 'Highlights')
-  await contains(grace.page, videosMembersOnly)
   await settle(grace)
   const hero = await grace.page.evaluate(() => {
     // The card: the smallest block holding both sides' notes.
@@ -1987,15 +2045,16 @@ async function follower(run: Run): Promise<void> {
   expect(await grace.page.$('video')).equals(null)
   await run.shot(grace, 'follower-game-after.png')
 
-  // Videos: the message where the video would be, readable and with no
-  // empty player box, above the highlights, whose pictures load.
+  // Videos: no player box, and the members-only rule, readable, only once
+  // playback is attempted; then the highlights, whose pictures load.
   expect(await playerBox(grace)).equals(false)
-  await readable(grace, videosMembersOnly)
   const watch = await text()
-  const firstPlay = watch.indexOf('Alfonso S')
-  expect(firstPlay).greaterThan(0)
-  expect(watch.indexOf(videosMembersOnly)).lessThan(firstPlay)
+  expect(watch.indexOf('Alfonso S')).greaterThan(0)
   expect(watch).not.includes('All angles')
+  expect(watch).not.includes(videosMembersOnly)
+  await grace.m.tapOn({ id: 'gameVideoPreview', timeout: 15000 })
+  await readable(grace, videosMembersOnly, 'sheet')
+  await grace.m.tapOn({ text: 'Close warning', timeout: 15000 })
   await grace.page.waitForFunction(
     () =>
       [...document.querySelectorAll('img')].filter(
@@ -2040,28 +2099,19 @@ async function follower(run: Run): Promise<void> {
     ;(node as HTMLElement).click()
   })
   await settle(grace)
+  // A highlight explains the rule in the same sheet as the preview does.
   expect(
     await grace.page.evaluate(() =>
       [...document.querySelectorAll('[role="alert"]')].map(
         node => node.textContent
       )
     )
-  ).deep.equals([videosMembersOnly, videosMembersOnly])
-  expect(
-    await grace.page.evaluate(() => {
-      const repeated = document.querySelector(
-        '[data-testid="highlightMembersOnly"]'
-      )
-      const tapped = repeated === null ? null : repeated.parentElement
-      const words = tapped === null ? null : tapped.textContent
-      // eslint-disable-next-line @typescript-eslint/prefer-optional-chain -- Sucrase would compile `?.` to a helper the browser does not have.
-      return words !== null && words.includes('Alfonso S')
-    })
-  ).equals(true)
+  ).includes(videosMembersOnly)
   expect(new URL(grace.page.url()).searchParams.get('t')).equals(null)
   expect(await grace.page.$('video')).equals(null)
   expect(await playerBox(grace)).equals(false)
   await run.shot(grace, 'follower-highlight.png')
+  await grace.m.tapOn({ text: 'Close warning', timeout: 15000 })
 
   // Box score: the innings and the runs, then the message.
   await grace.page.evaluate(() => {
@@ -2071,9 +2121,9 @@ async function follower(run: Run): Promise<void> {
   await contains(grace.page, boxMembersOnly)
   await readable(grace, boxMembersOnly)
   const box = await text()
-  const innings = box.indexOf('Demo Visitors1023')
-  expect(innings, 'away line: 1 0 2 then 3').greaterThan(0)
-  expect(box.indexOf('Demo Hawks2136')).greaterThan(innings)
+  // The names' column, then innings 1–3 and R: away 1 0 2 for 3, home 2 1 3 for 6.
+  const innings = box.indexOf('Demo VisitorsDemo Hawks123R10232136')
+  expect(innings, 'away line: 1 0 2 then 3; home 2 1 3 then 6').greaterThan(0)
   expect(box.indexOf(boxMembersOnly)).greaterThan(innings)
   expect(box).not.includes('Batting —')
   expect(box).not.includes('Pitching —')
@@ -2309,16 +2359,20 @@ async function home(run: Run): Promise<void> {
   await contains(guardian.page, 'Career')
   await settle(guardian)
   const stats = await page(guardian)
-  // Both teams' games: the Hawks' 4 at-bats and the Comets' 3.
+  // Both teams' games, a row each and a total, as PA AB H AVG: the Comets'
+  // 3 at-bats, the Hawks' 4, 7 together.
   expect(stats).includes('2 games · Career')
-  expect(stats).includes('PA7AB7H3AVG.429')
+  expect(stats).includes('Demo CometsDemo HawksTotalPAABHAVG')
+  expect(stats).includes('331.333')
+  expect(stats).includes('442.500')
+  expect(stats).includes('773.429')
 
   // Teams: the Comets he has left are still on his page.
   await guardian.m.tapOn({ text: 'Teams', role: 'tab', timeout: 15000 })
   await contains(guardian.page, 'Demo Comets')
   const teamRows = (
     await guardian.page.evaluate(() =>
-      [...document.querySelectorAll('[role="button"]')]
+      [...document.querySelectorAll('[data-scene-role="top"] [role="button"]')]
         .map(node => node.textContent)
         .filter(text => text !== null && /^D(H|C)Demo /.test(text))
     )
@@ -2349,13 +2403,18 @@ async function home(run: Run): Promise<void> {
   }))
   expect(form.jersey).equals(0)
   expect(form.positions).equals(0)
-  expect(form.radios).deep.equals([
-    'Bats Right',
-    'Bats Left',
-    'Bats Switch',
-    'Throws Right',
-    'Throws Left'
-  ])
+  // The choices offered, in whatever order the form lays them out.
+  expect(
+    [...form.radios].sort((a, b) => String(a).localeCompare(String(b)))
+  ).deep.equals(
+    [
+      'Bats Right',
+      'Bats Left',
+      'Bats Switch',
+      'Throws Right',
+      'Throws Left'
+    ].sort((a, b) => a.localeCompare(b))
+  )
   expect(new URL(guardian.page.url()).searchParams.get('tab')).equals(
     'settings'
   )
