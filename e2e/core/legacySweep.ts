@@ -82,6 +82,34 @@ export function alternatives(source: string, file: string): Invocation[] {
   }))
 }
 
+/**
+ * `files` with each one that continues from another's run (`{legacy:<name>}`
+ * in its table) moved to just after that one, so nothing resets the database
+ * in between.
+ */
+export function continuingAfter(
+  files: string[],
+  table: (file: string) => Invocation[] | undefined
+): string[] {
+  const after = new Map<string, string[]>()
+  const moved = new Set<string>()
+  for (const file of files) {
+    const from = /\{legacy:([^}]+)\}/.exec(JSON.stringify(table(file) ?? []))
+    const earlier =
+      from == null
+        ? undefined
+        : files.find(
+            other => legacyArtifacts(other) === legacyArtifacts(`${from[1]}.x`)
+          )
+    if (earlier == null || earlier === file) continue
+    after.set(earlier, [...(after.get(earlier) ?? []), file])
+    moved.add(file)
+  }
+  return files
+    .filter(file => !moved.has(file))
+    .flatMap(file => [file, ...(after.get(file) ?? [])])
+}
+
 /** The directory `runLegacy` gives `file`'s artifacts. */
 function legacyArtifacts(file: string): string {
   const name = file
@@ -172,7 +200,7 @@ async function main(): Promise<void> {
   const [results, ...given] = process.argv.slice(2)
   if (results == null) throw new Error('usage: legacySweep <results> [path…]')
   const cwd = process.cwd()
-  const files =
+  const listed =
     given.length > 0
       ? given
       : Object.keys(
@@ -182,6 +210,7 @@ async function main(): Promise<void> {
             }
           ).modules
         )
+  const files = continuingAfter(listed, file => tableRecipe(cwd, file))
   const defaultTimeout = Number(process.env.LEGACY_TIMEOUT_MS ?? 20 * 60 * 1000)
   const bin = maestroBin()
   // The loopback harnesses serve `dist` and put their media on a port of
@@ -229,6 +258,16 @@ async function main(): Promise<void> {
               reason: invocation.blocked
             }
           }
+          // `{legacy:<name>}` in a value is that script's artifact directory, for
+          // a script that reads what an earlier one left (chat.e2e's profiles).
+          const env = Object.fromEntries(
+            Object.entries(invocation.env ?? {}).map(([key, value]) => [
+              key,
+              value.replace(/\{legacy:([^}]+)\}/g, (_, name: string) =>
+                legacyArtifacts(`${name}.x`)
+              )
+            ])
+          )
           return await runLegacy(
             path,
             cwd,
@@ -240,14 +279,19 @@ async function main(): Promise<void> {
               env: {
                 TS_CHAT_API_LOG: stack.apiLog,
                 ...shared,
-                ...invocation.env
+                ...env
               },
               label: invocation.label
             }
           )
         }
         const source = readFileSync(join(cwd, file), 'utf8')
-        if (needsChatSeed(source)) {
+        // A script that continues from another's run (`{legacy:…}`) keeps that
+        // run's database; every other chat script starts from a fresh seed.
+        const continues = JSON.stringify(tableRecipe(cwd, file) ?? []).includes(
+          '{legacy:'
+        )
+        if (needsChatSeed(source) && !continues && BLOCKED[file] == null) {
           chatReset(cwd, legacyArtifacts(file))
           stack.reseed()
         }

@@ -70,7 +70,7 @@ export const LONG_HOME = 'Cedar Hollow Owls'
  * outside `src`, where the app's type check does not reach.
  */
 const marker = createRequire(__filename)(
-  '../../../../scripts/e2e/scoreboardLog/readMarker.ts'
+  '../../scripts/e2e/scoreboardLog/readMarker.ts'
 ) as {
   markerGeometry: (height: number) => unknown
   readMarkerSource: () => string

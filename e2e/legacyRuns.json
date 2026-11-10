@@ -5,14 +5,20 @@
       "args": [
         "record"
       ],
-      "needs": "web"
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
     },
     {
       "label": "compare",
       "args": [
         "compare"
       ],
-      "needs": "web"
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
     }
   ],
   "src/app/chat/chatNoWasm.e2e.ts": [
@@ -21,14 +27,20 @@
       "args": [
         "noWasm"
       ],
-      "needs": "web"
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
     },
     {
       "label": "badModule",
       "args": [
         "badModule"
       ],
-      "needs": "web"
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
     }
   ],
   "src/app/chat/chatUiFollowup.e2e.ts": [
@@ -1562,7 +1574,8 @@
         "P1"
       ],
       "env": {
-        "CHAT_PLATFORM": "ios"
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       },
       "needs": "ios-sim"
     },
@@ -1572,7 +1585,8 @@
         "P3"
       ],
       "env": {
-        "CHAT_PLATFORM": "ios"
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       },
       "needs": "ios-sim"
     },
@@ -1582,7 +1596,8 @@
         "P2"
       ],
       "env": {
-        "CHAT_PLATFORM": "ios"
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       },
       "needs": "ios-sim"
     },
@@ -1592,7 +1607,8 @@
         "P4"
       ],
       "env": {
-        "CHAT_PLATFORM": "ios"
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       },
       "needs": "ios-sim"
     },
@@ -1602,7 +1618,8 @@
         "P1"
       ],
       "env": {
-        "CHAT_PLATFORM": "android"
+        "CHAT_PLATFORM": "android",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       },
       "needs": "android-phone"
     },
@@ -1612,7 +1629,8 @@
         "P2"
       ],
       "env": {
-        "CHAT_PLATFORM": "android"
+        "CHAT_PLATFORM": "android",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       },
       "needs": "android-phone"
     }
@@ -3008,6 +3026,18 @@
       },
       "needs": "android-phone",
       "blocked": "same"
+    }
+  ],
+  "scripts/walkup-native.mjs": [
+    {
+      "label": "ios",
+      "needs": "ios-phone"
+    }
+  ],
+  "scripts/walkup-native-android.mjs": [
+    {
+      "label": "android",
+      "needs": "android-phone"
     }
   ]
 }

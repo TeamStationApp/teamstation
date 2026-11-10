@@ -192,6 +192,10 @@ export const BLOCKED: Record<string, string> = {
     'the synthetic preview it opens (cardSpacingPreview.tsx) is not an entry of any build in the repository',
   'src/app/uiFixes.e2e.ts':
     'needs a copy of production in the database (game gam_demo000000000001), which this task does not have',
+  'src/app/passwordForm.e2e.ts':
+    'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
+  'src/app/passwordNative.e2e.ts':
+    'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
   'scripts/e2e/playbackReliability/playbackReliability.e2e.ts':
     'needs a real source game with uploads and a 1Password test account on a deployed server'
 }
