@@ -103,6 +103,32 @@ describe('TV playback composition and remote state', () => {
     clock.progress(2, 320, 330, 0)
     expect(clock.available(2)).equals(true)
   })
+  it('does not pull the others back before a gap a returning live camera has just crossed', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    // The third camera was away for 70 s: its footage resumes at media 200 s,
+    // wall 370 s.
+    clock.ports[2].timeline.anchors = [
+      [0, 100000],
+      [200000, 370000]
+    ]
+    for (const i of [0, 1]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 272, 273, 0)
+      clock.settled(i)
+    }
+    expect(clock.wall).equals(372000)
+    clock.load(2, Infinity)
+    for (const i of [0, 1]) seeks[i].length = 0
+    // Opened again with a seekable range only just past the gap, its edge
+    // within a few seconds of the others'.
+    clock.progress(2, 200, 200.05, 0)
+    expect(clock.wall, 'not sent back before the gap').equals(372000)
+    expect(seeks[0].concat(seeks[1])).deep.equals([])
+    expect(clock.available(2)).equals(false)
+  })
   it('rejoins a live follower within the required half-second wall tolerance', () => {
     const clock = new PlaybackClock()
     for (let i = 0; i < 2; i++) clock.register(i, timeline(), () => undefined)
