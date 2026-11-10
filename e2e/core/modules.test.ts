@@ -28,7 +28,7 @@ describe('moduleOf', function () {
   const assigned: Array<[string, string]> = [
     ['src/app/passwordForm.e2e.ts', 'account'],
     ['src/app/uiTweaks.e2e.ts', 'app-shell'],
-    ['src/app/tess/tess.e2e.ts', 'assistant'],
+    ['src/app/tess/tessSpaceHold.e2e.ts', 'assistant'],
     ['src/server/tess/tess.integration.ts', 'assistant'],
     ['src/app/chat/chat.e2e.ts', 'messaging'],
     ['src/app/playerNamePrivacy.e2e.ts', 'people'],
