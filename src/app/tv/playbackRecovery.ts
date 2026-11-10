@@ -1,0 +1,112 @@
+/** Per-camera retry state. A ready/load event is not proof of advancing video. */
+export class PlaybackRecovery {
+  private position: number | null = null
+  private advancedAt: number
+  private failed = false
+  private attempts = 0
+  private due = 0
+  private openingUntil = 0
+  private began: number | null = null
+  private buffering = false
+  /** When buffering last ended: the player then gets one silent window. */
+  private readySince = 0
+  exhausted = false
+
+  constructor(now: number) {
+    this.advancedAt = now
+  }
+
+  progress(seconds: number, now: number): boolean {
+    // A failed camera's first samples are where a remount landed, not playing
+    // on: it recovers only once it plays half a second past the lowest.
+    const advanced =
+      this.position != null &&
+      seconds > this.position + (this.failed ? 0.5 : 0.05)
+    if (this.failed && this.position != null && !advanced) {
+      this.position = Math.min(this.position, seconds)
+      return false
+    }
+    if (advanced) {
+      this.advancedAt = now
+      this.openingUntil = 0
+      this.failed = false
+      this.attempts = 0
+      this.began = null
+      this.exhausted = false
+    }
+    this.position = seconds
+    return advanced
+  }
+
+  readyPaused(now: number): void {
+    this.openingUntil = 0
+    this.failed = false
+    this.advancedAt = now
+    this.began = null
+    this.attempts = 0
+    this.exhausted = false
+  }
+
+  /**
+   * A buffering camera is downloading, not stalled. Like a buffering seek
+   * (`NativeSeekQueue`), it gets two minutes between completed transfers,
+   * which can arrive only when a large, slow segment finishes. Only a frame
+   * or a transfer restarts that: a player flipping in and out of buffering
+   * is given its silent window from each exit, never past the two minutes.
+   */
+  buffer(isBuffering: boolean, now: number): void {
+    if (this.buffering && !isBuffering) this.readySince = now
+    this.buffering = isBuffering
+  }
+
+  transfer(now: number): void {
+    if (this.buffering && !this.failed) this.advancedAt = now
+  }
+
+  /** A fetched URL starts a native attempt, which needs time to open and restore. */
+  opening(now: number): void {
+    // Native HLS can fetch the playlist twice before requesting its first segment.
+    // Allow both requests and restoration before declaring this attempt stuck.
+    this.openingUntil = now + 30_000
+    // A new attempt or a settled seek: the old mount's last sample is no
+    // measure of whether this one plays.
+    this.position = null
+  }
+
+  /** A seek moved the picture: the next sample is where it landed. */
+  seeked(): void {
+    this.position = null
+  }
+
+  error(now: number): void {
+    this.position = null
+    this.openingUntil = 0
+    this.failed = true
+    this.began ??= now
+    if (this.due < now) this.due = now + 1000
+  }
+
+  /** Returns once per retry; callers serialize the asynchronous URL refresh. */
+  retry(now: number, playing: boolean, ended: boolean): boolean {
+    if (this.exhausted || ended) return false
+    if (!playing && !this.failed) {
+      this.advancedAt = now
+      return false
+    }
+    const stalled =
+      now - this.advancedAt >= 120_000 ||
+      (!this.buffering &&
+        now - Math.max(this.advancedAt, this.readySince) >= 20_000)
+    if (!this.failed && !stalled) return false
+    this.began ??= now
+    if (now - this.began >= 5 * 60_000) {
+      this.exhausted = true
+      return false
+    }
+    if (now < this.due || now < this.openingUntil) return false
+    this.failed = true
+    this.attempts++
+    this.due = now + Math.min(10_000, 1000 * 2 ** this.attempts)
+    return true
+  }
+}
