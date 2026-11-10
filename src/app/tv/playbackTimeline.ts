@@ -28,7 +28,9 @@ export function targetTime(
   return {
     seconds: Math.max(0, Math.min(duration, seconds)),
     available:
-      seconds >= 0 && seconds < duration && !inWallGap(timeline.anchors, wall)
+      seconds >= 0 &&
+      seconds < duration &&
+      !inWallGap(timeline.anchors, wall, timeline.source)
   }
 }
 export function commonStart(timelines: WallTimeline[]): number | null {

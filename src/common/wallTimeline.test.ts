@@ -31,6 +31,19 @@ describe('the wall time of a position in a video (U21)', function () {
     ).equals(false)
   })
 
+  it('reads arrival jitter of up to a look as footage, and a longer jump as a gap', () => {
+    // A segment found a look late: its point is 1.2 s after the media ran.
+    const late: WallAnchor[] = [
+      [0, T0],
+      [2000, T0 + 3200],
+      [4000, T0 + 5200]
+    ]
+    expect(inWallGap(late, T0 + 2500)).equals(true)
+    expect(inWallGap(late, T0 + 2500, 'sei')).equals(true)
+    expect(inWallGap(late, T0 + 2500, 'arrival')).equals(false)
+    expect(inWallGap(anchors, T0 + 70_000, 'arrival')).equals(true)
+  })
+
   it('is the anchor itself on an anchor', function () {
     expect(wallAt(anchors, 0)).equals(T0)
     expect(wallAt(anchors, 60_000)).equals(T0 + 80_000)

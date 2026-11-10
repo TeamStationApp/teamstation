@@ -235,11 +235,11 @@ export class PlaybackClock {
       if (
         !playing ||
         this.wall === null ||
-        !inWallGap(port.timeline.anchors, this.wall) ||
+        !inWallGap(port.timeline.anchors, this.wall, port.timeline.source) ||
         this.ports.some((p, i) => p.loaded && this.available(i)) ||
         nextWall === null ||
         nextWall < this.wall ||
-        inWallGap(port.timeline.anchors, nextWall)
+        inWallGap(port.timeline.anchors, nextWall, port.timeline.source)
       )
         return this.wall
       this.master = index

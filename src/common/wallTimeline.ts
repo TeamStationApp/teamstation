@@ -101,10 +101,20 @@ export function mediaAt(
   return anchorMs + (wallMs - anchorWall)
 }
 
+/**
+ * The shortest wall jump read as missing footage. A frame's own clock moves
+ * by sub-frame corrections; an `arrival` point is when a once-a-second look
+ * found its segment, so it jitters by about that look and a slow scan.
+ */
+function gapMinimumMs(source: WallSource | undefined): number {
+  return source === 'arrival' ? 2000 : 250
+}
+
 /** A snapped inverse points into the future when no footage covers this moment. */
 export function inWallGap(
   anchors: readonly WallAnchor[],
-  wallMs: number
+  wallMs: number,
+  source?: WallSource
 ): boolean {
   if (anchors.length < 2) return false
   let low = 0
@@ -118,6 +128,7 @@ export function inWallGap(
   const next = anchors[low + 1]
   if (next == null) return false
   const end = previous[1] + next[0] - previous[0]
-  // Sub-frame clock corrections are not recording outages.
-  return next[1] - end > 250 && wallMs >= end && wallMs < next[1]
+  return (
+    next[1] - end > gapMinimumMs(source) && wallMs >= end && wallMs < next[1]
+  )
 }
