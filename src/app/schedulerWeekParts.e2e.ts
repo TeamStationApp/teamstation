@@ -6,6 +6,16 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  browserSession,
+  capture,
+  contains,
+  fill,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { wallInstant } from '../common/fieldAvailability'
 import { gameCalendarDay } from '../common/gameTime'
 import { gameWeekPart } from '../common/gameWeekPart'
@@ -19,16 +29,6 @@ import {
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
-import {
-  browserSession,
-  capture,
-  contains,
-  fill,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
   const dir = process.env.TS_AUTO_SCHEDULER_ARTIFACTS

@@ -4,11 +4,6 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import type { BoardStep, GameDetail } from '../../../common/api'
-import { wallAt } from '../../../common/wallTimeline'
-import { serverConfig } from '../../../server/serverConfig'
-import { tileRects } from '../multiCam/layout'
-import { boardAt } from './boardAt'
 import {
   angleTiles,
   api,
@@ -44,7 +39,12 @@ import {
   unwrapMarker,
   type VideoTimeline,
   videoTimeline
-} from './overlayRig.e2e'
+} from '../../../../e2e/rigs/overlayRig'
+import type { BoardStep, GameDetail } from '../../../common/api'
+import { wallAt } from '../../../common/wallTimeline'
+import { serverConfig } from '../../../server/serverConfig'
+import { tileRects } from '../multiCam/layout'
+import { boardAt } from './boardAt'
 
 /**
  * E8: the web players draw the game's board at the wall time of the frame on

@@ -5,11 +5,11 @@ import { createServer } from 'node:net'
 import { join, resolve } from 'node:path'
 import { setTimeout } from 'node:timers/promises'
 
+import { maestro } from '../../e2e/rigs/refinementsMaestro'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import { groupFixture } from '../test/groupFixtures'
 import { insertFixtureUsers } from '../test/insertFixtureUsers'
-import { maestro } from '../test/refinementsMaestro.e2e'
 
 async function main(): Promise<void> {
   const platform = process.env.TS_ADD_PEOPLE_PLATFORM

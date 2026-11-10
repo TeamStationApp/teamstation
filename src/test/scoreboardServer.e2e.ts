@@ -4,15 +4,19 @@ import { existsSync, openSync, readFileSync, writeFileSync } from 'node:fs'
 import puppeteer, { type Page } from 'puppeteer'
 import { WebSocket } from 'ws'
 
-import { NO_OVERRIDES, type ScoreboardState } from '../common/scoreboard'
-import { makeDatabase } from '../server/db/database'
-import { override, publish, scoreboardSocketUrl } from './scoreboardPublish.e2e'
+import {
+  override,
+  publish,
+  scoreboardSocketUrl
+} from '../../e2e/rigs/scoreboardPublish'
 import {
   OTHER_EMAIL,
   RUNNER_EMAIL,
   SEEDED,
   seedScoreboardGames
-} from './seedScoreboardGames.e2e'
+} from '../../e2e/rigs/seedScoreboardGames'
+import { NO_OVERRIDES, type ScoreboardState } from '../common/scoreboard'
+import { makeDatabase } from '../server/db/database'
 
 /**
  * The M1 end-to-end scenarios, E1 to E5, against a running server.

@@ -12,6 +12,8 @@
     // The app runs in a browser, so it gets the DOM as well as the language
     // library. The server config deliberately does not.
     "lib": ["es2023", "dom", "dom.iterable"],
+    // Unit tests import rigs and fixtures from `e2e/`.
+    "rootDir": ".",
     // A suite names the file it means in full, where a bare `./PagedList`
     // would reach the bundled tests' stand-in for it. Nothing here is emitted.
     "allowImportingTsExtensions": true

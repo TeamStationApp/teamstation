@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import { userIdOfGumbo } from '../common/userId'
 import { googlePlaces } from '../server/location/googlePlaces'
@@ -17,7 +18,6 @@ import {
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
   const dir = process.env.TS_MANAGER_ARTIFACTS

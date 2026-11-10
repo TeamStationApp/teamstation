@@ -4,14 +4,15 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { type GroupFixture, groupFixture } from '../test/groupFixtures'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   fill,
   freezeBrowserClock,
   press,
   text
-} from './creationBrowserActions.e2e'
+} from '../../e2e/rigs/creationBrowserActions'
+import { userIdOfGumbo } from '../common/userId'
+import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)
@@ -70,7 +71,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'DELETE',
-          `/manage/team/${f.teamA}/people/101`,
+          `/manage/team/${f.teamA}/people/${userIdOfGumbo(101)}`,
           undefined,
           101
         )
@@ -85,7 +86,7 @@ async function main(): Promise<void> {
     await press(team, 'Add Person to Team')
     await fill(team, 'E-mail addresses', 'fixture106@example.com')
     await toggle(team, 'Team admin')
-    await press(team, 'Send invite')
+    await press(team, 'Add people')
     await text(team, 'Team management')
     await team.screenshot({
       path: join(artifacts!, 'admin-added-at-once.png')
@@ -99,7 +100,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'DELETE',
-          `/manage/team/${f.teamA}/people/101`,
+          `/manage/team/${f.teamA}/people/${userIdOfGumbo(101)}`,
           undefined,
           101
         )
@@ -125,7 +126,7 @@ async function main(): Promise<void> {
     // Suspension remains an API action; this screen manages node access.
     const protectedAccount = await f.h.request(
       'PATCH',
-      '/users/106/administration',
+      `/users/${userIdOfGumbo(106)}/administration`,
       { suspended: true },
       105
     )
@@ -146,7 +147,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          `/users/${userIdOfGumbo(106)}/administration`,
           { suspended: true },
           105
         )
@@ -159,7 +160,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          `/users/${userIdOfGumbo(106)}/administration`,
           { suspended: false },
           105
         )

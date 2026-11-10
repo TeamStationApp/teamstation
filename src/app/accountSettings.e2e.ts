@@ -175,7 +175,7 @@ describe('account settings in the finished desktop application', function () {
     await press('Back')
     // The picture stays on Account, so only the page going says Back landed.
     await page.waitForFunction(
-      () => document.body.textContent?.includes('Email addresses') !== true
+      () => !String(document.body.textContent).includes('Email addresses')
     )
     await page.waitForSelector('[aria-label^="Account, Mookie Betts"]')
     await openAccount()

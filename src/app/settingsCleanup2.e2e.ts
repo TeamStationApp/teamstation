@@ -6,12 +6,8 @@ import { join, resolve } from 'node:path'
 
 import express from 'express'
 
-import { asGameDetail } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import { freezeBrowserClock } from '../../e2e/rigs/creationBrowserActions'
 import {
   browserSession,
   capture,
@@ -19,15 +15,19 @@ import {
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { asGameDetail } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 import {
   PLAYER_ID,
   PLAYER_NAME,
   TEAM_ID,
   teamScheduleAnswer
 } from '../test/teamScheduleFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import { freezeBrowserClock } from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_CREATION_ARTIFACTS')

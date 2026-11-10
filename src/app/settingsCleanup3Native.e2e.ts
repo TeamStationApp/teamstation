@@ -3,8 +3,8 @@ import { type ChildProcess, execFileSync, spawn } from 'node:child_process'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+import { maestro, type MaestroHandle } from '../../e2e/rigs/refinementsMaestro'
 import { nativePlaybackSeconds } from '../test/nativePlaybackClock'
-import { maestro, type MaestroHandle } from '../test/refinementsMaestro.e2e'
 
 interface NativeNode {
   text?: string

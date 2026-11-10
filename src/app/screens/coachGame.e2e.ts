@@ -11,19 +11,19 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import type { Page } from 'puppeteer'
 
+import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
+import {
+  type BrowserSession,
+  browserSession,
+  maestro
+} from '../../../e2e/rigs/refinementsMaestro'
 import { DEFAULT_DICTATION_MODEL, TeamStationClient } from '../../common/api'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
 import { type GameState, setupOf } from '../../common/scoring/state'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
-import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
 import { signInTestAccount } from '../../test/passwordFixtures'
-import {
-  type BrowserSession,
-  browserSession,
-  maestro
-} from '../../test/refinementsMaestro.e2e'
 
 /**
  * Coach Game end to end: a head coach's own team in a game, in maestro-d's

@@ -1,0 +1,38 @@
+{
+  "autocomplete": {
+    "suggestions": [
+      {
+        "placePrediction": {
+          "placeId": "e2e-city",
+          "structuredFormat": {
+            "mainText": { "text": "Springfield" },
+            "secondaryText": { "text": "Illinois, USA" }
+          }
+        }
+      }
+    ]
+  },
+  "searchText": {
+    "places": [
+      {
+        "id": "e2e-venue",
+        "displayName": { "text": "Neutral Field" },
+        "formattedAddress": "100 Neutral Way, Springfield, IL 62701, USA",
+        "primaryType": "stadium",
+        "location": { "latitude": 39.8, "longitude": -89.65 }
+      }
+    ]
+  },
+  "placeDetails": {
+    "id": "e2e-venue",
+    "displayName": { "text": "Neutral Field" },
+    "formattedAddress": "100 Neutral Way, Springfield, IL 62701, USA",
+    "location": { "latitude": 39.8, "longitude": -89.65 },
+    "addressComponents": [
+      { "longText": "Springfield", "types": ["locality"] },
+      { "longText": "Illinois", "types": ["administrative_area_level_1"] },
+      { "longText": "United States", "types": ["country"] }
+    ]
+  },
+  "timezone": { "status": "OK", "timeZoneId": "America/Chicago" }
+}

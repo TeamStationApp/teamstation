@@ -2,18 +2,18 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import { makeId } from '../common/ids'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { groupFixture } from '../test/groupFixtures'
-import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import {
   browserSession,
   contains,
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { makeId } from '../common/ids'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { groupFixture } from '../test/groupFixtures'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_ADD_PEOPLE_ARTIFACTS
@@ -87,7 +87,7 @@ async function main(): Promise<void> {
         row => row.textContent
       )
       assert.ok(identity?.includes('MB') === true)
-      assert.ok(identity?.includes('Demo Eagles'))
+      assert.equal(identity?.includes('Demo Eagles'), true)
       await writeFile(
         join(artifacts, 'account-results.png'),
         await m.screenshot()

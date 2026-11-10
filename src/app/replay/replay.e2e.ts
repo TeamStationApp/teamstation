@@ -4,13 +4,6 @@ import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { TeamStationClient } from '../../common/api'
-import { narrateTimeline } from '../../common/replay/narration'
-import {
-  replayContextOf,
-  replayTimelineOf
-} from '../../common/replay/replayTimeline'
-import { CHEER_GAIN, CROWD_IDLE_GAIN } from './crowdCheer'
 import {
   artifactsDir,
   attachWeb,
@@ -20,7 +13,14 @@ import {
   sessionFor,
   shot,
   signInWeb
-} from './kit.e2e'
+} from '../../../e2e/rigs/replayKit'
+import { TeamStationClient } from '../../common/api'
+import { narrateTimeline } from '../../common/replay/narration'
+import {
+  replayContextOf,
+  replayTimelineOf
+} from '../../common/replay/replayTimeline'
+import { CHEER_GAIN, CROWD_IDLE_GAIN } from './crowdCheer'
 import { stepHalfEnds } from './replayGaps'
 
 /**

@@ -4,15 +4,15 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { type GroupFixture, groupFixture } from '../test/groupFixtures'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   fill,
   frameText,
   freezeBrowserClock,
   press,
   text
-} from './creationBrowserActions.e2e'
+} from '../../e2e/rigs/creationBrowserActions'
+import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)
@@ -32,7 +32,7 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
   await fill(page, 'Sign-in code', f.h.mail.get(email)!)
   await press(page, 'Sign in')
   await page.waitForSelector('[aria-label^="Account,"]')
-  await text(page, 'Discover leagues, seasons and teams')
+  await text(page, 'Your Home')
 }
 async function shot(page: Page, name: string): Promise<void> {
   await page.screenshot({ path: join(artifacts!, name) })
@@ -64,6 +64,7 @@ async function main(): Promise<void> {
     await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'networkidle0'
     })
+    await press(host, 'Schedule', 'tab')
     await press(host, 'Create Game')
     await press(host, 'Choose Home Team, Home')
     await fill(host, 'Search all teams', 'Demo Eagles')
