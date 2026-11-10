@@ -52,6 +52,7 @@ let fail = false
 let pending = false
 let live = false
 let mixed = false
+let anchorless = false
 let closed = false
 const client = {
   game: async () => {
@@ -78,7 +79,11 @@ const client = {
     }
   },
   scoreboardOverlay: async () => SHOWN_OVERLAY,
-  wallTimeline: async () => ({ ...timelineFor('2026-10-01T00:00:00Z'), live }),
+  wallTimeline: async () => ({
+    ...timelineFor('2026-10-01T00:00:00Z'),
+    ...(anchorless ? { anchors: [] } : {}),
+    live
+  }),
   gameStatistics: async () => {
     const data = nativeStatistics(
       await client.game('game'),
@@ -264,6 +269,7 @@ afterEach(async () => {
   lineOnly = false
   wide = false
   mixed = false
+  anchorless = false
   fail = false
   pending = false
   live = false
@@ -1484,6 +1490,42 @@ describe('TV game playback entry', () => {
     await press('Retry video')
     expect(document.querySelectorAll('video')).length(2)
     expect(document.body.textContent).not.contains('Retry video')
+  })
+  it('keeps a highlight error while the cameras play on', async () => {
+    anchorless = true
+    count = 2
+    await render()
+    const videos = [...document.querySelectorAll('video')]
+    await act(async () => {
+      for (const video of videos) {
+        Object.defineProperty(video, 'duration', {
+          value: 60,
+          configurable: true
+        })
+        video.dispatchEvent(
+          new window.Event('durationchange', { bubbles: true })
+        )
+      }
+      await pause()
+    })
+    await press('Close panel')
+    await press('Highlights')
+    await press('Home run')
+    expect(document.body.textContent).contains(
+      'This highlight has no video timeline.'
+    )
+    for (const seconds of [1, 2, 3])
+      await act(async () => {
+        for (const video of videos) {
+          video.currentTime = seconds
+          video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+        }
+        await pause()
+      })
+    expect(
+      document.body.textContent,
+      'advancing cameras clear only the error their recovery raised'
+    ).contains('This highlight has no video timeline.')
   })
   it('plays available cameras when another URL fails or is still preparing', async () => {
     mixed = true

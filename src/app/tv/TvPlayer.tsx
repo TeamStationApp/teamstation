@@ -75,6 +75,15 @@ import { angleNeighbor, tvLayout } from './tvLayout'
 const HIGHLIGHTS_PANEL_WIDTH = 420
 const LAYOUT_DURATION = 240
 const STATS_SCROLL_SENSITIVITY = 0.5
+/** The one error camera recovery raises, and so the only one it may clear. */
+const CAMERAS_FAILED = 'The cameras could not play. Try again.'
+const withoutRecoveryError = (previous: string | null): string | null =>
+  previous === CAMERAS_FAILED ? null : previous
+/** Unchanged when `index` was not failing, so a playing camera re-renders nothing. */
+const without =
+  (index: number) =>
+  (previous: number[]): number[] =>
+    previous.includes(index) ? previous.filter(i => i !== index) : previous
 
 interface Angle {
   name: string
@@ -336,23 +345,24 @@ export function TvPlayer({
         throw failed?.reason ?? new Error('No camera angles could open.')
       }
       if (!active) return
-      loaded.forEach((angle, index) => {
-        const watch = new PlaybackRecovery(Date.now())
-        watch.opening(Date.now())
-        recovery.current.set(index, watch)
-        const queue = new NativeSeekQueue(
+      const seekQueue = (index: number): NativeSeekQueue =>
+        new NativeSeekQueue(
           seconds => refs.current[index]?.seek(seconds, 0),
           () => {
             clock.current.settled(index)
             recovery.current.get(index)?.opening(Date.now())
             if (current.current.paused) {
               recovery.current.get(index)?.readyPaused(Date.now())
-              setError(null)
+              setError(withoutRecoveryError)
             }
-            setFailures(previous => previous.filter(i => i !== index))
+            setFailures(without(index))
           }
         )
-        seekQueues.current[index] = queue
+      loaded.forEach((angle, index) => {
+        const watch = new PlaybackRecovery(Date.now())
+        watch.opening(Date.now())
+        recovery.current.set(index, watch)
+        seekQueues.current[index] = seekQueue(index)
         clock.current.register(index, angle.timeline, seconds => {
           seekQueues.current[index]?.request(seconds)
         })
@@ -382,18 +392,7 @@ export function TvPlayer({
           loaded[index] = updated
           clock.current.ports[index].timeline = timeline
           // Remounting abandons the old native seek, including its completion.
-          seekQueues.current[index] = new NativeSeekQueue(
-            seconds => refs.current[index]?.seek(seconds, 0),
-            () => {
-              clock.current.settled(index)
-              recovery.current.get(index)?.opening(Date.now())
-              if (current.current.paused) {
-                recovery.current.get(index)?.readyPaused(Date.now())
-                setError(null)
-              }
-              setFailures(previous => previous.filter(i => i !== index))
-            }
-          )
+          seekQueues.current[index] = seekQueue(index)
           setBuffering(previous => previous.filter(i => i !== index))
           setFailures(previous => [...new Set([...previous, index])])
           recovery.current.get(index)?.opening(Date.now())
@@ -493,7 +492,7 @@ export function TvPlayer({
           refreshAngle.current?.(index).catch(() => undefined)
         }
         if (watch.exhausted && clock.current.ports.every(p => p.failed))
-          setError('The cameras could not play. Try again.')
+          setError(CAMERAS_FAILED)
       }
     }, 1000)
     return () => {
@@ -937,8 +936,8 @@ export function TvPlayer({
       port.pendingWall === null &&
       recovery.current.get(index)?.progress(seconds, Date.now()) === true
     ) {
-      setError(null)
-      setFailures(previous => previous.filter(i => i !== index))
+      setError(withoutRecoveryError)
+      setFailures(without(index))
     }
     const next = clock.current.progress(
       index,
@@ -1183,8 +1182,7 @@ export function TvPlayer({
                     recovery.current.get(index)?.error(Date.now())
                     markReady()
                     setFailures(previous => [...new Set([...previous, index])])
-                    if (unavailable)
-                      setError('The cameras could not play. Try again.')
+                    if (unavailable) setError(CAMERAS_FAILED)
                   }}
                 />
                 {(!available || failures.includes(index)) && (
