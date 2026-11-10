@@ -2165,7 +2165,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     expect(mc().tiles.B?.parked ?? null).equals(null)
     expect(tiles.B.currentTime).greaterThan(140)
   })
-  it('runs a live game’s bar from its first camera to the newest footage any angle has, and lands a move past live at the live point', async function () {
+  it('runs a live game’s bar from its first camera to the newest footage any angle has, and honors explicit seeks up to that footage', async function () {
     const served: Record<string, WallMapping | null> = {
       A: dated(300),
       B: dated(300)
@@ -2180,7 +2180,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       tiles => {
         for (const tile of Object.values(tiles)) {
           tile.duration = Number.POSITIVE_INFINITY
-          // B's player can reach less than A's: the slower angle sets it.
+          // The angles can have different available ends.
           Object.assign(tile, {
             seekable: { length: 1, end: () => (tile === tiles.B ? 250 : 260) }
           })
@@ -2192,12 +2192,11 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     // angle has, A's 260 s, though the viewer has played only to 150 s.
     expect(mc().take?.fromMs).equals(T0)
     expect(mc().take?.toMs).equals(T0 + 260_000)
-    // Dragged to the end, the grid goes to the live point: 45 s behind the
-    // slower angle's newest footage, B's 250 s.
+    // Explicit seeks reach the available end, not the opening cushion.
     await act(async () => {
       mc().goTo(T0 + 260_000)
     })
-    expect(mc().atWallMs).equals(T0 + 205_000)
+    expect(mc().atWallMs).equals(T0 + 260_000)
     // Back is anywhere in the take.
     await act(async () => {
       mc().goTo(T0 + 60_000)
@@ -2231,11 +2230,11 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       }
     )
     expect(mc().atWallMs).equals(T0 + 230_000)
-    // Ten seconds on, past the live point: it stays where it is.
+    // Ten seconds on is honored even inside the opening cushion.
     await act(async () => {
       mc().goTo(T0 + 240_000)
     })
-    expect(mc().atWallMs).equals(T0 + 230_000)
+    expect(mc().atWallMs).equals(T0 + 240_000)
     // Back is still back.
     await act(async () => {
       mc().goTo(T0 + 220_000)
@@ -2272,11 +2271,11 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     for (const tile of Object.values(tiles)) tile.readyState = 1
     await ticks(1)
     expect(mc().take?.toMs).equals(T0 + 260_000)
-    // And a move past live still lands at the live point.
+    // A move beyond available footage is capped at the displayed end.
     await act(async () => {
-      mc().goTo(T0 + 260_000)
+      mc().goTo(T0 + 300_000)
     })
-    expect(mc().atWallMs).equals(T0 + 215_000)
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('lets no angle whose camera has stopped hold the live point back once the grid has played past it', async function () {
@@ -2306,8 +2305,8 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     await act(async () => {
       mc().goTo(T0 + 260_000)
     })
-    // A's live point, not B's last picture less the delay.
-    expect(mc().atWallMs).equals(T0 + 215_000)
+    // A's available end, not B's stopped footage.
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('ends a live bar at an angle’s seekable end where it has no mapping yet', async function () {
@@ -2370,8 +2369,8 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     await act(async () => {
       mc().goTo(T0 + 260_000)
     })
-    // A's live point, 45 s behind its newest footage: not B's, minutes back.
-    expect(mc().atWallMs).equals(T0 + 215_000)
+    // A's available end, not the unavailable angle's older footage.
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('places a tile by the server’s wall timeline before its own stream’s dates, and reaches its newest footage by it', async function () {
