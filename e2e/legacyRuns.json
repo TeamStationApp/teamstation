@@ -3188,5 +3188,21 @@
       "label": "ios-phone",
       "needs": "ios-phone"
     }
+  ],
+  "scripts/e2e/scoreboardLog/f1Recording.ts": [
+    {
+      "label": "sync",
+      "args": [
+        "sync"
+      ],
+      "needs": "mac-display"
+    },
+    {
+      "label": "grid",
+      "args": [
+        "grid"
+      ],
+      "needs": "mac-display"
+    }
   ]
 }
