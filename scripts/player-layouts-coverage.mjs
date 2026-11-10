@@ -54,6 +54,9 @@ const tsSuites = [
   'src/app/player/**/*.test.ts',
   'src/common/api.test.ts',
   'src/common/wallTimeline.test.ts',
+  'src/app/tv/*.test.ts',
+  'src/server/live/originPublisher.test.ts',
+  'src/server/live/originPublish.test.ts',
   'src/server/openapi.test.ts',
   // The line score from game events (M1).
   'src/common/scoring/boardLine.test.ts',
@@ -77,6 +80,7 @@ const tsSuites = [
  */
 const appSuites = [
   ...globSync('src/app/player/**/*.test.tsx').sort(),
+  'src/app/tv/TvPlayer.test.tsx',
   'src/app/App.membershipAccess.test.tsx',
   'src/app/App.player.test.tsx',
   // The home screen's cards, which play a live game as a live viewer.
@@ -154,7 +158,22 @@ const paths = [...new Set([...changed, ...untracked])].filter(eligible).sort()
 for (const [index, suite] of appSuites.entries()) {
   await build({
     ...webSettings,
-    plugins: [...webSettings.plugins, pagedListStandInPlugin()],
+    plugins: [
+      ...webSettings.plugins,
+      pagedListStandInPlugin(),
+      {
+        name: 'tv-remote-test-runtime',
+        setup(build) {
+          build.onLoad({ filter: /app\/tv\/remote\.ts$/ }, args => ({
+            contents: readFileSync(args.path, 'utf8').replace(
+              "import * as ReactNative from 'react-native'",
+              "import * as ReactNative from '../../test/tvRemoteRuntime'"
+            ),
+            loader: 'ts'
+          }))
+        }
+      }
+    ],
     alias: {
       ...webSettings.alias,
       'react-native-webview': './src/test/eventWebViewStub.tsx',
