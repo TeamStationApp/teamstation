@@ -40,9 +40,38 @@ async function main(): Promise<void> {
   const shot = async (name: string): Promise<void> => {
     await capture(m, artifacts!, name)
   }
+  // A covered screen keeps its rows in the DOM where no tap reaches them: mark
+  // the top screen's match that a tap at its centre lands on, and tap that.
   const tapCss = async (css: string): Promise<void> => {
     await page.waitForSelector(css, { timeout: 15000 })
-    await m.tapOn({ css, timeout: 15000 })
+    const marked = await page.evaluate(selector => {
+      const top = document.querySelector('[data-scene-role="top"]')
+      // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing -- Sucrase would compile `??` to a helper the browser does not have.
+      for (const node of (top === null ? document : top).querySelectorAll(
+        selector
+      )) {
+        node.scrollIntoView({ block: 'center' })
+        const rect = node.getBoundingClientRect()
+        const hit = document.elementFromPoint(
+          rect.left + rect.width / 2,
+          rect.top + rect.height / 2
+        )
+        if (hit !== null && node.contains(hit)) {
+          node.setAttribute('data-e2e-tap', 'here')
+          return true
+        }
+      }
+      return false
+    }, css)
+    await m.tapOn({
+      css: marked ? '[data-e2e-tap="here"]' : css,
+      timeout: 15000
+    })
+    if (marked)
+      await page.evaluate(() => {
+        for (const node of document.querySelectorAll('[data-e2e-tap]'))
+          node.removeAttribute('data-e2e-tap')
+      })
   }
   // The player's own Videos pill is also a tab. The navbar is the tablist
   // with no name of its own.
@@ -65,6 +94,13 @@ async function main(): Promise<void> {
     await note(
       `$ node -r sucrase/register src/app/navigation/navbarPop.e2e.ts${before ? ' before' : ''}`
     )
+    // The account harness's own team is also named Demo Hawks; this script
+    // follows the fixture's, so Home must show one team by that name.
+    await f.h.db
+      .updateTable('teams')
+      .set({ name: 'Demo Harness Team' })
+      .where('id', '=', 'tem_account')
+      .execute()
     const owls = await f.h.request(
       'POST',
       '/teams',
