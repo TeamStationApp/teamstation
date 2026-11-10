@@ -1,0 +1,75 @@
+# Fails a pull request that merges develop into master when that merge would
+# leave the branches different. Master's tree must already be contained in
+# develop, and every commit that landed on master must already be on develop.
+# A merge commit of develop into master is expected and is not itself a miss.
+#
+# Other pull requests into master pass. This check is only the develop merge.
+name: Develop matches master
+
+on:
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  identical:
+    name: Develop matches master
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+      - name: Require the develop merge to leave both branches the same
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -eu
+          if [ "$HEAD_REF" != "develop" ]; then
+            echo "This pull request is not merging develop into master (head: $HEAD_REF)."
+            echo "The identical-branch check applies only to that merge."
+            exit 0
+          fi
+
+          git fetch --no-tags origin master
+          master=$(git rev-parse origin/master)
+          develop=$(git rev-parse HEAD)
+
+          messages=$(mktemp)
+          set +e
+          merged=$(git merge-tree --write-tree --messages "$master" "$develop" 2>"$messages")
+          status=$?
+          set -e
+          if [ "$status" -ne 0 ]; then
+            echo "::error::Merging develop into master conflicts, so the branches would not come out the same."
+            cat "$messages"
+            echo
+            echo "Commits on master that are not in develop:"
+            git log --oneline "$develop..$master"
+            exit 1
+          fi
+
+          merged=$(printf '%s\n' "$merged" | head -n 1)
+          develop_tree=$(git rev-parse "$develop^{tree}")
+          if [ "$merged" != "$develop_tree" ]; then
+            echo "::error::Merging develop into master would keep changes that are only on master."
+            echo "The merge tree is $merged and develop's tree is $develop_tree."
+            git diff --stat "$develop_tree" "$merged"
+            echo
+            echo "Commits on master that are not in develop:"
+            git log --oneline "$develop..$master"
+            exit 1
+          fi
+
+          missing=$(git cherry "$develop" "$master" | awk '/^\+/ { print $2 }')
+          if [ -n "$missing" ]; then
+            echo "::error::Master has commits that never landed on develop. Put them on develop before merging develop into master."
+            for sha in $missing; do
+              git log -1 --oneline "$sha"
+            done
+            exit 1
+          fi
+
+          echo "Merging develop ($develop) into master ($master) leaves develop's tree ($develop_tree), and every master commit is already on develop."
