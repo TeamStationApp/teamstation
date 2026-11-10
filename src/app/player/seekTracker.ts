@@ -20,17 +20,22 @@
  *   it for the life of the source. So this tracks a **target**, which a newer
  *   seek simply replaces.
  * - **It sometimes answers not at all**, when the seek was issued while paused
- *   *and* buffering — which is precisely a seek on a stalled live stream. So
- *   there is a deadline, after which the player is believed again regardless.
- *   One wrong second is better than a playhead wedged for ever.
+ *   *and* buffering — which is precisely a seek on a stalled live stream. A
+ *   seek the handle has *sent* is not given up on here: believing the player
+ *   after a second discarded slow cold seeks whose segment was still
+ *   arriving. `NativeVideoHandle.checkSeekTimeout` bounds it instead — five
+ *   seconds once the player is ready, two minutes between transfers while it
+ *   buffers — and an unanswered seek then reloads the source at its target.
+ *   The deadline below covers only a target the handle held without sending
+ *   (a duplicate of the seek in flight, or one after a timeout).
  */
 
 /** Near enough: inside a frame at 25fps, so the error is never visible. */
 export const SEEK_TOLERANCE = 0.05
 
 /**
- * How long to wait for a seek to be acknowledged before believing the player
- * again.
+ * How long to wait, for a target that was not sent, before believing the
+ * player again.
  */
 export const SEEK_PATIENCE_MS = 1000
 
