@@ -1080,6 +1080,14 @@ export function TvPlayer({
         {angles?.map((angle, index) => {
           const rect = layout.tiles[state.visible.indexOf(index)]
           const available = clock.current.available(index)
+          const port = clock.current.ports[index]
+          // Past its recording's last frame, not missing: says so.
+          const notice =
+            available && !failures.includes(index)
+              ? null
+              : port.ended && !port.failed && !failures.includes(index)
+                ? 'end of video'
+                : 'video unavailable at this moment'
           return (
             <CameraFrame
               key={angle.video.id}
@@ -1101,7 +1109,7 @@ export function TvPlayer({
                 }}
                 testID={`tv-angle-${index}`}
                 accessibilityRole="button"
-                accessibilityLabel={`Camera ${angle.name}${!available || failures.includes(index) ? ': video unavailable at this moment' : ''}`}
+                accessibilityLabel={`Camera ${angle.name}${notice === null ? '' : `: ${notice}`}`}
                 accessibilityValue={{
                   text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
                 }}
@@ -1227,10 +1235,10 @@ export function TvPlayer({
                     if (unavailable) setError(CAMERAS_FAILED)
                   }}
                 />
-                {(!available || failures.includes(index)) && (
+                {notice !== null && (
                   <View style={styles.unavailable}>
                     <Text style={styles.copy}>
-                      {angle.name}: video unavailable at this moment
+                      {angle.name}: {notice}
                     </Text>
                   </View>
                 )}
