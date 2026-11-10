@@ -19,6 +19,9 @@ import {
   waitInMapFrame
 } from '../../test/mapFrameProbe'
 
+/** An RSVP pill's test id, by the fixture person's legacy number. */
+const rsvpId = (gumbo: number): string => `event-rsvp-${userIdOfGumbo(gumbo)}`
+
 interface Browser {
   openBrowser: (body: { url: string }) => Promise<unknown>
   setCookies: (body: {
@@ -300,27 +303,27 @@ async function main(): Promise<void> {
     )
     console.log('Failed map tiles recover through the visible retry button')
     await m.scrollUntilVisible({
-      element: { id: 'event-rsvp-101-1' },
+      element: { id: `${rsvpId(101)}-1` },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
     })
-    await m.tapOn({ id: 'event-rsvp-101-1' })
+    await m.tapOn({ id: `${rsvpId(101)}-1` })
     const rect = await evaluate<{
       x: number
       y: number
       width: number
       height: number
     }>(
-      `(()=>{const r=document.querySelector('[data-testid="event-rsvp-101"]').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`
+      `(()=>{const r=document.querySelector('[data-testid="${rsvpId(101)}"]').getBoundingClientRect();return {x:r.x,y:r.y,width:r.width,height:r.height}})()`
     )
     await m.evalBrowserScript({
-      script: `window.__rsvpColors=[];const stop=performance.now()+1800;function sample(){window.__rsvpColors.push(getComputedStyle(document.querySelector('[data-testid="event-rsvp-101-fill"]')).backgroundColor);if(performance.now()<stop)requestAnimationFrame(sample)}sample();`
+      script: `window.__rsvpColors=[];const stop=performance.now()+1800;function sample(){window.__rsvpColors.push(getComputedStyle(document.querySelector('[data-testid="${rsvpId(101)}-fill"]')).backgroundColor);if(performance.now()<stop)requestAnimationFrame(sample)}sample();`
     })
     assert(rect.width > 0)
     await m.dragAndDrop({
-      from: { id: 'event-rsvp-101-1' },
-      to: { id: 'event-rsvp-101-0' },
+      from: { id: `${rsvpId(101)}-1` },
+      to: { id: `${rsvpId(101)}-0` },
       holdDuration: 100,
       duration: 600
     })
@@ -332,55 +335,55 @@ async function main(): Promise<void> {
     )
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-0"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="${rsvpId(101)}-0"]').getAttribute('aria-checked')`
       ),
       'true'
     )
     console.log('Continuous blue-to-green dragging and snapped Yes passed')
-    await m.tapOn({ id: 'event-rsvp-101-1' })
+    await m.tapOn({ id: `${rsvpId(101)}-1` })
     await m.assertVisible({
-      css: '[data-testid="event-rsvp-101-1"]:not([aria-disabled="true"])',
+      css: `[data-testid="${rsvpId(101)}-1"]:not([aria-disabled="true"])`,
       timeout: 5000
     })
     await m.pressKey({ key: 'LEFT' })
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-0"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="${rsvpId(101)}-0"]').getAttribute('aria-checked')`
       ),
       'true'
     )
     await m.assertVisible({
-      css: '[data-testid="event-rsvp-101-0"]:not([aria-disabled="true"])',
+      css: `[data-testid="${rsvpId(101)}-0"]:not([aria-disabled="true"])`,
       timeout: 5000
     })
     await m.pressKey({ key: 'RIGHT' })
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-101-1"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="${rsvpId(101)}-1"]').getAttribute('aria-checked')`
       ),
       'true'
     )
     await m.assertVisible({
-      css: '[data-testid="event-rsvp-101-1"]:not([aria-disabled="true"])',
+      css: `[data-testid="${rsvpId(101)}-1"]:not([aria-disabled="true"])`,
       timeout: 5000
     })
     await m.pressKey({ key: 'LEFT' })
     console.log('Real browser arrow keys select independent RSVP choices')
     assert.equal(
       await evaluate(
-        `(()=>{const p=document.querySelector('[data-testid="event-rsvp-101"]');const row=p.parentElement.parentElement;return p.getBoundingClientRect().top-row.getBoundingClientRect().top<20})()`
+        `(()=>{const p=document.querySelector('[data-testid="${rsvpId(101)}"]');const row=p.parentElement.parentElement;return p.getBoundingClientRect().top-row.getBoundingClientRect().top<20})()`
       ),
       true,
       'The pill remains on the avatar/name row'
     )
     await m.scrollUntilVisible({
-      element: { id: 'event-rsvp-101-1' },
+      element: { id: `${rsvpId(101)}-1` },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
     })
-    await m.tapOn({ id: 'event-rsvp-103-2' })
-    await m.tapOn({ id: 'event-rsvp-104-0' })
+    await m.tapOn({ id: `${rsvpId(103)}-2` })
+    await m.tapOn({ id: `${rsvpId(104)}-0` })
     for (const id of [101, 103, 104])
       await m.assertVisible({
         css: `[data-testid="event-rsvp-${id}-0"]:not([aria-disabled="true"])`,
@@ -400,15 +403,15 @@ async function main(): Promise<void> {
     )
     await open(`/games/${gameId}`)
     await m.scrollUntilVisible({
-      element: { id: 'event-rsvp-101-1' },
+      element: { id: `${rsvpId(101)}-1` },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
     })
-    await m.tapOn({ id: 'event-rsvp-101-1' })
+    await m.tapOn({ id: `${rsvpId(101)}-1` })
     await m.waitForAnimationToEnd()
     await m.scrollUntilVisible({
-      element: { id: 'event-rsvp-101-1' },
+      element: { id: `${rsvpId(101)}-1` },
       direction: 'DOWN',
       centerElement: true,
       maxScrolls: 8
@@ -424,7 +427,7 @@ async function main(): Promise<void> {
     // Simulate text-only enlargement, where native accessibility scales glyphs
     // without increasing the fixed capsule width. Restore the original styles.
     await m.scrollUntilVisible({
-      element: { id: 'event-rsvp-101' },
+      element: { id: rsvpId(101) },
       direction: 'UP',
       centerElement: true,
       maxScrolls: 8
@@ -501,7 +504,7 @@ async function main(): Promise<void> {
       create trigger fail_event_rsvp_fixture before insert or update on game_rsvps for each row execute function fail_event_rsvp_fixture();`
       )
       .execute(f.h.db)
-    await m.tapOn({ id: 'event-rsvp-103-0' })
+    await m.tapOn({ id: `${rsvpId(103)}-0` })
     await m.scrollUntilVisible({
       element: { text: 'Something went wrong' },
       direction: 'DOWN',
@@ -511,13 +514,13 @@ async function main(): Promise<void> {
     await m.assertVisible({ text: 'Something went wrong', timeout: 10000 })
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-103-2"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="${rsvpId(103)}-2"]').getAttribute('aria-checked')`
       ),
       'true'
     )
     assert.equal(
       await evaluate(
-        `document.querySelector('[data-testid="event-rsvp-104-0"]').getAttribute('aria-checked')`
+        `document.querySelector('[data-testid="${rsvpId(104)}-0"]').getAttribute('aria-checked')`
       ),
       'true'
     )

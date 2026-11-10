@@ -202,6 +202,94 @@ export async function tap(
     throw error
   }
 }
+/**
+ * Waits for the row `field` to show `value`, then for the picker's dialog to
+ * finish animating out: a tap sent while it closes can hang Maestro D past
+ * its own timeout.
+ */
+async function rowShows(
+  m: MaestroHandle,
+  field: string,
+  value: string
+): Promise<void> {
+  const page = browserPages.get(m)
+  if (page == null) return
+  await page.waitForSelector(
+    `[data-scene-role="top"] [role="button"][aria-label="${field}: ${value}"]`,
+    { timeout: 15000 }
+  )
+  await m.waitForAnimationToEnd()
+}
+
+/** The value an event schedule row shows, from its label `<field>: <value>`. */
+async function scheduleValue(m: MaestroHandle, field: string): Promise<string> {
+  const page = browserPages.get(m)
+  if (page == null)
+    throw new Error('chooseDate and chooseTime need a browser session')
+  const css = `[data-scene-role="top"] [role="button"][aria-label^="${field}: "]`
+  await page.waitForSelector(css, { timeout: 15000 })
+  const label = await page.$eval(css, node => node.getAttribute('aria-label'))
+  return String(label).slice(field.length + 2)
+}
+
+/**
+ * Picks `date` (YYYY-MM-DD) for the event schedule row `field` ("Date",
+ * "End date"): opens its calendar, steps from the month it shows to the
+ * date's, and chooses the day.
+ */
+export async function chooseDate(
+  m: MaestroHandle,
+  field: string,
+  date: string
+): Promise<void> {
+  const shown = await scheduleValue(m, field)
+  const months = (value: string): number =>
+    Number(value.slice(0, 4)) * 12 + Number(value.slice(5, 7))
+  await m.tapOn({ text: `${field}: ${shown}`, role: 'button', timeout: 15000 })
+  // The dialog slides in; a tap computed mid-slide misses its target.
+  await m.waitForAnimationToEnd()
+  const delta = months(date) - months(shown)
+  for (let i = 0; i < Math.abs(delta); i++) {
+    await m.tapOn({
+      text: delta > 0 ? 'Next month' : 'Previous month',
+      role: 'button',
+      timeout: 10000
+    })
+    await m.waitForAnimationToEnd()
+  }
+  await m.tapOn({ text: `Choose ${date}`, role: 'button', timeout: 10000 })
+  await rowShows(m, field, date)
+}
+
+/**
+ * Picks `time` (HH:MM, 24-hour, minutes in fives) for the event schedule row
+ * `field` ("Start time", "End time") on its hour, minute and period wheels.
+ */
+export async function chooseTime(
+  m: MaestroHandle,
+  field: string,
+  time: string
+): Promise<void> {
+  const shown = await scheduleValue(m, field)
+  const [hour, minute] = time.split(':').map(Number)
+  await m.tapOn({ text: `${field}: ${shown}`, role: 'button', timeout: 15000 })
+  await m.waitForAnimationToEnd()
+  const twelve = hour % 12 === 0 ? 12 : hour % 12
+  for (const option of [
+    `Hour ${String(twelve).padStart(2, '0')}`,
+    `Minute ${String(minute).padStart(2, '0')}`,
+    `Period ${hour < 12 ? 'AM' : 'PM'}`
+  ]) {
+    await m.tapOn({ text: option, role: 'button', timeout: 10000 })
+  }
+  await m.tapOn({ text: 'Use time', role: 'button', timeout: 10000 })
+  await rowShows(
+    m,
+    field,
+    `${twelve}:${String(minute).padStart(2, '0')} ${hour < 12 ? 'AM' : 'PM'}`
+  )
+}
+
 export async function show(m: MaestroHandle, text: string): Promise<void> {
   await m.assertVisible({ text, timeout: 15000 })
 }

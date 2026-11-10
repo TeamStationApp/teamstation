@@ -3204,5 +3204,14 @@
       ],
       "needs": "mac-display"
     }
+  ],
+  "src/app/umpireBefore.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "web",
+      "env": {
+        "TS_UMPIRE_WEB": "dist"
+      }
+    }
   ]
 }

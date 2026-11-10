@@ -17,6 +17,9 @@ import {
   waitInMapFrame
 } from '../../test/mapFrameProbe'
 
+/** An RSVP pill's test id, by the fixture person's legacy number. */
+const pillId = (gumbo: number): string => `event-rsvp-${userIdOfGumbo(gumbo)}`
+
 async function main(): Promise<void> {
   const artifacts = resolve(process.env.EVENT_INFO_ARTIFACTS!)
   mkdirSync(artifacts, { recursive: true })
@@ -198,7 +201,7 @@ async function main(): Promise<void> {
     )
     await tap('schedule-rsvp-control-gam_upcoming')
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-104-2"]')!=null`
+      `document.querySelector('[data-testid="${pillId(104)}-2"]')!=null`
     )
     for (const [id, choice] of [
       [101, 0],
@@ -210,9 +213,9 @@ async function main(): Promise<void> {
         `document.querySelector('[data-testid="event-rsvp-${id}-${choice}"]').getAttribute('aria-disabled')!=='true'`
       )
     }
-    await tap('event-rsvp-104-1')
+    await tap(`${pillId(104)}-1`)
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-104-1"]').getAttribute('aria-disabled')!=='true'`
+      `document.querySelector('[data-testid="${pillId(104)}-1"]').getAttribute('aria-disabled')!=='true'`
     )
     await m.tapOn({ text: 'Done' })
     await wait(
@@ -237,7 +240,7 @@ async function main(): Promise<void> {
     writeFileSync(join(artifacts, 'schedule-avatars.png'), await m.screenshot())
     await tap('schedule-rsvp-control-gam_upcoming')
     await wait(
-      `document.querySelector('[data-testid="event-rsvp-103-2"]')?.getAttribute('aria-checked')==='true'`
+      `document.querySelector('[data-testid="${pillId(103)}-2"]')?.getAttribute('aria-checked')==='true'`
     )
     await m.tapOn({ text: 'Done' })
     await m.openBrowser({ url: f.h.origin + `/teams/${f.teamA}?tab=schedule` })
