@@ -14,9 +14,13 @@ interface ClockPort {
   pendingWall: number | null
   seekableEnd: number | null
   seekableStart: number
+  /** The largest step a live seekable edge has advanced by: its segment length. */
+  edgeStep: number
 }
-/** The longest step back a live rejoin may take: two 4-second segments. */
-const REJOIN_MAX_MS = 8000
+/** The segment length assumed until a live edge has been seen to advance. */
+const SEGMENT_SEC = 4
+/** The longest a playlist's segments run (`EXT-X-TARGETDURATION`). */
+const MAX_SEGMENT_SEC = 12
 
 /** Native ports stay registered until the entire player closes, including hidden angles. */
 export class PlaybackClock {
@@ -40,7 +44,8 @@ export class PlaybackClock {
       target: null,
       pendingWall: null,
       seekableEnd: null,
-      seekableStart: 0
+      seekableStart: 0,
+      edgeStep: 0
     }
   }
 
@@ -180,8 +185,14 @@ export class PlaybackClock {
       seekableEnd != null &&
       Number.isFinite(seekableEnd) &&
       seekableEnd > 0
-    )
+    ) {
+      // A live edge advances a segment at a time; a larger jump is several
+      // segments listed together, not a longer segment.
+      const step = seekableEnd - (port.seekableEnd ?? seekableEnd)
+      if (step > 0 && step <= MAX_SEGMENT_SEC)
+        port.edgeStep = Math.max(port.edgeStep, step)
       port.seekableEnd = seekableEnd
+    }
     if (port === undefined || port.failed || port.ended) return this.wall
     // A replacement live source may open at the live edge. Restore the selected
     // moment only once its new seekable bounds arrive, and ignore that first frame.
@@ -283,10 +294,12 @@ export class PlaybackClock {
       if (wall === null) return false
       shared = Math.min(shared, wall)
     }
-    // The decoders' offset past their safe edges is a hold-back at most. A
-    // longer step back is a camera missing footage at this moment, whether its
-    // feed stopped or its seekable range has only just restarted after a gap.
-    if (this.wall - shared > REJOIN_MAX_MS) return false
+    // The decoders' offset past their safe edges is two segments at most: one
+    // past the edge, one between the cameras' edges. A longer step back is a
+    // camera missing footage at this moment, whether its feed stopped or its
+    // seekable range has only just restarted after a gap.
+    const segment = Math.max(SEGMENT_SEC, ...active.map(p => p.edgeStep))
+    if (this.wall - shared > 2 * segment * 1000) return false
     if (
       active.some(port => {
         const target = targetTime(port.timeline, shared, port.duration)
