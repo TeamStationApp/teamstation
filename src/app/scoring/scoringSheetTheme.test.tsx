@@ -42,6 +42,17 @@ describe('scoped scoring presentation', () => {
     })
     root = undefined
   })
+  it('keeps a held text button and emblem letters on the sheet surface', () => {
+    for (const base of [tsBallpark, tsDark]) {
+      const sheet = scoringSheetTheme(base)
+      expect(sheet.textButtonPressedColor).equals(base.scoringSurface.canvas)
+      expect(sheet.emblemColor).equals(base.scoringSurface.accent)
+      expect(sheet.plateIconColor).equals(base.scoringSurface.secondaryText)
+      expect(sheet.cardDangerColor).equals(base.scoringSurface.danger)
+      expect(sheet.cardSuccessColor).equals(base.scoringSurface.accent)
+      expect(sheet.cardDetailColor).equals(base.scoringSurface.secondaryText)
+    }
+  })
   it('reaches renderer fixture dialogs through real scoring transitions', () => {
     for (const kind of ['runner-advance', 'runner-out']) {
       const state = modalRendererFixture(kind)

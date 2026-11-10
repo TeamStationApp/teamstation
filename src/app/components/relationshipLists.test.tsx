@@ -6,7 +6,14 @@ import { Text } from 'react-native'
 
 import { TeamStationClient } from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
-import { find, press, settle, text } from '../../test/gameFormDom'
+import {
+  find,
+  press,
+  rowLeaf,
+  rowTextColor,
+  settle,
+  text
+} from '../../test/gameFormDom'
 import {
   GroupRelationshipRow,
   relationshipDetails
@@ -14,6 +21,7 @@ import {
 import { ParticipationList } from '../screens/ParticipationList'
 import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { ActionList, ActionRow } from './ActionRow'
 import { Button } from './Button'
 import { DangerText } from './DangerText'
@@ -45,6 +53,81 @@ describe('relationship list presentation and confirmation', () => {
     await act(async () => root?.unmount())
     root = undefined
     document.body.replaceChildren()
+  })
+  const leaveRow = (
+    <GroupRelationshipRow
+      group={group('league')}
+      label="Leave Demo one"
+      onLeave={() => undefined}
+    />
+  )
+  it('keeps a bounded list readable where the card matches the canvas text', async () => {
+    await render(
+      <ScopedThemeProvider theme={tsDark}>
+        <ActionList bounded>{leaveRow}</ActionList>
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor('Demo one')).equals('rgb(31, 36, 24)')
+    // The detail keeps a quieter tone than the title.
+    expect(rowTextColor('League')).equals('rgb(87, 93, 84)')
+    expect(rowTextColor('Leave')).equals('rgb(186, 26, 26)')
+  })
+  it('keeps season links, and the detail beside them, on one second line', async () => {
+    const name = '2027 Spring Regular Season Majors Division'
+    await render(
+      <ActionList bounded>
+        <GroupRelationshipRow
+          group={group('team')}
+          detail="Placeholder team"
+          links={[
+            { label: name, onPress: () => undefined },
+            { label: 'Demo Fall', onPress: () => undefined }
+          ]}
+        />
+      </ActionList>
+    )
+    const label = rowLeaf(name)
+    // One line each: a long name ends in an ellipsis rather than wrapping.
+    expect(getComputedStyle(label).whiteSpace).equals('nowrap')
+    expect(getComputedStyle(label).flexShrink).equals('1')
+    // The second line is not bold, and matches the detail's size.
+    expect(['400', 'normal']).includes(getComputedStyle(label).fontWeight)
+    expect(getComputedStyle(label).fontSize).equals(
+      getComputedStyle(rowLeaf('Placeholder team')).fontSize
+    )
+    expect(find(`Open ${name}`)).not.equals(undefined)
+    expect(find('Open Demo Fall')).not.equals(undefined)
+    // The detail moves onto the links' line, once, so the title stands alone.
+    const detail = rowLeaf('Placeholder team')
+    expect(detail.parentElement).equals(
+      label.closest('[role="button"]')!.parentElement
+    )
+    expect(
+      [...document.querySelectorAll('*')].filter(
+        node =>
+          node.children.length === 0 && node.textContent === 'Placeholder team'
+      )
+    ).length(1)
+  })
+  it('leaves an unbounded list and an ordinary theme alone', async () => {
+    await render(
+      <ScopedThemeProvider theme={tsDark}>
+        <ActionList>{leaveRow}</ActionList>
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor('Demo one')).equals('rgb(232, 228, 216)')
+    await render(
+      <ScopedThemeProvider theme={tsBallpark}>
+        <ActionList bounded>{leaveRow}</ActionList>
+      </ScopedThemeProvider>
+    )
+    const plain = rowTextColor('Demo one')
+    await render(
+      <ScopedThemeProvider theme={tsBallpark}>
+        <ActionList>{leaveRow}</ActionList>
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor('Demo one')).equals(plain)
   })
   it('separates navigation and short actions, wraps identities and renders only meaningful detail', async () => {
     const opened: string[] = []
@@ -117,6 +200,14 @@ describe('relationship list presentation and confirmation', () => {
         n.textContent === 'Willow Woods Westward Wanderers'
     )!
     expect(parseFloat(getComputedStyle(name).fontSize)).greaterThan(24)
+    // The season's participating teams share one card, as the team's seasons do.
+    const card = document.querySelector<HTMLElement>(
+      '[data-testid="participating-teams-list"]'
+    )!
+    const surface = document.createElement('div')
+    surface.style.color = tsBallpark.cardBackgroundColor
+    expect(getComputedStyle(card).backgroundColor).equals(surface.style.color)
+    expect(card.contains(name)).equals(true)
     await press('End participation for Willow Woods Westward Wanderers')
     await press('Cancel')
     expect(find('Confirm end participation')).equals(undefined)

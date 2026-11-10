@@ -206,6 +206,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   secondaryLabel: { color: theme.secondaryButtonTextColor },
 
   text: { backgroundColor: 'transparent' },
-  textPressed: { backgroundColor: theme.containerBackgroundColor },
+  textPressed: { backgroundColor: theme.textButtonPressedColor },
   textLabel: { color: theme.activeColor }
 }))

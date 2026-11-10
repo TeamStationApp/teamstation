@@ -33,8 +33,9 @@ export function ParticipationList({
   return (
     <>
       {seasonSide && <SectionHeader title="Participating teams" />}
+      {/* Each side's collection is one shared card. */}
       <ActionList
-        bounded={!seasonSide}
+        bounded
         testID={
           seasonSide ? 'participating-teams-list' : 'season-participations-card'
         }

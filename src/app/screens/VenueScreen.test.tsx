@@ -9,6 +9,7 @@ import {
   fill,
   mount,
   press,
+  rowTextColor,
   settle,
   text,
   unmount
@@ -22,6 +23,8 @@ import {
   venueDetail,
   venueField
 } from '../../test/venueDom'
+import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { approvalLabel, sizesLabel, VenueScreen } from './VenueScreen'
 
 type Calls = Record<string, unknown[][]>
@@ -86,6 +89,44 @@ const owner = (canEdit = true): VenueDetail['rights'] => ({
 })
 
 describe('the venue screen', () => {
+  it('keeps its field rows readable on a dark shared card', async () => {
+    const venue = venueDetail({
+      fields: [venueField()],
+      claims: [
+        {
+          id: 'vcl_b',
+          leagueId: 'lea_b',
+          leagueName: 'Demo League B',
+          kind: 'coOwner',
+          status: 'pending',
+          requestedAt: '2027-04-01T00:00:00.000Z',
+          approvesAt: '2027-04-08T12:00:00.000Z'
+        }
+      ],
+      rights: { ...owner(), decidableClaimIds: ['vcl_b'] }
+    })
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        <VenueScreen
+          client={fakeClient(venue).client}
+          venueId="ven_demo"
+          onOpenField={() => undefined}
+          onClaimed={() => undefined}
+        />
+      </ScopedThemeProvider>
+    )
+    await settle()
+    expect(rowTextColor(venueField().name)).equals('rgb(31, 36, 24)')
+    expect(rowTextColor('Delete')).equals('rgb(186, 26, 26)')
+    // Approve reads its colour inside the card, as Decline does.
+    expect(rowTextColor('Approve')).equals('rgb(36, 113, 61)')
+    // The settings card and the week's hours are shared cards too.
+    expect(rowTextColor('Size switch time')).equals('rgb(31, 36, 24)')
+    const monday = [...document.querySelectorAll<HTMLElement>('*')].find(
+      node => node.children.length === 0 && node.textContent === 'Monday'
+    )!
+    expect(getComputedStyle(monday).color).equals('rgb(31, 36, 24)')
+  })
   afterEach(unmount)
 
   it('reads plainly: approval dates and size lists', () => {

@@ -91,6 +91,7 @@ export const tsBallpark: Theme = {
   cardBackgroundColor: palette.white,
   cardBackgroundDark: palette.forest,
   containerBackgroundColor: palette.cream,
+  textButtonPressedColor: palette.cream,
   inactiveBackgroundColor: palette.cream,
   overlayBackgroundColor: palette.scrim,
 
@@ -130,6 +131,8 @@ export const tsBallpark: Theme = {
 
   // Status
   activeColor: palette.forest,
+  emblemColor: palette.forest,
+  plateIconColor: palette.moss,
   scoringInstructionBackground: '#665016',
   scoringInstructionBorder: '#c5a13c',
   scoringStatusText: '#665016',
@@ -145,6 +148,9 @@ export const tsBallpark: Theme = {
   successColor: palette.winInk,
   warningColor: palette.gold,
   dangerColor: palette.crimson,
+  cardDangerColor: palette.crimson,
+  cardSuccessColor: palette.winInk,
+  cardDetailColor: palette.moss,
   addEventCardColor: palette.blue,
   addEventCardTextColor: '#FFFFFF',
   linkTextColor: palette.blue,

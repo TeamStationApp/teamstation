@@ -22,7 +22,7 @@ export function SettingsGear({
       style={({ pressed }) => [styles.target, pressed && styles.pressed]}
     >
       <View style={styles.disc}>
-        <Icon name="settings" size={1.25} color={theme.secondaryTextColor} />
+        <Icon name="settings" size={1.25} color={theme.plateIconColor} />
       </View>
     </Pressable>
   )

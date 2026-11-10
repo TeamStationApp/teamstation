@@ -31,6 +31,12 @@ export interface Theme {
   cardBackgroundColor: string
   cardBackgroundDark: string
   containerBackgroundColor: string
+  /**
+   * The fill behind a text button while it is held. It stands in for
+   * `containerBackgroundColor` there, so a derived theme that overrides that
+   * token sets this one too.
+   */
+  textButtonPressedColor: string
   inactiveBackgroundColor: string
   overlayBackgroundColor: string
 
@@ -87,9 +93,37 @@ export interface Theme {
 
   // Status
   activeColor: string
+  /**
+   * Initials and icons on an untinted emblem's plate. It stands in for
+   * `activeColor` there, so a derived theme that overrides that token sets
+   * this one too.
+   */
+  emblemColor: string
+  /**
+   * Icons on that same plate, such as the settings gear. It stands in for
+   * `secondaryTextColor` there, so a derived theme that overrides that token
+   * sets this one too.
+   */
+  plateIconColor: string
   successColor: string
   warningColor: string
   dangerColor: string
+  /**
+   * Destructive text on `cardBackgroundColor`: `dangerColor` on a shared card
+   * whose surface matches the canvas text. A derived theme that overrides
+   * `dangerColor` or `cardBackgroundColor` sets this one too.
+   */
+  cardDangerColor: string
+  /**
+   * Approving text on `cardBackgroundColor`: `successColor` on such a card.
+   * A derived theme that overrides either sets this one too.
+   */
+  cardSuccessColor: string
+  /**
+   * Quieter detail text on `cardBackgroundColor`: `secondaryTextColor` on
+   * such a card. A derived theme that overrides either sets this one too.
+   */
+  cardDetailColor: string
   addEventCardColor: string
   addEventCardTextColor: string
   linkTextColor: string

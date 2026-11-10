@@ -22,7 +22,7 @@ import {
   useHeaderHandoff,
   useHeaderSlot
 } from '../components'
-import { ActionList } from '../components/ActionRow'
+import { ActionList, CardThemeScope } from '../components/ActionRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { FollowButton } from '../components/FollowButton'
 import { StickySectionLayout } from '../components/StickySectionLayout'
@@ -159,37 +159,15 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
       onScroll={handoff.handleScroll}
       hero={
         <Card style={styles.identity} ref={handoff.ref}>
-          <View style={styles.identityTop}>
-            <Emblem
-              uri={group.imageUrl}
-              fallback={initialsOf(group.name)}
-              size={2.25}
+          <CardThemeScope>
+            <LeagueHeroContent
+              client={client}
+              detail={detail}
+              onSettings={() => {
+                props.onSettings(league)
+              }}
             />
-            <Text style={styles.name}>{group.name}</Text>
-            {detail.canManage ? (
-              <SettingsGear
-                label="League settings"
-                onPress={() => {
-                  props.onSettings(league)
-                }}
-              />
-            ) : (
-              detail.canSeePeople !== true && (
-                // A visitor who neither runs this league nor belongs to it
-                // follows it where an administrator has the gear.
-                <FollowButton
-                  client={client}
-                  group={league}
-                  name={group.name}
-                />
-              )
-            )}
-          </View>
-          <Text style={styles.meta}>
-            {group.locality == null
-              ? 'Location not set'
-              : localityLabel(group.locality)}
-          </Text>
+          </CardThemeScope>
         </Card>
       }
       sections={
@@ -272,16 +250,18 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
               </ActionList>
               {detail.canManage && props.onAutoScheduler != null && (
                 <View style={styles.autoScheduler}>
-                  <ListCard>
-                    <ListRow
-                      title="Auto-Scheduler"
-                      subtitle="Fields, season settings and schedules"
-                      emblemIcon="event"
-                      onPress={() => {
-                        props.onAutoScheduler?.(league)
-                      }}
-                    />
-                  </ListCard>
+                  <CardThemeScope>
+                    <ListCard>
+                      <ListRow
+                        title="Auto-Scheduler"
+                        subtitle="Fields, season settings and schedules"
+                        emblemIcon="event"
+                        onPress={() => {
+                          props.onAutoScheduler?.(league)
+                        }}
+                      />
+                    </ListCard>
+                  </CardThemeScope>
                 </View>
               )}
             </View>
@@ -324,19 +304,16 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
                   <Text style={styles.muted}>No teams in this league yet.</Text>
                 </Card>
               )}
-              <ActionList>
+              <ActionList
+                bounded={teams.length > 0}
+                testID={teams.length > 0 ? 'league-teams-card' : undefined}
+              >
                 {teams.map(team => (
                   <GroupRelationshipRow
                     key={team.id}
                     group={team}
-                    detail={[
-                      team.external ? 'Placeholder team' : undefined,
-                      team.locality == null
-                        ? undefined
-                        : localityLabel(team.locality)
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    // People in a league know where its teams are.
+                    detail={team.external ? 'Placeholder team' : undefined}
                     onOpen={() => {
                       onOpen({ kind: 'team', id: team.id })
                     }}
@@ -412,6 +389,52 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
         />
       )}
     </StickySectionLayout>
+  )
+}
+
+/** The league's name, place and gear, in colours that read on its card. */
+function LeagueHeroContent({
+  client,
+  detail,
+  onSettings
+}: {
+  client: TeamStationClient
+  detail: GroupDetail
+  onSettings: () => void
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  const { group } = detail
+  const league: GroupRef = { kind: 'league', id: group.id }
+  return (
+    <>
+      <View style={styles.identityTop}>
+        <Emblem
+          uri={group.imageUrl}
+          fallback={initialsOf(group.name)}
+          size={2.25}
+        />
+        <Text style={styles.name}>{group.name}</Text>
+        {detail.canManage ? (
+          <SettingsGear
+            label="League settings"
+            onPress={() => {
+              onSettings()
+            }}
+          />
+        ) : (
+          detail.canSeePeople !== true && (
+            // A visitor who neither runs this league nor belongs to it
+            // follows it where an administrator has the gear.
+            <FollowButton client={client} group={league} name={group.name} />
+          )
+        )}
+      </View>
+      <Text style={styles.meta}>
+        {group.locality == null
+          ? 'Location not set'
+          : localityLabel(group.locality)}
+      </Text>
+    </>
   )
 }
 

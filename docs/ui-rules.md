@@ -100,6 +100,16 @@ and every text column at the same left edge, regardless of the number of lines.
   teams, seasons or leagues in one `ListCard`, with padded rows and hairline
   dividers. Relationship lists with independent actions use `ActionList bounded`
   and `GroupRelationshipRow`. Each category may have its own shared card.
+  League Teams, including kept placeholder teams, is one such collection:
+  keep its heading, count and Add/Create actions outside the shared card,
+  even when the list is large. An empty collection has no empty card shell.
+  `ActionList bounded` keeps the colours its rows read from the theme readable
+  on a theme whose card surface matches its canvas text. Only colours read
+  inside the list are remapped: a style a screen builds from its own theme, or
+  a colour it passes into a row, keeps the outer value, so read it inside the
+  card instead, for example through a small child component. A shared card
+  built directly from `ListCard`, outside `ActionList`, wraps its contents in
+  `CardThemeScope` for the same colours.
 
 Navigation and a trailing action such as Follow remain separate touch targets.
 Do not nest the action inside the navigation button. Empty, loading and error

@@ -1,7 +1,12 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import {
+  cacheStyles,
+  ScopedThemeProvider,
+  type Theme,
+  useTheme
+} from '../theme/ThemeContext'
 import { CardDivider } from './Card'
 import { Icon } from './Icon'
 import { ListCard } from './ListCard'
@@ -24,26 +29,51 @@ export function ActionRow({
   onOpen?: () => void
   openLabel?: string
   separateEndAction?: boolean
+  /** A second line of actions in the title's column, outside the open target. */
   extra?: React.ReactNode
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const identity = (
+  const words = (
     <>
-      {leading}
-      <View style={styles.words}>
-        <Text style={styles.name}>{title}</Text>
-        {detail != null && detail !== '' && (
-          <Text style={styles.detail}>{detail}</Text>
-        )}
-      </View>
-      {onOpen != null && !separateEndAction && <Icon name="chevron_right" />}
+      <Text style={styles.name}>{title}</Text>
+      {detail != null && detail !== '' && (
+        <Text style={styles.detail}>{detail}</Text>
+      )}
     </>
+  )
+  const chevron = onOpen != null && !separateEndAction && (
+    <Icon name="chevron_right" />
   )
   return (
     <View style={styles.row} testID="relationship-action-row">
       <View style={styles.left}>
-        {onOpen == null ? (
-          <View style={styles.identity}>{identity}</View>
+        {extra != null ? (
+          // A second line of its own actions sits in the title's column, as a
+          // detail would. The open target lies under the whole identity, so
+          // those actions are never nested inside it.
+          <View style={styles.identity}>
+            {onOpen != null && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={openLabel ?? `Open ${title}`}
+                onPress={onOpen}
+                style={styles.underlay}
+              />
+            )}
+            <View pointerEvents="none">{leading}</View>
+            <View style={styles.words} pointerEvents="box-none">
+              <View pointerEvents="none" style={styles.wordsTop}>
+                {words}
+              </View>
+              {extra}
+            </View>
+            <View pointerEvents="none">{chevron}</View>
+          </View>
+        ) : onOpen == null ? (
+          <View style={styles.identity}>
+            {leading}
+            <View style={styles.words}>{words}</View>
+          </View>
         ) : (
           <Pressable
             accessibilityRole="button"
@@ -51,10 +81,11 @@ export function ActionRow({
             onPress={onOpen}
             style={styles.identity}
           >
-            {identity}
+            {leading}
+            <View style={styles.words}>{words}</View>
+            {chevron}
           </Pressable>
         )}
-        {extra}
       </View>
       {separateEndAction && end != null ? (
         <View style={styles.endAction}>
@@ -71,7 +102,52 @@ export function ActionRow({
   )
 }
 
-/** Long lists have no bounding card; a short settings list can share one. */
+const cardThemes = new WeakMap<Theme, Theme>()
+
+const sameColor = (a: string, b: string): boolean =>
+  a.trim().toLowerCase() === b.trim().toLowerCase()
+
+/**
+ * Some themes use a light card surface with light canvas text. Their card
+ * tokens (`cardDangerColor`, `cardSuccessColor`, `cardDetailColor`), and their
+ * `secondaryTextColor`, `tertiaryTextColor` and `clearButtonColor`, must read
+ * on that light card.
+ */
+function cardThemeOf(theme: Theme): Theme {
+  if (!sameColor(theme.primaryTextColor, theme.cardBackgroundColor))
+    return theme
+  let cardTheme = cardThemes.get(theme)
+  if (cardTheme == null) {
+    cardTheme = {
+      ...theme,
+      // A light surface: its own dark variants, and links set apart from titles.
+      isDark: false,
+      primaryTextColor: theme.secondaryTextColor,
+      secondaryTextColor: theme.cardDetailColor,
+      activeColor: theme.tertiaryTextColor,
+      textButtonPressedColor: theme.clearButtonColor,
+      dangerColor: theme.cardDangerColor,
+      successColor: theme.cardSuccessColor
+    }
+    cardThemes.set(theme, cardTheme)
+  }
+  return cardTheme
+}
+
+/** A shared card's contents, in colours that read on the card. */
+export function CardThemeScope({
+  children
+}: {
+  children: React.ReactNode
+}): React.ReactElement {
+  return (
+    <ScopedThemeProvider theme={cardThemeOf(useTheme())}>
+      {children}
+    </ScopedThemeProvider>
+  )
+}
+
+/** A bounded list's rows share one card; an unbounded list has none. */
 export function ActionList({
   children,
   bounded = false,
@@ -81,7 +157,12 @@ export function ActionList({
   bounded?: boolean
   testID?: string
 }): React.ReactElement {
-  if (bounded) return <ListCard testID={testID}>{children}</ListCard>
+  if (bounded)
+    return (
+      <CardThemeScope>
+        <ListCard testID={testID}>{children}</ListCard>
+      </CardThemeScope>
+    )
   return (
     <View testID={testID}>
       {React.Children.toArray(children).map((child, index) => (
@@ -124,6 +205,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     minHeight: 48
   },
   words: { flex: 1, minWidth: 0, gap: theme.rem(0.25) },
+  wordsTop: { gap: theme.rem(0.25) },
+  underlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0
+  },
   name: {
     fontFamily: theme.semiBoldTextFont,
     fontWeight: '600',
