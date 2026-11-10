@@ -382,7 +382,7 @@ class ProgrammeExportTest {
      * frame, the part's last keyframe follows once a second, each lasting until the next, and the next
      * part opens on its keyframe at its own time. No sample lasts over a second and the track is one
      * run of samples. The file is TeamStation's fixture for the same check through FFmpeg
-     * (`src/server/media/androidHole.test.ts`), and must stay what this export writes.
+     * (`src/server/media/androidHole.integration.test.ts`), and must stay what this export writes.
      */
     @Test
     fun aHoleIsFilledOnceASecondSoFFmpegsCopyKeepsIt() {

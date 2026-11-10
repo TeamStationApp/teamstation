@@ -12,7 +12,7 @@ it('marks roster players independently of email and removes only the chosen team
   this.timeout(60000)
   const f = await groupFixture()
   const lines = [
-    '$ mocha -r sucrase/register src/server/routes/managePlayers.test.ts'
+    '$ mocha -r sucrase/register src/server/routes/managePlayers.integration.test.ts'
   ]
   try {
     await f.h.db

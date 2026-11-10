@@ -169,7 +169,7 @@ describe('ChatBenchScreen', () => {
   })
   it('is in a served web build, which defines __DEV__ as this bundle does', () => {
     // A production build defines it false and has no bench: the real build
-    // in buildCsp.test.ts checks its bundle for the route.
+    // in buildCsp.integration.test.ts checks its bundle for the route.
     expect(chatBenchPath).equals('/dev/chat-bench')
     expect(ChatBench).equals(ChatBenchScreen)
   })

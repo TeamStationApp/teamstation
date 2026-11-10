@@ -551,8 +551,8 @@ const CHAT2_HARNESS_FILES: ReadonlySet<string> = new Set([
   'src/app/chat/chat2.e2e.ts',
   'e2e/rigs/chat2Maestro.ts',
   'e2e/fixtures/chat2Fixture.ts',
-  'src/app/chat/chat2Actions.test.ts',
-  'src/test/chat2FixtureIdentity.test.ts',
+  'src/app/chat/chat2Actions.integration.test.ts',
+  'src/test/chat2FixtureIdentity.integration.test.ts',
   'src/app/chat/engine/dmTitle.test.ts',
   // The fixture coordinator and its helpers: run from the command line,
   // imported by no web, native or server entry.

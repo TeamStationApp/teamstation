@@ -76,17 +76,17 @@ await build({
 const tests = [
   ...globSync('src/**/observability/*.test.ts'),
   ...globSync('src/logServer/*.test.ts'),
-  'src/server/account/deleteAccount.test.ts',
-  'src/server/jsonBody.test.ts',
+  'src/server/account/deleteAccount.integration.test.ts',
+  'src/server/jsonBody.integration.test.ts',
   'src/server/middleware/withCors.test.ts',
   'src/server/serverConfig.test.ts',
   'src/server/openapi.test.ts',
   'src/server/sentry/sentry.test.ts',
-  'src/server/statsBuilder/main.test.ts',
+  'src/server/statsBuilder/main.integration.test.ts',
   'src/app/player/nativeVideoHandle.test.ts',
   'src/common/api.test.ts',
-  'src/server/routes/signup.test.ts',
-  'src/server/routes/directorUploads.test.ts',
+  'src/server/routes/signup.integration.test.ts',
+  'src/server/routes/directorUploads.integration.test.ts',
   'lib/observability-tests.cjs',
   'scripts/observability-line-gate.test.cjs'
 ]

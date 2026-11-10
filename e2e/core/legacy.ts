@@ -22,7 +22,9 @@ export function readLegacy(root: string): LegacyList {
   return JSON.parse(readFileSync(path, 'utf8')) as LegacyList
 }
 
-export const SUITE_FILE = /\.(?:e2e|integration)\.[^/]+$/
+// A mocha `*.integration.test.ts(x)` file is the integration tier's, which
+// `npm run test.integration` runs; it is not a legacy script.
+export const SUITE_FILE = /\.(?:e2e|integration)\.(?!test\.)[^/]+$/
 
 export interface LegacyReport {
   legacy: string[]

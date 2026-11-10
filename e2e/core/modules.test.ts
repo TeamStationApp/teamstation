@@ -9,7 +9,6 @@ import { main } from './cli'
 import { readLegacy } from './legacy'
 import { ROOT } from './manifest'
 import { moduleOf, moduleProblems, MODULES } from './modules'
-import { validate } from './validate'
 
 async function capture(run: () => Promise<number>): Promise<string[]> {
   const lines: string[] = []
@@ -109,13 +108,8 @@ describe('moduleOf', function () {
     expect(text).includes('moduleOf says messaging')
     expect(text).includes('a helper or a parked path is in modules')
     expect(text).includes('unknown module "not-a-module"')
-    const live = validate().problems.filter(
-      problem =>
-        problem.includes('moduleOf') ||
-        problem.includes('pendingCategories') ||
-        problem.includes('has no module')
-    )
-    expect(live).deep.equals([])
+    // That the live repository has none of these is the integration tier's
+    // check: `validate()` lists files with git (core.integration.test.ts).
   })
 
   it('a category list is the unfiltered ids for that module, then its legacy paths', async function () {

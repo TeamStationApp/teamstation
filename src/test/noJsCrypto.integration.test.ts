@@ -61,7 +61,9 @@ describe('no JavaScript crypto', function () {
     const lines = found
       .split('\n')
       .filter(
-        line => line !== '' && !line.startsWith('src/test/noJsCrypto.test.ts')
+        line =>
+          line !== '' &&
+          !line.startsWith('src/test/noJsCrypto.integration.test.ts')
       )
     expect(lines).deep.equals([])
   })

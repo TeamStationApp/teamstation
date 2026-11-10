@@ -20,11 +20,14 @@ import { connect } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { stackServers } from './legacyServers'
 import { loadSettings, readSecret } from './settings'
 import { lanAddress } from './stack'
 
 export const STACK_DATABASE = 'AppDb_nativeScoreboard'
-export const STACK_DATABASE_URL = `postgres://localhost:5433/${STACK_DATABASE}`
+/** The stack's database and store, from TS_TEST_DATABASE_URL and TS_TEST_REDIS_URL. */
+export const STACK_SERVERS = stackServers(STACK_DATABASE)
+export const STACK_DATABASE_URL = STACK_SERVERS.databaseUrl
 export const STACK_API_PORT = 9100
 export const STACK_WEB_PORT = 8082
 export const STACK_PROXY_PORT = 8080
@@ -101,17 +104,19 @@ async function stopChild(child: ChildProcess | undefined): Promise<void> {
 
 /** A fresh `AppDb_nativeScoreboard`: fixtures with fixed ids refuse a second run. */
 function freshDatabase(): void {
+  const { clusterArgs, password } = STACK_SERVERS
+  const env =
+    password == null ? process.env : { ...process.env, PGPASSWORD: password }
   const dropped = spawnSync(
     'dropdb',
-    ['-h', 'localhost', '-p', '5433', '--if-exists', '--force', STACK_DATABASE],
-    { encoding: 'utf8' }
+    [...clusterArgs, '--if-exists', '--force', STACK_DATABASE],
+    { encoding: 'utf8', env }
   )
   if (dropped.status !== 0) throw new Error(`dropdb failed: ${dropped.stderr}`)
-  const made = spawnSync(
-    'createdb',
-    ['-h', 'localhost', '-p', '5433', STACK_DATABASE],
-    { encoding: 'utf8' }
-  )
+  const made = spawnSync('createdb', [...clusterArgs, STACK_DATABASE], {
+    encoding: 'utf8',
+    env
+  })
   if (made.status !== 0) throw new Error(`createdb failed: ${made.stderr}`)
 }
 
@@ -224,7 +229,7 @@ export async function startLegacyStack(
       serveMediaLocally: true,
       // Fixtures burn a clock into sample video, which needs drawtext.
       ...(existsSync(FFMPEG_FULL) ? { ffmpegPath: FFMPEG_FULL } : {}),
-      redis: { url: 'redis://127.0.0.1:6379', prefix: '', caFile: '' },
+      redis: { url: STACK_SERVERS.redisUrl, prefix: '', caFile: '' },
       corsOrigins: [
         STACK_ORIGIN,
         `http://localhost:${STACK_PROXY_PORT}`,

@@ -89,9 +89,9 @@ run('node_modules/.bin/mocha', [
   'sucrase/register',
   '-r',
   './src/test/scoringDomSetup.cjs',
-  'src/server/routes/account.test.ts',
-  'src/server/routes/account.chatAge.test.ts',
-  'src/server/routes/password.test.ts',
+  'src/server/routes/account.integration.test.ts',
+  'src/server/routes/account.chatAge.integration.test.ts',
+  'src/server/routes/password.integration.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordProtocol.test.ts',
   'src/common/passwordCalibration.test.ts',
@@ -99,7 +99,7 @@ run('node_modules/.bin/mocha', [
   'src/app/platform/passwordKdf.test.ts',
   'src/app/platform/accountPhoto.test.ts',
   'src/server/openapi.test.ts',
-  'src/server/jsonBody.test.ts',
+  'src/server/jsonBody.integration.test.ts',
   'src/common/api.test.ts',
   'lib/account-tests.cjs'
 ])
