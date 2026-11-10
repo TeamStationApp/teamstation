@@ -101,6 +101,9 @@ export function eventGeocoder(
         settle = resolve
         fail = reject
       })
+      // Only lookups that join this one await it; with none, its failure
+      // would be an unhandled rejection, which ends the process.
+      work.catch(() => undefined)
       inFlight.set(key, work)
       const finish = (error?: unknown, value?: Coordinates): void => {
         if (inFlight.get(key) === work) inFlight.delete(key)
