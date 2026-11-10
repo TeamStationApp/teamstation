@@ -95,6 +95,8 @@ async function main(): Promise<void> {
     await recipient.goto(f.h.origin + '/notifications', {
       waitUntil: 'networkidle0'
     })
+    // A role given at once is recorded accepted: it is in History, not Pending.
+    await press(recipient, 'History')
     await text(recipient, 'added you as Admin')
     expect(
       (
