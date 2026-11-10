@@ -1123,10 +1123,11 @@ export function useMultiCam(
         const element = elements.current.get(video.id)
         if (element == null) continue
         // Preserve the grid's requested moment even when alignment must wait
-        // for native to open. Watchdog corrections are not viewer intent.
-        if (mode === 'exact') {
-          const seconds = secondsAt(video, wallMs)
-          if (seconds != null) notifyExplicitSeek(element, seconds)
+        // for native to open: the moment each tile is actually sent to.
+        // Watchdog corrections are not viewer intent.
+        const intended = (seconds: number | null): void => {
+          if (mode === 'exact' && seconds != null)
+            notifyExplicitSeek(element, seconds)
         }
         // Waiting for the game to reach it: left alone by the watchdog, and
         // overtaken by anything somebody asked for.
@@ -1176,6 +1177,7 @@ export function useMultiCam(
             correction.reason === 'beforeStart'
               ? 0
               : (mediaLengthOf(element) ?? element.currentTime)
+          intended(edge)
           if (Math.abs(element.currentTime - edge) > 0.5) {
             element.currentTime = edge
           }
@@ -1191,6 +1193,7 @@ export function useMultiCam(
         // A tile a little out, while it plays, is brought back by speed: a
         // seek costs more than the gap everywhere but Chrome (`align.ts`).
         const target = secondsAt(video, wallMs)
+        intended(target)
         const errorSec = target == null ? 0 : target - element.currentTime
         // Joining — starting late, coming back, or too far out to close by
         // speed — it is sent just ahead and started when the game gets there.

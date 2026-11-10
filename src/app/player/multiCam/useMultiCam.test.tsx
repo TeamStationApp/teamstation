@@ -12,6 +12,7 @@ import {
 } from '../../../common/api'
 import { ThemeProvider } from '../../theme/ThemeContext'
 import { attachHls as attachNativeHls } from '../attachHls.native'
+import { onExplicitSeek } from '../explicitSeek'
 import { NativeVideoHandle } from '../nativeVideoHandle'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
@@ -371,9 +372,12 @@ describe('useMultiCam', function () {
 
   it('moves every tile when the take is moved, and parks one that was not recording yet', async function () {
     const { mc, tiles } = await grid()
+    const intended: number[] = []
+    onExplicitSeek(tiles.B, seconds => intended.push(seconds))
     await act(async () => {
       mc().goTo(T0 + 30_000)
     })
+    expect(intended, 'the edge it is sent to').deep.equals([0])
     expect(tiles.A.currentTime).equals(30)
     // B had not started thirty seconds in: held at its first frame, stopped.
     expect(tiles.B.paused).equals(true)
@@ -2093,9 +2097,12 @@ describe('useMultiCam on each tile’s own dates (U22)', function () {
       mc().goTo(T0 + 99_000)
     })
     expect(tiles.B.currentTime).closeTo(99, 0.01)
+    const intended: number[] = []
+    onExplicitSeek(tiles.B, seconds => intended.push(seconds))
     await act(async () => {
       mc().goTo(T0 + 110_000)
     })
+    expect(intended, 'nothing sought for a gap').deep.equals([])
     expect(mc().tiles.B?.parked).equals('gap')
     expect(tiles.B.paused).equals(true)
     expect(tiles.B.currentTime, 'no seek into future footage').closeTo(99, 0.01)
