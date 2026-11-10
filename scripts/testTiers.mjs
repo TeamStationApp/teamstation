@@ -15,13 +15,14 @@ export const UNIT_SERVERS = {
 }
 
 /**
- * Integration files that run last, alone: the FFmpeg writers timed against the
- * wall clock, and the files that build the whole server or the app's test
+ * Integration files that run last, alone: the FFmpeg writers and the change
+ * feed timed against the wall clock, and the files that build the whole server or the app's test
  * bundles, which starve or stop beside other groups.
  */
 export const SERIAL = [
   'src/server/live/codecHold.integration.test.ts',
   'src/server/live/mismatchedPublish.integration.test.ts',
+  'src/server/live/feedSync.integration.test.ts',
   'src/server/oauth/oauth.integration.test.ts',
   'src/test/testRunner.integration.test.ts'
 ]
