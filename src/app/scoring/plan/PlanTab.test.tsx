@@ -89,7 +89,8 @@ function Harness({
       batters={ids.map(id => ({
         id,
         player: LINEUP[id - 1],
-        label: `#${LINEUP[id - 1].jersey} ${LINEUP[id - 1].fullName}`
+        name: LINEUP[id - 1].fullName,
+        jersey: LINEUP[id - 1].jersey
       }))}
       context={context}
       onChange={setShown}
@@ -219,15 +220,15 @@ function placeTargets(): void {
 }
 
 describe('the game plan tab', function () {
-  it('lists the lineup in batting order, jersey first, under six inning columns and a plus', async function () {
+  it('lists the lineup in batting order, name then jersey, under six inning columns and a plus', async function () {
     await mount()
     const players = [1, 2, 3].map(
       row => byId(`Plan player ${row}`)!.textContent
     )
     expect(players).deep.equals([
-      '#3 Babe Ruth',
-      '#4 Lou Gehrig',
-      '#24 Willie Mays'
+      'Babe Ruth #3',
+      'Lou Gehrig #4',
+      'Willie Mays #24'
     ])
     const headers = [
       ...document.querySelectorAll('[data-testid^="Plan inning "]')
@@ -369,7 +370,7 @@ describe('the game plan tab', function () {
     expect(input.selectionStart).equals(0)
     expect(input.selectionEnd).equals(1)
     expect(picker()).not.equals(null)
-    expect(picker()!.textContent).includes('Assign: #3 Babe Ruth (Inn 2)')
+    expect(picker()!.textContent).includes('Assign: Babe Ruth #3 (Inn 2)')
     // The cell's own value is lit there.
     expect(byId('Plan pick C')!.getAttribute('aria-selected')).equals('true')
     expect(byId('Plan pick CF')!.getAttribute('aria-selected')).equals('false')
@@ -444,7 +445,7 @@ describe('the game plan tab', function () {
     const tapped = byId('Plan cell 2-4')!
     expect(tapped.tagName).not.equals('INPUT')
     await press(tapped)
-    expect(picker()!.textContent).includes('Assign: #4 Lou Gehrig (Inn 4)')
+    expect(picker()!.textContent).includes('Assign: Lou Gehrig #4 (Inn 4)')
     await press(byId('Plan pick LF'))
     expect(cells()[1][3]).equals('LF')
     expect(picker()).equals(null)
@@ -548,7 +549,7 @@ describe('the game plan tab', function () {
     await key('Enter')
     await settle()
     expect(order).deep.equals([3, 1, 2])
-    expect(byId('Plan player 1')!.textContent).equals('#24 Willie Mays')
+    expect(byId('Plan player 1')!.textContent).equals('Willie Mays #24')
     expect([1, 2, 3].map(inning => cell(1, inning).value)).deep.equals([
       'CF',
       '',
@@ -592,7 +593,7 @@ describe('the game plan tab', function () {
     await pointer('pointerup', 225)
     await settle()
     expect(order).deep.equals([1, 2, 3])
-    expect(byId('Plan player 3')!.textContent).equals('#24 Willie Mays')
+    expect(byId('Plan player 3')!.textContent).equals('Willie Mays #24')
     expect([1, 2, 3].map(inning => cell(3, inning).value)).deep.equals([
       'CF',
       '',
@@ -600,14 +601,22 @@ describe('the game plan tab', function () {
     ])
   })
 
-  it('flips the per-inning toggle', async function () {
+  it('has no toggle: a plan is on while a cell holds a position', async function () {
     await mount()
-    const toggle = document.querySelector<HTMLElement>(
-      '[aria-label="Enable per-inning game plan"]'
-    )!
-    expect(latest.enabled).equals(false)
-    await press(toggle)
+    expect(byId('Plan toggle row')).equals(null)
+    expect(document.body.textContent).not.includes('Enable per-inning')
+    expect(document.querySelector('[role="switch"]')).equals(null)
+    const input = cell(1, 2)
+    await focus(input)
+    await typeText(input, 'p')
     expect(latest.enabled).equals(true)
+    // DH bats without fielding: no position, so still off once P is gone.
+    await focus(cell(2, 2))
+    await typeText(cell(2, 2), 'dh')
+    await focus(input)
+    await typeText(input, '')
+    expect(cells()[1][1]).equals('DH')
+    expect(latest.enabled).equals(false)
   })
 
   it('warns in yellow and red, and judges again as a cell changes and as a player moves', async function () {
@@ -645,10 +654,14 @@ describe('the game plan tab', function () {
     const red = byId('Plan warning red maxSitsPerGame')!
     expect(red.textContent).includes('Babe Ruth')
     expect(red.getAttribute('aria-label')).match(/^Red warning: /)
-    // Above Clear.
+    // Under the sheet, which Clear is above.
     const warnings = byId('Plan warnings')!
     expect(
-      warnings.compareDocumentPosition(byId('Plan clear')!) &
+      byId('Plan sheet')!.compareDocumentPosition(warnings) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(
+      byId('Plan clear')!.compareDocumentPosition(byId('Plan sheet')!) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.equals(0)
     expect(shown()).not.include('Plan warning yellow rotateLeadoff')
@@ -720,6 +733,209 @@ describe('the game plan tab', function () {
     // Empty, the plan is off; the innings stay.
     expect(latest.enabled).equals(false)
     expect(latest.innings).equals(7)
+  })
+
+  it('puts a blue Help left of a red Clear above the sheet, with no Clear below it, and Help slides up the tab’s help', async function () {
+    await mount()
+    const row = byId('Plan help row')!
+    const help = byId('Plan help')!
+    const clear = byId('Plan clear')!
+    expect(row.contains(help) && row.contains(clear)).equals(true)
+    expect(help.getAttribute('aria-label')).equals('Plan help')
+    expect(help.textContent).equals('Help')
+    expect(clear.textContent).equals('Clear')
+    expect(
+      help.compareDocumentPosition(clear) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(
+      row.compareDocumentPosition(byId('Plan sheet')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    // One Clear: none under the sheet.
+    expect(document.querySelectorAll('[data-testid="Plan clear"]')).has.length(
+      1
+    )
+    const color = (node: HTMLElement): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    expect(color(help)).not.equals(color(clear))
+    const sheetText = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="Help sheet text"]')
+    expect(sheetText()).equals(null)
+    await press(help)
+    expect(sheetText()!.textContent).equals(
+      'Tap and hold a player to drag them to a new batting order. Tap or hold an inning slot to set a player’s position.'
+    )
+    await press(
+      document.querySelector<HTMLElement>('[aria-label="Dismiss sheet"]')
+    )
+    expect(sheetText()).equals(null)
+  })
+
+  it('draws an added inning’s number in red, and deletes that inning only once confirmed', async function () {
+    const filled: GamePlan = {
+      enabled: true,
+      innings: 8,
+      rows: LINEUP.map(player => ({
+        player,
+        cells: ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'RF']
+      }))
+    }
+    await mount({ plan: filled })
+    const red = getComputedStyle(
+      byId('Plan clear')!.querySelector('[dir="auto"]')!
+    ).color
+    const number = (inning: number): HTMLElement =>
+      byId(`Plan inning ${inning}`)!
+    for (const inning of [1, 6]) {
+      expect(number(inning).getAttribute('role'), `${inning}`).not.equals(
+        'button'
+      )
+      expect(
+        getComputedStyle(number(inning).firstElementChild!).color
+      ).not.equals(red)
+    }
+    for (const inning of [7, 8]) {
+      expect(number(inning).getAttribute('role')).equals('button')
+      expect(number(inning).getAttribute('aria-label')).equals(
+        `Delete inning ${inning}`
+      )
+      expect(getComputedStyle(number(inning).firstElementChild!).color).equals(
+        red
+      )
+    }
+    // Inning 1's number does nothing.
+    await press(number(1))
+    expect(document.querySelector('[aria-label="Delete inning 1?"]')).equals(
+      null
+    )
+    await press(number(7))
+    const sheet = document.querySelector<HTMLElement>(
+      '[aria-label="Delete inning 7?"]'
+    )!
+    expect(sheet.textContent).includes('Delete inning 7?')
+    // Red Delete first, the blue Cancel beneath it.
+    const actions = (): HTMLElement[] => [
+      ...document
+        .querySelector('[aria-label="Delete inning 7?"]')!
+        .querySelectorAll<HTMLElement>('[role="button"]')
+    ]
+    expect(actions().map(node => String(node.textContent))).deep.equals([
+      'Delete',
+      'Cancel'
+    ])
+    await press(actions().find(node => node.textContent === 'Cancel')!)
+    expect(document.querySelector('[aria-label="Delete inning 7?"]')).equals(
+      null
+    )
+    expect(latest.innings).equals(8)
+    await press(number(7))
+    await press(byId('Plan delete inning confirm'))
+    await settle()
+    // Inning 8 moves up to be inning 7.
+    expect(latest.innings).equals(7)
+    expect(cells()[0]).deep.equals(['P', 'C', '1B', '2B', '3B', 'SS', 'RF'])
+    expect(byId('Plan inning 8')).equals(null)
+    expect(latest.enabled).equals(true)
+  })
+
+  it('closes the picker, changing nothing, on a tap outside it on a phone and a click outside it on the web', async function () {
+    await mount({ os: 'ios' })
+    await press(byId('Plan cell 2-3'))
+    expect(picker()).not.equals(null)
+    await press(byId('Plan picker backdrop'))
+    expect(picker()).equals(null)
+    expect(cells()[1][2]).equals('')
+    await act(async () => {
+      root!.unmount()
+    })
+    root = undefined
+    host!.remove()
+    await mount()
+    expect(byId('Plan picker backdrop')).equals(null)
+    await focus(cell(2, 3))
+    expect(picker()).not.equals(null)
+    // A press on another cell, or on the picker, keeps it.
+    for (const inside of [cell(1, 1), picker()!]) {
+      await act(async () => {
+        inside.dispatchEvent(new window.Event('pointerdown', { bubbles: true }))
+      })
+      await settle()
+      expect(picker()).not.equals(null)
+    }
+    await act(async () => {
+      byId('Plan help row')!.dispatchEvent(
+        new window.Event('pointerdown', { bubbles: true })
+      )
+    })
+    await settle()
+    expect(picker()).equals(null)
+    expect(cells()[1][2]).equals('')
+  })
+
+  it('assigns on a phone by holding a picker position, whose enlarged box shows and follows the finger, and writes where it lets go', async function () {
+    await mount({ os: 'ios' })
+    const root = byId('Plan tab')!
+    const responder = (): ViewProps => propsWith(root, 'onResponderMove')
+    const enlarged = (): HTMLElement | null => byId('Plan pick enlarged')
+    const hold = async (target: string): Promise<void> => {
+      const props = propsWith(byId(`Plan pick ${target}`)!, 'onLongPress')
+      await act(async () => {
+        ;(props.onLongPress as (event: GestureResponderEvent) => void)(
+          touch(210, 110)
+        )
+      })
+      await settle()
+    }
+    const letGo = async (target: string): Promise<void> => {
+      const props = propsWith(byId(`Plan pick ${target}`)!, 'onPressOut')
+      await act(async () => {
+        ;(props.onPressOut as () => void)()
+      })
+      await settle()
+    }
+    // A plain tap shows no enlarged box.
+    await press(byId('Plan cell 1-2'))
+    placeTargets()
+    expect(enlarged()).equals(null)
+    // Held where it is and let go: written.
+    await hold('CF')
+    expect(enlarged()!.textContent).equals('CF')
+    expect(getComputedStyle(enlarged()!).pointerEvents).equals('none')
+    await letGo('CF')
+    expect(cells()[0][1]).equals('CF')
+    expect(picker()).equals(null)
+    expect(enlarged()).equals(null)
+    // Held on CF, then carried by the root down to LF: the box follows.
+    await press(byId('Plan cell 2-2'))
+    placeTargets()
+    await hold('CF')
+    await act(async () => {
+      responder().onResponderGrant!(touch(212, 112))
+    })
+    await letGo('CF')
+    // The first move measures the targets, the second finds LF under it.
+    for (let move = 0; move < 2; move++) {
+      await act(async () => {
+        responder().onResponderMove!(touch(140, 150))
+      })
+      await settle()
+    }
+    expect(enlarged()!.textContent).equals('LF')
+    await act(async () => {
+      responder().onResponderRelease!(touch(140, 150))
+    })
+    await settle()
+    expect(cells()[1][1]).equals('LF')
+    expect(picker()).equals(null)
+    expect(enlarged()).equals(null)
+    // The cell's own position, held and let go, takes it off, as a tap on
+    // it does.
+    await press(byId('Plan cell 1-2'))
+    placeTargets()
+    await hold('CF')
+    await letGo('CF')
+    expect(cells()[0][1]).equals('')
+    expect(picker()).equals(null)
   })
 
   it('judges a final game that stopped short on the innings it played', async function () {

@@ -152,11 +152,6 @@ export const enUs = {
   coach_box_score: 'Box Score',
   /** The coaching screen's tab for the per-inning game plan. */
   coach_plan_tab: 'Plan',
-  /** The Plan tab's instruction line, on the web and on a phone. */
-  coach_plan_instruction_web:
-    'Drag a player to change the batting order. Click a cell to set a position.',
-  coach_plan_instruction_phone:
-    'Drag a player to change the batting order. Tap a cell to set a position, or hold and drag onto the field.',
   /** Shown for five seconds after a save whose plan has warnings. */
   coach_plan_saved_warnings: 'Saved. Plan has %s.',
   /**
@@ -187,8 +182,10 @@ export const enUs = {
   roster_defense_help: 'Tap and drag players into positions.',
   /** The roster screen's Cancel, a red button left of the microphone. */
   roster_cancel: 'Cancel',
-  /** The toggle at the top of the Plan tab. */
-  plan_enable: 'Enable per-inning game plan',
+  /** The Plan tab's Help, left of its Clear, and the sheet it opens. */
+  plan_help_label: 'Plan help',
+  plan_help:
+    'Tap and hold a player to drag them to a new batting order. Tap or hold an inning slot to set a player\u2019s position.',
   plan_player_header: 'Player',
   plan_add_inning: 'Add inning',
   /** A cell's accessible name: the player, and the inning. */
@@ -207,6 +204,12 @@ export const enUs = {
   plan_clear_title: 'Clear the whole plan?',
   plan_clear_detail:
     'Every inning is emptied for every player. Nothing is saved until Save Rosters.',
+  /** An added inning's red number, and the confirmation it opens. */
+  plan_delete_inning_label: 'Delete inning %s',
+  plan_delete_inning_title: 'Delete inning %s?',
+  plan_delete_inning_detail:
+    'Its cells are removed for every player, and the innings after it move up. Nothing is saved until Save Rosters.',
+  plan_delete: 'Delete',
   game_replay: 'Replay',
   game_live: 'Live',
   replay_exit: 'Exit',

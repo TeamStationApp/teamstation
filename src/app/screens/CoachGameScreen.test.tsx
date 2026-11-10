@@ -1527,7 +1527,7 @@ describe('the coach’s game plan', function () {
     await waitFor(() => cell(1, 1) != null, 'the plan sheet')
   }
 
-  it('puts Plan in the pill after Defense, with its own instruction and no Choose Next Batter list', async function () {
+  it('puts Plan in the pill after Defense, with its Help and no instruction or Choose Next Batter list', async function () {
     const held = server({ coachSides: ['away'] })
     held.plans = { away: { ...HOME_PLAN, teamId: 'away' }, home: null }
     await coach(held, {
@@ -1557,18 +1557,60 @@ describe('the coach’s game plan', function () {
     await click('Plan', 'tab')
     expect(node('Plan', 'tab')!.getAttribute('aria-selected')).equals('true')
     expect(document.body.textContent)
-      .includes(
-        'Drag a player to change the batting order. Click a cell to set a position.'
-      )
+      .not.includes('Drag a player to change the batting order')
       .and.not.includes('Choose Next Batter')
       .and.not.includes('Tap to add to lineup.')
+    expect(document.querySelector('[data-testid="Plan help"]')).not.equals(null)
     expect(document.querySelector('[data-testid="Plan sheet"]')).not.equals(
       null
     )
-    // The away side's batting order, jersey first.
+    // The away side's batting order, name then jersey.
     expect(
       document.querySelector('[data-testid="Plan player 1"]')!.textContent
-    ).equals('#1 Owl 1')
+    ).equals('Owl 1 #1')
+  })
+
+  it('closes a phone’s picker, and only that, on a tap on the tabs or the bar around the sheet', async function () {
+    const originalOS = Platform.OS
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true })
+    const backdrop = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>(
+        '[data-testid="Plan picker screen backdrop"]'
+      )
+    const picker = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="Plan field picker"]')
+    try {
+      await plan(accepted())
+      expect(backdrop()).equals(null)
+      await act(async () => {
+        cell(2, 3).click()
+      })
+      await settle()
+      expect(picker()).not.equals(null)
+      // Over the tabs and the footer, as the sheet's own backdrop is over
+      // the sheet: a tap there closes the picker and stays on Plan.
+      expect(backdrop()!.getAttribute('aria-label')).equals('Close the field')
+      await act(async () => {
+        backdrop()!.click()
+      })
+      await settle()
+      expect(picker()).equals(null)
+      expect(backdrop()).equals(null)
+      expect(node('Plan', 'tab')!.getAttribute('aria-selected')).equals('true')
+      // Gone with the sheet when the tab changes under an open picker.
+      await act(async () => {
+        cell(2, 3).click()
+      })
+      await settle()
+      expect(backdrop()).not.equals(null)
+      await click('Lineup', 'tab')
+      expect(backdrop()).equals(null)
+    } finally {
+      Object.defineProperty(Platform, 'OS', {
+        value: originalOS,
+        configurable: true
+      })
+    }
   })
 
   it('lights Save for an edited plan and saves the plan alone, and the lineup first when both changed', async function () {
@@ -1587,7 +1629,8 @@ describe('the coach’s game plan', function () {
     expect(held.writes).deep.equals(['plan'])
     const sent = held.savedPlans[0]
     expect(sent.innings).equals(6)
-    expect(sent.enabled).equals(false)
+    // A plan holding a position is on.
+    expect(sent.enabled).equals(true)
     expect(sent.rows.map(row => row.player.gumboId)).deep.equals([
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
@@ -1769,7 +1812,7 @@ describe('the coach’s game plan', function () {
           document.querySelector(`[data-testid="Plan player ${n}"]`)!
             .textContent
       )
-    ).deep.equals(['#3 Hawk 3', '#2 Hawk 2', '#1 Hawk 1'])
+    ).deep.equals(['Hawk 3 #3', 'Hawk 2 #2', 'Hawk 1 #1'])
     expect([cell(1, 1).value, cell(3, 1).value]).deep.equals(['1B', ''])
     await click('Save Rosters')
     await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
@@ -1837,7 +1880,7 @@ describe('the coach’s game plan', function () {
     await waitFor(() => cell(1, 1)?.value === '1B', 'his reorder')
     expect(
       document.querySelector('[data-testid="Plan player 1"]')!.textContent
-    ).equals('#3 Hawk 3')
+    ).equals('Hawk 3 #3')
     expect(saveDisabled()).equals(true)
     await click('Back')
     expect(document.body.textContent).not.includes(

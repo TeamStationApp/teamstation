@@ -23,10 +23,13 @@ export const PLAN_ROW_HEIGHT = 44
 export const PLAN_HEADER_HEIGHT = 32
 /** The batting slot's number, left of the player. */
 export const PLAN_SLOT_WIDTH = 24
-/** The player, "#27 Ruth", wide enough for six innings beside it on a phone. */
+/** The player, "Ruth #27", wide enough for six innings beside it on a phone. */
 export const PLAN_PLAYER_WIDTH = 136
-/** The field picker's card. */
-export const PLAN_PICKER_WIDTH = 320
+/**
+ * The field picker's card: 15% narrower than the 320 points it was, which
+ * leaves its field in the 3:2 of the field's art.
+ */
+export const PLAN_PICKER_WIDTH = 272
 export const PLAN_PICKER_HEIGHT = 262
 /** Space between the picker and the row it edits. */
 const PICKER_GAP = 4

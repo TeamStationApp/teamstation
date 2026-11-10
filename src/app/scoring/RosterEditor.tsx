@@ -447,6 +447,9 @@ export function RosterEditor({
   const [areaHeight, setAreaHeight] = useState(0)
   const [gridWidth, setGridWidth] = useState(0)
   const [helping, setHelping] = useState(false)
+  // The phone's plan picker's close while it is open: a tap on the tabs or
+  // the bar around the sheet closes it rather than acting.
+  const [closePlanPicker, setClosePlanPicker] = useState<() => void>()
   /** The footer's height, which the dictation chat's overlay stays above. */
   const [footerHeight, setFooterHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
@@ -782,7 +785,8 @@ export function RosterEditor({
       .map((id, at) => ({
         id,
         player: players[at],
-        label: `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
+        name: names[id].fullName,
+        jersey: names[id].jersey
       }))
   }, [draft, side, team.battingOrder, names])
   const place = (id: number, index: number, boundary = false): void => {
@@ -1012,15 +1016,13 @@ export function RosterEditor({
         {mode === 'editRoster' ? (
           <GameRosterHeader information={coach} />
         ) : (
-          // Defense has a Help button on its field instead.
+          // Defense has a Help button on its field instead, and Plan one
+          // above its sheet.
           !boxScore &&
-          !defense && (
+          !defense &&
+          !planning && (
             <Text style={text}>
-              {planning
-                ? Platform.OS === 'web'
-                  ? lstrings.coach_plan_instruction_web
-                  : lstrings.coach_plan_instruction_phone
-                : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+              Tap to add to lineup. Hold briefly, then drag to reorder.
             </Text>
           )
         )}
@@ -1050,7 +1052,13 @@ export function RosterEditor({
         </View>
       )}
       {planning && (
-        <View style={{ flex: 1, minHeight: 0 }}>
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            zIndex: closePlanPicker == null ? undefined : 2
+          }}
+        >
           {plan == null || planContext == null ? (
             <ScoringError message={lstrings.coach_plan_load_failed} />
           ) : (
@@ -1069,9 +1077,27 @@ export function RosterEditor({
                 place(id, team.battingOrder.indexOf(id) + delta)
               }}
               locked={locked}
+              onPicker={close => {
+                setClosePlanPicker(() => close)
+              }}
             />
           )}
         </View>
+      )}
+      {planning && closePlanPicker != null && (
+        <Pressable
+          testID="Plan picker screen backdrop"
+          accessibilityLabel={lstrings.plan_close_picker}
+          onPress={closePlanPicker}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 1
+          }}
+        />
       )}
       <View
         style={{

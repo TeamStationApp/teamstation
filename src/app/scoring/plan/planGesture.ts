@@ -42,6 +42,41 @@ export function pickerHit(
   return targets.find(target => contains(target.rect, point))?.value ?? null
 }
 
+/** The enlarged box is half as large again as the target it shows. */
+export const ENLARGED_SCALE = 1.5
+/** Its bottom edge sits this share of the target's height above the target. */
+export const ENLARGED_LIFT = 0.75
+
+const clamp = (value: number, low: number, high: number): number =>
+  Math.max(low, Math.min(high, value))
+
+/**
+ * Where the enlarged box of a held or hovered target is drawn: 1.5 times its
+ * size, centred over it, its bottom edge three quarters of the target's
+ * height above the target's top, so a finger on the target never hides it,
+ * and kept inside `bounds`. It is only drawn: `pickerHit` tests the targets
+ * themselves, so a finger moving up under the box still reaches the targets
+ * it covers.
+ */
+export function enlargedRect(target: PlanRect, bounds: PlanRect): PlanRect {
+  const width = target.width * ENLARGED_SCALE
+  const height = target.height * ENLARGED_SCALE
+  return {
+    x: clamp(
+      target.x + (target.width - width) / 2,
+      bounds.x,
+      bounds.x + bounds.width - width
+    ),
+    y: clamp(
+      target.y - ENLARGED_LIFT * target.height - height,
+      bounds.y,
+      bounds.y + bounds.height - height
+    ),
+    width,
+    height
+  }
+}
+
 export interface AssignDrag {
   cell: PlanCellAddress
   start: PlanPoint
@@ -50,11 +85,16 @@ export interface AssignDrag {
   moved: boolean
 }
 
+/**
+ * A hold begun: on a cell, over nothing yet; on one of the picker's
+ * targets, over that target.
+ */
 export function startAssignDrag(
   cell: PlanCellAddress,
-  start: PlanPoint
+  start: PlanPoint,
+  over: PlanCell | null = null
 ): AssignDrag {
-  return { cell, start, over: null, moved: false }
+  return { cell, start, over, moved: false }
 }
 
 export function moveAssignDrag(

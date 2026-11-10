@@ -23,8 +23,21 @@
 // onto C, which it then reads, and drags again off the picture, which
 // changes nothing. S3 holds a player and drags him down two rows: his innings
 // move with him and the Lineup tab bats him there too. S2 and S3 are drags of
-// W3C touch actions through this daemon's WebDriverAgent, recorded by
-// `xcrun simctl io recordVideo` into `coach-plan-phone-drag.mp4`.
+// W3C touch actions through this daemon's WebDriverAgent, recorded on a
+// simulator by `xcrun simctl io recordVideo` into `coach-plan-phone-drag.mp4`.
+//
+// S8, on the same game, opens the picker and taps the Lineup tab, then the
+// Box Score pill, above the sheet: each tap closes the picker and does
+// nothing else. The Plan tab stays, and no cell changes.
+//
+// S6 and S7 hold on the Plan tab's picker, recorded on a simulator by `xcrun
+// simctl io recordVideo` into `plan-picker-enlarged.mp4`, and read through
+// `simctl` screenshots taken while the gesture runs. S6 holds SS: its
+// enlarged box, half as large again, shows above it, its bottom three
+// quarters of a box above SS, and letting go writes SS. S7 holds a cell and
+// drags up through C, then P (under C's enlarged box), to SS: the enlarged
+// box follows each, and letting go over SS writes it. On a phone, which
+// `simctl` does not know, only what they write is checked.
 //
 // S4: the roster footer bar lowers ten points into the 34-point bottom inset
 // of an iPhone 16 Pro, on the coaching screen (whose root pads the inset and
@@ -48,12 +61,14 @@
 //
 // The microphone is drawn only when the API dictates; no scenario presses it.
 import assert from 'node:assert/strict'
-import { execFileSync, spawn } from 'node:child_process'
+import { execFile, execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 import type { LineupFixture } from '../../server/dev/lineupFixture'
+import { decodeRaster, type Raster } from '../../test/rasterImage'
 
 interface Bounds {
   x: number
@@ -187,7 +202,9 @@ async function main(): Promise<void> {
   assert((await fetch(`${api}/health`)).ok, `${api} answers`)
   const password = required('TS_LINEUP_PASSWORD')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
-  const only = (process.env.TEST_ONLY ?? 'S1,S2,S3,S4,S5,D4,D3').split(',')
+  const only = (process.env.TEST_ONLY ?? 'S1,S8,S2,S3,S6,S7,S4,S5,D4,D3').split(
+    ','
+  )
   await mkdir(artifacts, { recursive: true })
   const requireClient = createRequire(
     join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -441,10 +458,15 @@ async function main(): Promise<void> {
       }
     }
 
-    if (only.some(id => ['S1', 'S2', 'S3'].includes(id))) {
+    if (only.some(id => ['S1', 'S8', 'S2', 'S3'].includes(id))) {
       const fixture = lineupFixture(password)
       await coachGame(fixture)
       await m.tapOn({ text: 'Plan', timeout: 15000 })
+      // The sheet's cells take a moment to reach the hierarchy.
+      for (let tries = 0; tries < 10; tries++) {
+        if ((await all()).some(n => n.id === 'Plan cell 1-1')) break
+        await pause(1000)
+      }
       await byId('Plan cell 1-1')
       await m.waitForAnimationToEnd()
       await closeWarnings()
@@ -469,31 +491,43 @@ async function main(): Promise<void> {
         )
         finished.add('S1')
       }
+      if (only.includes('S8')) {
+        const picking = async (): Promise<boolean> =>
+          (await all()).some(n => n.id === 'Plan field picker')
+        const held = await cellValue(4, 3)
+        for (const target of ['Lineup', 'Box Score']) {
+          await m.tapOn({ id: 'Plan cell 4-3' })
+          await pause(1200)
+          check(await picking(), `S8: the picker opens before ${target}`)
+          // The header's own control, above the sheet.
+          const control = (await all()).find(
+            n => label(n) === target && n.bounds != null && n.bounds.y < 300
+          )
+          assert(control != null, `S8: ${target} is on screen`)
+          await m.tapOnPoint(centre(control.bounds!))
+          await pause(1500)
+          check(!(await picking()), `S8: a tap on ${target} closes the picker`)
+          check(
+            (await all()).some(n => n.id === 'Plan cell 1-1'),
+            `S8: a tap on ${target} stays on the Plan tab`
+          )
+        }
+        check((await cellValue(4, 3)) === held, 'S8: no cell changed')
+        finished.add('S8')
+      }
 
-      const recording =
+      const stop =
         only.includes('S2') || only.includes('S3')
-          ? spawn(
-              'xcrun',
-              [
-                'simctl',
-                'io',
-                device,
-                'recordVideo',
-                '--force',
-                join(artifacts, 'coach-plan-phone-drag.mp4')
-              ],
-              { stdio: 'ignore' }
-            )
+          ? await record('coach-plan-phone-drag.mp4')
           : undefined
       try {
-        if (recording != null) await pause(1500)
         if (only.includes('S2')) {
           // Where C is drawn for this cell: the picker opens at the same
           // place for it every time.
           await m.tapOn({ id: 'Plan cell 3-2' })
           await pause(800)
           const catcher = centre((await byId('Plan pick C')).bounds!)
-          const toggle = centre((await byId('Plan toggle row')).bounds!)
+          const helpRow = centre((await byId('Plan help row')).bounds!)
           await m.tapOn({ id: 'Plan picker close' })
           await pause(600)
           const cell = centre((await byId('Plan cell 3-2')).bounds!)
@@ -501,8 +535,8 @@ async function main(): Promise<void> {
           const value = await cellValue(3, 2)
           console.log(`S2 cell 3-2 after the drag onto C: ${value}`)
           check(value === 'C', 'S2: holding and dragging onto C writes C')
-          // Off the picture: the toggle row above the sheet.
-          await holdAndDrag(cell, toggle)
+          // Off the picture: the Help row above the sheet.
+          await holdAndDrag(cell, helpRow)
           const kept = await cellValue(3, 2)
           console.log(`S2 cell 3-2 after the drag off it: ${kept}`)
           check(kept === 'C', 'S2: letting go off the picture changes nothing')
@@ -513,7 +547,7 @@ async function main(): Promise<void> {
           finished.add('S2')
         }
         if (only.includes('S3')) {
-          // The player column's names, "#3 Alonso", top to bottom.
+          // The player column's names, "Alonso #3", top to bottom.
           const players = async (): Promise<string[]> => {
             const column = (await byId('Plan player 1')).bounds!
             return [
@@ -523,7 +557,7 @@ async function main(): Promise<void> {
                     n =>
                       n.bounds != null &&
                       n.bounds.x < column.x + column.width &&
-                      /^#\d+ /.test(label(n))
+                      / #\d+$/.test(label(n))
                   )
                   .sort((a, b) => a.bounds!.y - b.bounds!.y)
                   .map(label)
@@ -570,11 +604,225 @@ async function main(): Promise<void> {
           finished.add('S3')
         }
       } finally {
-        if (recording != null) {
-          await pause(1000)
-          recording.kill('SIGINT')
-          await new Promise(resolve => recording.once('exit', resolve))
+        await stop?.()
+      }
+    }
+
+    if (only.includes('S6') || only.includes('S7')) {
+      const fixture = lineupFixture(password)
+      await coachGame(fixture)
+      await m.tapOn({ text: 'Plan', timeout: 15000 })
+      // The sheet's cells take a moment to reach the hierarchy.
+      for (let tries = 0; tries < 10; tries++) {
+        if ((await all()).some(n => n.id === 'Plan cell 1-1')) break
+        await pause(1000)
+      }
+      await byId('Plan cell 1-1')
+      await m.waitForAnimationToEnd()
+      await closeWarnings()
+      /**
+       * Where the picker draws a target, and where its enlarged box goes:
+       * 1.5 times its size, centred over it, its bottom three quarters of
+       * the target's height above it, kept inside the card's border.
+       */
+      const enlarged = (target: Bounds, card: Bounds): Bounds => {
+        const width = target.width * 1.5
+        const height = target.height * 1.5
+        const inside = { x: card.x + 1, y: card.y + 1 }
+        return {
+          x: Math.min(
+            Math.max(target.x + (target.width - width) / 2, inside.x),
+            card.x + card.width - 1 - width
+          ),
+          y: Math.max(target.y - 0.75 * target.height - height, inside.y),
+          width,
+          height
         }
+      }
+      /** The cell's picker, opened by a tap, its targets read, and closed. */
+      const pickerOf = async (
+        row: number,
+        inning: number,
+        targets: string[]
+      ): Promise<{ card: Bounds; at: Record<string, Bounds> }> => {
+        await m.tapOn({ id: `Plan cell ${row}-${inning}` })
+        await pause(800)
+        const card = (await byId('Plan field picker')).bounds!
+        const at: Record<string, Bounds> = {}
+        for (const target of targets)
+          at[target] = (await byId(`Plan pick ${target}`)).bounds!
+        await m.tapOn({ id: 'Plan picker close' })
+        await pause(600)
+        return { card, at }
+      }
+      /**
+       * Screenshots taken one after another while `gesture` runs: the
+       * gesture holds WebDriverAgent, so the frames come from `simctl`. A
+       * phone, which `simctl` does not know, gives none: only what the
+       * gesture writes is checked there.
+       */
+      const framesDuring = async (
+        gesture: Promise<void>
+      ): Promise<Array<Raster & { png: Buffer }>> => {
+        const frames: Array<Raster & { png: Buffer }> = []
+        if (!simulator) {
+          await gesture
+          console.log('frames skipped: a phone has no simctl screenshots')
+          return frames
+        }
+        const state = { done: false }
+        const finished = gesture.finally(() => {
+          state.done = true
+        })
+        const path = join(artifacts, 'plan-picker-frame.png')
+        while (!state.done) {
+          await promisify(execFile)('xcrun', [
+            'simctl',
+            'io',
+            device,
+            'screenshot',
+            path
+          ])
+          const png = await readFile(path)
+          frames.push({ ...decodeRaster(png), png })
+        }
+        await finished
+        return frames
+      }
+      /** A frame's colour at a point, in points. */
+      const colour = (frame: Raster, x: number, y: number): number[] => {
+        const scale = frame.width / WINDOW_WIDTH
+        const at =
+          (Math.round(y * scale) * frame.width + Math.round(x * scale)) * 4
+        return [...frame.data.subarray(at, at + 3)]
+      }
+      const same = (a: number[], b: number[]): boolean =>
+        a.every((value, at) => Math.abs(value - b[at]) <= 16)
+      /**
+       * Whether a frame draws `target`'s enlarged box where it belongs: its
+       * fill, the colour of the cell's own lit value `lit`, near its left
+       * and right ends and just above its bottom edge, and not in the gap
+       * between it and the target.
+       */
+      const shows = (
+        frame: Raster,
+        target: Bounds,
+        card: Bounds,
+        lit: Bounds
+      ): boolean => {
+        const box = enlarged(target, card)
+        const fill = colour(frame, lit.x + 6, lit.y + lit.height / 2)
+        const middle = box.y + box.height / 2
+        return (
+          same(colour(frame, box.x + 5, middle), fill) &&
+          same(colour(frame, box.x + box.width - 5, middle), fill) &&
+          same(colour(frame, box.x + 5, box.y + box.height - 3), fill) &&
+          !same(
+            colour(frame, box.x + 5, target.y - 0.375 * target.height),
+            fill
+          )
+        )
+      }
+      const stop = await record('plan-picker-enlarged.mp4')
+      try {
+        if (only.includes('S6')) {
+          // The cell holds LF, which its picker lights in the box's colour.
+          await m.tapOn({ id: 'Plan cell 2-3' })
+          await pause(800)
+          await m.tapOn({ id: 'Plan pick LF' })
+          await pause(800)
+          const { card, at } = await pickerOf(2, 3, ['SS', 'LF'])
+          await m.tapOn({ id: 'Plan cell 2-3' })
+          await pause(800)
+          const ss = centre(at.SS)
+          const frames = await framesDuring(
+            touch([
+              { ...ss, ms: 0 },
+              { x: ss.x, y: ss.y + 1, ms: 2500 },
+              { x: ss.x, y: ss.y + 1, ms: 300 }
+            ])
+          )
+          const shown = frames.filter(frame => shows(frame, at.SS, card, at.LF))
+          console.log(
+            `S6 frames: ${frames.length}, showing SS enlarged: ${shown.length}`
+          )
+          if (simulator)
+            check(
+              shown.length > 0,
+              'S6: holding SS shows its enlarged box above it, its bottom 0.75 of a box above SS'
+            )
+          if (shown.length > 0)
+            await writeFile(
+              join(artifacts, 'plan-picker-enlarged-S6.png'),
+              shown[0].png
+            )
+          const value = await cellValue(2, 3)
+          console.log(`S6 cell 2-3 after letting go of SS: ${value}`)
+          check(value === 'SS', 'S6: letting go of the held SS writes SS')
+          check(
+            !(await all()).some(n => n.id === 'Plan field picker'),
+            'S6: the picker closes'
+          )
+          finished.add('S6')
+        }
+        if (only.includes('S7')) {
+          await m.tapOn({ id: 'Plan cell 3-4' })
+          await pause(800)
+          await m.tapOn({ id: 'Plan pick LF' })
+          await pause(800)
+          const { card, at } = await pickerOf(3, 4, ['C', 'P', 'SS', 'LF'])
+          const cell = centre((await byId('Plan cell 3-4')).bounds!)
+          const [c, p, ss] = [centre(at.C), centre(at.P), centre(at.SS)]
+          // Held on the cell, then up through C and P to SS, resting on each.
+          const frames = await framesDuring(
+            touch([
+              { ...cell, ms: 0 },
+              { x: cell.x, y: cell.y + 2, ms: 1000 },
+              { ...c, ms: 800 },
+              { ...c, ms: 1800 },
+              { ...p, ms: 600 },
+              { ...p, ms: 1800 },
+              { ...ss, ms: 600 },
+              { ...ss, ms: 1800 }
+            ])
+          )
+          const hovered = frames.map(frame =>
+            (['C', 'P', 'SS'] as const).filter(target =>
+              shows(frame, at[target], card, at.LF)
+            )
+          )
+          console.log(
+            `S7 frames: ${hovered.map(each => (each.length === 0 ? '-' : each.join('+'))).join(' ')}`
+          )
+          // The first frame from `from` on that shows `target`. On its way to
+          // C the finger can cross P, which a frame may catch, so P counts
+          // only once C has shown, and SS once P has after it.
+          const next = (target: 'C' | 'P' | 'SS', from: number): number => {
+            const at = hovered.findIndex(
+              (each, index) => index >= from && each.includes(target)
+            )
+            return at < 0 ? Infinity : at
+          }
+          const toC = next('C', 0)
+          const toP = next('P', toC + 1)
+          if (simulator)
+            check(
+              next('SS', toP + 1) < Infinity,
+              'S7: the enlarged box follows the finger from C to P to SS'
+            )
+          // C's enlarged box covers P: P was reached under it.
+          const cBox = enlarged(at.C, card)
+          check(
+            cBox.y < at.P.y + at.P.height && cBox.y + cBox.height > at.P.y,
+            'S7: C’s enlarged box covers P, which the finger still reached'
+          )
+          const value = await cellValue(3, 4)
+          console.log(`S7 cell 3-4 after letting go over SS: ${value}`)
+          check(value === 'SS', 'S7: SS is reached and written on letting go')
+          finished.add('S7')
+        }
+      } finally {
+        await stop()
       }
     }
 

@@ -1,7 +1,8 @@
-import { execFileSync } from 'node:child_process'
+import { execFile, execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import { promisify } from 'node:util'
 
 // The functions puppeteer runs in the page are transpiled by sucrase, which
 // turns ?. and ?? into helpers the page does not have: they use neither.
@@ -48,7 +49,9 @@ import {
  * `coach-box-<phase>.png`, `defense-coach-<phase>.png`,
  * `defense-scorekeeper-<phase>.png`, `plan-tab-<phase>.png`,
  * `plan-picker-<phase>.png` and `dictation-overlay-<phase>.png` (and, once
- * the Defense tab has its Help, `defense-help-sheet.png`) into
+ * the Defense tab has its Help, `defense-help-sheet.png`, and once the Plan
+ * tab has its, an added inning in `plan-tab-after.png`,
+ * `plan-help-sheet.png` and `plan-delete-inning.png`) into
  * `TS_LINEUP_ARTIFACTS`, where the phase is `TS_ARTIFACT_PHASE` (`after` by
  * default). They read only what both the old and the new screens have: the
  * `Coach` pill, a tab named `Box` or `Box Score`, the `Defense` and `Plan`
@@ -72,9 +75,14 @@ import {
  * Cancel, a red button as large as Save Rosters, left of the microphone on
  * Save Rosters' row; P3 reads the coach's Defense field, whose nine cards
  * sit on six rows with names at 13.75 points; P4 to P9 work the Plan tab:
- * its grid (P4), typing and pasting into a cell (P5), the field picker (P6),
- * moving a player's row (P7), the live playing-time warnings and the save's
- * summary (P8), and Clear (P9); P10 scores the game with the plan on and
+ * its grid, each player named then numbered (P4), typing and pasting into a
+ * cell (P5), the field picker (P6), moving a player's row (P7), the live
+ * playing-time warnings and the save's summary (P8), and Clear, at the top
+ * (P9); P15 finds Help left of Clear above the sheet, no toggle and no Clear
+ * below, and Help's sheet as tall as its words; P16 deletes an added
+ * inning, whose number is red, once confirmed; P17 measures the picker:
+ * 15% narrower, P on the mound and the infielders slid along their base
+ * paths, closed by a click outside it; P10 scores the game with the plan on and
  * then with no positions in it, ending halves from the scoring menu, and
  * reads the defence the game stores after each inning's end, with a
  * mid-game edit of the plan made while the scoring screen is open; P11 finds the
@@ -82,8 +90,9 @@ import {
  * as P2 and P3 do. P12 fits the footer on a 320-point screen; P13 has the
  * scorekeeper reorder the lineup over the API after the coach's plan is
  * saved, and finds the coach's screen opening clean, Back asking nothing.
- * P14 has the head coach turn his plan on and save before the first pitch,
- * and reads the defence the game's lineup starts in: the plan's inning 1.
+ * P14 has the head coach fill his empty plan's inning 1 from the picker,
+ * which turns it on, and save before the first pitch, and reads the defence
+ * the game's lineup starts in: the plan's inning 1.
  * P2 and P11 need a server that dictates, so the bar draws
  * its microphone; no scenario presses it. P4, P5 and P8 save
  * `coach-plan.png`, `coach-plan-picker-web.png` and
@@ -126,6 +135,20 @@ const centre = (box: Box): Point => ({
   x: box.x + box.width / 2,
   y: box.y + box.height / 2
 })
+/**
+ * A Lineup tab card's text, "≡ 1. #1 Ohtani ×", as the Plan tab names the
+ * player: "Ohtani #1".
+ */
+const planName = (lineupCard: string): string => {
+  const card = lineupCard
+    .replace(/^≡?\s*\d+\.\s*/, '')
+    .replace(/×$/, '')
+    .trim()
+  const numbered = /^#(\d+) (.+)$/.exec(card)
+  return numbered == null ? card : `${numbered[2]} #${numbered[1]}`
+}
+/** A Plan tab row's player without his jersey: "Ohtani #1" is "Ohtani". */
+const unnumbered = (row: string): string => row.replace(/ #\d+$/, '')
 interface Footer {
   bar: Box
   /** Cancel's word and Save Rosters' word, inside their buttons. */
@@ -155,14 +178,20 @@ function cardRows(cards: Record<string, FieldCard>): string[][] {
   return rows.map(row => row.positions)
 }
 
-/** A new game, its rosters and the people who use it. */
-function lineupFixture(): LineupFixture {
-  const out = execFileSync(
+/**
+ * A new game, its rosters and the people who use it. The fixture takes
+ * longer than the API keeps an idle connection open, so it runs beside the
+ * event loop, not blocking it: blocked, `fetch` never hears the API close
+ * the connection the last request left idle, and the next request goes out
+ * on it and is reset.
+ */
+async function lineupFixture(): Promise<LineupFixture> {
+  const { stdout } = await promisify(execFile)(
     'npm',
     ['run', '--silent', 'lineup-fixture', '--', '--password', PASSWORD],
     { encoding: 'utf8' }
   )
-  return JSON.parse(out) as LineupFixture
+  return JSON.parse(stdout) as LineupFixture
 }
 
 const tokens = new Map<string, string>()
@@ -523,6 +552,17 @@ class Browser {
     return await text!.evaluate(node => String(node.textContent))
   }
 
+  /** The Plan tab's Help pressed, and its sheet up. */
+  async planHelpSheet(): Promise<string> {
+    await this.tap('Plan help')
+    const text = await this.page.waitForSelector(
+      '[data-testid="Help sheet text"]',
+      { visible: true, timeout: 15000 }
+    )
+    await this.session.m.waitForAnimationToEnd()
+    return await text!.evaluate(node => String(node.textContent))
+  }
+
   /** The help sheet closed by a tap on the backdrop above it. */
   async closeHelpSheet(): Promise<void> {
     const sheet = await this.box('[data-testid="Scoring sheet"]')
@@ -846,7 +886,7 @@ describe('Coach Plan', function () {
 
   it('captures the coach Box Score and Defense tabs and the scorekeeper roster sheet', async function () {
     if (!CAPTURING && ARTIFACTS == null) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.tapCss(BOX_SCORE)
@@ -889,18 +929,38 @@ describe('Coach Plan', function () {
 
   it('captures the coach Plan tab, holding P8’s plan, and its picker', async function () {
     if (!CAPTURING && ARTIFACTS == null) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await teamRules(fixture, P8_RULES)
     await savePlan(fixture, HOME_PLAN)
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.plan()
+    // The branch's Plan tab, which has Help, shows an added inning's red
+    // number too.
+    const branch = (await coach.page.$('[data-testid="Plan help"]')) != null
+    if (branch) {
+      await coach.tapCss('[data-testid="Plan add inning"]')
+      await coach.page.waitForSelector('[data-testid="Plan inning 7"]')
+    }
     await coach.tallShot(`plan-tab-${PHASE}.png`, '[data-testid="Plan scroll"]')
     await coach.click('[data-testid="Plan cell 1-1"]')
     await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
       visible: true
     })
     await coach.shot(`plan-picker-${PHASE}.png`)
+    if (!branch) return
+    await coach.page.keyboard.press('Escape')
+    await coach.page.waitForFunction(
+      () => document.querySelector('[data-testid="Plan field picker"]') == null
+    )
+    await coach.planHelpSheet()
+    await coach.shot('plan-help-sheet.png')
+    await coach.closeHelpSheet()
+    await coach.tapCss('[data-testid="Plan inning 7"]')
+    await coach.page.waitForSelector('[aria-label="Delete inning 7?"]', {
+      visible: true
+    })
+    await coach.shot('plan-delete-inning.png')
   })
 
   it('captures the roster chat on the Defense tab, on its fixture page', async function () {
@@ -931,7 +991,7 @@ describe('Coach Plan', function () {
 
   it('D1 puts Help and Clear in the field’s top corners, drops the instruction and Roster header, runs the roster cards edge to edge, and halves the Box Score gap', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     /** The Defense tab as D1 reads it, for the coach or the scorekeeper. */
     const check = async (who: string, baseRosterTop: number): Promise<void> => {
       const layout = await coach.defenseLayout()
@@ -1058,7 +1118,7 @@ describe('Coach Plan', function () {
 
   it('D4 drops a bench player anywhere on the box a fielder left', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.defense()
@@ -1091,7 +1151,7 @@ describe('Coach Plan', function () {
 
   it('P1 puts Box Score in a pill of its own above Roster, Lineup, Defense and Plan, none of them chosen', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     const read = async (): Promise<{
@@ -1147,7 +1207,7 @@ describe('Coach Plan', function () {
 
   it('P2 puts the coach’s Cancel left of the microphone, on Save Rosters’ row', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.tap('Lineup', 'tab')
@@ -1160,7 +1220,7 @@ describe('Coach Plan', function () {
 
   it('P3 lays the coach’s Defense field out on six rows with larger names', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.defense()
@@ -1228,9 +1288,9 @@ describe('Coach Plan', function () {
     }
   })
 
-  it('P4 lists the lineup in order, jersey first, in two-character inning columns that scroll sideways', async function () {
+  it('P4 lists the lineup in order, name then jersey, in two-character inning columns that scroll sideways', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.tap('Lineup', 'tab')
@@ -1241,16 +1301,9 @@ describe('Coach Plan', function () {
     await coach.plan()
     const players = await coach.planPlayers()
     expect(players).has.length(9)
-    // "≡ 1. #1 Ohtani ×" on the Lineup tab is "#1 Ohtani" here, in order.
-    expect(players).deep.equals(
-      lineup.map(text =>
-        text
-          .replace(/^≡?\s*\d+\.\s*/, '')
-          .replace(/×$/, '')
-          .trim()
-      )
-    )
-    for (const player of players) expect(player).match(/^#\d+ \S/)
+    // "≡ 1. #1 Ohtani ×" on the Lineup tab is "Ohtani #1" here, in order.
+    expect(players).deep.equals(lineup.map(planName))
+    for (const player of players) expect(player).match(/^\S.* #\d+$/)
     const columns = await coach.page.evaluate(() => {
       const cell = document.querySelector('[data-testid="Plan cell 1-1"]')!
       // Two characters of the cell's own font.
@@ -1305,7 +1358,7 @@ describe('Coach Plan', function () {
 
   it('P5 selects a clicked cell’s text, opens the picker, takes values a key at a time and refuses X and a pasted SSS', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.page.browserContext().setPermission(
       new URL(APP).origin,
@@ -1321,7 +1374,7 @@ describe('Coach Plan', function () {
     await coach.page.keyboard.type('c')
     expect(await coach.cell(1, 1)).equals('C')
     // Clicked again, the cell's text is selected and the picker opens.
-    await coach.click('[data-testid="Plan toggle row"]')
+    await coach.click('[data-testid="Plan help row"]')
     await coach.page.waitForFunction(
       () => document.querySelector('[data-testid="Plan field picker"]') == null
     )
@@ -1386,7 +1439,7 @@ describe('Coach Plan', function () {
 
   it('P6 writes the position clicked on the picker, and does nothing on hover', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.plan()
@@ -1418,7 +1471,7 @@ describe('Coach Plan', function () {
 
   it('P7 moves a player’s row, every inning with it, by dragging him above the first', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await savePlan(fixture, HOME_PLAN)
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
@@ -1463,12 +1516,12 @@ describe('Coach Plan', function () {
       '[data-roster-target^="lineup-"][data-roster-player]',
       nodes => nodes.map(node => String(node.textContent))
     )
-    expect(lineup[0]).includes(players[2])
-    expect(lineup[1]).includes(players[0])
+    expect(planName(lineup[0])).equals(players[2])
+    expect(planName(lineup[1])).equals(players[0])
     // Saved with the lineup alone changed: the stored plan's rows follow it,
     // so the next game's Rotate Leadoff reads the new leadoff.
     await coach.tap('Save Rosters')
-    const moved = players[2].replace(/^#\d+ /, '')
+    const moved = unnumbered(players[2])
     const deadline = Date.now() + 30000
     let stored: GamePlan | null = null
     while (stored?.rows[0]?.player.fullName !== moved) {
@@ -1498,7 +1551,7 @@ describe('Coach Plan', function () {
 
   it('P8 warns as the plan breaks the rules, before Save, follows a moved row, and summarises the save', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await teamRules(fixture, P8_RULES)
     await savePlan(fixture, HOME_PLAN)
     await coach.as(fixture, 'headCoach')
@@ -1506,8 +1559,8 @@ describe('Coach Plan', function () {
     await coach.plan()
     const players = await coach.planPlayers()
     // Marte sits the fifth and sixth: two in a row, and more than one.
-    const marte = players[4].replace(/^#\d+ /, '')
-    const senga = players[8].replace(/^#\d+ /, '')
+    const marte = unnumbered(players[4])
+    const senga = unnumbered(players[8])
     const opened = await coach.warnings()
     expect(
       opened.some(line => line.startsWith('red ') && line.includes(marte))
@@ -1523,16 +1576,19 @@ describe('Coach Plan', function () {
       line.startsWith('red noConsecutiveSits')
     )!
     expect(consecutive).includes(`${marte}, ${senga}`)
-    // Above Clear.
+    // Under the sheet, whose Clear is above it.
     const order = await coach.page.evaluate(() => {
-      const warnings = document.querySelector('[data-testid="Plan warnings"]')!
-      const clear = document.querySelector('[data-testid="Plan clear"]')!
-      return (
-        warnings.getBoundingClientRect().bottom <=
-        clear.getBoundingClientRect().top
-      )
+      const top = (css: string): number =>
+        document.querySelector(css)!.getBoundingClientRect().top
+      const sheet = document
+        .querySelector('[data-testid="Plan sheet"]')!
+        .getBoundingClientRect()
+      return [
+        top('[data-testid="Plan clear"]') < sheet.top,
+        top('[data-testid="Plan warnings"]') >= sheet.bottom
+      ]
     })
-    expect(order).equals(true)
+    expect(order).deep.equals([true, true])
     // Season tracking never warns in red.
     for (const line of benched)
       expect(line).not.match(
@@ -1567,7 +1623,7 @@ describe('Coach Plan', function () {
     expect(
       moved.find(line => line.startsWith('red noConsecutiveSits'))
     ).includes(`${senga}, ${marte}`)
-    // The toggle, the grid and the warnings above Clear, in one frame.
+    // Help and Clear, the grid and the warnings under it, in one frame.
     await coach.tallShot('coach-plan.png', '[data-testid="Plan scroll"]')
     // Saved anyway, and summarised. Before the first pitch the plan he
     // follows sets the defence from its inning 1, and the notice says so.
@@ -1598,15 +1654,16 @@ describe('Coach Plan', function () {
 
   it('P9 asks before clearing: Cancel keeps every cell, Clear empties them', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await savePlan(fixture, HOME_PLAN)
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.plan()
     const cells = await coach.cells()
     expect(cells[0][0]).equals('P')
+    // Clear is at the top, right of Help.
     await coach.page.$eval('[data-testid="Plan scroll"]', node => {
-      node.scrollTop = node.scrollHeight
+      node.scrollTop = 0
     })
     await coach.tapCss('[data-testid="Plan clear"]')
     const sheet = '[aria-label="Clear the whole plan?"]'
@@ -1649,7 +1706,7 @@ describe('Coach Plan', function () {
     if (CAPTURING) this.skip()
     for (const enabled of [true, false]) {
       const toggle = enabled ? 'on' : 'off'
-      const fixture = lineupFixture()
+      const fixture = await lineupFixture()
       await savePlan(fixture, enabled ? SHIFT_PLAN : NO_POSITIONS)
       await coach.as(fixture, 'scorekeeper')
       await coach.scoreGame(fixture.gameId)
@@ -1733,7 +1790,7 @@ describe('Coach Plan', function () {
       ['no positions', NO_POSITIONS]
     ] as const) {
       const planned = cells === twoInnings
-      const fixture = lineupFixture()
+      const fixture = await lineupFixture()
       await teamRules(fixture, { enforceSittingLimits: true })
       await savePlan(fixture, cells)
       await coach.as(fixture, 'headCoach')
@@ -1810,7 +1867,7 @@ describe('Coach Plan', function () {
 
   it('P11 puts the scorekeeper’s Cancel beside the microphone and Save Rosters, over a field with no row of three', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await coach.as(fixture, 'scorekeeper')
     await coach.scoreGame(fixture.gameId)
     await coach.tap('Open scoring menu')
@@ -1868,7 +1925,7 @@ describe('Coach Plan', function () {
       expect(labels[0].size, `${where}: Cancel's size`).equals(labels[1].size)
     }
     try {
-      const fixture = lineupFixture()
+      const fixture = await lineupFixture()
       await narrow.as(fixture, 'headCoach')
       await narrow.coachGame(fixture.gameId)
       await narrow.plan()
@@ -1889,7 +1946,7 @@ describe('Coach Plan', function () {
 
   it('P13 opens clean for the coach after the scorekeeper reorders the lineup his saved plan follows', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
+    const fixture = await lineupFixture()
     await savePlan(fixture, HOME_PLAN)
     const saveDisabled = async (): Promise<string | null> =>
       await coach.page.$eval('[aria-label="Save Rosters"]', node =>
@@ -1946,11 +2003,9 @@ describe('Coach Plan', function () {
     await coach.coachGame(fixture.gameId)
     await coach.plan()
     const names = players.map(player => player.fullName)
-    expect(
-      (await coach.planPlayers())
-        .slice(0, 3)
-        .map(row => row.replace(/^#\d+ /, ''))
-    ).deep.equals([names[2], names[1], names[0]])
+    expect((await coach.planPlayers()).slice(0, 3).map(unnumbered)).deep.equals(
+      [names[2], names[1], names[0]]
+    )
     expect(await coach.cells()).deep.include.ordered.members([
       HOME_PLAN[2],
       HOME_PLAN[1],
@@ -1967,14 +2022,24 @@ describe('Coach Plan', function () {
     ).not.includes('Discard unsaved roster changes?')
   })
 
-  it('P14 starts the lineup the head coach saves before the first pitch in his plan’s inning 1, once he turns the plan on', async function () {
+  it('P14 starts the lineup the head coach saves before the first pitch in his plan’s inning 1, once he gives the plan positions', async function () {
     if (CAPTURING) this.skip()
-    const fixture = lineupFixture()
-    await savePlan(fixture, OPENING_PLAN, false)
+    const fixture = await lineupFixture()
+    // Off: no cell holds a position.
+    await savePlan(fixture, NO_POSITIONS)
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
     await coach.plan()
-    await coach.tap('Enable per-inning game plan')
+    // He fills inning 1 from the picker, which turns the plan on.
+    for (const [at, row] of OPENING_PLAN.entries()) {
+      if (row[0] === '') continue
+      await coach.click(`[data-testid="Plan cell ${at + 1}-1"]`)
+      await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+        visible: true
+      })
+      await coach.click(`[data-testid="Plan pick ${row[0]}"]`)
+      expect(await coach.cell(at + 1, 1)).equals(row[0])
+    }
     await coach.tap('Save Rosters')
     await coach.page.waitForSelector(
       '[aria-label="Save Rosters"][aria-disabled="true"]',
@@ -1991,8 +2056,232 @@ describe('Coach Plan', function () {
       await new Promise(resolve => setTimeout(resolve, 500))
       held = await homeDefense(fixture)
     }
-    console.log(`    toggle on, saved before the 1st: ${named(fixture, held)}`)
+    console.log(`    positions, saved before the 1st: ${named(fixture, held)}`)
     expect(held).deep.equals(expected)
     expect(held).not.deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
+  })
+
+  it('P15 names each row’s player then his jersey, puts Help left of Clear above the sheet with no toggle or bottom Clear, and opens Help’s sheet as tall as its words', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, HOME_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    const players = await coach.planPlayers()
+    expect(players).has.length(9)
+    const names = fixture.players.home.map(
+      player => `${player.name} #${player.jersey}`
+    )
+    expect(players).deep.equals(names.slice(0, 9))
+    const layout = await coach.page.evaluate(() => {
+      const box = (css: string): Box => {
+        const r = document.querySelector(css)!.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      }
+      return {
+        help: box('[data-testid="Plan help"]'),
+        clear: box('[data-testid="Plan clear"]'),
+        sheet: box('[data-testid="Plan sheet"]'),
+        clears: document.querySelectorAll('[data-testid="Plan clear"]').length,
+        toggle:
+          document.querySelector('[data-testid="Plan toggle row"]') != null ||
+          document.querySelector('[data-testid="Plan tab"] [role="switch"]') !=
+            null ||
+          String(document.body.textContent).includes('Enable per-inning'),
+        instruction: String(document.body.textContent).includes(
+          'Drag a player to change the batting order'
+        ),
+        helpColor: getComputedStyle(
+          document.querySelector('[data-testid="Plan help"] [dir="auto"]')!
+        ).color,
+        clearColor: getComputedStyle(
+          document.querySelector('[data-testid="Plan clear"] [dir="auto"]')!
+        ).color
+      }
+    })
+    console.log(`    P15 layout: ${JSON.stringify(layout)}`)
+    expect(layout.toggle).equals(false)
+    expect(layout.instruction).equals(false)
+    expect(layout.clears).equals(1)
+    // One row: Help on the left, Clear on the right, both above the sheet.
+    expect(Math.abs(layout.help.y - layout.clear.y)).lessThan(1)
+    expect(layout.help.x + layout.help.width).lessThan(layout.clear.x)
+    expect(layout.clear.x + layout.clear.width).greaterThan(WIDTH - 40)
+    expect(layout.clear.y + layout.clear.height).at.most(layout.sheet.y + 1)
+    // Blue Help, red Clear.
+    expect(layout.helpColor).not.equals(layout.clearColor)
+    expect(layout.clearColor).equals('rgb(168, 53, 53)')
+    const text = await coach.planHelpSheet()
+    expect(text).equals(
+      'Tap and hold a player to drag them to a new batting order. Tap or hold an inning slot to set a player’s position.'
+    )
+    const sheet = await coach.box('[data-testid="Scoring sheet"]')
+    const words = await coach.box('[data-testid="Help sheet text"]')
+    console.log(
+      `    P15 help sheet ${JSON.stringify(sheet)}, words ${JSON.stringify(words)}`
+    )
+    // As tall as its words, its title and Done: well under half the screen.
+    expect(sheet.y + sheet.height).closeTo(HEIGHT, 2)
+    expect(sheet.height).lessThan(HEIGHT / 3)
+    expect(words.y).greaterThan(sheet.y)
+    expect(words.y + words.height).lessThan(sheet.y + sheet.height)
+    await coach.closeHelpSheet()
+  })
+
+  it('P16 draws an added inning’s number in red, and deletes that inning only once confirmed', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.tapCss('[data-testid="Plan add inning"]')
+    await coach.page.waitForSelector('[data-testid="Plan inning 7"]')
+    // Something in the added inning, which Cancel keeps.
+    await coach.click('[data-testid="Plan cell 1-7"]')
+    await coach.click('[data-testid="Plan pick SS"]')
+    expect(await coach.cell(1, 7)).equals('SS')
+    const headers = await coach.page.$$eval(
+      '[data-testid^="Plan inning "]',
+      nodes =>
+        nodes.map(node => ({
+          id: String(node.getAttribute('data-testid')),
+          role: node.getAttribute('role'),
+          color: getComputedStyle(node.querySelector('[dir="auto"]')!).color
+        }))
+    )
+    console.log(`    P16 headers: ${JSON.stringify(headers)}`)
+    expect(headers.map(header => header.id)).deep.equals(
+      [1, 2, 3, 4, 5, 6, 7].map(inning => `Plan inning ${inning}`)
+    )
+    for (const header of headers.slice(0, 6)) {
+      expect(header.role, header.id).not.equals('button')
+      expect(header.color, header.id).not.equals('rgb(168, 53, 53)')
+    }
+    expect(headers[6].role).equals('button')
+    expect(headers[6].color).equals('rgb(168, 53, 53)')
+    const confirm = '[aria-label="Delete inning 7?"]'
+    // Inning 1's number does nothing.
+    await coach.page.click('[data-testid="Plan inning 1"]')
+    await new Promise(resolve => setTimeout(resolve, 400))
+    for (const sheet of ['Delete inning 1?', 'Delete inning 7?'])
+      expect(await coach.page.$(`[aria-label="${sheet}"]`)).equals(null)
+    // Cancel keeps the inning.
+    await coach.tapCss('[data-testid="Plan inning 7"]')
+    await coach.page.waitForSelector(confirm, { visible: true })
+    const actions = await coach.page.$$eval(
+      `${confirm} [role="button"]`,
+      nodes =>
+        nodes.map(node => ({
+          text: String(node.textContent),
+          fill: getComputedStyle(node).backgroundColor
+        }))
+    )
+    console.log(`    P16 confirmation: ${JSON.stringify(actions)}`)
+    expect(actions.map(action => action.text)).deep.equals(['Delete', 'Cancel'])
+    await coach.page.evaluate(selector => {
+      const cancel = [
+        ...document.querySelectorAll(`${selector} [role="button"]`)
+      ].find(node => node.textContent === 'Cancel') as HTMLElement
+      cancel.click()
+    }, confirm)
+    await coach.page.waitForFunction(
+      selector => document.querySelector(selector) == null,
+      {},
+      confirm
+    )
+    expect(await coach.cell(1, 7)).equals('SS')
+    // Delete removes it.
+    await coach.tapCss('[data-testid="Plan inning 7"]')
+    await coach.tapCss('[data-testid="Plan delete inning confirm"]')
+    await coach.page.waitForFunction(
+      () => document.querySelector('[data-testid="Plan inning 7"]') == null
+    )
+    expect(await coach.page.$('[data-testid="Plan cell 1-7"]')).equals(null)
+    expect((await coach.cells())[0]).has.length(6)
+  })
+
+  it('P17 draws a picker 15% narrower, P on the mound, the infielders slid along their base paths, and closes it on a click outside', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, HOME_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    const before = await coach.cells()
+    await coach.click('[data-testid="Plan cell 2-3"]')
+    await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+      visible: true
+    })
+    const drawn = await coach.page.evaluate(() => {
+      const box = (node: Element): Box => {
+        const r = node.getBoundingClientRect()
+        return { x: r.x, y: r.y, width: r.width, height: r.height }
+      }
+      const picker = document.querySelector(
+        '[data-testid="Plan field picker"]'
+      )!
+      const chips: Record<string, Box> = {}
+      for (const position of ['P', '1B', '2B', '3B', 'SS'])
+        chips[position] = box(
+          picker.querySelector(`[data-testid="Plan pick ${position}"]`)!
+        )
+      return {
+        card: box(picker),
+        field: box(picker.querySelector('svg')!),
+        mound: box(picker.querySelector('svg circle')!),
+        chips,
+        enlarged:
+          picker.querySelector('[data-testid="Plan pick enlarged"]') != null
+      }
+    })
+    console.log(`    P17 picker: ${JSON.stringify(drawn)}`)
+    expect(drawn.card.width).closeTo(0.85 * 320, 0.5)
+    expect(drawn.enlarged).equals(false)
+    // P's box centred on the mound.
+    expect(centre(drawn.chips.P).x).closeTo(centre(drawn.mound).x, 1)
+    expect(centre(drawn.chips.P).y).closeTo(centre(drawn.mound).y, 1)
+    // The base drew 1B, 2B, 3B and SS where the Defense tab does; the
+    // branch slides each half a box's diagonal toward second base.
+    const { field } = drawn
+    const at = ([x, y]: readonly [number, number]): Point => ({
+      x: field.x + (field.width * x) / 100,
+      y: field.y + (field.height * y) / 100
+    })
+    const bag = (x: number, y: number): Point => at([x / 3.6, y / 2.4])
+    const [first, second, third] = [bag(269, 136), bag(180, 96), bag(91, 136)]
+    const slide = Math.hypot(44, 26) / 2
+    for (const [position, base, from] of [
+      ['1B', [83, 56], first],
+      ['2B', [69, 40], first],
+      ['3B', [17, 56], third],
+      ['SS', [31, 40], third]
+    ] as const) {
+      const old = at(base)
+      const now = centre(drawn.chips[position])
+      const [dx, dy] = [now.x - old.x, now.y - old.y]
+      const [px, py] = [second.x - from.x, second.y - from.y]
+      console.log(
+        `    P17 ${position}: moved ${dx.toFixed(1)}, ${dy.toFixed(1)} (${Math.hypot(dx, dy).toFixed(1)} of ${slide.toFixed(1)})`
+      )
+      expect(Math.hypot(dx, dy), position).closeTo(slide, 1)
+      // Along the path: the cross product, over the path's length, is the
+      // distance off it.
+      expect(
+        Math.abs(dx * py - dy * px) / Math.hypot(px, py),
+        position
+      ).lessThan(1)
+      expect(dy, position).lessThan(0)
+    }
+    // A click outside, on the row above the sheet, closes it and changes
+    // nothing.
+    const row = await coach.box('[data-testid="Plan help row"]')
+    await coach.page.mouse.click(row.x + row.width / 2, row.y + row.height / 2)
+    await coach.page.waitForFunction(
+      () => document.querySelector('[data-testid="Plan field picker"]') == null,
+      { timeout: 5000 }
+    )
+    expect(await coach.page.$('[data-testid="Help sheet text"]')).equals(null)
+    expect(await coach.cells()).deep.equals(before)
   })
 })

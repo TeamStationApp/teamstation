@@ -5,7 +5,6 @@ import {
   Pressable,
   ScrollView,
   StyleSheet,
-  Switch,
   Text,
   View,
   type ViewProps
@@ -16,9 +15,12 @@ import {
   addInning,
   alignPlan,
   clearPlan,
+  DEFAULT_PLAN_INNINGS,
   type GamePlan,
   MAX_PLAN_INNINGS,
-  type PlanCell
+  type PlanCell,
+  planHasPositions,
+  removeInning
 } from '../../../common/gamePlan'
 import {
   type PlanHistory,
@@ -28,6 +30,7 @@ import {
 import type { PlayingTimeRules } from '../../../common/playingTimeRules'
 import { useConfirmedAction } from '../../components/useConfirmedAction'
 import { lstrings, sprintf } from '../../locales/strings'
+import { HelpSheet } from '../HelpSheet'
 import { RosterDrag, RosterDragGroup } from '../RosterDrag'
 import {
   measureRosterView,
@@ -77,20 +80,27 @@ export interface PlanBatter {
   id: number
   /** Who he is, which his plan row is matched by. */
   player: LineupPlayer
-  /** "#7 Ruth", as the side's other tabs name him. */
-  label: string
+  /** His name as the side shows it, and his jersey number or ''. */
+  name: string
+  jersey: string
 }
+
+/** A plan row's player: "Ruth #7", the name first; "Ruth" with no number. */
+export const planBatterLabel = ({ name, jersey }: PlanBatter): string =>
+  jersey === '' ? name : `${name} #${jersey}`
 
 /** The vertical scroll the row drag auto-scrolls. */
 const SCROLL_NAME = 'Plan sheet'
 
 /**
- * The coach's game plan: the per-inning toggle, then a sheet of the lineup
- * in batting order, one two-character column per inning, then the
- * playing-time warnings and a red Clear. The player column stays put while
- * the innings scroll sideways. A cell is set by typing (web) or from the
- * field picker; a player is dragged up or down to change the batting order,
- * and his row's innings move with him.
+ * The coach's game plan: a row of a blue Help and a red Clear, then a sheet
+ * of the lineup in batting order, one two-character column per inning, then
+ * the playing-time warnings. The player column stays put while the innings
+ * scroll sideways. A cell is set by typing (web) or from the field picker;
+ * a player is dragged up or down to change the batting order, and his row's
+ * innings move with him. A plan is on while any cell holds a position, so
+ * every change carries that as `enabled`. The innings added past the first
+ * six have red numbers, which delete their inning once confirmed.
  */
 export function PlanTab(props: {
   plan: GamePlan
@@ -106,6 +116,12 @@ export function PlanTab(props: {
    * so a row shows no insertion edge.
    */
   locked?: boolean
+  /**
+   * On a phone, the picker's close while it is open, and undefined once it
+   * shuts: the screen around the sheet takes a tap outside it to close it,
+   * as the sheet's own backdrop does.
+   */
+  onPicker?: (close: (() => void) | undefined) => void
   /** The platform, which decides the cells: the app's own but for tests. */
   os?: string
 }): React.ReactElement {
@@ -129,6 +145,7 @@ function PlanSheet({
   onDrop,
   onReorder,
   locked = false,
+  onPicker,
   os
 }: {
   plan: GamePlan
@@ -138,6 +155,7 @@ function PlanSheet({
   onDrop: (id: number, index: number, edge?: 'before' | 'after') => void
   onReorder: (id: number, delta: number) => void
   locked?: boolean
+  onPicker?: (close: (() => void) | undefined) => void
   os: string
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
@@ -159,8 +177,13 @@ function PlanSheet({
       }),
     [aligned, context]
   )
-  const current = useRef({ aligned, onChange })
-  current.current = { aligned, onChange }
+  // Every change says whether the plan is now on: whether it holds a
+  // position.
+  const emit = (next: GamePlan): void => {
+    onChange({ ...next, enabled: planHasPositions(next) })
+  }
+  const current = useRef({ aligned, onChange: emit })
+  current.current = { aligned, onChange: emit }
   const setCell = (at: PlanCellAddress, value: PlanCell): void => {
     const { aligned: shown, onChange: change } = current.current
     change({
@@ -176,6 +199,15 @@ function PlanSheet({
             }
       )
     })
+  }
+
+  /**
+   * A position chosen from the picker, by a tap, a hold or a drag alike:
+   * the cell's own value again takes it off, to the bench.
+   */
+  const pick = (at: PlanCellAddress, value: PlanCell): void => {
+    const own = current.current.aligned.rows[at.row].cells[at.inning]
+    setCell(at, value === own ? '' : value)
   }
 
   const [picking, setPicking] = useState<PlanCellAddress>()
@@ -255,6 +287,28 @@ function PlanSheet({
     }, 0)
   }
 
+  // A web click anywhere but the picker and the cells closes the picker,
+  // changing nothing, even where the click takes no focus from the cell.
+  useEffect(() => {
+    if (!web || picking == null) return
+    const press = (event: Event): void => {
+      const target = event.target as Node | null
+      const holds = (node: unknown): boolean =>
+        target != null &&
+        (node as { contains?: (other: Node) => boolean } | null)?.contains?.(
+          target
+        ) === true
+      if (holds(pickerNode.current)) return
+      if (holds(sheetNode.current) && (target as Element).tagName === 'INPUT')
+        return
+      setPicking(undefined)
+    }
+    document.addEventListener('pointerdown', press, true)
+    return () => {
+      document.removeEventListener('pointerdown', press, true)
+    }
+  }, [web, picking])
+
   // A phone's hold-and-drag: once the hold has opened the picker, the root
   // takes the finger's moves, wherever it goes, until it lets go.
   const endDrag = (): void => {
@@ -286,13 +340,33 @@ function PlanSheet({
       remeasure()
         .then(found => {
           const { write, close } = releaseAssignDrag(finished, point, found)
-          if (write != null) setCell(finished.cell, write)
+          if (write != null) pick(finished.cell, write)
           if (close) setPicking(undefined)
         })
         .catch(() => undefined)
     },
     onResponderTerminationRequest: () => false,
     onResponderTerminate: endDrag
+  }
+  // A hold on one of the picker's targets: a drag from there, over it at
+  // once, so its enlarged box shows. Let go where it held, with no move the
+  // root took, it is written.
+  const holdTarget = (target: PlanCell, point: PlanPoint): void => {
+    if (picking == null) return
+    const start = startAssignDrag(picking, point, target)
+    dragging.current = start
+    rootOwns.current = false
+    setDrag(start)
+  }
+  const releaseTarget = (): void => {
+    setTimeout(() => {
+      const held = dragging.current
+      if (rootOwns.current || held == null) return
+      endDrag()
+      if (held.over == null) return
+      pick(held.cell, held.over)
+      setPicking(undefined)
+    }, 0)
   }
 
   const header = {
@@ -306,6 +380,26 @@ function PlanSheet({
     borderColor: surface.divider
   }
   const chosen = picking == null ? undefined : aligned.rows[picking.row]
+  const open = picking != null && chosen != null
+  const told = useRef(onPicker)
+  told.current = onPicker
+  useEffect(() => {
+    if (web) return
+    told.current?.(
+      open
+        ? () => {
+            setPicking(undefined)
+          }
+        : undefined
+    )
+  }, [web, open])
+  // Shut with the sheet: the screen's backdrop goes too.
+  useEffect(
+    () => () => {
+      told.current?.(undefined)
+    },
+    []
+  )
   const pickerWidth = Math.min(PLAN_PICKER_WIDTH, area.width)
   const rowTop =
     picking == null
@@ -318,8 +412,28 @@ function PlanSheet({
     areaTop: Math.max(0, sheetTop + PLAN_HEADER_HEIGHT - scrollY),
     areaBottom: area.height
   })
-  const clearing = useConfirmedAction('plan', 'clear')
+  const confirming = useConfirmedAction('plan', 'confirm')
+  const [helping, setHelping] = useState(false)
   const innings = Array.from({ length: aligned.innings }, (_, at) => at + 1)
+  const deleteInning = (inning: number): void => {
+    const title = sprintf(lstrings.plan_delete_inning_title, inning)
+    confirming.open({
+      title,
+      detail: lstrings.plan_delete_inning_detail,
+      sheetLabel: title,
+      label: lstrings.plan_delete,
+      testID: 'Plan delete inning confirm',
+      run: async () => {
+        const { aligned: shown, onChange: change } = current.current
+        setPicking(undefined)
+        change(removeInning(shown, inning))
+      }
+    })
+  }
+  const link = {
+    minHeight: 44,
+    justifyContent: 'center' as const
+  }
   return (
     <View
       testID="Plan tab"
@@ -355,39 +469,64 @@ function PlanSheet({
             contentContainerStyle={{ gap: 12, paddingBottom: 8 }}
           >
             <View
-              testID="Plan toggle row"
+              testID="Plan help row"
               style={{
                 flexDirection: 'row',
                 alignItems: 'center',
-                gap: 12,
-                minHeight: 48
+                justifyContent: 'space-between'
               }}
             >
-              <Text
-                style={{
-                  flex: 1,
-                  color: surface.text,
-                  fontFamily: theme.regularTextFont,
-                  fontSize: 16
+              <Pressable
+                testID="Plan help"
+                accessibilityRole="button"
+                accessibilityLabel={lstrings.plan_help_label}
+                onPress={() => {
+                  setHelping(true)
                 }}
+                style={{ ...link, paddingRight: 16 }}
               >
-                {lstrings.plan_enable}
-              </Text>
-              <Switch
-                testID="Plan enabled"
-                accessibilityLabel={lstrings.plan_enable}
-                value={aligned.enabled}
-                onValueChange={enabled => {
-                  onChange({ ...aligned, enabled })
+                <Text
+                  selectable={false}
+                  style={{
+                    color: theme.linkTextColor,
+                    fontFamily: theme.boldTextFont,
+                    fontSize: 16
+                  }}
+                >
+                  {lstrings.roster_help}
+                </Text>
+              </Pressable>
+              <Pressable
+                testID="Plan clear"
+                accessibilityRole="button"
+                accessibilityLabel={lstrings.plan_clear_label}
+                onPress={() => {
+                  confirming.open({
+                    title: lstrings.plan_clear_title,
+                    detail: lstrings.plan_clear_detail,
+                    sheetLabel: lstrings.plan_clear_title,
+                    label: lstrings.plan_clear,
+                    testID: 'Plan clear confirm',
+                    run: async () => {
+                      const { aligned: shown, onChange: change } =
+                        current.current
+                      change(clearPlan(shown))
+                    }
+                  })
                 }}
-                trackColor={{
-                  false: surface.inputBorder,
-                  true: surface.active
-                }}
-                thumbColor={surface.switchThumb}
-                {...(web ? { activeThumbColor: surface.switchThumb } : {})}
-                ios_backgroundColor={surface.idle}
-              />
+                style={{ ...link, paddingLeft: 16 }}
+              >
+                <Text
+                  selectable={false}
+                  style={{
+                    color: theme.scoringOutColor,
+                    fontFamily: theme.boldTextFont,
+                    fontSize: 16
+                  }}
+                >
+                  {lstrings.plan_clear}
+                </Text>
+              </Pressable>
             </View>
             <View
               ref={sheetNode}
@@ -512,7 +651,7 @@ function PlanSheet({
                                 fontSize: 15
                               }}
                             >
-                              {batter.label}
+                              {planBatterLabel(batter)}
                             </Text>
                           </View>
                         </RosterDrag>
@@ -538,27 +677,55 @@ function PlanSheet({
                   >
                     {innings.map(inning => {
                       const active = picking?.inning === inning - 1
-                      return (
+                      // An added inning's number is red, and deletes it.
+                      const added = inning > DEFAULT_PLAN_INNINGS
+                      const number = (
+                        <Text
+                          selectable={false}
+                          style={{
+                            ...header,
+                            fontSize: 13,
+                            color: added
+                              ? theme.scoringOutColor
+                              : active
+                                ? surface.accent
+                                : surface.mutedText
+                          }}
+                        >
+                          {inning}
+                        </Text>
+                      )
+                      const style = {
+                        width: PLAN_COLUMN_WIDTH,
+                        height: PLAN_HEADER_HEIGHT,
+                        alignItems: 'center' as const,
+                        justifyContent: 'center' as const,
+                        borderBottomWidth: 2,
+                        borderColor: active ? surface.accent : 'transparent'
+                      }
+                      return added ? (
+                        <Pressable
+                          key={inning}
+                          testID={`Plan inning ${inning}`}
+                          accessibilityRole="button"
+                          accessibilityLabel={sprintf(
+                            lstrings.plan_delete_inning_label,
+                            inning
+                          )}
+                          onPress={() => {
+                            deleteInning(inning)
+                          }}
+                          style={style}
+                        >
+                          {number}
+                        </Pressable>
+                      ) : (
                         <View
                           key={inning}
                           testID={`Plan inning ${inning}`}
-                          style={{
-                            width: PLAN_COLUMN_WIDTH,
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            borderBottomWidth: 2,
-                            borderColor: active ? surface.accent : 'transparent'
-                          }}
+                          style={style}
                         >
-                          <Text
-                            style={{
-                              ...header,
-                              fontSize: 13,
-                              color: active ? surface.accent : surface.mutedText
-                            }}
-                          >
-                            {inning}
-                          </Text>
+                          {number}
                         </View>
                       )
                     })}
@@ -569,7 +736,7 @@ function PlanSheet({
                         accessibilityLabel={lstrings.plan_add_inning}
                         hitSlop={8}
                         onPress={() => {
-                          onChange(addInning(aligned))
+                          emit(addInning(aligned))
                         }}
                         style={{
                           width: PLAN_COLUMN_WIDTH,
@@ -688,41 +855,6 @@ function PlanSheet({
               </ScrollView>
             </View>
             <PlanWarnings warnings={warnings} rules={context.rules != null} />
-            <Pressable
-              testID="Plan clear"
-              accessibilityRole="button"
-              accessibilityLabel={lstrings.plan_clear_label}
-              onPress={() => {
-                clearing.open({
-                  title: lstrings.plan_clear_title,
-                  detail: lstrings.plan_clear_detail,
-                  sheetLabel: lstrings.plan_clear_title,
-                  label: lstrings.plan_clear,
-                  testID: 'Plan clear confirm',
-                  run: async () => {
-                    const { aligned: shown, onChange: change } = current.current
-                    change(clearPlan(shown))
-                  }
-                })
-              }}
-              style={{
-                alignSelf: 'flex-start',
-                minHeight: 44,
-                justifyContent: 'center',
-                paddingRight: 16
-              }}
-            >
-              <Text
-                selectable={false}
-                style={{
-                  color: theme.scoringOutColor,
-                  fontFamily: theme.boldTextFont,
-                  fontSize: 16
-                }}
-              >
-                {lstrings.plan_clear}
-              </Text>
-            </Pressable>
             {/* Said to a screen reader when a cell refuses what was typed. */}
             <Text
               accessibilityLiveRegion="assertive"
@@ -741,6 +873,25 @@ function PlanSheet({
           </ScrollView>
         </RosterClipContext.Provider>
       </View>
+      {/* On a phone, a tap anywhere outside the picker closes it, changing
+          nothing; the web closes it on a click outside (above). */}
+      {picking != null && chosen != null && !web && (
+        <Pressable
+          testID="Plan picker backdrop"
+          accessibilityLabel={lstrings.plan_close_picker}
+          onPress={() => {
+            setPicking(undefined)
+          }}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 19
+          }}
+        />
+      )}
       {picking != null && chosen != null && (
         <View
           ref={pickerNode}
@@ -756,7 +907,7 @@ function PlanSheet({
             key={`${picking.row}-${picking.inning}`}
             title={sprintf(
               lstrings.plan_assign_title,
-              batters[picking.row].label,
+              planBatterLabel(batters[picking.row]),
               picking.inning + 1
             )}
             value={chosen.cells[picking.inning]}
@@ -767,20 +918,26 @@ function PlanSheet({
             }}
             measureRef={measureTargets}
             onPick={value => {
-              // The cell's own value again takes it off.
-              setCell(
-                picking,
-                value === chosen.cells[picking.inning] ? '' : value
-              )
+              pick(picking, value)
               setPicking(undefined)
             }}
             onClose={() => {
               setPicking(undefined)
             }}
+            onHold={holdTarget}
+            onHoldEnd={releaseTarget}
           />
         </View>
       )}
-      {clearing.sheet}
+      {confirming.sheet}
+      {helping && (
+        <HelpSheet
+          text={lstrings.plan_help}
+          onClose={() => {
+            setHelping(false)
+          }}
+        />
+      )}
     </View>
   )
 }

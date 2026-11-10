@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  enlargedRect,
   moveAssignDrag,
   pickerHit,
   type PickerTarget,
@@ -63,6 +64,51 @@ describe('the game plan hold-and-drag', function () {
     // A release far from the hold with no move reported first still moved.
     expect(releaseAssignDrag(start, { x: 300, y: 100 }, TARGETS)).deep.equals({
       write: null,
+      close: true
+    })
+  })
+
+  it('starts a hold on one of the picker’s targets over it', function () {
+    expect(startAssignDrag(cell, { x: 180, y: 290 }, 'CF')).deep.equals({
+      cell,
+      start: { x: 180, y: 290 },
+      over: 'CF',
+      moved: false
+    })
+  })
+
+  it('draws the enlarged box half as large again, three quarters of a box above its target, inside the card', function () {
+    const card = { x: 0, y: 0, width: 270, height: 260 }
+    const box = enlargedRect({ x: 100, y: 120, width: 44, height: 26 }, card)
+    expect(box).deep.equals({ x: 89, y: 61.5, width: 66, height: 39 })
+    // Its bottom, 19.5 points above the target's top.
+    expect(120 - (box.y + box.height)).equals(0.75 * 26)
+    // Kept inside the card at its edges.
+    expect(
+      enlargedRect({ x: 2, y: 10, width: 44, height: 26 }, card)
+    ).deep.equals({ x: 0, y: 0, width: 66, height: 39 })
+    expect(
+      enlargedRect({ x: 240, y: 200, width: 30, height: 30 }, card).x
+    ).equals(270 - 45)
+  })
+
+  it('finds the lower target under a finger moving up beneath the enlarged box, which is only drawn', function () {
+    // SS's box, enlarged above it, covers CF's target.
+    const ss = { x: 160, y: 340, width: 40, height: 26 }
+    const targets: PickerTarget[] = [...TARGETS, { value: 'SS', rect: ss }]
+    const box = enlargedRect(ss, { x: 0, y: 0, width: 400, height: 600 })
+    const underBox = { x: 180, y: 295 }
+    expect(
+      underBox.x >= box.x &&
+        underBox.x <= box.x + box.width &&
+        underBox.y >= box.y &&
+        underBox.y <= box.y + box.height
+    ).equals(true)
+    const held = startAssignDrag(cell, { x: 180, y: 353 }, 'SS')
+    const up = moveAssignDrag(held, underBox, targets)
+    expect(up.over).equals('CF')
+    expect(releaseAssignDrag(up, underBox, targets)).deep.equals({
+      write: 'CF',
       close: true
     })
   })
