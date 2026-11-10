@@ -35,6 +35,15 @@ describe('one player’s mapping onto the wall clock (U20)', function () {
     ])
     expect(anchors.inGap?.(T0 + 10000)).equals(true)
     expect(anchors.inGap?.(T0 + 42000)).equals(false)
+    // A segment an arrival look found a second late is not an outage.
+    const late: Array<[number, number]> = [
+      [0, T0],
+      [2000, T0 + 3200]
+    ]
+    expect(fromAnchors(late).inGap?.(T0 + 2500)).equals(true)
+    expect(fromAnchors(late, undefined, 'arrival').inGap?.(T0 + 2500)).equals(
+      false
+    )
   })
 
   it('maps fragment by fragment, one second a second inside each, across a gap', function () {

@@ -2,7 +2,8 @@ import {
   inWallGap,
   mediaAt,
   type WallAnchor,
-  wallAt
+  wallAt,
+  type WallSource
 } from '../../common/wallTimeline'
 import type { AngleVideo } from './wallClock'
 
@@ -149,11 +150,13 @@ export function fromStartDate(
  */
 export function fromAnchors(
   anchors: readonly WallAnchor[],
-  seekableEnd: () => number | null = () => null
+  seekableEnd: () => number | null = () => null,
+  /** Where the anchors came from, which sets how long a gap must be. */
+  from?: WallSource
 ): WallMapping {
   return {
     source: 'timeline',
-    inGap: wallMs => inWallGap(anchors, wallMs),
+    inGap: wallMs => inWallGap(anchors, wallMs, from),
     wallAt: sec => wallAt(anchors, sec * 1000),
     secAt: wallMs => {
       const ms = mediaAt(anchors, wallMs)
