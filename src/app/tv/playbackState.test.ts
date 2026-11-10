@@ -67,7 +67,7 @@ describe('TV playback composition and remote state', () => {
       }
     }
   })
-  it('refuses a rejoin to a camera whose edge trails by more than a segment, after any edge jump', () => {
+  it('refuses a rejoin to a camera whose edge trails by more than three segments, after any edge jump', () => {
     const clock = new PlaybackClock()
     const seeks: number[][] = [[], [], []]
     for (let i = 0; i < 3; i++)
@@ -209,7 +209,7 @@ describe('TV playback composition and remote state', () => {
     expect(seeks[1].at(-1)).closeTo(shared, 0.001)
     expect(clock.available(2)).equals(false)
   })
-  it('rejoins a healthy camera whose 6-second edge lags out of phase once its edge moves', () => {
+  it('rejoins a healthy camera whose edge lags up to three of the 6-second segments the others step by', () => {
     const clock = new PlaybackClock()
     const seeks: number[][] = [[], []]
     for (let i = 0; i < 2; i++)
@@ -220,15 +220,15 @@ describe('TV playback composition and remote state', () => {
     for (; seconds <= 150; seconds += 0.25)
       clock.progress(0, seconds, edge(), 0)
     // A segment out of phase, a reload late, and a second of uplink: its edge
-    // stays 13 s behind the master's, which a healthy feed on 6-second
-    // segments can be.
+    // trails the master's by 13 s, which a healthy feed on 6-second segments
+    // can. Past three segments (18 s) it is missing footage.
     clock.load(1, Infinity)
     clock.progress(1, edge() - 19, edge() - 19, 0)
-    expect(seeks[1], 'held until its edge proves current').deep.equals([])
+    expect(seeks[1], 'held while it trails three segments').deep.equals([])
     expect(clock.available(1)).equals(false)
     clock.progress(1, edge() - 18.5, edge() - 13, 0)
     const shared = edge() - 13 - 0.1
-    expect(seeks[0].at(-1), 'rejoined once its edge moved').closeTo(
+    expect(seeks[0].at(-1), 'rejoined within three segments').closeTo(
       shared,
       0.001
     )
@@ -238,6 +238,93 @@ describe('TV playback composition and remote state', () => {
       clock.progress(i, shared, edge() - (i === 0 ? 0 : 13), 0)
       expect(clock.available(i)).equals(true)
     }
+  })
+  it('keeps a returning live camera covered until its timeline holds the outage', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1, 2]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 296, 0)
+      clock.settled(i)
+    }
+    // The third camera's feed stops at 296 s and is opened again, stale.
+    let second = 300
+    const edge = (): number => 296 + 4 * Math.floor((second - 300) / 4)
+    for (second = 301; second <= 360; second++) {
+      for (const i of [0, 1]) clock.progress(i, second, edge(), 0)
+      if (second === 330) {
+        clock.fail(2)
+        clock.load(2, Infinity)
+      }
+      if (second > 330) clock.progress(2, 296, 296, 0)
+    }
+    expect(clock.wall).equals(460000)
+    // Its feed returns at wall 452 s, before the TV has fetched the anchor
+    // for the outage: its new footage still maps 56 s too early, and its edge
+    // moves on in 4-second steps.
+    for (const i of [0, 1, 2]) seeks[i].length = 0
+    for (let step = 1; step <= 4; step++) {
+      second++
+      for (const i of [0, 1]) clock.progress(i, second, edge(), 0)
+      clock.progress(2, 296 + 4 * step - 3, 296 + 4 * step, 0)
+    }
+    expect(clock.wall, 'not pulled back an outage').equals(465000)
+    expect(seeks[0].concat(seeks[1])).deep.equals([])
+    expect(clock.available(2)).equals(false)
+    // The periodic refresh brings the outage's anchor; it joins the moment.
+    clock.ports[2].timeline = {
+      ...clock.ports[2].timeline,
+      anchors: [
+        [0, 100000],
+        [296000, 452000]
+      ]
+    }
+    second++
+    for (const i of [0, 1]) clock.progress(i, second, edge(), 0)
+    clock.progress(2, 309.5, 312, 0)
+    expect(seeks[2].at(-1)).closeTo(310, 0.001)
+    clock.settled(2)
+    clock.progress(2, 310, 312, 0)
+    expect(clock.wall).equals(466000)
+    expect(clock.available(2)).equals(true)
+  })
+  it('does not let a stalled camera covered by a rejoin pull the others back to its edge', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1, 2]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 296, 0)
+      clock.settled(i)
+    }
+    // All three edges step every 4 s; then the third camera's feed stops.
+    let second = 300
+    const edge = (): number => 296 + 4 * Math.floor((second - 300) / 4)
+    for (second = 301; second <= 340; second++) {
+      for (const i of [0, 1]) clock.progress(i, second, edge(), 0)
+      clock.progress(2, second <= 316 ? second : 316, Math.min(edge(), 312), 0)
+    }
+    expect(clock.available(2)).equals(false)
+    // The second camera reopens behind the moment and rejoins; the rejoin's
+    // seek leaves the stalled camera waiting for its moment.
+    clock.fail(1)
+    clock.load(1, Infinity)
+    clock.progress(1, 337, edge(), 0)
+    const shared = edge() - 0.1
+    expect(clock.wall).equals(100000 + shared * 1000)
+    for (const i of [0, 1]) {
+      clock.settled(i)
+      clock.progress(i, shared, edge(), 0)
+    }
+    for (const i of [0, 1, 2]) seeks[i].length = 0
+    // Its next frame does not send everyone back to its frozen edge.
+    clock.progress(2, 316, 312, 0)
+    expect(clock.wall).equals(100000 + shared * 1000)
+    expect(seeks[0].concat(seeks[1])).deep.equals([])
+    expect(clock.available(2)).equals(false)
   })
   it('rejoins a live follower within the required half-second wall tolerance', () => {
     const clock = new PlaybackClock()

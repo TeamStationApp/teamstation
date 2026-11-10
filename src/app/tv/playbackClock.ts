@@ -14,14 +14,30 @@ interface ClockPort {
   pendingWall: number | null
   seekableEnd: number | null
   seekableStart: number
-  /** The live seekable edge has advanced since this source loaded: its feed is current. */
-  edgeMoved: boolean
+  /** The latest steps its live seekable edge advanced by, in seconds. */
+  edgeSteps: number[]
 }
+/** The segment length assumed until a camera's edge has advanced a few times. */
+const SEGMENT_SEC = 4
+/** The longest a playlist's segments run (`EXT-X-TARGETDURATION`). */
+const MAX_SEGMENT_SEC = 12
+/** How many of a camera's latest edge steps its segment length is read from. */
+const EDGE_STEPS = 5
 /**
- * How far behind the other cameras' safe edges a reopened live camera may be
- * and still rejoin before its own edge has moved: two 4-second segments.
+ * How many segments a current camera's safe edge may trail the newest one:
+ * one of phase, one of a late playlist reload, and one of hold-back.
  */
-const EDGE_SPREAD_MS = 8000
+const EDGE_SPREAD_SEGMENTS = 3
+
+/**
+ * A camera's segment length: the median of its latest edge steps, so one
+ * reload listing several segments at once does not stretch it.
+ */
+function segmentOf(port: ClockPort): number {
+  if (port.edgeSteps.length < 3) return SEGMENT_SEC
+  const sorted = [...port.edgeSteps].sort((a, b) => a - b)
+  return Math.max(SEGMENT_SEC, sorted[Math.floor(sorted.length / 2)])
+}
 
 /** Native ports stay registered until the entire player closes, including hidden angles. */
 export class PlaybackClock {
@@ -46,7 +62,7 @@ export class PlaybackClock {
       pendingWall: null,
       seekableEnd: null,
       seekableStart: 0,
-      edgeMoved: false
+      edgeSteps: []
     }
   }
 
@@ -61,7 +77,6 @@ export class PlaybackClock {
     port.duration = duration > 0 ? duration : Infinity
     port.seekableEnd = null
     port.seekableStart = 0
-    port.edgeMoved = false
     if (this.wall !== null) this.seekPort(port, this.wall, true)
     if (!this.available(this.master) && this.available(index))
       this.master = index
@@ -188,8 +203,10 @@ export class PlaybackClock {
       Number.isFinite(seekableEnd) &&
       seekableEnd > 0
     ) {
-      if (port.seekableEnd !== null && seekableEnd > port.seekableEnd)
-        port.edgeMoved = true
+      // A feed keeps its segment length across reloads, so the steps stay.
+      const step = seekableEnd - (port.seekableEnd ?? seekableEnd)
+      if (step > 0 && step <= MAX_SEGMENT_SEC)
+        port.edgeSteps = [...port.edgeSteps, step].slice(-EDGE_STEPS)
       port.seekableEnd = seekableEnd
     }
     if (port === undefined || port.failed || port.ended) return this.wall
@@ -301,15 +318,17 @@ export class PlaybackClock {
       if (edge === null) return false
       edges.set(port, edge)
     }
-    // A reopened camera far behind the others may be one whose feed stopped:
-    // it rejoins once its own edge has moved, which a stopped feed never does.
+    // A camera whose edge trails the newest by more than a current feed's
+    // lag is missing footage: its feed stopped, or it has come back and its
+    // timeline does not yet hold the return. It stays covered.
     const own = edges.get(joining)!
     const newest = Math.max(
       ...together.flatMap(p =>
-        p === joining || Number.isFinite(p.duration) ? [] : [edges.get(p)!]
+        Number.isFinite(p.duration) ? [] : [edges.get(p)!]
       )
     )
-    if (!joining.edgeMoved && newest - own > EDGE_SPREAD_MS) return false
+    const segment = Math.max(...together.map(segmentOf))
+    if (newest - own > EDGE_SPREAD_SEGMENTS * segment * 1000) return false
     // Just inside each edge on the wall clock: in media time, stepping back
     // could cross an anchor into footage from before a gap.
     const shared = Math.min(this.wall, ...[...edges.values()].map(e => e - 100))
