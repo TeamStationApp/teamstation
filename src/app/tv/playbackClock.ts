@@ -15,6 +15,9 @@ interface ClockPort {
   seekableEnd: number | null
   seekableStart: number
 }
+/** How far one live feed's safe edge may trail another's and still be current. */
+const TRAILING_MS = 8000
+
 /** Native ports stay registered until the entire player closes, including hidden angles. */
 export class PlaybackClock {
   readonly ports: ClockPort[] = []
@@ -203,6 +206,9 @@ export class PlaybackClock {
         // edges. Chasing the moving master there can never converge. Rejoin
         // playing cameras in footage they can all seek, without accepting skew
         // or changing a paused selection (or crossing a known missing span).
+        // A camera whose feed has stopped is not one of them: it stays covered
+        // until its footage reaches the moment, rather than pulling the others
+        // back to its last picture.
         if (
           playing &&
           !Number.isFinite(port.duration) &&
@@ -212,6 +218,7 @@ export class PlaybackClock {
           decodedWall !== null &&
           decodedWall < port.pendingWall - 500 &&
           this.available(this.master) &&
+          !this.trailing(port) &&
           this.rejoinSeekable()
         )
           return this.wall
@@ -261,6 +268,35 @@ export class PlaybackClock {
       }
     }
     return this.wall
+  }
+
+  /** The wall instant of a live port's safe seek edge, or null while unknown. */
+  private edgeWall(port: ClockPort): number | null {
+    if (Number.isFinite(port.duration) || port.seekableEnd === null) return null
+    return wallAt(port.timeline.anchors, port.seekableEnd * 1000)
+  }
+
+  /**
+   * Whether a live camera's newest footage trails the other cameras' by more
+   * than their feeds ever differ: a segment (4 s) and the scan that lists it.
+   */
+  private trailing(port: ClockPort): boolean {
+    const own = this.edgeWall(port)
+    if (own === null) return false
+    const others: number[] = []
+    for (const other of this.ports) {
+      if (
+        other === port ||
+        !other.loaded ||
+        other.failed ||
+        other.ended ||
+        other.pendingWall !== null
+      )
+        continue
+      const edge = this.edgeWall(other)
+      if (edge !== null) others.push(edge)
+    }
+    return others.length > 0 && Math.max(...others) - own > TRAILING_MS
   }
 
   private rejoinSeekable(): boolean {
