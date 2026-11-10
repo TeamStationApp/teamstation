@@ -92,15 +92,28 @@ export function attachHls(
    */
   let failed = false
   /**
-   * The native progress revision at the last failure, until another native
-   * sample advances. Kept apart from `failed`, which a `canplay` clears: iOS
-   * sends that whenever AVPlayer changes its mind about keeping up, picture or
-   * not, and a failed AVPlayer raises no second error to set it again.
+   * The native progress revision at the last failure, until native samples
+   * have played half a second on. Kept apart from `failed`, which a `canplay`
+   * clears: iOS sends that whenever AVPlayer changes its mind about keeping
+   * up, picture or not, and a failed AVPlayer raises no second error to set
+   * it again. A reload's landing sample, a few milliseconds off where it was
+   * put, is not playing on: counted, a stream failing at one point would
+   * reset its ladder on every reload and never give up.
    */
   let failedAt: number | null = null
+  /** The lowest native position reported since that failure. */
+  let failedFrom = 0
+  const failedHere = (): void => {
+    if (failedAt != null) return
+    failedAt = handle.progressRevision
+    failedFrom = handle.reportedTime
+  }
   const hasFailed = (): boolean => {
     if (failedAt == null) return false
-    if (handle.progressRevision > failedAt) failedAt = null
+    if (handle.progressRevision > failedAt) {
+      failedFrom = Math.min(failedFrom, handle.reportedTime)
+      if (handle.reportedTime > failedFrom + 0.5) failedAt = null
+    }
     return failedAt != null
   }
   /** Where to put the playhead once a reloaded stream has opened. */
@@ -212,7 +225,7 @@ export function attachHls(
       return
     }
     failed = true
-    failedAt ??= handle.progressRevision
+    failedHere()
     const now = Date.now()
     if (firstFailureAt === 0) firstFailureAt = now
     if (now - firstFailureAt > patience) {
@@ -282,7 +295,7 @@ export function attachHls(
         reloads++
         recovering = true
         failed = true
-        failedAt ??= handle.progressRevision
+        failedHere()
         reloadKeepingPlace()
       }
     }

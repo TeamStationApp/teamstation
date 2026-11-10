@@ -738,10 +738,13 @@ describe('a phone watching a live game whose camera is away', function () {
       })
 
   /** A grid tile, loaded and showing a picture at a minute in. */
-  function gridTile(intent: {
-    wantsToPlay: () => boolean
-    wantsRecovery?: () => boolean
-  }): {
+  function gridTile(
+    intent: {
+      wantsToPlay: () => boolean
+      wantsRecovery?: () => boolean
+    },
+    onGiveUp?: () => void
+  ): {
     handle: NativeVideoHandle
     player: ReturnType<typeof androidPlayer>
     detach: () => void
@@ -752,7 +755,7 @@ describe('a phone watching a live game whose camera is away', function () {
     handle.attach(player.ref)
     handle.clearBeforeReload = true
     handle.source = URL
-    const detach = attachHls(handle, URL, undefined, {
+    const detach = attachHls(handle, URL, onGiveUp, {
       ...intent,
       buffer: { aheadSec: 30 }
     })
@@ -814,6 +817,36 @@ describe('a phone watching a live game whose camera is away', function () {
       })
       await handle.play()
       expect(player.loads(), 'play on a failed player loads it again').equals(1)
+    } finally {
+      detach()
+    }
+  })
+
+  it('gives up on a stream that fails again where each reload lands', () => {
+    let gaveUpAt: number | null = null
+    let attempt = 0
+    const { handle, player, detach, loaded } = gridTile(
+      { wantsToPlay: () => true },
+      () => {
+        gaveUpAt = attempt
+      }
+    )
+    try {
+      for (; attempt < 5; attempt++) {
+        handle.handleError(serverDown)
+        for (const run of timers.splice(0)) run()
+        handle.handleLoad({ ...loaded, currentTime: 0 })
+        const at = player.seeks.at(-1)!
+        handle.handleSeek({ seekTime: at, currentTime: at })
+        // Landed a few milliseconds off: a new sample, but no playing on.
+        handle.handleProgress({
+          currentTime: at + 0.003,
+          playableDuration: 90,
+          seekableDuration: 200
+        })
+      }
+      expect(gaveUpAt, 'the reloads are counted to the limit').equals(3)
+      expect(player.loads()).equals(3)
     } finally {
       detach()
     }
