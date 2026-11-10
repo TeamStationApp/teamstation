@@ -3,6 +3,7 @@ import { createServer } from 'node:http'
 import { extname } from 'node:path'
 
 import type { StoredGame } from '../../common/scoring/session'
+import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { POSITIONS } from './scoringTypes'
@@ -98,6 +99,12 @@ export async function modalFixture(
   let loaded = ''
   let held: StoredGame = { plays: [], currentPlay: null }
   const games = new Map<string, StoredGame>()
+  const playerNames = new Map(
+    [...roster('away'), ...roster('home')].map(player => [
+      player.gumboId,
+      player.shortName
+    ])
+  )
   const unexpected: string[] = []
   let paused = false
   const waiting = new Set<() => void>()
@@ -120,6 +127,7 @@ export async function modalFixture(
   const server = createServer((request, response) => {
     const respond = async (): Promise<void> => {
       const u = new URL(request.url ?? '/', 'http://localhost')
+      response.setHeader('Cache-Control', 'no-store')
       response.setHeader('Access-Control-Allow-Origin', '*')
       response.setHeader(
         'Access-Control-Allow-Headers',
@@ -149,9 +157,34 @@ export async function modalFixture(
       }
       let body: unknown
       if (u.pathname.endsWith('/auth/me'))
-        body = { id: 999, displayName: 'Scorer', isAdmin: false }
-      else if (u.pathname.endsWith('/me/roles'))
-        body = { teams: [], players: [] }
+        body = {
+          id: userIdOfGumbo(999),
+          gumboId: 999,
+          displayName: 'Scorer',
+          isAdmin: false
+        }
+      else if (u.pathname.endsWith('/me/roles')) body = { teams: {} }
+      else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
+      else if (u.pathname === '/api/v1/me/notifications/summary')
+        body = { hasPending: false }
+      else if (u.pathname === '/api/v1/me/account/chat-age')
+        body = {
+          confirmed: true,
+          source: 'self',
+          confirmedAt: '2026-01-01T00:00:00Z'
+        }
+      else if (u.pathname === '/api/v1/analytics/events') body = {}
+      else if (
+        [
+          '/api/v1/me/home',
+          '/api/v1/users',
+          '/api/v1/me/umpire-leagues',
+          '/api/v1/chat/blocks',
+          '/api/v1/chat/links',
+          '/api/v1/chat/conversations'
+        ].includes(u.pathname)
+      )
+        body = []
       else if (u.pathname.endsWith('/health'))
         body = {
           status: 'ok',
@@ -193,9 +226,12 @@ export async function modalFixture(
           plays: stored.plays.map(play => ({
             id: `event${play.about.atBatIndex}`,
             gameId,
-            gumbo: play
+            gumbo: withNames(play, playerNames)
           })),
-          currentPlay: stored.currentPlay
+          currentPlay:
+            stored.currentPlay == null
+              ? null
+              : withNames(stored.currentPlay, playerNames)
         }
       } else if (/\/games\/[^/]+$/.test(u.pathname)) {
         loaded = u.pathname.split('/').at(-1) ?? ''
@@ -242,7 +278,15 @@ export async function modalFixture(
       ) {
         let bytes = ''
         for await (const chunk of request) bytes += String(chunk)
-        body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        const player = rosterEntryFromBody(
+          JSON.parse(bytes === '' ? '{}' : bytes)
+        )
+        assert(
+          player.gumboId != null,
+          'Fixture player must have a scoring identity'
+        )
+        playerNames.set(player.gumboId, player.shortName)
+        body = player
         response.statusCode = 201
       } else {
         unexpected.push(`${request.method} ${u.pathname}`)

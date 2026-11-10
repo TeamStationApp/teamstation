@@ -11,10 +11,276 @@ import {
   newSetup,
   overrideOf,
   pitchThrown,
+  placesTaken,
+  recordsOverrideReplacement,
+  startAppearance,
   validateRoster
 } from './lineup'
 import { applyRosterCommands, rosterSituation } from './rosterCommands'
-import { setupOf } from './state'
+import { type PlayEvent, setupOf } from './state'
+
+describe('pending lineup roles and selected pregame turns', function () {
+  it('drops a removed player’s waiting event before later pregame roster edits', function () {
+    const state = game()
+    state.overrideLineupSetup = true
+    state.liveData.boxscore.teams.away.battingOrder.pop()
+    state.liveData.boxscore.teams.away.defense.RF = null
+    state.liveData.boxscore.teams.home.defense.P = null
+    state.pendingLineupEvents = [
+      {
+        index: 0,
+        isPitch: false,
+        type: 'action',
+        isSubstitution: true,
+        details: { code: 'defensive_switch', description: 'Defensive switch' },
+        position: 'RF',
+        count: { balls: 0, strikes: 0, outs: 0 },
+        player: { id: 9, fullName: 'Player 9' }
+      }
+    ]
+    const setup = setupOf(state)
+    delete setup.players[9]
+    setup.sides.away.players = setup.sides.away.players.filter(id => id !== 9)
+    const removed = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(removed.problems).deep.equals([])
+    expect(removed.state.pendingLineupEvents).equals(undefined)
+    expect(recordsOverrideReplacement(removed.state)).equals(false)
+    const later = setupOf(removed.state)
+    later.sides.home.defense.P = 10
+    later.sides.away.defense.C = null
+    later.sides.away.defense.SS = 2
+    const edited = applyAction(removed.state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup: later
+    })
+    expect(edited.problems).deep.equals([])
+    expect(edited.state.pendingLineupEvents).equals(undefined)
+    expect(edited.state.liveData.plays.currentPlay!.playEvents).deep.equals([])
+  })
+
+  it('treats late-start defensive assignments as setup until scoring begins', function () {
+    let state = applyAction(game(), {
+      type: 'gameFlow',
+      kind: 'override',
+      inning: 3,
+      top: false,
+      batter: 10,
+      balls: 1,
+      clearPitcher: true
+    }).state
+    const setup = setupOf(state)
+    setup.sides.away.defense.P = 2
+    setup.sides.away.defense.C = 1
+    const repaired = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(repaired.problems).deep.equals([])
+    state = repaired.state
+    expect(state.pendingLineupEvents).equals(undefined)
+    const pitched = applyAction(state, { type: 'pitch', call: 'B' })
+    expect(pitched.problems).deep.equals([])
+    expect(
+      pitched.state.liveData.plays.currentPlay!.playEvents.map(
+        event => event.details.code
+      )
+    ).deep.equals(['B'])
+  })
+
+  for (const context of ['legacy', 'override', 'pending'])
+    it(`preserves legacy cross-team attribution except in new setup context: ${context}`, function () {
+      const state = applyAction(game(), { type: 'pitch', call: 'B' }).state
+      state.liveData.boxscore.teams.home.defense.C = null
+      const previous: PlayEvent = {
+        index: 1,
+        isPitch: false,
+        type: 'action',
+        isSubstitution: true,
+        details: {
+          code: 'defensive_switch',
+          description: 'Defensive switch',
+          fromPosition: 'C'
+        },
+        position: 'SS',
+        count: { balls: 1, strikes: 0, outs: 0 },
+        player: { id: 2, fullName: 'Player 2' }
+      }
+      if (context === 'pending') state.pendingLineupEvents = [previous]
+      else state.liveData.plays.currentPlay!.playEvents.push(previous)
+      if (context === 'override') state.overrideLineupSetup = true
+      const setup = setupOf(state)
+      setup.sides.home.defense['1B'] = null
+      setup.sides.home.defense.C = 12
+      const changed = applyAction(state, {
+        type: 'lineup',
+        kind: 'roster',
+        setup
+      })
+      expect(changed.problems).deep.equals([])
+      const replacement =
+        changed.state.liveData.plays.currentPlay!.playEvents.find(
+          event => event.player.id === 12
+        )
+      expect(replacement?.position).equals('C')
+      expect(replacement?.replacedPlayer?.id).equals(
+        context === 'legacy' ? 2 : undefined
+      )
+    })
+  it('keeps chained defensive changes ordered across pitcher repair, with the same attribution as an open play', function () {
+    const change = (
+      state: ReturnType<typeof game>,
+      first: boolean
+    ): ReturnType<typeof game> => {
+      const setup = setupOf(state)
+      if (first) {
+        setup.sides.home.defense.C = null
+        setup.sides.home.defense.SS = 11
+      } else {
+        setup.sides.home.defense['1B'] = null
+        setup.sides.home.defense.C = 12
+      }
+      const result = applyAction(state, {
+        type: 'lineup',
+        kind: 'roster',
+        setup
+      })
+      expect(result.problems).deep.equals([])
+      return result.state
+    }
+    const opened = applyAction(game(), { type: 'pitch', call: 'B' }).state
+    const baseline = change(change(opened, true), false)
+      .liveData.plays.currentPlay!.playEvents.filter(
+        event => event.isSubstitution === true
+      )
+      .map((event, index) => ({ ...event, index }))
+    let state = applyAction(opened, {
+      type: 'gameFlow',
+      kind: 'override',
+      top: false,
+      batter: 10,
+      balls: 1,
+      clearPitcher: true
+    }).state
+    state = change(state, true)
+    expect(
+      state.pendingLineupEvents?.map(event => event.player.id)
+    ).deep.equals([11])
+    const setup = setupOf(state)
+    setup.sides.away.defense.P = 1
+    state = applyAction(state, { type: 'lineup', kind: 'roster', setup }).state
+    state = change(state, false)
+    expect(state.liveData.plays.currentPlay!.playEvents).deep.equals([])
+    expect(state.pendingLineupEvents).deep.equals(baseline)
+    expect(state.pendingLineupEvents?.[1].replacedPlayer?.id).equals(11)
+    state = applyAction(state, {
+      type: 'gameFlow',
+      kind: 'override',
+      top: true,
+      batter: 1,
+      clearPitcher: true
+    }).state
+    const repair = setupOf(state)
+    repair.sides.home.defense.P = 10
+    state = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup: repair
+    }).state
+    expect(state.liveData.plays.currentPlay!.playEvents).deep.equals(baseline)
+    expect(state.pendingLineupEvents).equals(undefined)
+  })
+  it('keeps the other opening team at its new leadoff slot', function () {
+    let state = game()
+    state = applyAction(state, {
+      type: 'gameFlow',
+      kind: 'override',
+      batter: 4,
+      batterIndex: 3
+    }).state
+    const setup = setupOf(state)
+    setup.sides.home.battingOrder = [11, 10, 12, 13, 14, 15, 16, 17, 18]
+    const changed = applyAction(state, {
+      type: 'lineup',
+      kind: 'roster',
+      setup
+    })
+    expect(changed.problems).deep.equals([])
+    expect(changed.state.liveData.boxscore.teams.home.battingIndex).equals(0)
+    expect(changed.state.liveData.boxscore.teams.away.battingIndex).equals(3)
+  })
+  it('waits for each team’s offensive or defensive half and tolerates a missing event player', function () {
+    const state = game()
+    const event = (id: number, code: string, position?: string): PlayEvent => ({
+      index: 0,
+      isPitch: false,
+      type: 'action',
+      isSubstitution: true,
+      details: { description: 'Lineup change', code },
+      position,
+      count: { balls: 0, strikes: 0, outs: 0 },
+      player: { id, fullName: 'Player' }
+    })
+    state.pendingLineupEvents = [
+      event(2, 'defensive_switch', 'SS'),
+      event(11, 'defensive_switch', 'SS'),
+      event(3, 'offensive_substitution', 'PH'),
+      event(12, 'offensive_substitution', 'PR'),
+      event(4, 'ts_batting_order'),
+      event(999, 'defensive_switch', 'RF')
+    ]
+    startAppearance(state)
+    expect(
+      state.liveData.plays.currentPlay!.playEvents.map(event => event.player.id)
+    ).deep.equals([11, 3, 4])
+    expect(state.pendingLineupEvents.map(event => event.player.id)).deep.equals(
+      [2, 12]
+    )
+    state.liveData.linescore.isTopInning = false
+    startAppearance(state)
+    expect(
+      state.liveData.plays.currentPlay!.playEvents.map(event => event.player.id)
+    ).deep.equals([2, 12])
+    expect(state.pendingLineupEvents).equals(undefined)
+  })
+
+  for (const { order, selected, removed, expected } of [
+    { order: [1, 2, 3, 4, 5], selected: 3, removed: 1, expected: 2 },
+    { order: [1, 2, 1, 3], selected: 2, removed: 1, expected: 1 },
+    { order: [1, 2, 3, 4, 5], selected: 3, removed: 3, expected: 3 }
+  ])
+    it(`follows a selected pregame occurrence through removal: ${order.join(',')}/${selected}/${removed}`, function () {
+      let state = game()
+      state.liveData.boxscore.teams.away.battingOrder = order
+      const selectedResult = applyAction(state, {
+        type: 'gameFlow',
+        kind: 'override',
+        batter: order[selected],
+        batterIndex: selected
+      })
+      expect(selectedResult.problems).deep.equals([])
+      state = selectedResult.state
+      const setup = setupOf(state)
+      setup.sides.away.battingOrder.splice(removed, 1)
+      const changed = applyAction(state, {
+        type: 'lineup',
+        kind: 'roster',
+        setup
+      })
+      expect(changed.problems).deep.equals([])
+      expect(changed.state.liveData.boxscore.teams.away.battingIndex).equals(
+        expected
+      )
+      expect(changed.state.liveData.linescore.offense.batter?.id).equals(
+        setup.sides.away.battingOrder[expected]
+      )
+    })
+})
 
 describe('player identities', function () {
   it('keeps sparse persistent identities and rejects invalid or duplicate guests', function () {
@@ -536,5 +802,22 @@ describe('correcting the game state by hand', function () {
         pitcher: 3
       }).problems[0].message
     ).equals('Choose a pitcher from the fielding team.')
+  })
+})
+
+describe('explicit merged-turn replacements', function () {
+  it('keeps the legacy taker map unless occurrence replacement is explicit', function () {
+    const before = [1, 2, 1, 3]
+    const after = [1, 2, 9, 3]
+    const legacy = placesTaken(before, after, { replaced: { 1: 9 } })
+    const explicit = placesTaken(before, after, {
+      replaced: { 1: 9 },
+      replaceOccurrence: true
+    })
+    if ('error' in legacy) throw new Error(legacy.error)
+    if ('error' in explicit) throw new Error(explicit.error)
+    expect([...legacy.takers]).deep.equals([])
+    expect([...explicit.takers]).deep.equals([[1, 9]])
+    expect(legacy.order).deep.equals(after)
   })
 })

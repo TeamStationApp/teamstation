@@ -404,7 +404,10 @@ const actionCleaners = {
      * next at-bat's actions after it, so it replays as it was scored.
      */
     keepAtBat: asOptional(asBoolean),
+    /** An explicit half-change reset; absent on older saved overrides. */
+    clearPitcher: asOptional(asBoolean),
     batter: asOptional(asSessionId),
+    batterIndex: asOptional(asNumber),
     pitcher: asOptional(asSessionId),
     bases: asOptional(
       asArray((raw: unknown) => (raw == null ? null : asSessionId(raw)))
@@ -554,12 +557,15 @@ export function dictatedAction(
  * it, and a save queued under an older one is played again or judged before
  * it is sent (`Outbox`). Raise it only when an older engine would fold some
  * log into plays at other indexes or with other results. 4: an end of the
- * half can keep its at-bat (`keepAtBat`).
+ * half can keep its at-bat (`keepAtBat`). 5 reads explicit pitcher resets,
+ * selected batting slots and their pinch-hit replacement relationship.
  */
-export const FOLD_VERSION = 4
+export const FOLD_VERSION = 5
 
 /** The fold that first read an end of the half that keeps its at-bat. */
 export const KEEPS_AT_BAT_SINCE = 4
+/** Explicit pitcher resets and batting-slot overrides. */
+export const OVERRIDE_SLOTS_SINCE = 5
 
 /**
  * Whether `action` is an end of the half that keeps the at-bat in progress:

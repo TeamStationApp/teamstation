@@ -645,17 +645,14 @@ async function main(): Promise<void> {
           baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
         )
         await menu('Overrides')
-        await input('inning', '0')
-        await finishKeyboard()
-        await reach(
-          'Use whole numbers: inning 1 or higher, scores 0 or higher, balls 0–3, strikes 0–2, outs 0–2.'
-        )
-        await shown('Use whole numbers')
+        await tap('Owls score')
+        await input('Enter score', '-1')
+        await m.hideKeyboard()
+        await shown('Use a whole number, 0 or higher.')
+        await tap('Cancel')
         await tap('Cancel')
         await menu('Overrides')
-        await input('inning', '2')
-        await finishKeyboard()
-        await reach('Apply Override')
+        await tap('Balls 2')
         await tap('Apply Override')
         await shown('Undo Override')
         await tap('Undo Override')

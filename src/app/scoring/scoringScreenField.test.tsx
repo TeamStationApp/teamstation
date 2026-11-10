@@ -806,18 +806,22 @@ describe('scoring screen field wiring', function () {
     /** Opens `live` as a coach of both teams, then takes the roles away. */
     const openThenRevoke = async (
       live: ScoringSession,
-      source: Partial<ScoringSource> = {}
+      source: Partial<ScoringSource> = {},
+      rosters?: Record<string, RosterEntry[]>
     ): Promise<void> => {
       roles = {
         teams: { away: ['coach'], home: ['coach'] },
         guardianOf: []
       }
       TeamStationClient.prototype.myRoles = async () => roles
-      const render = await mount({
-        persistent: false,
-        open: async () => live,
-        ...source
-      })
+      const render = await mount(
+        {
+          persistent: false,
+          open: async () => live,
+          ...source
+        },
+        rosters
+      )
       roles = { teams: {}, guardianOf: [] }
       await render({ active: false })
       await render({ active: true })
@@ -961,18 +965,35 @@ describe('scoring screen field wiring', function () {
       expect(fullNamesShown()).deep.equals([])
       expect(live.state.gameData.players[2].fullName).equals('Aaron Judge')
     })
-    it('draws the Overrides batter and pitcher lists by public labels', async function () {
-      const live = ScoringSession.start(memoryStore(), 'g1', session())
-      await openThenRevoke(live)
+    it('draws the Overrides batter and field pitcher lists by public labels', async function () {
+      const initial = session()
+      initial.liveData.boxscore.teams.home.defense.P = null
+      const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+        requireCurrentSetup: true
+      })
+      const publicNames = new Map(
+        Object.entries(named).map(([id, [, label]]) => [Number(id), label])
+      )
+      const roster = (first: number): RosterEntry[] =>
+        scoringRoster(first).map(row => ({
+          ...row,
+          shortName: publicNames.get(row.gumboId ?? 0) ?? row.shortName
+        }))
+      await openThenRevoke(live, {}, { away: roster(1), home: roster(10) })
       await click('Open scoring menu')
       await click('Overrides')
       await click('Batter')
+      expect(document.querySelector('[aria-label^="1. Mookie B"]')).not.equals(
+        null
+      )
+      expect(fullNamesShown()).deep.equals([])
+      await click('Cancel')
+      await click('Cancel')
+      await step(() => field().onPlayerTap?.('empty-P'))
       expect(
-        document.querySelector('[aria-label="Choose Batter Mookie B"]')
-      ).not.equals(null)
-      await click('Pitcher')
-      expect(
-        document.querySelector('[aria-label="Choose Pitcher Shohei O"]')
+        document.querySelector(
+          '[aria-label^="Assign P "][aria-label$=" Shohei O"]'
+        )
       ).not.equals(null)
       expect(fullNamesShown()).deep.equals([])
     })

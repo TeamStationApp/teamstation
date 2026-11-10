@@ -998,9 +998,9 @@ describe('the game socket (U14)', function () {
       message: 'Update TeamStation to keep following games.'
     }
 
-    it('subscribes protocol 3 and 4, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
-      // Only a save of plays needs 4: an app of protocol 3 still follows.
-      expect(GAME_SOCKET_PROTOCOL).equals(4)
+    it('subscribes protocol 3 and 5, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
+      // Only a save of plays needs 5: an app of protocol 3 still follows.
+      expect(GAME_SOCKET_PROTOCOL).equals(5)
       const watcher = await listen(VIEWER)
       watcher.send({ type: 'subscribe', gameId: scored, id: 'w1', protocol: 3 })
       expect(

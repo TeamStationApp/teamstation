@@ -974,29 +974,27 @@ describe('scoring slide-up sheets', function () {
   it('validates override fields and player collisions, then reconciles the chosen half', async function () {
     await mount()
     await menu('Overrides')
-    await input('balls', '4')
-    expect(
-      document
-        .querySelector('[aria-label="Apply Override"]')
-        ?.getAttribute('aria-disabled')
-    ).equals('true')
-    await input('balls', '')
-    await input('balls', '3')
-    await click('First base')
-    await click('Choose First base Player 1')
-    expect(document.body.textContent).includes('cannot include the batter')
-    await click('First base')
-    await click('Choose First base Empty')
+    await click('Balls 3')
     await click('Bottom')
-    await click('Batter')
-    await click('Choose Batter Player 2')
-    await click('Pitcher')
-    await click('Choose Pitcher Player 3')
-    await input('inning', '2')
-    await input('homeScore', '5')
-    await input('awayScore', '4')
-    await input('outs', '2')
-    await input('strikes', '1')
+    await click('Inning')
+    const chooseWheel = async (value: string): Promise<void> => {
+      const row = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.textContent === value)!
+      await act(async () => {
+        row.click()
+      })
+    }
+    await chooseWheel('2')
+    await click('Done')
+    await click('Hawks score')
+    await input('Enter score', '5')
+    await click('Done')
+    await click('Owls score')
+    await input('Enter score', '4')
+    await click('Done')
+    await click('Outs 2')
+    await click('Strikes 1')
     await click('Apply Override')
     expect(document.body.textContent).includes('Owls 4 · Hawks 5 · Bottom 2nd')
     await click('Undo Override game state')
@@ -1058,14 +1056,21 @@ describe('scoring slide-up sheets', function () {
     await click('Undo Set team roster')
     expect(document.body.textContent).includes('Next batter is on base')
     await menu('Overrides')
-    await click('First base')
-    await click('Choose First base Empty')
     await click('Batter')
-    await click('Choose Batter Player 1')
-    await click('Apply Override')
+    const occupied = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label]')
+    ].find(
+      node =>
+        node.getAttribute('aria-label')?.startsWith('1. Player 1') === true
+    )!
+    expect(occupied.getAttribute('aria-disabled')).equals('true')
+    await click('Cancel')
     expect(
-      document.querySelector('[aria-label*="Batter Player 1"]')
-    ).not.equals(null)
+      document
+        .querySelector('[aria-label="Apply Override"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    await click('Cancel')
   })
   it('cancels roster pointer gestures and commits only a released drop', async function () {
     await mount()

@@ -12,6 +12,7 @@ import {
 } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { startingSetup, teamsOf } from './developmentSession'
+import { overrideActions, overrideDraftOf } from './overrideModel'
 import { memoryStore, olderSaveFoldsAlike } from './scoringSource'
 
 const game = asGameDetail({
@@ -240,12 +241,130 @@ describe('a save of plays an older build queued', function () {
     ).equals(true)
   })
 
-  it('goes as it was queued from a build that reads a kept at-bat, unread', async function () {
+  it('goes as it was queued from the current fold, unread', async function () {
     expect(
-      await olderSaveFoldsAlike(4, { held: unread, server: unread })
+      await olderSaveFoldsAlike(5, { held: unread, server: unread })
     ).equals(true)
   })
 
+  for (const variant of ['score', 'runner'])
+    it(`permits a fold-4 queued save after an ordinary new-editor correction: ${variant}`, async function () {
+      const store = memoryStore()
+      const starting = copied(context)
+      const scorer = await ScoringSession.open(store, game.id, starting)
+      applied(scorer, [ball])
+      const prepared = overrideActions(scorer.state, {
+        ...overrideDraftOf(scorer.state),
+        awayScore: 2,
+        ...(variant === 'runner' ? { bases: [102, null, null] } : {})
+      })
+      if ('error' in prepared) throw new Error(prepared.error)
+      expect(prepared.actions[0]).not.property('batterIndex')
+      expect(prepared.actions[0]).not.property('clearPitcher')
+      applied(scorer, prepared.actions)
+      await scorer.flush()
+      const stored = copied(store.games.get(game.id)!)
+      expect(
+        await olderSaveFoldsAlike(4, {
+          held: async () => stored,
+          server: async () => stored
+        })
+      ).equals(true)
+    })
+
+  it('holds older saves for a late-start score edit before assigning the pitcher', async function () {
+    const store = memoryStore()
+    const starting = copied(context)
+    starting.setup.sides.home.defense.P = null
+    const scorer = await ScoringSession.open(store, game.id, starting)
+    const prepared = overrideActions(scorer.state, {
+      ...overrideDraftOf(scorer.state),
+      inning: 3,
+      awayScore: 2
+    })
+    if ('error' in prepared) throw new Error(prepared.error)
+    expect(copied(prepared.actions[0])).not.property('pitcher')
+    expect(prepared.actions[0]).not.property('clearPitcher')
+    applied(scorer, prepared.actions)
+    expect(scorer.state.liveData.linescore.currentInning).equals(3)
+    expect(scorer.state.liveData.linescore.teams.away.runs).equals(2)
+    await scorer.flush()
+    const stored = copied(store.games.get(game.id)!)
+    expect(
+      await olderSaveFoldsAlike(4, { held: async () => stored, server: unread })
+    ).equals(false)
+    expect(
+      await olderSaveFoldsAlike(4, {
+        held: async () => undefined,
+        server: async () => stored
+      })
+    ).equals(false)
+    expect(
+      await olderSaveFoldsAlike(5, { held: unread, server: unread })
+    ).equals(true)
+  })
+
+  it('holds pre-5 saves when either copy contains new override semantics, but permits old games', async function () {
+    const store = memoryStore()
+    const scorer = await ScoringSession.open(store, game.id, context)
+    applied(scorer, [ball])
+    await scorer.flush()
+    const plain = copied(store.games.get(game.id)!)
+    for (const action of [
+      { type: 'gameFlow', kind: 'override', clearPitcher: true },
+      { type: 'gameFlow', kind: 'override', batterIndex: 4 },
+      { type: 'lineup', kind: 'roster', setup: {}, replaces: 1 }
+    ]) {
+      const changed = copied(plain)
+      const record = changed.currentPlay as unknown as {
+        teamStation: { actions: unknown[] }
+      }
+      record.teamStation.actions.push(action)
+      expect(
+        await olderSaveFoldsAlike(4, {
+          held: async () => changed,
+          server: unread
+        })
+      ).equals(false)
+      expect(
+        await olderSaveFoldsAlike(4, {
+          held: async () => plain,
+          server: async () => changed
+        })
+      ).equals(false)
+      expect(
+        await olderSaveFoldsAlike(5, { held: unread, server: unread })
+      ).equals(true)
+    }
+    expect(
+      await olderSaveFoldsAlike(4, {
+        held: async () => plain,
+        server: async () => plain
+      })
+    ).equals(true)
+    const legacyRoster = copied(plain)
+    const legacyRecord = legacyRoster.currentPlay as unknown as {
+      teamStation: { actions: unknown[] }
+    }
+    legacyRecord.teamStation.actions.push({
+      type: 'lineup',
+      kind: 'roster',
+      setup: {}
+    })
+    expect(
+      await olderSaveFoldsAlike(4, {
+        held: async () => legacyRoster,
+        server: async () => legacyRoster
+      })
+    ).equals(true)
+    const kept = await servedGame()
+    expect(
+      await olderSaveFoldsAlike(4, {
+        held: async () => undefined,
+        server: async () => copied(kept.games.get(game.id)!)
+      })
+    ).equals(true)
+  })
   it('throws a server read that failed, for the queue to try again', async function () {
     const server = memoryStore()
     const scorer = await ScoringSession.open(server, game.id, context)

@@ -33,6 +33,7 @@ import {
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreEligibility, moreReducer } from './moreActions'
+import { overrideActions } from './overrideModel'
 import {
   accepted,
   act,
@@ -56,6 +57,7 @@ import {
   CORRECTION_WINDOW_MS,
   type GameCheckpoint,
   type HistoryEntry,
+  type OverrideDraft,
   type ScoringDraft,
   type ScoringEvent,
   type ScoringScreenState,
@@ -154,6 +156,27 @@ export function snapshotOf(state: ScoringState): ScoringSnapshot {
     ...rest
   } = state
   return { ...copyState(rest), log, session: copyGame(session) }
+}
+
+/** Runs the same lineup confirmation and readiness checks as committing the draft. */
+export function overrideProblem(
+  state: ScoringState,
+  draft: OverrideDraft
+): string | undefined {
+  if (
+    state.moreDraft != null ||
+    (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+  )
+    return 'Finish the current play before applying an override.'
+  const next = snapshotOf(state)
+  try {
+    return overrideActions(next.session, draft, (_state, action) =>
+      act(next, action)
+    ).error
+  } catch (error) {
+    if (error instanceof Refused) return error.message
+    throw error
+  }
 }
 
 /** A copy of the screen without the game or its history. */
@@ -813,11 +836,19 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       return state
     return accepted(state, 'Set Outs', next => {
       const draft = overrideOf(next.session)
+      const team =
+        next.session.liveData.boxscore.teams[battingSide(next.session)]
       act(next, {
         type: 'gameFlow',
         kind: 'override',
         ...draft,
         outs: event.outs,
+        // A repeated identity needs its occurrence; ordinary tiebreakers
+        // keep the legacy action shape and do not enter correction setup.
+        ...(team.battingOrder[team.battingIndex] === draft.batter &&
+        team.battingOrder.indexOf(draft.batter) !== team.battingIndex
+          ? { batterIndex: team.battingIndex }
+          : {}),
         batter: draft.batter ?? undefined,
         pitcher: draft.pitcher ?? undefined
       })
@@ -836,14 +867,15 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       next => {
         if (event.type === 'ROSTER')
           applyRosterSave(next, event.draft, event.nextBatter, event.runners)
-        else
-          act(next, {
-            type: 'gameFlow',
-            kind: 'override',
-            ...event.draft,
-            batter: event.draft.batter ?? undefined,
-            pitcher: event.draft.pitcher ?? undefined
-          })
+        else {
+          const prepared = overrideActions(
+            next.session,
+            event.draft,
+            (_state, action) => act(next, action)
+          )
+          if (prepared.error != null)
+            throw new Refused([{ code: 'illegal', message: prepared.error }])
+        }
         next.phase =
           next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
         next.generation++
