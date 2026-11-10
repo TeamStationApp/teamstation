@@ -180,6 +180,10 @@ export function clock(seconds: number): string {
     : `${minutes}:${pad(secs)}`
 }
 
+export function matchupTitle(lines: { first: string; second: string }): string {
+  return [lines.first, lines.second].filter(Boolean).join(' ')
+}
+
 /**
  * How the two teams of a game are written on one row.
  *

@@ -67,7 +67,12 @@ async function gameScreen(
   client.teams = async () => []
   await render(
     <GestureHandlerRootView>
-      <GameScreen client={client} gameId="g1" onScoreGame={onScoreGame} />
+      <GameScreen
+        signedIn
+        client={client}
+        gameId="g1"
+        onScoreGame={onScoreGame}
+      />
     </GestureHandlerRootView>
   )
 }

@@ -151,6 +151,7 @@ async function page(
                 frame={options.frame == null ? null : { ...options.frame }}
               >
                 <GameScreen
+                  signedIn
                   client={client}
                   gameId="g1"
                   initialTab="watch"
@@ -1043,14 +1044,20 @@ describe('a game’s highlights (U26)', function () {
       await act(async () => {
         row('Second single').click()
       })
-      expect(listProps().extraData).equals('e2')
+      expect(listProps().extraData).deep.equals({
+        activeEventId: 'e2',
+        signedIn: true
+      })
       expect(row('Second single').className).not.equals(unmarked)
       expect(row('First single').className).equals(unmarked)
       expect(video.currentTime).equals(240)
       await act(async () => {
         row('Third single').click()
       })
-      expect(listProps().extraData).equals('e3')
+      expect(listProps().extraData).deep.equals({
+        activeEventId: 'e3',
+        signedIn: true
+      })
       expect(row('Second single').className).equals(unmarked)
       expect(row('Third single').className).not.equals(unmarked)
       expect(video.currentTime).equals(360)

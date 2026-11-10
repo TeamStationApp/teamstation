@@ -148,7 +148,12 @@ async function boxScore(
     root?.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen client={client} gameId="g1" initialTab="boxScore" />
+          <GameScreen
+            signedIn
+            client={client}
+            gameId="g1"
+            initialTab="boxScore"
+          />
         </GestureHandlerRootView>
       </ThemeProvider>
     )
@@ -201,7 +206,12 @@ async function nonMemberBoxScore(): Promise<{
     root?.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen client={client} gameId="g1" initialTab="boxScore" />
+          <GameScreen
+            signedIn
+            client={client}
+            gameId="g1"
+            initialTab="boxScore"
+          />
         </GestureHandlerRootView>
       </ThemeProvider>
     )

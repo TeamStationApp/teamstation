@@ -667,6 +667,21 @@ describe('the home screen', function () {
     ])
   })
 
+  it('opens a recent event with no trailing space in its title', async () => {
+    const calls = await mount({
+      teams: async () => [team('tem_hawks', 'Alta Hawks')],
+      recent: async () =>
+        recentGame({
+          eventKind: 'event',
+          eventType: 'practice',
+          title: null,
+          videoCount: 0
+        })
+    })
+    await press(button('Box Score'))
+    expect(calls.games.at(-1)?.title).equals('Practice')
+  })
+
   it('keeps the Home Add and Create preview source stable while refreshing LIVE metadata', async function () {
     clock = liveClock()
     restoreVideo = playableVideo()

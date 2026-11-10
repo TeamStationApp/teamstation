@@ -38,6 +38,7 @@ import type { WallTimeline } from '../../common/wallTimeline'
 import {
   AnglePickerModal,
   AnglesUnavailableModal,
+  Button,
   Card,
   GameHeroCard,
   GlassView,
@@ -152,7 +153,8 @@ const SEEKABLE_SLACK_SEC = 0.25
 export interface GameScreenProps {
   client: TeamStationClient
   gameId: string
-  signedIn?: boolean
+  /** null while session restoration is pending. */
+  signedIn: boolean | null
   onSignIn?: () => void
   socket?: Pick<GameSocket, 'subscribe'>
   /** Opens the scoring choices as a separate page, retaining the watched moment. */
@@ -414,7 +416,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     onOpenTeam,
     onOpenPlayer
   } = props
-  const deviceRecording = useGameRecording(client, gameId)
+  const deviceRecording = useGameRecording(client, gameId, props.signedIn)
   const recording = props.recording ?? deviceRecording
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -470,6 +472,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       live.current = false
     }
   }, [])
+  const [permissionVersion, setPermissionVersion] = useState(0)
+  const permissionRefreshOwed = useRef<string | undefined>(undefined)
+  const permissionProjection = useRef<string | undefined>(undefined)
   const gameRequest = useRef(0)
   /** Whether this game has been shown since it was opened. */
   const shown = useRef(false)
@@ -485,6 +490,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       )
         return
       setGame(found)
+      const projection = JSON.stringify([
+        found.id,
+        found.homeTeamId,
+        found.awayTeamId,
+        found.seasonId,
+        found.withdrawnByTeamId,
+        found.status,
+        found.eventKind,
+        found.canScore
+      ])
+      if (
+        permissionRefreshOwed.current === gameId ||
+        permissionProjection.current !== projection
+      ) {
+        permissionRefreshOwed.current = undefined
+        setPermissionVersion(version => version + 1)
+      }
+      permissionProjection.current = projection
       shown.current = true
       setError(undefined)
       videoHints.current.onTitle?.(
@@ -500,21 +523,25 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     },
     [gameId]
   )
-  const refreshGame = useCallback(async (): Promise<void> => {
-    if (live.current && currentGameId.current === gameId)
-      setLocalTimezone(viewerTimezone())
-    const request = ++gameRequest.current
-    try {
-      showGame(await client.game(gameId), request)
-    } catch (error) {
-      if (
-        live.current &&
-        currentGameId.current === gameId &&
-        request === gameRequest.current
-      )
-        throw error
-    }
-  }, [client, gameId, showGame])
+  const refreshGame = useCallback(
+    async (refreshPermissions = true): Promise<void> => {
+      if (live.current && currentGameId.current === gameId)
+        setLocalTimezone(viewerTimezone())
+      if (refreshPermissions) permissionRefreshOwed.current = gameId
+      const request = ++gameRequest.current
+      try {
+        showGame(await client.game(gameId), request)
+      } catch (error) {
+        if (
+          live.current &&
+          currentGameId.current === gameId &&
+          request === gameRequest.current
+        )
+          throw error
+      }
+    },
+    [client, gameId, showGame]
+  )
   /** The game as the phone last stored it, until the read returns. */
   const paintGame = useCallback(async (): Promise<void> => {
     const request = ++gameRequest.current
@@ -618,7 +645,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           return
         }
         // A reconnect asks for the game again.
-        if (event.type === 'resync') gameHeld.current = 'asked'
+        if (event.type === 'resync') {
+          gameHeld.current = 'asked'
+        }
         if (
           event.type === 'resync' ||
           (event.type === 'change' &&
@@ -627,7 +656,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           // A play body is news of its own: read now, as before, without
           // waiting on the event's scope. The read counts for the scope's
           // gate, so a notice after it waits out the gate's window.
-          readLatest.current.alongside(refreshGame).catch(() => undefined)
+          readLatest.current
+            .alongside(async () => {
+              await refreshGame(event.type === 'resync')
+            })
+            .catch(() => undefined)
           setBox(undefined)
         }
       })
@@ -644,13 +677,22 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   useEffect(() => {
     setCanManageSchedule(false)
   }, [gameId])
+  const permissionReady = game != null
+  const permissionKind = game?.eventKind
+  const permissionCanScore = game?.canScore
   useEffect(() => {
     let active = true
+    // Authenticated-only APIs require sign-in regardless of the game projection.
+    // A signed-in non-member can still have scheduling rights through a season.
+    if (!permissionReady || props.signedIn !== true) {
+      setCanManageSchedule(false)
+      return
+    }
     const permission =
-      game?.eventKind === 'event'
+      permissionKind === 'event'
         ? client.eventInfo(gameId).then(info => info.canManage)
         : // A scorekeeper may swap home and away there, if nothing else.
-          game?.canScore === true
+          permissionCanScore === true
           ? Promise.resolve(true)
           : client
               .gameScheduling(gameId)
@@ -666,7 +708,15 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       active = false
     }
-  }, [client, gameId, game])
+  }, [
+    client,
+    gameId,
+    permissionReady,
+    permissionKind,
+    permissionCanScore,
+    permissionVersion,
+    props.signedIn
+  ])
   const [video, setVideo] = useState<VideoSummary | undefined>(undefined)
   const [membershipWarning, setMembershipWarning] = useState(false)
   const [highlights, setHighlights] = useState<Highlight[]>([])
@@ -753,6 +803,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    */
   const nonMemberView = game?.nonMemberView === true
   const showAngles =
+    props.signedIn === true &&
     !nonMemberView &&
     angles != null &&
     angles.length > 0 &&
@@ -956,6 +1007,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const awayTeamId = game?.awayTeamId
   const homeTeamId = game?.homeTeamId
   useEffect(() => {
+    if (props.signedIn !== true) {
+      setOpenableTeams(previous => (previous.size === 0 ? previous : new Map()))
+      return
+    }
     if (awayTeamId == null || homeTeamId == null) return
     let live = true
     const load = async (): Promise<void> => {
@@ -976,7 +1031,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [awayTeamId, client, homeTeamId, seasonId])
+  }, [awayTeamId, client, homeTeamId, seasonId, props.signedIn])
 
   // Keyed by the video's id, not its entry: a refresh that brings the same
   // video with a new status or start neither reloads its highlights nor
@@ -1007,7 +1062,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   /** How many times a live video without files has been asked for again. */
   const [playbackAsks, setPlaybackAsks] = useState(0)
   useEffect(() => {
-    if (videoId == null || nonMemberView) return
+    if (videoId == null || nonMemberView || props.signedIn !== true) return
     const forVideoId = videoId
     let live = true
     setPlayback(undefined)
@@ -1028,7 +1083,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, nonMemberView])
+  }, [client, videoId, nonMemberView, props.signedIn])
 
   // A live video is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then the server
@@ -1037,6 +1092,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // for good that the video is not available.
   useEffect(() => {
     if (
+      props.signedIn !== true ||
+      nonMemberView ||
       videoId == null ||
       (videoStatus !== 'live' && playback?.pending !== true) ||
       playbackFor !== videoId ||
@@ -1067,7 +1124,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       live = false
       clearTimeout(timer)
     }
-  }, [client, videoId, videoStatus, playback, playbackFor, playbackAsks])
+  }, [
+    client,
+    videoId,
+    videoStatus,
+    playback,
+    playbackFor,
+    playbackAsks,
+    props.signedIn,
+    nonMemberView
+  ])
 
   // Fetched when the tab is first opened, not with the game: most people come
   // here to watch, and the box score is a second query against every play.
@@ -1077,7 +1143,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const reveals = useSceneReveals()
   const boxRead = useRef(reveals)
   useEffect(() => {
-    if (tab !== 'boxScore' || !gameLoaded || nonMemberView) return
+    if (
+      tab !== 'boxScore' ||
+      !gameLoaded ||
+      nonMemberView ||
+      props.signedIn !== true
+    )
+      return
     // Kept, but for a name corrected on a screen pushed over this one.
     if (box != null && boxRead.current === reveals) return
     boxRead.current = reveals
@@ -1093,7 +1165,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [box, client, nonMemberView, gameId, gameLoaded, tab, reveals])
+  }, [
+    box,
+    client,
+    nonMemberView,
+    gameId,
+    gameLoaded,
+    tab,
+    reveals,
+    props.signedIn
+  ])
 
   const playbackUrl = playback?.url ?? null
 
@@ -1635,7 +1716,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const jumpTo = (highlight: Highlight): void => {
-    if (nonMemberView) {
+    if (props.signedIn === null) return
+    if (nonMemberView || !props.signedIn) {
       setMembershipWarning(true)
       return
     }
@@ -1690,15 +1772,20 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   const jump = useCallback((highlight: Highlight) => {
     latestJump.current(highlight)
   }, [])
+  const highlightExtraData = useMemo(
+    () => ({ activeEventId, signedIn: props.signedIn }),
+    [activeEventId, props.signedIn]
+  )
   const renderHighlight = useCallback(
     (highlight: Highlight) => (
       <HighlightRow
         highlight={highlight}
         active={highlight.eventId === activeEventId}
+        disabled={props.signedIn === null}
         onJump={jump}
       />
     ),
-    [activeEventId, jump]
+    [activeEventId, jump, props.signedIn]
   )
 
   // A highlight chosen on another page opens here straight into the player in
@@ -2066,7 +2153,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // screen, where the node's single-camera setting puts it on the picture:
   // the box less any black bars.
   const pictureBoard =
-    video == null
+    video == null || props.signedIn !== true || nonMemberView
       ? undefined
       : {
           client,
@@ -2079,18 +2166,24 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         }
   const player = (
     <View style={styles.playerBlock}>
-      {noVideoHere ? null : nonMemberView ? (
+      {noVideoHere ? null : nonMemberView || props.signedIn !== true ? (
         <Pressable
           testID="gameVideoPreview"
           accessibilityRole="button"
           accessibilityLabel="Play game video"
+          disabled={props.signedIn === null}
+          accessibilityState={{
+            disabled: props.signedIn === null,
+            busy: props.signedIn === null
+          }}
           onPress={() => {
-            setMembershipWarning(true)
+            if (props.signedIn !== null) setMembershipWarning(true)
           }}
           style={{
             width: layout.videoWidth,
             height: layout.videoHeight,
-            overflow: 'hidden'
+            overflow: 'hidden',
+            opacity: props.signedIn === null ? 0.5 : 1
           }}
         >
           <View pointerEvents="none">
@@ -2254,7 +2347,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           data={highlights}
           keyOf={highlightKey}
           renderItem={renderHighlight}
-          extraData={activeEventId}
+          extraData={highlightExtraData}
           numColumns={columns}
           estimatedItemSize={HIGHLIGHT_ROW_HEIGHT}
         />
@@ -2427,29 +2520,55 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     />
   ) : null
 
+  const sessionLoading = (
+    <ActivityIndicator
+      accessibilityLabel="Loading session"
+      color={theme.primaryTextColor}
+    />
+  )
   const below = (
     <View style={styles.tabBody}>
       {tab === 'info' ? (
-        <EventInfoTab
-          key={gameId}
-          client={client}
-          eventId={gameId}
-          event={game}
-          umpires={game.umpires}
-        />
+        props.signedIn === null ? (
+          sessionLoading
+        ) : !props.signedIn ? (
+          <Card testID="game-public-info">
+            {game.venue != null && game.venue !== '' && (
+              <Text style={styles.publicInfoText}>{game.venue}</Text>
+            )}
+            <Text style={styles.publicInfoText}>
+              Sign in to view event information.
+            </Text>
+            {props.onSignIn != null && (
+              <Button label="Log in / Sign up" onPress={props.onSignIn} />
+            )}
+          </Card>
+        ) : (
+          <EventInfoTab
+            key={gameId}
+            client={client}
+            eventId={gameId}
+            event={game}
+            umpires={game.umpires}
+          />
+        )
       ) : (
         <BoxScore
           membershipAccess={
-            <MembershipAccess
-              key={`${game.id}:${props.signedIn === true}`}
-              client={client}
-              signedIn={props.signedIn === true}
-              teams={[
-                { id: game.homeTeamId, name: game.homeTeamName },
-                { id: game.awayTeamId, name: game.awayTeamName }
-              ]}
-              onSignIn={() => props.onSignIn?.()}
-            />
+            props.signedIn === null ? (
+              sessionLoading
+            ) : (
+              <MembershipAccess
+                key={`${game.id}:${props.signedIn}`}
+                client={client}
+                signedIn={props.signedIn}
+                teams={[
+                  { id: game.homeTeamId, name: game.homeTeamName },
+                  { id: game.awayTeamId, name: game.awayTeamName }
+                ]}
+                onSignIn={() => props.onSignIn?.()}
+              />
+            )
           }
           game={game}
           box={box}
@@ -2534,10 +2653,10 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           </TabPages>
         </View>
       </View>
-      {membershipWarning && (
+      {membershipWarning && props.signedIn !== null && (
         <VideoMembershipSheet
           client={client}
-          signedIn={props.signedIn === true}
+          signedIn={props.signedIn}
           teams={[
             { id: game.homeTeamId, name: game.homeTeamName },
             { id: game.awayTeamId, name: game.awayTeamName }
@@ -2583,16 +2702,23 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 const HighlightRow = memo(function HighlightRow(props: {
   highlight: Highlight
   active: boolean
+  disabled: boolean
   onJump: (highlight: Highlight) => void
 }): React.ReactElement {
-  const { highlight, active, onJump } = props
+  const { highlight, active, onJump, disabled } = props
   const styles = getStyles(useTheme())
   return (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Play highlight: ${highlight.title}`}
+      disabled={disabled}
+      accessibilityState={{ disabled, busy: disabled }}
       testID={`game-highlight-${highlight.eventId}`}
-      style={[styles.highlight, active ? styles.highlightActive : undefined]}
+      style={[
+        styles.highlight,
+        active ? styles.highlightActive : undefined,
+        disabled ? { opacity: 0.5 } : undefined
+      ]}
       onPress={() => {
         onJump(highlight)
       }}
@@ -2670,6 +2796,11 @@ const getStyles = cacheStyles((theme: Theme) =>
       flexDirection: 'row',
       alignItems: 'baseline',
       gap: theme.rem(0.75)
+    },
+    publicInfoText: {
+      color: theme.primaryTextColor,
+      fontFamily: theme.regularTextFont,
+      fontSize: theme.rem(1)
     },
     teamName: {
       color: theme.primaryTextColor,

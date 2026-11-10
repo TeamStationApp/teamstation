@@ -96,6 +96,7 @@
     "test": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/checkScoringLayering.mjs && node scripts/run-unit-tests.mjs",
     "test.integration": "node scripts/chatCryptoBuild.mjs node wasm && node src/migrate/requirePostgres18.js && node scripts/run-unit-tests.mjs --tier integration",
     "test.models": "node scripts/testModels.mjs",
+    "test.e2e.seasonSchedule": "TS_REFINEMENTS_SCHEDULE_ONLY=1 node -r sucrase/register src/app/seasonGameRefinements.e2e.ts",
     "test.mocha": "mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && npm run typecheck.mason",
     "typecheck.mason": "tsc -p tsconfig.mason.json",

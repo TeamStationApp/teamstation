@@ -66,6 +66,7 @@ function Fixture(): React.ReactElement {
           />
         ) : (
           <GameScreen
+            signedIn
             client={client}
             gameId={game.id}
             initialTab="watch"

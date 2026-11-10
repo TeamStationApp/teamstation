@@ -43,7 +43,13 @@ import { HOME_GUARDED, HOME_LISTS, HOME_RECENT } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { UmpireMaskDrawing } from '../umpires/UmpireMaskDrawing'
-import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
+import {
+  gameStatusLine,
+  matchupLines,
+  matchupTitle,
+  shortDate,
+  winnerOf
+} from './format'
 import type { GameListOpenOptions } from './gameListOptions'
 import {
   type HomeListExpanded,
@@ -778,7 +784,7 @@ function startedAtLabel(startedAt: string): string {
 /** `Alta Hawks @ Bay Stars`, the way the row in a list reads. */
 function matchup(game: SeasonGame): string {
   const lines = matchupLines(game)
-  return `${lines.first} ${lines.second}`
+  return matchupTitle(lines)
 }
 
 /** `QPLL Spring 2026 · 12–3`, or whichever half of that we know. */

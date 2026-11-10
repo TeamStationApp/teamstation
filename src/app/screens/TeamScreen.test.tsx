@@ -746,6 +746,43 @@ describe('a team’s page, from the first page of its lists', function () {
     return { asked, stats }
   }
 
+  it('opens a scheduled practice with a title that has no trailing space', async () => {
+    const opened: Array<[string, string]> = []
+    const { client } = fakeClient({
+      teamGamesPage: async () => ({
+        items: [
+          {
+            ...rows(['gam_practice'], 'sea_newest')[0],
+            eventKind: 'event',
+            eventType: 'practice',
+            title: null
+          }
+        ],
+        nextCursor: null,
+        prevCursor: null,
+        anchorId: null,
+        counts
+      })
+    })
+    await render(
+      <TeamScreen
+        client={client}
+        team={hawks}
+        initialTab="schedule"
+        onOpenGame={(id, title) => opened.push([id, title])}
+      />
+    )
+    const row = document.querySelector<HTMLElement>(
+      '[data-testid="schedule-display-row"]'
+    )!
+    expect(row).not.equals(null)
+    await act(async () => {
+      row.click()
+      await delay(10)
+    })
+    expect(opened).deep.equals([['gam_practice', 'Practice']])
+  })
+
   it('says what the whole list holds, and reads the newest season’s figures', async function () {
     const { asked, stats } = await read('schedule')
     expect(asked).deep.equals([

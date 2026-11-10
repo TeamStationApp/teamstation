@@ -98,7 +98,7 @@ export function CameraAnglesPanel({
     }
   }, [client, gameId])
   useEffect(() => {
-    if (!shown || signedIn === false) return
+    if (!shown || signedIn !== true) return
     mounted.current = true
     let polling = false
     const poll = (): void => {
@@ -317,8 +317,9 @@ export function CameraAnglesPanel({
     )
   }
 
+  if (signedIn === null) return null
   if (
-    signedIn !== false &&
+    signedIn &&
     (access === undefined || (access?.canFilm === true && streams == null))
   )
     return null

@@ -1820,6 +1820,7 @@ describe('the Coach Game pill', function () {
     const opened: string[] = []
     await render(
       <GameScreen
+        signedIn
         client={client}
         gameId="g1"
         initialTab="boxScore"

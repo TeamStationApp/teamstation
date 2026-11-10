@@ -66,6 +66,7 @@ export const ANGLES_POLL_MS = 5000
 export const LAUNCH_LIMIT_MS = 30_000
 
 export interface CameraAnglesPanelProps {
+  signedIn: boolean | null
   client: TeamStationClient
   gameId: string
   /** The engine; a test hands in one over a stand-in module. */
@@ -157,6 +158,21 @@ function isUploading(
  */
 export function CameraAnglesPanel(
   props: CameraAnglesPanelProps
+): React.ReactElement | null {
+  if (props.signedIn !== true)
+    return props.signedIn === null || props.hasVideo ? null : (
+      <StreamEmptyState
+        client={props.client}
+        access={null}
+        onRecord={() => {}}
+        onRequested={() => {}}
+      />
+    )
+  return <SignedInCameraAnglesPanel {...props} />
+}
+
+function SignedInCameraAnglesPanel(
+  props: Omit<CameraAnglesPanelProps, 'signedIn'>
 ): React.ReactElement | null {
   const {
     client,
