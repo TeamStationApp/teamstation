@@ -235,7 +235,10 @@ export class NativeVideoHandle implements VideoHandle {
     this.pendingSeekAt = Date.now()
     this.actuallyPlaying = false
     this.emit('seeking')
-    if (this.activeSeekTo == null) this.sendSeek(next)
+    // Native players coalesce seeks. Replace an obsolete target immediately:
+    // waiting for its download first delays every subsequent scrub position.
+    if (!this.seekTimedOut && !answersSeek(this.activeSeekTo, next))
+      this.sendSeek(next)
   }
 
   private sendSeek(seconds: number): void {
@@ -245,12 +248,16 @@ export class NativeVideoHandle implements VideoHandle {
     this.player?.seek(seconds, SEEK_TOLERANCE)
   }
 
-  /** A lost native completion must not leave every later seek queued forever. */
+  /**
+   * Buffering a cold seek is useful work, not a lost acknowledgement. Allow
+   * the same thirty seconds as a source opening before bounded recovery.
+   * A ready player that never acknowledges a seek still gets five seconds.
+   */
   checkSeekTimeout(): void {
     if (
       this.activeSeekTo == null ||
       this.seekTimedOut ||
-      this.clock() - this.activeSeekAt < 5000
+      this.clock() - this.activeSeekAt < (this.buffering ? 30_000 : 5000)
     )
       return
     // Keep the requested moment quarantined until the replacement source loads.
@@ -472,15 +479,12 @@ export class NativeVideoHandle implements VideoHandle {
       reported: data.currentTime
     })
     if (this.seekTimedOut) return
-    if (!answersSeek(this.activeSeekTo, data.seekTime)) return
-    this.activeSeekTo = null
     if (
-      this.pendingSeekTo != null &&
-      !answersSeek(this.pendingSeekTo, data.seekTime)
-    ) {
-      this.sendSeek(this.pendingSeekTo)
+      !answersSeek(this.activeSeekTo, data.seekTime) ||
+      !answersSeek(this.activeSeekTo, data.currentTime)
+    )
       return
-    }
+    this.activeSeekTo = null
     if (answersSeek(this.pendingSeekTo, data.seekTime)) {
       // Held where it was sent while the player got there, and carried on
       // from there now that it has.
@@ -565,6 +569,9 @@ export class NativeVideoHandle implements VideoHandle {
   handleBuffer = (data: OnBufferData): void => {
     this.trace('native.buffer', { nextBuffering: data.isBuffering })
     this.rebase()
+    // Start the acknowledgement grace period when buffering actually ends.
+    if (this.buffering && !data.isBuffering && this.activeSeekTo != null)
+      this.activeSeekAt = this.clock()
     this.buffering = data.isBuffering
     if (data.isBuffering) {
       this.actuallyPlaying = false
