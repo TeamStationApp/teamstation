@@ -407,13 +407,14 @@ export function TvPlayer({
           // This game's port, held across the await: a reopened game has a
           // new clock.
           const port = clock.current.ports[index]
+          const held = port.timeline
           const [playback, fetched] = await Promise.all([
             client.playback(previous.video.id),
             client.wallTimeline(previous.video.id).catch(() => null)
           ])
-          // As at load: a camera plays without a fresh timeline. Read after
-          // the wait, the port's copy is the newest the periodic refresh has.
-          const timeline = fetched ?? port.timeline
+          // As at load: a camera plays without a fresh timeline, on the one
+          // it had.
+          const timeline = fetched ?? held
           if (!active || playback.url === null) return
           const updated = {
             ...previous,
@@ -429,7 +430,9 @@ export function TvPlayer({
           // Rejects the old mount's callbacks now, not at the next render.
           const next = [...loaded]
           anglesRef.current = next
-          port.timeline = timeline
+          // One the periodic refresh wrote during the wait may be newer than
+          // this fetch; it stays for the swap that refresh queued.
+          if (port.timeline === held) port.timeline = timeline
           // Remounting abandons the old native seek, including its completion.
           seekQueues.current[index] = seekQueue(index)
           setBuffering(previous => previous.filter(i => i !== index))
