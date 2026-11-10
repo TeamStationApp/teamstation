@@ -10,6 +10,11 @@ type TraceGlobal = typeof globalThis & {
   __TS_PLAYER_TRACE__?: (record: PlayerTraceRecord) => void
 }
 
+// Bench build only: numeric diagnostics go to the attached device console.
+;(globalThis as TraceGlobal).__TS_PLAYER_TRACE__ = record => {
+  console.info('TS_PLAYER_TRACE ' + JSON.stringify(record))
+}
+
 export function playerTrace(
   event: string,
   values: PlayerTraceRecord['values']
