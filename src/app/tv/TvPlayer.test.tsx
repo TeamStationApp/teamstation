@@ -10,6 +10,7 @@ import {
 } from 'react-native'
 
 import { asVideoGame, type TeamStationClient } from '../../common/api'
+import type { WallTimeline } from '../../common/wallTimeline'
 import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import { boardStep, SHOWN_OVERLAY } from '../../test/overlayFixtures'
 import { replayContext, scored } from '../../test/replayGameFixture'
@@ -53,6 +54,7 @@ let pending = false
 let live = false
 let mixed = false
 let anchorless = false
+let timelineOf: ((id: string) => Promise<WallTimeline | undefined>) | undefined
 let closed = false
 const client = {
   game: async () => {
@@ -79,11 +81,12 @@ const client = {
     }
   },
   scoreboardOverlay: async () => SHOWN_OVERLAY,
-  wallTimeline: async () => ({
-    ...timelineFor('2026-10-01T00:00:00Z'),
-    ...(anchorless ? { anchors: [] } : {}),
-    live
-  }),
+  wallTimeline: async (id: string) =>
+    (await timelineOf?.(id)) ?? {
+      ...timelineFor('2026-10-01T00:00:00Z'),
+      ...(anchorless ? { anchors: [] } : {}),
+      live
+    },
   gameStatistics: async () => {
     const data = nativeStatistics(
       await client.game('game'),
@@ -270,6 +273,7 @@ afterEach(async () => {
   wide = false
   mixed = false
   anchorless = false
+  timelineOf = undefined
   fail = false
   pending = false
   live = false
@@ -667,6 +671,90 @@ describe('TV game playback entry', () => {
         document.querySelectorAll('video')[1],
         'buffering with no transfer for two minutes is bounded'
       ).not.equals(before[1])
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
+  it('keeps the timeline a refreshed camera opened with over an older periodic fetch', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      // The periodic fetch of camera 0's live timeline is slow to answer.
+      let answerStale: (() => void) | undefined
+      const stale = new Promise<WallTimeline>(resolve => {
+        answerStale = () => {
+          resolve({ ...timelineFor('2026-10-01T00:00:00Z'), live: true })
+        }
+      })
+      timelineOf = async id => (id === '0' ? await stale : undefined)
+      await act(async () => {
+        poll!()
+        await pause()
+      })
+      // Meanwhile camera 0 fails and is reopened as the finished recording,
+      // whose timeline starts twenty seconds earlier.
+      timelineOf = async id =>
+        id === '0'
+          ? { ...timelineFor('2026-09-30T23:59:40Z'), live: false }
+          : undefined
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      const remounted = document.querySelector('video')!
+      expect(remounted).not.equals(before[0])
+      await act(async () => {
+        answerStale!()
+        await pause()
+      })
+      await act(async () => {
+        load(remounted)
+        await pause()
+      })
+      expect(
+        remounted.currentTime,
+        'placed by the recording timeline it opened with'
+      ).equals(22)
     } finally {
       globalThis.setInterval = originalInterval
       Date.now = originalNow

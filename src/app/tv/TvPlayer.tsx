@@ -368,7 +368,8 @@ export function TvPlayer({
         })
       })
       dispatch({ type: 'reset', count: loaded.length })
-      setAngles(loaded)
+      // State gets copies: `loaded` is rewritten in place by `refreshAngle`.
+      setAngles([...loaded])
       refreshAngle.current = async index => {
         if (refreshing.current.has(index)) return
         refreshing.current.add(index)
@@ -390,13 +391,16 @@ export function TvPlayer({
             revision: previous.revision + 1
           }
           loaded[index] = updated
+          // Rejects the old mount's callbacks now, not at the next render.
+          const next = [...loaded]
+          anglesRef.current = next
           clock.current.ports[index].timeline = timeline
           // Remounting abandons the old native seek, including its completion.
           seekQueues.current[index] = seekQueue(index)
           setBuffering(previous => previous.filter(i => i !== index))
           setFailures(previous => [...new Set([...previous, index])])
           recovery.current.get(index)?.opening(Date.now())
-          setAngles([...loaded])
+          setAngles(next)
         } finally {
           if (active) refreshing.current.delete(index)
         }
@@ -421,15 +425,18 @@ export function TvPlayer({
           if (highlights !== null) setClips(highlights)
         }
         if (loaded.some(a => a.video.status === 'live')) {
+          // A camera refreshed meanwhile already holds a newer timeline.
+          const revisions = loaded.map(a => a.revision)
           const updates = await Promise.all(
             loaded.map(
-              async a =>
-                await client.wallTimeline(a.video.id).catch(() => a.timeline)
+              async a => await client.wallTimeline(a.video.id).catch(() => null)
             )
           )
           if (active && sequence > appliedTimelineSequence) {
             appliedTimelineSequence = sequence
             updates.forEach((timeline, i) => {
+              if (timeline === null || loaded[i].revision !== revisions[i])
+                return
               clock.current.ports[i].timeline = timeline
               if (!timeline.live && loaded[i].video.status === 'live')
                 refreshAngle.current?.(i).catch(() => undefined)
