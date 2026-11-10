@@ -63,7 +63,9 @@ export default [
       'scripts/e2e/**/*.ts',
       'scripts/testModels.test.ts',
       'scripts/testTiers.test.ts',
-      'scripts/testTools.test.ts'
+      'scripts/testTools.test.ts',
+      'scripts/patchVideoSeekable.test.ts',
+      'scripts/patchVideoItemNotifications.test.ts'
     ],
     languageOptions: {
       parserOptions: {
