@@ -129,6 +129,15 @@ function otherScreen(api: TeamStationClient): React.ReactElement | undefined {
       />
     )
   }
+  if (query.has('seasonParticipants'))
+    return (
+      <ParticipationList
+        client={api}
+        owner={{ kind: 'season', id: season.id, name: season.name }}
+        groups={[hawks, kept]}
+        onLeft={() => {}}
+      />
+    )
   if (query.has('participations'))
     return (
       <ParticipationList

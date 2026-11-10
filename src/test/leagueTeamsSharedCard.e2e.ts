@@ -17,6 +17,7 @@ import {
 const DARK_STATES: Array<[string, string[]]> = [
   ['seasons', ['Demo Spring']],
   ['parents', ['Demo League']],
+  ['seasonParticipants', ['Demo Hawks', 'Willow Woods Westward Wanderers']],
   ['players', ['Aaron Judge', 'Mookie Betts']],
   ['seasonTeams', ['Demo Hawks', 'Willow Woods Westward Wanderers']],
   ['participations', ['Demo Spring']],
@@ -128,6 +129,8 @@ async function main(): Promise<void> {
       out
     )
     const { m, page } = browser
+    // The light Parent Organizations card, which every shared card matches.
+    let referenceCard: { surface: string; radius: string } | undefined
     for (const [name, query] of [
       ['chromium', ''],
       ['chromium-dark', '?dark'],
@@ -233,6 +236,11 @@ async function main(): Promise<void> {
         assert.equal(geometry.children, 3)
         assert.equal(geometry.surface, geometry.reference)
         assert.equal(geometry.radius, geometry.referenceRadius)
+        if (name === 'chromium')
+          referenceCard = {
+            surface: geometry.reference,
+            radius: geometry.referenceRadius
+          }
         assert.equal(geometry.padding, '0px')
         assert(Math.abs(geometry.ratio - 0.8) < 0.02)
         assert(geometry.top > 0 && geometry.bottom > 0 && !geometry.overflow)
@@ -274,6 +282,38 @@ async function main(): Promise<void> {
       assert(link.right <= link.dividerLeft && link.oneLine)
       assert.equal(link.ellipsis, 'ellipsis')
       logs.push(`long season link, large text: ${JSON.stringify(link)}`)
+    }
+    await m.openBrowser({ url: url + '?seasonParticipants' })
+    await contains(page, 'Willow Woods Westward Wanderers')
+    await writeFile(
+      join(out, `chromium-season-participants-${suffix}.png`),
+      await m.screenshot()
+    )
+    if (!before) {
+      // Season Settings' participating teams share one card.
+      const participants = await page.$eval(
+        '[data-testid="participating-teams-list"]',
+        card => ({
+          surface: getComputedStyle(card).backgroundColor,
+          radius: getComputedStyle(card).borderTopLeftRadius,
+          rows: card.querySelectorAll('[data-testid="relationship-action-row"]')
+            .length,
+          // Rows and the dividers between them, flush to the card's edge.
+          children: card.children.length,
+          padding: getComputedStyle(card).padding
+        })
+      )
+      assert(
+        referenceCard != null,
+        'reference Parent Organizations card not measured'
+      )
+      assert.deepEqual(participants, {
+        ...referenceCard,
+        rows: 2,
+        children: 3,
+        padding: '0px'
+      })
+      logs.push(`season participants: ${JSON.stringify(participants)}`)
     }
     await m.openBrowser({ url: url + '?empty' })
     await contains(page, 'No teams in this league yet.')

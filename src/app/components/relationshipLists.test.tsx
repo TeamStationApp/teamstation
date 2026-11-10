@@ -200,6 +200,14 @@ describe('relationship list presentation and confirmation', () => {
         n.textContent === 'Willow Woods Westward Wanderers'
     )!
     expect(parseFloat(getComputedStyle(name).fontSize)).greaterThan(24)
+    // The season's participating teams share one card, as the team's seasons do.
+    const card = document.querySelector<HTMLElement>(
+      '[data-testid="participating-teams-list"]'
+    )!
+    const surface = document.createElement('div')
+    surface.style.color = tsBallpark.cardBackgroundColor
+    expect(getComputedStyle(card).backgroundColor).equals(surface.style.color)
+    expect(card.contains(name)).equals(true)
     await press('End participation for Willow Woods Westward Wanderers')
     await press('Cancel')
     expect(find('Confirm end participation')).equals(undefined)
