@@ -1523,61 +1523,101 @@ async function step7(): Promise<void> {
   }
   // Scoring's own offline line appears only once the request deadline has
   // passed on a stalled link. From fully online: the line gone, then the
-  // stall, then a pitch whose send stalls. Its accessibility label is "Save
-  // status" on iOS (the text is only in the picture), so it is found by its
-  // id across the top of the scorer.
-  const lineShown = async (): Promise<boolean> =>
-    (await nodes()).some(
-      n =>
-        upper(0.15)(n) &&
-        (n.id === 'scoringSaveStatus' ||
-          label(n) === OFFLINE_LINE ||
-          label(n).startsWith('Offline. Edits'))
-    )
+  // stall, then a pitch whose send stalls. A hierarchy read takes 6–8 s on
+  // the iPhone, too coarse to place the line against a 10 s deadline, so the
+  // line is timed by screenshots (a few hundred ms each) of the band across
+  // the top of the scorer where it draws: a light pill on the dark scorer.
+  const lineLit = (png: Buffer): number => {
+    const image = PNG.sync.read(png)
+    const top = Math.floor(image.height * 0.065)
+    const bottom = Math.floor(image.height * 0.105)
+    let lit = 0
+    let total = 0
+    for (let y = top; y < bottom; y += 2)
+      for (
+        let x = Math.floor(image.width * 0.08);
+        x < image.width * 0.92;
+        x += 2
+      ) {
+        const i = (y * image.width + x) * 4
+        total++
+        if (
+          image.data[i] > 215 &&
+          image.data[i + 1] > 215 &&
+          image.data[i + 2] > 205
+        )
+          lit++
+      }
+    return total === 0 ? 0 : lit / total
+  }
   clearShape()
   let online = false
+  let litNow = 1
   const clearedAt = Date.now()
   while (!online && Date.now() - clearedAt < 120000) {
-    online = !(await lineShown())
-    if (!online) await pause(2000)
+    litNow = lineLit(await m.screenshot())
+    online = litNow < 0.3
+    if (!online) await pause(1000)
   }
   log(
-    `offline line ${online ? 'gone' : 'STILL SHOWN'} ${Math.round((Date.now() - clearedAt) / 1000)} s after the shape was cleared`
+    `offline line ${online ? 'gone' : 'STILL SHOWN'} ${Math.round((Date.now() - clearedAt) / 1000)} s after the shape was cleared (band ${litNow.toFixed(2)} lit)`
   )
   shape({ latencyMs: 30000 })
-  await pause(1000)
-  await tap(
+  await pause(1500)
+  const ball = await waitFor(
     /^Ball$/,
     15000,
     n => (n.type ?? '').includes('Button') || PLATFORM === 'android'
   )
+  if (ball == null) throw new Error('no Ball button for the stalled pitch')
   const stalledAt = Date.now()
+  await tapNode(ball)
   entered.push('pitch')
-  const reads: Array<{ ms: number; shown: boolean }> = []
-  while (Date.now() - stalledAt < 60000) {
+  const samples: Array<{ ms: number; lit: number }> = []
+  let firstShown: { ms: number; lit: number } | undefined
+  while (Date.now() - stalledAt < 45000) {
     const ms = Date.now() - stalledAt
-    const shown = await lineShown()
-    reads.push({ ms, shown })
-    if (shown) break
+    const png = await m.screenshot()
+    const sample = { ms, lit: lineLit(png) }
+    samples.push(sample)
+    if (sample.lit > 0.5 && firstShown == null) {
+      firstShown = sample
+      writeFileSync(
+        join(
+          ARTIFACTS,
+          'support',
+          `${PLATFORM}-offlineLineFirstShown-${MODE}.png`
+        ),
+        png
+      )
+    }
+    if (firstShown != null && ms > firstShown.ms + 2000) break
   }
-  const firstShown = reads.find(r => r.shown)
-  const early = reads.filter(r => r.ms < 9000)
+  const early = samples.filter(r => r.ms < 9500)
+  // What the band shows is scoring's offline line: on Android its text is in
+  // the hierarchy; on iOS only its id is.
+  const lineNode = (await nodes()).find(
+    n =>
+      upper(0.15)(n) &&
+      (label(n) === OFFLINE_LINE || n.id === 'scoringSaveStatus')
+  )
   log(
-    `offline line after the stalled pitch: ${reads.map(r => `${r.shown ? 'shown' : 'absent'}@${r.ms}ms`).join(', ')}`
+    `the lit band is ${lineNode == null ? 'NOT' : `"${label(lineNode)}" (${lineNode.id ?? ''})`}, scoring's own line`
+  )
+  log(
+    `offline line after the stalled pitch (screenshots, ms after the tap: share of the band lit): ${samples.map(r => `${r.ms}:${r.lit.toFixed(2)}`).join(' ')}`
   )
   check(
     "stalled: scoring's offline line is absent before the 10 s request deadline",
-    online && early.length > 0 && early.every(r => !r.shown),
-    early.length === 0
-      ? 'no read before 9 s'
-      : early.map(r => `${r.shown ? 'shown' : 'absent'}@${r.ms}ms`).join(', ')
+    online && early.length > 0 && early.every(r => r.lit < 0.5),
+    `${early.length} screenshots before 9.5 s, last at ${early.at(-1)?.ms ?? '-'} ms, ${early.filter(r => r.lit >= 0.5).length} with the line`
   )
   check(
     "stalled: scoring's own offline line shows once the request deadline passes",
-    firstShown != null && firstShown.ms >= 9000,
+    firstShown != null && firstShown.ms >= 9500,
     firstShown == null
-      ? 'never shown within 60 s'
-      : `first shown at the read asked ${firstShown.ms} ms after the pitch`
+      ? 'never shown within 45 s'
+      : `first shown in the screenshot asked ${firstShown.ms} ms after the pitch`
   )
   await shot('offlineLineStalled')
 
