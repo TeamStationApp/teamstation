@@ -258,14 +258,15 @@ export class NativeVideoHandle implements VideoHandle {
 
   /**
    * A ready player gets five seconds to acknowledge a seek. A buffering
-   * player gets thirty seconds without a media transfer before recovery;
-   * useful downloads can continue for as long as the connection needs.
+   * player gets two minutes between completed media transfers: bandwidth
+   * callbacks may not arrive until a large, slow segment finishes. Native
+   * network errors still trigger recovery immediately.
    */
   checkSeekTimeout(): void {
     if (
       this.activeSeekTo == null ||
       this.seekTimedOut ||
-      this.clock() - this.activeSeekAt < (this.buffering ? 30_000 : 5000)
+      this.clock() - this.activeSeekAt < (this.buffering ? 120_000 : 5000)
     )
       return
     // Keep the requested moment quarantined until the replacement source loads.
