@@ -97,6 +97,29 @@ describe('event address geocoding', function () {
     })
     expect(calls).equals(2)
   })
+  it('leaves no unhandled rejection when a lookup fails with nobody else waiting', async () => {
+    const unhandled: unknown[] = []
+    const record = (reason: unknown): void => {
+      unhandled.push(reason)
+    }
+    process.on('unhandledRejection', record)
+    try {
+      const geocoder = eventGeocoder(f.h.db, {
+        spacingMs: 0,
+        fetch: async () => new Response('unavailable', { status: 503 })
+      })
+      try {
+        await geocoder.lookup('Nobody else waits')
+        expect.fail('must fail')
+      } catch (error) {
+        expect(String(error)).includes('could not be located')
+      }
+      await new Promise(resolve => setImmediate(resolve))
+      expect(unhandled).deep.equals([])
+    } finally {
+      process.off('unhandledRejection', record)
+    }
+  })
   it('bounds concurrent work and aborts provider requests', async () => {
     const geocoder = eventGeocoder(f.h.db, {
       spacingMs: 1,
