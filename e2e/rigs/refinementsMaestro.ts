@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/prefer-optional-chain -- Serialized browser callbacks cannot capture Sucrase's generated helper functions. */
 import { execFileSync } from 'node:child_process'
 import { appendFile, mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
@@ -161,7 +160,42 @@ export async function tap(
   text: string,
   role = 'button'
 ): Promise<void> {
-  await m.tapOn({ text, role, timeout: 15000 })
+  try {
+    await m.tapOn({ text, role, timeout: 15000 })
+  } catch (error) {
+    // Every element with this label, where it is, and what hides it: a match
+    // in a hidden tab pane or a scene behind the top one is the usual cause.
+    const page = browserPages.get(m)
+    if (page != null) {
+      const found = await page.evaluate(
+        (label: string) =>
+          [...document.querySelectorAll('[aria-label]')]
+            .filter(n => n.getAttribute('aria-label') === label)
+            .map(n => {
+              let hidden = ''
+              for (let e: Element | null = n; e != null; e = e.parentElement) {
+                if (e.getAttribute('aria-hidden') === 'true')
+                  hidden += ' aria-hidden@' + e.tagName
+                const cs = getComputedStyle(e)
+                if (cs.pointerEvents === 'none')
+                  hidden +=
+                    ' pe-none@' +
+                    String(e.getAttribute('data-scene-role')) +
+                    '/' +
+                    e.tagName
+                if (cs.display === 'none' || cs.visibility === 'hidden')
+                  hidden += ' invisible'
+                if (e.hasAttribute('inert')) hidden += ' inert'
+              }
+              const r = n.getBoundingClientRect()
+              return `${n.getAttribute('role')} ${Math.round(r.x)},${Math.round(r.y)} ${Math.round(r.width)}x${Math.round(r.height)}${hidden}`
+            }),
+        text
+      )
+      console.error('Tap target', JSON.stringify(text), JSON.stringify(found))
+    }
+    throw error
+  }
 }
 export async function show(m: MaestroHandle, text: string): Promise<void> {
   await m.assertVisible({ text, timeout: 15000 })
@@ -185,21 +219,18 @@ export async function log(
   await appendFile(join(artifacts, file), line + '\n')
   console.log(line)
 }
+/**
+ * Waits for `text` on the page as shown: `innerText`, so a hidden tab pane or
+ * a scene behind the top one does not count.
+ */
 export async function contains(page: Page, text: string): Promise<void> {
   await page
-    .waitForFunction(
-      text => {
-        const body = document.body.textContent
-        return body !== null && body.includes(text)
-      },
-      {},
-      text
-    )
+    .waitForFunction(text => document.body.innerText.includes(text), {}, text)
     .catch(async (error: unknown) => {
       console.error(
         'Missing text',
         text,
-        await page.evaluate(() => document.body.textContent)
+        await page.evaluate(() => document.body.innerText)
       )
       throw error
     })
