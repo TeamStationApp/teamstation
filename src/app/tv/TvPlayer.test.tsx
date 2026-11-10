@@ -547,6 +547,73 @@ describe('TV game playback entry', () => {
       Date.now = originalNow
     }
   })
+  it('keeps a paused live remount that is waiting for its seekable bounds', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      await press('Close panel')
+      await press('Pause')
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      const remounted = document.querySelector('video')!
+      expect(remounted).not.equals(before[0])
+      await act(async () => {
+        load(remounted)
+        await pause()
+      })
+      now += 30_001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      expect(
+        document.querySelector('video'),
+        'a loaded paused remount is not refreshed again'
+      ).equals(remounted)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
   it('abandons an unacknowledged seek when replacing a failed source', async () => {
     count = 2
     const originalInterval = globalThis.setInterval

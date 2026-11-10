@@ -884,6 +884,13 @@ export function TvPlayer({
         ? Infinity
         : duration
     )
+    // A paused live remount waits for seekable bounds that only playback
+    // reports. It has opened; the selected moment is restored on play.
+    if (
+      current.current.paused &&
+      clock.current.ports[index].pendingWall !== null
+    )
+      recovery.current.get(index)?.readyPaused(Date.now())
     markReady()
   }
   const markReady = (): void => {
