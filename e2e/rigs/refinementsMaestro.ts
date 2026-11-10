@@ -68,7 +68,12 @@ export async function browserSession(
     appId: `about:blank#${device}`,
     artifacts: 'on-failure',
     extra: {
-      browser: browserName,
+      // An installed Chrome by path: without Google Chrome in /Applications,
+      // Maestro D's `chrome` is a Chromium that plays no H.264 or HEVC.
+      browser:
+        browserName === 'chrome'
+          ? (process.env.TS_CHROME_PATH ?? 'chrome')
+          : browserName,
       windowSize: `${width}x${height}`,
       headed: false,
       userDataDir: profile

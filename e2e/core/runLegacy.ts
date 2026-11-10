@@ -3,7 +3,13 @@
  */
 
 import { type ChildProcess, spawn } from 'node:child_process'
-import { mkdirSync, openSync, readdirSync, readFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -89,7 +95,10 @@ function artifactEnv(
   const env: Record<string, string> = {}
   const named = new Set([...keys, ...sourceNames(source)])
   for (const key of named) {
-    if (isArtifactKey(key)) env[key] = dir
+    // Browser coverage is one JSON file; every other artifact key is a directory.
+    if (key === 'TS_BROWSER_COVERAGE_OUT') {
+      env[key] = join(dir, 'browser-coverage.json')
+    } else if (isArtifactKey(key)) env[key] = dir
   }
   return env
 }
@@ -192,28 +201,50 @@ export function stackKnown(keys: string[]): Record<string, string> {
   return known
 }
 
-/** The Chromium Maestro D's web surface launches, newest first. */
-export function maestroChromium(): string | undefined {
-  const root = join(homedir(), '.maestro-d/browsers')
+/**
+ * The newest Chrome for Testing in puppeteer's cache. Its WebGL runs on
+ * SwiftShader headless, it plays H.264, and it speaks the DevTools protocol of
+ * the repository's puppeteer; Maestro D's own Chromium does none of those.
+ */
+export function testChrome(
+  root = join(homedir(), '.cache/puppeteer/chrome')
+): string | undefined {
   try {
     const dir = readdirSync(root)
-      .filter(name => name.startsWith('chromium-'))
-      .sort()
+      .filter(name => /^mac_arm-\d/.test(name))
+      .sort((a, b) =>
+        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+      )
       .at(-1)
     return dir == null
       ? undefined
-      : join(root, dir, 'Chromium.app/Contents/MacOS/Chromium')
+      : join(
+          root,
+          dir,
+          'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+        )
   } catch {
     return undefined
   }
 }
 
-function browserKnown(keys: string[]): Record<string, string> {
-  const chromium = maestroChromium()
-  if (chromium == null) return {}
+/**
+ * Variables that name the browser a script drives: puppeteer's executable, or
+ * Maestro D's `browser`, which takes a binary's path as well as a name. Maestro
+ * D's `chrome` is an installed Google Chrome, and without one its own Chromium,
+ * which plays neither H.264 nor HEVC.
+ */
+const BROWSER_PATH = /(?:_BROWSER|_CHROME_PATH)$/
+
+/** `chrome` for each variable `keys` names that holds a browser. */
+export function browserKnown(
+  keys: string[],
+  chrome: string | null | undefined = testChrome()
+): Record<string, string> {
+  if (chrome == null) return {}
   const known: Record<string, string> = {}
   for (const key of keys) {
-    if (/(_BROWSER|_CHROME_PATH)$/.test(key)) known[key] = chromium
+    if (BROWSER_PATH.test(key)) known[key] = chrome
   }
   return known
 }
@@ -275,7 +306,7 @@ export async function runLegacy(
   if (concrete.blocked != null) {
     return { file, status: 'blocked', exit: 2, reason: concrete.blocked }
   }
-  const childEnv = {
+  const childEnv: NodeJS.ProcessEnv = {
     ...env,
     ...stack,
     ...artifacts,
@@ -287,6 +318,8 @@ export async function runLegacy(
     ...(options.env ?? {}),
     MAESTRO_D: options.env?.MAESTRO_D ?? 'e2eSuite'
   }
+  // For the rigs, which ask Maestro D for `chrome` (refinementsMaestro).
+  childEnv.TS_CHROME_PATH ??= testChrome()
   if (options.args != null) {
     const at = command.argv.findIndex(
       token => token === file || token.endsWith('/' + file)
@@ -298,6 +331,8 @@ export async function runLegacy(
     artifactDir(file),
     options.label == null ? 'run.log' : `run-${options.label}.log`
   )
+  // This run's output only: an earlier run's error is not this one's.
+  writeFileSync(log, '')
   const servers: ChildProcess[] = []
   try {
     for (const step of command.setup) {
