@@ -1562,6 +1562,35 @@ async function step7(): Promise<void> {
   log(
     `offline line ${online ? 'gone' : 'STILL SHOWN'} ${Math.round((Date.now() - clearedAt) / 1000)} s after the shape was cleared (band ${litNow.toFixed(2)} lit)`
   )
+  // The writes queued while the phone was dropped go out now. A send still in
+  // flight when the link stalls hits its own deadline and shows the line early,
+  // so wait until the seat has every swap entered so far and the game's writes
+  // have stopped arriving.
+  if (MODE === 'after') {
+    const writes = (): string[] =>
+      recorded().filter(
+        l =>
+          l.includes(`/games/${FIXTURE.upcomingGameId}/`) &&
+          /^\S+\s+(POST|PUT|DELETE)\s/.test(l)
+      )
+    const swaps = entered.filter(kind => kind === 'swap').length
+    let last = -1
+    let quietSince = Date.now()
+    const drainStarted = Date.now()
+    while (Date.now() - drainStarted < 120000) {
+      const now = writes()
+      if (now.length !== last) {
+        last = now.length
+        quietSince = Date.now()
+      }
+      const arrivedSwaps = now.filter(l => /\/swap-sides\b/.test(l)).length
+      if (arrivedSwaps >= swaps && Date.now() - quietSince >= 6000) break
+      await pause(2000)
+    }
+    log(
+      `queued writes drained ${Math.round((Date.now() - drainStarted) / 1000)} s after the line went: ${last} writes to the game at the seat, ${swaps} swaps entered`
+    )
+  }
   shape({ latencyMs: 30000 })
   await pause(1500)
   const ball = await waitFor(
