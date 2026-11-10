@@ -1834,6 +1834,10 @@ describe('TV game playback entry', () => {
       videos[0].dispatchEvent(new window.Event('ended', { bubbles: true }))
       await pause()
     })
+    expect(document.body.textContent).contains('Angle 0: end of video')
+    expect(document.body.textContent).not.contains(
+      'Angle 0: video unavailable at this moment'
+    )
     expect(document.querySelector('video')!.paused).equals(false)
     expect(videos[0].muted).equals(true)
     expect(videos[1].muted).equals(false)
