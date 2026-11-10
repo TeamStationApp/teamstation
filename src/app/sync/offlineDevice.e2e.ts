@@ -1619,10 +1619,36 @@ async function step7(): Promise<void> {
     if (choose != null) {
       await tapNode(choose)
       await pause(1500)
-      // Add to Roster is the sheet's title as well as its button.
-      const confirm = await waitFor(/^Add to Roster$/, 15000, n =>
-        (n.type ?? '').includes('Button')
+      // Add to Roster opens with the jersey field focused: on iOS the number
+      // pad covers the sheet's own Add to Roster button, so close the pad with
+      // its Done first, then bring the button above the fold. The sheet's
+      // title reads Add to Roster as well; only the button is a Button.
+      const done = await waitFor(
+        /^Done$/,
+        3000,
+        n => (n.bounds?.y ?? 0) > screen.height * 0.5
       )
+      if (done != null) {
+        await tapNode(done)
+        await pause(800)
+      }
+      const reachable = (n: Node): boolean =>
+        (n.type ?? '').includes('Button') &&
+        n.bounds != null &&
+        n.bounds.y + n.bounds.height < screen.height * 0.92
+      let confirm = await waitFor(/^Add to Roster$/, 8000, reachable)
+      for (let lift = 0; confirm == null && lift < 4; lift++) {
+        const x = Math.round(screen.width / 2)
+        await m.swipe({
+          startX: x,
+          startY: Math.round(screen.height * 0.7),
+          endX: x,
+          endY: Math.round(screen.height * 0.35),
+          duration: 500
+        })
+        await pause(800)
+        confirm = await waitFor(/^Add to Roster$/, 3000, reachable)
+      }
       if (confirm == null)
         check(`offline: Add to Roster opens for ${CANDIDATE_SHORT}`, false)
       else {
