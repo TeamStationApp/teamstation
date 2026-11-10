@@ -912,26 +912,21 @@ async function main(): Promise<void> {
       await shot('cancel-invite-link')
     }
     if (only == null || only === 'schedule') {
-      await go(`/groups/team/${f.teamA}?tab=schedule`, 'Add Event')
-      await show('Add Event')
-      await shot('add-event')
+      // The team schedule's add action is the score-blue Add Game button.
+      await go(`/groups/team/${f.teamA}?tab=schedule`, 'Add Game')
+      await show('Add Game')
+      await shot('add-game')
       if (!before) {
-        const style = await page.$eval(
-          '[data-testid="add-event-card"]',
-          node => ({
-            background: getComputedStyle(node).backgroundColor,
-            border: getComputedStyle(node).borderTopWidth,
-            shadow: getComputedStyle(node).boxShadow,
-            centered: getComputedStyle(node).alignItems
-          })
+        const background = await page.$eval(
+          '[data-testid="add-game-button"]',
+          node => getComputedStyle(node).backgroundColor
         )
-        assert.equal(style.background, 'rgb(21, 101, 192)')
-        assert.equal(style.border, '0px')
-        assert.notEqual(style.shadow, 'none')
-        assert.equal(style.centered, 'center')
-        await tap(m, 'Add Event')
+        assert.equal(background, 'rgb(29, 78, 216)')
+        await tap(m, 'Add Game')
         await contains(page, 'Choose Away Team')
-        await note('E5 PASS: blue borderless shadow card opens event creation')
+        await note(
+          'E5 PASS: the score-blue Add Game button opens game creation'
+        )
       }
     }
     if (only == null || only === 'forms') {
