@@ -295,11 +295,16 @@ describe('the lint', function () {
     expect(rules(test, 'expect(1); try { a() } catch {}')).includes(
       'no-empty-catch'
     )
-    expect(rules(test, 'expect(1); "00008132-001234567890ABCD"')).includes(
-      'no-device-id'
-    )
+    // Invented, and joined at run time so no device-shaped literal is committed.
+    const deviceLike = (...parts: string[]): string => parts.join('-')
     expect(
-      rules(test, 'expect(1); "E8380536-54E2-4042-8FFF-0BC7EF6D3EC5"')
+      rules(test, `expect(1); "${deviceLike('00008132', '0123456789ABCDEF')}"`)
+    ).includes('no-device-id')
+    expect(
+      rules(
+        test,
+        `expect(1); "${deviceLike('ABCDEF01', '2345', '4678', '9ABC', 'DEF012345678')}"`
+      )
     ).includes('no-device-id')
     expect(
       rules(test, 'expect(1); "00000000-0000-4000-8000-000000000001"')

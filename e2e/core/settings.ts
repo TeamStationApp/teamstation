@@ -38,9 +38,19 @@ export function settingsPath(env = process.env): string {
   )
 }
 
+/** `~/x` as a path under `home`; any other value as it is. */
+export function expandHome(value: unknown, home = homedir()): unknown {
+  return typeof value === 'string' && value.startsWith('~/')
+    ? join(home, value.slice(2))
+    : value
+}
+
 export function loadSettings(path = settingsPath()): LocalSettings {
   if (!existsSync(path)) return {}
-  return JSON.parse(readFileSync(path, 'utf8')) as LocalSettings
+  const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>
+  return Object.fromEntries(
+    Object.entries(raw).map(([key, value]) => [key, expandHome(value)])
+  )
 }
 
 /** A secret by name, from the file the settings point at. */
