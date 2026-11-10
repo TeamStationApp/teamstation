@@ -36,7 +36,7 @@ describe('runLegacy browsers', function () {
       for (const name of [
         'mac_arm-99.0.1.2',
         'mac_arm-153.0.8010.36',
-        'linux-200.0.0.0'
+        'win64-200.0.0.0'
       ]) {
         mkdirSync(join(root, name))
       }
@@ -46,6 +46,10 @@ describe('runLegacy browsers', function () {
           'mac_arm-153.0.8010.36',
           'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
         )
+      )
+      mkdirSync(join(root, 'linux-160.0.1.1'))
+      expect(testChrome(root)).equals(
+        join(root, 'linux-160.0.1.1', 'chrome-linux64/chrome')
       )
     } finally {
       rmSync(root, { recursive: true, force: true })
