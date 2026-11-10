@@ -925,6 +925,81 @@ describe('TV game playback entry', () => {
       globalThis.setInterval = originalInterval
     }
   })
+  it('remounts a recovering camera once when its retry fires again during a slow refresh', async () => {
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of before) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(
+            new window.Event('durationchange', { bubbles: true })
+          )
+        }
+        await pause()
+      })
+      let release: (() => void) | undefined
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      let fetches = 0
+      let released = false
+      playbackOf = async id => {
+        if (id !== '0') return
+        fetches++
+        if (!released) await held
+      }
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      // The retry fires, and fires again after its back-off while the
+      // address is still on its way.
+      for (const step of [1001, 3000, 5000]) {
+        now += step
+        await act(async () => {
+          recover!()
+          await pause()
+        })
+      }
+      released = true
+      await act(async () => {
+        release!()
+        await pause()
+        await pause()
+      })
+      const remounted = document.querySelector('video')!
+      expect(remounted).not.equals(before[0])
+      await act(async () => {
+        await pause()
+        await pause()
+      })
+      expect(fetches, 'one refresh').equals(1)
+      expect(document.querySelector('video'), 'not remounted again').equals(
+        remounted
+      )
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
   it('swaps a camera to its recording when the game finishes during its recovery', async () => {
     live = true
     count = 2
