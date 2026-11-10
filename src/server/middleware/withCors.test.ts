@@ -71,6 +71,7 @@ describe('withCors', function () {
       ?.split(',')
     expect(allowed).includes('authorization')
     expect(allowed).includes('x-teamstation-app')
+    expect(allowed).includes('x-teamstation-protocol')
     const result = await fetch(`${base}/teams`, {
       headers: { origin: ORIGIN, 'x-teamstation-app': 'TS web' }
     })

@@ -190,7 +190,9 @@ describe('the phone document cache', function () {
         id: 'r2',
         idempotencyKey: 'k2',
         dependsOn: [],
-        names: '{"12":"Juan Soto"}'
+        names: '{"12":"Juan Soto"}',
+        foldVersion: 4,
+        log: '{"actions":[],"times":[]}'
       })
       return [first, second]
     })
@@ -205,10 +207,21 @@ describe('the phone document cache', function () {
       dependsOn: ['player-5']
     })
     expect(queued[1]).deep.include({ names: '{"12":"Juan Soto"}' })
+    expect(queued.map(item => item.foldVersion)).deep.equals([null, 4])
+    expect(queued.map(item => item.log)).deep.equals([
+      null,
+      '{"actions":[],"times":[]}'
+    ])
     expect(await store.read('lineups.g1')).deep.include({ pending: true })
     await store.atomically(async tx => {
       await tx.update('r1', {})
       await tx.update('r1', { state: 'dead', message: 'No', attempts: 2 })
+      // A rebuild puts its plays, their names and this build's fold.
+      await tx.update('r1', {
+        body: '{"plays":[]}',
+        names: '{}',
+        foldVersion: 4
+      })
       await tx.removeKey('k2')
       await tx.addLocalPlayer({
         localId: 5,
@@ -222,7 +235,14 @@ describe('the phone document cache', function () {
       async tx => await tx.outbox()
     )
     expect(rest).deep.equals([])
-    expect(left).deep.include({ state: 'dead', message: 'No', attempts: 2 })
+    expect(left).deep.include({
+      state: 'dead',
+      message: 'No',
+      attempts: 2,
+      body: '{"plays":[]}',
+      names: '{}',
+      foldVersion: 4
+    })
     expect(
       await store.atomically(async tx => await tx.localPlayers())
     ).deep.equals([
@@ -237,7 +257,7 @@ describe('the phone document cache', function () {
     await store.close()
   })
 
-  it('adds the outbox message, names and background columns to a file made before them, and reads a bad dependency list as none (U36)', async function () {
+  it('adds the outbox message, names, background, fold version and log columns to a file made before them, and reads a bad dependency list as none (U36)', async function () {
     const executor = nodeSqliteExecutor(join(dir, 'older.sqlite'))
     executor.db.exec(`CREATE TABLE outbox (
       id text PRIMARY KEY, idempotency_key text NOT NULL UNIQUE,
@@ -254,7 +274,10 @@ describe('the phone document cache', function () {
       names: null,
       background: false,
       dependsOn: [],
-      gameId: null
+      gameId: null,
+      // Queued by a build from before rows kept the fold, or a log.
+      foldVersion: null,
+      log: null
     })
     // A row queued in the background reads back as one.
     await store.atomically(async tx => {
@@ -272,6 +295,7 @@ describe('the phone document cache', function () {
     })
     const rows = await store.atomically(async tx => await tx.outbox())
     expect(rows.map(each => each.background)).deep.equals([false, true])
+    expect(rows.map(each => each.foldVersion)).deep.equals([null, null])
     await store.close()
     // Opened again, the column is there already.
     const again = await openCacheStore(

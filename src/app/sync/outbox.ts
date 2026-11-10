@@ -1,9 +1,11 @@
-import { HttpError } from '../../common/errors'
+import { HttpError, isUpdateRequired } from '../../common/errors'
 import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import { FOLD_VERSION } from '../../common/scoring/actions'
+import type { SaveChange, SessionLog } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import type {
   CacheTransaction,
@@ -77,6 +79,8 @@ export type QueuedCall =
       body: unknown
       /** The names of the players its plays name, which the body holds none of. */
       names?: DeviceNames
+      /** The session's whole log as the save leaves it, never sent. */
+      log?: SessionLog
     }
   | {
       /** A game-only player's name corrected: `PUT`, on the game's chain. */
@@ -153,7 +157,8 @@ export function queuedCallOf(
   path: string,
   body: unknown,
   names?: DeviceNames,
-  background = false
+  background = false,
+  log?: SessionLog
 ): QueuedCall | undefined {
   const existing = body != null && typeof body === 'object' && 'userId' in body
   if (background) {
@@ -225,7 +230,8 @@ export function queuedCallOf(
       gameId: eventsGame,
       path: events[1],
       body,
-      ...(names == null ? {} : { names })
+      ...(names == null ? {} : { names }),
+      ...(log == null ? {} : { log })
     }
   return undefined
 }
@@ -294,6 +300,13 @@ function namesOf(call: QueuedCall): string | null {
     ? call.names == null
       ? null
       : JSON.stringify(call.names)
+    : null
+}
+
+/** The session log a queued save of plays keeps beside it, as JSON. */
+function logOf(call: QueuedCall): string | null {
+  return call.kind === 'events' && call.log != null
+    ? JSON.stringify(call.log)
     : null
 }
 
@@ -413,17 +426,44 @@ export interface OutboxOptions {
    * reused key dropped comes back from there. Throws when it does not.
    */
   read?: (path: string) => Promise<void>
+  /**
+   * Whether a save of a game's plays a build of fold `foldVersion` queued may go as
+   * it was queued: whether that build folded the game as this one does
+   * (`olderSaveFoldsAlike`). Such a save that may not waits, parked, and so
+   * does every one while this is not given. Throws as a send would when it
+   * cannot read the server.
+   */
+  olderSave?: (gameId: string, foldVersion: number | null) => Promise<boolean>
+  /**
+   * The game as this build folds it once the log a save kept beside it is
+   * played again on the server's plays (`rebuildGameEvents`), or null when
+   * the server's log is not where that one began. A save an older build
+   * queued with its log is sent as this; without this, it waits, parked.
+   * Throws as a send would when it cannot read the server.
+   */
+  rebuildEvents?: (
+    gameId: string,
+    log: SessionLog
+  ) => Promise<SaveChange | null>
   now?: () => number
   random?: () => number
   setTimer?: (run: () => void, ms: number) => unknown
   clearTimer?: (handle: unknown) => void
 }
 
+/**
+ * Why a save an older build queued waits: the game was scored since on a
+ * newer build in a way the older one read wrongly.
+ */
+export const OLDER_SAVE_HELD =
+  'These plays were saved on an older version of TeamStation, and the game has been scored on a newer one since. They cannot be saved as they are.'
+
 type Outcome =
   | { kind: 'ok'; answer: unknown }
   | { kind: 'newer' }
   | { kind: 'retry'; network: boolean }
   | { kind: 'auth' }
+  | { kind: 'update' }
   | { kind: 'park'; message: string }
   | { kind: 'dead'; message: string }
   | { kind: 'reused' }
@@ -436,6 +476,9 @@ function outcomeOf(error: unknown, call: QueuedCall): Outcome {
       message: error instanceof Error ? error.message : String(error)
     }
   if (error.code === 'offline') return { kind: 'retry', network: true }
+  // This build is older than the server reads: the write waits on the phone
+  // for the update, which sends it.
+  if (isUpdateRequired(error)) return { kind: 'update' }
   if (error.status >= 500 || error.code === 'rateLimited')
     return { kind: 'retry', network: false }
   if (error.code === 'unauthorized') return { kind: 'auth' }
@@ -504,6 +547,24 @@ function namesOfRow(row: OutboxRow): DeviceNames | undefined {
   )
 }
 
+/**
+ * What a drain made of a game's saves an older build queued: the game as
+ * this build folds it, rebuilt from its log, or null where it could not be;
+ * or, with no log, whether that build folded the game alike.
+ */
+interface OlderVerdict {
+  change?: SaveChange | null
+  alike?: boolean
+}
+
+/** The session log a queued save of plays kept, when it kept a readable one. */
+function logOfRow(row: OutboxRow): SessionLog | undefined {
+  if (row.log == null) return undefined
+  const raw = parsed(row.log) as Partial<SessionLog>
+  if (!Array.isArray(raw.actions) || !Array.isArray(raw.times)) return undefined
+  return { actions: raw.actions, times: raw.times }
+}
+
 /** The call a queued row is. */
 function callOfRow(row: OutboxRow): QueuedCall {
   const body = parsed(row.body)
@@ -562,8 +623,10 @@ function ownKey(
 }
 
 export class Outbox {
-  private readonly options: Required<Omit<OutboxOptions, 'read' | 'owns'>> &
-    Pick<OutboxOptions, 'read' | 'owns'>
+  private readonly options: Required<
+    Omit<OutboxOptions, 'read' | 'owns' | 'olderSave' | 'rebuildEvents'>
+  > &
+    Pick<OutboxOptions, 'read' | 'owns' | 'olderSave' | 'rebuildEvents'>
 
   private draining: Promise<void> | undefined
   private again = false
@@ -576,6 +639,12 @@ export class Outbox {
   private lastNetwork = false
   /** Set by a 401: nothing is sent while the token is still this one. */
   private paused: { token: string | undefined } | undefined
+  /**
+   * The chains a write of was refused as `updateRequired`: this build sends
+   * nothing more of them, and what they hold waits for the update. Every
+   * other chain still goes. No reset clears them.
+   */
+  private readonly outdated = new Set<string>()
   private timer: unknown
   /** The last drain found nothing it could send, and nothing was queued since. */
   private idle = false
@@ -968,7 +1037,9 @@ export class Outbox {
           names: namesOf(call),
           dependsOn: [],
           gameId: call.kind === 'roster' ? null : (call.gameId ?? null),
-          background: backgroundOnly(call)
+          background: backgroundOnly(call),
+          foldVersion: FOLD_VERSION,
+          log: logOf(call)
         })
         const leaseUntil = this.options.now() + LEASE_MS
         await tx.update(row.id, { state: 'inflight', leaseUntil })
@@ -1020,7 +1091,10 @@ export class Outbox {
     try {
       answer = await this.options.send(method, call.path, body, key)
     } catch (error: unknown) {
-      if (!isRetryable(error, call)) {
+      // Refused as too old to save: queued as sent, as a retry is, and the
+      // game waits on the phone for the update, which sends it.
+      const update = isUpdateRequired(error)
+      if (!update && !isRetryable(error, call)) {
         await store
           .atomically(async tx => {
             await tx.remove(row.id)
@@ -1030,7 +1104,11 @@ export class Outbox {
         this.wake(true)
         throw error
       }
-      this.failed(outcomeOf(error, call) as { kind: 'retry'; network: boolean })
+      if (update) this.outdated.add(chain)
+      else
+        this.failed(
+          outcomeOf(error, call) as { kind: 'retry'; network: boolean }
+        )
       // Queued as sent, in the place it held, so a retry under the same key
       // is the same request and still goes first.
       try {
@@ -1104,9 +1182,16 @@ export class Outbox {
     replaces?: OutboxRow
   ): Promise<unknown> {
     if (replaces != null) await tx.remove(replaces.id)
-    const dependsOn = await this.dependencies(tx, await tx.outbox(), call.body)
+    const rows = await tx.outbox()
+    const dependsOn = await this.dependencies(tx, rows, call.body)
     const written = await this.optimistic(tx, call)
     if (written == null) return undefined
+    const log = logOf(call)
+    // A game's newest log holds every earlier one: only it is kept.
+    if (log != null)
+      for (const other of rows)
+        if (other.chain === chainOf(call) && other.log != null)
+          await tx.update(other.id, { log: null })
     await tx.enqueue({
       id: written.id ?? this.makeId(),
       idempotencyKey: key,
@@ -1118,6 +1203,8 @@ export class Outbox {
       dependsOn,
       gameId: call.kind === 'roster' ? null : (call.gameId ?? null),
       background: background || backgroundOnly(call),
+      foldVersion: FOLD_VERSION,
+      log,
       ...(replaces == null ? {} : { seq: replaces.seq })
     })
     return written.answer
@@ -1806,9 +1893,26 @@ export class Outbox {
             ],
             gameId: other.gameId,
             background: other.background,
+            foldVersion: other.foldVersion,
+            log:
+              other.log == null
+                ? null
+                : JSON.stringify(swap(parsed(other.log))),
             seq: other.seq
           })
         }
+        // The game's kept session log sits on its newest save, which need not
+        // name him: it names the placeholder too.
+        const swapped = new Set(rows.map(other => other.id))
+        for (const other of await tx.outbox())
+          if (
+            other.gameId === gameId &&
+            other.log != null &&
+            !swapped.has(other.id)
+          )
+            await tx.update(other.id, {
+              log: JSON.stringify(swap(parsed(other.log)))
+            })
         // The game's documents on the phone those writes hold read so too.
         const keys = new Set(
           rows.flatMap(other =>
@@ -1967,6 +2071,7 @@ export class Outbox {
       dependsOn: [],
       gameId,
       background: true,
+      foldVersion: FOLD_VERSION,
       seq
     })
     return {
@@ -2077,7 +2182,7 @@ export class Outbox {
     let leaseEnds: number | undefined
     const ready: OutboxRow[] = []
     for (const head of heads.values()) {
-      if (isHeld(head.state)) continue
+      if (isHeld(head.state) || this.outdated.has(head.chain)) continue
       if (head.state === 'inflight') {
         leaseEnds = Math.min(leaseEnds ?? Infinity, head.leaseUntil!)
         continue
@@ -2136,6 +2241,9 @@ export class Outbox {
   }
 
   private async drainOnce(): Promise<void> {
+    // What this drain made of each game's older saves, read once for all of
+    // a game's rows.
+    const verdicts = new Map<string, OlderVerdict>()
     for (;;) {
       if (!this.active) return
       if (this.paused != null) {
@@ -2159,7 +2267,8 @@ export class Outbox {
         return
       }
       // The session changed while the row was read: it is not the new
-      // session's to send. It waits for its own person's.
+      // session's to send, or to read the game for. It waits for its own
+      // person's.
       if (this.options.owns?.() === false) {
         await store
           .atomically(async tx => {
@@ -2167,6 +2276,15 @@ export class Outbox {
           })
           .catch(() => undefined)
         return
+      }
+      // A save of plays an older build folded goes as this build folds it
+      // where its game kept a log, and as it was queued only where that
+      // build folded the game as this one does.
+      if (call.kind === 'events' && (row.foldVersion ?? 0) < FOLD_VERSION) {
+        const go = await this.judgeOlder(store, row, call, verdicts)
+        this.notify()
+        if (!go) return
+        continue
       }
       let outcome: Outcome
       try {
@@ -2186,6 +2304,119 @@ export class Outbox {
       this.notify()
       if (!go) return
     }
+  }
+
+  /**
+   * Sends a save of plays an older build queued in `row` as this build
+   * folds the game: from the newest session log the game's chain kept,
+   * played again on the server's plays, or, where there is none or it cannot
+   * be played again, as it was queued where that build folded the game as
+   * this one does.
+   * A rebuilt game is sent once, in the chain's last such save, in its place
+   * in the queue and on what that save was built on, and the chain's earlier
+   * saves an older build queued are dropped: it holds them all, and whatever
+   * else the chain queued between them still goes first, in order.
+   * The row keeps what the post was built on (its lineups base and
+   * generation) and its key, and is marked as this build's: if a send of the
+   * older body did land and its answer was lost, the server refuses the
+   * rebuilt one as a reused key, and the game is read again (`reused`). One
+   * that can be neither waits, parked with why. A read that fails for want
+   * of the signal, a sign-in or an update waits as a send that failed so
+   * would; any other holds the save, parked. What this drain made of a game
+   * an older build folded alike is kept in `verdicts` for the rest of its
+   * rows. Answers whether the drain goes on.
+   */
+  private async judgeOlder(
+    store: DocumentStore,
+    row: OutboxRow,
+    call: Extract<QueuedCall, { kind: 'events' }>,
+    verdicts: Map<string, OlderVerdict>
+  ): Promise<boolean> {
+    let verdict = verdicts.get(row.chain)
+    if (verdict == null) {
+      // The newest log the game's chain holds covers every save before it,
+      // with the server's ids for the players the phone made that landed, as
+      // a body is sent.
+      const log = await store.atomically(async tx => {
+        const kept = (await tx.outbox()).filter(
+          other => other.chain === row.chain && other.log != null
+        )
+        const newest = kept.length === 0 ? undefined : logOfRow(kept.at(-1)!)
+        return newest == null
+          ? undefined
+          : (withServerIds(newest, await this.landedIds(tx)) as SessionLog)
+      })
+      try {
+        const change =
+          log == null
+            ? null
+            : ((await this.options.rebuildEvents?.(call.gameId, log)) ?? null)
+        // A game the log cannot be played on again still goes as it was
+        // queued where that build folded it as this one does.
+        verdict =
+          change != null
+            ? { change }
+            : {
+                alike:
+                  (await this.options.olderSave?.(
+                    call.gameId,
+                    row.foldVersion
+                  )) ?? false
+              }
+      } catch (error: unknown) {
+        // A read that failed as a send would waits as one: for the signal,
+        // for a sign-in, for an update. Any other only decided how to send
+        // the save, so it holds the save rather than give it up.
+        const outcome = outcomeOf(error, call)
+        if (
+          outcome.kind === 'retry' ||
+          outcome.kind === 'auth' ||
+          outcome.kind === 'update'
+        )
+          return await this.settle(store, row, call, parsed(row.body), outcome)
+        verdict = { alike: false }
+      }
+      verdicts.set(row.chain, verdict)
+    }
+    const { change, alike } = verdict
+    await store.atomically(async tx => {
+      if (change != null) {
+        const { plays, remove, currentPlay, fenceDistanceFt } = change
+        // The rebuilt game covers every save of it an older build queued.
+        // The last of them sends it, in its place, on what it was built on,
+        // so a lineup change queued between them still goes before it; the
+        // earlier ones go.
+        const older = (await tx.outbox()).filter(
+          other =>
+            other.chain === row.chain &&
+            (other.foldVersion ?? 0) < FOLD_VERSION &&
+            callOfRow(other).kind === 'events'
+        )
+        const last = older.at(-1) ?? row
+        for (const other of older)
+          if (other.id !== last.id) await tx.remove(other.id)
+        await tx.update(last.id, {
+          body: JSON.stringify({
+            ...parsed(last.body),
+            plays,
+            remove,
+            ...(currentPlay === undefined ? {} : { currentPlay }),
+            ...(fenceDistanceFt === undefined ? {} : { fenceDistanceFt })
+          }),
+          names: JSON.stringify(change.names ?? {}),
+          foldVersion: FOLD_VERSION,
+          state: 'pending',
+          leaseUntil: null
+        })
+      } else if (alike === true)
+        await tx.update(row.id, {
+          foldVersion: FOLD_VERSION,
+          state: 'pending',
+          leaseUntil: null
+        })
+      else await this.park(tx, await tx.outbox(), row, OLDER_SAVE_HELD)
+    })
+    return true
   }
 
   /**
@@ -2247,6 +2478,12 @@ export class Outbox {
         })
         this.paused = { token: this.options.token() }
         return false
+      case 'update':
+        await store.atomically(async tx => {
+          await tx.update(row.id, { state: 'pending', leaseUntil: null })
+        })
+        this.outdated.add(row.chain)
+        return true
       case 'park':
         if (call.kind === 'guestRename') return await this.dropAlone(store, row)
         await store.atomically(async tx => {

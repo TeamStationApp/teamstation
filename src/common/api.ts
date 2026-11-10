@@ -23,7 +23,12 @@ import { asLiteral } from './asLiteral'
 import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
 import { asChatBoxCursor } from './chatHistory'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
-import { type ApiError, asApiError, HttpError } from './errors'
+import {
+  type ApiError,
+  asApiError,
+  HttpError,
+  isUpdateRequired
+} from './errors'
 import {
   asEventInfo,
   asEventLocation,
@@ -45,6 +50,7 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
   asGroupRef,
@@ -147,7 +153,7 @@ import {
   asSaidRosterCommand,
   type SaidRosterCommand
 } from './scoring/rosterCommands'
-import type { SaveChange, StoredGame } from './scoring/session'
+import type { SaveChange, SessionLog, StoredGame } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import {
   asScheduleSetup,
@@ -1512,6 +1518,10 @@ const asStoredGame = asObject({
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
+/** A game's plays as `GET /games/:gameId/events` answers them, kept or read. */
+export const asStoredGameAnswer: Cleaner<StoredGame> = raw =>
+  storedGameOf(asStoredGame(raw))
+
 function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
   return {
     plays: stored.plays.map(row => row.gumbo),
@@ -3267,6 +3277,11 @@ export interface RequestOptions {
    */
   deviceNames?: Record<string, string>
   /**
+   * A live post's session log (`SaveChange.log`): never sent, but kept on the
+   * device beside a queued post, for a newer build to play again.
+   */
+  deviceLog?: SessionLog
+  /**
    * The screen does not wait for the server: the phone's client queues the
    * write and answers its own answer at once, sending it in the background.
    * The plain client sends it as any other.
@@ -4041,6 +4056,11 @@ export class TeamStationClient {
    * refused (`POST /auth/...`) is not that.
    */
   onSessionRefused?: () => void
+  /**
+   * Told when a call is refused because this build is older than the server
+   * reads (`updateRequired`), so the app can say to update it.
+   */
+  onUpdateRequired?: () => void
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -5971,7 +5991,12 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/events?answer=edits`,
       asPostedEdits,
       liveEventsBody(change),
-      change.names == null ? undefined : { deviceNames: change.names }
+      change.names == null && change.log == null
+        ? undefined
+        : {
+            ...(change.names == null ? {} : { deviceNames: change.names }),
+            ...(change.log == null ? {} : { deviceLog: change.log })
+          }
     )
   }
 
@@ -7383,7 +7408,7 @@ export class TeamStationClient {
       if (xhr.status === 401) this.onSessionRefused?.()
       if (!ok()) {
         settle(() => {
-          throw errorFrom(xhr.status, xhr.responseText)
+          throw this.refusal(errorFrom(xhr.status, xhr.responseText))
         })
         return
       }
@@ -7418,6 +7443,7 @@ export class TeamStationClient {
       xhr.setRequestHeader('content-type', 'application/json')
     if (this.analyticsApp != null)
       xhr.setRequestHeader('x-teamstation-app', this.analyticsApp)
+    xhr.setRequestHeader(PROTOCOL_HEADER, String(GAME_SOCKET_PROTOCOL))
     if (this.token != null)
       xhr.setRequestHeader('authorization', `Bearer ${this.token}`)
     xhr.send(body === undefined ? undefined : JSON.stringify(body))
@@ -7442,6 +7468,7 @@ export class TeamStationClient {
     }
     if (this.analyticsApp != null)
       headers['x-teamstation-app'] = this.analyticsApp
+    headers[PROTOCOL_HEADER] = String(GAME_SOCKET_PROTOCOL)
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
     // `fetch` rejects with a bare TypeError when the request never leaves the
@@ -7491,13 +7518,13 @@ export class TeamStationClient {
     try {
       text = await response.text()
     } catch {
-      if (!response.ok) throw errorFrom(response.status, '')
+      if (!response.ok) throw this.refusal(errorFrom(response.status, ''))
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
-    if (!response.ok) throw errorFrom(response.status, text)
+    if (!response.ok) throw this.refusal(errorFrom(response.status, text))
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -7507,6 +7534,12 @@ export class TeamStationClient {
       throw new HttpError('internal', 'The server sent something unreadable')
     }
     return cleaner(parsed)
+  }
+
+  /** A refusal, after telling `onUpdateRequired` of one this build is too old for. */
+  private refusal(error: HttpError): HttpError {
+    if (isUpdateRequired(error)) this.onUpdateRequired?.()
+    return error
   }
 }
 

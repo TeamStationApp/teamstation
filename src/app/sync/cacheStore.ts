@@ -78,6 +78,19 @@ export interface OutboxRow {
    * (`unroster`, `guestPlayer`, `existingPlayer`) are read back from it.
    */
   background: boolean
+  /**
+   * The `FOLD_VERSION` of the build that queued the row, or null for a build
+   * from before rows kept it. A game's plays an older fold made are played
+   * again or judged before they are sent (`Outbox`, `rebuildEvents`).
+   */
+  foldVersion: number | null
+  /**
+   * A queued save of plays' session log (`SaveChange.log`), as JSON: kept on
+   * the phone beside the body and never sent, so a newer build can play it
+   * again on its own engine. Null for any other row, and for one queued by a
+   * build from before rows kept it.
+   */
+  log: string | null
 }
 
 export type NewOutboxRow = Omit<
@@ -89,9 +102,13 @@ export type NewOutboxRow = Omit<
   | 'message'
   | 'names'
   | 'background'
+  | 'foldVersion'
+  | 'log'
 > & {
   names?: string | null
   background?: boolean
+  foldVersion?: number | null
+  log?: string | null
   /**
    * Its place in the queue, when it takes the place a row it replaces held
    * (a direct send that could not be answered); else after every row.
@@ -127,7 +144,17 @@ export interface CacheTransaction {
   update: (
     id: string,
     fields: Partial<
-      Pick<OutboxRow, 'body' | 'state' | 'attempts' | 'leaseUntil' | 'message'>
+      Pick<
+        OutboxRow,
+        | 'body'
+        | 'state'
+        | 'attempts'
+        | 'leaseUntil'
+        | 'message'
+        | 'names'
+        | 'foldVersion'
+        | 'log'
+      >
     >
   ) => Promise<void>
   remove: (id: string) => Promise<void>
@@ -196,7 +223,9 @@ const SCHEMA = [
 const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'message', 'text'],
   ['outbox', 'names', 'text'],
-  ['outbox', 'background', 'integer NOT NULL DEFAULT 0']
+  ['outbox', 'background', 'integer NOT NULL DEFAULT 0'],
+  ['outbox', 'fold_version', 'integer'],
+  ['outbox', 'log', 'text']
 ]
 
 function outboxRowOf(row: SqlRow): OutboxRow {
@@ -216,7 +245,9 @@ function outboxRowOf(row: SqlRow): OutboxRow {
     gameId: typeof row.game_id === 'string' ? row.game_id : null,
     message: typeof row.message === 'string' ? row.message : null,
     names: typeof row.names === 'string' ? row.names : null,
-    background: Number(row.background ?? 0) === 1
+    background: Number(row.background ?? 0) === 1,
+    foldVersion: row.fold_version == null ? null : Number(row.fold_version),
+    log: typeof row.log === 'string' ? row.log : null
   }
 }
 
@@ -225,7 +256,10 @@ const OUTBOX_COLUMNS: Record<string, string> = {
   state: 'state',
   attempts: 'attempts',
   leaseUntil: 'lease_until',
-  message: 'message'
+  message: 'message',
+  names: 'names',
+  foldVersion: 'fold_version',
+  log: 'log'
 }
 
 function transactionOf(tx: SqlTransaction): CacheTransaction {
@@ -268,13 +302,15 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
         leaseUntil: null,
         message: null,
         names: row.names ?? null,
-        background: row.background === true
+        background: row.background === true,
+        foldVersion: row.foldVersion ?? null,
+        log: row.log ?? null
       }
       await tx.execute(
         `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path,
            body, depends_on, state, attempts, lease_until, game_id, message,
-           names, background)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           names, background, fold_version, log)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           queued.id,
           queued.idempotencyKey,
@@ -290,7 +326,9 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
           queued.gameId,
           queued.message,
           queued.names,
-          queued.background ? 1 : 0
+          queued.background ? 1 : 0,
+          queued.foldVersion,
+          queued.log
         ]
       )
       return queued

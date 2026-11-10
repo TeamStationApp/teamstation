@@ -8,6 +8,7 @@ import { Pool } from 'pg'
 
 import type { TagDocument } from '../../common/eventTags'
 import { tagTargets } from '../../common/eventTags'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -175,7 +176,8 @@ describe('reading a game without taking its row', function () {
       method: 'POST',
       headers: {
         authorization: `Bearer ${TOKEN}`,
-        'content-type': 'application/json'
+        'content-type': 'application/json',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
       },
       body: JSON.stringify({
         mode: 'live',
@@ -332,7 +334,8 @@ describe('reading a game without taking its row', function () {
         method: 'POST',
         headers: {
           authorization: `Bearer ${TOKEN}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
         },
         body: JSON.stringify({
           mode: 'live',

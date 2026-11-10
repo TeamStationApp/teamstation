@@ -7,6 +7,7 @@ import {
   type PostedEdits,
   TeamStationClient
 } from '../../common/api'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import type { PitchCall } from '../../common/scoring/actions'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
@@ -109,6 +110,7 @@ export async function livePitch(
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
           authorization: `Bearer ${options.token}`
         },
         body: JSON.stringify(liveEventsBody(change))

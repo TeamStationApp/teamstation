@@ -9,6 +9,7 @@ import { asLiteral } from '../../common/asLiteral'
 import {
   type GameSocketErrorCode,
   type GameSocketReply,
+  minimumProtocolOf,
   type ScreenScopeName,
   TYPING_INTERVAL_MS
 } from '../../common/gameSocket'
@@ -103,7 +104,7 @@ export interface GameSocketOptions {
   /**
    * The oldest `GAME_SOCKET_PROTOCOL` a game or scope subscribe may name. One
    * naming an older one, or none, is refused as `forbidden` with the reason
-   * `updateRequired`. 3 unless given.
+   * `updateRequired`. Never below `MINIMUM_GAME_SOCKET_PROTOCOL`.
    */
   minimumProtocol?: number
   /** Where a request that failed is reported. `console.error` unless given. */
@@ -322,7 +323,7 @@ export function attachGameSocket(
   const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
   const screenNoticeSpreadMs =
     options.screenNoticeSpreadMs ?? SCREEN_NOTICE_SPREAD_MS
-  const minimumProtocol = options.minimumProtocol ?? 3
+  const minimumProtocol = minimumProtocolOf(options.minimumProtocol)
   /** A resync's closes and frames, and notices' frames, still to come. */
   const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()

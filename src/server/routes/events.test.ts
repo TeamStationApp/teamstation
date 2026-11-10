@@ -13,6 +13,7 @@ import {
   tagMetadata,
   tagTargets
 } from '../../common/eventTags'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import {
   asGumboPlay,
   asPostEventsBody,
@@ -473,7 +474,8 @@ describe('posting and reading plays', function () {
     token: string | null = TOKEN
   ): Promise<{ status: number; body: Record<string, unknown> }> {
     const headers: Record<string, string> = {
-      'content-type': 'application/json'
+      'content-type': 'application/json',
+      [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
     }
     if (token != null) headers.authorization = `Bearer ${token}`
     const response = await fetch(`${base}${path}`, {
@@ -602,6 +604,120 @@ describe('posting and reading plays', function () {
       MANAGER
     )
     expect(posted.status).equals(200)
+  })
+
+  it('refuses a save from an app older than the protocol, and takes one from a tool as before', async function () {
+    const post = async (
+      headers: Record<string, string>,
+      scored = false
+    ): Promise<{ status: number; body: Record<string, unknown> }> => {
+      const posted = play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })
+      const response = await fetch(`${base}/games/${openId}/events`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${MANAGER}`,
+          ...headers
+        },
+        body: JSON.stringify({
+          plays: [
+            scored
+              ? { ...posted, teamStation: { version: 2, actions: [] } }
+              : posted
+          ],
+          source: { system: 'manual' }
+        })
+      })
+      return {
+        status: response.status,
+        body: (await response.json()) as Record<string, unknown>
+      }
+    }
+    const refusal = {
+      code: 'unavailable',
+      message: 'Update TeamStation to keep scoring games.',
+      details: { reason: 'updateRequired' }
+    }
+    // A build from before x-teamstation-app names no app, but posts
+    // TeamStation's own scoring records as the person signed in.
+    const unnamed = await post({}, true)
+    expect(unnamed.status).equals(503)
+    expect(unnamed.body).deep.equals(refusal)
+    // Nor does its undo, a live post that only takes a play away.
+    const undone = await fetch(`${base}/games/${openId}/events`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${MANAGER}`
+      },
+      body: JSON.stringify({
+        mode: 'live',
+        plays: [],
+        remove: [0],
+        source: { system: 'teamstation' }
+      })
+    })
+    expect(undone.status).equals(503)
+    expect(await undone.json()).deep.equals(refusal)
+    for (const headers of [
+      { 'x-teamstation-app': 'TS' },
+      {
+        'x-teamstation-app': 'TS',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL - 1)
+      },
+      { 'x-teamstation-app': 'TS web', [PROTOCOL_HEADER]: 'four' }
+    ] as Array<Record<string, string>>) {
+      const refused = await post(headers)
+      expect(refused.status, JSON.stringify(headers)).equals(503)
+      expect(refused.body).deep.equals(refusal)
+    }
+    // A config file that pins an older minimum, as every server's does once
+    // it has started, cannot let a protocol 3 app save.
+    const pinned = express()
+    pinned.use(jsonBody)
+    pinned.use(withActor(db!))
+    pinned.use('/api/v1', eventRoutes(db!, { minimumProtocol: 3 }))
+    pinned.use(errorHandler)
+    const pinnedServer = pinned.listen(0, '127.0.0.1')
+    await new Promise<void>(resolve => pinnedServer.once('listening', resolve))
+    try {
+      const port = (pinnedServer.address() as AddressInfo).port
+      const response = await fetch(
+        `http://127.0.0.1:${port}/api/v1/games/${openId}/events`,
+        {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${MANAGER}`,
+            'x-teamstation-app': 'TS',
+            [PROTOCOL_HEADER]: '3'
+          },
+          body: JSON.stringify({
+            plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })],
+            source: { system: 'manual' }
+          })
+        }
+      )
+      expect(response.status).equals(503)
+      expect(await response.json()).deep.equals(refusal)
+    } finally {
+      await new Promise(resolve => pinnedServer.close(resolve))
+    }
+    // Past the gate, each is answered as any post to this game, which an
+    // earlier test made final.
+    for (const headers of [
+      {
+        'x-teamstation-app': 'TS',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
+      },
+      {}
+    ] as Array<Record<string, string>>) {
+      const passed = await post(headers)
+      expect(passed.body, JSON.stringify(headers)).deep.equals({
+        code: 'conflict',
+        message: 'This game is final'
+      })
+    }
   })
 
   it('lets a scorekeeper post, and refuses a coach, a songkeeper and a videographer', async function () {
@@ -4028,6 +4144,7 @@ describe('the team default lineup a live post keeps (U10)', function () {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
         authorization: `Bearer ${OWNER}`
       },
       body: JSON.stringify(body)

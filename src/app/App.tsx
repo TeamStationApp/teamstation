@@ -794,6 +794,10 @@ function Shell(props: AppProps): React.ReactElement {
    * can do is hide a tab.
    */
   const signedInAs = session?.user.id
+  // A refused save keeps its plays on the device for the person signed in.
+  useEffect(() => {
+    scoringSource.account = signedInAs
+  }, [scoringSource, signedInAs])
   /**
    * Whether this account may see chat: confirmed for its age, or this
    * device's Apple answer is 13 or more. Every chat surface stands behind it.
@@ -892,9 +896,9 @@ function Shell(props: AppProps): React.ReactElement {
     [gameSocket]
   )
   /**
-   * The server refused a game screen's subscribe because this build is older
-   * than the socket's protocol. It stays set: no later socket of this build
-   * would be told otherwise.
+   * The server refused a game screen's subscribe, or a save of a game's plays,
+   * because this build is older than the socket's protocol. It stays set: no
+   * later socket or call of this build would be told otherwise.
    */
   const [updateRequired, setUpdateRequired] = useState(false)
   useEffect(
@@ -904,6 +908,17 @@ function Shell(props: AppProps): React.ReactElement {
       }),
     [gameSocket]
   )
+  // A call the server refused for the same reason: a save of a game's plays.
+  useEffect(() => {
+    const required = (): void => {
+      setUpdateRequired(true)
+    }
+    client.onUpdateRequired = required
+    return () => {
+      if (client.onUpdateRequired === required)
+        client.onUpdateRequired = undefined
+    }
+  }, [client])
   /**
    * The session, refused by the server (a REST 401, the scoreboard socket's
    * 4401, `whoAmI` saying nobody): no token and nobody signed in, keeping

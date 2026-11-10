@@ -15,7 +15,7 @@ import { gameFixture } from './scoring/isUnscoredGame.test'
 
 const TITLE = 'Update required'
 const BODY =
-  'This version of TeamStation can no longer follow games live. Update the app to continue.'
+  'This version of TeamStation can no longer follow or score games live. Update the app to continue.'
 
 /** The game subscribes the app sent on one socket. */
 function gameSubscribes(socket: FakeSocket): Array<Record<string, unknown>> {
@@ -195,6 +195,47 @@ describe('the update required notice', () => {
     })
     expect(document.body.textContent).not.contains(TITLE)
     await refuse(socket, scope!)
+    const notice = document.querySelector(
+      '[data-testid="updateRequiredNotice"]'
+    )
+    expect(notice?.textContent).contains(TITLE)
+  })
+
+  it('shows it when the server refuses a call as too old', async () => {
+    const clients: TeamStationClient[] = []
+    TeamStationClient.prototype.whoAmI = async function (
+      this: TeamStationClient
+    ) {
+      clients.push(this)
+      return asSessionUser({
+        id: userIdOfGumbo(101),
+        displayName: 'Babe Ruth',
+        isAdmin: false
+      })
+    }
+    // The client keeps the fetch it was made with: this one answers as the
+    // server does once it is told to.
+    let tooOld = false
+    globalThis.fetch = async () => {
+      if (!tooOld) throw new TypeError('fetch failed')
+      return new Response(
+        JSON.stringify({
+          code: 'unavailable',
+          message: 'Update TeamStation to keep scoring games.',
+          details: { reason: 'updateRequired' }
+        }),
+        { status: 503 }
+      )
+    }
+    showRoute({ name: 'home' }, true)
+    await mount(<App initialToken="token-one" />)
+    await settle(50)
+    expect(document.body.textContent).not.contains(TITLE)
+    tooOld = true
+    await act(async () => {
+      await clients[0].gameEvents('g1').catch(() => undefined)
+    })
+    await settle(50)
     const notice = document.querySelector(
       '[data-testid="updateRequiredNotice"]'
     )

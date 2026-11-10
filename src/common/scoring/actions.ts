@@ -549,6 +549,19 @@ export function dictatedAction(
 }
 
 /**
+ * How this engine folds a game's log into plays, apart from the socket's wire
+ * version (`GAME_SOCKET_PROTOCOL`). A phone stamps each save it queues with
+ * it, and a save queued under an older one is played again or judged before
+ * it is sent (`Outbox`). Raise it only when an older engine would fold some
+ * log into plays at other indexes or with other results. 4: an end of the
+ * half can keep its at-bat (`keepAtBat`).
+ */
+export const FOLD_VERSION = 4
+
+/** The fold that first read an end of the half that keeps its at-bat. */
+export const KEEPS_AT_BAT_SINCE = 4
+
+/**
  * Whether `action` is an end of the half that keeps the at-bat in progress:
  * one the End half button, dictation and a repair of an older game mark
  * (`keepAtBat`). It reads a stored action as well as a cleaned one.

@@ -22,6 +22,7 @@ import { WebSocket } from 'ws'
 import { asPostedEdits, type PostedEdits } from '../../src/common/api'
 import {
   GAME_SOCKET_PROTOCOL,
+  PROTOCOL_HEADER,
   RECONNECT_DELAYS_MS
 } from '../../src/common/gameSocket'
 import type { ScoringAction } from '../../src/common/scoring/actions'
@@ -298,7 +299,10 @@ export async function request(
         authorization: `Bearer ${account.token}`,
         ...(options.body === undefined
           ? {}
-          : { 'content-type': 'application/json' })
+          : {
+              'content-type': 'application/json',
+              [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
+            })
       },
       body:
         options.body === undefined ? undefined : JSON.stringify(options.body),
