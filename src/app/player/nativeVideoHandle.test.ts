@@ -168,6 +168,41 @@ describe('NativeVideoHandle', function () {
     expect(handle.seeking).equals(false)
   })
 
+  it('accepts a seek the player stopped at the end of a recording or live window', () => {
+    for (const live of [false, true]) {
+      let now = 0
+      const handle = new NativeVideoHandle(
+        () => undefined,
+        () => now
+      )
+      handle.attach(fakePlayer().ref)
+      handle.handleLoad({
+        currentTime: 10,
+        duration: live ? 0 : 120,
+        naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+        audioTracks: [],
+        textTracks: [],
+        videoTracks: []
+      })
+      if (live)
+        handle.handleProgress({
+          currentTime: 10,
+          playableDuration: 60,
+          seekableDuration: 120
+        })
+      let errors = 0
+      handle.onError = () => {
+        errors++
+      }
+      handle.currentTime = 130
+      handle.handleSeek({ seekTime: 130, currentTime: 119.8 })
+      expect(handle.seeking, live ? 'live' : 'recording').equals(false)
+      expect(handle.currentTime).equals(119.8)
+      now = 6000
+      handle.checkSeekTimeout()
+      expect(errors, 'an answered clamp is not a lost seek').equals(0)
+    }
+  })
   it('reports native progress separately and escalates a lost seek completion', () => {
     let now = 0
     const handle = new NativeVideoHandle(

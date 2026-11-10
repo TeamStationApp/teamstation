@@ -488,22 +488,39 @@ export class NativeVideoHandle implements VideoHandle {
       reported: data.currentTime
     })
     if (this.seekTimedOut) return
-    if (
-      !answersSeek(this.activeSeekTo, data.seekTime) ||
-      !answersSeek(this.activeSeekTo, data.currentTime)
-    )
-      return
+    if (!answersSeek(this.activeSeekTo, data.seekTime)) return
+    // The newest target paired with an older position is a cancelled seek's
+    // report. A target past the end is the exception: the player stops there.
+    const landed = answersSeek(this.activeSeekTo, data.currentTime)
+    const clamped =
+      !landed && this.clampedAtEnd(this.activeSeekTo!, data.currentTime)
+    if (!landed && !clamped) return
     this.activeSeekTo = null
     if (answersSeek(this.pendingSeekTo, data.seekTime)) {
       // Held where it was sent while the player got there, and carried on
       // from there now that it has.
       this.pendingSeekTo = null
+      if (clamped) this.time = data.currentTime
       this.timeAt = this.clock()
       this.emit('seeked')
     }
     if (shouldResumeAfterSeek({ wantsPaused: this.props.paused })) {
       this.player?.resume()
     }
+  }
+
+  /**
+   * A seek past the end of what the player can reach, a recording's length
+   * or a live window's seekable end, which it answered from that end.
+   */
+  private clampedAtEnd(target: number, reported: number): boolean {
+    const end = Number.isFinite(this.length) ? this.length : this.seekableTo
+    return (
+      end != null &&
+      target > end + SEEK_TOLERANCE &&
+      reported >= end - 1 &&
+      reported <= target
+    )
   }
 
   handlePlaybackState = (data: OnPlaybackStateChangedData): void => {
