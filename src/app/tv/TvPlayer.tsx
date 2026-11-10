@@ -394,13 +394,14 @@ export function TvPlayer({
         refreshing.current.add(index)
         try {
           const previous = loaded[index]
-          // As at load: a camera plays without a fresh timeline. The clock's
+          // This game's port, held across the await: a reopened game has a
+          // new clock.
+          const port = clock.current.ports[index]
+          // As at load: a camera plays without a fresh timeline. The port's
           // copy is the newest, which the periodic refresh keeps up to date.
           const [playback, timeline] = await Promise.all([
             client.playback(previous.video.id),
-            client
-              .wallTimeline(previous.video.id)
-              .catch(() => clock.current.ports[index].timeline)
+            client.wallTimeline(previous.video.id).catch(() => port.timeline)
           ])
           if (!active || playback.url === null) return
           const updated = {
@@ -417,7 +418,7 @@ export function TvPlayer({
           // Rejects the old mount's callbacks now, not at the next render.
           const next = [...loaded]
           anglesRef.current = next
-          clock.current.ports[index].timeline = timeline
+          port.timeline = timeline
           // Remounting abandons the old native seek, including its completion.
           seekQueues.current[index] = seekQueue(index)
           setBuffering(previous => previous.filter(i => i !== index))
@@ -1081,11 +1082,12 @@ export function TvPlayer({
           const rect = layout.tiles[state.visible.indexOf(index)]
           const available = clock.current.available(index)
           const port = clock.current.ports[index]
+          const failing = failures.includes(index)
           // Past its recording's last frame, not missing: says so.
           const notice =
-            available && !failures.includes(index)
+            available && !failing
               ? null
-              : port.ended && !port.failed && !failures.includes(index)
+              : port.ended && !port.failed && !failing
                 ? 'end of video'
                 : 'video unavailable at this moment'
           return (
@@ -1111,7 +1113,7 @@ export function TvPlayer({
                 accessibilityRole="button"
                 accessibilityLabel={`Camera ${angle.name}${notice === null ? '' : `: ${notice}`}`}
                 accessibilityValue={{
-                  text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
+                  text: `${port.position.toFixed(1)} seconds`
                 }}
                 focusable={
                   !overlay &&
