@@ -3,8 +3,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   type BrowserSession,
   browserSession,
@@ -13,14 +12,15 @@ import {
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { exerciseUmpireNotes } from '../../e2e/rigs/umpireNotesBrowser'
+import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
 import {
   readyUmpireBrowser,
   UMPIRE_BROWSER_NOW,
   umpireBrowserFixture
 } from '../test/umpireBrowserFixture'
-import { exerciseUmpireNotes } from '../test/umpireNotesBrowser.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
   const artifacts = process.env.TS_UMPIRE_ARTIFACTS

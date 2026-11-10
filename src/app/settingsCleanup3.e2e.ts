@@ -6,23 +6,23 @@ import { join, resolve } from 'node:path'
 
 import express from 'express'
 
-import { asGameDetail, TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
+import { freezeBrowserClock } from '../../e2e/rigs/creationBrowserActions'
 import {
   browserSession,
   contains,
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { asGameDetail, TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
 import { teamScheduleAnswer } from '../test/teamScheduleFixture'
 import { teamTint } from './components/teamTile'
-import { freezeBrowserClock } from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_CREATION_ARTIFACTS')
@@ -439,10 +439,14 @@ async function main(): Promise<void> {
           '/games/gam_settings3_final?tab=info',
           'Demo Field'
         ],
-        ['player-gear', `/players/104?onTeam=${f.teamA}`, 'Ichiro'],
+        [
+          'player-gear',
+          `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}`,
+          'Ichiro'
+        ],
         [
           'player-team-tiles',
-          `/players/104?onTeam=${f.teamA}&tab=teams`,
+          `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}&tab=teams`,
           'Winter Wolves'
         ],
         ['home-team-tiles', '/', 'Winter Wolves'],
@@ -893,7 +897,7 @@ async function main(): Promise<void> {
       )
       await shot('discovery-team-tiles')
       await go(settings + '/people', 'Add People')
-      await show('Send invite')
+      await show('Add people')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await note(
@@ -977,7 +981,7 @@ async function main(): Promise<void> {
       await shot('cancel-manage-player')
       await tap(m, 'Cancel')
       await go(
-        `/players/104?onTeam=${f.teamA}&tab=settings`,
+        `/players/${userIdOfGumbo(104)}?onTeam=${f.teamA}&tab=settings`,
         'Remove from Winter Wolves'
       )
       await show('Remove from Winter Wolves')
@@ -1003,7 +1007,7 @@ async function main(): Promise<void> {
       await shot('cancel-photo')
       await tap(m, 'Cancel')
       await go(settings + '/people', 'Add People')
-      await show('Send invite')
+      await show('Add people')
       await cancelCheck(false)
       await shot('cancel-add-people')
       await go(settings + '/invites', 'Create invite link')

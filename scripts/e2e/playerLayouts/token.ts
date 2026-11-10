@@ -2,7 +2,7 @@
  * Prints a session token for the player-layouts fixture's administrator, and
  * nothing else, for `lineScoreProbe.sh`.
  */
-import { signedIn } from '../../../src/app/player/playerLayoutsRig.e2e'
+import { signedIn } from '../../../e2e/rigs/playerLayoutsRig'
 
 signedIn()
   .then(token => {

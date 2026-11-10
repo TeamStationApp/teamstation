@@ -4,13 +4,11 @@ import { mkdir } from 'node:fs/promises'
 import { expect } from 'chai'
 import pg from 'pg'
 
-import { makeId } from '../../common/ids'
-import type { NamesFixture } from '../../server/dev/namesFixture'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
 import {
   API,
   APP,
@@ -18,7 +16,9 @@ import {
   note,
   pause,
   writeArtifactsTo
-} from '../../test/scoringBrowser.e2e'
+} from '../../../e2e/rigs/scoringBrowser'
+import { makeId } from '../../common/ids'
+import type { NamesFixture } from '../../server/dev/namesFixture'
 
 /**
  * E8 of player-names-derived: scoring in the browser stores no names, and a

@@ -7,7 +7,7 @@ import {
   required,
   shot,
   signInWeb
-} from '../replay/kit.e2e'
+} from '../../../e2e/rigs/replayKit'
 
 /**
  * The Box score tab of the replay seed's final game lists the visitors'

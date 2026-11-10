@@ -2,9 +2,6 @@ import assert from 'node:assert/strict'
 import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 
-import { makeId } from '../../common/ids'
-import { SESSION_COOKIE } from '../../server/auth/tokens'
-import { demoLocality, groupFixture } from '../../test/groupFixtures'
 import {
   browserSession,
   capture,
@@ -13,7 +10,10 @@ import {
   log,
   maestro,
   tap
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { makeId } from '../../common/ids'
+import { SESSION_COOKIE } from '../../server/auth/tokens'
+import { demoLocality, groupFixture } from '../../test/groupFixtures'
 const artifacts = process.env.TS_NAVBAR_ARTIFACTS
 if (artifacts == null) throw new Error('Supply TS_NAVBAR_ARTIFACTS')
 const before = process.argv.includes('before')

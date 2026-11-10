@@ -24,7 +24,7 @@ import {
   shot,
   type WebSession,
   webSession
-} from '../../../src/app/player/playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
 
 const { values } = parseArgs({
   options: {

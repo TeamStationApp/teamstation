@@ -3,12 +3,12 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   LONG_LISTS_SHAPE,
   type LongListsSeed,
   longListsSupport
 } from '../../test/longListsSeed'
-import { log, maestro } from '../../test/refinementsMaestro.e2e'
 
 /**
  * The long lists scenarios on a phone, through maestro-d's JavaScript library,

@@ -6,11 +6,11 @@ import { join, resolve } from 'node:path'
 import { deflateSync } from 'fflate'
 import { base64 } from 'rfc4648'
 
+import { rosterEditFixture } from '../../../e2e/fixtures/scoringRosterEditFixture'
 import { storedRecordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
 import { utf8 } from '../walkup/localFileId'
 import { lineupQrFixture2, lineupQrFixture4 } from './lineupQr.fixtures'
-import { rosterEditFixture } from './scoringRosterEdit.e2e.fixture'
 
 /**
  * Lineup QR share and import on the scorekeeper's Set Team Rosters screen,

@@ -4,6 +4,13 @@ import { dirname, join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  fill,
+  freezeBrowserClock,
+  press,
+  text
+} from '../../e2e/rigs/creationBrowserActions'
 import { asParentActions } from '../common/groupLinks'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
@@ -13,13 +20,6 @@ import { publishPictureCatalog } from '../server/media/pictureCatalog'
 import { accountTestPicture } from '../test/accountHarness'
 import { actor, demoLocality, groupFixture } from '../test/groupFixtures'
 import { scrollToRow } from '../test/scrollToRow'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import {
-  fill,
-  freezeBrowserClock,
-  press,
-  text
-} from './creationBrowserActions.e2e'
 
 /** The picture opens its menu, whatever else its label says, then the row. */
 async function openNotifications(page: Page): Promise<void> {
