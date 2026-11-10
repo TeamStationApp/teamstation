@@ -11,6 +11,7 @@ import {
   contains,
   fill,
   maestro,
+  show,
   tap
 } from '../../e2e/rigs/refinementsMaestro'
 import { umpireDate } from '../common/umpireTime'
@@ -321,9 +322,9 @@ async function main(): Promise<void> {
           await open('/games/gam_umpire_g1')
           // Uma reads her own slot, so the game's umpires name her in full:
           // her row's title, then its position.
-          await contains(page, 'Uma LeePlate')
+          await contains(page, 'Uma Lee\nPlate')
           await m.scrollUntilVisible({
-            element: { text: 'Plate' },
+            element: { text: 'Umpires' },
             direction: 'down'
           })
           await shot('game-screen-after.png')
@@ -425,7 +426,8 @@ async function main(): Promise<void> {
           await signIn(103, '/')
           await tap(m, 'Umpire Schedule')
           await contains(page, 'Demo Visitors')
-          await tap(m, 'League view', 'tab')
+          // The league switcher is a row of leagues in the header.
+          await show(m, 'Demo Visitors')
           await shot('league-switcher-after.png')
           await tap(m, 'Schedule filters')
           await tap(m, 'majors')
@@ -433,7 +435,8 @@ async function main(): Promise<void> {
           await tap(m, 'Demo Visitors')
           await contains(page, 'No games match this schedule.')
           const switched = new URL(page.url())
-          expect(switched.searchParams.get('view')).equals('umpire')
+          // A switch opens the league in its own default view, unfiltered.
+          expect(switched.searchParams.has('view')).equals(false)
           expect(switched.searchParams.has('levels')).equals(false)
           await tap(m, 'Schedule filters')
           await chooseTime('Start time', '18:00')
