@@ -94,7 +94,7 @@
     "stats-tables-seed": "node -r sucrase/register src/server/dev/statsTablesSeed.ts",
     "tess.sitemap": "node -r sucrase/register src/server/tess/sitemapCli.ts",
     "test": "node scripts/chatCryptoBuild.mjs node wasm && node scripts/checkScoringLayering.mjs && node scripts/run-unit-tests.mjs",
-    "test.integration": "node scripts/chatCryptoBuild.mjs node && node src/migrate/requirePostgres18.js && node scripts/run-unit-tests.mjs --tier integration",
+    "test.integration": "node scripts/chatCryptoBuild.mjs node wasm && node src/migrate/requirePostgres18.js && node scripts/run-unit-tests.mjs --tier integration",
     "test.models": "node scripts/testModels.mjs",
     "test.mocha": "mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts",
     "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && node scripts/typecheckE2e.mjs && npm run typecheck.mason",

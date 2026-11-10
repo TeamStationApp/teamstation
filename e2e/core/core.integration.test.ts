@@ -819,6 +819,8 @@ describe('prepare', function () {
   })
 
   it('tells a simulator UDID from a phone', function () {
+    // Simulators are Xcode's: only a Mac can list them.
+    if (process.platform !== 'darwin') this.skip()
     expect(iosIsSimulator('not-a-device')).equals(false)
     const listed = execFileSync('xcrun', ['simctl', 'list', 'devices', '-j'], {
       encoding: 'utf8'
