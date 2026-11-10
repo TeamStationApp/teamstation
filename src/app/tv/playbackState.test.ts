@@ -41,6 +41,28 @@ describe('TV playback composition and remote state', () => {
       }
     }
   })
+  it('rejoins healthy cameras decoding a segment past 6-second safe edges', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    clock.load(0, Infinity)
+    // The first camera decodes 9 s past its safe edge, which advances 6 s at
+    // a time.
+    let seconds = 120
+    const edge = (): number => 6 * Math.floor((seconds - 9) / 6)
+    for (; seconds < 150; seconds += 0.25) clock.progress(0, seconds, edge(), 0)
+    clock.load(1, Infinity)
+    clock.progress(1, edge(), edge(), 0)
+    const shared = edge() - 0.1
+    expect(seeks[0].at(-1), 'rejoined, not refused').closeTo(shared, 0.001)
+    expect(seeks[1].at(-1)).closeTo(shared, 0.001)
+    for (let i = 0; i < 2; i++) {
+      clock.settled(i)
+      clock.progress(i, shared, edge(), 0)
+      expect(clock.available(i)).equals(true)
+    }
+  })
   for (const obstacle of [
     'unknown bounds',
     'missing mapping',
