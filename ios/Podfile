@@ -1,5 +1,7 @@
 require_relative '../scripts/patch-video-seekable'
 patch_video_seekable(File.expand_path('../node_modules/react-native-video', __dir__))
+require_relative '../scripts/patch-video-item-notifications'
+patch_video_item_notifications(File.expand_path('../node_modules/react-native-video', __dir__))
 require_relative '../appletv/scripts/patch-video-seek'
 patch_video_seek(File.expand_path('../node_modules/react-native-video/ios/Video/Features/RCTPlayerOperations.swift', __dir__))
 
