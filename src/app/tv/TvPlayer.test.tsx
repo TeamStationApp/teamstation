@@ -1091,6 +1091,99 @@ describe('TV game playback entry', () => {
       Date.now = originalNow
     }
   })
+  it('swaps a recovered camera to the recording the refresh saw when the swap cannot fetch its own timeline', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      // Camera 0 fails; its recovery's address is slow, but its own timeline
+      // fetch finds it still live.
+      let release: (() => void) | undefined
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      playbackOf = async id => {
+        if (id === '0') await held
+      }
+      let phase: 'recovering' | 'finished' | 'swapping' = 'recovering'
+      timelineOf = async id => {
+        if (id !== '0' || phase === 'recovering') return undefined
+        if (phase === 'swapping') throw new Error('Timeline unavailable')
+        // The game has finished: the recording, twenty seconds earlier.
+        return { ...timelineFor('2026-09-30T23:59:40Z'), live: false }
+      }
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      // The periodic refresh sees the recording while the recovery waits.
+      phase = 'finished'
+      await act(async () => {
+        poll!()
+        await pause()
+        await pause()
+      })
+      // The swap queued behind the recovery cannot fetch its own timeline.
+      phase = 'swapping'
+      playbackOf = undefined
+      await act(async () => {
+        release!()
+        await pause()
+        await pause()
+      })
+      const swapped = document.querySelector('video')!
+      expect(swapped).not.equals(before[0])
+      await act(async () => {
+        load(swapped)
+        await pause()
+      })
+      expect(
+        swapped.currentTime,
+        "placed as a recording, by the timeline the refresh fetched, not the recovery's"
+      ).equals(22)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
+    }
+  })
   it('abandons an unacknowledged seek when replacing a failed source', async () => {
     count = 2
     const originalInterval = globalThis.setInterval
