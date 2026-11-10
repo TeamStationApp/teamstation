@@ -14,13 +14,12 @@ interface ClockPort {
   pendingWall: number | null
   seekableEnd: number | null
   seekableStart: number
-  /** The largest step a live seekable edge has advanced by: its segment length. */
-  edgeStep: number
 }
-/** The segment length assumed until a live edge has been seen to advance. */
-const SEGMENT_SEC = 4
-/** The longest a playlist's segments run (`EXT-X-TARGETDURATION`). */
-const MAX_SEGMENT_SEC = 12
+/**
+ * How far apart live cameras' safe edges may be while every feed is current:
+ * one segment, at most the longest `EXT-X-TARGETDURATION` a playlist runs.
+ */
+const EDGE_SPREAD_MS = 12_000
 
 /** Native ports stay registered until the entire player closes, including hidden angles. */
 export class PlaybackClock {
@@ -44,8 +43,7 @@ export class PlaybackClock {
       target: null,
       pendingWall: null,
       seekableEnd: null,
-      seekableStart: 0,
-      edgeStep: 0
+      seekableStart: 0
     }
   }
 
@@ -185,14 +183,8 @@ export class PlaybackClock {
       seekableEnd != null &&
       Number.isFinite(seekableEnd) &&
       seekableEnd > 0
-    ) {
-      // A live edge advances a segment at a time; a larger jump is several
-      // segments listed together, not a longer segment.
-      const step = seekableEnd - (port.seekableEnd ?? seekableEnd)
-      if (step > 0 && step <= MAX_SEGMENT_SEC)
-        port.edgeStep = Math.max(port.edgeStep, step)
+    )
       port.seekableEnd = seekableEnd
-    }
     if (port === undefined || port.failed || port.ended) return this.wall
     // A replacement live source may open at the live edge. Restore the selected
     // moment only once its new seekable bounds arrive, and ignore that first frame.
@@ -217,10 +209,10 @@ export class PlaybackClock {
         // edges. Chasing the moving master there can never converge. Rejoin
         // playing cameras in footage they can all seek, without accepting skew
         // or changing a paused selection (or crossing a known missing span).
-        // A camera whose feed stopped, or has only just come back, is not one
-        // of them: it stays covered until its footage reaches the moment
-        // rather than pulling the others back to its last picture
-        // (`rejoinSeekable` refuses a long step back).
+        // A camera whose feed stopped, or has only just come back after a
+        // gap, is not one of them: it stays covered until its footage reaches
+        // the moment rather than pulling the others back to its last picture
+        // (`rejoinSeekable` refuses both).
         if (
           playing &&
           !Number.isFinite(port.duration) &&
@@ -285,21 +277,22 @@ export class PlaybackClock {
     if (this.wall === null) return false
     const active = this.ports.filter(p => p.loaded && !p.failed && !p.ended)
     let shared = this.wall
+    const liveEdges: number[] = []
     for (const port of active) {
-      const end = Number.isFinite(port.duration)
-        ? port.duration
-        : port.seekableEnd
+      const live = !Number.isFinite(port.duration)
+      const end = live ? port.seekableEnd : port.duration
       if (end === null) return false
-      const wall = wallAt(port.timeline.anchors, (end - 0.1) * 1000)
-      if (wall === null) return false
-      shared = Math.min(shared, wall)
+      // Just inside the edge on the wall clock: in media time, stepping back
+      // could cross an anchor into footage from before a gap.
+      const edge = wallAt(port.timeline.anchors, end * 1000)
+      if (edge === null) return false
+      if (live) liveEdges.push(edge)
+      shared = Math.min(shared, edge - 100)
     }
-    // The decoders' offset past their safe edges is two segments at most: one
-    // past the edge, one between the cameras' edges. A longer step back is a
-    // camera missing footage at this moment, whether its feed stopped or its
-    // seekable range has only just restarted after a gap.
-    const segment = Math.max(SEGMENT_SEC, ...active.map(p => p.edgeStep))
-    if (this.wall - shared > 2 * segment * 1000) return false
+    // Current feeds' safe edges are within a segment of each other. A camera
+    // further behind is missing footage: its feed stopped, and the others stay.
+    if (Math.max(...liveEdges) - Math.min(...liveEdges) > EDGE_SPREAD_MS)
+      return false
     if (
       active.some(port => {
         const target = targetTime(port.timeline, shared, port.duration)
