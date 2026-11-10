@@ -321,7 +321,8 @@ async function main(): Promise<void> {
             .map(r => {
               const at = runs.indexOf(r)
               const label = from[at]?.label ?? ''
-              const what = r.reason ?? `exit ${r.exit}`
+              // One line each: a reason can carry a script's stderr.
+              const what = (r.reason ?? `exit ${r.exit}`).replace(/\s+/g, ' ')
               return label === '' ? what : `${label}: ${what}`
             })
             .join('; ')
