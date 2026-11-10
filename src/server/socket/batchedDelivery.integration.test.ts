@@ -427,9 +427,18 @@ describe('authorizing a delivery in one set of reads', function () {
       lone.ws.terminate()
 
       // Two hundred, and some who may not see it, all stale.
-      const sockets = await Promise.all(
-        members.map(async member => await connect(member.token))
-      )
+      // A few at a time. The listen queue holds 128 connections, and the
+      // rest of a single burst are reset.
+      const sockets: Array<Awaited<ReturnType<typeof connect>>> = []
+      for (let i = 0; i < members.length; i += 32) {
+        sockets.push(
+          ...(await Promise.all(
+            members
+              .slice(i, i + 32)
+              .map(async member => await connect(member.token))
+          ))
+        )
+      }
       const others = await Promise.all(
         [...strangers, ...otherMembers].map(
           async someone => await connect(someone.token)

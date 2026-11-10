@@ -3389,6 +3389,12 @@ export function stopIngest(): void {
 
 export function tickSamplerForTest(): void {
   pollSampler()
+  // The directory watch and ffmpeg's progress lines call the stamper on a
+  // running ingest. A test drives the tick itself, and lists a segment when
+  // that watch delivers nothing.
+  for (const entry of entries.values()) {
+    for (const output of entry.outputs) output.stampSegments?.()
+  }
 }
 
 export function attachSessionForTest(
