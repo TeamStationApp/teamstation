@@ -12,6 +12,7 @@ import { replayPlays } from '../../common/scoring/gumbo'
 import {
   type EventStore,
   ScoringSession,
+  type SessionContext,
   type StoredGame
 } from '../../common/scoring/session'
 import { type Database, makeDatabase } from '../db/database'
@@ -169,12 +170,17 @@ function changedPlayer(
 function playerChange(
   stored: StoredGame,
   plays: GumboPlay[],
-  current: CurrentPlay | null
+  current: CurrentPlay | null,
+  moved: (index: number) => number = index => index
 ): string | undefined {
+  // Each rebuilt play against the stored play that moved to its index; one
+  // no stored play moved to is new, and names nobody it changed.
   const pairs: Array<
     [GumboPlay | CurrentPlay | undefined, GumboPlay | CurrentPlay]
   > = plays.map(play => [
-    stored.plays.find(was => was.about.atBatIndex === play.about.atBatIndex),
+    stored.plays.find(
+      was => moved(was.about.atBatIndex) === play.about.atBatIndex
+    ),
     play
   ])
   if (
@@ -191,11 +197,27 @@ function playerChange(
   }
 }
 
+/** How one game's refold may differ from a plain one. */
+export interface RefoldOptions {
+  /**
+   * Changes the stored game before it is played again: the edit a repair
+   * makes to its records, and where it moves each stored play's index (a
+   * play put back moves every play after it up one), for the plays the
+   * rebuilt ones are checked against. Null leaves the game unchanged and
+   * writes nothing.
+   */
+  edit?: (
+    stored: StoredGame,
+    context: SessionContext
+  ) => { stored: StoredGame; moved?: (index: number) => number } | null
+}
+
 /** Refolds one game, writing what changed unless it is a preview. */
 export async function refoldGame(
   db: Kysely<Database>,
   gameId: string,
-  preview: boolean
+  preview: boolean,
+  options: RefoldOptions = {}
 ): Promise<
   | { kind: 'changed'; refold: GameRefold }
   | { kind: 'unchanged' }
@@ -221,12 +243,15 @@ export async function refoldGame(
   )
   const context = await contextOf(db, gameId, game, stored)
   if (context == null) return { kind: 'unchanged' }
-  const problems = replayPlays(stored, context).problems
+  const edit = options.edit == null ? { stored } : options.edit(stored, context)
+  if (edit == null) return { kind: 'unchanged' }
+  const edited = edit.stored
+  const problems = replayPlays(edited, context).problems
   if (problems.length > 0)
     return { kind: 'skipped', problem: problems[0].message }
 
   const store: EventStore = {
-    load: async () => stored,
+    load: async () => edited,
     save: async () => {
       throw new Error('The refold writes through postGamePlays')
     }
@@ -243,7 +268,7 @@ export async function refoldGame(
         comparablePlay(byIndex.get(play.about.atBatIndex) ?? null)
       )
   )
-  const changed = playerChange(stored, plays, picture.current)
+  const changed = playerChange(stored, plays, picture.current, edit.moved)
   if (changed != null)
     return {
       kind: 'skipped',

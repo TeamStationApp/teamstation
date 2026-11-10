@@ -85,6 +85,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dev/importArchiveCameras.js',
   'server/dev/importInvites.js',
   'server/dev/importVideoFile.js',
+  'server/dev/keepInterruptedAtBats.js',
   'server/dev/lineupFixture.js',
   'server/dev/livePitch.js',
   'server/dev/makeSampleVideo.js',
