@@ -33,6 +33,19 @@ describe('TV per-camera playback recovery', () => {
     ready.transfer(15_000) // A transfer is no picture while not buffering.
     expect(ready.retry(21_000, true, false)).equals(true)
   })
+  it('does not let a camera flipping in and out of buffering hide a stall', () => {
+    const watch = new PlaybackRecovery(0)
+    watch.progress(10, 0)
+    watch.progress(10.25, 250)
+    watch.buffer(true, 500)
+    let fired: number | null = null
+    for (let now = 1000; now <= 130_000 && fired === null; now += 1000) {
+      if (now % 3000 === 0) watch.buffer(now % 6000 === 0, now)
+      if (watch.retry(now, true, false)) fired = now
+    }
+    expect(fired).not.equals(null)
+    expect(fired!).lessThanOrEqual(121_000)
+  })
   it('retries a replacement error without waiting out its opening deadline', () => {
     const watch = new PlaybackRecovery(0)
     watch.error(100)

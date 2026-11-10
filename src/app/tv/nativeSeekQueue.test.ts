@@ -52,6 +52,22 @@ describe('TV native seek backpressure', () => {
     expect(queue.pending).equals(false)
     expect(queue.timedOut()).equals(false)
   })
+  it('times out a seek on a decoder flipping in and out of buffering', () => {
+    let now = 0
+    const queue = new NativeSeekQueue(
+      () => undefined,
+      () => undefined,
+      () => now
+    )
+    queue.request(50)
+    queue.buffer(true)
+    let fired: number | null = null
+    for (now = 1000; now <= 130_000 && fired === null; now += 1000) {
+      if (now % 3000 === 0) queue.buffer(now % 6000 === 0)
+      if (queue.timedOut()) fired = now
+    }
+    expect(fired).equals(120_000)
+  })
   it('does not settle a failed paused seek when its completion arrives late', () => {
     let now = 0
     let settled = 0

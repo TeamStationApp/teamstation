@@ -11,14 +11,19 @@ export class NativeSeekQueue {
   private requestedAt = 0
   private timeoutReported = false
   private buffering = false
+  private readySince = 0
 
   get pending(): boolean {
     return this.active !== null && !this.timeoutReported
   }
 
+  /**
+   * Leaving buffering gives a ready decoder a fresh acknowledgement window.
+   * Only a request or a transfer restarts the two-minute buffering bound, so
+   * a decoder flipping in and out of buffering cannot hold a seek for ever.
+   */
   buffer(isBuffering: boolean): void {
-    if (this.buffering !== isBuffering && this.pending)
-      this.requestedAt = this.now()
+    if (this.buffering && !isBuffering) this.readySince = this.now()
     this.buffering = isBuffering
   }
 
@@ -51,10 +56,13 @@ export class NativeSeekQueue {
 
   /** A lost completion is a source failure even while the viewer is paused. */
   timedOut(): boolean {
+    const now = this.now()
     if (
       this.active === null ||
       this.timeoutReported ||
-      this.now() - this.requestedAt < (this.buffering ? 120_000 : 5000)
+      (now - this.requestedAt < 120_000 &&
+        (this.buffering ||
+          now - Math.max(this.requestedAt, this.readySince) < 5000))
     )
       return false
     this.timeoutReported = true

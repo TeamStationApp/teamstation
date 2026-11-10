@@ -8,6 +8,8 @@ export class PlaybackRecovery {
   private openingUntil = 0
   private began: number | null = null
   private buffering = false
+  /** When buffering last ended: the player then gets one silent window. */
+  private readySince = 0
   exhausted = false
 
   constructor(now: number) {
@@ -40,10 +42,12 @@ export class PlaybackRecovery {
   /**
    * A buffering camera is downloading, not stalled. Like a buffering seek
    * (`NativeSeekQueue`), it gets two minutes between completed transfers,
-   * which can arrive only when a large, slow segment finishes.
+   * which can arrive only when a large, slow segment finishes. Only a frame
+   * or a transfer restarts that: a player flipping in and out of buffering
+   * is given its silent window from each exit, never past the two minutes.
    */
   buffer(isBuffering: boolean, now: number): void {
-    if (this.buffering !== isBuffering && !this.failed) this.advancedAt = now
+    if (this.buffering && !isBuffering) this.readySince = now
     this.buffering = isBuffering
   }
 
@@ -72,11 +76,11 @@ export class PlaybackRecovery {
       this.advancedAt = now
       return false
     }
-    if (
-      !this.failed &&
-      now - this.advancedAt < (this.buffering ? 120_000 : 20_000)
-    )
-      return false
+    const stalled =
+      now - this.advancedAt >= 120_000 ||
+      (!this.buffering &&
+        now - Math.max(this.advancedAt, this.readySince) >= 20_000)
+    if (!this.failed && !stalled) return false
     this.began ??= now
     if (now - this.began >= 5 * 60_000) {
       this.exhausted = true
