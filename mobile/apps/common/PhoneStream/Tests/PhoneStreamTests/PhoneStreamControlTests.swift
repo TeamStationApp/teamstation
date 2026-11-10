@@ -16,6 +16,31 @@ extension PhoneStreamTests {
   @MainActor
   struct Controls {
     static let angle = "Home Plate"
+    @Test("Focus commands carry the camera generation and status stays capture-authoritative")
+    func focusControls() async throws {
+      let rig = EngineRig(root: try scratchDirectory())
+      let device = FakeCaptureDevice()
+      let engine = try rig.engine(source: { PhoneCameraSource(input: .camera(device)) })
+      try engine.open(angleName: Self.angle, audioEnabled: false, disabledLenses: [])
+      var state = Self.thirteenPro()
+      state.focus.reset(supported: true, generation: "current")
+      device.publish(state)
+      let command = try #require(FocusCommand(generation: "current", token: "tap", point: FocusPoint(x: 0.2, y: 0.7)))
+      engine.setFocus("invalid")
+      engine.setFocus("auto:old:tap")
+      #expect(device.focusCommands.isEmpty)
+      engine.setFocus(command.text)
+      #expect(device.focusCommands == [command])
+      #expect(engine.status.focus.phase == .reset)
+      #expect({ state.focus.begin(command) }())
+      #expect({ state.focus.complete(command, success: true) }())
+      device.publish(state)
+      #expect(engine.status.focus.phase == .locked)
+      engine.setFocus("auto:current:continuous")
+      #expect(device.focusCommands.last?.point == nil)
+      #expect(device.started == 1 && device.stopped == 0)
+      await engine.close()
+    }
     /// An iPhone 13 Pro's back camera as `CameraSession` publishes it: three lenses, 0.5x to 9x.
     static func thirteenPro(deviceZoom: Double = 2) -> CameraSession.State {
       var state = CameraSession.State()

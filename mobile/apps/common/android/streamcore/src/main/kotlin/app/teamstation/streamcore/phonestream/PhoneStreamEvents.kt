@@ -1,6 +1,7 @@
 package app.teamstation.streamcore.phonestream
 
 import app.teamstation.streamcore.core.CameraLens
+import app.teamstation.streamcore.core.CameraFocus
 
 /** What the streaming screen draws, four times a second. */
 data class PhoneStreamStatus(
@@ -20,7 +21,11 @@ data class PhoneStreamStatus(
     /** How long the take has been recording, counted from its start, 0 while not recording. */
     val recordingSeconds: Double = 0.0,
     val isRecording: Boolean = false,
-    val error: PhoneStreamError? = null
+    val error: PhoneStreamError? = null,
+    val focus: CameraFocus = CameraFocus(),
+    // The engine's encoder and renderer use this fixed output profile, not the sensor format.
+    val videoWidth: Int = PhoneStreamProfile.width,
+    val videoHeight: Int = PhoneStreamProfile.height
 )
 
 /** What went wrong, as a code the screen words for itself. */

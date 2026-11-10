@@ -759,7 +759,8 @@ public final class PhoneStreamEngine {
       thermal: deviceStatus.thermal().rawValue,
       recordingSeconds: recordingSeconds,
       isRecording: recordingTakeID != nil,
-      error: lastError
+      error: lastError,
+      focus: cameraState.focus
     )
   }
 
@@ -861,6 +862,11 @@ public final class PhoneStreamEngine {
   public func setZoom(displayed: Double) {
     pinchStartDeviceZoom = nil
     source?.device?.setDisplayedZoom(displayed)
+  }
+
+  public func setFocus(_ text: String) {
+    guard let command = FocusCommand(text: text), command.generation == cameraState.focus.generation else { return }
+    source?.device?.setPreviewFocus(command)
   }
 
   /// A pinch, multiplicative against the zoom when it began; `ended` closes the gesture.

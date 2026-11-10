@@ -67,6 +67,8 @@ public protocol PhoneCaptureDevice: AnyObject, Sendable {
   func flip()
   func setDeviceZoom(_ value: Double)
   func setDisplayedZoom(_ value: Double)
+  /// Focus using normalized coordinates in the local preview layer.
+  func setPreviewFocus(_ command: FocusCommand)
 }
 
 extension CameraSession: PhoneCaptureDevice {}

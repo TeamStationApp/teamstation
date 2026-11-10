@@ -19,7 +19,8 @@ public struct RootView: View {
         DiagnosticView(environment: environment)
       } else {
         // The phone draws its own preview layer where a remote screen draws a decoded stream.
-        CameraView(model: environment, isShowingSettings: $environment.isShowingSettings) {
+        CameraView(model: environment, isShowingSettings: $environment.isShowingSettings,
+                   focusPreview: environment.focusPreview) {
           CameraPreview(
             camera: environment.camera,
             captureRotation: environment.cameraState.captureRotationAngle

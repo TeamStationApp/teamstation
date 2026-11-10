@@ -128,6 +128,7 @@ final class FakeCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   var flips = 0
   var deviceZooms: [Double] = []
   var displayedZooms: [Double] = []
+  var focusCommands: [FocusCommand] = []
 
   func configure(position: CameraPosition, settings: CameramanCore.StreamSettings) {
     configured.append((position, settings))
@@ -143,6 +144,7 @@ final class FakeCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   func flip() { flips += 1 }
   func setDeviceZoom(_ value: Double) { deviceZooms.append(value) }
   func setDisplayedZoom(_ value: Double) { displayedZooms.append(value) }
+  func setPreviewFocus(_ command: FocusCommand) { focusCommands.append(command) }
   func showPreview(in layer: AVCaptureVideoPreviewLayer, rotationAngle: CGFloat, mirrored: Bool) {
     calls.append("show \(Int(rotationAngle)) \(mirrored)")
   }
@@ -205,6 +207,7 @@ final class ReplayCaptureDevice: PhoneCaptureDevice, @unchecked Sendable {
   func flip() {}
   func setDeviceZoom(_ value: Double) {}
   func setDisplayedZoom(_ value: Double) {}
+  func setPreviewFocus(_ command: FocusCommand) {}
 
   func start() {
     let video = DispatchSource.makeTimerSource(queue: queue)
@@ -299,6 +302,7 @@ final class RotationFailingCaptureDevice: PhoneCaptureDevice, @unchecked Sendabl
   func flip() {}
   func setDeviceZoom(_ value: Double) {}
   func setDisplayedZoom(_ value: Double) {}
+  func setPreviewFocus(_ command: FocusCommand) {}
 
   /// Called on the main actor, as the engine calls it.
   func start() {

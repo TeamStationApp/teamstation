@@ -21,6 +21,7 @@ public struct PhoneStreamStatus: Sendable, Equatable {
   public var recordingSeconds: Double
   public var isRecording: Bool
   public var error: PhoneStreamError?
+  public var focus: CameraFocus
 
   public init(
     phase: String = "idle",
@@ -33,7 +34,8 @@ public struct PhoneStreamStatus: Sendable, Equatable {
     thermal: String = "nominal",
     recordingSeconds: Double = 0,
     isRecording: Bool = false,
-    error: PhoneStreamError? = nil
+    error: PhoneStreamError? = nil,
+    focus: CameraFocus = CameraFocus()
   ) {
     self.phase = phase
     self.retryInSeconds = retryInSeconds
@@ -46,6 +48,7 @@ public struct PhoneStreamStatus: Sendable, Equatable {
     self.recordingSeconds = recordingSeconds
     self.isRecording = isRecording
     self.error = error
+    self.focus = focus
   }
 }
 
