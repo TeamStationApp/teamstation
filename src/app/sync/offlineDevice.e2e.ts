@@ -2027,8 +2027,68 @@ async function step7(): Promise<void> {
 
 async function step8(): Promise<void> {
   log('step 8: clear the shape; the writes arrive in order')
+  // The phone was stalled, then dropped, and is now cleared with the app left
+  // in the foreground (no relaunch): every queued write must reach the seat
+  // on its own. Wait up to 90 s for all of them and note when each arrived.
+  const clearedAt = new Date()
   clearShape()
-  await pause(MODE === 'before' ? 60000 : 30000)
+  if (MODE === 'after') {
+    const swaps = entered.filter(kind => kind === 'swap').length
+    const gameWrites = (): string[] =>
+      recorded().filter(
+        l =>
+          l.includes(`/games/${FIXTURE.upcomingGameId}/`) &&
+          /^\S+\s+(POST|PUT|DELETE)\s/.test(l)
+      )
+    const rosterAdd = (): string[] =>
+      recorded().filter(l =>
+        new RegExp(
+          `^\\S+\\s+POST\\s+\\S*/teams/${FIXTURE.teams.opened}/roster-players\\b.*\\s2\\d\\d\\b`
+        ).test(l)
+      )
+    let complete = false
+    let quietSince = Date.now()
+    let last = -1
+    while (Date.now() - clearedAt.getTime() < 90000) {
+      const writes = gameWrites()
+      if (writes.length !== last) {
+        last = writes.length
+        quietSince = Date.now()
+      }
+      const lastSwapAt = writes
+        .map(l => /\/swap-sides\b/.test(l))
+        .lastIndexOf(true)
+      complete =
+        writes.filter(l => /\/swap-sides\b/.test(l)).length >= swaps &&
+        writes.slice(lastSwapAt + 1).some(l => /\/events\b/.test(l)) &&
+        rosterAdd().length > 0
+      if (complete && Date.now() - quietSince >= 6000) break
+      await pause(3000)
+    }
+    const after = recorded().filter(
+      l => (l.split(' ')[0] ?? '') >= clearedAt.toISOString()
+    )
+    const arrivals = after
+      .filter(l => /^\S+\s+(POST|PUT|DELETE)\s/.test(l))
+      .map(l => {
+        const [at, method, path, status] = l.split(' ')
+        return `+${((Date.parse(at) - clearedAt.getTime()) / 1000).toFixed(1)}s ${method} ${path.replace(/^\/api\/v1/, '')} ${status}`
+      })
+    log(
+      `writes that reached the seat after the shape cleared at ${clearedAt.toISOString()} (app in the foreground, not relaunched):\n${arrivals.join('\n')}`
+    )
+    check(
+      'every queued write (pitches, every swap, the roster add) reaches the seat within 90 s of the clear, without a relaunch',
+      complete,
+      `${arrivals.length} writes, the last ${arrivals.at(-1)?.split(' ')[0] ?? '-'} after the clear`
+    )
+    const failed = recorded().filter(l => /\s5\d\d$/.test(l))
+    check(
+      'no 5xx answer from the seat during the run',
+      failed.length === 0,
+      failed.join(' | ')
+    )
+  } else await pause(60000)
   log(`seat game state after the run: ${gameState().replace(/\n/g, ' ; ')}`)
   if (MODE === 'after') {
     // Every write to the scored game, in arrival order; a pitch is a save of
