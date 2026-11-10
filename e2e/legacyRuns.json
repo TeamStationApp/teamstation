@@ -1657,21 +1657,24 @@
       "args": [
         "web"
       ],
-      "needs": "web"
+      "needs": "web",
+      "blocked": "runs inside chatHistoryRecoveryReplyFixture host mode, whose CHAT_RECOVERY_REPLY_SETUP comes from the producer that needs the private CHAT_RECOVERY_OWNER_FILE"
     },
     {
       "label": "ios",
       "args": [
         "ios"
       ],
-      "needs": "ios-sim"
+      "needs": "ios-sim",
+      "blocked": "runs inside chatHistoryRecoveryReplyFixture host mode, whose CHAT_RECOVERY_REPLY_SETUP comes from the producer that needs the private CHAT_RECOVERY_OWNER_FILE"
     },
     {
       "label": "android",
       "args": [
         "android"
       ],
-      "needs": "android-phone"
+      "needs": "android-phone",
+      "blocked": "runs inside chatHistoryRecoveryReplyFixture host mode, whose CHAT_RECOVERY_REPLY_SETUP comes from the producer that needs the private CHAT_RECOVERY_OWNER_FILE"
     }
   ],
   "src/app/chat/chat117.e2e.ts": [
@@ -3038,6 +3041,146 @@
     {
       "label": "android",
       "needs": "android-phone"
+    }
+  ],
+  "src/app/screens/signInReturn.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/screens/statsMembership.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/screens/coachRoster.simulator.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/test/gameHeroActions.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/test/scoringDefense.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/test/scoringTweaks.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/screens/expandedStats.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/teamRestorationIOS.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/scoring/defensiveScoringNative.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/scoring/priorRunnerNative.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/test/pickoffReset.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/test/runnerDrag.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/streamingScreen.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/uploadReminder.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/twoDevices.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/uploadRecording.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/seasonGameRefinementsNative.e2e.ts": [
+    {
+      "label": "android-phone",
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/scoring/gameRosterLayout.e2e.ts": [
+    {
+      "label": "phone-width",
+      "needs": "web",
+      "env": {
+        "ROSTER_BROWSER_DEVICE": "web"
+      }
+    }
+  ],
+  "src/app/scoring/eventTags.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/scoring/eventTags.edge.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim",
+      "blocked": "EVENT_TAGS_EDGE_CONFIG names a private fault-control server that is not in the repository"
+    }
+  ],
+  "src/app/addPeople.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "web",
+      "env": {
+        "TS_ADD_PEOPLE_WORK": "{legacy:addPeople.e2e}/work"
+      }
+    }
+  ],
+  "src/app/userIds.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "web",
+      "blocked": "TS_USER_IDS_FIXTURE (player and scorer ids, game, team and password files) has no producer in the repository"
     }
   ]
 }

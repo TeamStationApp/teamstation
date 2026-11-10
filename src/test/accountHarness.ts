@@ -241,7 +241,7 @@ export async function accountHarness(
     })
     app.use(express.static(webRoot, { dotfiles: 'allow' }))
     app.get('/{*path}', (_req, res) => {
-      res.sendFile(path.join(webRoot, 'index.html'), { dotfiles: 'allow' })
+      res.sendFile(path.resolve(webRoot, 'index.html'), { dotfiles: 'allow' })
     })
   }
   app.use(errorHandler)

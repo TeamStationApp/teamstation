@@ -4,8 +4,14 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync } from 'node:fs'
-import { homedir } from 'node:os'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  writeFileSync
+} from 'node:fs'
+import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { STACK_API, STACK_ORIGIN } from './legacyStack'
@@ -138,6 +144,29 @@ function scoreboardLog(extra: string[] = []): Recipe {
   }
 }
 
+/**
+ * A fresh existing-player fixture in the stack's database, at the path the
+ * script reads, then the script's table rows (or its header's one run). A
+ * fixture file left from another database holds passwords it no longer has.
+ */
+function existingPlayer(file: string): Recipe {
+  return async context => {
+    const made = spawnSync(
+      process.execPath,
+      ['-r', 'sucrase/register', 'scripts/e2e/existingPlayer/fixture.ts'],
+      { cwd: context.cwd, encoding: 'utf8' }
+    )
+    if (made.status !== 0) {
+      return [
+        {
+          blocked: `existingPlayer fixture failed: ${made.stderr.slice(-300)}`
+        }
+      ]
+    }
+    return tableRecipe(context.cwd, file) ?? [{}]
+  }
+}
+
 const REPLAY_TWICE = ['pills', 'controls', 'liveInPlay', 'board']
 const REPLAY_ONCE = [
   'replay',
@@ -196,6 +225,8 @@ export const BLOCKED: Record<string, string> = {
     'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
   'src/app/passwordNative.e2e.ts':
     'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
+  'src/app/settingsPillSweep.e2e.ts':
+    'compares against support/pill-sweep-before.json and before-fixture.json, captured once for an earlier task; nothing in the repository makes them',
   'scripts/e2e/playbackReliability/playbackReliability.e2e.ts':
     'needs a real source game with uploads and a 1Password test account on a deployed server'
 }
@@ -225,27 +256,53 @@ export const RECIPES: Record<string, Recipe> = {
   'scripts/e2e/scoreboardLog/e4.mjs': scoreboardLog(['--offset', '1234']),
   'scripts/e2e/scoreboardLog/e5.mjs': scoreboardLog(),
   'src/app/autoScheduler.e2e.ts': async () => [{ args: [] }],
-  // A fresh fixture in the stack's database, at the path the script reads.
-  'scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts': async context => {
-    const made = spawnSync(
-      process.execPath,
-      ['-r', 'sucrase/register', 'scripts/e2e/existingPlayer/fixture.ts'],
-      { cwd: context.cwd, encoding: 'utf8' }
-    )
-    if (made.status !== 0) {
-      return [
-        {
-          blocked: `existingPlayer fixture failed: ${made.stderr.slice(-300)}`
-        }
-      ]
+  // The scoreboard seed's open game, and its scorer's token in a private file
+  // (never the synced artifacts).
+  'src/app/screens/homeCoalesce.e2e.ts': async context => {
+    const file = 'src/app/screens/homeCoalesce.e2e.ts'
+    const state = await scoreboardSeed(context)
+    const game = state?.games['-10m']
+    if (state == null || game == null) {
+      return [{ blocked: 'the scoreboard seed printed no game id' }]
     }
-    return (
-      tableRecipe(
-        context.cwd,
-        'scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts'
-      ) ?? [{}]
+    const tokenFile = join(
+      mkdtempSync(join(tmpdir(), 'homeCoalesce-')),
+      'token'
     )
+    writeFileSync(tokenFile, state.runner, { mode: 0o600 })
+    const env = {
+      TS_HOME_COALESCE_TOKEN_FILE: tokenFile,
+      TS_HOME_COALESCE_GAME: game
+    }
+    return (tableRecipe(context.cwd, file) ?? [{}]).map(run => ({
+      ...run,
+      env: { ...run.env, ...env }
+    }))
   },
+  // The replay seed's final game, whose pitchers are listed in mound order.
+  'src/app/screens/boxScoreOrder.e2e.ts': async context => {
+    seedReplay(context.cwd)
+    return [
+      {
+        env: {
+          REPLAY_GAME: 'gam_replaySeedFinal',
+          REPLAY_SHOT: 'box-score-pitchers-after',
+          REPLAY_EXPECT: 'mound',
+          REPLAY_ARTIFACTS: '{legacy:boxScoreOrder.e2e}'
+        }
+      }
+    ]
+  },
+  // A fresh fixture in the stack's database, at the path the script reads.
+  'scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts': existingPlayer(
+    'scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts'
+  ),
+  'src/app/scoring/existingPlayer.e2e.ts': existingPlayer(
+    'src/app/scoring/existingPlayer.e2e.ts'
+  ),
+  'src/app/screens/teamPlayers.e2e.ts': existingPlayer(
+    'src/app/screens/teamPlayers.e2e.ts'
+  ),
   'src/app/replay/replay.e2e.ts': async context => {
     seedReplay(context.cwd)
     const runs: Invocation[] = []
