@@ -1117,7 +1117,9 @@ async function step2(): Promise<void> {
   )
   log(`opened team ${FIXTURE.teamNames.opened} and its Schedule`)
   await openFromHome(
-    /^Offline Fall Demo/,
+    // The season's own row: on Android a team row's subtitle starts with
+    // the season's name too ("Offline Fall Demo · 1–0").
+    /^Offline Fall Demo($|, )/,
     'Schedule',
     `teamstation://seasons/${FIXTURE.seasonId}`
   )
@@ -1282,7 +1284,9 @@ async function step5(): Promise<void> {
   await shot('unopenedTeam')
   await dumpHierarchy('unopenedTeam')
   await openFromHome(
-    /^Offline Fall Demo/,
+    // The season's own row: on Android a team row's subtitle starts with
+    // the season's name too ("Offline Fall Demo · 1–0").
+    /^Offline Fall Demo($|, )/,
     'Schedule',
     `teamstation://seasons/${FIXTURE.seasonId}`
   )
