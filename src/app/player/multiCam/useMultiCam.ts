@@ -1880,6 +1880,35 @@ export function useMultiCam(
   }, [])
 
   /**
+   * The furthest a live take may be moved to: where a live viewer plays,
+   * `LIVE_DELAY_SEC` behind the newest footage of its slowest angle
+   * (`liveOpeningMs`). Only the angles the grid plays count, as at the
+   * opening: one it has no address for, one left out, or one with no picture
+   * yet would hold every other angle back at its own last footage. Null for
+   * a take with nothing live, or none that can say yet.
+   */
+  const livePointMs = (): number | null => {
+    // Only angles with an address that are not left out: none still being
+    // asked for, which the opening waits for and a move need not. And none
+    // whose newest footage the grid has already played past: a camera that
+    // has stopped sending, though still listed live, is parked there and
+    // would otherwise hold every other angle back at its last picture.
+    const here = gameNowRef.current('') ?? atWallRef.current
+    const at = chosenRef.current
+      .filter(
+        video =>
+          video.status === 'live' &&
+          urls[video.id] != null &&
+          !leftOut.current.has(video.id)
+      )
+      .map(newestWallOf)
+      .filter(newest => newest == null || here == null || newest >= here)
+    return liveOpeningMs(at, Number.POSITIVE_INFINITY)
+  }
+  const livePointRef = useRef(livePointMs)
+  livePointRef.current = livePointMs
+
+  /**
    * A seek the viewer settled on: past a highlight's end, they have taken
    * over, and it no longer ends. Not a drag's passing moves, which may cross
    * the end on their way somewhere before it.
