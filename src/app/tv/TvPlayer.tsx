@@ -880,9 +880,7 @@ export function TvPlayer({
   const loaded = (index: number, duration: number): void => {
     clock.current.load(
       index,
-      duration > 0 && angles?.[index].video.status === 'live'
-        ? Infinity
-        : duration
+      angles?.[index].video.status === 'live' ? Infinity : duration
     )
     // A paused live remount waits for seekable bounds that only playback
     // reports. It has opened; the selected moment is restored on play.

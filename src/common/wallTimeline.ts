@@ -106,7 +106,7 @@ export function mediaAt(
  * by sub-frame corrections; an `arrival` point is when a once-a-second look
  * found its segment, so it jitters by about that look and a slow scan.
  */
-function gapMinimumMs(source: WallSource | undefined): number {
+export function gapMinimumMs(source?: WallSource): number {
   return source === 'arrival' ? 2000 : 250
 }
 
