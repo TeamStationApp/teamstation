@@ -201,28 +201,35 @@ export function stackKnown(keys: string[]): Record<string, string> {
   return known
 }
 
+/** Where Chrome for Testing keeps its binary, by the cache's platform prefix. */
+const TEST_CHROME_BINARY: Record<string, string> = {
+  mac_arm:
+    'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing',
+  linux: 'chrome-linux64/chrome'
+}
+
 /**
- * The newest Chrome for Testing in puppeteer's cache. Its WebGL runs on
- * SwiftShader headless, it plays H.264, and it speaks the DevTools protocol of
- * the repository's puppeteer; Maestro D's own Chromium does none of those.
+ * The newest Chrome for Testing in puppeteer's cache, on a Mac or Linux. Its
+ * WebGL runs on SwiftShader headless, it plays H.264, and it speaks the
+ * DevTools protocol of the repository's puppeteer; Maestro D's own Chromium
+ * does none of those.
  */
 export function testChrome(
   root = join(homedir(), '.cache/puppeteer/chrome')
 ): string | undefined {
   try {
     const dir = readdirSync(root)
-      .filter(name => /^mac_arm-\d/.test(name))
+      .filter(name => /^(?:mac_arm|linux)-\d/.test(name))
       .sort((a, b) =>
-        a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' })
+        a
+          .replace(/^[a-z_]+-/, '')
+          .localeCompare(b.replace(/^[a-z_]+-/, ''), undefined, {
+            numeric: true
+          })
       )
       .at(-1)
-    return dir == null
-      ? undefined
-      : join(
-          root,
-          dir,
-          'chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
-        )
+    if (dir == null) return undefined
+    return join(root, dir, TEST_CHROME_BINARY[dir.replace(/-.*$/, '')])
   } catch {
     return undefined
   }
