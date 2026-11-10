@@ -29,26 +29,51 @@ export function ActionRow({
   onOpen?: () => void
   openLabel?: string
   separateEndAction?: boolean
+  /** A second line of actions in the title's column, outside the open target. */
   extra?: React.ReactNode
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const identity = (
+  const words = (
     <>
-      {leading}
-      <View style={styles.words}>
-        <Text style={styles.name}>{title}</Text>
-        {detail != null && detail !== '' && (
-          <Text style={styles.detail}>{detail}</Text>
-        )}
-      </View>
-      {onOpen != null && !separateEndAction && <Icon name="chevron_right" />}
+      <Text style={styles.name}>{title}</Text>
+      {detail != null && detail !== '' && (
+        <Text style={styles.detail}>{detail}</Text>
+      )}
     </>
+  )
+  const chevron = onOpen != null && !separateEndAction && (
+    <Icon name="chevron_right" />
   )
   return (
     <View style={styles.row} testID="relationship-action-row">
       <View style={styles.left}>
-        {onOpen == null ? (
-          <View style={styles.identity}>{identity}</View>
+        {extra != null ? (
+          // A second line of its own actions sits in the title's column, as a
+          // detail would. The open target lies under the whole identity, so
+          // those actions are never nested inside it.
+          <View style={styles.identity}>
+            {onOpen != null && (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={openLabel ?? `Open ${title}`}
+                onPress={onOpen}
+                style={styles.underlay}
+              />
+            )}
+            <View pointerEvents="none">{leading}</View>
+            <View style={styles.words} pointerEvents="box-none">
+              <View pointerEvents="none" style={styles.wordsTop}>
+                {words}
+              </View>
+              {extra}
+            </View>
+            <View pointerEvents="none">{chevron}</View>
+          </View>
+        ) : onOpen == null ? (
+          <View style={styles.identity}>
+            {leading}
+            <View style={styles.words}>{words}</View>
+          </View>
         ) : (
           <Pressable
             accessibilityRole="button"
@@ -56,10 +81,11 @@ export function ActionRow({
             onPress={onOpen}
             style={styles.identity}
           >
-            {identity}
+            {leading}
+            <View style={styles.words}>{words}</View>
+            {chevron}
           </Pressable>
         )}
-        {extra}
       </View>
       {separateEndAction && end != null ? (
         <View style={styles.endAction}>
@@ -179,6 +205,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     minHeight: 48
   },
   words: { flex: 1, minWidth: 0, gap: theme.rem(0.25) },
+  wordsTop: { gap: theme.rem(0.25) },
+  underlay: {
+    position: 'absolute',
+    top: 0,
+    right: 0,
+    bottom: 0,
+    left: 0
+  },
   name: {
     fontFamily: theme.semiBoldTextFont,
     fontWeight: '600',

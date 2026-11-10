@@ -199,6 +199,33 @@ async function main(): Promise<void> {
           contrast(color, geometry.surface)
         )
         assert(labelContrast.every(ratio => ratio >= 4.5))
+        // Two lines: the team name, then its seasons starting under the name.
+        const rowShape = await page.evaluate(() => {
+          const leaf = (text: string): DOMRect =>
+            [...document.querySelectorAll<HTMLElement>('*')]
+              .find(
+                node => node.children.length === 0 && node.textContent === text
+              )!
+              .getBoundingClientRect()
+          const name = leaf('Demo Hawks')
+          const season = leaf('Demo Spring')
+          const placeholder = leaf('Placeholder team')
+          return {
+            nameLeft: name.left,
+            seasonLeft: season.left,
+            seasonBelowName: season.top >= name.bottom,
+            emblemRight: leaf('DH').right,
+            // The space between the lines, against a title and its detail.
+            gap: season.top - name.bottom,
+            standardGap:
+              placeholder.top - leaf('Willow Woods Westward Wanderers').bottom
+          }
+        })
+        assert(Math.abs(rowShape.nameLeft - rowShape.seasonLeft) <= 1)
+        assert(
+          rowShape.seasonBelowName && rowShape.seasonLeft > rowShape.emblemRight
+        )
+        assert(rowShape.gap <= rowShape.standardGap + 2, `gap ${rowShape.gap}`)
         // A control's icon needs 3:1 against what it sits on.
         const gearContrast = contrast(geometry.gear[0], geometry.gear[1])
         assert(gearContrast >= 3, `gear ${gearContrast}`)
@@ -211,7 +238,7 @@ async function main(): Promise<void> {
         assert(geometry.top > 0 && geometry.bottom > 0 && !geometry.overflow)
         assert(geometry.targets.every(height => height >= 48))
         logs.push(
-          `${name}: ${JSON.stringify({ ...geometry, contrast: labelContrast, gearContrast })}`
+          `${name}: ${JSON.stringify({ ...geometry, contrast: labelContrast, gearContrast, rowShape })}`
         )
       }
     }
@@ -233,20 +260,19 @@ async function main(): Promise<void> {
             '[data-testid="relationship-action-divider"]'
           )!
           .getBoundingClientRect()
-        const button = label
-          .closest<HTMLElement>('[role="button"]')!
-          .getBoundingClientRect()
+        const box = label.getBoundingClientRect()
         return {
-          right: label.getBoundingClientRect().right,
-          bottom: label.getBoundingClientRect().bottom,
-          buttonBottom: button.bottom,
-          buttonHeight: button.height,
+          right: box.right,
           dividerLeft: divider.left,
-          clipped: label.scrollWidth > label.clientWidth
+          // A line is under two font sizes tall.
+          oneLine:
+            box.height < 2 * parseFloat(getComputedStyle(label).fontSize),
+          ellipsis: getComputedStyle(label).textOverflow
         }
       })
-      assert(link.right <= link.dividerLeft && !link.clipped)
-      assert(link.bottom <= link.buttonBottom && link.buttonHeight > 48)
+      // One line, ended with an ellipsis, left of the Leave separator.
+      assert(link.right <= link.dividerLeft && link.oneLine)
+      assert.equal(link.ellipsis, 'ellipsis')
       logs.push(`long season link, large text: ${JSON.stringify(link)}`)
     }
     await m.openBrowser({ url: url + '?empty' })

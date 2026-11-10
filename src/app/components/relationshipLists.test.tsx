@@ -72,21 +72,42 @@ describe('relationship list presentation and confirmation', () => {
     expect(rowTextColor('League')).equals('rgb(87, 93, 84)')
     expect(rowTextColor('Leave')).equals('rgb(186, 26, 26)')
   })
-  it('lets a long season link wrap inside the identity column', async () => {
+  it('keeps season links, and the detail beside them, on one second line', async () => {
     const name = '2027 Spring Regular Season Majors Division'
     await render(
       <ActionList bounded>
         <GroupRelationshipRow
           group={group('team')}
-          links={[{ label: name, onPress: () => undefined }]}
+          detail="Placeholder team"
+          links={[
+            { label: name, onPress: () => undefined },
+            { label: 'Demo Fall', onPress: () => undefined }
+          ]}
         />
       </ActionList>
     )
     const label = rowLeaf(name)
-    expect(getComputedStyle(label).whiteSpace).not.equals('nowrap')
+    // One line each: a long name ends in an ellipsis rather than wrapping.
+    expect(getComputedStyle(label).whiteSpace).equals('nowrap')
     expect(getComputedStyle(label).flexShrink).equals('1')
-    expect(getComputedStyle(find(`Open ${name}`)!).height).equals('auto')
+    // The second line is not bold, and matches the detail's size.
+    expect(['400', 'normal']).includes(getComputedStyle(label).fontWeight)
+    expect(getComputedStyle(label).fontSize).equals(
+      getComputedStyle(rowLeaf('Placeholder team')).fontSize
+    )
     expect(find(`Open ${name}`)).not.equals(undefined)
+    expect(find('Open Demo Fall')).not.equals(undefined)
+    // The detail moves onto the links' line, once, so the title stands alone.
+    const detail = rowLeaf('Placeholder team')
+    expect(detail.parentElement).equals(
+      label.closest('[role="button"]')!.parentElement
+    )
+    expect(
+      [...document.querySelectorAll('*')].filter(
+        node =>
+          node.children.length === 0 && node.textContent === 'Placeholder team'
+      )
+    ).length(1)
   })
   it('leaves an unbounded list and an ordinary theme alone', async () => {
     await render(

@@ -208,7 +208,7 @@ describe('the league page', () => {
       }
     })
   }
-  it('shows team locality and opens the selected team from its identity', async () => {
+  it('leaves team locality out and opens the selected team from its identity', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })
     api.group = async () => ({
       ...detail,
@@ -229,7 +229,8 @@ describe('the league page', () => {
     await mount(render(api, opened))
     await press('Teams')
     const card = document.querySelector('[data-testid="league-teams-card"]')!
-    expect(card.textContent).includes('Demo City, Demo Region, Demo Country')
+    // People in a league know where its teams are.
+    expect(card.textContent).not.includes('Demo City')
     await press('Open Demo Hawks')
     expect(opened).deep.equals([{ kind: 'team', id: 'team_hawks' }])
   })
@@ -463,7 +464,7 @@ describe('the league page', () => {
     const created: string[] = []
     await mount(render(api, opened, links, created))
     await press('Teams')
-    expect(document.body.textContent).includes('Austin')
+    expect(document.body.textContent).not.includes('Austin')
     await press('Add team')
     expect(links.at(-1)).deep.include({
       targetKind: 'team',

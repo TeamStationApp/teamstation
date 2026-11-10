@@ -39,11 +39,6 @@ export interface ButtonProps {
   style?: StyleProp<ViewStyle>
   /** Allows a bounded label to shrink without changing other buttons. */
   labelStyle?: StyleProp<TextStyle>
-  /**
-   * Grows to wrap a long label inside its column, keeping the minimum height.
-   * It replaces `compact`'s height, padding and corners.
-   */
-  wrapLabel?: boolean
   /** For a device test that must tell this button from text that reads the same. */
   testID?: string
   /** Points the target reaches past a shell drawn shorter than 48. */
@@ -82,7 +77,6 @@ export function Button(props: ButtonProps): React.ReactElement {
     icon,
     style,
     labelStyle,
-    wrapLabel = false,
     testID,
     hitSlop
   } = props
@@ -116,7 +110,6 @@ export function Button(props: ButtonProps): React.ReactElement {
           borderRadius: 18,
           paddingHorizontal: pillPadding(36)
         },
-        wrapLabel && styles.wrapping,
         style
       ]}
     >
@@ -134,14 +127,13 @@ export function Button(props: ButtonProps): React.ReactElement {
             />
           )}
           <Text
-            numberOfLines={wrapLabel ? undefined : 1}
+            numberOfLines={1}
             style={[
               styles.label,
               styles[`${kind}Label`],
               compact && { fontSize: 14 },
               small && styles.smallLabel,
               textColor != null && { color: textColor },
-              wrapLabel && styles.wrappingLabel,
               labelStyle
             ]}
           >
@@ -190,19 +182,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   block: {
     alignSelf: 'stretch'
-  },
-  // Lines clear of the pressed fill's edges, under corners that do not depend
-  // on how many lines there are.
-  wrapping: {
-    height: 'auto',
-    maxWidth: '100%',
-    // A short label stays on one line in a narrow column.
-    paddingHorizontal: theme.rem(0.75),
-    paddingVertical: theme.rem(0.5),
-    borderRadius: theme.rem(theme.radiusRem)
-  },
-  wrappingLabel: {
-    flexShrink: 1
   },
   inert: {
     opacity: 0.5

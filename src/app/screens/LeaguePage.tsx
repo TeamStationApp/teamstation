@@ -312,14 +312,8 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
                   <GroupRelationshipRow
                     key={team.id}
                     group={team}
-                    detail={[
-                      team.external ? 'Placeholder team' : undefined,
-                      team.locality == null
-                        ? undefined
-                        : localityLabel(team.locality)
-                    ]
-                      .filter(Boolean)
-                      .join(' · ')}
+                    // People in a league know where its teams are.
+                    detail={team.external ? 'Placeholder team' : undefined}
                     onOpen={() => {
                       onOpen({ kind: 'team', id: team.id })
                     }}
