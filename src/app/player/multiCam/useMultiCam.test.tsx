@@ -11,6 +11,9 @@ import {
   type VideoSummary
 } from '../../../common/api'
 import { ThemeProvider } from '../../theme/ThemeContext'
+import { attachHls as attachNativeHls } from '../attachHls.native'
+import { onExplicitSeek } from '../explicitSeek'
+import { NativeVideoHandle } from '../nativeVideoHandle'
 import { SLOW_RATE } from '../slowMotion'
 import type { VideoEventName } from '../videoHandle'
 import type { AngleVideo } from '../wallClock'
@@ -355,11 +358,26 @@ describe('useMultiCam', function () {
     expect(tiles.B.paused).equals(false)
   })
 
+  it('applies rapid toggles before React renders the queued state updates', async () => {
+    const { mc, tiles } = await grid()
+    await act(async () => {
+      mc().toggle()
+      expect(tiles.A.paused).equals(true)
+      mc().toggle()
+      expect(tiles.A.paused).equals(false)
+      expect(tiles.B.paused).equals(false)
+    })
+    expect(mc().playing).equals(true)
+  })
+
   it('moves every tile when the take is moved, and parks one that was not recording yet', async function () {
     const { mc, tiles } = await grid()
+    const intended: number[] = []
+    onExplicitSeek(tiles.B, seconds => intended.push(seconds))
     await act(async () => {
       mc().goTo(T0 + 30_000)
     })
+    expect(intended, 'the edge it is sent to').deep.equals([0])
     expect(tiles.A.currentTime).equals(30)
     // B had not started thirty seconds in: held at its first frame, stopped.
     expect(tiles.B.paused).equals(true)
@@ -1414,7 +1432,141 @@ describe('useMultiCam on live angles', function () {
 })
 
 describe('useMultiCam buffering', function () {
+  for (const restoring of [false, true])
+    it(`preserves the selected moment when controls encounter a reset source (restoring=${restoring})`, async () => {
+      const { mc, tiles } = await grid({
+        videos: [video('A', 0)],
+        order: ['A'],
+        atMs: T0 + 190_000
+      })
+      await act(async () => {
+        tiles.A.currentTime = 0
+        tiles.A.readyState = restoring ? 4 : 0
+        tiles.A.paused = false
+        if (restoring) mc().attaching('A')
+        mc().toggle()
+      })
+      await act(async () => {
+        mc().skip(-10)
+        mc().skip(-10)
+      })
+      expect(mc().atWallMs).equals(T0 + 170_000)
+      expect(mc().playing).equals(false)
+    })
+  it('preserves a paused grid rewind made while a network replacement opens', async function () {
+    this.timeout(5000)
+    const { mc } = await grid({
+      videos: [video('A', 0)],
+      order: ['A'],
+      atMs: T0 + 190_000
+    })
+    let loads = 0
+    let opening = false
+    const seeks: number[] = []
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.source = 'https://media/A.m3u8'
+    handle.attach({
+      pause: () => undefined,
+      resume: () => undefined,
+      seek: (seconds: number) => {
+        seeks.push(seconds)
+        if (!opening)
+          handle.handleSeek({ seekTime: seconds, currentTime: seconds })
+      },
+      setSource: () => {
+        opening = true
+        loads++
+      }
+    } as unknown as Parameters<NativeVideoHandle['attach']>[0])
+    const load: Parameters<NativeVideoHandle['handleLoad']>[0] = {
+      currentTime: 190,
+      duration: 600,
+      naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+      audioTracks: [],
+      textTracks: [],
+      videoTracks: []
+    }
+    handle.handleLoad(load)
+    handle.handleReadyForDisplay()
+    handle.handleProgress({
+      currentTime: 190,
+      playableDuration: 600,
+      seekableDuration: 600
+    })
+    await act(async () => {
+      mc().takeElement('A')(handle)
+      mc().attached('A', handle, mc().attaching('A'))
+      if (mc().playing) mc().toggle()
+    })
+    const stop = attachNativeHls(handle, handle.source, () => undefined, {
+      wantsToPlay: () => mc().intents.current.get('A') === true,
+      wantsRecovery: () => mc().playing,
+      buffer: { aheadSec: 30 }
+    })
+    try {
+      await act(async () => {
+        handle.handleError({
+          error: { errorString: 'Temporary network interruption' }
+        })
+      })
+      await until(() => loads > 0, 2000)
+      expect(loads).equals(1)
+      await act(async () => {
+        mc().goTo(T0 + 80_000)
+      })
+      await act(async () => {
+        opening = false
+        handle.handleLoad({ ...load, currentTime: 0 })
+        handle.handleReadyForDisplay()
+      })
+      expect(seeks.at(-1)).equals(80)
+      expect(handle.currentTime).equals(80)
+      expect(mc().atWallMs).equals(T0 + 80_000)
+      expect(mc().playing).equals(false)
+      expect(handle.paused).equals(true)
+    } finally {
+      stop()
+    }
+  })
   // A is two minutes in at 120 s; B, which started a minute later, at 60 s.
+
+  it('clears the ended notice when a paused viewer rewinds into the recording', async function () {
+    this.timeout(8000)
+    const { mc } = await grid({ atMs: T0 + 660_000 }, {}, tiles => {
+      for (const tile of Object.values(tiles)) {
+        tile.currentTime = 600
+        tile.ended = true
+      }
+    })
+    await ticks(2)
+    expect(mc().ended).equals(true)
+    await act(async () => {
+      mc().toggle()
+    })
+    expect(mc().playing).equals(false)
+    await act(async () => {
+      mc().goTo(T0 + 120_000)
+    })
+    expect(mc().ended).equals(false)
+    expect(mc().playing).equals(false)
+  })
+
+  it('recognizes a native frozen picture despite an advancing optimistic clock', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      Object.assign(tiles.A, { reportedTime: 120 })
+      Object.assign(tiles.B, { reportedTime: 60 })
+    })
+    await ticks(1)
+    // A's interpolation moves, but no native picture has advanced. B really
+    // reports another second; neither tile is seeking or buffering.
+    tiles.A.currentTime = 121
+    tiles.B.currentTime = 61
+    Object.assign(tiles.B, { reportedTime: 61 })
+    await ticks(1)
+    expect(mc().tiles.A?.stalledSince).a('number')
+    expect(mc().tiles.B?.stalledSince ?? null).equals(null)
+  })
 
   it('holds every tile until each holds five seconds, then plays them together', async function () {
     this.timeout(5000)
@@ -1502,6 +1654,33 @@ describe('useMultiCam buffering', function () {
     expect(tiles.A.paused).equals(false)
     expect(mc().waiting).equals(false)
   })
+
+  for (const ahead of [0.1, 0.5015])
+    it(`resumes a lone cold seek with ${ahead}s buffered without pausing it again`, async function () {
+      this.timeout(8000)
+      const { mc, tiles } = await grid({
+        videos: [video('A', 0)],
+        order: ['A'],
+        atMs: T0 + 120_000
+      })
+      await act(async () => {
+        fill(tiles.A)
+        tiles.A.readyState = 2
+        mc().goTo(T0 + 434_188)
+      })
+      await ticks(1)
+      expect(tiles.A.paused).equals(true)
+      await act(async () => {
+        fill(tiles.A, [430, 434.188 + ahead])
+        tiles.A.readyState = 4
+      })
+      await ticks(1)
+      expect(tiles.A.currentTime).closeTo(434.188, 0.001)
+      expect(tiles.A.paused).equals(false)
+      expect(mc().waiting).equals(false)
+      await ticks(1)
+      expect(tiles.A.paused).equals(false)
+    })
 
   it('holds a grid of several angles for two seconds before trusting a player that stands ready', async function () {
     this.timeout(8000)
@@ -1666,6 +1845,22 @@ describe('useMultiCam buffering', function () {
     expect(tiles.B.currentTime).equals(63 + JOIN_LEAD_SEC)
   })
 
+  it('leaves an active download alone during alignment but honors a new user seek', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid()
+    await ticks(1)
+    tiles.A.currentTime = 125
+    tiles.B.currentTime = 60
+    tiles.B.readyState = 2
+    Object.assign(tiles.B, { seeking: true })
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(60)
+    await act(async () => {
+      mc().goTo(T0 + 140_000)
+    })
+    expect(tiles.B.currentTime).equals(80)
+  })
+
   it('sends a joining tile further ahead when the game passes it before it is ready', async function () {
     this.timeout(8000)
     const { tiles } = await grid()
@@ -1804,7 +1999,129 @@ describe('useMultiCam buffering', function () {
   })
 })
 
+describe('useMultiCam bounded recovery', () => {
+  for (const mode of ['stuck', 'browser', 'native'])
+    it(`allows a slow follower join and bounds a stuck browser seek (${mode})`, async () => {
+      const realNow = Date.now
+      const realSet = globalThis.setInterval
+      const realClear = globalThis.clearInterval
+      let now = T0
+      const intervals = new Map<unknown, () => void>()
+      Date.now = () => now
+      globalThis.setInterval = ((callback: () => void) => {
+        const id = {}
+        intervals.set(id, callback)
+        return id
+      }) as unknown as typeof setInterval
+      globalThis.clearInterval = (id: unknown) => {
+        if (!intervals.delete(id))
+          realClear(id as Parameters<typeof clearInterval>[0])
+      }
+      try {
+        const client = new TeamStationClient({ baseUrl: '/api/v1' })
+        const requests: Record<string, number> = {}
+        client.playback = async (id: string) => {
+          requests[id] = (requests[id] ?? 0) + 1
+          return {
+            videoId: id,
+            storage: 'spaces',
+            url: `https://media/${id}-${requests[id]}.m3u8`,
+            expiresAt: null,
+            durationSec: null,
+            unavailable: false
+          }
+        }
+        const { mc, tiles } = await grid({ client })
+        const tick = async (seconds: number): Promise<void> => {
+          now = T0 + seconds * 1000
+          tiles.A.currentTime = 120 + seconds
+          await act(async () => {
+            for (const callback of [...intervals.values()]) callback()
+          })
+        }
+        await tick(1)
+        tiles.B.currentTime = 58
+        await tick(2)
+        tiles.B.readyState = 2
+        Object.assign(tiles.B, { seeking: true })
+        let supervised = 0
+        if (mode === 'native')
+          Object.assign(tiles.B, {
+            checkSeekTimeout: () => {
+              supervised++
+            }
+          })
+        const pendingUntil = mode === 'native' ? 145 : 45
+        const landingAt = tiles.B.currentTime
+        for (let second = 3; second <= pendingUntil; second++)
+          await tick(second)
+        expect(tiles.B.currentTime).equals(landingAt)
+        expect(requests.B).equals(1)
+        if (mode !== 'stuck') {
+          // Landed, but the player says it is ready only a few seconds later.
+          Object.assign(tiles.B, { seeking: false })
+          for (let second = 1; second <= 3; second++)
+            await tick(pendingUntil + second)
+          expect(requests.B, 'a landed slow seek is kept').equals(1)
+          tiles.B.readyState = 4
+          let second = pendingUntil + 4
+          for (; tiles.B.paused && second <= pendingUntil + 30; second++)
+            await tick(second)
+          expect(requests.B).equals(1)
+          expect(tiles.B.paused).equals(false)
+          if (mode === 'native') expect(supervised).greaterThan(100)
+        } else {
+          for (let second = 46; second <= 123; second++) await tick(second)
+          expect(requests.B).equals(2)
+          expect(mc().urls.B).contains('B-2')
+        }
+        expect(requests.A).equals(1)
+        expect(tiles.A.paused).equals(false)
+      } finally {
+        await act(async () => root?.unmount())
+        root = undefined
+        Date.now = realNow
+        globalThis.setInterval = realSet
+        globalThis.clearInterval = realClear
+      }
+    })
+})
+
 describe('useMultiCam on each tile’s own dates (U22)', function () {
+  it('parks missing footage without showing a future frame and resumes after the gap', async function () {
+    const { mc, tiles } = await grid({
+      videos: [video('A', 0), video('B', 0)],
+      order: ['A', 'B']
+    })
+    await act(async () => {
+      mc().takeMapping('B')(
+        fromFragments([
+          { start: 0, duration: 100, programDateTime: T0 },
+          { start: 100, duration: 400, programDateTime: T0 + 120_000 }
+        ])
+      )
+      mc().goTo(T0 + 99_000)
+    })
+    expect(tiles.B.currentTime).closeTo(99, 0.01)
+    const intended: number[] = []
+    onExplicitSeek(tiles.B, seconds => intended.push(seconds))
+    await act(async () => {
+      mc().goTo(T0 + 110_000)
+    })
+    expect(intended, 'nothing sought for a gap').deep.equals([])
+    expect(mc().tiles.B?.parked).equals('gap')
+    expect(tiles.B.paused).equals(true)
+    expect(tiles.B.currentTime, 'no seek into future footage').closeTo(99, 0.01)
+    expect(tiles.A.currentTime).closeTo(110, 0.01)
+    expect(tiles.A.paused).equals(false)
+    await act(async () => {
+      mc().goTo(T0 + 120_000)
+    })
+    expect(mc().tiles.B?.parked).equals(null)
+    expect(tiles.B.currentTime).closeTo(100, 0.01)
+    expect(tiles.B.paused).equals(false)
+  })
+
   it('lines two angles up by their program date-times, not by their starts', async function () {
     // Both rows say the same start, but their playlists begin a minute
     // apart on the wall: A's first fragment was captured at T0 + 60 s.
@@ -1929,7 +2246,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     expect(mc().tiles.B?.parked ?? null).equals(null)
     expect(tiles.B.currentTime).greaterThan(140)
   })
-  it('runs a live game’s bar from its first camera to the newest footage any angle has, and lands a move past live at the live point', async function () {
+  it('runs a live game’s bar from its first camera to the newest footage any angle has, and honors explicit seeks up to that footage', async function () {
     const served: Record<string, WallMapping | null> = {
       A: dated(300),
       B: dated(300)
@@ -1944,7 +2261,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       tiles => {
         for (const tile of Object.values(tiles)) {
           tile.duration = Number.POSITIVE_INFINITY
-          // B's player can reach less than A's: the slower angle sets it.
+          // The angles can have different available ends.
           Object.assign(tile, {
             seekable: { length: 1, end: () => (tile === tiles.B ? 250 : 260) }
           })
@@ -1956,12 +2273,11 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     // angle has, A's 260 s, though the viewer has played only to 150 s.
     expect(mc().take?.fromMs).equals(T0)
     expect(mc().take?.toMs).equals(T0 + 260_000)
-    // Dragged to the end, the grid goes to the live point: 45 s behind the
-    // slower angle's newest footage, B's 250 s.
+    // Explicit seeks reach the available end, not the opening cushion.
     await act(async () => {
       mc().goTo(T0 + 260_000)
     })
-    expect(mc().atWallMs).equals(T0 + 205_000)
+    expect(mc().atWallMs).equals(T0 + 260_000)
     // Back is anywhere in the take.
     await act(async () => {
       mc().goTo(T0 + 60_000)
@@ -1976,7 +2292,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       A: dated(300),
       B: dated(300)
     }
-    const { mc } = await grid(
+    const { mc, tiles } = await grid(
       {
         videos: [liveVideo('A', 0), liveVideo('B', 0)],
         order: ['A', 'B'],
@@ -1995,16 +2311,22 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       }
     )
     expect(mc().atWallMs).equals(T0 + 230_000)
-    // Ten seconds on, past the live point: it stays where it is.
+    // Ten seconds on is honored even inside the opening cushion.
     await act(async () => {
       mc().goTo(T0 + 240_000)
     })
-    expect(mc().atWallMs).equals(T0 + 230_000)
+    expect(mc().atWallMs).equals(T0 + 240_000)
     // Back is still back.
     await act(async () => {
       mc().goTo(T0 + 220_000)
     })
     expect(mc().atWallMs).equals(T0 + 220_000)
+    // Pictures decoded past the bar's end: a move forward stays where they are.
+    for (const tile of Object.values(tiles)) tile.currentTime = 265
+    await act(async () => {
+      mc().goTo(T0 + 280_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 265_000)
   })
 
   it('keeps the bar’s end and the live point while every tile seeks out of what it holds', async function () {
@@ -2036,11 +2358,11 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     for (const tile of Object.values(tiles)) tile.readyState = 1
     await ticks(1)
     expect(mc().take?.toMs).equals(T0 + 260_000)
-    // And a move past live still lands at the live point.
+    // A move beyond available footage is capped at the displayed end.
     await act(async () => {
-      mc().goTo(T0 + 260_000)
+      mc().goTo(T0 + 300_000)
     })
-    expect(mc().atWallMs).equals(T0 + 215_000)
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('lets no angle whose camera has stopped hold the live point back once the grid has played past it', async function () {
@@ -2070,8 +2392,8 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     await act(async () => {
       mc().goTo(T0 + 260_000)
     })
-    // A's live point, not B's last picture less the delay.
-    expect(mc().atWallMs).equals(T0 + 215_000)
+    // A's available end, not B's stopped footage.
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('ends a live bar at an angle’s seekable end where it has no mapping yet', async function () {
@@ -2134,8 +2456,8 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     await act(async () => {
       mc().goTo(T0 + 260_000)
     })
-    // A's live point, 45 s behind its newest footage: not B's, minutes back.
-    expect(mc().atWallMs).equals(T0 + 215_000)
+    // A's available end, not the unavailable angle's older footage.
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('places a tile by the server’s wall timeline before its own stream’s dates, and reaches its newest footage by it', async function () {

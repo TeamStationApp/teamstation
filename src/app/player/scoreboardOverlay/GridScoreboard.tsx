@@ -219,7 +219,7 @@ export function useGridBoard(
       if (timeline == null) return undefined
       return timeline.anchors.length === 0
         ? null
-        : fromAnchors(timeline.anchors)
+        : fromAnchors(timeline.anchors, undefined, timeline.source)
     }
   }
 }
