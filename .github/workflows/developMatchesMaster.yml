@@ -3,7 +3,7 @@
 # develop, and every commit that landed on master must already be on develop.
 # A merge commit of develop into master is expected and is not itself a miss.
 #
-# Other pull requests into master pass. This check is only the develop merge.
+# Any other pull request into master fails. Master takes its testing from develop.
 name: Develop matches master
 
 on:
@@ -28,9 +28,8 @@ jobs:
         run: |
           set -eu
           if [ "$HEAD_REF" != "develop" ]; then
-            echo "This pull request is not merging develop into master (head: $HEAD_REF)."
-            echo "The identical-branch check applies only to that merge."
-            exit 0
+            echo "::error::Master only accepts a merge from develop (head: $HEAD_REF)."
+            exit 1
           fi
 
           git fetch --no-tags origin master
