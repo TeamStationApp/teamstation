@@ -5,8 +5,7 @@ import { parseArgs } from 'node:util'
 const { values } = parseArgs({
   options: {
     surface: { type: 'string' },
-    case: { type: 'string' },
-    seconds: { type: 'string', default: '3600' }
+    case: { type: 'string' }
   }
 })
 assert(
@@ -14,8 +13,6 @@ assert(
     (values.surface === 'web' && ['gaps', 'sync'].includes(values.case ?? '')),
   'Unknown case'
 )
-const seconds = Number(values.seconds)
-assert(Number.isFinite(seconds) && seconds > 0 && seconds <= 3600)
 const run =
   values.surface === 'tv'
     ? import('./streamingReliabilityTv').then(async ({ tvReliability }) => {
