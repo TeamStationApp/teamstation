@@ -267,10 +267,10 @@ async function main(): Promise<void> {
     await press(teamAdmin, 'Team this season manages')
     await fill(teamAdmin, 'Search by name or city', 'Demo Hawks')
     await press(teamAdmin, 'Choose Demo Hawks, Demo City, Demo Region, US')
+    // Sending approves for the sender's own groups; Save sends.
     await text(teamAdmin, 'Sending approves for the group')
-    await press(teamAdmin, 'I approve for all affected groups')
-    await press(teamAdmin, 'Confirm relationship')
-    await text(teamAdmin, 'Accepted')
+    await press(teamAdmin, 'Save')
+    await text(teamAdmin, 'Demo Playoffs added as parent of Demo Hawks')
     await teamAdmin.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
       waitUntil: 'networkidle0'
     })
@@ -397,9 +397,21 @@ async function main(): Promise<void> {
     await text(teamAdmin, 'Leave Demo Regular?')
     await frameText(teamAdmin, 'Leave Demo Regular?')
     await shot(teamAdmin, 'parent-unlink-preview.png')
-    await press(teamAdmin, 'Leave Demo Regular')
+    // The sheet's Leave reads its whole name; the row's own reads only Leave.
+    await teamAdmin.evaluate(() => {
+      const confirm = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.innerText.trim() === 'Leave Demo Regular')
+      if (confirm === undefined)
+        throw new Error('No Leave Demo Regular in the sheet')
+      confirm.click()
+    })
+    // Gone from the settings on top; a covered screen may still hold its own.
     await teamAdmin.waitForFunction(
-      () => document.querySelector('[aria-label="Leave Demo Regular"]') === null
+      () =>
+        document.querySelector(
+          '[data-scene-role="top"] [aria-label="Leave Demo Regular"]'
+        ) === null
     )
     expect(
       await f.h.db
@@ -449,9 +461,17 @@ async function main(): Promise<void> {
     })
     await login(recipient, f, 103)
     await openNotifications(recipient)
-    await press(recipient, 'Become administrator of Demo Outside Opponent')
-    await press(recipient, 'Accept invitation')
-    await text(recipient, 'Accepted')
+    // The inbox row answers in place.
+    await press(
+      recipient,
+      'Accept Become administrator of Demo Outside Opponent'
+    )
+    await recipient.waitForFunction(
+      () =>
+        document.querySelector(
+          '[aria-label="Accept Become administrator of Demo Outside Opponent"]'
+        ) === null
+    )
     await recipient.goto(f.h.origin + `/groups/team/${external.id}`, {
       waitUntil: 'networkidle0'
     })
