@@ -371,7 +371,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
               loadRoster(game.homeTeamId),
               defaultsOf(props.client, game, true)
             ])
-      const value = await source.open(game, away, home, held)
+      const value = await source.open(game, away, home, held, {
+        storedFirst: true
+      })
       if (!live) return
       // What a swap from this screen is made over.
       if (web)
