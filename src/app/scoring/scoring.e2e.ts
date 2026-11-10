@@ -1802,7 +1802,10 @@ describe('scoring browser', function () {
         '[data-roster-target="defense-1B"]',
         node => node.textContent
       )
-      const name = await page.$eval(source, node => node.textContent!.trim())
+      // The card's name, without its grip's three bars.
+      const name = await page.$eval(source, node =>
+        node.textContent!.replace('≡', '').trim()
+      )
       await new Promise(resolve => setTimeout(resolve, 300))
       const point = async (
         selector: string

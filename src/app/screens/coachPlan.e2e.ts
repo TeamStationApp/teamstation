@@ -118,6 +118,14 @@ interface Box {
   width: number
   height: number
 }
+interface Point {
+  x: number
+  y: number
+}
+const centre = (box: Box): Point => ({
+  x: box.x + box.width / 2,
+  y: box.y + box.height / 2
+})
 interface Footer {
   bar: Box
   /** Cancel's word and Save Rosters' word, inside their buttons. */
@@ -519,6 +527,25 @@ class Browser {
       hidden: true,
       timeout: 15000
     })
+  }
+
+  /**
+   * A mouse drag from one point to another in ten steps, held still `hold`
+   * milliseconds first, and released after the drop's hover settles.
+   */
+  async mouseDrag(from: Point, to: Point, hold = 0): Promise<void> {
+    const mouse = this.page.mouse
+    await mouse.move(from.x, from.y)
+    await mouse.down()
+    if (hold > 0) await new Promise(resolve => setTimeout(resolve, hold))
+    for (let step = 1; step <= 10; step++)
+      await mouse.move(
+        from.x + ((to.x - from.x) * step) / 10,
+        from.y + ((to.y - from.y) * step) / 10
+      )
+    await new Promise(resolve => setTimeout(resolve, 200))
+    await mouse.up()
+    await new Promise(resolve => setTimeout(resolve, 400))
   }
 
   /** An element's box, as the page lays it out. */
@@ -1023,6 +1050,39 @@ describe('Coach Plan', function () {
       harness.server.closeAllConnections()
       await harness.close()
     }
+  })
+
+  it('D4 drops a bench player anywhere on the box a fielder left', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = lineupFixture()
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.defense()
+    // 2B cleared by a tap, then SS dragged onto the empty 2B.
+    await coach.tap('Clear 2B')
+    await coach.page.waitForSelector('[aria-label="Assign 2B"]')
+    const shortstop = await coach.box('[data-roster-target="defense-SS"]')
+    const second = await coach.box('[data-roster-target="defense-2B"]')
+    await coach.mouseDrag(centre(shortstop), centre(second))
+    await coach.page.waitForSelector('[aria-label="Assign SS"]')
+    await coach.page.waitForSelector('[aria-label="Clear 2B"]')
+    const vacated = await coach.box('[data-roster-target="defense-SS"]')
+    const card = await coach.box('[data-testid="Defense SS card"]')
+    console.log(`    D4 vacated SS: ${JSON.stringify({ vacated, card })}`)
+    expect(vacated.height).closeTo(card.height, 1)
+    // A bench player, picked up by his grip, dropped on the box's centre.
+    const bench = await coach.page.$eval(
+      '[data-testid="Defense roster grid"] [data-roster-player]',
+      node => String(node.getAttribute('aria-label'))
+    )
+    const grip = await coach.box(`[aria-label="Drag ${bench}"]`)
+    await coach.mouseDrag(centre(grip), centre(card))
+    await coach.page.waitForSelector('[aria-label="Clear SS"]')
+    const fielder = await coach.page.$eval('[aria-label="Clear SS"]', node =>
+      String(node.textContent)
+    )
+    console.log(`    D4 SS now: ${fielder} (dropped ${bench})`)
+    expect(fielder).includes(bench.replace(/^.* /, ''))
   })
 
   it('P1 puts Box Score in a pill of its own above Roster, Lineup, Defense and Plan, none of them chosen', async function () {

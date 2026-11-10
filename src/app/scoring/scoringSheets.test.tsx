@@ -775,12 +775,13 @@ describe('scoring slide-up sheets', function () {
         if (jersey !== '') await input('Jersey Number', jersey)
         await click('Create Player')
       }
+      // Each card's name, without its grip's three bars.
       const roster = (): string[] =>
         Array.from(
           document.querySelectorAll(
             '[data-roster-target="roster"] [data-roster-player]'
           )
-        ).map(node => node.textContent!.trim())
+        ).map(node => node.textContent!.replace('≡', '').trim())
       const inOrder = (rows: string[]): void => {
         const numbers = rows.map(row => /^#(\d+)/.exec(row)?.[1])
         const numbered = numbers.filter(number => number != null)

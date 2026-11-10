@@ -21,7 +21,7 @@ import {
 } from './DefensiveField'
 import { DefensiveFieldArt as NativeDefensiveFieldArt } from './DefensiveFieldArt.native'
 import { gameFixture } from './isUnscoredGame.test'
-import { RosterDragGroup } from './RosterDrag'
+import { RosterDrag, RosterDragGroup, RosterGrip } from './RosterDrag'
 import { defenseRosterMinimum, RosterEditor } from './RosterEditor'
 import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
 import { initialScoringState } from './scoringMachine'
@@ -508,6 +508,132 @@ describe('compact defensive field', function () {
       expect(pitcher.getAttribute('data-roster-player')).equals('1')
       expect(pitcher.style.touchAction).equals('none')
       expect(catcher.getAttribute('data-roster-player')).equals(null)
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+    }
+  })
+  it('takes a drop anywhere on the box a fielder was dragged out of (N2)', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    const root = createRoot(host)
+    const placed: string[] = []
+    function Field(): React.ReactElement {
+      const [defense, setDefense] = React.useState<
+        Partial<Record<(typeof POSITIONS)[number], number | null>>
+      >({ SS: 6, '2B': null })
+      return (
+        <ThemeProvider>
+          <RosterDragGroup>
+            <DefensiveField
+              defense={defense}
+              display={id => `#${id} Fielder`}
+              onPlace={(player, position) => {
+                placed.push(`${player} ${position}`)
+                setDefense(field => {
+                  const from = POSITIONS.find(p => field[p] === player)
+                  return {
+                    ...field,
+                    ...(from == null ? {} : { [from]: null }),
+                    [position]: player
+                  }
+                })
+              }}
+              onClear={() => undefined}
+            />
+            <RosterDrag playerId={9} label="Bench">
+              <RosterGrip label="Drag Bench" color="white" />
+            </RosterDrag>
+          </RosterDragGroup>
+        </ThemeProvider>
+      )
+    }
+    /**
+     * Each box where the field draws it, six points to a percent, and as
+     * tall as its slot: the height a drag left on the slot, or its card's.
+     */
+    const box = (node: Element): DOMRect => {
+      const target = node.getAttribute('data-roster-target')
+      const slot = node.firstElementChild as HTMLElement
+      const height =
+        slot.style.height === '' ? 46 : parseFloat(slot.style.height)
+      const [x, y] =
+        target == null
+          ? [10, 100]
+          : DEFENSE_LOCATIONS[target.slice('defense-'.length) as 'SS']
+      const rect = { x: x * 6 - 30, y: y * 6 - 23, width: 60, height }
+      const bounds: DOMRect = {
+        ...rect,
+        top: rect.y,
+        left: rect.x,
+        right: rect.x + rect.width,
+        bottom: rect.y + rect.height,
+        toJSON: () => rect
+      }
+      return bounds
+    }
+    const centre = (target: string): { x: number; y: number } => {
+      const rect = box(host.querySelector(`[data-roster-target="${target}"]`)!)
+      return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 }
+    }
+    const pointer = async (
+      target: Element,
+      type: string,
+      at: { x: number; y: number }
+    ): Promise<void> => {
+      const event = new window.MouseEvent(type, {
+        bubbles: true,
+        clientX: at.x,
+        clientY: at.y,
+        button: 0
+      })
+      Object.defineProperties(event, {
+        pointerType: { value: 'mouse' },
+        pointerId: { value: 1 }
+      })
+      await act(async () => {
+        target.dispatchEvent(event)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      })
+    }
+    const drag = async (
+      from: Element,
+      start: { x: number; y: number },
+      end: { x: number; y: number }
+    ): Promise<void> => {
+      await pointer(from, 'pointerdown', start)
+      await pointer(from, 'pointermove', { x: start.x + 12, y: start.y })
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      })
+      await pointer(from, 'pointermove', end)
+      await pointer(from, 'pointerup', end)
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 300))
+      })
+    }
+    try {
+      await act(async () => {
+        root.render(<Field />)
+      })
+      // Every box the drags measure is the one its node lays out.
+      for (const node of host.querySelectorAll<HTMLElement>(
+        '[data-roster-target], [data-roster-player]'
+      ))
+        node.getBoundingClientRect = () => box(node)
+      const target = (position: string): Element =>
+        host.querySelector(`[data-roster-target="defense-${position}"]`)!
+      await drag(target('SS'), centre('defense-SS'), centre('defense-2B'))
+      expect(placed).deep.equals(['6 2B'])
+      expect(target('SS').getAttribute('data-roster-player')).equals(null)
+      expect(box(target('SS')).height).equals(46)
+      // The bench player, by his grip, onto the middle of the empty box.
+      const grip = host.querySelector('[data-roster-grip]')!
+      await drag(grip, { x: 64, y: 600 }, centre('defense-SS'))
+      expect(placed).deep.equals(['6 2B', '9 SS'])
+      expect(target('SS').getAttribute('data-roster-player')).equals('9')
     } finally {
       await act(async () => {
         root.unmount()

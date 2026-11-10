@@ -1,5 +1,5 @@
 // Run with node -r sucrase/register. Coach Plan in the real phone app (a Debug
-// build on an iOS simulator, its JavaScript from Metro started with
+// build on an iOS simulator or a phone, its JavaScript from Metro started with
 // TS_API_BASE_URL pointing at the local API by the Mac's LAN address), against
 // the local stack and a game from `npm run lineup-fixture`, made afresh.
 //
@@ -8,9 +8,14 @@
 //   TS_API_TEST_URL=http://<lan>:9180/api/v1 TS_LINEUP_PASSWORD=<password> \
 //     node -r sucrase/register src/app/screens/coachPlan.native.e2e.ts
 //
-// TEST_ONLY lists the scenarios to run (default all). `before` captures and
-// logs without asserting. Never point it at a live service: the fixture
-// writes to the database the local `serverConfig.json` names.
+// TEST_ONLY lists the scenarios to run (default all); the run fails unless
+// each of them runs to its end. `before` captures and logs without
+// asserting. Never point it at a live service: the fixture writes to the
+// database the local `serverConfig.json` names.
+//
+// A phone, which `simctl` does not know, is not recorded, and takes its deep
+// links through `devicectl`, by the app's bundle id: other TeamStation builds
+// on it claim `teamstation://` too, and iOS may open one of those, signed out.
 //
 // S1 to S3 work the coaching screen's Plan tab on one fixture game, in turn:
 // S1 taps a cell, which opens the field picker (`coach-plan-phone-picker.png`),
@@ -30,6 +35,16 @@
 // S5: the coaching screen's Defense field on a phone. The nine position cards
 // sit on six rows, no three sharing a vertical band; CF is above LF and RF,
 // P below 3B and 1B; and each card holds its name, on two lines.
+//
+// D4 and D3 drag on the coaching screen's Defense tab, one fixture game,
+// recorded on a simulator by `xcrun simctl io recordVideo` into
+// `defense-grip-drag.mp4`. D4: 2B cleared by a tap, SS dragged onto it; the
+// empty SS box is as tall as its card, and a bench player held and dropped
+// on its middle plays SS. D3, after Clear Defense puts everyone on the
+// bench: a swipe that starts on a roster card's name scrolls the roster and
+// lifts nothing; a quick drag from the name to CF lifts nothing either; the
+// same quick drag from the card's grip (its three bars) puts him at CF; and
+// a half-second hold on a name, then a drag, puts that player at LF.
 //
 // The microphone is drawn only when the API dictates; no scenario presses it.
 import assert from 'node:assert/strict'
@@ -115,6 +130,18 @@ const inside = (inner: Bounds, outer: Bounds): boolean =>
   inner.y >= outer.y - 1 &&
   inner.x + inner.width <= outer.x + outer.width + 1 &&
   inner.y + inner.height <= outer.y + outer.height + 1
+/** Resolves once a child process has ended, by exiting or failing to start. */
+const ended = async (child: ReturnType<typeof spawn>): Promise<void> => {
+  if (child.exitCode != null || child.signalCode != null) return
+  await new Promise(resolve => {
+    child.once('exit', resolve)
+    child.once('error', resolve)
+  })
+}
+
+/** The scenarios TEST_ONLY asks for, and those that ran to their end. */
+const requested = new Set<string>()
+const finished = new Set<string>()
 
 /** A new game, its rosters and the people who use it. */
 function lineupFixture(password: string): LineupFixture {
@@ -147,12 +174,20 @@ async function main(): Promise<void> {
   assert(phase === 'before' || phase === 'after', 'TEST_PHASE')
   const asserting = phase === 'after'
   const device = required('TEST_DEVICE')
+  const inventory = JSON.parse(
+    execFileSync('xcrun', ['simctl', 'list', 'devices', '-j'], {
+      encoding: 'utf8'
+    })
+  ) as { devices: Record<string, Array<{ udid: string }>> }
+  const simulator = Object.values(inventory.devices)
+    .flat()
+    .some(sim => sim.udid === device)
   // The API Metro's bundle was built against, which the fixture's game is on.
   const api = required('TS_API_TEST_URL')
   assert((await fetch(`${api}/health`)).ok, `${api} answers`)
   const password = required('TS_LINEUP_PASSWORD')
   const artifacts = resolve(required('TEST_ARTIFACT_DIR'))
-  const only = (process.env.TEST_ONLY ?? 'S1,S2,S3,S4,S5').split(',')
+  const only = (process.env.TEST_ONLY ?? 'S1,S2,S3,S4,S5,D4,D3').split(',')
   await mkdir(artifacts, { recursive: true })
   const requireClient = createRequire(
     join(resolve(required('MAESTRO_D_CLIENT_ROOT')), 'package.json')
@@ -170,10 +205,26 @@ async function main(): Promise<void> {
     console.log(`${ok ? 'ok' : asserting ? 'FAIL' : 'observed'}: ${message}`)
     if (asserting) assert(ok, message)
   }
+  for (const id of only) requested.add(id)
   try {
     const m = await daemon.attach({ device, platform: 'ios', appId: APP })
     const all = async (): Promise<Node[]> => flatten(await m.hierarchy())
     const link = async (path: string): Promise<void> => {
+      if (!simulator) {
+        execFileSync('xcrun', [
+          'devicectl',
+          'device',
+          'process',
+          'launch',
+          '--device',
+          device,
+          '--payload-url',
+          `teamstation://${path}`,
+          APP
+        ])
+        await pause(4000)
+        return
+      }
       await m.openLink({ link: `teamstation://${path}` })
       if ((await all()).some(n => n.type === 'Alert' || n.text === 'Open'))
         await m.acceptAlert()
@@ -194,11 +245,29 @@ async function main(): Promise<void> {
         await pause(1000)
         if ((await all()).some(n => n.id === 'Password')) break
       }
-      await m.tapOn({ id: 'E-mail address' })
-      await m.inputText({ text: fixture.users[who].email })
-      await m.tapOn({ id: 'Password' })
-      await m.inputText({ text: password })
-      await m.tapOn({ text: 'Sign in', enabled: true })
+      // A phone can drop letters typed in one burst, and the tab bar's Home
+      // shows even signed out: type each field a letter at a time once the
+      // keyboard has risen, and sign in again, fields cleared, until the
+      // form is gone.
+      const form = async (): Promise<boolean> =>
+        (await all()).some(n => label(n) === 'Sign in to TeamStation')
+      for (let attempt = 1; ; attempt++) {
+        for (const [field, text] of [
+          ['E-mail address', fixture.users[who].email],
+          ['Password', password]
+        ]) {
+          await m.tapOn({ id: field })
+          await pause(1200)
+          for (const letter of text) await m.inputText({ text: letter })
+        }
+        await m.tapOn({ text: 'Sign in', enabled: true })
+        for (let wait = 0; wait < 15 && (await form()); wait++)
+          await pause(1000)
+        if (!(await form())) break
+        assert(attempt < 3, `${who} signs in`)
+        await m.tapOn({ id: 'Clear E-mail address' })
+        await m.tapOn({ id: 'Clear Password' })
+      }
       await m.assertVisible({ text: 'Home', timeout: 30000 })
       await pause(2000)
     }
@@ -346,6 +415,31 @@ async function main(): Promise<void> {
         /, inning \d+.*$/,
         ''
       )
+    /**
+     * Records the screen into `file` until the returned stop is called. A
+     * phone, which `simctl` cannot record, is not recorded.
+     */
+    const record = async (file: string): Promise<() => Promise<void>> => {
+      if (!simulator) return async () => {}
+      const recorder = spawn(
+        'xcrun',
+        [
+          'simctl',
+          'io',
+          device,
+          'recordVideo',
+          '--force',
+          join(artifacts, file)
+        ],
+        { stdio: 'ignore' }
+      )
+      await pause(1500)
+      return async () => {
+        await pause(1000)
+        recorder.kill('SIGINT')
+        await ended(recorder)
+      }
+    }
 
     if (only.some(id => ['S1', 'S2', 'S3'].includes(id))) {
       const fixture = lineupFixture(password)
@@ -373,6 +467,7 @@ async function main(): Promise<void> {
           !(await all()).some(n => n.id === 'Plan field picker'),
           'S1: the picker closes'
         )
+        finished.add('S1')
       }
 
       const recording =
@@ -415,6 +510,7 @@ async function main(): Promise<void> {
             !(await all()).some(n => n.id === 'Plan field picker'),
             'S2: the picker closes after the drag'
           )
+          finished.add('S2')
         }
         if (only.includes('S3')) {
           // The player column's names, "#3 Alonso", top to bottom.
@@ -471,6 +567,7 @@ async function main(): Promise<void> {
             order[4] === `Remove ${moved}`,
             'S3: the Lineup tab bats him fifth'
           )
+          finished.add('S3')
         }
       } finally {
         if (recording != null) {
@@ -575,6 +672,7 @@ async function main(): Promise<void> {
         JSON.stringify(restored) === JSON.stringify(order),
         'Cancel restored the lineup'
       )
+      finished.add('S4')
     }
 
     if (only.includes('S5')) {
@@ -620,8 +718,16 @@ async function main(): Promise<void> {
         'P is below 3B and 1B'
       )
       // XCUITest exposes only some cards' text, so every name it does show
-      // in the field must lie wholly inside one card, on a 17-point line
-      // (13.75 × 1.2, framed a point larger), and each card holds two lines.
+      // in the field must lie wholly inside one card, on DefensiveField's
+      // 17-point line (11 × 1.25 = 13.75 points, × 1.2, rounded), and each
+      // card holds two lines. iOS rounds a frame outward, so the iPhone 16
+      // Pro simulator reads that line as 17 or 18 points. A phone whose Text
+      // Size is set larger draws it larger too, since React Native text
+      // follows Dynamic Type: the iPhone 13 Pro on the bench draws every
+      // label about 12% larger, this line at 20 or 21. So a line may be up
+      // to a quarter larger, and a point more, which a name wrapped onto two
+      // lines never is.
+      const line = Math.round(11 * 1.25 * 1.2)
       const fieldBottom = Math.max(
         ...[...cards.values()].map(card => card.y + card.height)
       )
@@ -642,7 +748,8 @@ async function main(): Promise<void> {
           `"${label(text)}" lies inside the ${holder.join(', ')} card`
         )
         check(
-          Math.abs(text.bounds!.height - 18) <= 1,
+          text.bounds!.height >= line &&
+            text.bounds!.height <= Math.ceil(line * 1.25) + 1,
           `"${label(text)}" is a line ${text.bounds!.height} points tall`
         )
       }
@@ -651,6 +758,184 @@ async function main(): Promise<void> {
           at(position).height >= 40,
           `${position}'s card (${at(position).height} points) holds two lines`
         )
+      finished.add('S5')
+    }
+
+    if (only.includes('D3') || only.includes('D4')) {
+      const fixture = lineupFixture(password)
+      await coachDefense(fixture)
+      await closeWarnings()
+      const names = new Set(fixture.players.home.map(player => player.name))
+      /**
+       * A position's card: "Clear SS" with a fielder, "Assign SS" without.
+       * A box with no height has no frame, so it is missing.
+       */
+      const card = async (at: string): Promise<Node | undefined> =>
+        (await all()).find(
+          n =>
+            n.bounds != null &&
+            n.bounds.height > 0 &&
+            new RegExp(`^(Clear|Assign) ${at}$`).test(label(n))
+        )
+      const position = async (
+        at: string
+      ): Promise<{ held: boolean; bounds: Bounds }> => {
+        const found = await card(at)
+        assert(found?.bounds != null, `the ${at} card is on screen`)
+        return { held: label(found).startsWith('Clear'), bounds: found.bounds }
+      }
+      /** Waits for a position to be held, or empty. */
+      const until = async (at: string, held: boolean): Promise<boolean> => {
+        for (let tries = 0; tries < 10; tries++) {
+          const found = await card(at)
+          if (found == null && !held) return true
+          if (found != null && label(found).startsWith('Clear') === held)
+            return true
+          await pause(500)
+        }
+        return false
+      }
+      /**
+       * The bench's roster cards in sight, top to bottom, left to right: wholly
+       * between the field's lowest card and the footer bar. The hierarchy
+       * also lists cards scrolled up under the field.
+       */
+      const bench = async (): Promise<Node[]> => {
+        const nodes = await all()
+        const top = Math.max(
+          ...nodes
+            .filter(
+              n => n.bounds != null && /^(Clear|Assign) \S+$/.test(label(n))
+            )
+            .map(n => n.bounds!.y + n.bounds!.height)
+        )
+        const bottom = (await byId('Roster footer bar')).bounds!.y
+        return nodes
+          .filter(
+            n =>
+              n.bounds != null &&
+              names.has(label(n)) &&
+              n.bounds.y >= top &&
+              n.bounds.y + n.bounds.height <= bottom
+          )
+          .sort((a, b) =>
+            a.bounds!.y === b.bounds!.y
+              ? a.bounds!.x - b.bounds!.x
+              : a.bounds!.y - b.bounds!.y
+          )
+      }
+      /** A card's grip, its three bars at its left edge, and its name. */
+      const grip = (card: Bounds): { x: number; y: number } => ({
+        x: card.x + 12,
+        y: card.y + card.height / 2
+      })
+      const name = (card: Bounds): { x: number; y: number } => ({
+        x: card.x + card.width * 0.7,
+        y: card.y + card.height / 2
+      })
+      /** A touch carried from one point to another with no hold. */
+      const quickDrag = async (
+        from: { x: number; y: number },
+        to: { x: number; y: number }
+      ): Promise<void> => {
+        await touch([
+          { ...from, ms: 0 },
+          { ...to, ms: 400 },
+          { ...to, ms: 200 }
+        ])
+      }
+      const stop = await record('defense-grip-drag.mp4')
+      try {
+        if (only.includes('D4')) {
+          const shortstop = (await position('SS')).bounds
+          await m.tapOn({ text: 'Clear 2B' })
+          check(await until('2B', false), 'D4: a tap clears 2B')
+          await quickDrag(
+            centre(shortstop),
+            centre((await position('2B')).bounds)
+          )
+          check(
+            (await until('SS', false)) && (await position('2B')).held,
+            'D4: the shortstop dragged onto the empty 2B plays there'
+          )
+          const vacated = (await card('SS'))?.bounds
+          console.log(
+            `D4 SS box before ${JSON.stringify(shortstop)}, empty ${JSON.stringify(vacated)}`
+          )
+          check(
+            vacated != null && vacated.height >= shortstop.height - 2,
+            `D4: the empty SS box is its card's height (${vacated?.height ?? 0} of ${shortstop.height})`
+          )
+          const player = (await bench())[0]
+          console.log(`D4 dropping ${label(player)} on SS`)
+          await holdAndDrag(name(player.bounds!), centre(shortstop))
+          check(
+            await until('SS', true),
+            'D4: a bench player dropped on the empty box’s middle plays SS'
+          )
+          check(
+            !(await bench()).some(n => label(n) === label(player)),
+            `D4: ${label(player)} left the bench`
+          )
+          finished.add('D4')
+        }
+        if (only.includes('D3')) {
+          await m.tapOn({ text: 'Clear Defense' })
+          check(await until('CF', false), 'D3: Clear Defense empties CF')
+          await m.waitForAnimationToEnd()
+          const first = (await bench())[0]
+          const from = name(first.bounds!)
+          await touch([
+            { ...from, ms: 0 },
+            { x: from.x, y: from.y - 160, ms: 300 },
+            { x: from.x, y: from.y - 160, ms: 100 }
+          ])
+          await pause(800)
+          const scrolled = (await all()).find(
+            n => n.bounds != null && label(n) === label(first)
+          )
+          console.log(
+            `D3 swipe: ${label(first)} at ${first.bounds!.y}, now at ${scrolled?.bounds?.y}`
+          )
+          check(
+            scrolled?.bounds == null ||
+              scrolled.bounds.y < first.bounds!.y - 20,
+            'D3: a swipe from a card’s name scrolls the roster'
+          )
+          const fielded = async (): Promise<string[]> => {
+            const held: string[] = []
+            for (const at of POSITIONS)
+              if ((await position(at)).held) held.push(at)
+            return held
+          }
+          check((await fielded()).length === 0, 'D3: the swipe lifted nobody')
+          const centreField = centre((await position('CF')).bounds)
+          await quickDrag(name((await bench())[0].bounds!), centreField)
+          await pause(500)
+          check(
+            !(await position('CF')).held,
+            'D3: a quick drag from a card’s name lifts nothing'
+          )
+          const gripped = (await bench())[0]
+          await quickDrag(grip(gripped.bounds!), centreField)
+          check(
+            await until('CF', true),
+            `D3: the same quick drag from ${label(gripped)}’s grip puts him at CF`
+          )
+          const held = (await bench())[0]
+          await holdAndDrag(
+            name(held.bounds!),
+            centre((await position('LF')).bounds)
+          )
+          check(
+            await until('LF', true),
+            `D3: a half-second hold on ${label(held)}’s name, then a drag, puts him at LF`
+          )
+          finished.add('D3')
+        }
+      } finally {
+        await stop()
+      }
     }
   } finally {
     daemon.close()
@@ -660,4 +945,13 @@ async function main(): Promise<void> {
 main().catch((error: unknown) => {
   console.error(error)
   process.exit(1)
+})
+// An await that never settles, such as one on a child process whose end was
+// missed, lets node run out of work and exit 0 part way through: a run that
+// would end well fails unless every scenario asked for ran to its end.
+process.on('exit', code => {
+  const missing = [...requested].filter(id => !finished.has(id))
+  if (code !== 0 || missing.length === 0) return
+  console.error(`FAIL: ${missing.join(', ')} did not run to the end`)
+  process.exitCode = 1
 })

@@ -28,6 +28,11 @@ export const RosterContext = createContext<RosterGesture | null>(null)
 export const RosterClipContext = createContext<
   (() => Promise<RosterRect>) | undefined
 >(undefined)
+/**
+ * Told by a phone's RosterGrip that a touch has started on it, just before
+ * the touch reaches the grip's card, which then picks the card up at once.
+ */
+export const RosterGripContext = createContext<() => void>(() => undefined)
 export function useRosterGesture(): RosterGesture {
   const value = useContext(RosterContext)
   if (value == null) throw new Error('RosterDrag requires RosterDragGroup')

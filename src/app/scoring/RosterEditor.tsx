@@ -85,7 +85,12 @@ import {
   useRosterDictation
 } from './rosterDictation'
 import { planLineup, rosterDirty, rosterSavable } from './rosterDirty'
-import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import {
+  RosterDrag,
+  RosterDragGroup,
+  RosterGrip,
+  RosterScrollArea
+} from './RosterDrag'
 import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
 import { RosterConflictBanner } from './rosterLive'
 import { byJersey } from './rosterOrder'
@@ -1252,7 +1257,6 @@ export function RosterEditor({
                           <RosterDrag
                             key={id}
                             playerId={id}
-                            immediateMouseDrag={defense}
                             label={
                               defense
                                 ? names[id].fullName
@@ -1267,6 +1271,10 @@ export function RosterEditor({
                             }
                           >
                             <View style={row}>
+                              <RosterGrip
+                                label={`Drag ${names[id].fullName}`}
+                                color={text.color}
+                              />
                               <Text
                                 selectable={false}
                                 {...nameProps}
@@ -1373,13 +1381,10 @@ export function RosterEditor({
                         }}
                       >
                         <View style={row}>
-                          <Text
-                            selectable={false}
-                            accessibilityLabel={`Drag ${names[id].fullName}`}
-                            style={{ ...text, fontSize: 24 }}
-                          >
-                            ≡
-                          </Text>
+                          <RosterGrip
+                            label={`Drag ${names[id].fullName}`}
+                            color={text.color}
+                          />
                           <Text
                             selectable={false}
                             {...nameProps}
