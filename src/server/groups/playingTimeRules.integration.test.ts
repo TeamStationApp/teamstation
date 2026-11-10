@@ -90,18 +90,65 @@ describe('Playing Time Rules on seasons and teams', function () {
   })
 
   it('stores a season’s set and answers it to its administrator', async function () {
-    const season = rules({ mandatoryPlay: true, defensiveOutsRequired: 9 })
+    const season = rules({
+      defensivePlayingTime: true,
+      measuredIn: 'outs',
+      outs: { required: 9, consecutive: false }
+    })
     const answer = await put('season', f.seasonA, {
-      playingTimeRules: { mandatoryPlay: true, defensiveOutsRequired: 9 }
+      playingTimeRules: {
+        defensivePlayingTime: true,
+        measuredIn: 'outs',
+        outs: { required: 9 }
+      }
     })
     expect(answer.status).equals(200)
-    // The whole set is stored, every missing rule at its default.
+    // The whole set is stored, every missing rule and block at its default.
     expect(await stored('seasons', f.seasonA)).deep.equals(season)
     const read = await detail('season', f.seasonA)
     expect(read.playingTimeRules).deep.equals(season)
     expect(read.seasonPlayingTimeRules).equals(null)
     // A season that has none answers null.
     expect((await raw('season', f.playoffs)).playingTimeRules).equals(null)
+  })
+
+  it('maps a set in the first version’s shape, sent or stored, into this one', async function () {
+    const mapped = rules({
+      defensivePlayingTime: true,
+      measuredIn: 'outs',
+      outs: { required: 9, consecutive: true },
+      largeRoster: {
+        ...DEFAULT_PLAYING_TIME_RULES.largeRoster,
+        // Must Be Consecutive was both rosters'.
+        outs: { required: 3, consecutive: true }
+      },
+      catcherMaxInnings: 3,
+      catcherBlocksPitching: 4
+    })
+    const first = {
+      mandatoryPlay: true,
+      defensiveOutsRequired: 9,
+      mustBeConsecutive: true,
+      catcherInningLimit: true,
+      catcherMaxInnings: 3,
+      catcherBlocksPitching: true,
+      catcherBlocksIfCatchesFourth: true,
+      applyInShortenedGames: 'never',
+      rotateLeadoff: true
+    }
+    expect(
+      (await put('season', f.seasonA, { playingTimeRules: first })).status
+    ).equals(200)
+    expect(await stored('seasons', f.seasonA)).deep.equals(mapped)
+    // One stored before this version reads the same.
+    await f.h.db
+      .updateTable('seasons')
+      .set({ playing_time_rules: first })
+      .where('id', '=', f.seasonA)
+      .execute()
+    expect((await detail('season', f.seasonA)).playingTimeRules).deep.equals(
+      mapped
+    )
   })
 
   it('gives a team its managing season’s set, and none of its own', async function () {
@@ -140,13 +187,13 @@ describe('Playing Time Rules on seasons and teams', function () {
     await f.h.db
       .updateTable('seasons')
       .set({
-        playing_time_rules: rules({ rotateLeadoff: true }),
+        playing_time_rules: rules({ departuresSkipWithoutOut: true }),
         starts_on: '2028-01-01',
         ends_on: '2028-02-01'
       })
       .where('id', '=', f.seasonB)
       .execute()
-    const regular = rules({ mandatoryPlay: true })
+    const regular = rules({ defensivePlayingTime: true })
     const playoffs = rules({ enforceSittingLimits: true })
     await put('season', f.seasonA, { playingTimeRules: regular })
     await put('season', f.playoffs, { playingTimeRules: playoffs })
@@ -173,20 +220,23 @@ describe('Playing Time Rules on seasons and teams', function () {
   })
 
   it('keeps a team’s override whole when its season changes later', async function () {
-    const season = rules({ mandatoryPlay: true })
+    const season = rules({ defensivePlayingTime: true })
     await put('season', f.seasonA, { playingTimeRules: season })
-    const override = { ...season, mustBeConsecutive: true }
+    const override = { ...season, noConsecutiveSits: false }
     expect(
       (await put('team', f.teamA, { playingTimeRules: override })).status
     ).equals(200)
     expect(await stored('teams', f.teamA)).deep.equals(override)
     await put('season', f.seasonA, {
-      playingTimeRules: rules({ mandatoryPlay: false, rotateLeadoff: true })
+      playingTimeRules: rules({
+        defensivePlayingTime: false,
+        departuresSkipWithoutOut: true
+      })
     })
     const read = await detail('team', f.teamA)
     expect(read.playingTimeRules).deep.equals(override)
     expect(read.seasonPlayingTimeRules?.rules).deep.equals(
-      rules({ rotateLeadoff: true })
+      rules({ departuresSkipWithoutOut: true })
     )
     // Another field's save leaves the rules alone.
     expect((await put('team', f.teamA, { name: 'Demo Hawks' })).status).equals(
@@ -197,7 +247,7 @@ describe('Playing Time Rules on seasons and teams', function () {
 
   it('refuses anybody but an administrator, and tells them nothing', async function () {
     await put('season', f.seasonA, {
-      playingTimeRules: rules({ mandatoryPlay: true })
+      playingTimeRules: rules({ defensivePlayingTime: true })
     })
     await put('team', f.teamA, {
       playingTimeRules: rules({ continuousBatting: true })
@@ -243,10 +293,12 @@ describe('Playing Time Rules on seasons and teams', function () {
 
   it('refuses a value out of range or off its choices, storing nothing', async function () {
     for (const playingTimeRules of [
-      { largeRosterPlayers: 26 },
+      { largeRoster: { players: 26 } },
       { maxSitsPerGame: -1 },
+      { outs: { required: 4 } },
+      { catcherBlocksPitching: 6 },
+      // The first version's own values are refused as it refused them.
       { defensiveOutsRequired: 4 },
-      { infieldPositions: ['LF'] },
       'all of them'
     ]) {
       const answer = await put('team', f.teamA, {
@@ -265,10 +317,10 @@ describe('Playing Time Rules on seasons and teams', function () {
   })
 
   it('clears with null: a season has none, a team follows its season again', async function () {
-    const season = rules({ mandatoryPlay: true })
+    const season = rules({ defensivePlayingTime: true })
     await put('season', f.seasonA, { playingTimeRules: season })
     await put('team', f.teamA, {
-      playingTimeRules: rules({ rotateLeadoff: true })
+      playingTimeRules: rules({ departuresSkipWithoutOut: true })
     })
     expect(
       (await put('team', f.teamA, { playingTimeRules: null })).status

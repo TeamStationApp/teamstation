@@ -821,33 +821,23 @@ describe('api client', function () {
           }
         ]
       },
-      rules: { mandatoryPlay: true },
-      history: {
-        players: {
-          'g:7': {
-            positions: {
-              P: 0,
-              C: 0,
-              '1B': 3,
-              '2B': 0,
-              SS: 0,
-              '3B': 0,
-              LF: 0,
-              CF: 1,
-              RF: 0
-            },
-            sits: 1
-          }
-        },
-        lastLeadoff: 'g:7',
-        lastGameSits: { 'g:7': 1 }
-      },
+      rules: { defensivePlayingTime: true, measuredIn: 'outs' },
       sameDay: {
-        before: { catcherInnings: { 'n:Yogi Berra#8': 2 }, caughtFourth: {} },
+        before: { catcherInnings: { 'n:Yogi Berra#8': 2 } },
         laterPitched: { 'g:7': true }
       }
     }
-    const read = stubFetch(200, { away: null, home: side })
+    // An older server also answers the season's history and who caught a
+    // fourth inning, which are not read.
+    const older = {
+      ...side,
+      history: { players: {}, lastLeadoff: 'g:7', lastGameSits: {} },
+      sameDay: {
+        ...side.sameDay,
+        before: { ...side.sameDay.before, caughtFourth: { 'g:7': true } }
+      }
+    }
+    const read = stubFetch(200, { away: null, home: older })
     const plans = await new TeamStationClient({
       baseUrl: 'http://x/api/v1',
       fetch: read.fetch
@@ -863,10 +853,33 @@ describe('api client', function () {
       rows: [side.plan.rows[0], { ...side.plan.rows[1], cells: ['C', ''] }]
     })
     // A rule the server left out takes its default.
-    expect(plans.home?.rules?.mandatoryPlay).equals(true)
-    expect(plans.home?.rules?.defensiveOutsRequired).equals(6)
-    expect(plans.home?.history).deep.equals(side.history)
+    expect(plans.home?.rules?.measuredIn).equals('outs')
+    expect(plans.home?.rules?.outs).deep.equals({
+      required: 6,
+      consecutive: false
+    })
+    expect(Object.keys(plans.home ?? {})).not.includes('history')
     expect(plans.home?.sameDay).deep.equals(side.sameDay)
+    // Rules in the first version's shape read into this one.
+    const first = stubFetch(200, {
+      away: null,
+      home: {
+        ...side,
+        rules: { mandatoryPlay: true, catcherInningLimit: true }
+      }
+    })
+    expect(
+      (
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: first.fetch
+        }).gamePlans('gam 1')
+      ).home?.rules
+    ).deep.include({
+      defensivePlayingTime: true,
+      measuredIn: 'outs',
+      catcherMaxInnings: 4
+    })
 
     const saved = stubFetch(200, { ...side, plan: null, rules: null })
     const plan = side.plan as Parameters<TeamStationClient['saveGamePlan']>[2]
@@ -885,18 +898,6 @@ describe('api client', function () {
       [],
       { away: null },
       { away: null, home: { ...side, plan: { ...side.plan, innings: 3 } } },
-      { away: null, home: { ...side, history: { players: {} } } },
-      // A season count that leaves a position out.
-      {
-        away: null,
-        home: {
-          ...side,
-          history: {
-            ...side.history,
-            players: { 'g:7': { positions: { '1B': 3 }, sits: 1 } }
-          }
-        }
-      },
       {
         away: null,
         home: {
@@ -909,7 +910,7 @@ describe('api client', function () {
         away: null,
         home: {
           ...side,
-          sameDay: { catcherInnings: {}, caughtFourth: {}, pitched: {} }
+          sameDay: { catcherInnings: {}, pitched: {} }
         }
       }
     ]) {

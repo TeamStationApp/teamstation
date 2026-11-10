@@ -20,10 +20,7 @@ import {
 import { HttpError } from '../../common/errors'
 import type { GamePlan, PlanCell } from '../../common/gamePlan'
 import type { GameSocketEvent } from '../../common/gameSocket'
-import {
-  EMPTY_PLAN_HISTORY,
-  EMPTY_PLAN_SAME_DAY
-} from '../../common/planWarnings'
+import { EMPTY_PLAN_SAME_DAY } from '../../common/planWarnings'
 import { DEFAULT_PLAYING_TIME_RULES } from '../../common/playingTimeRules'
 import {} from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
@@ -171,7 +168,6 @@ const HOME_PLAN: SidePlan = {
   teamId: 'home',
   plan: null,
   rules: null,
-  history: EMPTY_PLAN_HISTORY,
   sameDay: EMPTY_PLAN_SAME_DAY
 }
 
@@ -1907,7 +1903,11 @@ describe('the coach’s game plan', function () {
       away: null,
       home: {
         ...HOME_PLAN,
-        rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
+        rules: {
+          ...DEFAULT_PLAYING_TIME_RULES,
+          defensivePlayingTime: true,
+          measuredIn: 'outs'
+        }
       }
     }
     await plan(held)
@@ -2261,7 +2261,11 @@ describe('the coach’s game plan', function () {
       firstInning(held, column({ 4: '', 5: 'SS' }))
       held.plans.home = {
         ...held.plans.home!,
-        rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
+        rules: {
+          ...DEFAULT_PLAYING_TIME_RULES,
+          defensivePlayingTime: true,
+          measuredIn: 'outs'
+        }
       }
       await opened(held)
       await moveFielder('2B', 'SS')
@@ -2350,7 +2354,11 @@ describe('the coach’s game plan', function () {
       firstInning(held, column({ 1: 'C', 2: '1B', 3: '' }))
       held.plans.home = {
         ...held.plans.home!,
-        rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
+        rules: {
+          ...DEFAULT_PLAYING_TIME_RULES,
+          defensivePlayingTime: true,
+          measuredIn: 'outs'
+        }
       }
       await opened(held)
       await click('Plan', 'tab')

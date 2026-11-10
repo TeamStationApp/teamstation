@@ -2,9 +2,8 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import type { LineupPlayer } from './api'
-import { type PlanCell, type PlanRowCounts, planRowCounts } from './gamePlan'
+import type { PlanCell } from './gamePlan'
 import {
-  EMPTY_PLAN_HISTORY,
   EMPTY_PLAN_SAME_DAY,
   type PlanWarning,
   planWarnings,
@@ -12,7 +11,11 @@ import {
   warningSummary
 } from './planWarnings'
 import {
+  asPlayingTimeRules,
   DEFAULT_PLAYING_TIME_RULES,
+  type InningDeadline,
+  type InningsRequirement,
+  type OutsRequirement,
   type PlayingTimeRules
 } from './playingTimeRules'
 
@@ -38,7 +41,7 @@ const PLAYERS: LineupPlayer[] = NAMES.map((fullName, at) => ({
   fullName,
   jersey: String(at + 1)
 }))
-const [RUTH, GEHRIG, DIMAGGIO, MANTLE, BERRA] = NAMES
+const [RUTH, GEHRIG, DIMAGGIO, MANTLE] = NAMES
 
 const rules = (changes: Partial<PlayingTimeRules> = {}): PlayingTimeRules => ({
   ...DEFAULT_PLAYING_TIME_RULES,
@@ -58,19 +61,37 @@ function warnings(
       rows: rows.map((cells, at) => ({ player: PLAYERS[at], cells }))
     },
     rules: changes == null ? null : rules(changes),
-    history: EMPTY_PLAN_HISTORY,
     sameDay: EMPTY_PLAN_SAME_DAY,
     ...extra
   })
 }
 
-/** A season's innings at the positions given, and none elsewhere. */
-const season = (
-  positions: Partial<PlanRowCounts['positions']>,
-  sits = 0
-): PlanRowCounts => ({
-  positions: { ...planRowCounts([], []).positions, ...positions },
-  sits
+/** Defensive Playing Time in outs. */
+const inOuts = (
+  required: OutsRequirement['required'],
+  consecutive = false
+): Partial<PlayingTimeRules> => ({
+  defensivePlayingTime: true,
+  measuredIn: 'outs',
+  outs: { required, consecutive }
+})
+
+/** Defensive Playing Time in innings, the default unit. */
+const inInnings = (
+  minimum: number,
+  completeBy: InningDeadline = 'none'
+): Partial<PlayingTimeRules> => ({
+  defensivePlayingTime: true,
+  innings: { minimum, completeBy, countPartial: 'anyAppearance' }
+})
+
+/** A large roster from `players` present, with its own requirement. */
+const largeRoster = (
+  players: number,
+  outs: OutsRequirement,
+  innings: InningsRequirement
+): Pick<PlayingTimeRules, 'largeRoster'> => ({
+  largeRoster: { enabled: true, players, outs, innings }
 })
 
 /** One rule's warnings, as levels and the players each names. */
@@ -142,7 +163,7 @@ describe('plan warnings', function () {
     ).deep.equals([])
   })
 
-  describe('Mandatory Play', function () {
+  describe('Defensive Playing Time in outs', function () {
     it('is red when the outs are out of reach and yellow while unplanned innings could meet them', function () {
       // The fourth inning is not planned yet.
       const list = warnings(
@@ -152,9 +173,9 @@ describe('plan warnings', function () {
           ['', '', 'RF', ''],
           ['', '', '', '']
         ],
-        { mandatoryPlay: true }
+        inOuts(6)
       )
-      expect(of(list, 'mandatoryPlay')).deep.equals([
+      expect(of(list, 'defensivePlayingTime')).deep.equals([
         { level: 'red', players: [GEHRIG, MANTLE] },
         { level: 'yellow', players: [DIMAGGIO] }
       ])
@@ -162,6 +183,13 @@ describe('plan warnings', function () {
         `Cannot reach 6 defensive outs: ${GEHRIG}, ${MANTLE}`,
         `Not yet 6 defensive outs: ${DIMAGGIO}`
       ])
+      // Off, or switched off with its values kept, it says nothing.
+      expect(
+        warnings([['P', 'P', 'P', '']], {
+          ...inOuts(9),
+          defensivePlayingTime: false
+        })
+      ).deep.equals([])
     })
 
     it('needs consecutive innings when Must Be Consecutive is on', function () {
@@ -172,9 +200,9 @@ describe('plan warnings', function () {
           ['', '', '', 'CF', ''],
           ['RF', 'RF', '', '', '']
         ],
-        { mandatoryPlay: true, mustBeConsecutive: true }
+        inOuts(6, true)
       )
-      expect(of(list, 'mandatoryPlay')).deep.equals([
+      expect(of(list, 'defensivePlayingTime')).deep.equals([
         { level: 'red', players: [RUTH] },
         { level: 'yellow', players: [GEHRIG] }
       ])
@@ -183,95 +211,62 @@ describe('plan warnings', function () {
       )
     })
 
-    it('relaxes the outs from 15 players present, not at 14', function () {
-      const reduced = { mandatoryPlay: true, reducedForLargeRosters: true }
+    it('takes the large roster’s outs from its count of players present, not one fewer', function () {
+      const reduced = {
+        ...inOuts(9),
+        ...largeRoster(
+          15,
+          { required: 3, consecutive: false },
+          DEFAULT_PLAYING_TIME_RULES.largeRoster.innings
+        )
+      }
       expect(
-        of(warnings(oneInningEach(14, 3), reduced), 'mandatoryPlay')
+        of(warnings(oneInningEach(14, 3), reduced), 'defensivePlayingTime')
       ).deep.equals([{ level: 'red', players: NAMES.slice(0, 14) }])
       expect(
-        of(warnings(oneInningEach(15, 3), reduced), 'mandatoryPlay')
+        only(warnings(oneInningEach(14, 3), reduced), 'defensivePlayingTime')[0]
+          .message
+      ).contains('Cannot reach 9 defensive outs')
+      expect(
+        of(warnings(oneInningEach(15, 3), reduced), 'defensivePlayingTime')
+      ).deep.equals([])
+      // Its own Must Be Consecutive: two separate innings are not six in a
+      // row.
+      const consecutive = {
+        ...reduced,
+        ...largeRoster(
+          15,
+          { required: 6, consecutive: true },
+          DEFAULT_PLAYING_TIME_RULES.largeRoster.innings
+        )
+      }
+      const split = NAMES.map((_, at): PlanCell[] =>
+        at === 0 ? ['LF', '', 'LF'] : ['CF', 'CF', '']
+      )
+      expect(
+        of(warnings(split, consecutive), 'defensivePlayingTime')
+      ).deep.equals([{ level: 'red', players: [RUTH] }])
+      expect(
+        of(
+          warnings(split, {
+            ...consecutive,
+            ...largeRoster(
+              15,
+              { required: 6, consecutive: false },
+              DEFAULT_PLAYING_TIME_RULES.largeRoster.innings
+            )
+          }),
+          'defensivePlayingTime'
+        )
       ).deep.equals([])
       // Off, 15 players still need the full outs.
       expect(
-        of(
-          warnings(oneInningEach(15, 3), { mandatoryPlay: true }),
-          'mandatoryPlay'
-        )
+        of(warnings(oneInningEach(15, 3), inOuts(9)), 'defensivePlayingTime')
       ).deep.equals([{ level: 'red', players: NAMES }])
     })
   })
 
-  describe('a shortened game', function () {
-    // Planned for 6, final after 4. Ruth fields innings 1, 2, 5 and 6, so
-    // only two of the innings played; Gehrig and Ruth share LF in inning 5,
-    // which was never played.
-    const rows: PlanCell[][] = [
-      ['LF', 'LF', '', '', 'LF', 'LF'],
-      ['CF', 'CF', 'CF', 'CF', 'LF', '']
-    ]
-    const nine = (
-      applyInShortenedGames: PlayingTimeRules['applyInShortenedGames']
-    ): Partial<PlayingTimeRules> => ({
-      mandatoryPlay: true,
-      defensiveOutsRequired: 9,
-      applyInShortenedGames,
-      stricterMinimumInnings: true,
-      minimumFullInnings: 3,
-      minimumInningsBy: 5
-    })
-    const final = { final: true, playedInnings: 4 }
-
-    it('judges only the innings played, and applies Always in full', function () {
-      const list = warnings(rows, nine('always'), final)
-      expect(of(list, 'duplicatePosition')).deep.equals([])
-      expect(of(list, 'mandatoryPlay')).deep.equals([
-        { level: 'red', players: [RUTH] }
-      ])
-      // Inning 5's deadline is clamped to the 4 played.
-      expect(
-        list.find(warning => warning.rule === 'stricterMinimumInnings')?.message
-      ).equals(`Cannot field 3 innings this game: ${RUTH}`)
-    })
-
-    it('turns Mandatory Play red into yellow under Local Option', function () {
-      const list = warnings(rows, nine('localOption'), final)
-      expect(of(list, 'mandatoryPlay')).deep.equals([
-        { level: 'yellow', players: [RUTH] }
-      ])
-      // Only Mandatory Play follows the shortened-game choice.
-      expect(of(list, 'stricterMinimumInnings')).deep.equals([
-        { level: 'red', players: [RUTH] }
-      ])
-    })
-
-    it('skips Mandatory Play under Never', function () {
-      const list = warnings(rows, nine('never'), final)
-      expect(of(list, 'mandatoryPlay')).deep.equals([])
-      expect(of(list, 'stricterMinimumInnings')).deep.equals([
-        { level: 'red', players: [RUTH] }
-      ])
-    })
-
-    it('is never a game still in progress', function () {
-      const list = warnings(rows, nine('never'), { playedInnings: 4 })
-      expect(of(list, 'mandatoryPlay')).deep.equals([])
-      expect(of(list, 'duplicatePosition')).deep.equals([
-        { level: 'red', players: [RUTH, GEHRIG] }
-      ])
-      expect(
-        warnings(rows, nine('never'), { final: false, playedInnings: 4 })
-      ).deep.equals(list)
-      // A final game that reached its planned innings is not shortened.
-      expect(
-        of(
-          warnings(rows, nine('never'), { final: true, playedInnings: 6 }),
-          'duplicatePosition'
-        )
-      ).deep.equals([{ level: 'red', players: [RUTH, GEHRIG] }])
-    })
-  })
-
-  describe('Stricter Minimum Innings', function () {
+  describe('Defensive Playing Time in innings', function () {
     it('counts fielded innings up to its deadline', function () {
       // The second inning is not planned yet.
       const list = warnings(
@@ -280,7 +275,7 @@ describe('plan warnings', function () {
           ['', '', 'CF', '', ''],
           ['LF', '', 'LF', '', '']
         ],
-        { stricterMinimumInnings: true, minimumInningsBy: 3 }
+        inInnings(2, 3)
       )
       expect(
         list.map(({ level, message }) => ({ level, message }))
@@ -293,13 +288,84 @@ describe('plan warnings', function () {
       ])
     })
 
-    it('reads a game-end deadline as this game', function () {
+    it('reads no deadline as this game', function () {
+      expect(warnings([['LF', '', '']], inInnings(2))[0].message).equals(
+        `Not yet 2 innings this game: ${RUTH}`
+      )
+      // Innings is the default unit: the outs are not judged.
       expect(
-        warnings([['LF', '', '']], {
-          stricterMinimumInnings: true,
-          minimumFullInnings: 2
-        })[0].message
-      ).equals(`Not yet 2 innings this game: ${RUTH}`)
+        warnings([['LF', 'LF', '']], {
+          ...inInnings(2),
+          outs: { required: 9, consecutive: true }
+        })
+      ).deep.equals([])
+    })
+
+    it('takes the large roster’s minimum and deadline from its count of players present', function () {
+      const reduced = {
+        ...inInnings(3),
+        ...largeRoster(15, DEFAULT_PLAYING_TIME_RULES.largeRoster.outs, {
+          minimum: 1,
+          completeBy: 3,
+          countPartial: 'fullOnly'
+        })
+      }
+      expect(
+        only(
+          warnings(oneInningEach(14, 3), reduced),
+          'defensivePlayingTime'
+        ).map(warning => warning.message.split(':')[0])
+      ).deep.equals(['Cannot field 3 innings this game'])
+      expect(
+        of(warnings(oneInningEach(15, 3), reduced), 'defensivePlayingTime')
+      ).deep.equals([])
+      expect(
+        only(
+          warnings(oneInningEach(15, 4), reduced),
+          'defensivePlayingTime'
+        ).map(warning => warning.message.split(':')[0])
+      ).deep.equals(['Cannot field 1 inning by inning 3'])
+    })
+  })
+
+  describe('a final game', function () {
+    // Planned for 6, final after 4. Ruth fields innings 1, 2, 5 and 6, so
+    // only two of the innings played; Gehrig and Ruth share LF in inning 5,
+    // which was never played.
+    const rows: PlanCell[][] = [
+      ['LF', 'LF', '', '', 'LF', 'LF'],
+      ['CF', 'CF', 'CF', 'CF', 'LF', '']
+    ]
+    const final = { final: true, playedInnings: 4 }
+
+    it('is judged on the innings it reached', function () {
+      const list = warnings(rows, inOuts(9), final)
+      expect(of(list, 'duplicatePosition')).deep.equals([])
+      expect(of(list, 'defensivePlayingTime')).deep.equals([
+        { level: 'red', players: [RUTH] }
+      ])
+      // Inning 5's deadline is clamped to the 4 played.
+      expect(
+        only(warnings(rows, inInnings(3, 5), final), 'defensivePlayingTime')[0]
+          .message
+      ).equals(`Cannot field 3 innings this game: ${RUTH}`)
+    })
+
+    it('is never a game still in progress, or one that reached its planned innings', function () {
+      const list = warnings(rows, inOuts(9), { playedInnings: 4 })
+      expect(of(list, 'defensivePlayingTime')).deep.equals([])
+      expect(of(list, 'duplicatePosition')).deep.equals([
+        { level: 'red', players: [RUTH, GEHRIG] }
+      ])
+      expect(
+        warnings(rows, inOuts(9), { final: false, playedInnings: 4 })
+      ).deep.equals(list)
+      expect(
+        of(
+          warnings(rows, inOuts(9), { final: true, playedInnings: 6 }),
+          'duplicatePosition'
+        )
+      ).deep.equals([{ level: 'red', players: [RUTH, GEHRIG] }])
     })
   })
 
@@ -328,39 +394,47 @@ describe('plan warnings', function () {
       ])
     })
 
-    it('counts only the selected infield positions', function () {
-      const list = warnings(
-        [
-          ['LF', '1B'],
-          ['LF', 'SS']
-        ],
-        { requireMinimumInfield: true, infieldPositions: ['SS'] }
-      )
-      expect(of(list, 'requireMinimumInfield')).deep.equals([
-        { level: 'red', players: [RUTH] }
-      ])
+    it('counts 1B, 2B, SS and 3B always, and P while Pitcher Counts as Infield is on', function () {
+      const rows: PlanCell[][] = [
+        ['LF', 'P'],
+        ['LF', '1B'],
+        ['LF', '3B']
+      ]
+      expect(
+        of(
+          warnings(rows, { requireMinimumInfield: true }),
+          'requireMinimumInfield'
+        )
+      ).deep.equals([])
+      expect(
+        of(
+          warnings(rows, {
+            requireMinimumInfield: true,
+            pitcherCountsAsInfield: false
+          }),
+          'requireMinimumInfield'
+        )
+      ).deep.equals([{ level: 'red', players: [RUTH] }])
     })
 
-    it('counts the catcher as infield as Catcher Counts as Infield says', function () {
+    it('counts the catcher toward the infield or the outfield, as Catcher Counts As says', function () {
       // Ruth catches only after the first inning, so is no starting catcher.
-      const roster = (count: number): PlanCell[][] => [
-        ['LF', 'C'],
-        ...Array.from({ length: count - 1 }, (): PlanCell[] => ['SS', 'LF'])
+      const rows: PlanCell[][] = [
+        ['SS', 'C'],
+        ['LF', 'SS']
       ]
-      const counts = (
-        catcherCountsAsInfield: PlayingTimeRules['catcherCountsAsInfield'],
-        size: number
+      const minimums = {
+        requireMinimumInfield: true,
+        requireMinimumOutfield: true
+      }
+      const short = (
+        catcherCountsAs: PlayingTimeRules['catcherCountsAs']
       ): string[] =>
-        warnings(roster(size), {
-          requireMinimumInfield: true,
-          catcherCountsAsInfield
-        })
-          .filter(warning => warning.rule === 'requireMinimumInfield')
-          .flatMap(warning => warning.players)
-      expect(counts('largeRoster', 12)).deep.equals([RUTH])
-      expect(counts('largeRoster', 13)).deep.equals([])
-      expect(counts('always', 12)).deep.equals([])
-      expect(counts('off', 13)).deep.equals([RUTH])
+        warnings(rows, { ...minimums, catcherCountsAs }).map(
+          warning => `${warning.rule} ${warning.players.join(', ')}`
+        )
+      expect(short('infield')).deep.equals([`requireMinimumOutfield ${RUTH}`])
+      expect(short('outfield')).deep.equals([])
     })
 
     it('warns of too few outfield innings by their deadline, red and yellow', function () {
@@ -617,67 +691,34 @@ describe('plan warnings', function () {
         warnings([['SS', 'SS', 'LF']], { ...rotate, rotateEvery: 2 })
       ).deep.equals([])
     })
-
-    it('needs an infield and an outfield inning when Must Play Both is on', function () {
-      const both = {
-        requireMinimumOutfield: true,
-        mustPlayInfieldAndOutfield: true
-      }
-      // The third inning is not planned yet: one more inning can meet one
-      // missing half, not two.
-      const list = warnings(
-        [
-          ['', '', ''],
-          ['SS', 'SS', ''],
-          ['1B', 'LF', ''],
-          ['DH', 'RF', ''],
-          ['', 'EH', '']
-        ],
-        both
-      )
-      expect(of(list, 'mustPlayInfieldAndOutfield')).deep.equals([
-        { level: 'red', players: [RUTH, BERRA] },
-        { level: 'yellow', players: [GEHRIG, MANTLE] }
-      ])
-      expect(
-        list
-          .filter(warning => warning.rule === 'mustPlayInfieldAndOutfield')
-          .map(warning => warning.message)
-      ).deep.equals([
-        `Cannot play both infield and outfield: ${RUTH}, ${BERRA}`,
-        `Not yet played both infield and outfield: ${GEHRIG}, ${MANTLE}`
-      ])
-      // Off while both minimums are off.
-      expect(
-        warnings([['SS', 'SS']], { mustPlayInfieldAndOutfield: true })
-      ).deep.equals([])
-    })
   })
 
   describe('catcher limits', function () {
-    it('warns red of too many innings at catcher, and never yellow', function () {
-      const list = warnings(
-        [
-          ['C', 'C', 'C', 'C'],
-          ['LF', 'LF', 'LF', ''],
-          ['CF', '', '', '']
-        ],
-        { catcherInningLimit: true, catcherMaxInnings: 3 }
-      )
-      expect(list).deep.equals([
-        {
-          rule: 'catcherInningLimit',
-          level: 'red',
-          message: `Catches more than 3 innings: ${RUTH}`,
-          players: [RUTH]
-        }
+    it('warns red of more innings at catcher than the limit, never yellow, and of none without one', function () {
+      const rows: PlanCell[][] = [
+        ['C', 'C', 'C', 'C', 'C', 'C'],
+        ['C', 'C', 'C', 'C', 'C', 'LF'],
+        ['C', 'C', 'C', 'C', 'LF', 'LF'],
+        ['C', 'C', 'C', 'LF', 'LF', '']
+      ]
+      const over = (limit: PlayingTimeRules['catcherMaxInnings']): string[] =>
+        only(
+          warnings(rows, { catcherMaxInnings: limit }),
+          'catcherMaxInnings'
+        ).map(warning => warning.message)
+      expect(over(3)).deep.equals([
+        `Catches more than 3 innings: ${RUTH}, ${GEHRIG}, ${DIMAGGIO}`
       ])
+      expect(over(4)).deep.equals([
+        `Catches more than 4 innings: ${RUTH}, ${GEHRIG}`
+      ])
+      expect(over(5)).deep.equals([`Catches more than 5 innings: ${RUTH}`])
+      expect(over('none')).deep.equals([])
       expect(
-        warnings([['C', 'C', 'C', 'LF']], {
-          catcherInningLimit: true,
-          catcherMaxInnings: 3
-        })
-      ).deep.equals([])
+        only(warnings(rows, { catcherMaxInnings: 3 }), 'catcherMaxInnings')[0]
+      ).deep.include({ level: 'red', players: [RUTH, GEHRIG, DIMAGGIO] })
+      // None is the default.
+      expect(only(warnings(rows, {}), 'catcherMaxInnings')).deep.equals([])
     })
 
     /**
@@ -686,43 +727,56 @@ describe('plan warnings', function () {
      */
     const day = (
       catcherInnings: Record<string, number>,
-      caughtFourth: Record<string, boolean> = {},
       laterPitched: Record<string, boolean> = {}
     ): PlanWarningsInput['sameDay'] => ({
-      before: { catcherInnings, caughtFourth },
+      before: { catcherInnings },
       laterPitched
     })
 
-    it('blocks pitching after four innings at catcher, and not before them', function () {
-      const blocks = { catcherBlocksPitching: true }
+    it('blocks pitching after N innings at catcher, and not before them', function () {
       const rows: PlanCell[][] = [
+        ['C', 'C', 'C', 'P', 'LF'],
         ['C', 'C', 'C', 'C', 'P'],
+        ['C', 'C', 'C', 'C', 'C'],
         ['C', 'C', 'P', 'LF', 'LF'],
-        ['C', 'C', 'C', 'C', 'LF'],
-        ['LF', 'LF', 'LF', 'C', 'P'],
         ['P', 'C', 'C', 'C', 'C']
       ]
-      expect(of(warnings(rows, blocks), 'catcherBlocksPitching')).deep.equals([
-        { level: 'red', players: [RUTH] }
+      const blocked = (
+        catcherBlocksPitching: PlayingTimeRules['catcherBlocksPitching']
+      ): string[] =>
+        only(
+          warnings(rows, { catcherBlocksPitching }),
+          'catcherBlocksPitching'
+        ).map(warning => warning.message)
+      expect(blocked(3)).deep.equals([
+        `Pitches after 3 innings at catcher today: ${RUTH}, ${GEHRIG}`
       ])
-      expect(
-        only(warnings(rows, blocks), 'catcherBlocksPitching')[0].message
-      ).equals(`Pitches after 4 innings at catcher today: ${RUTH}`)
+      expect(blocked(4)).deep.equals([
+        `Pitches after 4 innings at catcher today: ${GEHRIG}`
+      ])
+      expect(blocked(5)).deep.equals([])
+      // Disable, the default, never blocks.
+      expect(blocked('none')).deep.equals([])
+      expect(only(warnings(rows, {}), 'catcherBlocksPitching')).deep.equals([])
       // Pitching first, then catching four, breaks nothing (Berra, and
       // here a whole game of it).
-      expect(warnings([['P', 'P', 'C', 'C', 'C', 'C']], blocks)).deep.equals([])
+      expect(
+        warnings([['P', 'P', 'C', 'C', 'C', 'C']], { catcherBlocksPitching: 4 })
+      ).deep.equals([])
       // A pitch after a fourth inning caught later in the game is blocked,
       // though he pitched before it too.
       expect(
         of(
-          warnings([['C', 'C', 'P', 'C', 'C', 'P']], blocks),
+          warnings([['C', 'C', 'P', 'C', 'C', 'P']], {
+            catcherBlocksPitching: 4
+          }),
           'catcherBlocksPitching'
         )
       ).deep.equals([{ level: 'red', players: [RUTH] }])
     })
 
     it('blocks pitching here after catching in the day’s earlier games, not its later ones', function () {
-      const blocks = { catcherBlocksPitching: true }
+      const blocks = { catcherBlocksPitching: 4 as const }
       const rows: PlanCell[][] = [
         ['P', 'LF', 'LF', 'LF'],
         ['C', 'C', 'P', 'LF'],
@@ -746,10 +800,20 @@ describe('plan warnings', function () {
           'catcherBlocksPitching'
         )
       ).deep.equals([])
+      // At 3, those three do.
+      expect(
+        of(
+          warnings(
+            rows,
+            { catcherBlocksPitching: 3 },
+            { sameDay: day({ 'g:1': 3 }) }
+          ),
+          'catcherBlocksPitching'
+        )
+      ).deep.equals([{ level: 'red', players: [RUTH] }])
     })
 
     it('warns red of a pitch in a later game that this game’s catching blocks', function () {
-      const blocks = { catcherBlocksPitching: true }
       const rows: PlanCell[][] = [
         ['C', 'C', 'C', 'C'],
         ['C', 'C', 'LF', 'LF'],
@@ -760,14 +824,16 @@ describe('plan warnings', function () {
       // here makes four with three before; Gehrig's two make only two;
       // Mantle caught four before, which blocks the later pitch already,
       // and the later game's own plan says so.
-      const list = warnings(rows, blocks, {
-        sameDay: day(
-          { 'g:3': 3, 'g:4': 4 },
-          {},
-          { 'g:1': true, 'g:2': true, 'g:3': true, 'g:4': true }
+      const sameDay = day(
+        { 'g:3': 3, 'g:4': 4 },
+        { 'g:1': true, 'g:2': true, 'g:3': true, 'g:4': true }
+      )
+      expect(
+        only(
+          warnings(rows, { catcherBlocksPitching: 4 }, { sameDay }),
+          'catcherBlocksPitching'
         )
-      })
-      expect(only(list, 'catcherBlocksPitching')).deep.equals([
+      ).deep.equals([
         {
           rule: 'catcherBlocksPitching',
           level: 'red',
@@ -775,43 +841,10 @@ describe('plan warnings', function () {
           players: [RUTH, DIMAGGIO]
         }
       ])
-    })
-
-    it('blocks pitching after catching a fourth inning when that toggle is on', function () {
-      const fourth = {
-        catcherBlocksPitching: true,
-        catcherBlocksIfCatchesFourth: true
-      }
-      const rows: PlanCell[][] = [
-        ['LF', 'LF', 'LF', 'C', 'P'],
-        ['P', 'LF', 'LF', 'LF', 'LF'],
-        ['P', 'C', 'C', 'LF', 'LF'],
-        ['P', 'LF', 'LF', 'C', 'LF'],
-        ['LF', 'LF', 'LF', 'C', 'LF']
-      ]
-      // Gehrig caught the fourth inning of the day's earlier game; Berra
-      // catches this one's and pitches in a later one.
-      const sameDay = day({}, { 'g:2': true }, { 'g:5': true })
-      const list = warnings(rows, fourth, { sameDay })
-      expect(only(list, 'catcherBlocksPitching')).deep.equals([
-        {
-          rule: 'catcherBlocksPitching',
-          level: 'red',
-          message: `Pitches after 4 innings, or the 4th inning, at catcher today: ${RUTH}, ${GEHRIG}`,
-          players: [RUTH, GEHRIG]
-        },
-        {
-          rule: 'catcherBlocksPitching',
-          level: 'red',
-          message: `Pitches in a later game after 4 innings, or the 4th inning, at catcher today: ${BERRA}`,
-          players: [BERRA]
-        }
-      ])
-      // Mantle pitched before he caught the fourth inning, which is allowed.
-      // Without the toggle, a fourth inning is one inning like the others.
+      // At 5, Ruth's four do not block him; DiMaggio's four do not either.
       expect(
         only(
-          warnings(rows, { catcherBlocksPitching: true }, { sameDay }),
+          warnings(rows, { catcherBlocksPitching: 5 }, { sameDay }),
           'catcherBlocksPitching'
         )
       ).deep.equals([])
@@ -852,13 +885,9 @@ describe('plan warnings', function () {
     })
 
     it('leave a minimum whose deadline reaches them yellow, and red once planned without it', function () {
-      const stricter = {
-        stricterMinimumInnings: true,
-        minimumFullInnings: 2,
-        minimumInningsBy: 4 as const
-      }
+      const stricter = inInnings(2, 4)
       expect(
-        of(warnings(twoPlanned(), stricter), 'stricterMinimumInnings')
+        of(warnings(twoPlanned(), stricter), 'defensivePlayingTime')
       ).deep.equals([{ level: 'yellow', players: [GEHRIG, NAMES[9]] }])
       // Innings 3 and 4 planned with both on the bench.
       const planned = twoPlanned().map((cells, at): PlanCell[] => [
@@ -868,7 +897,7 @@ describe('plan warnings', function () {
         ...cells.slice(4)
       ])
       expect(
-        of(warnings(planned, stricter), 'stricterMinimumInnings')
+        of(warnings(planned, stricter), 'defensivePlayingTime')
       ).deep.equals([{ level: 'red', players: [GEHRIG, NAMES[9]] }])
     })
 
@@ -882,10 +911,7 @@ describe('plan warnings', function () {
         warnings(rows, { enforceSittingLimits: true, maxSitsPerGame: 0 })
       ).deep.equals([])
       expect(
-        of(
-          warnings(rows, { stricterMinimumInnings: true }),
-          'stricterMinimumInnings'
-        )
+        of(warnings(rows, inInnings(2)), 'defensivePlayingTime')
       ).deep.equals([{ level: 'yellow', players: [RUTH, GEHRIG, DIMAGGIO] }])
       // Planned, its blank is a sit.
       const fielded: PlanCell[][] = [['LF', 'SS'], ...rows.slice(1)]
@@ -898,20 +924,16 @@ describe('plan warnings', function () {
     })
 
     it('keep consecutive outs across them yellow', function () {
-      const consecutive: Partial<PlayingTimeRules> = {
-        mandatoryPlay: true,
-        defensiveOutsRequired: 9,
-        mustBeConsecutive: true
-      }
+      const consecutive = inOuts(9, true)
       // Ruth sits the first inning and fields the second; three and four
       // are not planned yet.
       const rows: PlanCell[][] = [
         ['', 'LF', '', ''],
         ['SS', 'SS', '', '']
       ]
-      expect(of(warnings(rows, consecutive), 'mandatoryPlay')).deep.equals([
-        { level: 'yellow', players: [RUTH, GEHRIG] }
-      ])
+      expect(
+        of(warnings(rows, consecutive), 'defensivePlayingTime')
+      ).deep.equals([{ level: 'yellow', players: [RUTH, GEHRIG] }])
       // The third planned with Ruth on the bench breaks his run.
       expect(
         of(
@@ -922,7 +944,7 @@ describe('plan warnings', function () {
             ],
             consecutive
           ),
-          'mandatoryPlay'
+          'defensivePlayingTime'
         )
       ).deep.equals([{ level: 'red', players: [RUTH] }])
     })
@@ -945,155 +967,27 @@ describe('plan warnings', function () {
     ).deep.equals([])
   })
 
-  describe('season tracking', function () {
-    it('warns yellow of a season infield share under half the team mean', function () {
-      const history = {
-        ...EMPTY_PLAN_HISTORY,
-        players: {
-          'g:1': season({ LF: 10 }),
-          'g:2': season({ SS: 10 }),
-          'g:3': season({ SS: 5, CF: 5 })
-        }
-      }
-      // Mantle has never fielded, so has no share.
-      const list = warnings(
-        [
-          ['LF', 'LF'],
-          ['SS', 'SS'],
-          ['SS', 'LF'],
-          ['', '']
-        ],
-        { trackSeasonInfieldBalance: true },
-        { history }
-      )
-      expect(only(list, 'trackSeasonInfieldBalance')).deep.equals([
-        {
-          rule: 'trackSeasonInfieldBalance',
-          level: 'yellow',
-          message: `Few infield innings this season: ${RUTH}`,
-          players: [RUTH]
-        }
-      ])
+  it('has no season tracking: a set that tracked the season warns of nothing for it', function () {
+    const tracked = asPlayingTimeRules({
+      trackSeasonInfieldBalance: true,
+      rotateLeadoff: true,
+      mustPlayNextSuggestions: true
     })
-
-    it('judges infield balance on the rule’s infield positions, as the infield minimum does', function () {
-      const balance = { trackSeasonInfieldBalance: true }
-      // Ruth is the regular catcher, Gehrig the shortstop; DiMaggio splits
-      // shortstop and left field.
-      const history = {
-        ...EMPTY_PLAN_HISTORY,
-        players: {
-          'g:1': season({ C: 10 }),
-          'g:2': season({ SS: 10 }),
-          'g:3': season({ SS: 5, LF: 5 })
-        }
-      }
-      const rows: PlanCell[][] = [
-        ['C', 'C'],
-        ['SS', 'SS'],
-        ['SS', 'LF']
-      ]
-      const flagged = (changes: Partial<PlayingTimeRules>): string[] =>
-        only(
-          warnings(rows, { ...balance, ...changes }, { history }),
-          'trackSeasonInfieldBalance'
-        ).flatMap(warning => warning.players)
-      expect(flagged({ catcherCountsAsInfield: 'always' })).deep.equals([])
-      expect(flagged({ catcherCountsAsInfield: 'off' })).deep.equals([RUTH])
-      // Large Roster counts the catcher only with more than 12 players.
-      expect(flagged({ catcherCountsAsInfield: 'largeRoster' })).deep.equals([
-        RUTH
-      ])
-      // A pitcher, with P left out of the infield.
-      const pitcher = {
-        ...history,
-        players: { ...history.players, 'g:1': season({ P: 10 }) }
-      }
-      const pitching: PlanCell[][] = [['P', 'P'], ...rows.slice(1)]
-      expect(
-        of(
-          warnings(pitching, balance, { history: pitcher }),
-          'trackSeasonInfieldBalance'
-        )
-      ).deep.equals([])
-      expect(
-        of(
-          warnings(
-            pitching,
-            {
-              ...balance,
-              infieldPositions: ['C', '1B', '2B', 'SS', '3B']
-            },
-            { history: pitcher }
-          ),
-          'trackSeasonInfieldBalance'
-        )
-      ).deep.equals([{ level: 'yellow', players: [RUTH] }])
-    })
-
-    it('warns yellow when last game’s leadoff leads off again', function () {
-      const leadoff = { rotateLeadoff: true }
-      const history = { ...EMPTY_PLAN_HISTORY, lastLeadoff: 'g:1' }
-      expect(
-        of(warnings([['LF'], ['SS']], leadoff, { history }), 'rotateLeadoff')
-      ).deep.equals([{ level: 'yellow', players: [RUTH] }])
-      expect(
-        warnings([['LF'], ['SS']], leadoff, {
-          history: { ...history, lastLeadoff: 'g:2' }
-        })
-      ).deep.equals([])
-      expect(warnings([['LF']], leadoff)).deep.equals([])
-    })
-
-    it('warns yellow when last game’s most-sat player sits the first inning', function () {
-      const next = { mustPlayNextSuggestions: true }
-      const history = {
-        ...EMPTY_PLAN_HISTORY,
-        lastGameSits: { 'g:1': 2, 'g:2': 2, 'g:3': 1 }
-      }
-      const rows: PlanCell[][] = [
-        ['', 'LF'],
-        ['LF', ''],
-        ['', 'CF']
-      ]
-      expect(warnings(rows, next, { history })).deep.equals([
-        {
-          rule: 'mustPlayNextSuggestions',
-          level: 'yellow',
-          message: `Sat the most last game, and sits in inning 1: ${RUTH}`,
-          players: [RUTH]
-        }
-      ])
-      expect(warnings(rows, next)).deep.equals([])
-    })
-
-    it('never warns red', function () {
-      const list = warnings(
-        [
-          ['', '', ''],
-          ['SS', 'SS', 'SS'],
-          ['LF', 'LF', 'LF']
-        ],
-        {
-          trackSeasonInfieldBalance: true,
-          rotateLeadoff: true,
-          mustPlayNextSuggestions: true
+    expect(tracked).deep.equals(DEFAULT_PLAYING_TIME_RULES)
+    expect(
+      planWarnings({
+        plan: {
+          enabled: true,
+          innings: 2,
+          rows: [
+            { player: PLAYERS[0], cells: ['', 'LF'] },
+            { player: PLAYERS[1], cells: ['SS', ''] }
+          ]
         },
-        {
-          history: {
-            players: { 'g:1': season({ RF: 9 }) },
-            lastLeadoff: 'g:1',
-            lastGameSits: { 'g:1': 3 }
-          }
-        }
-      )
-      expect(list.map(warning => warning.rule)).deep.equals([
-        'trackSeasonInfieldBalance',
-        'rotateLeadoff',
-        'mustPlayNextSuggestions'
-      ])
-      expect(list.every(warning => warning.level === 'yellow')).equals(true)
-    })
+        rules: tracked,
+        sameDay: EMPTY_PLAN_SAME_DAY
+      })
+    ).deep.equals([])
   })
 
   it('lists reds before yellows', function () {
@@ -1105,19 +999,16 @@ describe('plan warnings', function () {
         ['SS', '2B', '']
       ],
       {
-        mandatoryPlay: true,
+        ...inOuts(6),
         infieldInningsRequired: 2,
-        rotateLeadoff: true,
         requireMinimumInfield: true
-      },
-      { history: { ...EMPTY_PLAN_HISTORY, lastLeadoff: 'g:1' } }
+      }
     )
     expect(list.map(({ rule, level }) => `${rule} ${level}`)).deep.equals([
-      'mandatoryPlay red',
+      'defensivePlayingTime red',
       'requireMinimumInfield red',
-      'mandatoryPlay yellow',
-      'requireMinimumInfield yellow',
-      'rotateLeadoff yellow'
+      'defensivePlayingTime yellow',
+      'requireMinimumInfield yellow'
     ])
   })
 

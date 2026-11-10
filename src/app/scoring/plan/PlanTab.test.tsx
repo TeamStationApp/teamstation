@@ -6,10 +6,7 @@ import type { GestureResponderEvent, ViewProps } from 'react-native'
 
 import type { LineupPlayer } from '../../../common/api'
 import type { GamePlan, PlanCell } from '../../../common/gamePlan'
-import {
-  EMPTY_PLAN_HISTORY,
-  EMPTY_PLAN_SAME_DAY
-} from '../../../common/planWarnings'
+import { EMPTY_PLAN_SAME_DAY } from '../../../common/planWarnings'
 import {
   DEFAULT_PLAYING_TIME_RULES,
   type PlayingTimeRules
@@ -33,7 +30,6 @@ const PLAN: GamePlan = {
 }
 const NO_RULES: PlanContext = {
   rules: null,
-  history: EMPTY_PLAN_HISTORY,
   sameDay: EMPTY_PLAN_SAME_DAY,
   status: 'scheduled'
 }
@@ -798,19 +794,16 @@ describe('the game plan tab', function () {
 
   it('warns in yellow and red, and judges again as a cell changes and as a player moves', async function () {
     await mount({
-      context: ruled(
-        {
-          mandatoryPlay: true,
-          enforceSittingLimits: true,
-          rotateLeadoff: true
-        },
-        { history: { ...EMPTY_PLAN_HISTORY, lastLeadoff: 'g:102' } }
-      ),
+      context: ruled({
+        defensivePlayingTime: true,
+        measuredIn: 'outs',
+        enforceSittingLimits: true
+      }),
       plan: {
         ...PLAN,
         rows: [
           { player: LINEUP[0], cells: ['1B', '', '', '', '', ''] },
-          { player: LINEUP[1], cells: ['C', 'C', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['LF', '', '', '', '', ''] },
           { player: LINEUP[2], cells: ['CF', 'CF', '', '', '', ''] }
         ]
       }
@@ -819,17 +812,17 @@ describe('the game plan tab', function () {
       [...document.querySelectorAll('[data-testid^="Plan warning "]')].map(
         node => String(node.getAttribute('data-testid'))
       )
-    // Ruth's six outs are still reachable in the innings not planned yet:
-    // yellow; nothing red yet.
-    expect(listed()).deep.equals(['Plan warning yellow mandatoryPlay'])
-    // Planning the third inning without him is a second sit, which breaks
+    // Ruth's and Gehrig's six outs are still reachable in the innings not
+    // planned yet: yellow; nothing red yet.
+    expect(listed()).deep.equals(['Plan warning yellow defensivePlayingTime'])
+    // Planning the third inning without them is a second sit, which breaks
     // Max Sits at once, before any save.
-    await press(cell(2, 3))
+    await press(cell(3, 3))
     await key('c')
     await key('Enter')
     expect(listed()).deep.include('Plan warning red maxSitsPerGame')
     const red = byId('Plan warning red maxSitsPerGame')!
-    expect(red.textContent).includes('Babe Ruth')
+    expect(red.textContent).includes('Babe Ruth, Lou Gehrig')
     expect(red.getAttribute('aria-label')).match(/^Red warning: /)
     // Under the sheet, which Clear is above.
     const warnings = byId('Plan warnings')!
@@ -841,8 +834,7 @@ describe('the game plan tab', function () {
       byId('Plan clear')!.compareDocumentPosition(byId('Plan sheet')!) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.equals(0)
-    expect(listed()).not.include('Plan warning yellow rotateLeadoff')
-    // Gehrig led off last game: leading off again warns, softly.
+    // Gehrig moved above Ruth: the warning names him first.
     const gehrig = document.querySelector<HTMLElement>(
       '[aria-label="Reorder Lou Gehrig"]'
     )!
@@ -853,10 +845,9 @@ describe('the game plan tab', function () {
         )
       })
     await settle()
-    expect(listed()).deep.include('Plan warning yellow rotateLeadoff')
-    expect(listed().filter(id => id.includes('rotateLeadoff'))).deep.equals([
-      'Plan warning yellow rotateLeadoff'
-    ])
+    expect(byId('Plan warning red maxSitsPerGame')!.textContent).includes(
+      'Lou Gehrig, Babe Ruth'
+    )
   })
 
   it('says a team with rules has nothing to warn of, and shows nothing for one with none', async function () {
@@ -1222,7 +1213,7 @@ describe('the game plan tab', function () {
     await mount({
       plan,
       context: ruled(
-        { mandatoryPlay: true },
+        { defensivePlayingTime: true, measuredIn: 'outs' },
         { status: 'inProgress', playedInnings: 4 }
       )
     })
@@ -1235,7 +1226,7 @@ describe('the game plan tab', function () {
     await mount({
       plan,
       context: ruled(
-        { mandatoryPlay: true },
+        { defensivePlayingTime: true, measuredIn: 'outs' },
         { status: 'final', playedInnings: 4 }
       )
     })

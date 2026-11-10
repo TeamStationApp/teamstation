@@ -81,7 +81,10 @@ describe('team route frames', () => {
           kind === 'team'
             ? {
                 season: { id: 'sea1', name: 'Demo Regular' },
-                rules: { ...DEFAULT_PLAYING_TIME_RULES, mandatoryPlay: true }
+                rules: {
+                  ...DEFAULT_PLAYING_TIME_RULES,
+                  defensivePlayingTime: true
+                }
               }
             : null
       })
@@ -160,7 +163,7 @@ describe('team route frames', () => {
               {
                 playingTimeRules: {
                   ...DEFAULT_PLAYING_TIME_RULES,
-                  mandatoryPlay: true
+                  defensivePlayingTime: true
                 }
               }
             ]

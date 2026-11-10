@@ -1,5 +1,4 @@
 import { MAX_PLAN_INNINGS, PLAN_CELLS } from '../../common/gamePlan'
-import { POSITIONS } from '../../common/scoring/state'
 import { playingTimeRulesSchema } from '../groups/openApi'
 import { nullableGumboIdSchema } from '../userIdSchema'
 
@@ -56,7 +55,7 @@ const gamePlan = {
 /** One side's plan, with what its playing-time warnings are judged by. */
 const sidePlan = {
   type: 'object',
-  required: ['teamId', 'plan', 'rules', 'history', 'sameDay'],
+  required: ['teamId', 'plan', 'rules', 'sameDay'],
   properties: {
     teamId: { type: 'string' },
     plan: {
@@ -69,55 +68,17 @@ const sidePlan = {
       description:
         "The Playing Time Rules the plan is judged by: the team's own; else those of the game's season; else those of the latest-starting managing season with rules; else null"
     },
-    history: {
-      type: 'object',
-      description:
-        "The team's plans in its earlier games of this game's season, by player key (`g:<gumboId>`, or `n:<fullName>#<jersey>` for a player made up at the field)",
-      required: ['players', 'lastLeadoff', 'lastGameSits'],
-      properties: {
-        players: {
-          type: 'object',
-          additionalProperties: {
-            type: 'object',
-            required: ['positions', 'sits'],
-            properties: {
-              positions: {
-                type: 'object',
-                description:
-                  'Innings at each field position; the Playing Time Rules say which are infield',
-                required: POSITIONS,
-                properties: Object.fromEntries(
-                  POSITIONS.map(position => [
-                    position,
-                    { type: 'integer', minimum: 0 }
-                  ])
-                )
-              },
-              sits: { type: 'integer', minimum: 0 }
-            }
-          }
-        },
-        lastLeadoff: {
-          type: ['string', 'null'],
-          description: "The previous game's first row"
-        },
-        lastGameSits: counts("Each player's sits in the previous game")
-      }
-    },
     sameDay: {
       type: 'object',
       description:
-        "The team's plans in its other games on this game's date, in the game's time zone, by player key, split at this game (a game at the same start time is earlier when its id sorts first)",
+        "The team's plans in its other games on this game's date, in the game's time zone, by player key (`g:<gumboId>`, or `n:<fullName>#<jersey>` for a player made up at the field), split at this game (a game at the same start time is earlier when its id sorts first)",
       required: ['before', 'laterPitched'],
       properties: {
         before: {
           type: 'object',
           description: 'The games that start before this one',
-          required: ['catcherInnings', 'caughtFourth'],
-          properties: {
-            catcherInnings: counts('Innings caught'),
-            caughtFourth: flags('Caught a fourth inning')
-          }
+          required: ['catcherInnings'],
+          properties: { catcherInnings: counts('Innings caught') }
         },
         laterPitched: flags('Pitches in a game that starts after this one')
       }

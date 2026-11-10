@@ -19,7 +19,6 @@ import {
   planHasPositions,
   plannedInnings,
   planPlayerKey,
-  planRowCounts,
   removeInning
 } from './gamePlan'
 import { type Position, POSITIONS } from './scoring/state'
@@ -296,29 +295,6 @@ describe('game plan model', function () {
         ])
       )
     ).deep.equals([true, false, false, true, false])
-  })
-
-  it('counts a row’s innings at each field position, and its sits in planned innings', function () {
-    const planned = [...Array<boolean>(9).fill(true), false]
-    expect(
-      planRowCounts(
-        ['P', 'C', 'SS', 'LF', 'RF', 'SS', '', 'DH', 'EH', ''],
-        planned
-      )
-    ).deep.equals({
-      positions: {
-        P: 1,
-        C: 1,
-        '1B': 0,
-        '2B': 0,
-        SS: 2,
-        '3B': 0,
-        LF: 1,
-        CF: 0,
-        RF: 1
-      },
-      sits: 1
-    })
   })
 
   describe('inningDefense', function () {

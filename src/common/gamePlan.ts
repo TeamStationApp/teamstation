@@ -307,32 +307,6 @@ export function plannedInnings(
 }
 
 /**
- * A row's innings at each field position, and its sits, as a season's
- * history counts them: a sit is a blank in a planned inning (`planned`, as
- * `plannedInnings` gives it). DH, EH and unplanned innings count in neither.
- * Which positions are infield is the Playing Time Rules' choice, so the
- * warnings make it.
- */
-export interface PlanRowCounts {
-  positions: Record<Position, number>
-  sits: number
-}
-
-export function planRowCounts(
-  cells: readonly PlanCell[],
-  planned: readonly boolean[]
-): PlanRowCounts {
-  const positions = Object.fromEntries(
-    POSITIONS.map(position => [position, 0])
-  ) as Record<Position, number>
-  for (const cell of cells) if (isPosition(cell)) positions[cell]++
-  return {
-    positions,
-    sits: cells.filter((cell, at) => cell === '' && planned[at]).length
-  }
-}
-
-/**
  * The defence the plan's column for `inning` (from 1) gives the side, or
  * null when there is no such column, it is not planned (none of the side's
  * batters has a field position in it), or it changes nothing. Each batter is

@@ -966,7 +966,7 @@ describe('merging two rows that are one team', function () {
     if (db == null) this.skip()
     const strict: PlayingTimeRules = {
       ...DEFAULT_PLAYING_TIME_RULES,
-      mandatoryPlay: true
+      defensivePlayingTime: true
     }
     const loose: PlayingTimeRules = {
       ...DEFAULT_PLAYING_TIME_RULES,

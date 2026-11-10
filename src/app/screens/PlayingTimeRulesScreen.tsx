@@ -1,32 +1,33 @@
 import React, { useEffect, useState } from 'react'
-import { Pressable, Text, View } from 'react-native'
+import { Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import {
-  CATCHER_INFIELD_CHOICES,
+  CATCHER_COUNTS_AS_CHOICES,
   CATCHER_INNING_CHOICES,
+  type CatcherInnings,
   DEFAULT_PLAYING_TIME_RULES,
   DEFENSIVE_OUTS,
-  INFIELD_POSITIONS,
   INNING_DEADLINES,
   type InningDeadline,
+  MEASURED_IN_CHOICES,
   PARTIAL_INNING_CHOICES,
   PLAYING_TIME_RANGES,
   PLAYING_TIME_RULE_KEYS,
-  type PlayingTimeRuleKey,
+  type PlayingTimeRowKey,
+  type PlayingTimeRowValues,
   type PlayingTimeRules,
   ROTATE_EVERY_CHOICES,
   ruleRowEnabled,
-  SHORTENED_GAME_CHOICES,
-  SITTING_ORDER_CHOICES
+  ruleValue,
+  SITTING_ORDER_CHOICES,
+  withRuleValue
 } from '../../common/playingTimeRules'
 import type { GroupDetail } from '../../common/publicGroups'
-import { Button, Icon, ListCard, Screen, SectionHeader } from '../components'
+import { Button, ListCard, Screen, SectionHeader } from '../components'
 import { CancelAction } from '../components/CancelAction'
-import { CheckRow } from '../components/CheckRow'
 import { DangerText } from '../components/DangerText'
 import { SettingChoiceRow } from '../components/settings/SettingChoiceRow'
-import { GATED_OPACITY } from '../components/settings/settingRowStyles'
 import { SettingSegmentRow } from '../components/settings/SettingSegmentRow'
 import { SettingStepperRow } from '../components/settings/SettingStepperRow'
 import { SettingToggleRow } from '../components/settings/SettingToggleRow'
@@ -35,42 +36,48 @@ import { useTitleHandoff } from '../components/useTitleHandoff'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
-/** The rules whose value is a value of this type. */
+/** The rows whose value is a value of this type. */
 type KeysOf<Value> = {
-  [Key in PlayingTimeRuleKey]: PlayingTimeRules[Key] extends Value ? Key : never
-}[PlayingTimeRuleKey]
+  [Key in PlayingTimeRowKey]: PlayingTimeRowValues[Key] extends Value
+    ? Key
+    : never
+}[PlayingTimeRowKey]
 
 /** Every whole number from `min` to `max`. */
 const run = ({ min, max }: { min: number; max: number }): number[] =>
   Array.from({ length: max - min + 1 }, (unused, i) => min + i)
 
 const deadlineLabel = (deadline: InningDeadline): string =>
-  deadline === 'end'
+  deadline === 'none'
     ? lstrings.playing_time_by_end
     : lstrings[`playing_time_by_${deadline}`]
 const DEADLINES = INNING_DEADLINES.map(id => ({ id, label: deadlineLabel(id) }))
 const OUTS = DEFENSIVE_OUTS.map(id => ({ id, label: String(id) }))
-const SHORTENED_LABELS: Record<
-  (typeof SHORTENED_GAME_CHOICES)[number],
-  string
-> = {
-  always: lstrings.playing_time_always,
-  localOption: lstrings.playing_time_local_option,
-  never: lstrings.playing_time_never
-}
+const MEASURED_IN_LABELS: Record<(typeof MEASURED_IN_CHOICES)[number], string> =
+  {
+    innings: lstrings.playing_time_innings,
+    outs: lstrings.playing_time_outs
+  }
 const PARTIAL_LABELS: Record<(typeof PARTIAL_INNING_CHOICES)[number], string> =
   {
     fullOnly: lstrings.playing_time_full_only,
     anyAppearance: lstrings.playing_time_any_appearance
   }
-const CATCHER_INFIELD_LABELS: Record<
-  (typeof CATCHER_INFIELD_CHOICES)[number],
+const CATCHER_COUNTS_AS_LABELS: Record<
+  (typeof CATCHER_COUNTS_AS_CHOICES)[number],
   string
 > = {
-  off: lstrings.playing_time_off,
-  always: lstrings.playing_time_always,
-  largeRoster: lstrings.playing_time_large_roster_only
+  infield: lstrings.playing_time_infield_choice,
+  outfield: lstrings.playing_time_outfield_choice
 }
+/** 3, 4, 5, and `none` named as the row says. */
+const catcherInnings = (
+  none: string
+): Array<{ id: CatcherInnings; label: string }> =>
+  CATCHER_INNING_CHOICES.map(id => ({
+    id,
+    label: id === 'none' ? none : String(id)
+  }))
 const SITTING_ORDER_LABELS: Record<
   (typeof SITTING_ORDER_CHOICES)[number],
   string
@@ -129,7 +136,6 @@ export function PlayingTimeRulesScreen({
     DEFAULT_PLAYING_TIME_RULES
   )
   const [override, setOverride] = useState(false)
-  const [tracking, setTracking] = useState(false)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const confirm = useConfirmedAction(client, `${kind}:${id}`)
@@ -166,13 +172,13 @@ export function PlayingTimeRulesScreen({
     loaded != null &&
     ((season != null && override !== (loaded.own != null)) ||
       (editable && !sameRules(draft, loaded.start)))
-  const enabled = (key: PlayingTimeRuleKey): boolean =>
+  const enabled = (key: PlayingTimeRowKey): boolean =>
     editable && ruleRowEnabled(shown, key)
-  const set = <Key extends PlayingTimeRuleKey>(
+  const set = <Key extends PlayingTimeRowKey>(
     key: Key,
-    value: PlayingTimeRules[Key]
+    value: PlayingTimeRowValues[Key]
   ): void => {
-    setDraft(rules => ({ ...rules, [key]: value }))
+    setDraft(rules => withRuleValue(rules, key, value))
   }
   const toggle = (
     key: KeysOf<boolean>,
@@ -183,7 +189,7 @@ export function PlayingTimeRulesScreen({
       key={key}
       label={label}
       subtitle={subtitle}
-      value={shown[key]}
+      value={ruleValue(shown, key)}
       disabled={!enabled(key)}
       onChange={value => {
         set(key, value)
@@ -193,14 +199,14 @@ export function PlayingTimeRulesScreen({
   const stepper = <Key extends KeysOf<string | number>>(
     key: Key,
     label: string,
-    steps: ReadonlyArray<PlayingTimeRules[Key]>,
-    format?: (value: PlayingTimeRules[Key]) => string
+    steps: ReadonlyArray<PlayingTimeRowValues[Key]>,
+    format?: (value: PlayingTimeRowValues[Key]) => string
   ): React.ReactElement => (
     <SettingStepperRow
       key={key}
       label={label}
       steps={steps}
-      value={shown[key]}
+      value={ruleValue(shown, key)}
       format={format}
       disabled={!enabled(key)}
       onChange={value => {
@@ -211,13 +217,13 @@ export function PlayingTimeRulesScreen({
   const segment = <Key extends KeysOf<string | number>>(
     key: Key,
     label: string,
-    options: ReadonlyArray<{ id: PlayingTimeRules[Key]; label: string }>
+    options: ReadonlyArray<{ id: PlayingTimeRowValues[Key]; label: string }>
   ): React.ReactElement => (
     <SettingSegmentRow
       key={key}
       label={label}
       options={options}
-      selected={shown[key]}
+      selected={ruleValue(shown, key)}
       disabled={!enabled(key)}
       onSelect={value => {
         set(key, value)
@@ -227,13 +233,13 @@ export function PlayingTimeRulesScreen({
   const choice = <Key extends KeysOf<string | number>>(
     key: Key,
     label: string,
-    options: ReadonlyArray<{ id: PlayingTimeRules[Key]; label: string }>
+    options: ReadonlyArray<{ id: PlayingTimeRowValues[Key]; label: string }>
   ): React.ReactElement => (
     <SettingChoiceRow
       key={key}
       label={label}
       options={options}
-      selected={shown[key]}
+      selected={ruleValue(shown, key)}
       disabled={!enabled(key)}
       onSelect={value => {
         set(key, value)
@@ -251,7 +257,6 @@ export function PlayingTimeRulesScreen({
       <ListCard>{rows}</ListCard>
     </View>
   )
-  const infield = enabled('infieldPositions')
   const save = async (): Promise<void> => {
     if (loaded == null || saving) return
     setSaving(true)
@@ -327,60 +332,55 @@ export function PlayingTimeRulesScreen({
             )}
             {group(lstrings.playing_time_group_mandatory, [
               toggle(
-                'mandatoryPlay',
+                'defensivePlayingTime',
                 lstrings.playing_time_mandatory_play,
                 lstrings.playing_time_mandatory_play_detail
               ),
               segment(
-                'defensiveOutsRequired',
+                'measuredIn',
+                lstrings.playing_time_measured_in,
+                choices(MEASURED_IN_CHOICES, MEASURED_IN_LABELS)
+              ),
+              segment(
+                'outs.required',
                 lstrings.playing_time_outs_required,
                 OUTS
               ),
-              toggle('mustBeConsecutive', lstrings.playing_time_consecutive),
+              toggle('outs.consecutive', lstrings.playing_time_consecutive),
               toggle(
-                'reducedForLargeRosters',
+                'largeRoster.enabled',
                 lstrings.playing_time_large_rosters
               ),
               stepper(
-                'largeRosterPlayers',
+                'largeRoster.players',
                 sprintf(
                   lstrings.playing_time_large_roster_players,
-                  shown.largeRosterPlayers
+                  shown.largeRoster.players
                 ),
                 run(PLAYING_TIME_RANGES.largeRosterPlayers)
               ),
               segment(
-                'largeRosterOuts',
+                'largeRoster.outs.required',
                 sprintf(
                   lstrings.playing_time_large_roster_outs,
-                  shown.largeRosterOuts
+                  shown.largeRoster.outs.required
                 ),
                 OUTS
-              ),
-              segment(
-                'applyInShortenedGames',
-                lstrings.playing_time_shortened,
-                choices(SHORTENED_GAME_CHOICES, SHORTENED_LABELS)
               )
             ])}
             {group(lstrings.playing_time_group_total, [
-              toggle(
-                'stricterMinimumInnings',
-                lstrings.playing_time_stricter,
-                lstrings.playing_time_stricter_detail
-              ),
               stepper(
-                'minimumFullInnings',
+                'innings.minimum',
                 lstrings.playing_time_minimum_innings,
-                run(PLAYING_TIME_RANGES.minimumFullInnings)
+                run(PLAYING_TIME_RANGES.minimumInnings)
               ),
               choice(
-                'minimumInningsBy',
+                'innings.completeBy',
                 lstrings.playing_time_minimum_by,
                 DEADLINES
               ),
               segment(
-                'countPartialInnings',
+                'innings.countPartial',
                 lstrings.playing_time_partial,
                 choices(PARTIAL_INNING_CHOICES, PARTIAL_LABELS)
               )
@@ -392,41 +392,14 @@ export function PlayingTimeRulesScreen({
                 lstrings.playing_time_infield_innings,
                 run(PLAYING_TIME_RANGES.infieldInningsRequired)
               ),
-              <View
-                key="infieldPositions"
-                accessibilityState={{ disabled: !infield }}
-                aria-disabled={!infield}
-                style={[styles.positions, !infield && styles.gated]}
-              >
-                <Text style={[styles.label, styles.inset]}>
-                  {lstrings.playing_time_infield_positions}
-                </Text>
-                {INFIELD_POSITIONS.map(position => {
-                  const checked = shown.infieldPositions.includes(position)
-                  return (
-                    <CheckRow
-                      key={position}
-                      label={position}
-                      checked={checked}
-                      disabled={!infield}
-                      onToggle={() => {
-                        set(
-                          'infieldPositions',
-                          INFIELD_POSITIONS.filter(one =>
-                            one === position
-                              ? !checked
-                              : shown.infieldPositions.includes(one)
-                          )
-                        )
-                      }}
-                    />
-                  )
-                })}
-              </View>,
-              choice(
-                'catcherCountsAsInfield',
-                lstrings.playing_time_catcher_infield,
-                choices(CATCHER_INFIELD_CHOICES, CATCHER_INFIELD_LABELS)
+              toggle(
+                'pitcherCountsAsInfield',
+                lstrings.playing_time_pitcher_infield
+              ),
+              segment(
+                'catcherCountsAs',
+                lstrings.playing_time_catcher_counts_as,
+                choices(CATCHER_COUNTS_AS_CHOICES, CATCHER_COUNTS_AS_LABELS)
               ),
               choice('infieldBy', lstrings.playing_time_infield_by, DEADLINES),
               toggle('requireMinimumOutfield', lstrings.playing_time_outfield),
@@ -479,10 +452,6 @@ export function PlayingTimeRulesScreen({
                     ? lstrings.playing_time_unlimited
                     : String(value)
               ),
-              toggle(
-                'mustPlayInfieldAndOutfield',
-                lstrings.playing_time_both_fields
-              ),
               stepper(
                 'rotateEvery',
                 lstrings.playing_time_rotate_every,
@@ -492,23 +461,15 @@ export function PlayingTimeRulesScreen({
               )
             ])}
             {group(lstrings.playing_time_group_battery, [
-              toggle('catcherInningLimit', lstrings.playing_time_catcher_limit),
-              stepper(
+              segment(
                 'catcherMaxInnings',
-                sprintf(
-                  lstrings.playing_time_catcher_innings,
-                  shown.catcherMaxInnings
-                ),
-                CATCHER_INNING_CHOICES
+                lstrings.playing_time_catcher_limit,
+                catcherInnings(lstrings.playing_time_none)
               ),
-              toggle(
+              segment(
                 'catcherBlocksPitching',
                 lstrings.playing_time_catcher_pitching,
-                lstrings.playing_time_catcher_pitching_detail
-              ),
-              toggle(
-                'catcherBlocksIfCatchesFourth',
-                lstrings.playing_time_catcher_fourth
+                catcherInnings(lstrings.playing_time_disable)
               ),
               toggle(
                 'startingBatteryExemptFromMinimums',
@@ -523,44 +484,6 @@ export function PlayingTimeRulesScreen({
                 lstrings.playing_time_departures
               )
             ])}
-            <ListCard>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={lstrings.playing_time_group_season}
-                accessibilityState={{ expanded: tracking }}
-                aria-expanded={tracking}
-                onPress={() => {
-                  setTracking(open => !open)
-                }}
-                style={({ pressed }) => [
-                  styles.expander,
-                  pressed && styles.pressed
-                ]}
-              >
-                <View style={styles.expanderText}>
-                  <Text style={styles.label}>
-                    {lstrings.playing_time_group_season}
-                  </Text>
-                  <Text style={styles.subtitle}>
-                    {lstrings.playing_time_season_note}
-                  </Text>
-                </View>
-                <View style={tracking && styles.turned}>
-                  <Icon name="chevron_right" />
-                </View>
-              </Pressable>
-              {tracking && [
-                toggle(
-                  'trackSeasonInfieldBalance',
-                  lstrings.playing_time_infield_balance
-                ),
-                toggle('rotateLeadoff', lstrings.playing_time_rotate_leadoff),
-                toggle(
-                  'mustPlayNextSuggestions',
-                  lstrings.playing_time_must_play_next
-                )
-              ]}
-            </ListCard>
             <Text style={styles.hint}>
               {lstrings.playing_time_future_games}
             </Text>
@@ -609,29 +532,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.875)
   },
-  label: {
-    color: theme.primaryTextColor,
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
-    fontWeight: '600' as const
-  },
-  positions: {
-    paddingTop: theme.rem(0.75),
-    paddingBottom: theme.rem(0.25),
-    gap: theme.rem(0.25)
-  },
-  inset: { paddingHorizontal: theme.rem(theme.cardContentInsetRem) },
-  gated: { opacity: GATED_OPACITY },
-  expander: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    gap: theme.rem(theme.spaceMdRem),
-    minHeight: theme.rem(3),
-    padding: theme.rem(theme.cardContentInsetRem)
-  },
-  expanderText: { flex: 1, gap: theme.rem(0.125) },
-  turned: { transform: [{ rotate: '90deg' }] },
-  pressed: { backgroundColor: theme.highlightRowActiveBackground },
   hint: {
     color: theme.secondaryTextColor,
     fontFamily: theme.regularTextFont,

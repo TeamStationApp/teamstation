@@ -5,13 +5,10 @@ import {
   asGamePlan,
   type GamePlan,
   planHasPositions,
-  plannedInnings,
-  planPlayerKey,
-  planRowCounts
+  planPlayerKey
 } from '../../common/gamePlan'
-import type { PlanHistory, PlanSameDay } from '../../common/planWarnings'
+import type { PlanSameDay } from '../../common/planWarnings'
 import type { PlayingTimeRules } from '../../common/playingTimeRules'
-import { POSITIONS } from '../../common/scoring/state'
 import { atomic } from '../db/atomic'
 import type { Database, GamePlansTable, GamesTable } from '../db/database'
 import {
@@ -99,74 +96,13 @@ const playedPlan = (plan: GamePlan, reached: number | null): GamePlan =>
       }
 
 /**
- * The team's plans in its earlier games of this game's season, those that
- * started before it and were not cancelled, each cut to the innings its
- * game reached (`playedPlan`): each player's innings at each field position
- * and his sits across them (which positions are infield is the rules' to
- * say, so the warnings decide), and from the latest of them with a row, its
- * leadoff and each player's sits. A game in no season has none.
- */
-async function historyFor(
-  db: Kysely<Database>,
-  game: PlanGame,
-  teamId: string
-): Promise<PlanHistory> {
-  const history: PlanHistory = {
-    players: {},
-    lastLeadoff: null,
-    lastGameSits: {}
-  }
-  if (game.season_id == null) return history
-  const earlier = await db
-    .selectFrom('game_plans')
-    .innerJoin('games', 'games.id', 'game_plans.game_id')
-    .select([
-      'game_plans.enabled',
-      'game_plans.innings',
-      'game_plans.rows',
-      reachedInnings
-    ])
-    .where('game_plans.team_id', '=', teamId)
-    .where('games.season_id', '=', game.season_id)
-    .where('games.start_at', '<', game.start_at)
-    .where('games.status', '!=', 'cancelled')
-    .orderBy('games.start_at', 'desc')
-    .orderBy('games.id', 'desc')
-    .execute()
-  let last: GamePlan | undefined
-  for (const stored of earlier) {
-    const plan = playedPlan(planOf(stored), stored.reached)
-    if (last == null && plan.rows.length > 0) last = plan
-    const planned = plannedInnings(plan)
-    for (const row of plan.rows) {
-      const counts = planRowCounts(row.cells, planned)
-      const held = (history.players[planPlayerKey(row.player)] ??=
-        planRowCounts([], []))
-      for (const position of POSITIONS)
-        held.positions[position] += counts.positions[position]
-      held.sits += counts.sits
-    }
-  }
-  if (last != null) {
-    history.lastLeadoff = planPlayerKey(last.rows[0].player)
-    const planned = plannedInnings(last)
-    for (const row of last.rows)
-      history.lastGameSits[planPlayerKey(row.player)] = planRowCounts(
-        row.cells,
-        planned
-      ).sits
-  }
-  return history
-}
-
-/**
  * The team's plans in its other games on this game's calendar date, read in
  * this game's time zone, whatever their season, cancelled games aside, each
  * cut to the innings its game reached (`playedPlan`). A game starts before
  * this one when its `start_at` is earlier, or, at the same `start_at`, when
  * its id sorts first. Of the games before it: each player's catcher innings
- * across them, and whether he catches the fourth inning of any; of the games
- * after it: whether he pitches in any. Only players who do are named.
+ * across them; of the games after it: whether he pitches in any. Only
+ * players who do are named.
  */
 async function sameDayFor(
   db: Kysely<Database>,
@@ -174,7 +110,7 @@ async function sameDayFor(
   teamId: string
 ): Promise<PlanSameDay> {
   const sameDay: PlanSameDay = {
-    before: { catcherInnings: {}, caughtFourth: {} },
+    before: { catcherInnings: {} },
     laterPitched: {}
   }
   const others = await db
@@ -201,7 +137,7 @@ async function sameDayFor(
     const at = stored.start_at.getTime()
     // At one start time, the id first by code unit starts first.
     const before = at < start || (at === start && stored.id < game.id)
-    const { catcherInnings, caughtFourth } = sameDay.before
+    const { catcherInnings } = sameDay.before
     for (const row of playedPlan(planOf(stored), stored.reached).rows) {
       const key = planPlayerKey(row.player)
       if (!before) {
@@ -210,7 +146,6 @@ async function sameDayFor(
       }
       const caught = row.cells.filter(cell => cell === 'C').length
       if (caught > 0) catcherInnings[key] = (catcherInnings[key] ?? 0) + caught
-      if (row.cells[3] === 'C') caughtFourth[key] = true
     }
   }
   return sameDay
@@ -218,8 +153,7 @@ async function sameDayFor(
 
 /**
  * One team's side of a game's plans: its stored plan, or null before one is
- * saved, with the rules, season history and same-day load its warnings are
- * judged by.
+ * saved, with the rules and same-day load its warnings are judged by.
  */
 export async function loadSidePlan(
   db: Kysely<Database>,
@@ -227,7 +161,7 @@ export async function loadSidePlan(
   teamId: string
 ): Promise<SidePlan> {
   // Each read is its own, so they go out together.
-  const [stored, rules, history, sameDay] = await Promise.all([
+  const [stored, rules, sameDay] = await Promise.all([
     db
       .selectFrom('game_plans')
       .select(['enabled', 'innings', 'rows'])
@@ -235,14 +169,12 @@ export async function loadSidePlan(
       .where('team_id', '=', teamId)
       .executeTakeFirst(),
     rulesFor(db, game, teamId),
-    historyFor(db, game, teamId),
     sameDayFor(db, game, teamId)
   ])
   return {
     teamId,
     plan: stored == null ? null : planOf(stored),
     rules,
-    history,
     sameDay
   }
 }

@@ -212,9 +212,9 @@ describe('Playing Time Rules', function () {
     expect(new URL(session.page.url()).pathname).equals(
       `/groups/season/${f.seasonA}/settings/playing-time`
     )
-    expect(await grayed()).includes('Must Be Consecutive')
+    expect(await grayed()).includes('Reduced Requirement for Large Rosters')
     await toggle('Mandatory Play')
-    expect(await grayed()).not.includes('Must Be Consecutive')
+    expect(await grayed()).not.includes('Reduced Requirement for Large Rosters')
     // The short pickers' labels sit whole on their pill's straight run.
     const pills = await session.page.$$eval('[role="radio"]', nodes =>
       nodes.map(node => {
@@ -229,11 +229,14 @@ describe('Playing Time Rules', function () {
       })
     )
     expect(pills.map(pill => pill.text)).includes.members([
-      'Always',
-      'Local Option',
-      'Never',
+      'Innings',
+      'Defensive Outs',
       'Full only',
-      'Any appearance'
+      'Any appearance',
+      'Infield',
+      'Outfield',
+      'None',
+      'Disable'
     ])
     for (const pill of pills) {
       expect(pill.fits, String(pill.text)).equals(true)
@@ -243,7 +246,7 @@ describe('Playing Time Rules', function () {
     await save('SEASON DETAILS')
     await contains(session.page, 'Season rules')
     expect((await read('season', f.seasonA)).playingTimeRules).deep.include({
-      mandatoryPlay: true
+      defensivePlayingTime: true
     })
 
     // The team's administrator sees the season's values, grayed out.
@@ -255,7 +258,7 @@ describe('Playing Time Rules', function () {
     const allGrayed = await grayed()
     expect(allGrayed).includes.members([
       'Mandatory Play',
-      'Must Be Consecutive',
+      'Reduced Requirement for Large Rosters',
       'Enforce Sitting Limits',
       'Continuous Batting Order'
     ])
@@ -275,7 +278,7 @@ describe('Playing Time Rules', function () {
     const editable = await grayed()
     for (const row of [
       'Mandatory Play',
-      'Must Be Consecutive',
+      'Reduced Requirement for Large Rosters',
       'Enforce Sitting Limits',
       'Continuous Batting Order'
     ])
@@ -292,7 +295,7 @@ describe('Playing Time Rules', function () {
     await contains(session.page, 'Overridden for this team')
     const own = (await read('team', f.teamA)).playingTimeRules
     expect(own).deep.include({
-      mandatoryPlay: true,
+      defensivePlayingTime: true,
       enforceSittingLimits: true,
       maxSitsPerGame: 2
     })
@@ -303,7 +306,9 @@ describe('Playing Time Rules', function () {
     await toggle('Mandatory Play')
     await save('SEASON DETAILS')
     const team = await read('team', f.teamA)
-    expect(team.seasonPlayingTimeRules?.rules.mandatoryPlay).equals(false)
+    expect(team.seasonPlayingTimeRules?.rules.defensivePlayingTime).equals(
+      false
+    )
     expect(team.playingTimeRules).deep.equals(own)
     await open(`/groups/team/${f.teamA}/settings`, 'TEAM DETAILS')
     await openRules('Overridden for this team', teamSubtitle)

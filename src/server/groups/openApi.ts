@@ -1,16 +1,14 @@
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import {
-  CATCHER_INFIELD_CHOICES,
+  CATCHER_COUNTS_AS_CHOICES,
   CATCHER_INNING_CHOICES,
   DEFAULT_PLAYING_TIME_RULES,
   DEFENSIVE_OUTS,
-  INFIELD_POSITIONS,
   INNING_DEADLINES,
+  MEASURED_IN_CHOICES,
   PARTIAL_INNING_CHOICES,
   PLAYING_TIME_RANGES,
-  PLAYING_TIME_RULE_KEYS,
   ROTATE_EVERY_CHOICES,
-  SHORTENED_GAME_CHOICES,
   SITTING_ORDER_CHOICES
 } from '../../common/playingTimeRules'
 import { userIdSchema } from '../userIdSchema'
@@ -45,46 +43,60 @@ const action = {
 const retryKey = { type: 'string', minLength: 8, maxLength: 120 }
 /** A season's or team's Playing Time Rules, each rule with its default. */
 export const playingTimeRulesSchema = (() => {
+  // By the rule's name, a large roster's block's the same as the main one's.
   const choices: Record<string, readonly unknown[]> = {
-    defensiveOutsRequired: DEFENSIVE_OUTS,
-    largeRosterOuts: DEFENSIVE_OUTS,
-    applyInShortenedGames: SHORTENED_GAME_CHOICES,
-    minimumInningsBy: INNING_DEADLINES,
-    countPartialInnings: PARTIAL_INNING_CHOICES,
-    catcherCountsAsInfield: CATCHER_INFIELD_CHOICES,
+    measuredIn: MEASURED_IN_CHOICES,
+    required: DEFENSIVE_OUTS,
+    completeBy: INNING_DEADLINES,
+    countPartial: PARTIAL_INNING_CHOICES,
+    catcherCountsAs: CATCHER_COUNTS_AS_CHOICES,
     infieldBy: INNING_DEADLINES,
     outfieldBy: INNING_DEADLINES,
     equalSittingOrder: SITTING_ORDER_CHOICES,
     rotateEvery: ROTATE_EVERY_CHOICES,
-    catcherMaxInnings: CATCHER_INNING_CHOICES
+    catcherMaxInnings: CATCHER_INNING_CHOICES,
+    catcherBlocksPitching: CATCHER_INNING_CHOICES
   }
-  const ranges: Record<string, { min: number; max: number }> =
-    PLAYING_TIME_RANGES
+  const ranges: Record<string, { min: number; max: number }> = {
+    ...PLAYING_TIME_RANGES,
+    players: PLAYING_TIME_RANGES.largeRosterPlayers,
+    minimum: PLAYING_TIME_RANGES.minimumInnings
+  }
   const integer = (key: string): Record<string, unknown> => ({
     type: 'integer',
     minimum: ranges[key].min,
     maximum: ranges[key].max
   })
-  const properties: Record<string, unknown> = {}
-  for (const key of PLAYING_TIME_RULE_KEYS) {
-    const schema =
-      key === 'infieldPositions'
-        ? { type: 'array', items: { type: 'string', enum: INFIELD_POSITIONS } }
-        : key === 'maxInningsPerPosition'
-          ? { oneOf: [integer(key), { type: 'string', enum: ['unlimited'] }] }
-          : choices[key] != null
-            ? { enum: choices[key] }
-            : ranges[key] != null
-              ? integer(key)
-              : { type: 'boolean' }
-    properties[key] = { ...schema, default: DEFAULT_PLAYING_TIME_RULES[key] }
-  }
+  /** Each key of `defaults`, a block as an object of its own. */
+  const properties = (defaults: object): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(defaults).map(([key, value]: [string, unknown]) => [
+        key,
+        typeof value === 'object' && value != null
+          ? { type: 'object', properties: properties(value), default: value }
+          : {
+              ...(key === 'maxInningsPerPosition'
+                ? {
+                    oneOf: [
+                      integer(key),
+                      { type: 'string', enum: ['unlimited'] }
+                    ]
+                  }
+                : choices[key] != null
+                  ? { enum: choices[key] }
+                  : ranges[key] != null
+                    ? integer(key)
+                    : { type: 'boolean' }),
+              default: value
+            }
+      ])
+    )
   return {
     type: 'object',
     nullable: true,
     description:
-      'The whole set. A missing rule takes its default; a value out of range or not one of its choices is a 400 naming the rule. Null is none on a season, and on a team follows its managing season again. A team stores a full copy, so a later change to the season never reaches it. A league answers 400.',
-    properties
+      "The whole set. A missing rule takes its default, and a missing block its defaults; a value out of range or not one of its choices is a 400 naming the rule. Null is none on a season, and on a team follows its managing season again. A team stores a full copy, so a later change to the season never reaches it. A league answers 400. A set in the first version's shape (no `measuredIn`, and one of that version's keys such as `mandatoryPlay`) is read into this one. 'none' is no deadline, no catcher limit, or (`catcherBlocksPitching`) no block on pitching.",
+    properties: properties(DEFAULT_PLAYING_TIME_RULES)
   }
 })()
 /** A parent, competition, personal-role or promotion invitation. */

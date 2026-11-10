@@ -17,8 +17,8 @@ type PlannedGame = PlanGame & { home_team_id: string; away_team_id: string }
 /**
  * A coach's per-inning game plans. Each side's plan is read and saved by
  * whoever may save that side's lineup (`lineupTeams`: the team's head coach,
- * or a scorekeeper of either team), and answered with the Playing Time Rules,
- * season history and same-day load its warnings are judged by. A plan is on
+ * or a scorekeeper of either team), and answered with the Playing Time Rules
+ * and same-day load its warnings are judged by. A plan is on
  * when it holds a position: the `enabled` a save sends is not read. A save is
  * announced on the game socket as a `plans` change naming only the team.
  */

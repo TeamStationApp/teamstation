@@ -100,7 +100,7 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
-import type { PlanHistory, PlanSameDay } from './planWarnings'
+import type { PlanSameDay } from './planWarnings'
 import {
   asPlayerNamePrivacy,
   type PlayerNamePrivacy
@@ -3553,14 +3553,13 @@ export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
  * One side's game plan, as `GET /games/:gameId/plans` answers it to whoever
  * may save that side's lineup: the plan (null before one is saved), the
  * Playing Time Rules its warnings are judged by (null for none), and the
- * team's earlier plans this season and other games that day, by
- * `planPlayerKey`.
+ * team's other games that day, by `planPlayerKey`. An older server's
+ * `history` is ignored.
  */
 export interface SidePlan {
   teamId: string
   plan: GamePlan | null
   rules: PlayingTimeRules | null
-  history: PlanHistory
   sameDay: PlanSameDay
 }
 
@@ -3570,25 +3569,8 @@ export interface GamePlansResponse {
   home: SidePlan | null
 }
 
-/** A count at every field position: one left out is refused. */
-const asPositionCounts = asObject(
-  Object.fromEntries(POSITIONS.map(position => [position, asNumber])) as Record<
-    Position,
-    Cleaner<number>
-  >
-)
-
-const asPlanHistory: Cleaner<PlanHistory> = asObject({
-  players: asObject(asObject({ positions: asPositionCounts, sits: asNumber })),
-  lastLeadoff: asNullable(asString),
-  lastGameSits: asObject(asNumber)
-})
-
 const asPlanSameDay: Cleaner<PlanSameDay> = asObject({
-  before: asObject({
-    catcherInnings: asObject(asNumber),
-    caughtFourth: asObject(asBoolean)
-  }),
+  before: asObject({ catcherInnings: asObject(asNumber) }),
   laterPitched: asObject(asBoolean)
 })
 
@@ -3596,7 +3578,6 @@ export const asSidePlan: Cleaner<SidePlan> = asObject({
   teamId: asString,
   plan: asNullable(asGamePlan),
   rules: asNullable(asPlayingTimeRules),
-  history: asPlanHistory,
   sameDay: asPlanSameDay
 })
 

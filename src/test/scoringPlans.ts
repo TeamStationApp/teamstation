@@ -4,7 +4,7 @@ import {
   type PlanCell,
   planHasPositions
 } from '../common/gamePlan'
-import { EMPTY_PLAN_HISTORY, EMPTY_PLAN_SAME_DAY } from '../common/planWarnings'
+import { EMPTY_PLAN_SAME_DAY } from '../common/planWarnings'
 import type { PlayingTimeRules } from '../common/playingTimeRules'
 import type { Position, Side } from '../common/scoring/state'
 
@@ -75,7 +75,6 @@ export function scoringSidePlan(
     teamId: first === 1 ? 'away' : 'home',
     plan,
     rules: options.rules ?? null,
-    history: EMPTY_PLAN_HISTORY,
     sameDay: EMPTY_PLAN_SAME_DAY
   }
 }

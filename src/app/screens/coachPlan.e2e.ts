@@ -280,9 +280,9 @@ async function teamRules(
 
 /** P8's Playing Time Rules, which the Plan tab's capture shows too. */
 const P8_RULES: Partial<PlayingTimeRules> = {
-  mandatoryPlay: true,
-  enforceSittingLimits: true,
-  rotateLeadoff: true
+  defensivePlayingTime: true,
+  measuredIn: 'outs',
+  enforceSittingLimits: true
 }
 
 /**
@@ -1638,11 +1638,6 @@ describe('Coach Plan', function () {
       ]
     })
     expect(order).deep.equals([true, true])
-    // Season tracking never warns in red.
-    for (const line of benched)
-      expect(line).not.match(
-        /^red (trackSeasonInfieldBalance|rotateLeadoff|mustPlayNextSuggestions)/
-      )
     // Senga dragged to the top: the warnings name him first.
     const box = async (css: string): Promise<Box> =>
       await coach.page.$eval(css, node => {

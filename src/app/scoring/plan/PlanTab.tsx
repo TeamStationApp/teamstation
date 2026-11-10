@@ -24,11 +24,7 @@ import {
   planHasPositions,
   removeInning
 } from '../../../common/gamePlan'
-import {
-  type PlanHistory,
-  type PlanSameDay,
-  planWarnings
-} from '../../../common/planWarnings'
+import { type PlanSameDay, planWarnings } from '../../../common/planWarnings'
 import type { PlayingTimeRules } from '../../../common/playingTimeRules'
 import { useConfirmedAction } from '../../components/useConfirmedAction'
 import { lstrings, sprintf } from '../../locales/strings'
@@ -64,13 +60,12 @@ import {
 import { PlanWarnings } from './PlanWarnings'
 
 /**
- * What the plan's warnings are judged by: the rules, the season's history
- * and the day's other games from `GET /games/:gameId/plans`, and from the
- * game the screen holds, whether it is final and the innings it reached.
+ * What the plan's warnings are judged by: the rules and the day's other
+ * games from `GET /games/:gameId/plans`, and from the game the screen
+ * holds, whether it is final and the innings it reached.
  */
 export interface PlanContext {
   rules: PlayingTimeRules | null
-  history: PlanHistory
   sameDay: PlanSameDay
   status: 'scheduled' | 'inProgress' | 'final'
   playedInnings?: number
@@ -212,7 +207,6 @@ function PlanSheet({
         rules: context.rules,
         playedInnings: context.playedInnings,
         final: context.status === 'final',
-        history: context.history,
         sameDay: context.sameDay
       }),
     [aligned, context]

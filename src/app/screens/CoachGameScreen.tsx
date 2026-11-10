@@ -234,7 +234,7 @@ const NO_PLAN: GamePlan = {
 }
 
 /**
- * What the Plan tab's warnings are judged by: the side's rules, history and
+ * What the Plan tab's warnings are judged by: the side's rules and
  * same-day load as the server read them, and the game as the screen holds
  * it, final or not, and the innings it reached.
  */
@@ -242,7 +242,6 @@ export function planContextOf(side: SidePlan, session: GameState): PlanContext {
   const started = begun(session)
   return {
     rules: side.rules,
-    history: side.history,
     sameDay: side.sameDay,
     status: session.final ? 'final' : started ? 'inProgress' : 'scheduled',
     ...(started
@@ -800,7 +799,6 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               planWarnings({
                 plan: stored,
                 rules: answer.rules,
-                history: answer.history,
                 sameDay: answer.sameDay,
                 playedInnings: judged?.playedInnings,
                 final: judged?.status === 'final'

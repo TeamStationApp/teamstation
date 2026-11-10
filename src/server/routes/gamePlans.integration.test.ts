@@ -12,15 +12,10 @@ import {
 import {
   type GamePlan,
   type PlanCell,
-  planHasPositions,
-  type PlanRowCounts,
-  planRowCounts
+  planHasPositions
 } from '../../common/gamePlan'
 import { makeId } from '../../common/ids'
-import {
-  EMPTY_PLAN_HISTORY,
-  EMPTY_PLAN_SAME_DAY
-} from '../../common/planWarnings'
+import { EMPTY_PLAN_SAME_DAY } from '../../common/planWarnings'
 import {
   DEFAULT_PLAYING_TIME_RULES,
   type PlayingTimeRules
@@ -60,15 +55,6 @@ const planOf = (
   }
   return { enabled: planHasPositions(plan), ...plan }
 }
-
-/** A season's innings at the positions given, none elsewhere, and its sits. */
-const season = (
-  positions: Partial<PlanRowCounts['positions']>,
-  sits: number
-): PlanRowCounts => ({
-  positions: { ...planRowCounts([], []).positions, ...positions },
-  sits
-})
 
 describe('game plans (GET and PUT /games/:gameId/plans)', function () {
   this.timeout(60000)
@@ -209,7 +195,6 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
       teamId: f.teamA,
       plan,
       rules: null,
-      history: EMPTY_PLAN_HISTORY,
       sameDay: EMPTY_PLAN_SAME_DAY
     })
     const stored = await f.h.db
@@ -356,101 +341,25 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     ).equals(404)
   })
 
-  it('aggregates the team’s earlier plans this season into its history', async function () {
-    const first = await newGame('2027-04-01T17:00:00Z')
-    const second = await newGame('2027-04-05T17:00:00Z')
-    const later = await newGame('2027-04-20T17:00:00Z')
-    const otherSeason = await newGame('2027-04-03T17:00:00Z', {
-      seasonId: f.playoffs
-    })
-    const noSeason = await newGame('2027-04-04T17:00:00Z', { seasonId: null })
-    const cancelled = await newGame('2027-04-06T17:00:00Z', {
-      status: 'cancelled'
-    })
+  it('answers no season history, whatever the team planned earlier in the season', async function () {
+    const earlier = await newGame('2027-04-01T17:00:00Z')
     await saved(
-      first,
+      earlier,
       planOf([
         [SORIANO, 'SS SS LF _'],
         [BERRA, 'C _ _ RF']
       ])
     )
-    // Its fifth inning is not planned yet: no sits.
-    await saved(
-      second,
-      planOf([
-        [CHAPMAN, 'P P _ _ _'],
-        [SORIANO, '2B CF _ DH _'],
-        [BERRA, '_ EH 1B 1B _']
-      ])
-    )
-    for (const ignored of [later, otherSeason, noSeason, cancelled])
-      await saved(ignored, planOf([[SORIANO, 'LF _ _ _']]))
-    const { home } = await plans(game)
-    expect(home?.history).deep.equals({
-      players: {
-        'g:201': season({ SS: 2, LF: 1, '2B': 1, CF: 1 }, 2),
-        'n:Yogi Berra#8': season({ C: 1, RF: 1, '1B': 2 }, 3),
-        'g:202': season({ P: 2 }, 2)
-      },
-      lastLeadoff: 'g:202',
-      lastGameSits: { 'g:202': 2, 'g:201': 1, 'n:Yogi Berra#8': 1 }
-    })
-    // A game in no season has no history, and the first game of one none.
-    expect((await plans(noSeason)).home?.history).deep.equals(
-      EMPTY_PLAN_HISTORY
-    )
-    expect((await plans(first)).home?.history).deep.equals(EMPTY_PLAN_HISTORY)
-    // An earlier plan with no rows is no previous game.
-    const empty = await newGame('2027-04-07T17:00:00Z')
-    await saved(empty, { enabled: false, innings: 6, rows: [] })
-    expect((await plans(game)).home?.history.lastLeadoff).equals('g:202')
-  })
-
-  it('counts an earlier game shortened before its plan ran out only through the innings it reached', async function () {
-    // Called after four of six planned innings; the earlier one never scored
-    // here keeps its whole plan.
-    const shortened = await newGame('2027-04-03T17:00:00Z', {
-      status: 'final'
-    })
-    const unscored = await newGame('2027-04-01T17:00:00Z', {
-      status: 'final'
-    })
-    const innings = [1, 2, 3, 4].map(num => ({
-      num,
-      ordinalNum: `${num}`,
-      home: { runs: 0 },
-      away: { runs: 0 }
-    }))
-    await f.h.db
-      .updateTable('games')
-      .set({ linescore: JSON.stringify({ innings }) })
-      .where('id', '=', shortened)
-      .execute()
-    await saved(
-      shortened,
-      planOf([
-        [SORIANO, 'SS SS 2B 2B _ _'],
-        [BERRA, '_ C C C LF LF']
-      ])
-    )
-    await saved(
-      unscored,
-      planOf([
-        [CHAPMAN, 'P P _ _ _ _'],
-        [DECKER, 'C C C C C C']
-      ])
-    )
-    const { home } = await plans(game)
-    expect(home?.history).deep.equals({
-      players: {
-        'g:201': season({ SS: 2, '2B': 2 }, 0),
-        'n:Yogi Berra#8': season({ C: 3 }, 1),
-        'g:202': season({ P: 2 }, 4),
-        'g:203': season({ C: 6 }, 0)
-      },
-      lastLeadoff: 'g:201',
-      lastGameSits: { 'g:201': 0, 'n:Yogi Berra#8': 1 }
-    })
+    const answer = await get(game, 101)
+    expect(answer.status).equals(200)
+    const { home } = answer.body as { home: Record<string, unknown> }
+    expect(Object.keys(home)).deep.equals([
+      'teamId',
+      'plan',
+      'rules',
+      'sameDay'
+    ])
+    expect(home.sameDay).deep.equals(EMPTY_PLAN_SAME_DAY)
   })
 
   it('counts the team’s other games on the same date in the game’s time zone, split at this one', async function () {
@@ -490,18 +399,12 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     await saved(game, planOf([[SORIANO, 'P C']]))
     const { home } = await plans(game)
     expect(home?.sameDay).deep.equals({
-      before: {
-        catcherInnings: { 'g:203': 4, 'g:202': 1 },
-        caughtFourth: { 'g:203': true }
-      },
+      before: { catcherInnings: { 'g:203': 4, 'g:202': 1 } },
       laterPitched: { 'g:201': true, 'g:202': true }
     })
     // From the evening, the morning and this game both come first.
     expect((await plans(evening)).home?.sameDay).deep.equals({
-      before: {
-        catcherInnings: { 'g:203': 4, 'g:202': 1, 'g:201': 1 },
-        caughtFourth: { 'g:203': true }
-      },
+      before: { catcherInnings: { 'g:203': 4, 'g:202': 1, 'g:201': 1 } },
       laterPitched: {}
     })
   })
@@ -512,14 +415,11 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     await saved(game, planOf([[DECKER, 'P C C C C']]))
     const tiedFirst = tied < game
     const earlier = {
-      before: {
-        catcherInnings: { 'g:203': 4 },
-        caughtFourth: { 'g:203': true }
-      },
+      before: { catcherInnings: { 'g:203': 4 } },
       laterPitched: {}
     }
     const later = {
-      before: { catcherInnings: {}, caughtFourth: {} },
+      before: { catcherInnings: {} },
       laterPitched: { 'g:203': true }
     }
     expect((await plans(game)).home?.sameDay).deep.equals(
@@ -555,13 +455,13 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     await saved(last, planOf([[CHAPMAN, 'SS P SS SS SS']]))
     const { home } = await plans(game)
     expect(home?.sameDay).deep.equals({
-      before: { catcherInnings: { 'g:203': 3 }, caughtFourth: {} },
+      before: { catcherInnings: { 'g:203': 3 } },
       laterPitched: {}
     })
   })
 
   it('judges by the team’s rules, then the game’s season’s, then the latest managing season’s, then none', async function () {
-    const spring = rules({ mandatoryPlay: true })
+    const spring = rules({ defensivePlayingTime: true })
     const fall = rules({ continuousBatting: true })
     const own = rules({ enforceSittingLimits: true })
     // Demo Playoffs manages the Hawks too, and starts last.

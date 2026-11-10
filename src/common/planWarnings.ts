@@ -4,9 +4,7 @@ import {
   OUTFIELD_POSITIONS,
   type PlanCell,
   plannedInnings,
-  planPlayerKey,
-  type PlanRowCounts,
-  planRowCounts
+  planPlayerKey
 } from './gamePlan'
 import {
   type InningDeadline,
@@ -14,7 +12,7 @@ import {
   type PlayingTimeRules,
   ruleRowEnabled
 } from './playingTimeRules'
-import { isPosition, type Position, POSITIONS } from './scoring/state'
+import { isPosition, POSITIONS } from './scoring/state'
 
 /**
  * Playing-time warnings for a game plan. Like the rest of src/common, which
@@ -30,17 +28,6 @@ export interface PlanWarning {
 }
 
 /**
- * The team's earlier plans this season, by `planPlayerKey`: each player's
- * innings at each field position and his sits (as `planRowCounts` counts
- * them), the previous game's leadoff and each player's sits in that game.
- */
-export interface PlanHistory {
-  players: Record<string, PlanRowCounts>
-  lastLeadoff: string | null
-  lastGameSits: Record<string, number>
-}
-
-/**
  * The team's other games' plans on this game's date, by `planPlayerKey`,
  * split at this game: catching in a game that starts before it can block
  * pitching here, and catching here can block a pitch in a game that starts
@@ -51,20 +38,13 @@ export interface PlanSameDay {
   before: {
     /** Innings each player catches in them. */
     catcherInnings: Record<string, number>
-    /** Whether he catches the fourth inning of any of them. */
-    caughtFourth: Record<string, boolean>
   }
   /** Whether each player pitches in a game that starts after this one. */
   laterPitched: Record<string, boolean>
 }
 
-export const EMPTY_PLAN_HISTORY: PlanHistory = {
-  players: {},
-  lastLeadoff: null,
-  lastGameSits: {}
-}
 export const EMPTY_PLAN_SAME_DAY: PlanSameDay = {
-  before: { catcherInnings: {}, caughtFourth: {} },
+  before: { catcherInnings: {} },
   laterPitched: {}
 }
 
@@ -77,13 +57,21 @@ export interface PlanWarningsInput {
    * progress, its last once it is final.
    */
   playedInnings?: number
-  /** Whether the game is final: only a final game can be shortened. */
+  /**
+   * Whether the game is final: a final game is judged on the innings it
+   * reached.
+   */
   final?: boolean
-  history: PlanHistory
   sameDay: PlanSameDay
 }
 
 type Level = PlanWarning['level']
+/** The rules that are on or off. */
+type ToggleRule = {
+  [Key in PlayingTimeRuleKey]: PlayingTimeRules[Key] extends boolean
+    ? Key
+    : never
+}[PlayingTimeRuleKey]
 type Finding = Omit<PlanWarning, 'players'> & { player: string }
 /**
  * A cell as the warnings judge it: its value in a planned inning, where a
@@ -129,29 +117,25 @@ function longestRun(
 const fielded = (cell: Judged): boolean => isPosition(cell)
 const sits = (cell: Judged): boolean => cell === ''
 const unplanned = (cell: Judged): boolean => cell == null
-const outfield = (cell: Judged): boolean =>
-  OUTFIELD_POSITIONS.includes(cell as (typeof OUTFIELD_POSITIONS)[number])
 
 /**
  * The first inning (from 0) of `cells` a player may no longer pitch in,
- * having caught `caughtBefore` innings in the day's earlier games (and
- * their fourth inning, when `fourthBefore`): 0 when they already block him,
- * the inning after the one that blocks him here (`cells.length` when it is
- * this game's last), or null when he may still pitch at its end. With
- * `fourth`, catching a fourth inning blocks him as 4 innings do.
+ * once `blocking` innings caught block him, having caught `caughtBefore` in
+ * the day's earlier games: 0 when they already block him, the inning after
+ * the one that blocks him here (`cells.length` when it is this game's
+ * last), or null when he may still pitch at its end.
  */
 function pitchingBlockedFrom(
   cells: readonly Judged[],
   caughtBefore: number,
-  fourthBefore: boolean,
-  fourth: boolean
+  blocking: number
 ): number | null {
-  if (caughtBefore >= 4 || fourthBefore) return 0
+  if (caughtBefore >= blocking) return 0
   let caught = caughtBefore
   for (let inning = 0; inning < cells.length; inning++) {
     if (cells[inning] !== 'C') continue
     caught++
-    if (caught >= 4 || (fourth && inning === 3)) return inning + 1
+    if (caught >= blocking) return inning + 1
   }
   return null
 }
@@ -162,17 +146,17 @@ function pitchingBlockedFrom(
  * a sit, and an inning not planned yet holds no sit and no position. Red
  * means the planned innings break an enabled rule whatever the others
  * become; yellow means a minimum is not met yet but the innings inside its
- * deadline not planned yet could still meet it. The season-tracking rules
- * only ever warn yellow.
+ * deadline not planned yet could still meet it. A final game is judged on
+ * the innings it reached.
  */
 export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
-  const { plan, rules, history, sameDay } = input
-  const shortened =
+  const { plan, rules, sameDay } = input
+  const length =
     input.final === true &&
     input.playedInnings != null &&
     input.playedInnings < plan.innings
-  // A shortened game is judged on the innings it played.
-  const length = shortened ? (input.playedInnings ?? 0) : plan.innings
+      ? input.playedInnings
+      : plan.innings
   const planned = plannedInnings(plan)
   const rows: JudgedRow[] = plan.rows.map(row => ({
     ...row,
@@ -207,13 +191,12 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
   }
   if (rules == null) return grouped(findings)
 
-  const on = (key: PlayingTimeRuleKey): boolean =>
-    rules[key] === true && ruleRowEnabled(rules, key)
+  const on = (key: ToggleRule): boolean =>
+    rules[key] && ruleRowEnabled(rules, key)
   const until = (deadline: InningDeadline): number =>
-    deadline === 'end' ? length : Math.min(deadline, length)
+    deadline === 'none' ? length : Math.min(deadline, length)
   const by = (deadline: InningDeadline): string =>
     until(deadline) < length ? `by inning ${until(deadline)}` : 'this game'
-  const size = rows.length
   const battery = new Set(
     rows
       .filter(row => row.cells[0] === 'P' || row.cells[0] === 'C')
@@ -223,64 +206,66 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
     rules.startingBatteryExemptFromMinimums && battery.has(row.key)
   const sittingExempt = (row: { key: string }): boolean =>
     rules.startingBatteryExemptFromSitting && battery.has(row.key)
-  const catcherInfield =
-    rules.catcherCountsAsInfield === 'always' ||
-    (rules.catcherCountsAsInfield === 'largeRoster' && size > 12)
-  const infieldSet = new Set<string>(
-    rules.infieldPositions.filter(
-      position => position !== 'C' || catcherInfield
-    )
-  )
+  // 1B, 2B, SS and 3B are always infield, and LF, CF and RF outfield; P
+  // and C are as the rules say.
+  const infieldSet = new Set<string>([
+    '1B',
+    '2B',
+    'SS',
+    '3B',
+    ...(rules.pitcherCountsAsInfield ? ['P'] : []),
+    ...(rules.catcherCountsAs === 'infield' ? ['C'] : [])
+  ])
+  const outfieldSet = new Set<string>([
+    ...OUTFIELD_POSITIONS,
+    ...(rules.catcherCountsAs === 'outfield' ? ['C'] : [])
+  ])
   const infield = (cell: Judged): boolean =>
     cell != null && infieldSet.has(cell)
+  const outfield = (cell: Judged): boolean =>
+    cell != null && outfieldSet.has(cell)
 
-  // A player who bats in any inning meets Mandatory Play's at-bat; one who
-  // sits every inning has fielded none, which the outs already refuse.
-  if (
-    on('mandatoryPlay') &&
-    !(shortened && rules.applyInShortenedGames === 'never')
-  ) {
-    const outs =
-      rules.reducedForLargeRosters && size >= rules.largeRosterPlayers
-        ? rules.largeRosterOuts
-        : rules.defensiveOutsRequired
-    const consecutive = rules.mustBeConsecutive ? ' consecutive' : ''
-    const local = shortened && rules.applyInShortenedGames === 'localOption'
-    for (const row of rows) {
-      const level = rules.mustBeConsecutive
-        ? longestRun(row.cells, fielded) >= outs / 3
-          ? null
-          : longestRun(row.cells, cell => fielded(cell) || unplanned(cell)) >=
-              outs / 3
-            ? 'yellow'
-            : 'red'
-        : minimum(row.cells, fielded, outs / 3)
-      warn(
-        'mandatoryPlay',
-        local && level === 'red' ? 'yellow' : level,
-        level === 'red'
-          ? `Cannot reach ${outs}${consecutive} defensive outs`
-          : `Not yet ${outs}${consecutive} defensive outs`,
-        row
-      )
-    }
-  }
-
-  if (on('stricterMinimumInnings')) {
-    const required = rules.minimumFullInnings
-    const deadline = rules.minimumInningsBy
-    for (const row of rows) {
-      const level = minimum(
-        row.cells.slice(0, until(deadline)),
-        fielded,
-        required
-      )
-      warn(
-        'stricterMinimumInnings',
-        level,
-        `${level === 'red' ? 'Cannot field' : 'Not yet'} ${plural(required, 'inning')} ${by(deadline)}`,
-        row
-      )
+  // The large roster's requirement applies from its count of players
+  // present: those in the lineup.
+  if (on('defensivePlayingTime')) {
+    const large =
+      rules.largeRoster.enabled && rows.length >= rules.largeRoster.players
+    const block = large ? rules.largeRoster : rules
+    if (rules.measuredIn === 'outs') {
+      const { required: outs, consecutive } = block.outs
+      const what = `${outs}${consecutive ? ' consecutive' : ''} defensive outs`
+      for (const row of rows) {
+        const level = consecutive
+          ? longestRun(row.cells, fielded) >= outs / 3
+            ? null
+            : longestRun(row.cells, cell => fielded(cell) || unplanned(cell)) >=
+                outs / 3
+              ? 'yellow'
+              : 'red'
+          : minimum(row.cells, fielded, outs / 3)
+        warn(
+          'defensivePlayingTime',
+          level,
+          `${level === 'red' ? 'Cannot reach' : 'Not yet'} ${what}`,
+          row
+        )
+      }
+    } else {
+      // Count Partial Innings is the umpire's: a plan's innings are whole.
+      const { minimum: required, completeBy } = block.innings
+      for (const row of rows) {
+        const level = minimum(
+          row.cells.slice(0, until(completeBy)),
+          fielded,
+          required
+        )
+        warn(
+          'defensivePlayingTime',
+          level,
+          `${level === 'red' ? 'Cannot field' : 'Not yet'} ${plural(required, 'inning')} ${by(completeBy)}`,
+          row
+        )
+      }
     }
   }
 
@@ -403,46 +388,27 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
       )
   }
 
-  if (on('mustPlayInfieldAndOutfield')) {
-    for (const row of rows) {
-      if (minimumExempt(row)) continue
-      const missing =
-        (row.cells.some(infield) ? 0 : 1) + (row.cells.some(outfield) ? 0 : 1)
-      const open = row.cells.filter(unplanned).length
-      const level = missing === 0 ? null : open >= missing ? 'yellow' : 'red'
-      warn(
-        'mustPlayInfieldAndOutfield',
-        level,
-        `${level === 'red' ? 'Cannot play' : 'Not yet played'} both infield and outfield`,
-        row
-      )
-    }
-  }
-
-  if (on('catcherInningLimit')) {
+  if (rules.catcherMaxInnings !== 'none') {
     const max = rules.catcherMaxInnings
     for (const row of rows)
       warn(
-        'catcherInningLimit',
+        'catcherMaxInnings',
         row.cells.filter(cell => cell === 'C').length > max ? 'red' : null,
         `Catches more than ${plural(max, 'inning')}`,
         row
       )
   }
 
-  // After 4 innings catching, no pitching that calendar day: only catching
+  // After N innings catching, no pitching that calendar day: only catching
   // that comes before a pitch blocks it.
-  if (on('catcherBlocksPitching')) {
-    const fourth = on('catcherBlocksIfCatchesFourth')
-    const day = fourth
-      ? 'after 4 innings, or the 4th inning, at catcher today'
-      : 'after 4 innings at catcher today'
+  if (rules.catcherBlocksPitching !== 'none') {
+    const blocking = rules.catcherBlocksPitching
+    const day = `after ${blocking} innings at catcher today`
     for (const row of rows) {
       const from = pitchingBlockedFrom(
         row.cells,
         sameDay.before.catcherInnings[row.key] ?? 0,
-        fourth && sameDay.before.caughtFourth[row.key],
-        fourth
+        blocking
       )
       warn(
         'catcherBlocksPitching',
@@ -465,59 +431,6 @@ export function planWarnings(input: PlanWarningsInput): PlanWarning[] {
   // Continuous Batting, Late Arrivals and Departures govern how the
   // scorekeeper's order behaves. A plan lists every present player in
   // batting order, so it cannot break them.
-
-  if (on('trackSeasonInfieldBalance')) {
-    // Infield is the minimum's set, applied to the season's innings too.
-    const shares = rows.map(row => {
-      const past = history.players[row.key]
-      const now = planRowCounts(
-        row.cells.map(cell => cell ?? ''),
-        planned
-      )
-      const innings = (positions: readonly Position[]): number =>
-        positions.reduce(
-          (sum, position) =>
-            sum + now.positions[position] + (past?.positions[position] ?? 0),
-          0
-        )
-      const fieldedInnings = innings(POSITIONS)
-      return fieldedInnings === 0
-        ? null
-        : innings(POSITIONS.filter(infield)) / fieldedInnings
-    })
-    const known = shares.filter((share): share is number => share != null)
-    const mean = known.reduce((sum, share) => sum + share, 0) / known.length
-    rows.forEach((row, at) => {
-      const share = shares[at]
-      warn(
-        'trackSeasonInfieldBalance',
-        share != null && share < mean / 2 ? 'yellow' : null,
-        'Few infield innings this season',
-        row
-      )
-    })
-  }
-
-  if (on('rotateLeadoff') && rows.length > 0)
-    warn(
-      'rotateLeadoff',
-      rows[0].key === history.lastLeadoff ? 'yellow' : null,
-      'Led off last game too',
-      rows[0]
-    )
-
-  if (on('mustPlayNextSuggestions')) {
-    const most = Math.max(0, ...Object.values(history.lastGameSits))
-    for (const row of rows)
-      warn(
-        'mustPlayNextSuggestions',
-        most > 0 && history.lastGameSits[row.key] === most && sits(row.cells[0])
-          ? 'yellow'
-          : null,
-        'Sat the most last game, and sits in inning 1',
-        row
-      )
-  }
 
   return grouped(findings)
 }

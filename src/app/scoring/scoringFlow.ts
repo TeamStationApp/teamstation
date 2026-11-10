@@ -157,7 +157,7 @@ const NO_PITCHER = 'needs a pitcher'
  * that leaves nobody pitching, or that the game refuses, is skipped, and the
  * notice says why for that side; the inning's end stands either way. The
  * notice counts the playing-time warnings of the plans applied, judged by
- * the rules, history and same-day load they were read with.
+ * the rules and same-day load they were read with.
  */
 function shiftToPlans(next: ScoringSnapshot, inning: number): void {
   const sides: Side[] = []
@@ -208,7 +208,6 @@ function shiftToPlans(next: ScoringSnapshot, inning: number): void {
       ...planWarnings({
         plan: alignPlan(plan, planLineup(next.session, side)),
         rules: planned.rules,
-        history: planned.history,
         sameDay: planned.sameDay
       })
     )
