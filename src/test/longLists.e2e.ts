@@ -5,6 +5,13 @@ import { join, resolve } from 'node:path'
 
 import type { HTTPRequest } from 'puppeteer'
 
+import {
+  absent,
+  browserSession,
+  contains,
+  log,
+  maestro
+} from '../../e2e/rigs/refinementsMaestro'
 import { gameCountLabel } from '../app/locales/strings'
 import { scheduleDate, shortDate } from '../app/screens/format'
 import { countFor, type When } from '../app/screens/whenFilter'
@@ -24,13 +31,6 @@ import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { startLongLists } from './longListsFixture.e2e'
 import { longListsSupport } from './longListsSeed'
-import {
-  absent,
-  browserSession,
-  contains,
-  log,
-  maestro
-} from './refinementsMaestro.e2e'
 import { scrollToRow } from './scrollToRow'
 import { stackBrowserCoverage } from './stackBrowserCoverage'
 

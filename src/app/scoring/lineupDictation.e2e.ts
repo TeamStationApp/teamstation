@@ -11,16 +11,16 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import type { Page } from 'puppeteer'
 
-import { DEFAULT_DICTATION_MODEL } from '../../common/api'
-import { ONE_CATEGORY_AT_A_TIME } from '../../common/scoring/rosterCommands'
-import type { LineupFixture } from '../../server/dev/lineupFixture'
-import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
-import { signInTestAccount } from '../../test/passwordFixtures'
+import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { DEFAULT_DICTATION_MODEL } from '../../common/api'
+import { ONE_CATEGORY_AT_A_TIME } from '../../common/scoring/rosterCommands'
+import type { LineupFixture } from '../../server/dev/lineupFixture'
+import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**
  * The roster screen and lineup dictation end to end, as the scorekeeper, in

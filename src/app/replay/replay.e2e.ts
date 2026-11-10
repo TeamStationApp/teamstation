@@ -4,12 +4,6 @@ import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { TeamStationClient } from '../../common/api'
-import { narrateTimeline } from '../../common/replay/narration'
-import {
-  replayContextOf,
-  replayTimelineOf
-} from '../../common/replay/replayTimeline'
 import {
   artifactsDir,
   attachWeb,
@@ -19,7 +13,13 @@ import {
   sessionFor,
   shot,
   signInWeb
-} from './kit.e2e'
+} from '../../../e2e/rigs/replayKit'
+import { TeamStationClient } from '../../common/api'
+import { narrateTimeline } from '../../common/replay/narration'
+import {
+  replayContextOf,
+  replayTimelineOf
+} from '../../common/replay/replayTimeline'
 import { stepHalfEnds } from './replayGaps'
 
 /**

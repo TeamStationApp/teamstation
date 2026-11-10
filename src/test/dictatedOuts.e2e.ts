@@ -6,8 +6,8 @@ import path from 'node:path'
 
 import express from 'express'
 
+import { maestro, type MaestroHandle } from '../../e2e/rigs/refinementsMaestro'
 import { BASES } from '../app/field/fieldModel'
-import { maestro, type MaestroHandle } from './refinementsMaestro.e2e'
 
 /**
  * Dictated outs on the production field, in Safari on an iOS simulator that

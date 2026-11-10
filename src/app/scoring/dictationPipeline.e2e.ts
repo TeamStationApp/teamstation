@@ -11,9 +11,9 @@ import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 import NodeSocket from 'ws'
 
+import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import { dictationModelOf } from '../../common/api'
 import { idOfTag } from '../../common/scoring/playerTags'
-import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
 import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**

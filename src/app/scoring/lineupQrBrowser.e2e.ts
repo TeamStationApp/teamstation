@@ -7,13 +7,13 @@ import { join, resolve } from 'node:path'
 import express from 'express'
 import puppeteer from 'puppeteer'
 
+import { rosterEditFixture } from '../../../e2e/fixtures/scoringRosterEditFixture'
+import { recordBrowserCoverage } from '../../../e2e/rigs/browserCoverage'
 import { storedRecordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
-import { recordBrowserCoverage } from '../browserCoverage.e2e'
 import { encodeLineupQr } from './lineupQrCodec'
 import { lineupQrOf } from './lineupQrExport'
 import { qrMatrix } from './lineupQrMatrix'
-import { rosterEditFixture } from './scoringRosterEdit.e2e.fixture'
 import type { ScoringSessionState, Side } from './scoringTypes'
 
 /**

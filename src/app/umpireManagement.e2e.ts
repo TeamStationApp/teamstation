@@ -3,8 +3,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { umpireDate } from '../common/umpireTime'
-import { userIdOfGumbo } from '../common/userId'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   type BrowserSession,
   browserSession,
@@ -13,14 +12,15 @@ import {
   fill,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { umpireDate } from '../common/umpireTime'
+import { userIdOfGumbo } from '../common/userId'
 import {
   readyUmpireBrowser,
   UMPIRE_BROWSER_NOW,
   umpireBrowserFixture
 } from '../test/umpireBrowserFixture'
 import { seedUmpireCounts } from '../test/umpireTypes'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 async function main(): Promise<void> {
   const artifacts = process.env.TS_UMPIRE_ARTIFACTS
   if (artifacts == null) throw new Error('Supply TS_UMPIRE_ARTIFACTS')

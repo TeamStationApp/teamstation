@@ -9,6 +9,7 @@ import puppeteer, {
   type Page
 } from 'puppeteer'
 
+import { browserCoverageCollector } from '../../../e2e/rigs/browserCoverage'
 import type { GameDetail, RosterEntry } from '../../common/api'
 import {
   dictatedAction,
@@ -30,7 +31,6 @@ import { makeDatabase } from '../../server/db/database'
 import { serverConfig } from '../../server/serverConfig'
 import { ensureGumboId } from '../../server/users/insertUser'
 import { signInTestAccount } from '../../test/passwordFixtures'
-import { browserCoverageCollector } from '../browserCoverage.e2e'
 import { createDevelopmentSession, teamsOf } from './developmentSession'
 
 /**

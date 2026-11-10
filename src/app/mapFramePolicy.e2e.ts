@@ -22,6 +22,14 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import type { HTTPRequest, Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  type BrowserSession,
+  browserSession,
+  contains,
+  log,
+  maestro
+} from '../../e2e/rigs/refinementsMaestro'
 import { cspFor, originsFor } from '../buildCsp.mjs'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import { googlePlaces } from '../server/location/googlePlaces'
@@ -42,14 +50,6 @@ import {
   pointInMapFrame,
   waitInMapFrame
 } from '../test/mapFrameProbe'
-import {
-  type BrowserSession,
-  browserSession,
-  contains,
-  log,
-  maestro
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 import { MAP_FRAME_READY_MS } from './components/pinMapDocument'
 
 const DEVICE = 'mapFramePolicy-web'

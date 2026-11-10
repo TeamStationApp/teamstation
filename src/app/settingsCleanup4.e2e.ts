@@ -5,17 +5,17 @@ import { join, resolve } from 'node:path'
 
 import type { Page } from 'puppeteer'
 
-import { TeamStationClient } from '../common/api'
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { groupFixture } from '../test/groupFixtures'
-import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import {
   browserSession,
   contains,
   fill,
   maestro
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { TeamStationClient } from '../common/api'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { groupFixture } from '../test/groupFixtures'
+import { insertFixtureUsers } from '../test/insertFixtureUsers'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
@@ -460,7 +460,7 @@ async function main(): Promise<void> {
         'E7 PASS: selected invitation confirmation, Cancel/no write, withdraw keeps other invitation'
       )
     }
-    await go(`/teams/${f.teamA}/people/106`, 'Tim Raines')
+    await go(`/teams/${f.teamA}/people/${userIdOfGumbo(106)}`, 'Tim Raines')
     await show('Coach')
     if (!before) {
       await m.tapOn({ text: 'Coach', role: 'switch' })
@@ -503,7 +503,7 @@ async function main(): Promise<void> {
           is_player: false
         })
         .execute()
-      await go(`/teams/${f.teamA}/people/108`, 'Willie Mays')
+      await go(`/teams/${f.teamA}/people/${userIdOfGumbo(108)}`, 'Willie Mays')
       await show('Member')
       await m.tapOn({ text: 'Member', role: 'switch' })
       await tap('Confirm removal')

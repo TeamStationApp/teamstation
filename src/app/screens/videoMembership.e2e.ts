@@ -3,14 +3,14 @@ import { resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { userIdOfGumbo } from '../../common/userId'
-import { guardianFixture } from '../../test/guardianFixture'
 import {
   browserSession,
   capture,
   contains,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { userIdOfGumbo } from '../../common/userId'
+import { guardianFixture } from '../../test/guardianFixture'
 
 /** Real public thumbnails and membership approval, driven on a mobile browser. */
 async function main(): Promise<void> {

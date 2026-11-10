@@ -5,10 +5,10 @@ import { join, resolve } from 'node:path'
 
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import { modalFixture } from '../../../e2e/fixtures/scoringModalsFixture'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { runnerTargets } from './runnerDrag'
-import { modalFixture } from './scoringModals.e2e.fixture'
 
 const required = (name: string): string => {
   const value = process.env[name]

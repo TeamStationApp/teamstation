@@ -3,8 +3,6 @@ import { resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { apiKeyRoutes } from '../server/routes/apiKeys'
-import { accountHarness } from '../test/accountHarness'
 import {
   browserSession,
   capture,
@@ -13,7 +11,9 @@ import {
   log,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { apiKeyRoutes } from '../server/routes/apiKeys'
+import { accountHarness } from '../test/accountHarness'
 
 /**
  * API keys on Account, in one Chrome tab driven by maestro-d at a phone's

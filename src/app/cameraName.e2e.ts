@@ -7,12 +7,12 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import { TeamStationClient } from '../common/api'
 import { findUserByEmail } from '../server/auth/emails'
 import { createSession } from '../server/auth/sessions'
 import { makeDatabase } from '../server/db/database'
 import { serverConfig } from '../server/serverConfig'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 import { waitForCameraLimit } from './stream/webCameraLimit.e2e'
 
 /**

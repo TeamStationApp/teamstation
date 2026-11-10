@@ -9,7 +9,7 @@ import { NO_OVERRIDES } from '../../../../src/common/scoreboard'
 import {
   override as overrideOver,
   publish as publishOver
-} from '../../../../src/test/scoreboardPublish.e2e'
+} from '../../../../e2e/rigs/scoreboardPublish'
 import { attach, flatten } from '../../../test/maestroD'
 
 /**

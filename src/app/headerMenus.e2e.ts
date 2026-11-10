@@ -5,8 +5,8 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import { type TessFixture, tessFixture } from '../test/tessFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 /**
  * The header's two menus in a real browser, against the Tess fixture, at a

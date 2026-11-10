@@ -8,8 +8,9 @@
   "extends": "./tsconfig.server.json",
   "compilerOptions": {
     "noEmit": true,
-    // Some tests share tools/dbLoad's fixtures. Nothing is emitted here, and the
-    // build's own `rootDir` of `src` is what keeps the tools out of `lib/`.
+    // Unit tests import rigs from `e2e/`, and some tests share tools/dbLoad's
+    // fixtures. Nothing is emitted here, and the build's own `rootDir` of
+    // `src` is what keeps the tools out of `lib/`.
     "rootDir": "."
   },
   "include": [
@@ -25,7 +26,7 @@
     "src/test/fakeScoreboardSocket.ts",
     "src/test/scoringHelpers.ts",
     "src/test/scoreboardServer.e2e.ts",
-    "src/test/scoringBrowser.e2e.ts",
+    "e2e/rigs/scoringBrowser.ts",
     "src/test/chatBrowserLegacyActions.e2e.ts",
     "src/test/nativeLocationFailure.ts",
     "src/test/responderDrag.ts",

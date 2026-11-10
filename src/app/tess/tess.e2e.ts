@@ -6,16 +6,16 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import type { Page } from 'puppeteer'
 
-import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
+import { recordBrowserCoverage } from '../../../e2e/rigs/browserCoverage'
+import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import {
   type BrowserSession,
   browserSession,
   capture,
   contains,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
 import { HEARD, type TessFixture, tessFixture } from '../../test/tessFixture'
-import { recordBrowserCoverage } from '../browserCoverage.e2e'
 
 /**
  * Tess on a wide browser window (Chromium, 1280 × 900), driven through

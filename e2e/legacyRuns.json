@@ -1,0 +1,3192 @@
+{
+  "src/app/chat/chatHistory.e2e.ts": [
+    {
+      "label": "record",
+      "args": [
+        "record"
+      ],
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
+    },
+    {
+      "label": "compare",
+      "args": [
+        "compare"
+      ],
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
+    }
+  ],
+  "src/app/chat/chatNoWasm.e2e.ts": [
+    {
+      "label": "noWasm",
+      "args": [
+        "noWasm"
+      ],
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
+    },
+    {
+      "label": "badModule",
+      "args": [
+        "badModule"
+      ],
+      "needs": "web",
+      "env": {
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      }
+    }
+  ],
+  "src/app/chat/chatUiFollowup.e2e.ts": [
+    {
+      "label": "S1",
+      "args": [
+        "S1"
+      ],
+      "needs": "web",
+      "blocked": "CHAT_UI_* fixture env comes from scripts/chat-history-recovery-fixtures.ts, which asserts 'CHAT_RECOVERY_OWNER_FILE must name the private disposable server settings'"
+    },
+    {
+      "label": "S2",
+      "args": [
+        "S2"
+      ],
+      "needs": "web",
+      "blocked": "same private owner file"
+    },
+    {
+      "label": "S4",
+      "args": [
+        "S4"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "S4full",
+      "args": [
+        "S4full"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "S5",
+      "args": [
+        "S5"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "S6",
+      "args": [
+        "S6"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "S9",
+      "args": [
+        "S9"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "S10",
+      "args": [
+        "S10"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "bands",
+      "args": [
+        "bands"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "pendingSend",
+      "args": [
+        "pendingSend"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "reviewNavigation",
+      "args": [
+        "reviewNavigation"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "review2Browser",
+      "args": [
+        "review2Browser"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "composeFull",
+      "args": [
+        "composeFull"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "picker",
+      "args": [
+        "picker"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "reader",
+      "args": [
+        "reader"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "boundedMedia",
+      "args": [
+        "boundedMedia"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "currentHistoryReply",
+      "args": [
+        "currentHistoryReply"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "lockedCurrentReply",
+      "args": [
+        "lockedCurrentReply"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "lockedPrepare",
+      "args": [
+        "lockedPrepare"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "lockedReset",
+      "args": [
+        "lockedReset"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "lockedApprove",
+      "args": [
+        "lockedApprove"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "maappOn",
+      "args": [
+        "maappOn"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "maappOff",
+      "args": [
+        "maappOff"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "disposablePrepare",
+      "args": [
+        "disposablePrepare"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "disposableDelete",
+      "args": [
+        "disposableDelete"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "coarseTouch",
+      "args": [
+        "coarseTouch"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "purgePrepare",
+      "args": [
+        "purgePrepare"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "purgeDelete",
+      "args": [
+        "purgeDelete"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "historyFixture",
+      "args": [
+        "historyFixture"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "videoFixture",
+      "args": [
+        "videoFixture"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "adultReplyFixture",
+      "args": [
+        "adultReplyFixture"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "arrivalPeer",
+      "args": [
+        "arrivalPeer"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    }
+  ],
+  "src/app/chat/chatUiFollowupNative.e2e.ts": [
+    {
+      "label": "ios-core",
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "CHAT_UI_NATIVE_FIXTURE_FILE ('Only a synthetic fixture may be used') is made by chat-history-recovery-fixtures.ts, which needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "ios-bands",
+      "args": [
+        "bands"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-fault-pending-send",
+      "args": [
+        "fault-pending-send"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-fault-send",
+      "args": [
+        "fault-send"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-fault-page",
+      "args": [
+        "fault-page"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-fault-empty",
+      "args": [
+        "fault-empty"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-fault-cancel",
+      "args": [
+        "fault-cancel"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-restricted-closed",
+      "args": [
+        "restricted"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-restricted-readOnly",
+      "args": [
+        "restricted"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-deep",
+      "args": [
+        "deep"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-attachment-short",
+      "args": [
+        "attachment-short"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-attachment-quote",
+      "args": [
+        "attachment-quote"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-attachment-probe",
+      "args": [
+        "attachment-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-quote-hold-probe",
+      "args": [
+        "quote-hold-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-hold-probe",
+      "args": [
+        "hold-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-retention",
+      "args": [
+        "retention"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-top-retention",
+      "args": [
+        "top-retention"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-list-terminal",
+      "args": [
+        "list-terminal"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-owned-delete-live",
+      "args": [
+        "owned-delete-live"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-read-fixture",
+      "args": [
+        "read-fixture"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-return-key",
+      "args": [
+        "return-key"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-reply-send",
+      "args": [
+        "reply-send"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-reply-probe",
+      "args": [
+        "reply-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-reply-capture",
+      "args": [
+        "reply-capture"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-messages",
+      "args": [
+        "messages"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-picker",
+      "args": [
+        "picker"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-picker-large",
+      "args": [
+        "picker-large"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-picker-document-large",
+      "args": [
+        "picker-document-large"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-picker-inspect",
+      "args": [
+        "picker-inspect"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-media-bounds",
+      "args": [
+        "media-bounds"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-captures",
+      "args": [
+        "captures"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-inspect",
+      "args": [
+        "inspect"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-inspect-unready",
+      "args": [
+        "inspect-unready"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-jump-record",
+      "args": [
+        "jump-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-nested-record",
+      "args": [
+        "nested-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-video-record",
+      "args": [
+        "video-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-intact-record",
+      "args": [
+        "intact-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-intact-compare",
+      "args": [
+        "intact-compare"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-locked-setup",
+      "args": [
+        "locked-setup"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-locked-phase1",
+      "args": [
+        "locked-phase1"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-locked-phase2",
+      "args": [
+        "locked-phase2"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-locked-unpin",
+      "args": [
+        "locked-unpin"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-locked-sync",
+      "args": [
+        "locked-sync"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-locked-link",
+      "args": [
+        "locked-link"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-recovery-draft",
+      "args": [
+        "recovery-draft"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-recovery-retry",
+      "args": [
+        "recovery-retry"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "ios-recovery-permissions",
+      "args": [
+        "recovery-permissions"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "android-core",
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "CHAT_UI_NATIVE_FIXTURE_FILE ('Only a synthetic fixture may be used') is made by chat-history-recovery-fixtures.ts, which needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "android-bands",
+      "args": [
+        "bands"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-fault-pending-send",
+      "args": [
+        "fault-pending-send"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-fault-send",
+      "args": [
+        "fault-send"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-fault-page",
+      "args": [
+        "fault-page"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-fault-empty",
+      "args": [
+        "fault-empty"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-fault-cancel",
+      "args": [
+        "fault-cancel"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-restricted-closed",
+      "args": [
+        "restricted"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-restricted-readOnly",
+      "args": [
+        "restricted"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-deep",
+      "args": [
+        "deep"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-attachment-short",
+      "args": [
+        "attachment-short"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-attachment-quote",
+      "args": [
+        "attachment-quote"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-attachment-probe",
+      "args": [
+        "attachment-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-quote-hold-probe",
+      "args": [
+        "quote-hold-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-hold-probe",
+      "args": [
+        "hold-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-retention",
+      "args": [
+        "retention"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-top-retention",
+      "args": [
+        "top-retention"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-list-terminal",
+      "args": [
+        "list-terminal"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-owned-delete-live",
+      "args": [
+        "owned-delete-live"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-read-fixture",
+      "args": [
+        "read-fixture"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-return-key",
+      "args": [
+        "return-key"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-reply-send",
+      "args": [
+        "reply-send"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-reply-probe",
+      "args": [
+        "reply-probe"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-reply-capture",
+      "args": [
+        "reply-capture"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-messages",
+      "args": [
+        "messages"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-picker",
+      "args": [
+        "picker"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-picker-large",
+      "args": [
+        "picker-large"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-picker-document-large",
+      "args": [
+        "picker-document-large"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-picker-inspect",
+      "args": [
+        "picker-inspect"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-media-bounds",
+      "args": [
+        "media-bounds"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-captures",
+      "args": [
+        "captures"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-inspect",
+      "args": [
+        "inspect"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-inspect-unready",
+      "args": [
+        "inspect-unready"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-jump-record",
+      "args": [
+        "jump-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-nested-record",
+      "args": [
+        "nested-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-video-record",
+      "args": [
+        "video-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-intact-record",
+      "args": [
+        "intact-record"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-intact-compare",
+      "args": [
+        "intact-compare"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-locked-setup",
+      "args": [
+        "locked-setup"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-locked-phase1",
+      "args": [
+        "locked-phase1"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-locked-phase2",
+      "args": [
+        "locked-phase2"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-locked-unpin",
+      "args": [
+        "locked-unpin"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-locked-sync",
+      "args": [
+        "locked-sync"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_UI_NATIVE_DISPOSABLE": "1"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-locked-link",
+      "args": [
+        "locked-link"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-recovery-draft",
+      "args": [
+        "recovery-draft"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-recovery-retry",
+      "args": [
+        "recovery-retry"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "android-recovery-permissions",
+      "args": [
+        "recovery-permissions"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    }
+  ],
+  "src/app/chat/chatUiFollowupReply.e2e.ts": [
+    {
+      "label": "shared",
+      "needs": "web",
+      "blocked": "CHAT_UI_REPLY_SHARED_FIXTURE comes from the reply producer, which needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "small",
+      "env": {
+        "CHAT_UI_REPLY_MODE": "small"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "paging",
+      "env": {
+        "CHAT_UI_REPLY_MODE": "paging"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "incoming",
+      "env": {
+        "CHAT_UI_REPLY_MODE": "incoming"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "incoming-send",
+      "env": {
+        "CHAT_UI_REPLY_MODE": "incoming-send"
+      },
+      "needs": "web",
+      "blocked": "same"
+    }
+  ],
+  "src/app/chat/entityChats.e2e.ts": [
+    {
+      "label": "after",
+      "args": [
+        "after"
+      ],
+      "needs": "web",
+      "blocked": "TS_CHAT_FIXTURE is entity-fixture.json from the entity producer (runner 'entity', scenario 'after'), which needs the private CHAT_RECOVERY_OWNER_FILE"
+    }
+  ],
+  "src/app/chat/entityChatNavigation.e2e.ts": [
+    {
+      "label": "default",
+      "needs": "web",
+      "blocked": "needs the entity producer's signed-in synthetic fixture, which needs CHAT_RECOVERY_OWNER_FILE"
+    }
+  ],
+  "src/app/chat/entityChatNavigation.native.e2e.ts": [
+    {
+      "label": "default",
+      "needs": "ios-phone",
+      "blocked": "needs the same private synthetic fixture account (CHAT_RECOVERY_OWNER_FILE)"
+    }
+  ],
+  "src/app/chat/chatHistoryRecoveryRetained.e2e.ts": [
+    {
+      "label": "E1",
+      "args": [
+        "E1"
+      ],
+      "needs": "web",
+      "blocked": "CHAT_RECOVERY_FIXTURE comes from chat-history-recovery-fixtures.ts, which needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "E2",
+      "args": [
+        "E2"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    }
+  ],
+  "src/app/chat/chatHistoryRecovery.e2e.ts": [
+    {
+      "label": "E1",
+      "args": [
+        "E1"
+      ],
+      "needs": "web",
+      "blocked": "CHAT_RECOVERY_FIXTURE needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "E2",
+      "args": [
+        "E2"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E3",
+      "args": [
+        "E3"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E4",
+      "args": [
+        "E4"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E5",
+      "args": [
+        "E5"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E6",
+      "args": [
+        "E6"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E7",
+      "args": [
+        "E7"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E5-native-ios",
+      "args": [
+        "E5"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web",
+        "CHAT_RECOVERY_PREPARE_NATIVE": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "E9",
+      "args": [
+        "E9"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E11",
+      "args": [
+        "E11"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E12",
+      "args": [
+        "E12"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E13",
+      "args": [
+        "E13"
+      ],
+      "env": {
+        "CHAT_RECOVERY_SURFACE": "web"
+      },
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "E8",
+      "args": [
+        "E8"
+      ],
+      "needs": "web",
+      "blocked": "same, plus CHAT_RECOVERY_BUILDS"
+    },
+    {
+      "label": "E10",
+      "args": [
+        "E10"
+      ],
+      "needs": "web",
+      "blocked": "same, plus CHAT_RECOVERY_BUILDS"
+    }
+  ],
+  "src/app/chat/chatPhones.e2e.ts": [
+    {
+      "label": "ios-P1",
+      "args": [
+        "P1"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-P3",
+      "args": [
+        "P3"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-P2",
+      "args": [
+        "P2"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-P4",
+      "args": [
+        "P4"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "ios",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android-P1",
+      "args": [
+        "P1"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "android-P2",
+      "args": [
+        "P2"
+      ],
+      "env": {
+        "CHAT_PLATFORM": "android",
+        "CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/dev/chatBenchPhones.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "CHAT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android",
+      "env": {
+        "CHAT_PLATFORM": "android"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/chat/chatBlocks.e2e.ts": [
+    {
+      "label": "web",
+      "args": [
+        "web"
+      ],
+      "needs": "web",
+      "blocked": "runs inside chatHistoryRecoveryReplyFixture host mode, whose CHAT_RECOVERY_REPLY_SETUP comes from the producer that needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "ios",
+      "args": [
+        "ios"
+      ],
+      "needs": "ios-sim",
+      "blocked": "runs inside chatHistoryRecoveryReplyFixture host mode, whose CHAT_RECOVERY_REPLY_SETUP comes from the producer that needs the private CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "android",
+      "args": [
+        "android"
+      ],
+      "needs": "android-phone",
+      "blocked": "runs inside chatHistoryRecoveryReplyFixture host mode, whose CHAT_RECOVERY_REPLY_SETUP comes from the producer that needs the private CHAT_RECOVERY_OWNER_FILE"
+    }
+  ],
+  "src/app/chat/chat117.e2e.ts": [
+    {
+      "label": "people",
+      "args": [
+        "people"
+      ],
+      "needs": "web",
+      "blocked": "approval and layout open origin+'/__fixture/session/L', and nothing else in the repository serves that route. words needs the producer's 'chat117Words' scenario (CHAT_RECOVERY_OWNER_FILE)."
+    },
+    {
+      "label": "approval",
+      "args": [
+        "approval"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "layout",
+      "args": [
+        "layout"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    },
+    {
+      "label": "words",
+      "args": [
+        "words"
+      ],
+      "needs": "web",
+      "blocked": "same"
+    }
+  ],
+  "src/app/chat/chat117.native.e2e.ts": [
+    {
+      "label": "ios-app",
+      "env": {
+        "CHAT117_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "needs the native 'chat117' scene, which needs CHAT_RECOVERY_OWNER_FILE"
+    },
+    {
+      "label": "ios-safari",
+      "args": [
+        "safari"
+      ],
+      "env": {
+        "CHAT117_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    },
+    {
+      "label": "android-app",
+      "env": {
+        "CHAT117_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    }
+  ],
+  "src/app/chat/declaredAge.e2e.ts": [
+    {
+      "label": "web-consent",
+      "args": [
+        "web-consent"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "web-apple",
+      "args": [
+        "web-apple"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "web-under13",
+      "args": [
+        "web-under13"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "web-message",
+      "args": [
+        "web-message"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "ios",
+      "args": [
+        "ios"
+      ],
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-consent",
+      "args": [
+        "ios-consent"
+      ],
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android",
+      "args": [
+        "android"
+      ],
+      "needs": "android-phone"
+    }
+  ],
+  "mobile/test/teamStationAppSignInLink.e2e.ts": [
+    {
+      "label": "E5-ios",
+      "env": {
+        "TS_E2E_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "TS_API_BASE_URL must be a seat: 'whose TS_API_BASE_URL is the seat: a Mason build'"
+    },
+    {
+      "label": "E6-android",
+      "env": {
+        "TS_E2E_PLATFORM": "android",
+        "APP_LINKS_USER_SELECTION": "1"
+      },
+      "needs": "android-phone",
+      "blocked": "same seat"
+    }
+  ],
+  "mobile/test/teamStationAppSceneLifecycle.e2e.ts": [
+    {
+      "label": "phone",
+      "env": {
+        "TS_E2E_LAYOUT": "phone"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "tablet",
+      "env": {
+        "TS_E2E_LAYOUT": "tablet"
+      },
+      "needs": "ipad-sim"
+    }
+  ],
+  "scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts": [
+    {
+      "label": "N1-N4",
+      "needs": "ios-phone"
+    },
+    {
+      "label": "SETTINGS",
+      "args": [
+        "SETTINGS"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "OFFLINE",
+      "args": [
+        "OFFLINE"
+      ],
+      "needs": "ios-phone"
+    }
+  ],
+  "scripts/e2e/observability/run.ts": [
+    {
+      "label": "web-errors",
+      "args": [
+        "--target",
+        "web",
+        "--scenario",
+        "errors"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "web-cors",
+      "args": [
+        "--target",
+        "web",
+        "--scenario",
+        "cors"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "web-video",
+      "args": [
+        "--target",
+        "web",
+        "--scenario",
+        "video"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "web-funnel",
+      "args": [
+        "--target",
+        "web",
+        "--scenario",
+        "funnel"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "ts-ios-errors",
+      "args": [
+        "--target",
+        "ts-ios",
+        "--scenario",
+        "errors"
+      ],
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ts-ios-video",
+      "args": [
+        "--target",
+        "ts-ios",
+        "--scenario",
+        "video"
+      ],
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ts-ios-funnel",
+      "args": [
+        "--target",
+        "ts-ios",
+        "--scenario",
+        "funnel"
+      ],
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ts-android-errors",
+      "args": [
+        "--target",
+        "ts-android",
+        "--scenario",
+        "errors"
+      ],
+      "needs": "android-phone"
+    },
+    {
+      "label": "ts-android-video",
+      "args": [
+        "--target",
+        "ts-android",
+        "--scenario",
+        "video"
+      ],
+      "needs": "android-phone"
+    },
+    {
+      "label": "ts-android-funnel",
+      "args": [
+        "--target",
+        "ts-android",
+        "--scenario",
+        "funnel"
+      ],
+      "needs": "android-phone"
+    },
+    {
+      "label": "director-errors",
+      "args": [
+        "--target",
+        "director",
+        "--scenario",
+        "errors"
+      ],
+      "needs": "ipad-sim"
+    },
+    {
+      "label": "cam-ios-errors",
+      "args": [
+        "--target",
+        "cam-ios",
+        "--scenario",
+        "errors"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "cam-android-errors",
+      "args": [
+        "--target",
+        "cam-android",
+        "--scenario",
+        "errors"
+      ],
+      "needs": "android-phone"
+    }
+  ],
+  "scripts/e2e/playerLayouts/liveProbe.ts": [
+    {
+      "label": "playlists",
+      "args": [
+        "--playlists"
+      ],
+      "needs": "none"
+    },
+    {
+      "label": "jump",
+      "args": [
+        "--jump",
+        "34"
+      ],
+      "needs": "none"
+    },
+    {
+      "label": "stall",
+      "args": [
+        "--stall",
+        "20"
+      ],
+      "needs": "none"
+    },
+    {
+      "label": "tiles",
+      "args": [
+        "--tiles",
+        "--seconds",
+        "60"
+      ],
+      "needs": "web"
+    }
+  ],
+  "scripts/e2e/playbackReliability/playbackReliability.e2e.ts": [
+    {
+      "label": "iphone-safari-tp",
+      "env": {
+        "TS_TARGET": "iphone-safari",
+        "TS_CONTENT": "tp"
+      },
+      "needs": "ios-phone",
+      "blocked": "'needs a real source game with uploads and a 1Password test account on a deployed server' (TS_APP=https://<server>, TS_ACCOUNT_ITEM)"
+    },
+    {
+      "label": "iphone-safari-tp+",
+      "env": {
+        "TS_TARGET": "iphone-safari",
+        "TS_CONTENT": "tp+"
+      },
+      "needs": "ios-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "iphone-safari-real",
+      "env": {
+        "TS_TARGET": "iphone-safari",
+        "TS_CONTENT": "real"
+      },
+      "needs": "ios-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "iphone-safari-live",
+      "env": {
+        "TS_TARGET": "iphone-safari",
+        "TS_LIVE": "1"
+      },
+      "needs": "ios-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "iphone-brave-x4",
+      "env": {
+        "TS_TARGET": "iphone-brave"
+      },
+      "needs": "ios-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "pixel8-chrome-x4",
+      "env": {
+        "TS_TARGET": "pixel8-chrome"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "pixel10-chrome-x4",
+      "env": {
+        "TS_TARGET": "pixel10-chrome"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    }
+  ],
+  "src/app/autoSchedulerFixes.e2e.ts": [
+    {
+      "label": "full-pass",
+      "args": [
+        "--only",
+        "F10"
+      ],
+      "needs": "web"
+    }
+  ],
+  "src/app/autoSchedulerFixesIOS.e2e.ts": [
+    {
+      "label": "I1-I3-I4",
+      "args": [
+        "--only",
+        "I1,I3,I4"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "I2",
+      "args": [
+        "--only",
+        "I2"
+      ],
+      "env": {
+        "TS_AUTO_SCHEDULER_IOS_RELEASE": "1"
+      },
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/streamManagement.e2e.ts": [
+    {
+      "label": "E2",
+      "env": {
+        "TS_STREAM_SCENARIO": "E2"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "setup",
+      "env": {
+        "TS_STREAM_SCENARIO": "setup"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "rows",
+      "env": {
+        "TS_STREAM_SCENARIO": "rows"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "rows-E13-E15",
+      "env": {
+        "TS_STREAM_SCENARIO": "rows",
+        "TS_STREAM_STEPS": "E13,E15"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "links",
+      "env": {
+        "TS_STREAM_SCENARIO": "links"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/settingsCleanup.e2e.ts": [
+    {
+      "label": "account",
+      "needs": "web"
+    },
+    {
+      "label": "E14",
+      "args": [
+        "E14"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "E11",
+      "args": [
+        "E11"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "E8",
+      "args": [
+        "E8"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "E4",
+      "args": [
+        "E4"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "E27-live",
+      "args": [
+        "E27"
+      ],
+      "needs": "web",
+      "blocked": "'if (live && keyFile == null) throw new Error(Supply TS_GOOGLE_PLACES_KEY_FILE)': a private Google Places key"
+    }
+  ],
+  "src/app/googleProviderConsistency.e2e.ts": [
+    {
+      "label": "default",
+      "needs": "web"
+    },
+    {
+      "label": "live",
+      "args": [
+        "--live"
+      ],
+      "needs": "web",
+      "blocked": "assert(serverConfig.googlePlaces != null, 'Configure the server Places key in ignored local config')"
+    }
+  ],
+  "src/server/umpires/leaderboardPages.e2e.ts": [
+    {
+      "label": "default",
+      "needs": "none"
+    },
+    {
+      "label": "tess-index",
+      "args": [
+        "--tess-index"
+      ],
+      "needs": "none"
+    }
+  ],
+  "src/test/apiKeyChannels.e2e.ts": [],
+  "src/app/screens/homeCoalesce.e2e.ts": [
+    {
+      "label": "coalesce",
+      "args": [
+        "--scenario",
+        "coalesce"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "shown",
+      "args": [
+        "--scenario",
+        "shown"
+      ],
+      "needs": "web"
+    }
+  ],
+  "src/app/player/liveOrigin.e2e.ts": [
+    {
+      "label": "chrome",
+      "args": [
+        "--device",
+        "chrome"
+      ],
+      "needs": "web"
+    },
+    {
+      "label": "iphone-safari",
+      "args": [
+        "--device",
+        "iphone-safari"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "iphone-app",
+      "args": [
+        "--device",
+        "iphone-app"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "outage",
+      "args": [
+        "--outage"
+      ],
+      "needs": "web"
+    }
+  ],
+  "src/app/player/playerLayoutsDevices.e2e.ts": [
+    {
+      "label": "android-browser",
+      "env": {
+        "TS_DEVICE_PLATFORM": "android",
+        "TS_DEVICE_SURFACE": "browser"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "android-app",
+      "env": {
+        "TS_DEVICE_PLATFORM": "android",
+        "TS_DEVICE_SURFACE": "app"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "ios-browser",
+      "env": {
+        "TS_DEVICE_PLATFORM": "ios",
+        "TS_DEVICE_SURFACE": "browser"
+      },
+      "needs": "ios-phone"
+    },
+    {
+      "label": "ios-app",
+      "env": {
+        "TS_DEVICE_PLATFORM": "ios",
+        "TS_DEVICE_SURFACE": "app"
+      },
+      "needs": "ios-phone"
+    },
+    {
+      "label": "ipad-browser",
+      "env": {
+        "TS_DEVICE_PLATFORM": "ios",
+        "TS_DEVICE_SURFACE": "browser"
+      },
+      "needs": "ipad-sim"
+    },
+    {
+      "label": "ipad-app",
+      "env": {
+        "TS_DEVICE_PLATFORM": "ios",
+        "TS_DEVICE_SURFACE": "app"
+      },
+      "needs": "ipad-sim"
+    }
+  ],
+  "src/app/scoring/fieldSoundsDevice.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "REPLAY_PLATFORM": "ios",
+        "REPLAY_PHASE": "after"
+      },
+      "needs": "ios-phone"
+    },
+    {
+      "label": "android",
+      "env": {
+        "REPLAY_PLATFORM": "android",
+        "REPLAY_PHASE": "after"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/replay/replayDevice.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "REPLAY_PLATFORM": "ios"
+      },
+      "needs": "ios-phone"
+    },
+    {
+      "label": "android",
+      "env": {
+        "REPLAY_PLATFORM": "android"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/scoring/lineupQr.e2e.ts": [
+    {
+      "label": "safari",
+      "env": {
+        "LINEUP_QR_SURFACE": "safari"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios",
+      "env": {
+        "LINEUP_QR_SURFACE": "ios"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android",
+      "env": {
+        "LINEUP_QR_SURFACE": "android"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/scoring/scoringUiPolish.e2e.ts": [
+    {
+      "label": "safari-all",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-bases",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_UI_SECTION": "bases"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-all",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-bases",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_UI_SECTION": "bases"
+      },
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/scoring/scoringModals.e2e.ts": [
+    {
+      "label": "safari-default",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-settings",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "settings"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-defensive",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "defensive"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-behavior",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "behavior"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-extended",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "extended"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-picker",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "picker"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-forms",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "forms"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-placeholder",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "placeholder"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-basic",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "basic"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-player",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "player"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-additional",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "additional"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-advanced",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "advanced"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-error",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "error"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-preview",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_MODAL_SECTION": "preview"
+      },
+      "needs": "ios-sim",
+      "blocked": "expects 'Controlled scoring modal fixtures', which only e2e/fixtures/scoringModalsPreview.tsx renders, and no build has it as an entry"
+    },
+    {
+      "label": "native-default",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-settings",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "settings"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-defensive",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "defensive"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-behavior",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "behavior"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-extended",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "extended"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-picker",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "picker"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-forms",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "forms"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-placeholder",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "placeholder"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-basic",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "basic"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-player",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "player"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-additional",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "additional"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-advanced",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "advanced"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-error",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "error"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-preview",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_MODAL_SECTION": "preview"
+      },
+      "needs": "ios-sim",
+      "blocked": "expects 'Controlled scoring modal fixtures', which only e2e/fixtures/scoringModalsPreview.tsx renders, and no build has it as an entry"
+    }
+  ],
+  "src/app/scoring/scoringRosterEdit.e2e.ts": [
+    {
+      "label": "safari-all",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_ROSTER_REGRESSIONS": "1"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-names",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_ROSTER_SECTION": "names"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-namesPersisted",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_ROSTER_SECTION": "namesPersisted"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "safari-m1",
+      "env": {
+        "SCORING_MODAL_SURFACE": "safari",
+        "SCORING_ROSTER_SECTION": "m1"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-all",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_ROSTER_REGRESSIONS": "1"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-names",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_ROSTER_SECTION": "names"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-namesPersisted",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_ROSTER_SECTION": "namesPersisted"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "native-m1",
+      "env": {
+        "SCORING_MODAL_SURFACE": "native",
+        "SCORING_ROSTER_SECTION": "m1"
+      },
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/scoring/scheduleExit.e2e.ts": [
+    {
+      "label": "safari",
+      "env": {
+        "TEST_APP_ID": "com.apple.mobilesafari",
+        "TEST_PHASE": "after"
+      },
+      "needs": "ios-sim",
+      "blocked": "TEST_FIXTURE_CONTROL_URL: 'The local fixture control accepts POST JSON { rejectWrites: boolean }', and nothing else in the repository implements it"
+    },
+    {
+      "label": "native",
+      "env": {
+        "TEST_APP_ID": "app.teamstation.app",
+        "TEST_PHASE": "after"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    }
+  ],
+  "src/app/scoring/rosterDrag.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TEST_PLATFORM": "ios",
+        "TEST_PHASE": "after"
+      },
+      "needs": "ios-sim",
+      "blocked": "'against a local fixture API that serves game g1 with 14 players a side': the script starts no server and the repository has no such fixture"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TEST_PLATFORM": "android",
+        "TEST_PHASE": "after"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    }
+  ],
+  "src/app/scoring/rosterField.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TEST_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "'against an isolated synthetic API': the script serves none and no fixture in the repository does"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TEST_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "safari",
+      "env": {
+        "TEST_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "same"
+    }
+  ],
+  "src/app/field/defensivePositionFontFit.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "FONT_FIT_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "launches app 'app.teamstation.fontfit' (src/test/defensivePositionFontFit.native.tsx), and no build in the repository registers that host"
+    },
+    {
+      "label": "android",
+      "env": {
+        "FONT_FIT_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    },
+    {
+      "label": "safari",
+      "env": {
+        "FONT_FIT_PLATFORM": "safari"
+      },
+      "needs": "ios-sim",
+      "blocked": "SCORING_TEST_URL must open straight on 'Assign a pitcher', the preview that legacyRecipes NO_PREVIEW says is not in the repository"
+    }
+  ],
+  "src/app/scoring/defensiveRosterSheet.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "ROSTER_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "SCORING_APP_ID is the fixture host src/test/defensiveRosterSheet.native.tsx, which no build registers ('index.js registers only Root')"
+    },
+    {
+      "label": "chrome",
+      "env": {
+        "ROSTER_PLATFORM": "chrome"
+      },
+      "needs": "web",
+      "blocked": "SCORING_TEST_URL must open on 'Assign a pitcher' with no sign-in (NO_PREVIEW)"
+    },
+    {
+      "label": "landscape",
+      "env": {
+        "ROSTER_PLATFORM": "landscape"
+      },
+      "needs": "web",
+      "blocked": "same"
+    }
+  ],
+  "src/app/screens/teamPinnedHeadDevice.e2e.ts": [
+    {
+      "label": "ios-all",
+      "env": {
+        "TEST_PLATFORM": "ios",
+        "TEST_PHASE": "after"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-players",
+      "env": {
+        "TEST_PLATFORM": "ios",
+        "TEST_PHASE": "after",
+        "TEST_ONLY": "P1,P2,P3,P5",
+        "TS_FIXTURE_COACH": "1"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-E13-over",
+      "env": {
+        "TEST_PLATFORM": "ios",
+        "TEST_PHASE": "after",
+        "TEST_ONLY": "E13",
+        "TS_FIXTURE_SEASON": "over"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android-all",
+      "env": {
+        "TEST_PLATFORM": "android",
+        "TEST_PHASE": "after"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "android-players",
+      "env": {
+        "TEST_PLATFORM": "android",
+        "TEST_PHASE": "after",
+        "TEST_ONLY": "P1,P2,P3,P5",
+        "TS_FIXTURE_COACH": "1"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "android-E13-over",
+      "env": {
+        "TEST_PLATFORM": "android",
+        "TEST_PHASE": "after",
+        "TEST_ONLY": "E13",
+        "TS_FIXTURE_SEASON": "over"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/screens/longListsNative.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TS_LONG_LISTS_PLATFORM": "ios",
+        "TS_LONG_LISTS_CASES": "E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TS_LONG_LISTS_PLATFORM": "android",
+        "TS_LONG_LISTS_CASES": "E1,E2,E3,E4,E5,E6,E7,E8,E9,E10,E11,E12"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/navigation/stackTransitionsNative.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TS_STACK_PLATFORM": "ios",
+        "TS_STACK_CASES": "N1,N2,N3,N4"
+      },
+      "needs": "ios-phone"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TS_STACK_PLATFORM": "android",
+        "TS_STACK_CASES": "N1,N2,N3,N4"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/walkup/walkUpOffline.e2e.ts": [
+    {
+      "label": "E1",
+      "args": [
+        "--only",
+        "E1"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "E4",
+      "args": [
+        "--only",
+        "E4"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "E5",
+      "args": [
+        "--only",
+        "E5"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "E6",
+      "args": [
+        "--only",
+        "E6"
+      ],
+      "needs": "ios-phone"
+    },
+    {
+      "label": "E7",
+      "args": [
+        "--only",
+        "E7"
+      ],
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/screens/statsTables.e2e.ts": [
+    {
+      "label": "native",
+      "env": {
+        "TEST_APP_ID": "app.teamstation.app"
+      },
+      "needs": "ios-phone"
+    },
+    {
+      "label": "safari",
+      "env": {
+        "TEST_APP_ID": "com.apple.mobilesafari"
+      },
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/sentry.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TS_SENTRY_PLATFORM": "ios"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TS_SENTRY_PLATFORM": "android"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/addPeopleNative.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TS_ADD_PEOPLE_PLATFORM": "ios"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TS_ADD_PEOPLE_PLATFORM": "android"
+      },
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/playerNamePrivacyNative.e2e.ts": [
+    {
+      "label": "android",
+      "env": {
+        "TS_PRIVACY_PLATFORM": "android"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "ios",
+      "env": {
+        "TS_PRIVACY_PLATFORM": "ios"
+      },
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/creationNative.e2e.ts": [
+    {
+      "label": "ios",
+      "env": {
+        "TS_CREATION_PLATFORM": "ios"
+      },
+      "needs": "ios-sim",
+      "blocked": "TS_CREATION_NATIVE_FLOW: 'OS-only vectors are supplied privately alongside the isolated fixture', and nothing in the repository writes a NativeFlow"
+    },
+    {
+      "label": "android",
+      "env": {
+        "TS_CREATION_PLATFORM": "android"
+      },
+      "needs": "android-phone",
+      "blocked": "same"
+    }
+  ],
+  "scripts/walkup-native.mjs": [
+    {
+      "label": "ios",
+      "needs": "ios-phone"
+    }
+  ],
+  "scripts/walkup-native-android.mjs": [
+    {
+      "label": "android",
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/screens/signInReturn.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/screens/statsMembership.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/screens/coachRoster.simulator.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/test/gameHeroActions.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/test/scoringDefense.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/test/scoringTweaks.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/screens/expandedStats.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/teamRestorationIOS.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/scoring/defensiveScoringNative.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/scoring/priorRunnerNative.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/test/pickoffReset.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/test/runnerDrag.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/streamingScreen.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/uploadReminder.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/twoDevices.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/stream/uploadRecording.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ],
+  "src/app/seasonGameRefinementsNative.e2e.ts": [
+    {
+      "label": "android-phone",
+      "needs": "android-phone"
+    }
+  ],
+  "src/app/scoring/gameRosterLayout.e2e.ts": [
+    {
+      "label": "phone-width",
+      "needs": "web",
+      "env": {
+        "ROSTER_BROWSER_DEVICE": "web"
+      }
+    }
+  ],
+  "src/app/scoring/eventTags.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim"
+    }
+  ],
+  "src/app/scoring/eventTags.edge.e2e.ts": [
+    {
+      "label": "ios-sim",
+      "needs": "ios-sim",
+      "blocked": "EVENT_TAGS_EDGE_CONFIG names a private fault-control server that is not in the repository"
+    }
+  ],
+  "src/app/addPeople.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "web",
+      "env": {
+        "TS_ADD_PEOPLE_WORK": "{legacy:addPeople.e2e}/work"
+      }
+    }
+  ],
+  "src/app/userIds.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "web",
+      "blocked": "TS_USER_IDS_FIXTURE (player and scorer ids, game, team and password files) has no producer in the repository"
+    }
+  ],
+  "mobile/test/teamStationTvDeepLink.e2e.ts": [
+    {
+      "label": "ios-phone",
+      "needs": "ios-phone"
+    }
+  ]
+}

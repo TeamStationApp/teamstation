@@ -6,7 +6,7 @@ import path from 'node:path'
 
 import express from 'express'
 
-import { maestro, type MaestroHandle } from './refinementsMaestro.e2e'
+import { maestro, type MaestroHandle } from '../../e2e/rigs/refinementsMaestro'
 
 /**
  * Dictated force plays, the third out and the pitch before a ball in play,

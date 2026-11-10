@@ -4,9 +4,9 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { capture, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import { userIdOfGumbo } from '../../common/userId'
 import { guardianFixture } from '../../test/guardianFixture'
-import { capture, maestro } from '../../test/refinementsMaestro.e2e'
 import { routePath } from '../navigation/routes'
 
 /** Safari on an explicitly selected simulator; never attaches to hardware. */

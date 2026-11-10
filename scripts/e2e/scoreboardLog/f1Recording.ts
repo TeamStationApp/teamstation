@@ -31,7 +31,7 @@ import { join } from 'node:path'
 
 import WebSocket from 'ws'
 
-import * as rig from '../../../src/app/player/scoreboardOverlay/overlayRig.e2e'
+import * as rig from '../../../e2e/rigs/overlayRig'
 
 const part = process.argv[2]
 if (part !== 'sync' && part !== 'grid') throw new Error('Give sync or grid')

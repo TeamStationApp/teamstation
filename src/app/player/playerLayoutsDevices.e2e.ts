@@ -6,7 +6,12 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import { APP, artifacts, fixture, print } from './playerLayoutsRig.e2e'
+import {
+  APP,
+  artifacts,
+  fixture,
+  print
+} from '../../../e2e/rigs/playerLayoutsRig'
 
 /**
  * The player-layouts scenarios on phones and an iPad (D1–D6), and the live

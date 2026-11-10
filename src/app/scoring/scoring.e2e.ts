@@ -13,10 +13,10 @@ import {
   Vector3
 } from 'three'
 
+import { browserCoverageCollector } from '../../../e2e/rigs/browserCoverage'
 import { asGameDetail, type RosterEntry } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
-import { browserCoverageCollector } from '../browserCoverage.e2e'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
@@ -394,7 +394,23 @@ async function open(
       ]
     } else if (url.pathname.endsWith('/live-streams'))
       body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
-    else {
+    else if (url.pathname === '/api/v1/me/home')
+      body = { teams: [], seasons: [], leagues: [] }
+    else if (url.pathname === '/api/v1/me/umpire-leagues')
+      body = { leagues: [] }
+    else if (
+      url.pathname === '/api/v1/events' ||
+      url.pathname === '/api/v1/live' ||
+      url.pathname === '/api/v1/users' ||
+      url.pathname === '/api/v1/chat/blocks' ||
+      url.pathname === '/api/v1/chat/links' ||
+      url.pathname === '/api/v1/chat/conversations'
+    )
+      body = []
+    else if (url.pathname === '/api/v1/analytics/events') {
+      request.respond({ status: 204, body: '' }).catch(() => undefined)
+      return
+    } else {
       unexpected.push(url.pathname)
       status = 500
       body = {}
@@ -687,7 +703,7 @@ describe('scoring browser', function () {
       )
       await undo!.hover()
       await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 650))
+      await new Promise(resolve => setTimeout(resolve, 1100))
       await page.mouse.up()
       await page.waitForSelector('[data-testid="scoring-tag-history"]')
       await page.waitForFunction(() => {
@@ -730,7 +746,7 @@ describe('scoring browser', function () {
       // One short press removes one pitch, even when the previous label repeats.
       await undo!.hover()
       await page.mouse.down()
-      await new Promise(resolve => setTimeout(resolve, 650))
+      await new Promise(resolve => setTimeout(resolve, 1100))
       await page.mouse.up()
       await page.waitForSelector('[data-testid="scoring-tag-history"]')
       // The history opens without taking back another pitch.
@@ -749,7 +765,7 @@ describe('scoring browser', function () {
       const holdUndo = async (): Promise<void> => {
         await undo!.hover()
         await page.mouse.down()
-        await new Promise(resolve => setTimeout(resolve, 650))
+        await new Promise(resolve => setTimeout(resolve, 1100))
         await page.mouse.up()
         await page.waitForSelector('[data-testid="scoring-tag-history"]')
       }

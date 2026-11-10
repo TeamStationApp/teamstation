@@ -2,13 +2,13 @@
 // since TS_COVERAGE_BASE (default: the merge base with origin/master), each
 // file and the total.
 //
-//   npm run build.web
-//   TS_DIRECT_BROWSER_COVERAGE=coverage/tessBrowser.json \
-//     NODE_V8_COVERAGE=$PWD/coverage/tessE2eServer \
-//     node -r sucrase/register src/app/tess/tess.e2e.ts   # its own env too
 //   TS_DIRECT_BROWSER_COVERAGE=coverage/tessBrowser.json \
 //     TS_TESS_SERVER_COVERAGE=coverage/tessE2eServer \
 //     npm run coverage.tess -- [--allow-failing <pattern>]…
+//
+// Tess's end-to-end tests are scenarios in `e2e/tests/assistant/chat`. Run each with
+// `npm run e2e -- run <id> --surface <surface>`. Without the coverage inputs
+// above, the combined gate says so, and the unit gate still runs.
 //
 // The reports go to `coverage/tess/`, which each run clears; keep the
 // end-to-end inputs outside it.

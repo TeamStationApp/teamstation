@@ -14,7 +14,7 @@ import {
   signInPhone,
   signInWeb,
   visible
-} from './kit.e2e'
+} from '../../../e2e/rigs/replayKit'
 
 /**
  * The replay and the live view on a phone, filmed by the bench webcam with

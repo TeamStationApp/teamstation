@@ -23,6 +23,17 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import type { Frame } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  type BrowserSession,
+  browserSession,
+  contains,
+  fill,
+  log,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { eventLocalFields, zoneName } from '../common/eventTime'
 import type { SchedulePreview } from '../common/schedulePreviews'
 import type { ScheduleSetup } from '../common/seasonScheduling'
@@ -49,17 +60,6 @@ import {
   MORE_PARKS
 } from '../test/googlePlacesStub'
 import { isShownMapFrame } from '../test/mapFrameProbe'
-import {
-  type BrowserSession,
-  browserSession,
-  contains,
-  fill,
-  log,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 const WIDTH = 402
 const HEIGHT = 874
@@ -1440,9 +1440,12 @@ async function f7(run: Run): Promise<void> {
   )
   await new Promise(resolve => setTimeout(resolve, 1000))
   const rows = await b.page.evaluate(() =>
-    [...document.querySelectorAll('[aria-label^="Open "]')].map(node =>
-      String(node.getAttribute('aria-label')).slice('Open '.length)
-    )
+    [...document.querySelectorAll('[aria-label^="Open "]')]
+      .map(node =>
+        String(node.getAttribute('aria-label')).slice('Open '.length)
+      )
+      // The header's link back to the Field Manager is not a venue row.
+      .filter(name => name !== 'the Field Manager')
   )
   expect(rows).deep.equals([EXAMPLE_PARK.name, ...MORE_PARKS])
   expect(rows.length).greaterThanOrEqual(10)

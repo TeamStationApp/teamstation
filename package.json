@@ -4,7 +4,7 @@
   "private": true,
   "license": "AGPL-3.0-only",
   "author": "Paul Puey <paul@teamstation.app>",
-  "description": "TeamStation \u2014 a platform for youth sports team management, scoring, and video streaming",
+  "description": "TeamStation — a platform for youth sports team management, scoring, and video streaming",
   "engines": {
     "node": ">=24.9.0"
   },
@@ -62,7 +62,7 @@
     "feedProbe": "node -r sucrase/register src/server/changeFeed/probeCli.ts",
     "import-video": "node -r sucrase/register src/server/dev/importVideoFile.ts",
     "ios": "react-native run-ios",
-    "lint": "node --max-old-space-size=8192 node_modules/eslint/bin/eslint.js .",
+    "lint": "node --max-old-space-size=12288 node_modules/eslint/bin/eslint.js .",
     "lineup-fixture": "node -r sucrase/register src/server/dev/lineupFixture.ts",
     "live-pitch": "node -r sucrase/register src/server/dev/livePitch.ts",
     "make-season": "node -r sucrase/register src/server/dev/makeSeasonFromVideos.ts",
@@ -83,6 +83,7 @@
     "scoring-game": "node -r sucrase/register src/server/dev/scoringGame.ts",
     "scope-agreement": "node -r sucrase/register src/server/dev/scopeAgreementCheck.ts",
     "seed": "node -r sucrase/register src/server/dev/seed.ts",
+    "fixtures": "node -r sucrase/register src/server/dev/fixtures/cli.ts",
     "start": "node -r sucrase/register src/server/index.ts",
     "start.ingest": "node -r sucrase/register src/server/ingest/main.ts",
     "start.dbLoad": "node -r sucrase/register tools/dbLoad/main.ts",
@@ -98,7 +99,7 @@
     "test.models": "node scripts/testModels.mjs",
     "test.e2e.seasonSchedule": "TS_REFINEMENTS_SCHEDULE_ONLY=1 node -r sucrase/register src/app/seasonGameRefinements.e2e.ts",
     "test.mocha": "mocha --timeout 20000 --exit -r sucrase/register -r ./src/test/scoringDomSetup.cjs --extension ts",
-    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && npm run typecheck.mason",
+    "typecheck": "tsc -p tsconfig.app.json && tsc -p tsconfig.server.test.json && tsc -p tsconfig.eventControl.json && node scripts/typecheckE2e.mjs && npm run typecheck.mason",
     "typecheck.mason": "tsc -p tsconfig.mason.json",
     "typecheck.native": "tsc -p tsconfig.native.json",
     "typecheck.android": "tsc -p tsconfig.android.json",
@@ -141,7 +142,9 @@
     "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
     "test.tv": "node scripts/build-scoring-tests.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --timeout 60000 --exit src/server/routes/tvLogin.integration.test.ts src/server/routes/videoCollections.integration.test.ts src/server/auth/tvLocation.test.ts 'src/app/tv/*.test.ts' src/test/tvBuildConfig.test.ts lib/scoring-tests.cjs --grep \"TV |TeamStation TV|account|Account\"",
     "coverage.gameStatistics": "node scripts/game-statistics-coverage.mjs",
-    "coverage.tv": "node scripts/tv-coverage.mjs"
+    "coverage.tv": "node scripts/tv-coverage.mjs",
+    "e2e": "node -r sucrase/register e2e/core/cli.ts",
+    "coverage.e2e": "c8 --all --check-coverage --lines 90 --reporter=text --include 'e2e/core/**/*.ts' --include 'e2e/faults/**/*.ts' --include src/buildWorker.mjs --exclude '**/*.test.ts' mocha --timeout 60000 --exit -r sucrase/register --extension ts --spec 'e2e/**/*.test.ts' --spec src/buildWorker.test.ts"
   },
   "dependencies": {
     "@op-engineering/op-sqlite": "^18.2.5",
@@ -207,6 +210,7 @@
     "react-native-keyboard-controller": "1.22.8"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.3.0",
     "@babel/core": "^7.29.7",
     "@babel/plugin-syntax-jsx": "^7.29.7",
     "@babel/plugin-syntax-typescript": "^7.29.7",

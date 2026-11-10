@@ -4,17 +4,17 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { userIdOfGumbo } from '../common/userId'
-import { SESSION_COOKIE } from '../server/auth/tokens'
-import { groupFixture } from '../test/groupFixtures'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import { freezeBrowserClock } from '../../e2e/rigs/creationBrowserActions'
 import {
   browserSession,
   capture,
   maestro,
   tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import { freezeBrowserClock } from './creationBrowserActions.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { userIdOfGumbo } from '../common/userId'
+import { SESSION_COOKIE } from '../server/auth/tokens'
+import { groupFixture } from '../test/groupFixtures'
 
 const dir = process.env.TS_CREATION_ARTIFACTS
 if (dir == null) throw new Error('Supply TS_CREATION_ARTIFACTS')
@@ -150,7 +150,10 @@ async function main(): Promise<void> {
     }))
     const results: State[] = []
     registry.push(
-      { key: 'player-teams', path: `/players/103?onTeam=${f.teamA}&tab=teams` },
+      {
+        key: 'player-teams',
+        path: `/players/${userIdOfGumbo(103)}?onTeam=${f.teamA}&tab=teams`
+      },
       {
         key: 'game-box-score',
         path: '/games/gam_settings_fixture_0?tab=boxScore'

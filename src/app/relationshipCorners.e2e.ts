@@ -4,6 +4,13 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  frameText,
+  freezeBrowserClock,
+  press,
+  text
+} from '../../e2e/rigs/creationBrowserActions'
 import { asParentActions } from '../common/groupLinks'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
@@ -16,13 +23,6 @@ import {
   groupFixture
 } from '../test/groupFixtures'
 import { insertFixtureUsers } from '../test/insertFixtureUsers'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
-import {
-  frameText,
-  freezeBrowserClock,
-  press,
-  text
-} from './creationBrowserActions.e2e'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null)
@@ -57,7 +57,7 @@ async function main(): Promise<void> {
       [204, 'Willie Mays', 'team', f.teamA, 'admin'],
       [205, 'Jackie Robinson', 'season', f.seasonB, 'admin'],
       [206, 'Roberto Clemente', 'team', f.teamB, 'admin'],
-      [207, 'Ted Williams', 'team', f.teamA, 'coach']
+      [207, 'Ted Williams', 'team', f.teamA, 'scorekeeper']
     ] as const
     for (const [id, name, kind, scope, role] of people) {
       await insertFixtureUsers(f.h.db, {
@@ -185,7 +185,7 @@ async function main(): Promise<void> {
     })
     await text(plain, 'Not found')
     lines.push(
-      'E6 PASS: league-only, regular-season-only, playoff-only and direct-team administrators independently accept a raw guest game; season-only sender records host/owned opponent consent; coach cannot decide; no enrollment is inferred'
+      'E6 PASS: league-only, regular-season-only, playoff-only and direct-team administrators independently accept a raw guest game; season-only sender records host/owned opponent consent; a scorekeeper, who cannot schedule for the team, cannot decide; no enrollment is inferred'
     )
 
     const joinResponse = await f.h.request(
@@ -483,7 +483,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PUT',
-          `/manage/season/${f.seasonB}/people/205/roles`,
+          `/manage/season/${f.seasonB}/people/${userIdOfGumbo(205)}/roles`,
           { admin: false, flags: [] },
           105
         )

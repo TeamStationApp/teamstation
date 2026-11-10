@@ -16,6 +16,19 @@ import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  absent,
+  type BrowserSession,
+  browserSession,
+  capture,
+  contains,
+  fill,
+  log,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
   api,
@@ -32,19 +45,6 @@ import {
 import { interceptGoogleMaps } from '../test/googleMapsIntercept'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { mapFrameOf, waitInMapFrame } from '../test/mapFrameProbe'
-import {
-  absent,
-  type BrowserSession,
-  browserSession,
-  capture,
-  contains,
-  fill,
-  log,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 const WIDTH = 402
 const HEIGHT = 874
@@ -374,12 +374,15 @@ async function e2(run: Run): Promise<void> {
   await contains(admin.page, '5:00 PM – 9:00 PM')
   // The year's dates, October to September.
   await tapLabel(admin, 'Dates: Open all year')
-  for (let month = 0; month < 24; month++) {
+  // The calendar opens on this month, which can be after October 2026.
+  const opening = new Date().getFullYear() * 12 + new Date().getMonth()
+  const toOctober = 2026 * 12 + 9 - opening
+  for (let month = 0; month < Math.abs(toOctober); month++) {
     const shown = await admin.page.evaluate(
       () => document.querySelector('[aria-label="2026-10-01"]') != null
     )
     if (shown) break
-    await tapLabel(admin, 'Next month')
+    await tapLabel(admin, toOctober < 0 ? 'Previous month' : 'Next month')
   }
   await tapLabel(admin, '2026-10-01')
   for (let month = 0; month < 12; month++) {

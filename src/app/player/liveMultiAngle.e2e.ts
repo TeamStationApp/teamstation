@@ -4,7 +4,6 @@ import { createRequire } from 'node:module'
 import { expect } from 'chai'
 import { after, describe, it } from 'mocha'
 
-import { TeamStationClient } from '../../common/api'
 import {
   API,
   finish,
@@ -19,7 +18,8 @@ import {
   videoReadings,
   type WebSession,
   webSession
-} from './playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
+import { TeamStationClient } from '../../common/api'
 
 /**
  * The live multi-angle scenarios in a browser (E6, E7): the angle switch and

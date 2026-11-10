@@ -3,9 +3,9 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
+import { rosterEditFixture } from '../../../e2e/fixtures/scoringRosterEditFixture'
 import { recordOf, storedRecordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
-import { rosterEditFixture } from './scoringRosterEdit.e2e.fixture'
 
 const required = (name: string): string => {
   const value = process.env[name]

@@ -5,17 +5,17 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import { build } from 'esbuild'
 
-import { userIdOfGumbo } from '../common/userId'
-import { verifyMediaPath } from '../server/media/mediaTokens'
-import { mediaRoutes } from '../server/routes/media'
-import { groupFixture } from '../test/groupFixtures'
 import {
   browserSession,
   capture,
   contains,
   fill,
   maestro
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { userIdOfGumbo } from '../common/userId'
+import { verifyMediaPath } from '../server/media/mediaTokens'
+import { mediaRoutes } from '../server/routes/media'
+import { groupFixture } from '../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
 
 async function main(): Promise<void> {

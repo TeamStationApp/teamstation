@@ -5,14 +5,14 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
-import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
-import { groupFixture } from '../../test/groupFixtures'
 import {
   browserSession,
   capture,
   log,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
+import { groupFixture } from '../../test/groupFixtures'
 import { databaseUrlOf } from '../../test/screenScopeNotices'
 
 /**
