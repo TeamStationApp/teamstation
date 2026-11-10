@@ -189,6 +189,7 @@ function SheetContent({
   onBackdropPress,
   onClose,
   keyboardVerticalOffset,
+  footer,
   children
 }: {
   visible?: boolean
@@ -224,6 +225,8 @@ function SheetContent({
    * negative offset lets content that floats at the bottom sit on it.
    */
   keyboardVerticalOffset?: number
+  /** A pinned action; scroll padding keeps the final row above it. */
+  footer?: React.ReactNode
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
@@ -233,6 +236,7 @@ function SheetContent({
   const fullScreen = fullScreenAsked && !narrowed
   const tall = tallAsked || narrowed
   const scoring = appearance === 'scoring'
+  const [footerHeight, setFooterHeight] = useState(0)
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
   const contentScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -434,23 +438,52 @@ function SheetContent({
                   </View>
                 </View>
               )}
-              <Content
-                testID="Scoring sheet content"
-                ref={scroll ? contentScroll : undefined}
+              <View
                 style={{
-                  flex: fullScreen || tall || height != null ? 1 : undefined,
-                  minHeight: 0
+                  flexShrink: 1,
+                  minHeight: 0,
+                  flex: fullScreen || tall || height != null ? 1 : undefined
                 }}
-                onLayout={event => {
-                  setContentHeight(event.nativeEvent.layout.height)
-                }}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ gap: 0 }}
               >
-                <ScoringSheetHeight.Provider value={contentHeight}>
-                  {children}
-                </ScoringSheetHeight.Provider>
-              </Content>
+                <Content
+                  testID="Scoring sheet content"
+                  ref={scroll ? contentScroll : undefined}
+                  style={{
+                    flex: fullScreen || tall || height != null ? 1 : undefined,
+                    minHeight: 0
+                  }}
+                  onLayout={event => {
+                    setContentHeight(event.nativeEvent.layout.height)
+                  }}
+                  keyboardShouldPersistTaps="handled"
+                  contentContainerStyle={{
+                    gap: 0,
+                    paddingBottom: footer == null ? 0 : footerHeight + 12
+                  }}
+                >
+                  <ScoringSheetHeight.Provider value={contentHeight}>
+                    {children}
+                  </ScoringSheetHeight.Provider>
+                </Content>
+                {footer != null && (
+                  <View
+                    testID="Scoring sheet footer"
+                    onLayout={event => {
+                      setFooterHeight(event.nativeEvent.layout.height)
+                    }}
+                    style={{
+                      position: 'absolute',
+                      bottom: 0,
+                      left: 0,
+                      right: 0,
+                      paddingTop: 12,
+                      backgroundColor: theme.scoringSurface.background
+                    }}
+                  >
+                    {footer}
+                  </View>
+                )}
+              </View>
               {done && <ScoringButton label="Done" onPress={onClose} />}
             </Animated.View>
           </SheetArea>

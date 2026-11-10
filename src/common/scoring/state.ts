@@ -564,6 +564,14 @@ export function fenceOf(state: GameState): number {
 }
 
 export interface GameState {
+  /** Keep the overridden turn and substitution history until scoring resumes. */
+  overrideLineupSetup?: boolean
+  /** A half reset may discard an unfinished play; remember that scoring began. */
+  overridePlayStarted?: boolean
+  /** Pitchers explicitly cleared for setup, retained to distinguish restoration. */
+  overridePitchers?: Partial<Record<Side, number>>
+  /** Substitutions made while a half override is waiting for its pitcher. */
+  pendingLineupEvents?: PlayEvent[]
   gamePk: string
   gameData: {
     teams: Record<Side, GameTeam>
@@ -873,6 +881,15 @@ const asErrorlessOuts = asObject({
 /** Checks a whole game, such as one a session kept or a test built. */
 export const asGameState: Cleaner<GameState> = exactly(
   asObject({
+    overrideLineupSetup: asOptional(asBoolean),
+    overridePlayStarted: asOptional(asBoolean),
+    overridePitchers: asOptional(
+      asObject({
+        away: asOptional(asNumber),
+        home: asOptional(asNumber)
+      })
+    ),
+    pendingLineupEvents: asOptional(asArray(asPlayEvent)),
     gamePk: asString,
     gameData: asObject({
       teams: asObject({ away: asTeam, home: asTeam }),

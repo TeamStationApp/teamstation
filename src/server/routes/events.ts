@@ -10,12 +10,17 @@ import {
   unauthorized,
   updateRequired
 } from '../../common/errors'
-import { PROTOCOL_HEADER, saveProtocolOf } from '../../common/gameSocket'
+import {
+  MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
+  PROTOCOL_HEADER,
+  saveProtocolOf
+} from '../../common/gameSocket'
 import {
   asPostEventsBody,
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
+import { usesOverrideSlots } from '../../common/scoring/actions'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import { teamsOfRow } from '../../common/teamLists'
@@ -431,8 +436,29 @@ export function eventRoutes(
       // whoever may dictate still needs their first names.
       // Dictation's, so nothing Tess, who does not dictate, is told.
       const spoken = isSpoken() ? {} : await modelNames(db, teams)
+      const answer = await folded(result)
+      if (
+        actor.apiKey == null &&
+        !isMachine(actor) &&
+        !(
+          Number(req.header(PROTOCOL_HEADER)) >=
+          MINIMUM_OVERRIDE_REPLAY_PROTOCOL
+        ) &&
+        [
+          ...answer.plays.map(
+            row => (row as { gumbo?: unknown } | null)?.gumbo
+          ),
+          answer.currentPlay
+        ].some(play => {
+          const actions = (
+            play as { teamStation?: { actions?: unknown } } | null
+          )?.teamStation?.actions
+          return Array.isArray(actions) && actions.some(usesOverrideSlots)
+        })
+      )
+        throw updateRequired('Update TeamStation to replay this game.')
       res.json({
-        ...(await folded(result)),
+        ...answer,
         ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken }),
         // Named with these teams' halves, unlike the game socket's edits.
         ...(teams.length === 0 ? {} : { halves: teams })

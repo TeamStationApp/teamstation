@@ -102,7 +102,7 @@ export const asServerConfig = asObject({
    * subscribe, or an app's save of a game's plays, may name. An app that
    * sends an older one, or none, is told to update: it follows no game live
    * and no screen's notices, or saves no plays. It only raises the floors in
-   * code, 3 for a subscribe (`MINIMUM_GAME_SOCKET_PROTOCOL`) and 4 for a save
+   * code, 3 for a subscribe (`MINIMUM_GAME_SOCKET_PROTOCOL`) and 5 for a save
    * (`MINIMUM_SAVE_PROTOCOL`): every server writes the value it started with
    * back into this file, so a lower one stays pinned here.
    */

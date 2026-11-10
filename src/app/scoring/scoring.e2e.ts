@@ -167,6 +167,28 @@ async function open(
     }
     let body: unknown
     let status = 200
+    const shellRead = [
+      '/api/v1/events',
+      '/api/v1/live',
+      '/api/v1/me/home',
+      '/api/v1/users',
+      '/api/v1/me/umpire-leagues',
+      '/api/v1/chat/blocks',
+      '/api/v1/chat/conversations',
+      '/api/v1/chat/links'
+    ].includes(url.pathname)
+    if (shellRead || url.pathname === '/api/v1/analytics/events') {
+      request
+        .respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify(
+            url.pathname === '/api/v1/analytics/events' ? { ok: true } : []
+          )
+        })
+        .catch(() => undefined)
+      return
+    }
     const saving =
       request.method() === 'POST' && url.pathname.endsWith('/events')
     if (saving && holdSaves) return
@@ -445,7 +467,7 @@ async function click(page: Page, label: string): Promise<void> {
   )
   for (const match of (await page.$$(selector)).reverse()) {
     if (!(await match.isVisible())) continue
-    await match.click()
+    await match.asLocator().click()
     // Let the sheet transition finish before targeting its next control.
     await new Promise(resolve => setTimeout(resolve, 350))
     break
@@ -520,6 +542,7 @@ async function dropRunnerWithKeyboard(
 ): Promise<void> {
   await page.waitForSelector('canvas[data-field-ready="true"]')
   await page.focus('[role="application"]')
+  await page.keyboard.press('[')
   await page.keyboard.press('Space')
   if (advance) for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
   await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
@@ -542,13 +565,20 @@ async function overrideBases(
   page: Page,
   bases: Array<['First base' | 'Second base' | 'Third base', string]>
 ): Promise<void> {
-  await click(page, 'Open scoring menu')
-  await click(page, 'Overrides')
+  if (bases.length === 0) return
+  await tapSettled(page, 'Open scoring menu')
+  await tapSettled(page, 'Overrides')
   for (const [base, player] of bases) {
-    await click(page, base)
-    await click(page, `Choose ${base} ${player}`)
+    await tapSettled(page, base)
+    const label = `Choose ${base} ${player}`
+    // Empty and unnumbered players have no suffix; numbered players end in #N.
+    await page
+      .locator(
+        `[aria-label="${label}"]:not([aria-disabled="true"]), [aria-label^="${label} #"]:not([aria-disabled="true"])`
+      )
+      .click()
   }
-  await click(page, 'Apply Override')
+  await tapSettled(page, 'Apply Override')
 }
 
 async function dragRunner(
@@ -759,17 +789,11 @@ describe('scoring browser', function () {
       const { page } = await open('/games/g1/score')
       try {
         if (loaded) {
-          await click(page, 'Open scoring menu')
-          await click(page, 'Overrides')
-          for (const [base, name] of [
+          await overrideBases(page, [
             ['First base', 'Player 6'],
             ['Second base', 'Player 7'],
             ['Third base', 'Player 8']
-          ]) {
-            await click(page, base)
-            await click(page, `Choose ${base} ${name}`)
-          }
-          await click(page, 'Apply Override')
+          ])
         }
         await chooseHit(page, 'Error')
         await page.waitForSelector(
@@ -1437,20 +1461,16 @@ describe('scoring browser', function () {
       const { page, unexpected } = await open('/games/g1/score')
       try {
         await page.setViewport({ width: 390, height: 844 })
-        await click(page, 'Open scoring menu')
-        await click(page, 'Overrides')
-        await page.locator('[aria-label="strikes"]').fill('2')
-        if (scenario.startsWith('loaded')) {
-          await page.locator('[aria-label="outs"]').fill('2')
-          for (const [base, player] of [
+        if (scenario.startsWith('loaded'))
+          await overrideBases(page, [
             ['First base', 'Player 6'],
             ['Second base', 'Player 7'],
             ['Third base', 'Player 8']
-          ]) {
-            await click(page, base)
-            await click(page, `Choose ${base} ${player}`)
-          }
-        }
+          ])
+        await click(page, 'Open scoring menu')
+        await click(page, 'Overrides')
+        await click(page, 'Strikes 2')
+        if (scenario.startsWith('loaded')) await click(page, 'Outs 2')
         await click(page, 'Apply Override')
         await click(page, 'More')
         await click(page, 'Dropped Third Strike')
@@ -1470,10 +1490,14 @@ describe('scoring browser', function () {
             align: getComputedStyle(button.lastElementChild!).textAlign
           }))
           expect(copy.text).equals(
-            label + (scenario.startsWith('loaded') ? 'At Home' : 'At First')
+            label + (scenario.startsWith('loaded') ? '' : 'At First')
           )
-          expect(copy.subtitleSize).equals('10.5px')
-          expect(copy.align).equals('center')
+          // Automatic home-queue decisions deliberately have no subtitle;
+          // a runner-action destination uses At First (RunnerControls).
+          if (!scenario.startsWith('loaded')) {
+            expect(copy.subtitleSize).equals('10.5px')
+            expect(copy.align).equals('center')
+          }
         }
         await page.screenshot({
           path: join(
@@ -1522,17 +1546,11 @@ describe('scoring browser', function () {
     it(`automatically scores a forced run for ${action} with no correction prompt`, async function () {
       const { page } = await open('/games/g1/score')
       try {
-        await click(page, 'Open scoring menu')
-        await click(page, 'Overrides')
-        for (const [base, player] of [
+        await overrideBases(page, [
           ['First base', 'Player 6'],
           ['Second base', 'Player 7'],
           ['Third base', 'Player 8']
-        ]) {
-          await click(page, base)
-          await click(page, `Choose ${base} ${player}`)
-        }
-        await click(page, 'Apply Override')
+        ])
         if (action === 'Walk')
           for (let i = 0; i < 4; i++) {
             await click(page, 'Ball')
@@ -1547,7 +1565,7 @@ describe('scoring browser', function () {
           timeout: 30000
         })
         await page.waitForSelector(
-          `[aria-label*="Batter ${action === 'Balk' ? 'Jordan K.' : 'Player 2'}"]`
+          `[aria-label*="Batter ${action === 'Balk' ? 'Jordan K' : 'Player 2'}"]`
         )
         expect(await page.$('[aria-label="Finish at-bat"]')).equals(null)
         expect(await page.$('[aria-label="Safe at home"]')).equals(null)
@@ -2074,11 +2092,7 @@ describe('scoring browser', function () {
     const { page } = await open('/games/g1/score')
     try {
       await page.setViewport({ width: 320, height: 400 })
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 2')
-      await click(page, 'Apply Override')
+      await overrideBases(page, [['First base', 'Player 2']])
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Lineup')
@@ -2216,18 +2230,73 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('keeps inline override runners reachable above the pinned Apply action on a small phone', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 375, height: 667, deviceScaleFactor: 1 })
+      await tapSettled(page, 'Open scoring menu')
+      await tapSettled(page, 'Overrides')
+      expect(await page.$('[aria-label="Correct runners"]')).equals(null)
+      const divider = await page.$eval('[aria-label="Inning"]', row => {
+        const label = row.firstElementChild!.getBoundingClientRect()
+        const value = row.lastElementChild!.getBoundingClientRect()
+        const line = row.nextElementSibling!.getBoundingClientRect()
+        return { left: line.left - label.left, right: line.right - value.right }
+      })
+      expect(Math.abs(divider.left)).lessThan(1)
+      expect(Math.abs(divider.right)).lessThan(1)
+      const apply = '[aria-label="Apply Override"]'
+      await page.waitForFunction(() =>
+        document
+          .getAnimations()
+          .every(animation => animation.playState !== 'running')
+      )
+      const before = await page.$eval(apply, n => n.getBoundingClientRect().top)
+      await page.$eval('[data-testid="Scoring sheet content"]', n => {
+        n.scrollTop = n.scrollHeight
+      })
+      await page.waitForFunction(() => {
+        const row = document
+          .querySelector('[aria-label="Third base"]')!
+          .getBoundingClientRect()
+        const footer = document
+          .querySelector('[data-testid="Scoring sheet footer"]')!
+          .getBoundingClientRect()
+        return row.bottom <= footer.top && row.top > 0
+      })
+      const after = await page.$eval(apply, n => n.getBoundingClientRect().top)
+      expect(Math.abs(after - before)).lessThan(1)
+      expect(after).lessThan(667)
+      await tapSettled(page, 'Third base')
+      await tapSettled(page, 'Choose Third base Player 2 #2')
+      expect(
+        await page.$eval('[aria-label="Third base"]', n => n.textContent)
+      ).includes('Player 2')
+      const out = process.env.TS_SCORING_ARTIFACT_DIR
+      if (out != null) {
+        await mkdir(out, { recursive: true })
+        await page.screenshot({ path: join(out, 'inline-runners-after.png') })
+      }
+      await tapSettled(page, 'Apply Override')
+      await page.waitForSelector('[aria-label="Undo Override game state"]')
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('edits rosters with a captured drag, validates overrides, and uses slide-up settings', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       await click(page, 'Remove Player 2')
       await page.waitForFunction(() =>
         document
           .getAnimations()
           .every(animation => animation.playState !== 'running')
       )
-      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
+      const source = '[aria-label="Add Player 2 to Lineup"]'
       const target = '[data-roster-target="lineup-0"]'
       await page.$eval(source, node => {
         node.scrollIntoView({ block: 'center' })
@@ -2242,6 +2311,7 @@ describe('scoring browser', function () {
       })
       await page.mouse.move(from.x, from.y)
       await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 750))
       await page.waitForSelector('[data-testid="Roster dragged card"]')
       await page.mouse.move(to.x, to.y, { steps: 12 })
       await page.mouse.up()
@@ -2254,13 +2324,8 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label="Undo Set team roster"]')
       await click(page, 'Open scoring menu')
       await click(page, 'Overrides')
-      await page.locator('[aria-label="balls"]').fill('4')
-      expect(
-        await page.$eval('[aria-label="Apply Override"]', node =>
-          node.getAttribute('aria-disabled')
-        )
-      ).equals('true')
-      await page.locator('[aria-label="balls"]').fill('2')
+      expect(await page.$('[aria-label="Balls 4"]')).equals(null)
+      await click(page, 'Balls 2')
       await click(page, 'Apply Override')
       await page.waitForSelector('[aria-label*="2 balls 0 strikes"]')
       await click(page, 'Open scoring menu')
@@ -3016,17 +3081,11 @@ describe('scoring browser', function () {
     this.timeout(90000)
     const { page, unexpected } = await open('/games/g1/score')
     try {
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      for (const [base, player] of [
+      await overrideBases(page, [
         ['First base', 'Player 6'],
         ['Second base', 'Player 7'],
         ['Third base', 'Player 8']
-      ]) {
-        await click(page, base)
-        await click(page, `Choose ${base} ${player}`)
-      }
-      await click(page, 'Apply Override')
+      ])
       await chooseHit(page, 'Triple')
       await page.waitForSelector(
         '[aria-label="Home plate decision for Player 8"]',
@@ -3243,11 +3302,7 @@ describe('scoring browser', function () {
       const { page, unexpected } = await open('/games/g1/score')
       try {
         if (['Balk', 'Wild Pitch', 'Passed Ball'].includes(action)) {
-          await click(page, 'Open scoring menu')
-          await click(page, 'Overrides')
-          await click(page, 'First base')
-          await click(page, 'Choose First base Player 6')
-          await click(page, 'Apply Override')
+          await overrideBases(page, [['First base', 'Player 6']])
         }
         if (action === 'Wild Pitch' || action === 'Passed Ball')
           await click(page, 'Ball')
@@ -3308,11 +3363,10 @@ describe('scoring browser', function () {
   it('anchors keyboard decisions to the base and supports Tab activation and Escape', async function () {
     const { page } = await open('/games/g1/score')
     try {
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 6')
-      await click(page, 'Apply Override')
+      await overrideBases(page, [['First base', 'Player 6']])
+      // Lock the switch hitter so keyboard placement selects the base runner.
+      await click(page, 'Ball')
+      await waitReady(page)
       await page.waitForSelector('canvas[data-field-ready="true"]')
       for (const width of [1200, 390]) {
         await page.setViewport({ width, height: 900 })
@@ -3325,6 +3379,7 @@ describe('scoring browser', function () {
           width
         )
         await page.focus('[role="application"]')
+        await page.keyboard.press('[')
         await page.keyboard.press('Space')
         for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
         const rect = await page.$eval('canvas', node => {
@@ -3395,9 +3450,10 @@ describe('scoring browser', function () {
         expect(reached).equals(true)
         await page.keyboard.press('Enter')
         await page.waitForSelector('[aria-label="Steal"]')
-        await click(page, 'Cancel')
+        await tapSettled(page, 'Cancel')
         expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
         await page.focus('[role="application"]')
+        await page.keyboard.press('[')
         await page.keyboard.press('Space')
         await page.keyboard.press('ArrowUp')
         await page.focus('[aria-label="Out drag target"]')
@@ -3411,15 +3467,12 @@ describe('scoring browser', function () {
   it('cancels an entire runner draft by button, outside or Escape and commits one edit', async function () {
     const { page } = await open('/games/g1/score')
     try {
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 6')
-      await click(page, 'Apply Override')
+      await overrideBases(page, [['First base', 'Player 6']])
       await click(page, 'Ball')
       await waitReady(page)
       const propose = async (): Promise<void> => {
         await page.focus('[role="application"]')
+        await page.keyboard.press('[')
         await page.keyboard.press('Space')
         for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
         await page.keyboard.press('s')
@@ -3461,7 +3514,7 @@ describe('scoring browser', function () {
         await click(page, 'Overrides')
         const name = ['', 'First base', 'Second base', 'Third base'][base]
         await click(page, name)
-        await click(page, `Choose ${name} Player 6`)
+        await click(page, `Choose ${name} Player 6 #6`)
         await click(page, 'Apply Override')
         await click(page, 'Ball')
         await waitReady(page)
@@ -3969,17 +4022,11 @@ describe('scoring browser', function () {
         try {
           await page.setViewport({ width: 390, height: 844 })
           if (loaded) {
-            await click(page, 'Open scoring menu')
-            await click(page, 'Overrides')
-            for (const [base, name] of [
+            await overrideBases(page, [
               ['First base', 'Player 6'],
               ['Second base', 'Player 7'],
               ['Third base', 'Player 8']
-            ]) {
-              await click(page, base)
-              await click(page, `Choose ${base} ${name}`)
-            }
-            await click(page, 'Apply Override')
+            ])
           }
           await click(page, 'Swing in Play')
           await click(page, 'Home Run')
@@ -4055,17 +4102,11 @@ describe('scoring browser', function () {
         isMobile: true,
         hasTouch: true
       })
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      for (const [base, player] of [
+      await overrideBases(page, [
         ['First base', 'Player 6'],
         ['Second base', 'Player 7'],
         ['Third base', 'Player 8']
-      ]) {
-        await click(page, base)
-        await click(page, `Choose ${base} ${player}`)
-      }
-      await click(page, 'Apply Override')
+      ])
       await chooseHit(page, 'Home Run')
       await page.waitForSelector('[aria-label*="Owls 4 · Hawks 0"]', {
         timeout: 30000
@@ -4088,13 +4129,10 @@ describe('scoring browser', function () {
         .click()
     }
     try {
-      await tap('Open scoring menu')
-      await tap('Overrides')
-      await tap('Second base')
-      await tap('Choose Second base Player 7')
-      await tap('Third base')
-      await tap('Choose Third base Player 8')
-      await tap('Apply Override')
+      await overrideBases(rollback.page, [
+        ['Second base', 'Player 7'],
+        ['Third base', 'Player 8']
+      ])
       await chooseHit(rollback.page, 'Single')
       await rollback.page.waitForSelector(
         '[aria-label="Home plate decision for Player 8"]',
@@ -4169,18 +4207,20 @@ describe('scoring browser', function () {
           .click()
       }
       try {
-        await click(page, 'Open scoring menu')
-        await click(page, 'Overrides')
-        for (const [index, base] of [
-          'First base',
-          'Second base',
-          'Third base'
-        ].entries())
-          if ((mask & (1 << index)) !== 0) {
-            await tap(base)
-            await tap(`Choose ${base} Player ${index + 6}`)
-          }
-        await tap('Apply Override')
+        await overrideBases(
+          page,
+          (['First base', 'Second base', 'Third base'] as const).flatMap(
+            (base, index) =>
+              (mask & (1 << index)) !== 0
+                ? [
+                    [base, `Player ${index + 6}`] as [
+                      'First base' | 'Second base' | 'Third base',
+                      string
+                    ]
+                  ]
+                : []
+          )
+        )
         await chooseHit(page, "Fielder's Choice")
         await page.waitForSelector(
           '[aria-label^="Tap or drag each defender"]',
@@ -4314,7 +4354,7 @@ describe('scoring browser', function () {
                   `[aria-label="Fielder's choice decision for Player ${id}"]`
                 )!
                 const plate = document.querySelector(
-                  `[data-nameplate="offense-${id}"]`
+                  `[data-nameplate="offense-${100 + id}"]`
                 )!
                 return {
                   control: group.getBoundingClientRect().toJSON(),
@@ -4467,15 +4507,16 @@ describe('scoring browser', function () {
       it(`records ${advance ? 'advanced' : 'stationary'} ${decision}: ${reason} between pitches`, async function () {
         const { page, unexpected } = await open('/games/g1/score')
         try {
-          await click(page, 'Open scoring menu')
-          await click(page, 'Overrides')
-          await click(page, 'First base')
-          await click(page, 'Choose First base Player 6')
-          await click(page, 'Apply Override')
+          await overrideBases(page, [['First base', 'Player 6']])
           await click(page, 'Ball')
           await waitReady(page)
           await dropRunnerWithKeyboard(page, decision, advance)
           await click(page, reason)
+          if (reason === 'Wild Pitch')
+            await click(page, 'Use previous pitch as wild pitch')
+          else if (reason === 'Passed Ball') await click(page, 'YES')
+          else if (reason === 'Throwing Error' || reason === 'Fielding Error')
+            await placeDefenderWithKeyboard(page)
           if (decision === 'Out') {
             await page.waitForSelector(
               '[aria-label^="Tap or drag a player to where the ball was fielded."]'
@@ -4491,7 +4532,7 @@ describe('scoring browser', function () {
           await page.waitForSelector(
             `[aria-label*="1 balls 0 strikes ${decision === 'Out' ? 1 : 0} outs · Pitches 1"]`
           )
-          await page.waitForSelector('[aria-label*="Batter Jordan K."]')
+          await page.waitForSelector('[aria-label*="Batter Jordan K"]')
           expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
           await page.locator('[aria-label^="Undo "]').click()
           await page.waitForSelector('[aria-label="Undo Ball"]')
@@ -4544,14 +4585,7 @@ describe('scoring browser', function () {
         isMobile: true,
         hasTouch: true
       })
-      await click(page, 'Open scoring menu')
-      for (const label of [
-        'Overrides',
-        'First base',
-        'Choose First base Player 6',
-        'Apply Override'
-      ])
-        await tapSettled(page, label)
+      await overrideBases(page, [['First base', 'Player 6']])
       await page.waitForSelector('canvas[data-field-ready="true"]')
     }
     async function caughtFly(page: Page): Promise<void> {
@@ -4816,11 +4850,10 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label*="Bottom 1st"]')
       await page.locator('[aria-label^="Undo "]').click()
       await page.waitForSelector('[aria-label*="Top 1st"]')
+      await overrideBases(page, [['First base', 'Player 6']])
       await click(page, 'Open scoring menu')
       await click(page, 'Overrides')
-      await page.locator('[aria-label="outs"]').fill('2')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 6')
+      await click(page, 'Outs 2')
       await click(page, 'Apply Override')
       // A pitch locks the switch hitter, leaving the base runner selectable.
       await click(page, 'Ball')
@@ -4843,11 +4876,7 @@ describe('scoring browser', function () {
     this.timeout(90000)
     const { page } = await open('/games/g1/score')
     try {
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 2')
-      await click(page, 'Apply Override')
+      await overrideBases(page, [['First base', 'Player 2']])
       for (let i = 0; i < 3; i++) await click(page, 'Called Strike')
       await page.waitForSelector('[aria-label^="Next batter is on base."]', {
         timeout: 30000
@@ -4859,12 +4888,15 @@ describe('scoring browser', function () {
       ).equals('true')
       await click(page, 'Open scoring menu')
       await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Empty')
       await click(page, 'Batter')
-      await click(page, 'Choose Batter Player 2')
+      expect(
+        await page.$eval('[aria-label="2. Player 2 #2"]', node =>
+          node.getAttribute('aria-disabled')
+        )
+      ).equals('true')
+      await click(page, '3. Player 3 #3')
       await click(page, 'Apply Override')
-      await page.waitForSelector('[aria-label*="Batter Player 2"]')
+      await page.waitForSelector('[aria-label*="Batter Player 3"]')
     } finally {
       await page.close()
     }
@@ -4893,13 +4925,15 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       await click(page, 'Remove Jordan K.')
       for (let i = 2; i <= 9; i++) await click(page, `Remove Player ${i}`)
+      // Incomplete setup is now saveable; readiness blocks scoring until repaired.
       expect(
         await page.$eval('[aria-label="Save Rosters"]', node =>
           node.getAttribute('aria-disabled')
         )
-      ).equals('true')
+      ).not.equals('true')
       await click(page, 'Add Jordan K. to Lineup')
       await click(page, 'Defense')
       await click(page, 'Clear P')
@@ -4907,31 +4941,20 @@ describe('scoring browser', function () {
         await page.$eval('[aria-label="Save Rosters"]', node =>
           node.getAttribute('aria-disabled')
         )
-      ).equals('true')
+      ).not.equals('true')
       await click(page, 'Cancel')
+      await overrideBases(page, [['First base', 'Player 6']])
       await click(page, 'Open scoring menu')
       await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 6')
-      await click(page, 'Second base')
-      await click(page, 'Choose Second base Player 6')
+      await click(page, 'Batter')
       expect(
-        await page.$eval('[aria-label="Apply Override"]', node =>
+        await page.$eval('[aria-label="6. Player 6 #6"]', node =>
           node.getAttribute('aria-disabled')
         )
       ).equals('true')
-      await click(page, 'Second base')
-      await click(page, 'Choose Second base Empty')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Jordan K.')
-      expect(
-        await page.$eval('[aria-label="Apply Override"]', node =>
-          node.getAttribute('aria-disabled')
-        )
-      ).equals('true')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Empty')
-      await click(page, 'Apply Override')
+      await click(page, 'Cancel')
+      await click(page, 'Cancel')
+      await click(page, 'Undo Override game state')
       await chooseHit(page, 'Home Run')
       await click(page, 'Undo 45° Fly Ball')
       await click(page, 'Undo Home-run landing')
@@ -4997,11 +5020,7 @@ describe('scoring browser', function () {
         isMobile: true,
         hasTouch: true
       })
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      await click(page, 'First base')
-      await click(page, 'Choose First base Player 6')
-      await click(page, 'Apply Override')
+      await overrideBases(page, [['First base', 'Player 6']])
       await page.waitForSelector('canvas[data-field-ready="true"]')
       const rect = await page.$eval('canvas', n => {
         const r = n.getBoundingClientRect()
@@ -5050,16 +5069,13 @@ describe('scoring browser', function () {
         isMobile: true,
         hasTouch: true
       })
-      await click(page, 'Open scoring menu')
-      await click(page, 'Overrides')
-      await page.locator('[aria-label="outs"]').fill('2')
-      for (const [base, player] of [
+      await overrideBases(page, [
         ['Third base', 'Player 8'],
         ['Second base', 'Player 7']
-      ]) {
-        await click(page, base)
-        await click(page, `Choose ${base} ${player}`)
-      }
+      ])
+      await click(page, 'Open scoring menu')
+      await click(page, 'Overrides')
+      await click(page, 'Outs 2')
       await click(page, 'Apply Override')
       await chooseHit(page, 'Triple')
       await page.waitForSelector(
@@ -6803,12 +6819,12 @@ describe('ground outs', function () {
     if (capturing) this.skip()
     const page = await openPhone()
     try {
+      await overrideBases(page, [['First base', 'Player 7']])
       for (let i = 0; i < 6; i++) {
         await waitReady(page)
         await click(page, 'Swing and Miss')
       }
       await waitReady(page)
-      await overrideBases(page, [['First base', 'Player 7']])
       await groundOut(page)
       await stillNear(page, 1)
       await nobodyNear(page, 2)

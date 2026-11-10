@@ -7,9 +7,12 @@ import type {
 import { type TagChoices, tagTargets } from '../../common/eventTags'
 import {
   cleanAction,
+  FOLD_VERSION,
   KEEPS_AT_BAT_SINCE,
   keepsAtBat,
-  type ScoringAction
+  OVERRIDE_SLOTS_SINCE,
+  type ScoringAction,
+  usesOverrideSlots
 } from '../../common/scoring/actions'
 import {
   type EventStore,
@@ -100,12 +103,18 @@ export interface OlderSaveReads {
   server: () => Promise<StoredGame>
 }
 
-/** Whether a stored game holds an end of the half that kept its at-bat. */
-function keepsAnAtBat(stored: StoredGame): boolean {
+/** Whether a stored game uses semantics that the queued save could not read. */
+function foldsDiffer(stored: StoredGame, version: number): boolean {
   return [...stored.plays, stored.currentPlay].some(play => {
     const record = (play as { teamStation?: { actions?: unknown } } | null)
       ?.teamStation
-    return Array.isArray(record?.actions) && record.actions.some(keepsAtBat)
+    return (
+      Array.isArray(record?.actions) &&
+      record.actions.some(action => {
+        if (version < KEEPS_AT_BAT_SINCE && keepsAtBat(action)) return true
+        return version < OVERRIDE_SLOTS_SINCE && usesOverrideSlots(action)
+      })
+    )
   })
 }
 
@@ -115,17 +124,21 @@ function keepsAnAtBat(stored: StoredGame): boolean {
  * 4 reads an end of the half that kept its at-bat as one that dropped it, so
  * in a game that holds one it puts every later play an index low, and what
  * it wrote over cannot be told from what it added. Its save is held then;
- * in any other game both builds fold every play alike. A failed read of the
- * server throws.
+ * a build below 5 also cannot read explicit pitcher resets, batting slots
+ * or their pinch-hit replacements, nor corrections with an empty mound.
+ * Missing-pitcher actions are held conservatively without replaying the log.
+ * In other games the folds agree. A failed
+ * read of the server throws.
  */
 export async function olderSaveFoldsAlike(
   foldVersion: number | null,
   reads: OlderSaveReads
 ): Promise<boolean> {
-  if ((foldVersion ?? 0) >= KEEPS_AT_BAT_SINCE) return true
+  const version = foldVersion ?? 0
+  if (version >= FOLD_VERSION) return true
   const held = await reads.held()
-  if (held != null && keepsAnAtBat(held)) return false
-  return !keepsAnAtBat(await reads.server())
+  if (held != null && foldsDiffer(held, version)) return false
+  return !foldsDiffer(await reads.server(), version)
 }
 
 /** What a rebuild reads of a game: from the phone's copy, but its plays. */

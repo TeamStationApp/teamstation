@@ -672,7 +672,7 @@ describe('posting and reading plays', function () {
       expect(refused.body).deep.equals(refusal)
     }
     // A config file that pins an older minimum, as every server's does once
-    // it has started, cannot let a protocol 3 app save.
+    // it has started, cannot let a protocol 4 app save.
     const pinned = express()
     pinned.use(jsonBody)
     pinned.use(withActor(db!))
@@ -690,7 +690,7 @@ describe('posting and reading plays', function () {
             'content-type': 'application/json',
             authorization: `Bearer ${MANAGER}`,
             'x-teamstation-app': 'TS',
-            [PROTOCOL_HEADER]: '3'
+            [PROTOCOL_HEADER]: '4'
           },
           body: JSON.stringify({
             plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })],

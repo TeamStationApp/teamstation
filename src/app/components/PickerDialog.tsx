@@ -19,9 +19,11 @@ export function PickerDialog(props: {
   onClose: () => void
   /** The widest the dialog is drawn, in rem. */
   maxWidthRem?: number
+  /** Compact wheel dialogs scroll only their wheel, not the whole dialog. */
+  scrollable?: boolean
   children: React.ReactNode
 }): React.ReactElement {
-  const { onClose, maxWidthRem = 28, children } = props
+  const { onClose, maxWidthRem = 28, scrollable = true, children } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   return (
@@ -44,9 +46,16 @@ export function PickerDialog(props: {
           accessibilityViewIsModal
           style={[styles.dialog, { maxWidth: theme.rem(maxWidthRem) }]}
         >
-          <ScrollView style={styles.scroll} keyboardShouldPersistTaps="handled">
-            {children}
-          </ScrollView>
+          {scrollable ? (
+            <ScrollView
+              style={styles.scroll}
+              keyboardShouldPersistTaps="handled"
+            >
+              {children}
+            </ScrollView>
+          ) : (
+            children
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>

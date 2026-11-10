@@ -9,8 +9,10 @@ import { after, before, describe, it } from 'mocha'
 
 import { readTvStatistics, statisticsAt } from '../../app/tv/replayStatistics'
 import { TeamStationClient } from '../../common/api'
+import { PROTOCOL_HEADER } from '../../common/gameSocket'
 import { statisticsForCount } from '../../common/gameStatistics'
 import { asPostEventsBody } from '../../common/gumboPlay'
+import { makeId } from '../../common/ids'
 import { replayBoxScore } from '../../common/replay/replayBoxScore'
 import {
   readReplaySource,
@@ -26,6 +28,8 @@ import {
   scoreDirectly,
   scratchDatabase
 } from '../../test/scoreboardKit'
+import { USER_API_KEY_PREFIX } from '../auth/sessions'
+import { hashToken, makeToken } from '../auth/tokens'
 import type { Database } from '../db/database'
 import { seedReplay } from '../dev/replaySeed'
 import { postGamePlays } from '../events/postPlays'
@@ -33,6 +37,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import type { ScoreboardStore } from '../scoreboard/scoreboardStore'
+import { eventRoutes } from './events'
 import { scoreboardRoutes } from './scoreboard'
 import { teamRoutes } from './teams'
 
@@ -75,6 +80,7 @@ describe('unified box-score HTTP resource', function () {
     )
     const app = express()
     app.use(withActor(db))
+    app.use('/api/v1', eventRoutes(db))
     app.use('/api/v1', teamRoutes(db, Object.create(null) as MediaContext))
     app.use(
       '/api/v1',
@@ -203,6 +209,92 @@ describe('unified box-score HTTP resource', function () {
     console.log(
       '$ native replay / TV / video: initial, playhead, refresh, team rename agree'
     )
+  })
+
+  it('requires an updated replay reader only once override-slot actions are present', async () => {
+    const context = await addScorableTeams(db, {
+      away: 'Visitors',
+      home: 'Hosts'
+    })
+    const actor = await addPerson(db, 'replay-owner', {
+      owns: context.teams.home.id
+    })
+    const id = await addGame(db, {
+      awayTeamId: context.teams.away.id,
+      homeTeamId: context.teams.home.id,
+      startAt: new Date(epoch)
+    })
+    const read = async (view: string, protocol?: number): Promise<Response> =>
+      await fetch(
+        `${base}/games/${id}/${view === 'events' ? 'events' : `box-score?view=${view}`}`,
+        {
+          headers: {
+            authorization: `Bearer ${actor.token}`,
+            ...(protocol == null ? {} : { [PROTOCOL_HEADER]: String(protocol) })
+          }
+        }
+      )
+    await scoreDirectly(db, id, context, [
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'override', outs: 1 }
+    ])
+    expect((await read('playback', 3)).status).equals(503)
+    expect((await read('events', 3)).status).equals(503)
+    expect((await read('events', 5)).status).equals(200)
+    await scoreDirectly(db, id, context, [
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'override', batterIndex: 0 }
+    ])
+    for (const protocol of [undefined, 3, 4]) {
+      const events = await read('events', protocol)
+      expect(events.status).equals(503)
+      expect(JSON.stringify(await events.json())).includes('updateRequired')
+      const answer = await read('playback', protocol)
+      expect(answer.status).equals(503)
+      expect(JSON.stringify(await answer.json())).includes('updateRequired')
+    }
+    expect((await read('playback', 5)).status).equals(200)
+    expect((await read('events', 5)).status).equals(200)
+    await scoreDirectly(db, id, context, [
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'override', batterIndex: 0 },
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' }
+    ])
+    expect((await read('events', 3)).status).equals(503)
+    expect((await read('events', 5)).status).equals(200)
+    const apiKey = `${USER_API_KEY_PREFIX}${makeToken()}`
+    const machine = makeToken()
+    await db
+      .insertInto('user_api_keys')
+      .values({
+        id: makeId('userApiKey'),
+        user_id: actor.userId,
+        name: 'Replay reader',
+        token_hash: hashToken(apiKey),
+        secret_sealed: 'unused-test-seal',
+        permissions: ['gameEvents:read']
+      })
+      .execute()
+    await db
+      .insertInto('api_tokens')
+      .values({
+        id: makeId('apiToken'),
+        user_id: actor.userId,
+        label: 'Replay reader',
+        token_hash: hashToken(machine)
+      })
+      .execute()
+    for (const token of [apiKey, machine]) {
+      for (const path of ['events', 'box-score?view=playback']) {
+        const response = await get(`/games/${id}/${path}`, token)
+        expect(response.status, path).equals(200)
+        expect(JSON.stringify(await response.json())).includes('override')
+      }
+    }
+    for (const view of ['board', 'line'])
+      expect((await read(view, 3)).status).equals(200)
   })
   it('keeps inning lines and replay boxes in sync across imported and native plays', async () => {
     const seed = await seedReplay(db, {

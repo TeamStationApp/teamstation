@@ -22,12 +22,15 @@ import {
 } from './developmentSession'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
+import { overrideDraftOf } from './overrideModel'
 import { asScoringPlay } from './scoringContract'
 import {
   initialScoringState,
   resumedScoringState,
   rosterRefusal,
   scoringReducer,
+  scoringScreenModel,
+  scoringScreenReducer,
   sessionAt
 } from './scoringMachine'
 import { scoringPreferenceStore } from './scoringPreferenceStore'
@@ -63,6 +66,22 @@ function initial(): ScoringState {
     createDevelopmentSession(gameFixture, roster, scoringRoster(10))
   )
 }
+
+it('does not acknowledge a refused override when queued dictation drains', () => {
+  const state = initial()
+  state.queuedDictation = [
+    { transcript: 'Ball', actions: [{ type: 'pitch', call: 'B' }] }
+  ]
+  const draft = { ...overrideDraftOf(state.session), batter: null }
+  const next = scoringScreenReducer(scoringScreenModel(state), {
+    type: 'OVERRIDE',
+    draft
+  })
+  expect(next.scoring).not.equals(state)
+  expect(next.scoring.queuedDictation).equals(undefined)
+  expect(next.appliedOverrides).equals(0)
+  expect(next.attemptedOverrides).equals(1)
+})
 
 it('reconstructs saved merged roster additions for history without permitting a new duplicate', () => {
   const base = initial().session
