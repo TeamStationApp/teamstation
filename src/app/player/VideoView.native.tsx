@@ -169,6 +169,8 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       onSeek={handle.handleSeek}
       onPlaybackStateChanged={handle.handlePlaybackState}
       onBuffer={handle.handleBuffer}
+      reportBandwidth
+      onBandwidthUpdate={handle.handleTransferProgress}
       bufferingStrategy={
         heapShare == null
           ? BufferingStrategyType.DEFAULT

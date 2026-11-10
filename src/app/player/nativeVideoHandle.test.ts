@@ -95,6 +95,38 @@ describe('NativeVideoHandle', function () {
     expect(calls).deep.equals(['seek 100'])
   })
 
+  it('keeps downloading a slow seek while transfers arrive and recovers if they stop', () => {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    let errors = 0
+    handle.onError = () => {
+      errors++
+    }
+    handle.handleTransferProgress()
+    handle.currentTime = 100
+    handle.handleTransferProgress()
+    handle.handleBuffer({ isBuffering: true })
+    for (now = 10_000; now <= 90_000; now += 10_000) {
+      handle.handleTransferProgress()
+      handle.checkSeekTimeout()
+    }
+    expect(errors).equals(0)
+    expect(handle.reportedTime).equals(0)
+    now = 119_999
+    handle.checkSeekTimeout()
+    expect(errors).equals(0)
+    now = 120_000
+    handle.checkSeekTimeout()
+    expect(errors).equals(1)
+    handle.handleTransferProgress()
+    handle.handleSeek(seeked(100))
+    expect(handle.seeking).equals(true)
+  })
+
   it('bounds a buffering seek and gives a ready player time to acknowledge', () => {
     for (const finishesBuffering of [false, true]) {
       let now = 0

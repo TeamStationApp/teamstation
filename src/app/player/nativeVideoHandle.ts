@@ -248,10 +248,18 @@ export class NativeVideoHandle implements VideoHandle {
     this.player?.seek(seconds, SEEK_TOLERANCE)
   }
 
+  /** Native media transfers keep a slow seek alive without inventing playback. */
+  handleTransferProgress = (): void => {
+    if (this.activeSeekTo == null || !this.buffering || this.seekTimedOut)
+      return
+    this.activeSeekAt = this.clock()
+    this.trace('native.seek.transfer')
+  }
+
   /**
-   * Buffering a cold seek is useful work, not a lost acknowledgement. Allow
-   * the same thirty seconds as a source opening before bounded recovery.
-   * A ready player that never acknowledges a seek still gets five seconds.
+   * A ready player gets five seconds to acknowledge a seek. A buffering
+   * player gets thirty seconds without a media transfer before recovery;
+   * useful downloads can continue for as long as the connection needs.
    */
   checkSeekTimeout(): void {
     if (
