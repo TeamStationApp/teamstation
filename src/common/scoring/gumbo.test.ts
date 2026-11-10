@@ -3,7 +3,15 @@ import { readFileSync } from 'node:fs'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { after, F, game, TEAMS } from '../../test/scoringGames'
+import {
+  after,
+  ball,
+  endHalf,
+  F,
+  game,
+  strike,
+  TEAMS
+} from '../../test/scoringGames'
 import { asCurrentPlay, asGumboPlay, type GumboPlay } from '../gumboPlay'
 import { userIdOfGumbo } from '../userId'
 import type { ScoringAction } from './actions'
@@ -307,6 +315,78 @@ describe('reading a game back', function () {
     expect(replayed.state).deep.equals(scored.state)
     expect(replayed.derived).equals(0)
     expect(replayed.segments.map(s => s.actions.length)).deep.equals([3, 6, 1])
+  })
+
+  it('keeps the same batter when a half ends on a steal', function () {
+    const closePlay: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const walked: ScoringAction[] = [ball, ball, ball, ball, closePlay]
+    const scored = score(game(), [
+      ...walked,
+      ...walked,
+      ball,
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: '3B' },
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+      endHalf
+    ])
+    const saved = scored.plays.at(-1)!
+    expect(saved.result.eventType).equals('stolen_base_home')
+    expect(saved.result.awayScore).equals(1)
+    expect(
+      (saved.runners ?? []).map(runner => {
+        const movement = runner.movement as
+          { end?: unknown; isOut?: unknown } | undefined
+        return [movement?.end, runner.details?.eventType, movement?.isOut]
+      })
+    ).deep.equals([
+      ['3B', 'stolen_base_3b', false],
+      ['score', 'stolen_base_home', false]
+    ])
+    expect(storedRecordOf(saved)!.actions.at(-1)).deep.equals(endHalf)
+    const replayed = replayPlays(
+      { plays: scored.plays, currentPlay: scored.current },
+      context
+    )
+    expect(replayed.problems).deep.equals([])
+    expect(replayed.state.liveData.linescore.teams.away.runs).equals(1)
+    expect(replayed.state.liveData.boxscore.teams.away.battingIndex).equals(
+      scored.state.liveData.boxscore.teams.away.battingIndex
+    )
+    expect(replayed.state.liveData.plays.currentPlay!.matchup.batter.id).equals(
+      scored.state.liveData.plays.currentPlay!.matchup.batter.id
+    )
+  })
+
+  it('replays an older end of the half as it was scored', function () {
+    const closePlay: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const olderEndHalf: ScoringAction = { type: 'gameFlow', kind: 'endHalf' }
+    const walked: ScoringAction[] = [ball, ball, ball, ball, closePlay]
+    const struckOut: ScoringAction[] = [strike, strike, strike, closePlay]
+    // The older engine dropped the interrupted at-bat, so its actions lead
+    // the record of the next play scored.
+    const scored = score(game(), [
+      ...walked,
+      ...walked,
+      ball,
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+      olderEndHalf,
+      ...struckOut,
+      ...struckOut,
+      ...struckOut,
+      ...struckOut
+    ])
+    expect(scored.plays.map(play => play.about.atBatIndex)).deep.equals([
+      0, 1, 2, 3, 4, 5
+    ])
+    expect(storedRecordOf(scored.plays[2])!.actions).deep.includes(olderEndHalf)
+    const replayed = replayPlays(
+      { plays: scored.plays, currentPlay: scored.current },
+      context
+    )
+    expect(replayed.problems).deep.equals([])
+    expect(replayed.state).deep.equals(scored.state)
+    expect(replayed.segments.map(s => s.atBatIndex)).deep.equals([
+      0, 1, 2, 3, 4, 5, 6
+    ])
   })
 
   it('applies a substitution once, and keeps the order where the game left it', function () {

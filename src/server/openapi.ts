@@ -1190,9 +1190,11 @@ const gumboEventType = {
     "TeamStation's extensions: `final_score` and `score_correction` (an " +
     'import), `ts_manual_placement` (a batter the scorer put ' +
     'on base by hand), `ts_batter_out` (a batter out on a play MLB has no ' +
-    'code for), `ts_batting_order` (a change of batting order) and ' +
+    'code for), `ts_batting_order` (a change of batting order), ' +
     '`ts_courtesy_runner` (a pinch runner who takes a runner’s base and ' +
-    'leaves the batting order as it is). A post ' +
+    'leaves the batting order as it is) and `ts_at_bat_ended` (an at-bat ' +
+    'the half was ended in with only pitches in it, no plate appearance). ' +
+    'A post ' +
     'may still send `catcher_interference`, `placed_runner` or ' +
     '`manual_placement`; they are stored as `catcher_interf`, ' +
     '`runner_placed` and `ts_manual_placement`. It may also send the ' +

@@ -1889,6 +1889,23 @@ describe('dictation interpreter, a model that makes one call a reply', function 
     )
   })
 
+  it('keeps the at-bat in progress on a said end of the half, as the button does', async function () {
+    const { fetch } = provider(
+      [call('c1', 'gameFlow', { kind: 'endHalf' })],
+      []
+    )
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true }),
+      '',
+      "That's the end of the half."
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'gameFlow', kind: 'endHalf', keepAtBat: true }],
+      dropped: []
+    })
+  })
+
   it('tells the model everything recorded so far, so a call said twice counts', async function () {
     const { fetch, sent } = provider(
       [call('c1', 'pitch', { call: 'B' })],

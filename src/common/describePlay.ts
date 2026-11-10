@@ -113,7 +113,8 @@ export const DID_BY_TYPE: Record<GumboEventType, string | null> = {
   ts_manual_placement: 'is placed on base',
   ts_batter_out: null,
   ts_batting_order: null,
-  ts_courtesy_runner: null
+  ts_courtesy_runner: null,
+  ts_at_bat_ended: null
 }
 
 /** The strikeouts, whose clause turns on who is credited with them. */

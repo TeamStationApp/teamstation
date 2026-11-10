@@ -270,6 +270,9 @@ describe('scoring actions', function () {
     expect(
       dictatedAction('pitch', { type: 'ballInPlay', call: 'B' })
     ).deep.equals({ action: { type: 'pitch', call: 'B' } })
+    expect(dictatedAction('gameFlow', { kind: 'endHalf' })).deep.equals({
+      action: { type: 'gameFlow', kind: 'endHalf', keepAtBat: true }
+    })
     expect(dictatedAction('result', 'single')).to.have.nested.property(
       'problem.code',
       'malformed'

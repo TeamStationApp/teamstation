@@ -9,6 +9,7 @@ import {
   DESTINATIONS,
   type FieldingPlayAction,
   type GameFlowAction,
+  keepsAtBat,
   type LineupAction,
   PITCH_CALL_NAMES,
   type PitchAction,
@@ -543,6 +544,121 @@ function betweenEventType(reason: string, from: number, to: number): string {
 /** The base a steal was headed for, as MLB's event types name it. */
 function stealTarget(base: number): string {
   return base >= 4 ? 'home' : `${Math.max(2, base)}b`
+}
+
+/**
+ * The event type of a runner's own action, when that action is what an
+ * unfinished at-bat is saved as. An out uses `betweenEventType`. It names
+ * what the play came to, so it differs from `actionType` in `document.ts`,
+ * which names each runner's and each event's action: a pickoff throw the
+ * runner beat is `pickoff_<n>b` there, as MLB names the attempt, but a play
+ * whose result is `pickoff_<n>b` is a runner picked off.
+ */
+function safeActionEventType(reason: string, to: number): string {
+  if (reason === 'Steal') return `stolen_base_${stealTarget(to)}`
+  if (reason === 'Wild Pitch') return 'wild_pitch'
+  if (reason === 'Passed Ball') return 'passed_ball'
+  if (reason === 'Balk') return 'balk'
+  if (reason === 'Defensive Indifference') return 'defensive_indiff'
+  if (reason === 'Throwing Error' || reason === 'Fielding Error') return 'error'
+  return 'other_advance'
+}
+
+/**
+ * Events a play holds that change only who is on the field or where: the
+ * extra-innings runner placed, a pinch runner who leaves the order as it is,
+ * a change of the batting order. None puts an at-bat under way.
+ */
+const LINEUP_EVENT_CODES = new Set([
+  'placed_runner',
+  'ts_courtesy_runner',
+  'ts_batting_order'
+])
+
+/**
+ * A pitch or a runner's play has happened, so the at-bat is no longer only a
+ * lineup. Placing the extra-innings runner, a courtesy runner or a change of
+ * the order starts nothing: a half ended before the first pitch after one
+ * saves no play.
+ */
+export function atBatUnderWay(play: GamePlay): boolean {
+  return (
+    play.runners.some(
+      runner => runner.details.movementReason !== 'Place a Runner (Tiebreaker)'
+    ) ||
+    play.playEvents.some(
+      event =>
+        event.isSubstitution !== true &&
+        !LINEUP_EVENT_CODES.has(event.details.code ?? '')
+    )
+  )
+}
+
+/**
+ * What an at-bat ended by hand is stored as: the out, if a runner was put
+ * out, otherwise the steal or other running play, otherwise
+ * `ts_at_bat_ended`, which keeps the pitches without charging the batter a
+ * plate appearance.
+ */
+function interruptedEvent(play: GamePlay): {
+  event: string
+  eventType: string
+} {
+  const out = [...play.runners].reverse().find(runner => runner.movement.isOut)
+  if (out != null)
+    return {
+      event: 'Runner out',
+      eventType: betweenEventType(
+        out.details.movementReason,
+        out.movement.start,
+        out.movement.end
+      )
+    }
+  // The batter never finished, so every runner moved between pitches: a balk
+  // is the one award that keeps the same plate appearance. A row that moved
+  // nobody (a runner back safe on a pickoff throw, a correction sending one
+  // back) or placed one names no running play.
+  const moves = play.runners.filter(
+    runner =>
+      runner.movement.start !== runner.movement.end &&
+      runner.details.movementReason !== 'Back' &&
+      runner.details.movementReason !== 'Place a Runner (Tiebreaker)'
+  )
+  const named =
+    [...moves].reverse().find(runner => runner.movement.runScored === true) ??
+    moves.at(-1)
+  if (named == null)
+    return { event: 'At Bat Ended', eventType: 'ts_at_bat_ended' }
+  return {
+    event: named.details.movementReason,
+    eventType: safeActionEventType(
+      named.details.movementReason,
+      named.movement.end
+    )
+  }
+}
+
+/**
+ * Saves the at-bat in progress without sending the batter to the dugout.
+ * The pitches, the steals and the putouts stay on the play. The batting
+ * order is left where it is, so he is up again next inning.
+ */
+function closeInterruptedAtBat(ctx: Ctx): void {
+  const play = current(ctx)
+  const named = interruptedEvent(play)
+  play.about.isComplete = true
+  play.result.event = named.event
+  play.result.eventType = named.eventType
+  play.result.description = named.event
+  play.result.awayScore = line(ctx).teams.away.runs
+  play.result.homeScore = line(ctx).teams.home.runs
+  countRbi(play)
+  ctx.state.liveData.plays.allPlays.push(copyState(play))
+  ctx.out.push({
+    type: 'playClosed',
+    atBatIndex: play.about.atBatIndex,
+    eventType: play.result.eventType
+  })
 }
 
 /** Three outs between pitches: the play ends as the runner's out, and so does the half. */
@@ -2189,6 +2305,15 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
   }
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
   if (action.kind === 'endHalf') {
+    const play = state.liveData.plays.currentPlay
+    // A strikeout or a walk would still be pending, and is refused above, so
+    // the at-bat in progress never finished the batter's turn: it is saved —
+    // the steal, the pickoff, the pitches — and the same batter is due next
+    // inning. An older endHalf dropped it, and replays as it was scored.
+    if (keepsAtBat(action) && play != null) {
+      if (inPlay(play)) refuse('notNow', 'A ball in play needs its result')
+      if (atBatUnderWay(play)) closeInterruptedAtBat(ctx)
+    }
     nextHalf(ctx)
     return
   }

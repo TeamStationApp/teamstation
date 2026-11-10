@@ -67,6 +67,7 @@ const COUNTED_NON_PA = new Set([
   'other_out',
   'defensive_indiff',
   'other_advance',
+  'ts_at_bat_ended',
   'runner_double_play',
   'cs_double_play',
   'error'
