@@ -164,6 +164,14 @@ export function applyDevelopIdentity(root: string): void {
 
 export function setup(m: Setup): void {
   m.apiVersion(1)
+  m.workflow('soak-artifacts', { triggers: [{ request: true }] }, w => {
+    w.stage('retrieve', { on: SIGN, tools: { node: '24' }, run: async ctx => {
+      for (const [workflow, name] of [['tvos', 'tvos-ipa'], ['build', 'ios-ipa'], ['build', 'android-apk']]) {
+        await ctx.artifacts.fetch({ workflow, name, commit: '5ed3a9f8118d9e96a5e0df78b22d35af46da1886', status: 'success' }, 'soak-artifacts/' + name)
+      }
+      await ctx.stash('soak-artifacts', 'soak-artifacts/**/*')
+    } })
+  })
   const app = appIdOf({
     branch: m.branch,
     seat: typeof m.params?.seat === 'string' ? m.params.seat : undefined
