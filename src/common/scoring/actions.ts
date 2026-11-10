@@ -247,6 +247,7 @@ export const PRODUCED_EVENT_TYPES = [
   'defensive_switch',
   'ts_batting_order',
   'ts_courtesy_runner',
+  'ts_at_bat_ended',
   'final_score'
 ] as const
 
@@ -397,6 +398,12 @@ const actionCleaners = {
     balls: asOptional(asNumber),
     strikes: asOptional(asNumber),
     outs: asOptional(asNumber),
+    /**
+     * An `endHalf` that saves the at-bat in progress. Only new actions carry
+     * it: an older one dropped that at-bat, and its record still holds the
+     * next at-bat's actions after it, so it replays as it was scored.
+     */
+    keepAtBat: asOptional(asBoolean),
     batter: asOptional(asSessionId),
     pitcher: asOptional(asSessionId),
     bases: asOptional(
@@ -523,6 +530,8 @@ export function cleanAction(
  * input, as `toolSchema()` offers them. Only the scoring screen says the
  * scorer set a launch angle himself, so a dictated ball in play loses
  * `launchAngleDragged`, whatever the model sent: its angle stays an estimate.
+ * A dictated end of the half is a new one, so it keeps the at-bat in progress
+ * (`spokenAction`).
  */
 export function dictatedAction(
   name: string,
@@ -533,10 +542,49 @@ export function dictatedAction(
       ? { ...input, type: name }
       : { type: name }
   )
-  if ('problem' in cleaned || cleaned.action.type !== 'ballInPlay')
-    return cleaned
+  if ('problem' in cleaned) return cleaned
+  if (cleaned.action.type !== 'ballInPlay') return spokenAction(cleaned)
   const { launchAngleDragged, ...action } = cleaned.action
   return { action }
+}
+
+/**
+ * How this engine folds a game's log into plays, apart from the socket's wire
+ * version (`GAME_SOCKET_PROTOCOL`). A phone stamps each save it queues with
+ * it, and a save queued under an older one is played again or judged before
+ * it is sent (`Outbox`). Raise it only when an older engine would fold some
+ * log into plays at other indexes or with other results. 4: an end of the
+ * half can keep its at-bat (`keepAtBat`).
+ */
+export const FOLD_VERSION = 4
+
+/** The fold that first read an end of the half that keeps its at-bat. */
+export const KEEPS_AT_BAT_SINCE = 4
+
+/**
+ * Whether `action` is an end of the half that keeps the at-bat in progress:
+ * one the End half button, dictation and a repair of an older game mark
+ * (`keepAtBat`). It reads a stored action as well as a cleaned one.
+ */
+export function keepsAtBat(action: unknown): boolean {
+  if (action == null || typeof action !== 'object') return false
+  const { type, kind, keepAtBat } = action as Record<string, unknown>
+  return type === 'gameFlow' && kind === 'endHalf' && keepAtBat === true
+}
+
+/**
+ * A cleaned action a scorer said, as the game takes it from the screen: an
+ * end of the half keeps the at-bat in progress (`keepAtBat`), as the End half
+ * button's does. Dictation's server interpreter and `dictatedAction` both
+ * read a model's calls through it.
+ */
+export function spokenAction<
+  T extends { action: ScoringAction } | { problem: Problem }
+>(cleaned: T): T {
+  if ('problem' in cleaned) return cleaned
+  const action = cleaned.action
+  if (action.type !== 'gameFlow' || action.kind !== 'endHalf') return cleaned
+  return { ...cleaned, action: { ...action, keepAtBat: true } }
 }
 
 /** The fields of an action that name one player, and those that name several. */

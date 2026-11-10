@@ -869,7 +869,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     return state.phase !== 'ready' || state.moreDraft != null
       ? state
       : accepted(state, 'End half inning', next => {
-          act(next, { type: 'gameFlow', kind: 'endHalf' })
+          act(next, { type: 'gameFlow', kind: 'endHalf', keepAtBat: true })
           next.motions = []
           next.pendingPlay = null
           next.generation++

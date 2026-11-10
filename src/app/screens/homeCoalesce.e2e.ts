@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import { groupFixture } from '../../test/groupFixtures'
 import {
   browserSession,
@@ -260,7 +261,11 @@ async function coalesce({ stack, out, observe, d }: Run): Promise<void> {
         `${stack.api}/games/${stack.gameId}/events`,
         {
           method: 'POST',
-          headers: { ...authorized, 'content-type': 'application/json' },
+          headers: {
+            ...authorized,
+            'content-type': 'application/json',
+            [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
+          },
           body: JSON.stringify({
             mode: 'live',
             source: { system: 'manual' },
@@ -441,7 +446,8 @@ async function postLive(
     method: 'POST',
     headers: {
       authorization: `Bearer ${stack.token}`,
-      'content-type': 'application/json'
+      'content-type': 'application/json',
+      [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
     },
     body: JSON.stringify({
       mode: 'live',

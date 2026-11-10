@@ -24,7 +24,7 @@ export function withCors(allowedOrigins: string[]): RequestHandler {
       // A queued write names itself with `idempotency-key`.
       res.setHeader(
         'access-control-allow-headers',
-        'authorization,content-type,idempotency-key,x-teamstation-app'
+        'authorization,content-type,idempotency-key,x-teamstation-app,x-teamstation-protocol'
       )
       res.setHeader(
         'access-control-allow-methods',

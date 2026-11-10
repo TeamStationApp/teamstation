@@ -1,5 +1,5 @@
 import { asNumber, asObject, asOptional, asString } from 'cleaners'
-import { Router } from 'express'
+import { type Request, Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import {
@@ -7,8 +7,10 @@ import {
   conflict,
   forbidden,
   notFound,
-  unauthorized
+  unauthorized,
+  updateRequired
 } from '../../common/errors'
+import { PROTOCOL_HEADER, saveProtocolOf } from '../../common/gameSocket'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -20,6 +22,7 @@ import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
+import { type Actor, isMachine } from '../auth/sessions'
 import type { ValkeyCache } from '../cache/valkeyCache'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -58,8 +61,47 @@ import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
+  /**
+   * The oldest `GAME_SOCKET_PROTOCOL` an app's save of plays may name, as
+   * the game socket's subscribe. Never below `MINIMUM_SAVE_PROTOCOL`.
+   */
+  minimumProtocol?: number
   /** Where a live post leaves the game socket's frame of its edits. */
   cache?: ValkeyCache
+}
+
+/**
+ * Refuses a save from a TeamStation app older than the protocol, or naming
+ * none: it replays a game short of a play an end of the half kept, and writes
+ * its plays at the wrong indexes. An app is a request that names itself in
+ * `x-teamstation-app`, or one signed in as a person that carries TeamStation's
+ * own scoring records or is a live post, an undo's removal among them, which
+ * builds before that header still send. An API key, a machine token or Tess
+ * posts as before.
+ */
+function requireCurrentApp(
+  req: Request,
+  actor: Actor,
+  body: {
+    mode?: string
+    plays: readonly GumboPlay[]
+    currentPlay?: CurrentPlay | null
+  },
+  minimum: number
+): void {
+  if (actor.apiKey != null || isMachine(actor)) return
+  const scored =
+    body.plays.some(play => play.teamStation != null) ||
+    body.currentPlay?.teamStation != null
+  if (
+    req.header('x-teamstation-app') == null &&
+    !scored &&
+    body.mode !== 'live'
+  )
+    return
+  const protocol = Number(req.header(PROTOCOL_HEADER))
+  if (Number.isFinite(protocol) && protocol >= minimum) return
+  throw updateRequired('Update TeamStation to keep scoring games.')
 }
 
 /**
@@ -232,6 +274,12 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asPostEventsBody, req.body)
+      requireCurrentApp(
+        req,
+        actor,
+        body,
+        saveProtocolOf(options.minimumProtocol)
+      )
       // A live post asked for its edits answers only what it wrote. Every
       // other answers every play, as builds before the edits answer read it
       // and a phone's queue writes it over the game it holds.

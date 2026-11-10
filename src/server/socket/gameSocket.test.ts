@@ -14,7 +14,8 @@ import { asPostedEdits } from '../../common/api'
 import {
   GAME_SOCKET_PROTOCOL,
   type GameSocketReply,
-  type PlayEditsData
+  type PlayEditsData,
+  PROTOCOL_HEADER
 } from '../../common/gameSocket'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
@@ -235,6 +236,7 @@ describe('the game socket (U14)', function () {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
           authorization: `Bearer ${SCORER}`
         },
         body: JSON.stringify({
@@ -996,8 +998,15 @@ describe('the game socket (U14)', function () {
       message: 'Update TeamStation to keep following games.'
     }
 
-    it('subscribes protocol 3, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
-      expect(GAME_SOCKET_PROTOCOL).equals(3)
+    it('subscribes protocol 3 and 4, refuses none, 1 or 2 with updateRequired, and sends the refused nothing later', async function () {
+      // Only a save of plays needs 4: an app of protocol 3 still follows.
+      expect(GAME_SOCKET_PROTOCOL).equals(4)
+      const watcher = await listen(VIEWER)
+      watcher.send({ type: 'subscribe', gameId: scored, id: 'w1', protocol: 3 })
+      expect(
+        await watcher.next(frame => 'id' in frame && frame.id === 'w1')
+      ).deep.include({ type: 'subscribed', gameId: scored })
+      watcher.ws.terminate()
       const current = await listen(VIEWER)
       const unnamed = await listen(VIEWER)
       const older = await listen(VIEWER)
@@ -1113,7 +1122,7 @@ describe('the game socket (U14)', function () {
       for (const listener of [event, home]) listener.ws.terminate()
     })
 
-    it('refuses protocol 3 where the server asks for 4', async function () {
+    it('refuses this protocol where the server asks for the next', async function () {
       const plain = createServer()
       const strict = attachGameSocket(plain, db!, scratchUrl, {
         feed: {
@@ -1125,7 +1134,7 @@ describe('the game socket (U14)', function () {
           close: async () => undefined
         },
         stopSignals: null,
-        minimumProtocol: 4
+        minimumProtocol: GAME_SOCKET_PROTOCOL + 1
       })
       await new Promise<void>(resolve => plain.listen(0, '127.0.0.1', resolve))
       const mainUrl = socketUrl
@@ -1145,7 +1154,7 @@ describe('the game socket (U14)', function () {
           type: 'subscribe',
           gameId: scored,
           id: 'v3',
-          protocol: 4
+          protocol: GAME_SOCKET_PROTOCOL + 1
         })
         expect(
           await listener.next(frame => 'id' in frame && frame.id === 'v3')

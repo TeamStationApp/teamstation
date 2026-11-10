@@ -30,6 +30,7 @@ import { type Database, makeDatabase } from '../db/database'
 import { replaceGameEvents } from '../events/eventWrite'
 import { postGamePlays } from '../events/postPlays'
 import { readPlays } from '../routes/events'
+import { runKeep } from './keepInterruptedAtBats'
 import { refoldScoredGames, runRefold } from './refoldScoredGames'
 
 /**
@@ -784,5 +785,191 @@ describe('refolding the stored plays (U11)', function () {
         .filter((e: any) => e.isPitch)
         .map((e: any) => e.pitchData.startSpeed)
     ).deep.equals([82, 82])
+  })
+  describe('putting back an at-bat a build dropped when the half was ended by hand', function () {
+    /** The runs the stored plays' runners score, by side, as the stats count them. */
+    async function runsFromRunners(
+      gameId: string
+    ): Promise<{ away: number; home: number }> {
+      const runs = { away: 0, home: 0 }
+      for (const row of await readPlays(db, gameId)) {
+        const gumbo = row.gumbo as GumboPlay
+        const side = gumbo.about.halfInning === 'top' ? 'away' : 'home'
+        for (const runner of gumbo.runners ?? [])
+          if (
+            (runner.movement as { end?: unknown } | undefined)?.end === 'score'
+          )
+            runs[side]++
+      }
+      return runs
+    }
+    const completed = async (gameId: string): Promise<GumboPlay[]> =>
+      (await readPlays(db, gameId))
+        .map(row => row.gumbo as GumboPlay)
+        .filter(play => play.about.atBatIndex !== 9999)
+
+    /**
+     * Two walks, a ball and a steal of third and of home, the half ended by
+     * hand as a build that dropped the at-bat stored it, the other side struck
+     * out, and the next batter struck out.
+     */
+    async function droppedGame(): Promise<string> {
+      const gameId = await newGame()
+      await score(gameId, [
+        ...walked,
+        ...walked,
+        ball,
+        { type: 'baseRunning', kind: 'steal', runner: AWAY[0], to: '3B' },
+        { type: 'baseRunning', kind: 'steal', runner: AWAY[0], to: 'home' },
+        { type: 'gameFlow', kind: 'endHalf' },
+        ...strikeout,
+        ...strikeout,
+        ...strikeout,
+        ...strikeout
+      ])
+      return gameId
+    }
+    const walked: ScoringAction[] = [ball, ball, ball, ball, close]
+
+    it('marks the end of the half, saves the at-bat as a play, and its run is a runner’s again', async function () {
+      const gameId = await droppedGame()
+      const plays = await completed(gameId)
+      expect(plays.map(play => play.about.atBatIndex)).deep.equals([
+        0, 1, 2, 3, 4, 5
+      ])
+      // The run is on the score and on no runner: the stats cannot be built.
+      expect(await runsFromRunners(gameId)).deep.equals({ away: 0, home: 0 })
+      expect(plays[2].result.awayScore).equals(1)
+
+      const before = await snapshot(gameId)
+      const previewed: string[] = []
+      expect(
+        await runKeep(db, ['--game', gameId, '--preview'], line =>
+          previewed.push(line)
+        )
+      ).equals(0)
+      expect(previewed[0]).match(
+        /^would keep the at-bat the half was ended in, action \d+ of play 2's record$/
+      )
+      expect(previewed[1]).match(/^would write \d+ plays.*\(preview\)$/)
+      expect(await snapshot(gameId)).deep.equals(before)
+
+      const lines: string[] = []
+      expect(
+        await runKeep(db, ['--game', gameId], line => lines.push(line))
+      ).equals(0)
+      expect(lines[0]).match(/^kept the at-bat/)
+      const repaired = await completed(gameId)
+      expect(repaired.map(play => play.about.atBatIndex)).deep.equals([
+        0, 1, 2, 3, 4, 5, 6
+      ])
+      expect(repaired[2].about.halfInning).equals('top')
+      expect(repaired[2].result.eventType).equals('stolen_base_home')
+      expect(repaired[2].matchup?.batter?.id).equals(AWAY[2])
+      expect(
+        repaired.slice(3, 6).map(play => play.about.halfInning)
+      ).deep.equals(['bottom', 'bottom', 'bottom'])
+      // The same batter leads off the next inning.
+      expect(repaired[6].matchup?.batter?.id).equals(AWAY[2])
+      expect(await runsFromRunners(gameId)).deep.equals({ away: 1, home: 0 })
+
+      // Opened again, the game holds what is stored, with nothing to save.
+      const session = await ScoringSession.open(store, gameId, context(gameId))
+      expect(session.readOnly).equals(false)
+      expect(session.pending).equals(0)
+      expect(session.state.liveData.plays.allPlays).length(7)
+
+      // Run again, nothing is left to keep.
+      const again: string[] = []
+      expect(
+        await runKeep(db, ['--game', gameId], line => again.push(line))
+      ).equals(0)
+      expect(again).deep.equals([
+        `${gameId}: no at-bat was ended by hand under way`
+      ])
+    })
+
+    it('leaves an end of the half taken on a ball in play still waiting for its result', async function () {
+      const gameId = await newGame()
+      await score(gameId, [
+        ...walked,
+        ball,
+        { type: 'ballInPlay', contact: 'swing', fielder: HOME[4] },
+        { type: 'gameFlow', kind: 'endHalf' },
+        ...strikeout
+      ])
+      const before = await snapshot(gameId)
+      const lines: string[] = []
+      expect(
+        await runKeep(db, ['--game', gameId], line => lines.push(line))
+      ).equals(0)
+      expect(lines).deep.equals([
+        `${gameId}: no at-bat was ended by hand under way`
+      ])
+      expect(await snapshot(gameId)).deep.equals(before)
+    })
+
+    it('skips a game whose plays would name another man than the one the kept at-bat moved there', async function () {
+      const gameId = await droppedGame()
+      // The stored play at 4 says somebody else batted than its log does.
+      const [row] = (await readPlays(db, gameId)).filter(
+        each => (each.gumbo as GumboPlay).about.atBatIndex === 4
+      )
+      const gumbo = row.gumbo as GumboPlay
+      await db
+        .updateTable('events')
+        .set({
+          gumbo: JSON.stringify({
+            ...gumbo,
+            matchup: { ...gumbo.matchup, batter: { id: HOME[8] } }
+          })
+        })
+        .where('id', '=', row.id)
+        .execute()
+      const before = await snapshot(gameId)
+      const lines: string[] = []
+      expect(
+        await runKeep(db, ['--game', gameId], line => lines.push(line))
+      ).equals(1)
+      expect(lines).length(1)
+      expect(lines[0]).match(
+        new RegExp(
+          `^skipped ${gameId}: rebuilding would change who played: play 4 batter`
+        )
+      )
+      expect(await snapshot(gameId)).deep.equals(before)
+    })
+
+    it('leaves an end of the half taken between at-bats', async function () {
+      const gameId = await newGame()
+      await score(gameId, [
+        ...strikeout,
+        { type: 'gameFlow', kind: 'endHalf' },
+        ...strikeout
+      ])
+      const before = await snapshot(gameId)
+      const lines: string[] = []
+      expect(
+        await runKeep(db, ['--game', gameId], line => lines.push(line))
+      ).equals(0)
+      expect(lines).deep.equals([
+        `${gameId}: no at-bat was ended by hand under way`
+      ])
+      expect(await snapshot(gameId)).deep.equals(before)
+    })
+
+    it('says so when --game names no game, or the arguments are wrong', async function () {
+      const lines: string[] = []
+      expect(
+        await runKeep(db, ['--game', 'gam_none'], line => lines.push(line))
+      ).equals(1)
+      expect(await runKeep(db, [], line => lines.push(line))).equals(1)
+      expect(await runKeep(db, ['--game'], line => lines.push(line))).equals(1)
+      expect(lines).deep.equals([
+        'no such game: gam_none',
+        'Usage: npm run keep-interrupted-at-bats -- --game <id> [--preview]',
+        'Usage: npm run keep-interrupted-at-bats -- --game <id> [--preview]'
+      ])
+    })
   })
 })

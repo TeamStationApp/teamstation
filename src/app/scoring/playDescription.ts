@@ -4,6 +4,7 @@ import {
   type Destination,
   type Direction,
   drawnName,
+  keepsAtBat,
   type ScoringAction
 } from '../../common/scoring/actions'
 import { overrideOf, trajectoryOf } from '../../common/scoring/rules'
@@ -623,22 +624,64 @@ export function describeCompletedPlays(
     index >= 0 && out.size < indexes.size;
     index--
   ) {
-    if (!closesPlay(log[index])) continue
+    const action = log[index]
+    // An end of the half that keeps the at-bat saves it as a play of its own,
+    // described by the actions before it: the end of the half is no part of it.
+    const endedHalf = keepsAtBat(action)
+    if (!closesPlay(action) && !endedHalf) continue
     const after = gameAt(index + 1)
     const play = after.liveData.plays.allPlays.at(-1)
     if (
       play == null ||
+      (endedHalf &&
+        after.liveData.plays.allPlays.length ===
+          gameAt(index).liveData.plays.allPlays.length) ||
       !indexes.has(play.about.atBatIndex) ||
       out.has(play.about.atBatIndex)
     )
       continue
-    const description = describeLastPlay(
-      log.slice(0, index + 1),
-      [],
-      after,
-      gameAt
-    )
+    const description = endedHalf
+      ? describeKeptAtBat(log, index, gameAt)
+      : describeLastPlay(log.slice(0, index + 1), [], after, gameAt)
     if (description != null) out.set(play.about.atBatIndex, description)
   }
   return out
+}
+
+/**
+ * The at-bat an end of the half at `index` kept: every action taken while it
+ * was the at-bat in progress, the running play it was saved as among them,
+ * read against the game just before the half ended, whose bases still hold
+ * the runners it left on. Which at-bat each action left in progress says
+ * where it began, as no closing action does when the half before ended on a
+ * third out between pitches.
+ */
+function describeKeptAtBat(
+  log: readonly ScoringAction[],
+  index: number,
+  gameAt: (logLength: number) => GameState
+): PlayDescription | undefined {
+  const kept = gameAt(index).liveData.plays.currentPlay?.about.atBatIndex
+  const atBat = (state: GameState): number | undefined =>
+    state.liveData.plays.currentPlay?.about.atBatIndex
+  // An action is the kept at-bat's when it was taken in it, or when it is the
+  // pitch that closed the play ahead and began it, in the same half: a third
+  // out between pitches begins it too, but in the half after its own.
+  const its = (at: number): boolean => {
+    const before = gameAt(at)
+    const after = gameAt(at + 1)
+    return (
+      atBat(before) === kept ||
+      (atBat(after) === kept &&
+        before.liveData.linescore.isTopInning ===
+          after.liveData.linescore.isTopInning)
+    )
+  }
+  let start = index
+  while (start > 0 && !closesPlay(log[start - 1]) && its(start - 1)) start--
+  const actions = log.slice(start, index)
+  // A play closed by its next pitch leaves no closePlay: the last batter's.
+  const runs = batterRuns(gameAt(start), actions)
+  if (runs.length > 1) start += runs.at(-1)!.from
+  return describePlay(gameAt(start), log.slice(start, index), gameAt(index))
 }

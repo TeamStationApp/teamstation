@@ -219,6 +219,7 @@ describe("MLB's event types", function () {
     expect([...GUMBO_EXTENSION_EVENT_TYPES].sort()).deep.equals([
       'final_score',
       'score_correction',
+      'ts_at_bat_ended',
       'ts_batter_out',
       'ts_batting_order',
       'ts_courtesy_runner',

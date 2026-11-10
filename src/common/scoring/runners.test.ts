@@ -6,6 +6,7 @@ import {
   ball,
   bases,
   close,
+  endHalf,
   F,
   game,
   outs,
@@ -17,6 +18,7 @@ import {
   walk
 } from '../../test/scoringGames'
 import { gumboViolations } from '../gumbo/validate'
+import { eventTypeName } from '../gumboEventTypes'
 import type { GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import { applyAction } from './apply'
@@ -893,17 +895,282 @@ describe('runners between pitches', function () {
 
 describe('closing and ending', function () {
   it('ends a half by hand and refuses to close an undecided play', function () {
-    const state = after(game(), { type: 'gameFlow', kind: 'endHalf' })
+    const state = after(game(), endHalf)
     expect(state.liveData.linescore.isTopInning).equals(false)
+    expect(state.liveData.plays.allPlays).length(0)
     expect(
       applyAction(after(game(), result('field_out')), close).problems[0].message
     ).equals('The play is not decided yet')
     expect(
-      applyAction(after(game(), result('field_out')), {
-        type: 'gameFlow',
-        kind: 'endHalf'
-      }).problems[0].message
+      applyAction(after(game(), result('field_out')), endHalf).problems[0]
+        .message
     ).equals('Finish the current play first')
+    expect(
+      applyAction(
+        after(game(), { type: 'ballInPlay', contact: 'swing', fielder: F.CF }),
+        endHalf
+      ).problems[0].message
+    ).equals('A ball in play needs its result')
+  })
+
+  function dueAgain(state: GameState, batter: number): void {
+    const back = strikeout(strikeout(strikeout(state)))
+    expect(back.liveData.linescore.isTopInning).equals(true)
+    expect(back.liveData.plays.currentPlay!.matchup.batter.id).equals(batter)
+  }
+
+  it('saves a steal when the half is ended by hand and brings the same batter back', function () {
+    let state = walk(walk(game()))
+    const batter = state.liveData.plays.currentPlay!.matchup.batter.id
+    const index = state.liveData.boxscore.teams.away.battingIndex
+    state = after(state, strike, {
+      type: 'baseRunning',
+      kind: 'steal',
+      runner: 1,
+      to: '3B'
+    })
+    // The walk left runners on first and second; the steal leaves first and third.
+    expect(bases(state)).deep.equals([2, null, 1])
+    expect(runs(state)).equals(0)
+    state = after(
+      state,
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+      endHalf
+    )
+    expect(runs(state)).equals(1)
+    expect(state.liveData.linescore.isTopInning).equals(false)
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(index)
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(saved.about.isComplete).equals(true)
+    expect(saved.matchup.batter.id).equals(batter)
+    expect(saved.result).includes({
+      eventType: 'stolen_base_home',
+      awayScore: 1,
+      homeScore: 0
+    })
+    expect(
+      saved.runners.map(runner => [
+        runner.details.runner.id,
+        runner.movement.start,
+        runner.movement.end,
+        runner.movement.runScored,
+        runner.details.movementReason
+      ])
+    ).deep.equals([
+      [1, 2, 3, false, 'Steal'],
+      [1, 3, 4, true, 'Steal']
+    ])
+    expect(saved.playEvents.filter(event => event.isPitch)).length(1)
+    dueAgain(state, batter)
+  })
+
+  it('saves the pitches when the half ends before the batter is out or hits', function () {
+    const state = after(game(), strike, ball, endHalf)
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(0)
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(saved.matchup.batter.id).equals(1)
+    expect(saved.result).includes({
+      event: 'At Bat Ended',
+      eventType: 'ts_at_bat_ended'
+    })
+    expect(eventTypeName(saved.result.eventType)).equals(
+      'At-bat ended with the half'
+    )
+    expect(saved.runners).length(0)
+    expect(saved.playEvents.filter(event => event.isPitch).length).equals(2)
+    dueAgain(state, 1)
+  })
+
+  it('names a half ended by hand after the running play it was taken on', function () {
+    const cases: Array<[ScoringAction, string]> = [
+      [
+        {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 1, to: '2B' }]
+        },
+        'wild_pitch'
+      ],
+      [
+        {
+          type: 'batteryEvent',
+          kind: 'passed_ball',
+          advances: [{ runner: 1, to: '2B' }]
+        },
+        'passed_ball'
+      ],
+      [
+        {
+          type: 'batteryEvent',
+          kind: 'balk',
+          advances: [{ runner: 1, to: '2B' }]
+        },
+        'balk'
+      ],
+      [
+        { type: 'baseRunning', kind: 'defensive_indifference', runner: 1 },
+        'defensive_indiff'
+      ],
+      [
+        {
+          type: 'runnerMovement',
+          runner: 1,
+          to: '2B',
+          reason: 'Throwing Error'
+        },
+        'error'
+      ],
+      [
+        { type: 'baseRunning', kind: 'pickoff_safe', runner: 1 },
+        'ts_at_bat_ended'
+      ]
+    ]
+    for (const [action, eventType] of cases) {
+      const state = after(walk(game()), ball, action, endHalf)
+      const saved = state.liveData.plays.allPlays.at(-1)!
+      expect(saved.result.eventType, JSON.stringify(action)).equals(eventType)
+      expect(saved.matchup.batter.id).equals(2)
+      expect(state.liveData.boxscore.teams.away.battingIndex).equals(1)
+    }
+  })
+
+  it('names the run that scored, not the last runner to move', function () {
+    let state = walk(walk(game()))
+    state = after(
+      state,
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: '3B' },
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: 'home' },
+      { type: 'baseRunning', kind: 'steal', runner: 2, to: '3B' },
+      endHalf
+    )
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(runs(state)).equals(1)
+    expect(saved.result.eventType).equals('stolen_base_home')
+    expect(saved.result.event).equals('Steal')
+  })
+
+  it('names a steal, not the pickoff throw the runner then beat', function () {
+    const state = after(
+      walk(game()),
+      { type: 'baseRunning', kind: 'steal', runner: 1, to: '2B' },
+      { type: 'baseRunning', kind: 'pickoff_safe', runner: 1 },
+      endHalf
+    )
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(saved.result).includes({
+      event: 'Steal',
+      eventType: 'stolen_base_2b'
+    })
+  })
+
+  it('names no running play for a placed tiebreaker runner and pitches', function () {
+    const state = after(
+      game(),
+      { type: 'gameFlow', kind: 'placeRunner', runner: 9, base: '2B' },
+      ball,
+      endHalf
+    )
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(saved.result.eventType).equals('ts_at_bat_ended')
+    expect(saved.runners).length(1)
+  })
+
+  it('saves no play when the half ends with only the tiebreaker runner placed', function () {
+    const state = after(
+      game(),
+      { type: 'gameFlow', kind: 'placeRunner', runner: 9, base: '2B' },
+      endHalf
+    )
+    expect(state.liveData.linescore.isTopInning).equals(false)
+    expect(state.liveData.plays.allPlays).length(0)
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(0)
+  })
+
+  it('drops the at-bat on an older end of the half, as it was scored', function () {
+    const olderEndHalf: ScoringAction = { type: 'gameFlow', kind: 'endHalf' }
+    const state = after(game(), strike, ball, olderEndHalf)
+    expect(state.liveData.linescore.isTopInning).equals(false)
+    expect(state.liveData.plays.allPlays).length(0)
+  })
+
+  it('moves on after a strikeout when the half is then ended', function () {
+    let state = strikeout(game())
+    expect(state.liveData.plays.currentPlay!.matchup.batter.id).equals(2)
+    state = after(state, endHalf)
+    expect(state.liveData.plays.allPlays.at(-1)!.result.eventType).equals(
+      'strikeout'
+    )
+    expect(state.liveData.plays.allPlays).length(1)
+    dueAgain(state, 2)
+  })
+
+  it('records a caught stealing that ends the half and brings the same batter back', function () {
+    let state = twoOuts(walk(game()))
+    const batter = state.liveData.plays.currentPlay!.matchup.batter.id
+    const index = state.liveData.boxscore.teams.away.battingIndex
+    state = after(state, strike, {
+      type: 'baseRunning',
+      kind: 'caught_stealing',
+      runner: 1,
+      to: '2B',
+      fielders: [F.C, F.SS]
+    })
+    expect(state.liveData.linescore.isTopInning).equals(false)
+    expect(state.liveData.boxscore.teams.away.battingIndex).equals(index)
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(saved.matchup.batter.id).equals(batter)
+    expect(saved.result.eventType).equals('caught_stealing_2b')
+    expect(saved.playEvents.filter(event => event.isPitch)).length(1)
+    const putout = saved.runners.find(runner => runner.movement.isOut)!
+    expect(putout.details.movementReason).equals('Caught Stealing')
+    expect(putout.credits.map(credit => credit.credit)).deep.equals([
+      'f_assist',
+      'f_putout'
+    ])
+    expect(putout.credits.map(credit => credit.player?.id)).deep.equals([
+      F.C,
+      F.SS
+    ])
+    dueAgain(state, batter)
+  })
+
+  it('keeps every putout when a pickoff makes the third out', function () {
+    let state = strikeout(walk(walk(game())))
+    const batter = state.liveData.plays.currentPlay!.matchup.batter.id
+    state = after(
+      state,
+      {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 1,
+        to: '3B',
+        fielders: [F.C, F['3B']]
+      },
+      {
+        type: 'baseRunning',
+        kind: 'pickoff',
+        runner: 2,
+        fielders: [F.P, F['1B']]
+      }
+    )
+    expect(outs(state)).equals(0)
+    expect(state.liveData.linescore.isTopInning).equals(false)
+    const saved = state.liveData.plays.allPlays.at(-1)!
+    expect(saved.matchup.batter.id).equals(batter)
+    expect(saved.result.eventType).equals('pickoff_1b')
+    const outsOnThePlay = saved.runners.filter(runner => runner.movement.isOut)
+    expect(
+      outsOnThePlay.map(runner => [
+        runner.details.runner.id,
+        runner.details.movementReason,
+        runner.credits.map(credit => credit.credit).join(','),
+        runner.credits.map(credit => credit.player?.id).join(',')
+      ])
+    ).deep.equals([
+      [1, 'Caught Stealing', 'f_assist,f_putout', `${F.C},${F['3B']}`],
+      [2, 'Picked Off', 'f_assist,f_putout', `${F.P},${F['1B']}`]
+    ])
+    dueAgain(state, batter)
   })
 
   it('ends the game between at-bats and then takes nothing more', function () {

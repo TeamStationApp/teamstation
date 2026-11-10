@@ -3,7 +3,12 @@ import { asArray, asObject, asUnknown, type Cleaner } from 'cleaners'
 import { asLiteral } from '../asLiteral'
 import { eventTypeName } from '../gumboEventTypes'
 import { type CurrentPlay, type GumboPlay, isRealPlay } from '../gumboPlay'
-import { cleanAction, type Problem, type ScoringAction } from './actions'
+import {
+  cleanAction,
+  keepsAtBat,
+  type Problem,
+  type ScoringAction
+} from './actions'
 import { type Applied, applyAction } from './apply'
 import {
   currentDocumentOf,
@@ -243,7 +248,10 @@ export function segmentAfter(
   const finished: Array<{ play: GamePlay; segment: Segment }> = []
   let segment = current
   let rest = completed
-  if (applied.transitions[0]?.type === 'playClosed') {
+  // Ending the half completes the at-bat it was taken in. A later pitch that
+  // closes a play already decided belongs to the next at-bat instead.
+  const endsTheAtBat = keepsAtBat(action)
+  if (applied.transitions[0]?.type === 'playClosed' && !endsTheAtBat) {
     finished.push({ play: completed[0], segment })
     const closed = applyAction(
       copyGame(before),

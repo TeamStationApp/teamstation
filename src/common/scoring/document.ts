@@ -1746,6 +1746,7 @@ export const HIGHLIGHT_CREDITED = {
     'defensive_switch',
     'ts_batting_order',
     'ts_courtesy_runner',
+    'ts_at_bat_ended',
     'final_score'
   ])
 } as const satisfies Record<string, ReadonlySet<string>>

@@ -7,6 +7,7 @@ import express from 'express'
 import type { Kysely } from 'kysely'
 import { Pool } from 'pg'
 
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../common/gameSocket'
 import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
@@ -269,6 +270,7 @@ export async function accountHarness(
       const response = await fetch(`${origin}/api/v1${route}`, {
         method,
         headers: {
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
           ...(token == null ? {} : { authorization: `Bearer ${token}` }),
           ...(body === undefined ? {} : { 'content-type': 'application/json' })
         },

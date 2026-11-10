@@ -1,5 +1,5 @@
 import type { PostedEdits } from '../api'
-import { HttpError } from '../errors'
+import { HttpError, isUpdateRequired } from '../errors'
 import {
   eventSignature,
   historyTargets,
@@ -170,6 +170,19 @@ export interface SaveChange {
    * was reset since refuses the change (409, `details.generation`).
    */
   generation?: number
+  /**
+   * The session's whole log as the change leaves it, and when each action
+   * was taken: kept on the device beside a queued change, so a newer build
+   * can play it again on its own engine where this build's plays would not
+   * read right to it (`rebuildGameEvents`). Never sent.
+   */
+  log?: SessionLog
+}
+
+/** A session's actions, and the time each was taken where it is known. */
+export interface SessionLog {
+  actions: ScoringAction[]
+  times: Array<string | null>
 }
 /**
  * Where a session reads and writes its game. It does no I/O of its own. A
@@ -255,7 +268,7 @@ interface Mark {
  * Whether two actions say the same, whatever order their keys are in: the
  * one written-out form `keyOf` gives, and keeps, for each action.
  */
-function sameAction(a: ScoringAction, b: ScoringAction): boolean {
+export function sameAction(a: ScoringAction, b: ScoringAction): boolean {
   return a === b || keyOf(a) === keyOf(b)
 }
 
@@ -398,6 +411,11 @@ export class ScoringSession {
   private timer: unknown = null
   private retryMs = FIRST_RETRY_MS
   private blocked = false
+  /**
+   * Refused as older than the server reads (`updateRequired`): nothing more
+   * is sent from this build, and what is not saved stays on the log.
+   */
+  private isOutdated = false
   /** Closed for good: nothing more is saved from it. */
   private closed = false
   private swapLost = 0
@@ -815,6 +833,11 @@ export class ScoringSession {
     return this.isReplaced
   }
 
+  /** Closed for good (`close`): it saves nothing more. */
+  get isClosed(): boolean {
+    return this.closed
+  }
+
   /**
    * Saves nothing more: the screen that held it moved on to another read of
    * the game, as after a swap of home and away, whose sides this session's
@@ -850,6 +873,15 @@ export class ScoringSession {
    */
   get lineupSides(): Array<readonly Side[] | null> {
     return lineupSides(this.base, this.log)
+  }
+
+  /**
+   * A save was refused as older than the server reads (`updateRequired`):
+   * nothing more is sent from this build, and what is not saved stays on
+   * `actions` for a newer one.
+   */
+  get outdated(): boolean {
+    return this.isOutdated
   }
 
   /** When each action of `actions` was taken, as an ISO time, where known. */
@@ -1682,6 +1714,27 @@ export class ScoringSession {
     }
   }
 
+  /**
+   * The whole game as this engine folds it, in its stored form: every play,
+   * the at-bat in progress, and every stored index the log no longer makes.
+   * What a newer build sends in place of a save an older one queued, once it
+   * has played that save's log again.
+   */
+  wholeChange(): SaveChange {
+    const picture = this.picture()
+    const reopened = this.atBatOpen
+      ? this.game.liveData.plays.allPlays.length
+      : null
+    return storedChange({
+      plays: [...picture.plays.values()],
+      remove: [...this.stored]
+        .filter(index => !picture.plays.has(index) && index !== reopened)
+        .sort((a, b) => a - b),
+      currentPlay: picture.current,
+      fenceDistanceFt: fenceOf(this.game)
+    })
+  }
+
   private change(): SaveChange {
     // A session refused, or read back only in part, writes nothing.
     if (this.refusal != null) return { plays: [], remove: [] }
@@ -1723,7 +1776,13 @@ export class ScoringSession {
   }
 
   private schedule(ms: number): void {
-    if (this.refusal != null || this.blocked || this.closed || this.isReplaced)
+    if (
+      this.refusal != null ||
+      this.blocked ||
+      this.isOutdated ||
+      this.closed ||
+      this.isReplaced
+    )
       return
     if (this.timer != null) this.clearTimer(this.timer)
     this.timer = this.setTimer(() => {
@@ -1738,6 +1797,7 @@ export class ScoringSession {
       if (
         this.refusal != null ||
         this.blocked ||
+        this.isOutdated ||
         this.closed ||
         this.isReplaced
       )
@@ -1756,6 +1816,10 @@ export class ScoringSession {
       try {
         answer = await this.store.save(this.gameId, {
           ...storedChange(change),
+          log: {
+            actions: covering,
+            times: coveringTimes.map(time => time ?? null)
+          },
           ...(this.lineupsBase === undefined
             ? {}
             : { lineupsBase: this.lineupsBase }),
@@ -1821,6 +1885,15 @@ export class ScoringSession {
   private failed(error: unknown): void {
     const code = error instanceof HttpError ? error.code : null
     const message = error instanceof Error ? error.message : String(error)
+    // This build is older than the server reads: what is not saved stays,
+    // and nothing more is sent until the update the notice asks for.
+    if (isUpdateRequired(error)) {
+      this.failure = message
+      this.isOffline = false
+      this.isOutdated = true
+      this.notify()
+      return
+    }
     // Signed out, the scorer signs in again and the waiting changes go then.
     // Lineups that keep changing under each read are tried again later.
     if (

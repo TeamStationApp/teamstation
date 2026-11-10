@@ -586,6 +586,20 @@ describe('a pinch runner who keeps the batting order (U3)', function () {
       }
     )
 
+  it('saves no play when the half is ended by hand after only a courtesy runner', function () {
+    const state = walked()
+    const plays = state.liveData.plays.allPlays.length
+    const order = state.liveData.boxscore.teams.away.battingIndex
+    const ended = after(state, runner(19), {
+      type: 'gameFlow',
+      kind: 'endHalf',
+      keepAtBat: true
+    })
+    expect(ended.liveData.linescore.isTopInning).equals(false)
+    expect(ended.liveData.plays.allPlays).length(plays)
+    expect(ended.liveData.boxscore.teams.away.battingIndex).equals(order)
+  })
+
   it("puts him on the base and gives him the runner's charges, and nothing else changes", function () {
     const state = walked()
     const before = state.liveData.boxscore.teams

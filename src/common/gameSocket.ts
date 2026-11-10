@@ -37,9 +37,50 @@ import type { WalkUpSong } from './walkUpSong'
  * game and screen scope subscribe. A server refuses a subscribe below its
  * minimum as `forbidden` with the reason `updateRequired`, so an app too old
  * to read what it would be sent stops following instead of misreading it. 3
- * is the first whose scope frames carry no revision.
+ * is the first whose scope frames carry no revision. 4 is the first that
+ * reads an end of the half that keeps the at-bat in progress (`keepAtBat`):
+ * an older app drops that at-bat on replay, and every later play moves down
+ * an index. It is the socket's and the API's version only: how the engine
+ * folds a log, which a phone's queued saves are judged by, is
+ * `FOLD_VERSION`, and moves only when that does.
  */
-export const GAME_SOCKET_PROTOCOL = 3
+export const GAME_SOCKET_PROTOCOL = 4
+
+/**
+ * The oldest protocol a game or scope subscribe may name on any server: an
+ * app below it misreads a scope's frames. Watching a game needs no more, so
+ * an app, a watcher or an API client too old to save plays still follows.
+ */
+export const MINIMUM_GAME_SOCKET_PROTOCOL = 3
+
+/**
+ * The oldest protocol a save of a game's plays may name on any server: an app
+ * below it drops an at-bat an end of the half kept and writes every later
+ * play an index low.
+ */
+export const MINIMUM_SAVE_PROTOCOL = 4
+
+/**
+ * The minimum a server holds subscribes to: its config's, never below
+ * `MINIMUM_GAME_SOCKET_PROTOCOL`. A config can raise it and never lower it,
+ * since every server writes the minimum it started with back into its config
+ * file, which pins it there.
+ */
+export function minimumProtocolOf(configured: number | undefined): number {
+  return Math.max(MINIMUM_GAME_SOCKET_PROTOCOL, configured ?? 0)
+}
+
+/** The minimum a save of plays is held to: the subscribes', and 4 at least. */
+export function saveProtocolOf(configured: number | undefined): number {
+  return Math.max(MINIMUM_SAVE_PROTOCOL, minimumProtocolOf(configured))
+}
+
+/**
+ * The header the app names `GAME_SOCKET_PROTOCOL` in on every API request.
+ * A save of a game's plays from an app older than the server's minimum is
+ * refused as the socket refuses its subscribe (`updateRequired`).
+ */
+export const PROTOCOL_HEADER = 'x-teamstation-protocol'
 
 /**
  * A stored play as `GET /games/:gameId/events` gives each row: its id, its

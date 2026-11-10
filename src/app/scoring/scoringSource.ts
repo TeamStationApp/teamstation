@@ -6,9 +6,17 @@ import type {
 } from '../../common/api'
 import { type TagChoices, tagTargets } from '../../common/eventTags'
 import {
+  cleanAction,
+  KEEPS_AT_BAT_SINCE,
+  keepsAtBat,
+  type ScoringAction
+} from '../../common/scoring/actions'
+import {
   type EventStore,
+  sameAction,
   type SaveChange,
   ScoringSession,
+  type SessionLog,
   type StoredGame
 } from '../../common/scoring/session'
 import { appearedIn, reconcileRoster } from '../../common/scoring/startingSetup'
@@ -19,7 +27,9 @@ import {
   startingSetup,
   teamsOf
 } from './developmentSession'
+import { holdWhenOutdated, restoreHeld } from './heldScoring'
 import { LocalEventTags } from './localEventTags'
+import type { PreferenceStorage } from './scoringPreferenceStore'
 import { ServerClock } from './serverClock'
 
 /** Where the scoring screen's game comes from and is kept. */
@@ -82,6 +92,129 @@ export async function defaultsOf(
   return { away, home }
 }
 
+/** What the queue reads of a game to judge a save an older build queued. */
+export interface OlderSaveReads {
+  /** Its plays as the phone holds them, with its queued saves on top. */
+  held: () => Promise<StoredGame | undefined>
+  /** Its plays as the server holds them now. */
+  server: () => Promise<StoredGame>
+}
+
+/** Whether a stored game holds an end of the half that kept its at-bat. */
+function keepsAnAtBat(stored: StoredGame): boolean {
+  return [...stored.plays, stored.currentPlay].some(play => {
+    const record = (play as { teamStation?: { actions?: unknown } } | null)
+      ?.teamStation
+    return Array.isArray(record?.actions) && record.actions.some(keepsAtBat)
+  })
+}
+
+/**
+ * Whether a save of plays a build of fold `foldVersion` queued may go as it was
+ * queued: whether that build folded the game as this one does. A build below
+ * 4 reads an end of the half that kept its at-bat as one that dropped it, so
+ * in a game that holds one it puts every later play an index low, and what
+ * it wrote over cannot be told from what it added. Its save is held then;
+ * in any other game both builds fold every play alike. A failed read of the
+ * server throws.
+ */
+export async function olderSaveFoldsAlike(
+  foldVersion: number | null,
+  reads: OlderSaveReads
+): Promise<boolean> {
+  if ((foldVersion ?? 0) >= KEEPS_AT_BAT_SINCE) return true
+  const held = await reads.held()
+  if (held != null && keepsAnAtBat(held)) return false
+  return !keepsAnAtBat(await reads.server())
+}
+
+/** What a rebuild reads of a game: from the phone's copy, but its plays. */
+export interface GameReads {
+  game: () => Promise<GameDetail | undefined>
+  roster: (teamId: string) => Promise<RosterEntry[] | undefined>
+  /**
+   * Both teams' default lineups, as the scoring screen reads them: a game
+   * whose plays are all still on the phone starts from them.
+   */
+  defaults: (game: GameDetail) => Promise<DefaultLineups>
+  /** Its plays as the server holds them now. */
+  server: () => Promise<StoredGame>
+}
+
+/**
+ * The game as this build folds it (`ScoringSession.wholeChange`) once `log`,
+ * the whole session log a build kept beside a save it queued, is played on
+ * the server's plays: what is sent in place of that save, whose plays an
+ * older build folded and may name at other indexes. The server's log has to
+ * be where `log` began, action for action; only what follows is played.
+ *
+ * Null when the game or a roster is not there to read, when an action of the
+ * log no longer reads, when the server's log no longer plays, is not where
+ * `log` began (somebody else saved since), or refuses an action of the rest.
+ * A failed read of the server throws.
+ */
+export async function rebuildGameEvents(
+  gameId: string,
+  log: SessionLog,
+  reads: GameReads
+): Promise<SaveChange | null> {
+  const actions: ScoringAction[] = []
+  for (const raw of log.actions) {
+    const cleaned = cleanAction(raw)
+    if ('problem' in cleaned) return null
+    actions.push(cleaned.action)
+  }
+  const game = await reads.game()
+  if (game == null) return null
+  const [away, home] = await Promise.all([
+    reads.roster(game.awayTeamId),
+    reads.roster(game.homeTeamId)
+  ])
+  if (away == null || home == null) return null
+  const served = await reads.server()
+  // Opened as the scoring screen opens it (`ServerScoringSource.open`): a
+  // game with records is rebuilt from them, and one with none starts where
+  // the scorer's own session did, from the teams' defaults.
+  const server = await ScoringSession.open(
+    {
+      load: async () => served,
+      save: async () => {
+        throw new Error('A rebuild saves nothing: the queue sends it')
+      }
+    },
+    gameId,
+    context(game, away, home, await reads.defaults(game), false),
+    {
+      requireCurrentSetup: true,
+      reconcileSetup: (setup, state) =>
+        reconcileRoster(
+          setup,
+          teamsOf(game),
+          { away, home },
+          game.guestPlayers,
+          game.unrostered,
+          appearedIn(state)
+        )
+    }
+  )
+  if (server.readOnly) return null
+  const base = server.actions
+  if (
+    actions.length < base.length ||
+    base.some((action, i) => !sameAction(action, actions[i]))
+  )
+    return null
+  for (let i = base.length; i < actions.length; i++) {
+    const time = log.times[i]
+    const applied = server.apply(
+      actions[i],
+      typeof time === 'string' ? { time } : {}
+    )
+    if (applied.problems.length > 0) return null
+  }
+  return server.wholeChange()
+}
+
 /** Scores into the server's copy of the game as it is played. */
 export class ServerScoringSource implements ScoringSource {
   readonly persistent = true
@@ -91,8 +224,16 @@ export class ServerScoringSource implements ScoringSource {
     readonly clock = new ServerClock(
       async () => await client.serverTime(),
       deviceStorage
-    )
+    ),
+    /** Where plays a refused save could not send wait for a newer build. */
+    private readonly storage: PreferenceStorage = deviceStorage
   ) {}
+
+  /**
+   * Who is signed in, whose plays a refused save keeps on the device: set by
+   * the app. With nobody, none are kept or played again.
+   */
+  account: string | undefined
 
   keepTime(): () => void {
     return this.clock.keepTime()
@@ -179,7 +320,7 @@ export class ServerScoringSource implements ScoringSource {
       save: async (gameId, change) =>
         await client.saveGameEvents(gameId, change)
     }
-    return await ScoringSession.open(store, game.id, held.context, {
+    const session = await ScoringSession.open(store, game.id, held.context, {
       requireCurrentSetup: true,
       now: () => this.clock.now(),
       reconcileSetup: (setup, state) =>
@@ -192,6 +333,15 @@ export class ServerScoringSource implements ScoringSource {
           appearedIn(state)
         )
     })
+    // What a build too old to save left of this game on the device, for the
+    // person signed in, goes on now, and what this one cannot save stays
+    // there for the next.
+    const account = this.account
+    if (account != null) {
+      await restoreHeld(session, this.storage, account)
+      holdWhenOutdated(session, this.storage, account)
+    }
+    return session
   }
 }
 

@@ -5,7 +5,7 @@ import { lineupsDigest } from '../../server/events/teamLineups'
 import { F, game, TEAMS } from '../../test/scoringGames'
 import { expectNamesRoundTrip } from '../../test/storedNamesRoundTrip'
 import { asPostedEdits } from '../api'
-import { HttpError } from '../errors'
+import { HttpError, updateRequired } from '../errors'
 import { completedPlayTag, historyTargets, withTargetTags } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
@@ -847,6 +847,65 @@ describe('a scoring session', function () {
       strikes: 0
     })
     expect(session.pending).equals(0)
+  })
+
+  it('keeps its whole log beside each save, with when each action was taken', async function () {
+    const { session, store } = await open()
+    session.apply(ball)
+    await session.flush()
+    session.apply(strike, { time: '2026-11-09T18:00:00.000Z' })
+    await session.flush()
+    expect(store.posts.map(post => post.log?.actions)).deep.equals([
+      [ball],
+      [ball, strike]
+    ])
+    const times = store.posts[1].log!.times
+    expect(times).length(2)
+    expect(times[1]).equals('2026-11-09T18:00:00.000Z')
+    expect(
+      times.every(time => time === null || typeof time === 'string')
+    ).equals(true)
+  })
+
+  it('answers the whole game it folds, with every stored index the log no longer makes', async function () {
+    const { session, store } = await open()
+    for (const action of [ball, ball, ball, ball, strike]) session.apply(action)
+    await session.flush()
+    const whole = session.wholeChange()
+    expect(whole.plays.map(play => play.about.atBatIndex)).deep.equals([0])
+    expect(whole.currentPlay?.about.atBatIndex).equals(1)
+    expect(whole.remove).deep.equals([])
+    expect(whole.names).not.equals(undefined)
+    // Undone back into the walk, its play is the at-bat in progress again,
+    // and keeps its stored row, as a save leaves it.
+    session.undo()
+    session.undo()
+    expect(session.wholeChange().plays).deep.equals([])
+    expect(session.wholeChange().remove).deep.equals([])
+    expect(session.wholeChange().currentPlay?.about.atBatIndex).equals(0)
+    expect(
+      store.posts.at(-1)?.plays.map(play => play.about.atBatIndex)
+    ).deep.equals([0])
+  })
+
+  it('keeps what is not saved, and sends nothing more, once refused as too old', async function () {
+    const { session, store, clock } = await open()
+    session.apply(ball)
+    await session.flush()
+    store.fail = updateRequired('Update TeamStation to keep scoring games.')
+    session.apply(strike)
+    session.apply(strike)
+    await session.flush()
+    expect(session.readOnly).equals(false)
+    expect(session.problem).equals('Update TeamStation to keep scoring games.')
+    expect(session.actions).deep.equals([ball, strike, strike])
+    expect(session.pending).equals(1)
+    expect(clock.waiting).deep.equals([])
+    const posts = store.posts.length
+    session.apply(ball)
+    await session.flush()
+    expect(session.actions).deep.equals([ball, strike, strike, ball])
+    expect(store.posts).length(posts)
   })
 
   it('goes back to the game it opened on when its first save is refused', async function () {

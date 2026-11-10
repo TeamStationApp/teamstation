@@ -5,6 +5,7 @@ import express from 'express'
 import type { Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -403,7 +404,8 @@ describe('the game as a scoreboard source', function () {
           method: 'POST',
           headers: {
             authorization: `Bearer ${who.token}`,
-            'content-type': 'application/json'
+            'content-type': 'application/json',
+            [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
           },
           body: JSON.stringify(body(change))
         })
@@ -443,7 +445,8 @@ describe('the game as a scoreboard source', function () {
         method: 'POST',
         headers: {
           authorization: `Bearer ${stranger.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
         },
         body: JSON.stringify({ plays: [], mode: 'live' })
       })

@@ -8,6 +8,7 @@ import {
   asRosterEntry,
   type SaveLineupsBody
 } from '../../common/api'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
@@ -66,6 +67,7 @@ async function send(
     headers: {
       authorization: `Bearer ${f.h.tokens.get(user)!}`,
       'content-type': 'application/json',
+      [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
       ...(key == null ? {} : { 'idempotency-key': key })
     },
     body: JSON.stringify(body)

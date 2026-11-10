@@ -1,6 +1,7 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { join } from 'path'
 
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { withoutNames } from '../../common/scoring/storedNames'
 import { asGumboId } from '../../common/userId'
@@ -221,7 +222,8 @@ export async function postStatsFixture(input: {
   const base = input.url.replace(/\/$/, '')
   const headers = {
     cookie: `ts_session=${input.cookie}`,
-    'content-type': 'application/json'
+    'content-type': 'application/json',
+    [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
   }
 
   const gameRes = await fetchImpl(`${base}/api/v1/games/${input.game}`, {

@@ -4,6 +4,7 @@ import {
   cleanAction,
   type Problem,
   type ScoringAction,
+  spokenAction,
   taggedAction,
   type Tool,
   toolSchema,
@@ -1042,7 +1043,9 @@ function cleanTagged(
     game.ids,
     game.fielding
   )
-  return 'problem' in untagged ? untagged : cleanAction(untagged.raw)
+  return 'problem' in untagged
+    ? untagged
+    : spokenAction(cleanAction(untagged.raw))
 }
 
 /**

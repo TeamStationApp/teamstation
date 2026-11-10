@@ -8,6 +8,7 @@ import { after, afterEach, before, describe, it } from 'mocha'
 import { Pool, type PoolClient } from 'pg'
 import { WebSocket } from 'ws'
 
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -244,7 +245,8 @@ describe('the board timeline', function () {
         method: 'POST',
         headers: {
           authorization: `Bearer ${runner.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
         },
         body: JSON.stringify(body(change))
       })
@@ -1719,7 +1721,8 @@ describe('the board timeline', function () {
         method: 'POST',
         headers: {
           authorization: `Bearer ${runner.token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
         },
         body: JSON.stringify({
           plays: [

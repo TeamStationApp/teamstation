@@ -823,7 +823,8 @@ function runWorker(): void {
     '/api/v1',
     eventRoutes(db, {
       onGameWritten: scoreboard.onGameWritten,
-      cache: rosterCache
+      cache: rosterCache,
+      minimumProtocol: serverConfig.gameSocketMinimumProtocol
     })
   )
   app.use(

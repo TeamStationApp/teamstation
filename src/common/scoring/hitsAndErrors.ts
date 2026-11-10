@@ -102,7 +102,8 @@ export const EVENT_CLASS: Record<
   ts_manual_placement: { countable: true },
   ts_batter_out: { countable: true },
   ts_batting_order: { countable: false },
-  ts_courtesy_runner: { countable: false }
+  ts_courtesy_runner: { countable: false },
+  ts_at_bat_ended: { countable: false }
 }
 
 function classOf(

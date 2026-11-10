@@ -14,6 +14,7 @@ import {
   tessUploadType
 } from './api'
 import { HttpError } from './errors'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 
 interface Call {
   url: string
@@ -428,6 +429,7 @@ describe('api client for Tess', () => {
         accept: 'text/event-stream',
         'content-type': 'application/json',
         'x-teamstation-app': 'TS',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
         authorization: 'Bearer tok_tess_stream'
       })
       expect(JSON.parse(request.body!)).deep.equals({
@@ -480,7 +482,10 @@ describe('api client for Tess', () => {
       const [request, named] = requests
       expect(request.url).equals('/api/v1/me/tess/changes/a%20b/confirm')
       expect(request.body).equals(undefined)
-      expect(request.headers).deep.equals({ accept: 'text/event-stream' })
+      expect(request.headers).deep.equals({
+        accept: 'text/event-stream',
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
+      })
       // A confirm with a client id names its turn, for a stop.
       expect(JSON.parse(named.body!)).deep.equals({ clientId: 'm-5' })
       const done = { ...change, status: 'done' }

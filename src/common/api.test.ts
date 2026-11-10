@@ -19,7 +19,8 @@ import {
   TeamStationClient
 } from './api'
 import { asChatAge, asChatAgeBody } from './chatAge'
-import { HttpError } from './errors'
+import { HttpError, isUpdateRequired } from './errors'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import { asGumboPlay } from './gumboPlay'
 import { halfOutcomes, lineScore } from './scoring/linescore'
 import { userIdOfGumbo } from './userId'
@@ -3341,6 +3342,53 @@ describe('a session the server refuses', function () {
     }
     expect(stub.calls.at(-1)?.url).equals('/api/v1/auth/email-code')
     expect(refused, 'a sign-in attempt').equals(2)
+  })
+})
+
+describe('a build the server is newer than', function () {
+  it('names its protocol on every call, and is told when a save is refused as too old', async function () {
+    const stub = stubFetch(503, {
+      code: 'unavailable',
+      message: 'Update TeamStation to keep scoring games.',
+      details: { reason: 'updateRequired' }
+    })
+    const client = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stub.fetch
+    })
+    let told = 0
+    client.onUpdateRequired = () => {
+      told++
+    }
+    let failure: unknown
+    try {
+      await client.teams()
+    } catch (error) {
+      failure = error
+    }
+    expect(stub.calls[0].headers[PROTOCOL_HEADER]).equals(
+      String(GAME_SOCKET_PROTOCOL)
+    )
+    expect(isUpdateRequired(failure)).equals(true)
+    expect(failure).property(
+      'message',
+      'Update TeamStation to keep scoring games.'
+    )
+    expect(told).equals(1)
+    const other = stubFetch(403, { code: 'forbidden', message: 'Not found' })
+    const plain = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: other.fetch
+    })
+    plain.onUpdateRequired = () => {
+      told++
+    }
+    try {
+      await plain.teams()
+    } catch (error) {
+      expect(isUpdateRequired(error)).equals(false)
+    }
+    expect(told).equals(1)
   })
 })
 
