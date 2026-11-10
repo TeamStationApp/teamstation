@@ -14,6 +14,7 @@ import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { notifyExplicitSeek } from '../explicitSeek'
 import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { PlayIntent } from '../playIntent'
+import { playerTrace } from '../playerTrace'
 import {
   type GridZone,
   type PlacedIcon,
@@ -1919,6 +1920,7 @@ export function useMultiCam(
         limit == null || asked <= limit
           ? asked
           : Math.max(limit, Math.min(asked, here ?? limit))
+      playerTrace('grid.seek', { asked, accepted: wallMs, limit, here })
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
       // A paused grid has no moving leader to update its ended notice.
