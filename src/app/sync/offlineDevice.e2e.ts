@@ -540,10 +540,10 @@ const upper =
 
 async function tab(name: 'Home' | 'Videos' | 'Schedule'): Promise<void> {
   await tap(new RegExp(`^${name}$`), SLOW, inTabBar)
-  if (name === 'Home') {
-    // A second tap pops the Home stack to its root.
-    if ((await find(/^Back$/)) != null) await tap(/^Home$/, 5000, inTabBar)
-  }
+  // A second tap pops the tab's stack to its root (a game opened from
+  // Schedule stays on Schedule's stack).
+  if ((await find(/^Back$/)) != null)
+    await tap(new RegExp(`^${name}$`), 5000, inTabBar)
 }
 async function type(text: string): Promise<void> {
   if (PLATFORM === 'android') {
