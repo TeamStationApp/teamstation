@@ -96,7 +96,7 @@ const game = required('TS_STREAM_GAME')
 const teamId = process.env.TS_STREAM_TEAM_ID
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
 const gap = process.env.TS_STREAM_GAP === '1'
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 const SUGGESTIONS = ['Home', '1st', '3rd', 'Dugout']
 
 const flatten = (node: Node): Node[] => [

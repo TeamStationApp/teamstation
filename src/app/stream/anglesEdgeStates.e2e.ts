@@ -87,7 +87,7 @@ const viewerEmail = required('TS_STREAM_VIEWER_EMAIL')
 const game = required('TS_STREAM_GAME')
 const teamId = process.env.TS_STREAM_TEAM_ID
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 /** Device B: another phone of the same account. */
 const DEVICE_B = '00000000-0000-4000-8000-00000000000b'
 const TAKEN = 'Second Base'

@@ -69,7 +69,7 @@ interface Daemon {
   }) => Promise<Driver>
 }
 
-export const APP = 'app.teamstation.app'
+export const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 
 export const required = (key: string): string => {
   const value = process.env[key]

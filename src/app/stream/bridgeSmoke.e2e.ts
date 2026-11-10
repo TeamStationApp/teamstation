@@ -114,7 +114,7 @@ const walkUpSearch = android ? required('TS_STREAM_WALKUP_SEARCH') : ''
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
 const teamId = process.env.TS_STREAM_TEAM_ID
 const releaseBuild = process.env.TS_STREAM_RELEASE_BUILD === '1'
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 
 const sleep = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
