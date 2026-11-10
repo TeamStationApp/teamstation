@@ -1670,6 +1670,25 @@ async function step7(): Promise<void> {
       ? 'offline line never shown within 45 s of the stall'
       : `offline line first shown ${firstShown.stall} ms after the stall, ${firstShown.pitch} ms after the pitch`
   )
+  // What the phone had asked the seat for around the stall: a request in
+  // flight when the link stalls reaches its own deadline from when it began.
+  // The recorder notes each request by when it arrived, once it is answered.
+  if (MODE === 'after') {
+    const from = new Date(stalledAt - 20000).toISOString()
+    const to = new Date(stalledAt + 15000).toISOString()
+    const near = recorded().filter(l => {
+      const at = l.split(' ')[0] ?? ''
+      return at >= from && at <= to
+    })
+    log(
+      `requests the seat saw from 20 s before the stall to 15 s after it (stall at ${new Date(stalledAt).toISOString()}):\n${near
+        .map(l => {
+          const [at, ...rest] = l.split(' ')
+          return `${((Date.parse(at) - stalledAt) / 1000).toFixed(1)}s ${rest.join(' ')}`
+        })
+        .join('\n')}`
+    )
+  }
   check(
     "stalled: scoring's offline line is absent until 9 s after the stall",
     online && early.length > 0 && early.every(r => r.lit < 0.5),
