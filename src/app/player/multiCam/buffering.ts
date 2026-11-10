@@ -74,14 +74,18 @@ export function readyWhereItStands(tile: {
   aheadSec: number | null
   /**
    * The only tile the gate waits for: with no other angle to keep in step,
-   * its player's word decides at once, as a lone video's would.
+   * its player's word decides at once, as a lone video's would. Safari may
+   * preload less than a second while paused; any playable buffer suffices.
    */
   alone?: boolean
 }): boolean {
   return (
     tile.waitedMs >= (tile.alone === true ? 0 : HOLD_LIMIT_MS) &&
     tile.readyState >= CAN_PLAY &&
-    (tile.aheadSec == null || tile.aheadSec >= STAND_AHEAD_SEC)
+    (tile.aheadSec == null ||
+      (tile.alone === true
+        ? tile.aheadSec > 0
+        : tile.aheadSec >= STAND_AHEAD_SEC))
   )
 }
 
@@ -249,8 +253,14 @@ export function isReady(tile: TileBuffer): boolean {
  * has ended, or reaching the live edge, is not a shortage the grid can wait
  * out.
  */
-export function isDry(tile: TileBuffer): boolean {
+export function isDry(tile: TileBuffer, alone = false): boolean {
   if (tile.aheadSec == null) return tile.readyState < HAVE_FUTURE_DATA
+  // A lone browser player can keep loading as it plays. Pausing it to build
+  // a larger buffer can deadlock Safari, which may stop preloading while
+  // paused even though it has frames ready to play.
+  if (alone && tile.readyState >= HAVE_FUTURE_DATA && tile.aheadSec > 0) {
+    return false
+  }
   if (tile.aheadSec >= LOW_AHEAD_SEC) return false
   return tile.leftSec == null || tile.leftSec - tile.aheadSec > LOW_AHEAD_SEC
 }

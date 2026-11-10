@@ -2,7 +2,6 @@ import type {
   OnBufferData,
   OnLoadData,
   OnPlaybackStateChangedData,
-  OnProgressData,
   OnSeekData,
   OnVideoAspectRatioData,
   OnVideoErrorData,
@@ -11,6 +10,8 @@ import type {
   VideoRef
 } from 'react-native-video'
 
+import type { NativeProgressData } from './nativeProgress'
+import { playerTrace } from './playerTrace'
 import {
   answersSeek,
   SEEK_TOLERANCE,
@@ -86,8 +87,25 @@ export const STALL_REPORT_MS = 1000
 const monotonic = (globalThis as { performance?: { now: () => number } })
   .performance
 const steadyNow = (): number => monotonic?.now() ?? Date.now()
+let traceSequence = 0
 
 export class NativeVideoHandle implements VideoHandle {
+  private readonly traceId = ++traceSequence
+  private trace(
+    event: string,
+    values: Record<string, number | boolean | null> = {}
+  ): void {
+    playerTrace(event, {
+      player: this.traceId,
+      position: this.reportedTime,
+      pending: this.pendingSeekTo,
+      active: this.activeSeekTo,
+      ready: this.state,
+      paused: this.props.paused,
+      buffering: this.buffering,
+      ...values
+    })
+  }
   /** Set by the view once the player exists. */
   private player: VideoRef | null = null
   private readonly listeners = new Map<VideoEventName, Listener[]>()
@@ -117,6 +135,12 @@ export class NativeVideoHandle implements VideoHandle {
    * seek simply replaces an older one.
    */
   private pendingSeekTo: number | null = null
+  private activeSeekTo: number | null = null
+  private activeSeekAt = 0
+  private seekTimedOut = false
+  /** Native-reported position, never advanced by interpolation or a JS seek. */
+  reportedTime = 0
+  progressRevision = 0
   /** It has played to its end, and stays ended until it is moved back. */
   private over = false
   /**
@@ -203,6 +227,7 @@ export class NativeVideoHandle implements VideoHandle {
 
   set currentTime(seconds: number) {
     const next = Number.isFinite(seconds) ? Math.max(0, seconds) : 0
+    this.trace('native.seek.request', { target: next })
     this.time = next
     this.timeAt = this.clock()
     if (next < this.length - 0.5) this.over = false
@@ -210,7 +235,47 @@ export class NativeVideoHandle implements VideoHandle {
     this.pendingSeekAt = Date.now()
     this.actuallyPlaying = false
     this.emit('seeking')
-    this.player?.seek(next, SEEK_TOLERANCE)
+    // Native players coalesce seeks. Replace an obsolete target immediately:
+    // waiting for its download first delays every subsequent scrub position.
+    if (!this.seekTimedOut && !answersSeek(this.activeSeekTo, next))
+      this.sendSeek(next)
+  }
+
+  private sendSeek(seconds: number): void {
+    this.trace('native.seek.send', { target: seconds })
+    this.activeSeekTo = seconds
+    this.activeSeekAt = this.clock()
+    this.player?.seek(seconds, SEEK_TOLERANCE)
+  }
+
+  /** Native media transfers keep a slow seek alive without inventing playback. */
+  handleTransferProgress = (): void => {
+    if (this.activeSeekTo == null || !this.buffering || this.seekTimedOut)
+      return
+    this.activeSeekAt = this.clock()
+    this.trace('native.seek.transfer')
+  }
+
+  /**
+   * A ready player gets five seconds to acknowledge a seek. A buffering
+   * player gets two minutes between completed media transfers: bandwidth
+   * callbacks may not arrive until a large, slow segment finishes. Native
+   * network errors still trigger recovery immediately.
+   */
+  checkSeekTimeout(): void {
+    if (
+      this.activeSeekTo == null ||
+      this.seekTimedOut ||
+      this.clock() - this.activeSeekAt < (this.buffering ? 120_000 : 5000)
+    )
+      return
+    // Keep the requested moment quarantined until the replacement source loads.
+    // Late progress or a completion from this failed seek cannot restore it.
+    this.seekTimedOut = true
+    this.trace('native.seek.timeout')
+    this.handleError({
+      error: { errorString: 'Native seek did not complete' }
+    })
   }
 
   get duration(): number {
@@ -344,6 +409,8 @@ export class NativeVideoHandle implements VideoHandle {
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
+    this.activeSeekTo = null
+    this.seekTimedOut = false
     this.time = data.currentTime
     this.timeAt = this.clock()
     this.emit('loadedmetadata')
@@ -360,29 +427,44 @@ export class NativeVideoHandle implements VideoHandle {
     return this.seekableTo
   }
 
-  handleProgress = (data: OnProgressData): void => {
-    // AVPlayer reports the length of its seekable range, which for a game's
-    // playlist starts at its first segment and so ends at the newest one.
-    if (Number.isFinite(data.seekableDuration) && data.seekableDuration > 0) {
-      this.seekableTo = data.seekableDuration
+  handleProgress = (data: NativeProgressData): void => {
+    this.trace('native.progress', {
+      reported: data.currentTime,
+      playable: data.playableDuration ?? null,
+      seekable: data.seekableEnd ?? data.seekableDuration ?? null
+    })
+    if (this.seekTimedOut) return
+    const end = data.seekableEnd ?? data.seekableDuration
+    if (Number.isFinite(end) && end > 0) {
+      this.seekableTo = end
       // A live game's playlist grows. AVPlayer gives its length once, on
       // load, and a browser's grows with it: held at that first length, a
       // tile played up to it and the grid took it for the end of the footage
       // and waited there for good. A recording never reaches past its length.
-      if (Number.isFinite(this.length) && data.seekableDuration > this.length) {
-        this.length = data.seekableDuration
+      if (Number.isFinite(this.length) && end > this.length) {
+        this.length = end
         this.emit('durationchange')
       }
     }
-    const adopt = shouldAdoptProgress({
-      target: this.pendingSeekTo,
-      reported: data.currentTime,
-      sentAt: this.pendingSeekAt,
-      now: Date.now()
-    })
+    // A no-op seek may only be acknowledged by progress on some native players.
+    if (answersSeek(this.activeSeekTo, data.currentTime))
+      this.handleSeek({
+        currentTime: data.currentTime,
+        seekTime: this.activeSeekTo!
+      })
+    const adopt =
+      this.activeSeekTo == null &&
+      shouldAdoptProgress({
+        target: this.pendingSeekTo,
+        reported: data.currentTime,
+        sentAt: this.pendingSeekAt,
+        now: Date.now()
+      })
     if (adopt) {
       this.pendingSeekTo = null
       this.time = data.currentTime
+      if (this.reportedTime !== data.currentTime) this.progressRevision++
+      this.reportedTime = data.currentTime
       this.timeAt = this.clock()
       // Android can report playing while isSeeking remains true, then acknowledge
       // the seek through progress without another playback-state callback.
@@ -401,6 +483,17 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleSeek = (data: OnSeekData): void => {
+    this.trace('native.seek.callback', {
+      target: data.seekTime,
+      reported: data.currentTime
+    })
+    if (this.seekTimedOut) return
+    if (
+      !answersSeek(this.activeSeekTo, data.seekTime) ||
+      !answersSeek(this.activeSeekTo, data.currentTime)
+    )
+      return
+    this.activeSeekTo = null
     if (answersSeek(this.pendingSeekTo, data.seekTime)) {
       // Held where it was sent while the player got there, and carried on
       // from there now that it has.
@@ -414,6 +507,10 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handlePlaybackState = (data: OnPlaybackStateChangedData): void => {
+    this.trace('native.playback', {
+      playing: data.isPlaying,
+      seeking: data.isSeeking
+    })
     this.reportedPlaying = data.isPlaying
     this.actuallyPlaying = data.isPlaying && !data.isSeeking
     this.emit(
@@ -454,6 +551,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleReadyForDisplay = (): void => {
+    this.trace('native.display.ready')
     this.rebase()
     this.failed = false
     // A picture is up: what a browser calls `HAVE_ENOUGH_DATA`, which is what
@@ -478,7 +576,11 @@ export class NativeVideoHandle implements VideoHandle {
    * likely to keep up.
    */
   handleBuffer = (data: OnBufferData): void => {
+    this.trace('native.buffer', { nextBuffering: data.isBuffering })
     this.rebase()
+    // Start the acknowledgement grace period when buffering actually ends.
+    if (this.buffering && !data.isBuffering && this.activeSeekTo != null)
+      this.activeSeekAt = this.clock()
     this.buffering = data.isBuffering
     if (data.isBuffering) {
       this.actuallyPlaying = false
@@ -551,6 +653,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   handleError = (error: OnVideoErrorData): void => {
+    this.trace('native.error')
     this.actuallyPlaying = false
     this.reportedPlaying = false
     this.emit('error')
@@ -584,6 +687,7 @@ export class NativeVideoHandle implements VideoHandle {
    * lost its signal for a minute.
    */
   reload(): void {
+    this.trace('native.reload')
     if (this.source == null) return
     // Paused first, and that is not tidiness. A player handed its source again
     // starts stopped, exactly as a browser's does after `load()`, and the
@@ -617,6 +721,9 @@ export class NativeVideoHandle implements VideoHandle {
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null
+    this.activeSeekTo = null
+    this.seekTimedOut = false
+    this.reportedTime = 0
     this.over = false
     this.buffering = false
     this.playerStoppedAt = null
