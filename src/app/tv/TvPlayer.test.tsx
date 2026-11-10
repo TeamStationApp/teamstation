@@ -54,6 +54,7 @@ let pending = false
 let live = false
 let mixed = false
 let anchorless = false
+let playbackOf: ((id: string) => Promise<void> | undefined) | undefined
 let timelineOf: ((id: string) => Promise<WallTimeline | undefined>) | undefined
 let closed = false
 const client = {
@@ -146,6 +147,7 @@ const client = {
     }
   ],
   playback: async (id: string) => {
+    await playbackOf?.(id)
     if (mixed && id === '0') throw new Error('Camera unavailable')
     return {
       url:
@@ -274,6 +276,7 @@ afterEach(async () => {
   mixed = false
   anchorless = false
   timelineOf = undefined
+  playbackOf = undefined
   fail = false
   pending = false
   live = false
@@ -920,6 +923,97 @@ describe('TV game playback entry', () => {
       ).equals(22)
     } finally {
       globalThis.setInterval = originalInterval
+    }
+  })
+  it('swaps a camera to its recording when the game finishes during its recovery', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    const originalNow = Date.now
+    let now = originalNow()
+    let recover: (() => void) | undefined
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 1000) recover = callback
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    Date.now = () => now
+    const load = (video: HTMLVideoElement): void => {
+      Object.defineProperty(video, 'duration', {
+        value: 100,
+        configurable: true
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+    }
+    try {
+      await render()
+      const before = [...document.querySelectorAll('video')]
+      await act(async () => {
+        before.forEach(load)
+        await pause()
+        for (const video of before) {
+          video.currentTime = 1
+          video.dispatchEvent(new window.Event('timeupdate'))
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+      })
+      // Camera 0 fails; its recovery's address is slow and its own timeline
+      // fetch fails.
+      let release: (() => void) | undefined
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      playbackOf = async id => {
+        if (id === '0') await held
+      }
+      let recovering = true
+      timelineOf = async id => {
+        if (id !== '0') return undefined
+        if (recovering) throw new Error('Timeline unavailable')
+        // The game has finished: the recording, twenty seconds earlier.
+        return { ...timelineFor('2026-09-30T23:59:40Z'), live: false }
+      }
+      await act(async () => {
+        Object.defineProperty(before[0], 'error', {
+          configurable: true,
+          value: { code: 2 }
+        })
+        before[0].dispatchEvent(new window.Event('error', { bubbles: true }))
+        await pause()
+      })
+      now += 1001
+      await act(async () => {
+        recover!()
+        await pause()
+      })
+      // The periodic refresh sees the recording while the recovery waits.
+      recovering = false
+      await act(async () => {
+        poll!()
+        await pause()
+        await pause()
+      })
+      playbackOf = undefined
+      await act(async () => {
+        release!()
+        await pause()
+        await pause()
+      })
+      const swapped = document.querySelector('video')!
+      expect(swapped).not.equals(before[0])
+      await act(async () => {
+        load(swapped)
+        await pause()
+      })
+      expect(
+        swapped.currentTime,
+        'placed as a recording, by the timeline the refresh fetched'
+      ).equals(22)
+    } finally {
+      globalThis.setInterval = originalInterval
+      Date.now = originalNow
     }
   })
   it('abandons an unacknowledged seek when replacing a failed source', async () => {

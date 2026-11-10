@@ -389,20 +389,30 @@ export function TvPlayer({
       dispatch({ type: 'reset', count: loaded.length })
       // State gets copies: `loaded` is rewritten in place by `refreshAngle`.
       setAngles([...loaded])
+      // A refresh asked for while one runs is kept and run after it: the
+      // periodic refresh's swap to a recording must not be lost to a recovery.
+      const queuedRefresh = new Map<number, 'recover' | 'finished'>()
       refreshAngle.current = async (index, reason = 'recover') => {
-        if (refreshing.current.has(index)) return
+        if (refreshing.current.has(index)) {
+          queuedRefresh.set(index, reason)
+          return
+        }
+        // Already a recording: a queued swap has nothing left to do.
+        if (reason === 'finished' && loaded[index].video.status !== 'live')
+          return
         refreshing.current.add(index)
         try {
           const previous = loaded[index]
           // This game's port, held across the await: a reopened game has a
           // new clock.
           const port = clock.current.ports[index]
-          // As at load: a camera plays without a fresh timeline. The port's
-          // copy is the newest, which the periodic refresh keeps up to date.
-          const [playback, timeline] = await Promise.all([
+          const [playback, fetched] = await Promise.all([
             client.playback(previous.video.id),
-            client.wallTimeline(previous.video.id).catch(() => port.timeline)
+            client.wallTimeline(previous.video.id).catch(() => null)
           ])
+          // As at load: a camera plays without a fresh timeline. Read after
+          // the wait, the port's copy is the newest the periodic refresh has.
+          const timeline = fetched ?? port.timeline
           if (!active || playback.url === null) return
           const updated = {
             ...previous,
@@ -429,7 +439,13 @@ export function TvPlayer({
           recovery.current.get(index)?.opening(Date.now())
           setAngles(next)
         } finally {
-          if (active) refreshing.current.delete(index)
+          if (active) {
+            refreshing.current.delete(index)
+            const again = queuedRefresh.get(index)
+            queuedRefresh.delete(index)
+            if (again !== undefined)
+              refreshAngle.current?.(index, again).catch(() => undefined)
+          }
         }
       }
       let refreshSequence = 0
@@ -1081,13 +1097,15 @@ export function TvPlayer({
         {angles?.map((angle, index) => {
           const rect = layout.tiles[state.visible.indexOf(index)]
           const available = clock.current.available(index)
-          const port = clock.current.ports[index]
+          // A camera without a port (the frame a reopened game's new clock
+          // is not yet registered) is unavailable, as `available` has it.
+          const port = clock.current.ports.at(index)
           const failing = failures.includes(index)
           // Past its recording's last frame, not missing: says so.
           const notice =
             available && !failing
               ? null
-              : port.ended && !port.failed && !failing
+              : port?.ended === true && !port.failed && !failing
                 ? 'end of video'
                 : 'video unavailable at this moment'
           return (
@@ -1113,7 +1131,7 @@ export function TvPlayer({
                 accessibilityRole="button"
                 accessibilityLabel={`Camera ${angle.name}${notice === null ? '' : `: ${notice}`}`}
                 accessibilityValue={{
-                  text: `${port.position.toFixed(1)} seconds`
+                  text: `${port?.position.toFixed(1)} seconds`
                 }}
                 focusable={
                   !overlay &&
