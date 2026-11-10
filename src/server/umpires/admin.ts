@@ -18,6 +18,7 @@ import { publicNames } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { affiliationText } from '../users/personAffiliations'
+import type { Reader } from '../users/readerNames'
 import { requireType, types } from './types'
 
 export async function levels(
@@ -254,12 +255,16 @@ export async function applyRequirements(
     await deletion.execute()
   }
 }
-/** Resolve aliases before unioning affiliation and role rows. Names leave here abbreviated. */
+/**
+ * Resolve aliases before unioning affiliation and role rows. Names leave here
+ * abbreviated, except those `reader` may read in full.
+ */
 export async function people(
   db: Kysely<Database>,
   leagueId: string,
   query?: string,
-  media?: MediaContext
+  media?: MediaContext,
+  reader?: Reader
 ): Promise<UmpirePerson[]> {
   if (query?.trim() === '') return []
   const users = await db
@@ -391,7 +396,8 @@ export async function people(
           displayName: u.display_name
         },
         player: players.has(u.id)
-      }))
+      })),
+    { reader }
   )
   const certifications = await db
     .selectFrom('umpire_certifications as c')

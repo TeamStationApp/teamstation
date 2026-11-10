@@ -150,6 +150,49 @@ describe('lineup QR import under a chosen format', function () {
   })
 })
 
+describe('lineup QR import for a reader who reads a full name', function () {
+  /** Whether a scanned player lands on Alex Lee, labelled in full. */
+  const matched = async (
+    first: string,
+    last: string,
+    compactName: string,
+    inGame: boolean
+  ): Promise<boolean> => {
+    const entry = {
+      ...ROSTER[0],
+      shortName: 'Alex Lee',
+      nameFormat: 'full' as const,
+      compactName,
+      jersey: '77'
+    }
+    const state = inGame ? session([entry]) : empty()
+    if (inGame)
+      Object.assign(state.gameData.players[entry.gumboId!], {
+        fullName: 'Alex Lee',
+        nameFormat: 'full',
+        compactName
+      })
+    const { draft, added } = await scan(
+      state,
+      'away',
+      code([scanned(first, last, '77', 6)]),
+      inGame ? [] : [entry]
+    )
+    return added.length === 0 && draft.gameData.players[entry.gumboId!] != null
+  }
+
+  it('matches the scanned public label and the scanned full name', async function () {
+    for (const inGame of [false, true]) {
+      expect(await matched('Alex', 'L', 'Alex L', inGame)).equals(true)
+      expect(await matched('Alex', 'Lee', 'Alex L', inGame)).equals(true)
+      expect(await matched('Alex', 'Le', 'Alex Le', inGame)).equals(true)
+      // A scan shortening the name further than the label still fits.
+      expect(await matched('Alex', 'Lee', 'Alex Le', inGame)).equals(true)
+      expect(await matched('Alex', 'Ross', 'Alex L', inGame)).equals(false)
+    }
+  })
+})
+
 describe('lineup QR import', function () {
   it('adds every player of a code to an empty side, in order and in place', async function () {
     const { draft, added, reused, benched } = await scan(

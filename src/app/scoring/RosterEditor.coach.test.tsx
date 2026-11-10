@@ -4,10 +4,13 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { asRosterEntry } from '../../common/api'
 import { applyAction } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { guestRenames } from './guestRenames'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
 import { initialScoringState } from './scoringMachine'
@@ -48,6 +51,7 @@ describe('the roster screen for a coach', function () {
       onCancel?: () => void
       state?: ScoringState
       sheetHeight?: number
+      hiddenTeams?: readonly string[]
     } = {}
   ): Promise<void> => {
     host = document.createElement('div')
@@ -62,6 +66,7 @@ describe('the roster screen for a coach', function () {
               audience="coach"
               fixedSide="home"
               renderBoxScore={() => <Text>Line score here</Text>}
+              hiddenTeams={props.hiddenTeams}
               initialDraft={props.initialDraft}
               onReload={props.onReload}
               onCancel={props.onCancel}
@@ -238,6 +243,244 @@ describe('the roster screen for a coach', function () {
     expect(host.querySelectorAll('[data-testid="batIcon"]')).lengthOf(1)
     expect(host.textContent).not.includes('Drop here to remove')
   })
+  it('draws a hidden team’s player named in full by his public label, and only that team’s', async function () {
+    const named = copyState(state.session)
+    const id = named.liveData.boxscore.teams.home.battingOrder[0]
+    named.gameData.players[id] = {
+      ...named.gameData.players[id],
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const homeId = named.gameData.teams.home.id
+    const awayId = named.gameData.teams.away.id
+    for (const [hidden, shown, gone] of [
+      [[homeId], 'Shohei O', 'Ohtani'],
+      [[awayId], 'Shohei Ohtani', undefined],
+      [[], 'Shohei Ohtani', undefined]
+    ] as const) {
+      await mount({ state: initialScoringState(named), hiddenTeams: hidden })
+      expect(node(`Remove ${shown}`), shown).not.equals(null)
+      if (gone != null) expect(host.textContent).not.includes(gone)
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host.remove()
+    }
+  })
+  it('opens a hidden team’s guest named in full on his public label, and keeps his name when only the jersey changes', async function () {
+    const named = copyState(state.session)
+    const guestId = named.liveData.boxscore.teams.home.players.find(
+      id => named.gameData.players[id].local
+    )!
+    expect(guestId, 'a game-only player').not.equals(undefined)
+    named.gameData.players[guestId] = {
+      ...named.gameData.players[guestId],
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const drafts: RosterEditorDraft[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterEditor
+            state={initialScoringState(named)}
+            audience="coach"
+            fixedSide="home"
+            hiddenTeams={[named.gameData.teams.home.id]}
+            renderBoxScore={() => <Text>Line score here</Text>}
+            onDraftChange={draft => drafts.push(draft)}
+            onSave={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('Roster')
+    const card = host.querySelector<HTMLElement>(
+      '[aria-label^="Shohei O,"][aria-label*="game-only player"]'
+    )
+    expect(card, 'the guest by his public label').not.equals(null)
+    await act(async () => {
+      card!.click()
+    })
+    const input = (label: string): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+    expect(input('First Name').value).equals('Shohei')
+    expect(input('Last Name').value).equals('O')
+    expect(document.body.innerHTML).not.includes('Ohtani')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input('Jersey Number'), '17')
+      input('Jersey Number').dispatchEvent(
+        new window.Event('input', { bubbles: true })
+      )
+    })
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Save Player"]')!.click()
+    })
+    expect(drafts.at(-1)!.draft.gameData.players[guestId]).include({
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      jersey: '17'
+    })
+    expect(document.body.innerHTML).not.includes('Ohtani')
+  })
+  it('keeps a guest’s name when his sheet opened on his public label and his name is read in full by the save', async function () {
+    const named = copyState(state.session)
+    const guestId = named.liveData.boxscore.teams.home.players.find(
+      id => named.gameData.players[id].local
+    )!
+    named.gameData.players[guestId] = {
+      ...named.gameData.players[guestId],
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const opened = initialScoringState(named)
+    const drafts: RosterEditorDraft[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const render = async (hiddenTeams: readonly string[]): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <RosterEditor
+              state={opened}
+              audience="coach"
+              fixedSide="home"
+              hiddenTeams={hiddenTeams}
+              renderBoxScore={() => <Text>Line score here</Text>}
+              onDraftChange={draft => drafts.push(draft)}
+              onSave={() => undefined}
+            />
+          </ThemeProvider>
+        )
+      })
+    }
+    // Every team is hidden while the reader's rights are read again.
+    await render([named.gameData.teams.home.id])
+    await click('Roster')
+    const card = host.querySelector<HTMLElement>(
+      '[aria-label^="Shohei O,"][aria-label*="game-only player"]'
+    )
+    expect(card, 'the guest by his public label').not.equals(null)
+    await act(async () => {
+      card!.click()
+    })
+    const input = (label: string): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+    expect(input('Last Name').value).equals('O')
+    // The rights land: his name may be read in full, the sheet still open.
+    await render([])
+    expect(input('Last Name').value).equals('O')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input('Jersey Number'), '17')
+      input('Jersey Number').dispatchEvent(
+        new window.Event('input', { bubbles: true })
+      )
+    })
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Save Player"]')!.click()
+    })
+    const saved = drafts.at(-1)!.draft
+    expect(saved.gameData.players[guestId]).include({
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      jersey: '17'
+    })
+    expect(guestRenames(named, saved)).deep.equals([])
+  })
+  it('keeps a guest named in full by his public label when a player is left out', async function () {
+    const named = copyState(state.session)
+    const guestId = named.liveData.boxscore.teams.home.players.find(
+      id => named.gameData.players[id].local
+    )!
+    expect(guestId, 'a game-only player').not.equals(undefined)
+    named.gameData.players[guestId] = {
+      ...named.gameData.players[guestId],
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const teamId = named.gameData.teams.home.id
+    // The rest of the side are his team's roster players.
+    const rostered = named.liveData.boxscore.teams.home.players.filter(
+      id => id !== guestId
+    )
+    for (const id of rostered) named.gameData.players[id].local = false
+    const rosters = {
+      [teamId]: rostered.map(id =>
+        asRosterEntry({
+          userId: userIdOfGumbo(id),
+          gumboId: id,
+          shortName: named.gameData.players[id].fullName,
+          jersey: named.gameData.players[id].jersey,
+          positions: [],
+          isPlayer: true,
+          role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null
+        })
+      )
+    }
+    const drafts: RosterEditorDraft[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterEditor
+            state={initialScoringState(named)}
+            audience="coach"
+            fixedSide="home"
+            renderBoxScore={() => <Text>Line score here</Text>}
+            rosters={rosters}
+            unrostered={{ away: [], home: [] }}
+            onRosteredChange={async (side, userId, on) => ({
+              away: [],
+              home: on ? [] : [rostered[0]]
+            })}
+            onDraftChange={draft => drafts.push(draft)}
+            onSave={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('Roster')
+    const left = host.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][aria-label="Rostered for this game"]'
+    )!
+    await act(async () => {
+      left.click()
+    })
+    const last = drafts.at(-1)!.draft
+    expect(last.liveData.boxscore.teams.home.players).not.include(rostered[0])
+    expect(last.gameData.players[guestId]).include({
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    })
+  })
+
   it('clears his whole defense, the pitcher too, from the red Clear level with Roster (U34)', async function () {
     await mount()
     await click('Defense')

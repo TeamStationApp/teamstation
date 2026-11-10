@@ -264,7 +264,10 @@ describe('names derived from accounts', function () {
     return (await boardTimeline(db!, f.gameId))!.version
   }
 
-  /** The test account's inbox titles: pending, then history. */
+  /**
+   * The test account's inbox titles: pending, then history. A coach of the
+   * player's team, the account reads the player in full.
+   */
   async function inboxTitles(): Promise<{
     pending: string[]
     history: string[]
@@ -371,16 +374,22 @@ describe('names derived from accounts', function () {
     const titles = (
       first.highlights as { highlights: Array<{ title: string }> }
     ).highlights.map(h => h.title)
+    // His team's administrator reads its players in full on every surface
+    // but the game's plays, the record every viewer shares; the other team's
+    // players stay short.
     expect(titles.slice(0, 3)).deep.equals([
-      'Walk: Juan S',
+      'Walk: Juan Soto',
       'Strikeout: Tyler G',
-      'Single: Anthony R · Stolen base: Juan S'
+      'Single: Anthony Rizzo · Stolen base: Juan Soto'
     ])
-    expect((first.sotoPage as { name: string }).name).equals('Juan S')
+    expect(
+      (first.events as { readerNames: Record<string, string> }).readerNames
+    ).include({ [String(soto().gumboId)]: 'Juan Soto' })
+    expect((first.sotoPage as { name: string }).name).equals('Juan Soto')
     expect(
       (first.dj as { away: { batters: Array<{ name: string }> } }).away
         .batters[0].name
-    ).equals('Juan S')
+    ).equals('Juan Soto')
     expect(
       (
         first.defaultLineup as {
@@ -389,7 +398,7 @@ describe('names derived from accounts', function () {
       ).lineup.batters
         .slice(0, 3)
         .map(b => b.name)
-    ).deep.equals(['Juan S', 'Aaron J', 'Anthony R'])
+    ).deep.equals(['Juan Soto', 'Aaron Judge', 'Anthony Rizzo'])
     expect(
       (first.timeline as Array<{ state: { batterName: string } }>).some(
         step => step.state.batterName === 'Ichiro S'
@@ -399,7 +408,7 @@ describe('names derived from accounts', function () {
       'Ball four, Juan S walks.'
     )
     expect(await inboxTitles()).deep.equals({
-      pending: ["Joe Torre asks to be Mike T's guardian"],
+      pending: ["Joe Torre asks to be Mike Trout's guardian"],
       history: ['Bobby Cox added you as Coach of Lakeside Owls']
     })
     expect(await storedNameCount(await accountNames())).equals(0)
@@ -416,7 +425,10 @@ describe('names derived from accounts', function () {
       { name: { firstName: 'Vladimir', lastName: 'Guerrero' } }
     )
     expect(leadoff.status).equals(200)
-    expect(leadoff.body.shortName).equals('Vladimir G')
+    expect(leadoff.body).include({
+      shortName: 'Vladimir Guerrero',
+      compactName: 'Vladimir G'
+    })
     // A home fielder of the outside scorer's chain is renamed as a roster
     // import renames him: in his account alone.
     await db!
@@ -448,6 +460,7 @@ describe('names derived from accounts', function () {
     second = await surfaces()
     expect(second).deep.equals(
       renamed(first, [
+        ['Juan Soto', 'Vladimir Guerrero'],
         ['Juan S', 'Vladimir G'],
         ['Freddie F', 'Joey V'],
         ['Ichiro S', 'Hideki M']
@@ -455,7 +468,7 @@ describe('names derived from accounts', function () {
     )
     expect(await timelineVersion()).not.equals(firstVersion)
     expect(await inboxTitles()).deep.equals({
-      pending: ["Tony La Russa asks to be Mike T's guardian"],
+      pending: ["Tony La Russa asks to be Mike Trout's guardian"],
       history: ['Earl Weaver added you as Coach of Lakeside Owls']
     })
     // A scorer reads the corrected guest's halves.
@@ -499,14 +512,17 @@ describe('names derived from accounts', function () {
     }
 
     expect(await surfaces()).deep.equals(
-      renamed(second, [['Anthony R', DELETED_NAME]])
+      renamed(second, [
+        ['Anthony Rizzo', DELETED_NAME],
+        ['Anthony R', DELETED_NAME]
+      ])
     )
     expect(await timelineVersion()).not.equals(version)
     // The request ended with its sender's account, and still reads.
     expect(await inboxTitles()).deep.equals({
       pending: [],
       history: [
-        `${DELETED_NAME} asks to be Mike T's guardian`,
+        `${DELETED_NAME} asks to be Mike Trout's guardian`,
         'Earl Weaver added you as Coach of Lakeside Owls'
       ]
     })

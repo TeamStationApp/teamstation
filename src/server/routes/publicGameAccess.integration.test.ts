@@ -257,6 +257,25 @@ describe('public game access', function () {
       )
       expect(response.status).equals(200)
       const game = await response.json()
+      if (viewer === 101) {
+        // The site administrator reads them in full, the public label beside.
+        expect(game.guestPlayers.home[0]).includes({
+          userId: guest.userId,
+          shortName: 'Babe Ruth',
+          compactName: 'Babe R'
+        })
+        expect(game.guestPlayers.away[0]).includes({
+          userId: survivor,
+          shortName: 'Hank Aaron',
+          compactName: 'Hank A'
+        })
+        for (const entry of [
+          ...game.guestPlayers.home,
+          ...game.guestPlayers.away
+        ])
+          expect(entry.nameDetails).equals(undefined)
+        continue
+      }
       expect(JSON.stringify(game.guestPlayers)).not.includes('Babe Ruth')
       expect(JSON.stringify(game.guestPlayers)).not.includes('Hank Aaron')
       if (viewer == null || viewer === 103) {

@@ -290,7 +290,7 @@ describe('actual App scoring player Settings return', function () {
       await press('Ball')
       await openEditor()
       await press('Lineup')
-      const was = await moveDown('Aaron J')
+      const was = await moveDown('Aaron Judge')
       await press('Roster')
       await press('Mookie Betts,')
       await waitFor(
@@ -312,7 +312,7 @@ describe('actual App scoring player Settings return', function () {
       expect(document.body.textContent).includes('JERSEY NUMBER')
       await press('Back')
       await press('Lineup')
-      expect(slotOf('Aaron J')).not.equals(was)
+      expect(slotOf('Aaron Judge')).not.equals(was)
       await press('Roster')
       await press('Mookie Betts,')
       await waitFor(
@@ -565,6 +565,40 @@ describe('actual App scoring player Settings return', function () {
           ) === true
       )
       expect(document.body.textContent).not.includes('Mookie Betts')
+    })
+  })
+  it('draws the lineup by public labels throughout a pending return permission recheck', async function () {
+    await withScoringApp(async fixture => {
+      await openEditor()
+      await press('Lineup')
+      // The scorekeeper reads the game's players in full as it opens.
+      await waitFor(
+        () =>
+          document.querySelector('[aria-label="Remove Aaron Judge"]') != null
+      )
+      await press('Roster')
+      await press('Mookie Betts,')
+      await waitFor(
+        () => document.body.textContent?.includes('JERSEY NUMBER') === true
+      )
+      await fixture.roles([])
+      fixture.pauseRoleReads(true)
+      await press('Back')
+      await waitFor(() => fixture.trace.includes('Captured roles GET'))
+      await press('Lineup')
+      expect(document.body.textContent)
+        .not.includes('Aaron Judge')
+        .and.not.includes('Mookie Betts')
+      expect(
+        document.querySelector('[aria-label="Remove Aaron J"]')
+      ).not.equals(null)
+      fixture.pauseRoleReads(false)
+      await waitFor(
+        () =>
+          document.querySelector('[aria-label="Loading team roster"]') == null
+      )
+      // The rights the game was opened with are gone: still public.
+      expect(document.body.textContent).not.includes('Aaron Judge')
     })
   })
   for (const [back, delayedCommit] of [
@@ -881,7 +915,7 @@ describe('actual App scoring player Settings return', function () {
       await press('Ball')
       await press('Open scoring menu')
       await press('Set Team Rosters')
-      const was = await moveDown('Aaron J')
+      const was = await moveDown('Aaron Judge')
       await press('Roster')
       await press('Mookie Betts,')
       expect(currentRoute()).includes({
@@ -941,7 +975,7 @@ describe('actual App scoring player Settings return', function () {
       await settle()
       expect(currentRoute()).includes({ name: 'scoreGame' })
       await press('Lineup')
-      expect(slotOf('Aaron J')).not.equals(was)
+      expect(slotOf('Aaron Judge')).not.equals(was)
       await press('Cancel')
       expect(document.querySelector('[aria-label^="Undo Ball"]')).not.equals(
         null
@@ -967,7 +1001,7 @@ describe('actual App scoring player Settings return', function () {
       // The game has recorded nothing: its lineups wait to be accepted, so
       // Save is lit before any change.
       expect(saveDisabled()).equals(null)
-      await press('Remove Aaron J')
+      await press('Remove Aaron Judge')
       expect(saveDisabled()).equals(null)
       await press('Cancel')
       expect(document.querySelector('[aria-label="Save Rosters"]')).equals(null)
@@ -976,10 +1010,10 @@ describe('actual App scoring player Settings return', function () {
       await press('Set Team Rosters')
       await press('Lineup')
       expect(
-        document.querySelector('[aria-label="Remove Aaron J"]')
+        document.querySelector('[aria-label="Remove Aaron Judge"]')
       ).not.equals(null)
       expect(saveDisabled()).equals(null)
-      await press('Remove Aaron J')
+      await press('Remove Aaron Judge')
       await press('Save Rosters')
       expect(document.querySelector('[aria-label="Save Rosters"]')).equals(null)
       expect(
@@ -988,12 +1022,12 @@ describe('actual App scoring player Settings return', function () {
       await press('Open scoring menu')
       await press('Set Team Rosters')
       await press('Lineup')
-      expect(document.querySelector('[aria-label="Remove Aaron J"]')).equals(
-        null
-      )
+      expect(
+        document.querySelector('[aria-label="Remove Aaron Judge"]')
+      ).equals(null)
       // Saved, the lineup is the game's: Save waits for a change.
       expect(saveDisabled()).equals('true')
-      await press('Add Aaron J to Lineup')
+      await press('Add Aaron Judge to Lineup')
       expect(saveDisabled()).equals(null)
       await press('Cancel')
     })

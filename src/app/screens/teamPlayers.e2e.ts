@@ -247,17 +247,22 @@ describe("a team's players in the app theme", function () {
     expect(await probe<string>('document.body.innerText')).includes(
       'Created Max Muncy'
     )
+    // The coach reads the players they made in full, the public label beside.
     const players = await roster(token, falcons)
     const named = (name: string): any =>
       players.find(entry => entry.shortName === name)
-    expect(named('Walker B')).to.include({
+    expect(named('Walker Buehler')).to.include({
+      compactName: 'Walker B',
       jersey: '21',
       throws: 'right',
       bats: 'right'
     })
-    expect(named('Walker B').positions).deep.equals(['P'])
-    expect(named('Max M')).to.include({ jersey: '13' })
-    expect(named('Max M').positions).deep.equals(['3B'])
+    expect(named('Walker Buehler').positions).deep.equals(['P'])
+    expect(named('Max Muncy')).to.include({
+      compactName: 'Max M',
+      jersey: '13'
+    })
+    expect(named('Max Muncy').positions).deep.equals(['3B'])
   })
 
   it('W10 adds Burnes from Add Player with #39 at P, his name and hands greyed', async function () {
@@ -298,7 +303,13 @@ describe("a team's players in the app theme", function () {
     const burnes = (await roster(token, falcons)).find(
       entry => entry.userId === fixture.players['Corbin Burnes']
     )
-    expect(burnes).to.include({ jersey: '39', shortName: 'Corbin B' })
+    // Nobody could be told, so the add holds nothing back: the coach reads
+    // their new player in full now, though the search named him short.
+    expect(burnes).to.include({
+      jersey: '39',
+      shortName: 'Corbin Burnes',
+      compactName: 'Corbin B'
+    })
     expect(burnes.positions).deep.equals(['P'])
   })
 

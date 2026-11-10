@@ -284,9 +284,11 @@ async function main(): Promise<void> {
     await shown('Open scoring menu')
     await tap('Open scoring menu')
     await tap('Set Team Rosters')
+    // The fixture's actor keeps score for both teams, so the roster editor,
+    // its Defense bench and the team roster name its players in full.
     const nodes = flat(await m.hierarchy())
-    const from = nodes.find(node => node.text === 'Drag Mike T')?.bounds
-    const to = nodes.find(node => node.text === 'Reorder Mookie B')?.bounds
+    const from = nodes.find(node => node.text === 'Drag Mike Trout')?.bounds
+    const to = nodes.find(node => node.text === 'Reorder Mookie Betts')?.bounds
     assert(from != null && to != null)
     await m.dragAndDrop({
       from: {
@@ -305,7 +307,10 @@ async function main(): Promise<void> {
           .map(node => node.text)
       )
     ]
-    assert.deepEqual(order.slice(0, 2), ['Reorder Mike T', 'Reorder Mookie B'])
+    assert.deepEqual(order.slice(0, 2), [
+      'Reorder Mike Trout',
+      'Reorder Mookie Betts'
+    ])
     await tap('Defense')
     await shown('CF')
     await tap('Lineup')
@@ -351,7 +356,7 @@ async function main(): Promise<void> {
     await tap('Clear P')
     await shown('Assign P')
     const defenders = flat(await m.hierarchy())
-    const pitcher = defenders.find(node => node.text === 'Mookie B')?.bounds
+    const pitcher = defenders.find(node => node.text === 'Mookie Betts')?.bounds
     const place = defenders.find(node => node.text === 'Assign P')?.bounds
     assert(pitcher != null && place != null)
     await m.dragAndDrop({
@@ -640,7 +645,7 @@ async function main(): Promise<void> {
       return
     }
     await capture(`lineup-${phase}`)
-    if (phase === 'after' && section === 'all') await tap('Remove Aaron J')
+    if (phase === 'after' && section === 'all') await tap('Remove Aaron Judge')
     await tap('Defense')
     await capture(`defense-${phase}`)
     if (phase === 'after') {
@@ -794,7 +799,7 @@ async function main(): Promise<void> {
           await tap('Lineup')
           assert(
             !flat(await m.hierarchy()).some(
-              node => node.text === 'Remove Aaron J'
+              node => node.text === 'Remove Aaron Judge'
             ),
             'Staged lineup must survive every player visit'
           )
@@ -865,9 +870,9 @@ async function main(): Promise<void> {
     if (phase === 'after' && section === 'all') {
       await tap('Cancel')
       await open('teams/away?tab=roster')
-      await shown('Mookie B')
-      await reach('Mookie B')
-      await tapStarts('Mookie B')
+      await shown('Mookie Betts')
+      await reach('Mookie Betts')
+      await tapStarts('Mookie Betts')
       await shown('Settings')
       await tap('Settings')
       await shown('JERSEY NUMBER')

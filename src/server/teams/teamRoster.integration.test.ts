@@ -272,9 +272,11 @@ describe('scoring roster HTTP contract', function () {
     ])
     // A player who is a member of the season too is a player.
     expect(roster[1].inheritedFrom).equals(null)
+    // The coach reads their player in full, beside the public label.
     expect(roster[1]).includes({
       userId: userIdOfGumbo(child),
-      shortName: 'Jordan P',
+      shortName: 'Jordan Pacheco',
+      compactName: 'Jordan P',
       jersey: '00',
       bats: 'switch',
       throws: 'left',
@@ -292,14 +294,16 @@ describe('scoring roster HTTP contract', function () {
       role: 'member',
       jersey: null
     })
+    expect(roster[2].compactName).equals(undefined)
     expect(roster[2].inheritedFrom).deep.equals({
       level: 'season',
       role: 'member'
     })
     expect(roster[0]).includes({ bats: null, throws: null })
-    // The people match. `self` follows whoever is reading. Somebody in
-    // neither the team nor its season reads the same people in the
-    // non-member view, every name and no face.
+    // The people match. `self` and the names follow whoever is reading: the
+    // coach reads themselves and their player in full, the season's member
+    // only themselves. Somebody in neither the team nor its season reads the
+    // same people in the non-member view, every name and no face.
     const asMember = await fetch(address, {
       headers: { 'x-test-user': String(seasonMember) }
     })
@@ -307,11 +311,36 @@ describe('scoring roster HTTP contract', function () {
     const memberRoster = ((await asMember.json()) as unknown[]).map(
       asRosterEntry
     )
-    const asideFromSelf = (
+    const asideFromReader = (
       rows: typeof roster
-    ): Array<Omit<(typeof roster)[number], 'self'>> =>
-      rows.map(({ self: _self, ...row }) => row)
-    expect(asideFromSelf(memberRoster)).deep.equals(asideFromSelf(roster))
+    ): Array<
+      Omit<
+        (typeof roster)[number],
+        'self' | 'shortName' | 'nameFormat' | 'compactName'
+      >
+    > =>
+      rows.map(
+        ({
+          self: _self,
+          shortName: _shortName,
+          nameFormat: _nameFormat,
+          compactName: _compactName,
+          ...row
+        }) => row
+      )
+    expect(asideFromReader(memberRoster)).deep.equals(asideFromReader(roster))
+    expect(roster.map(row => [row.shortName, row.compactName])).deep.equals([
+      ['Alex Cora', 'Alex C'],
+      ['Jordan Pacheco', 'Jordan P'],
+      ['Frank F', undefined]
+    ])
+    expect(
+      memberRoster.map(row => [row.shortName, row.compactName])
+    ).deep.equals([
+      ['Alex C', undefined],
+      ['Jordan P', undefined],
+      ['Frank Francisco', 'Frank F']
+    ])
     expect(roster[0].self).equals(true)
     expect(roster[2].self).equals(false)
     expect(memberRoster[2].self).equals(true)
@@ -370,9 +399,10 @@ describe('scoring roster HTTP contract', function () {
     expect(detail.scoringOwner).equals(null)
     expect(detail.videos[0]).includes({ id: video, status: 'unavailable' })
     const box = asBoxScore(await get(`/games/${game}/box-score`))
+    // The coach reads his player in full, as on the roster.
     expect(box.batting[0]).includes({
       userId: userIdOfGumbo(child),
-      shortName: 'Jordan P',
+      shortName: 'Jordan Pacheco',
       h: 1,
       ab: 2,
       seasonAvg: 0.5
@@ -661,8 +691,10 @@ describe('roster sections', function () {
       'coach'
     ])
     expect(byUser.get(userIdOfGumbo(admin))?.staffRoles).deep.equals([])
+    // The league's admin reads its players in full.
     expect(byUser.get(userIdOfGumbo(201))).to.include({
-      shortName: 'Alfonso S',
+      shortName: 'Alfonso Soriano',
+      compactName: 'Alfonso S',
       jersey: '7',
       isPlayer: true
     })
@@ -767,11 +799,11 @@ describe('roster sections', function () {
       section: 'family',
       inheritedFrom: null
     })
-    // Under a family member, the players here they guard, by short name;
-    // nobody else carries the field.
+    // Under a family member, the players here they guard, by the names the
+    // list gives them; nobody else carries the field.
     expect(
       byUser.get(userIdOfGumbo(f.people.guardian))?.guardianOf
-    ).deep.equals(['Alfonso S'])
+    ).deep.equals(['Alfonso Soriano'])
     expect(byUser.get(userIdOfGumbo(201))?.guardianOf).equals(undefined)
     expect(byUser.get(userIdOfGumbo(f.people.teamCoach))).to.include({
       section: 'staff',
@@ -785,6 +817,117 @@ describe('roster sections', function () {
       jersey: null,
       walkUpSong: null
     })
+  })
+
+  it('names a player in full to whoever may read it, with the public label beside it, and short to everybody else', async function () {
+    const as = async (reader: number): Promise<Map<string, RosterEntry>> => {
+      const response = await f.h.request(
+        'GET',
+        `/teams/${f.teamA}/roster`,
+        undefined,
+        reader
+      )
+      expect(response.status).equals(200)
+      const raw = (await response.json()) as unknown[]
+      return new Map(
+        raw.map(asRosterEntry).map(row => [row.userId, row] as const)
+      )
+    }
+    const named = (
+      roster: Map<string, RosterEntry>,
+      id: number
+    ): Pick<RosterEntry, 'shortName' | 'nameFormat' | 'compactName'> => {
+      const { shortName, nameFormat, compactName } = roster.get(
+        userIdOfGumbo(id)
+      )!
+      return { shortName, nameFormat, compactName }
+    }
+    const coach = await as(f.people.teamCoach)
+    expect(named(coach, 201)).deep.equals({
+      shortName: 'Alfonso Soriano',
+      nameFormat: 'full',
+      compactName: 'Alfonso S'
+    })
+    // An adult with no tie the coach may read in full stays short.
+    expect(named(coach, f.people.follower).compactName).equals(undefined)
+    // A guardian reads their own child in full, and another child short.
+    const guardian = await as(f.people.guardian)
+    expect(named(guardian, 201)).deep.equals({
+      shortName: 'Alfonso Soriano',
+      nameFormat: 'full',
+      compactName: 'Alfonso S'
+    })
+    expect(named(guardian, 202)).deep.equals({
+      shortName: 'Ben C',
+      nameFormat: undefined,
+      compactName: undefined
+    })
+    // A follower reads everybody short, with no second label.
+    const follower = await as(f.people.follower)
+    for (const id of [201, 202])
+      expect(named(follower, id).compactName).equals(undefined)
+    expect(named(follower, 201).shortName).equals('Alfonso S')
+    expect(
+      guardian.get(userIdOfGumbo(f.people.guardian))?.guardianOf
+    ).deep.equals(['Alfonso Soriano'])
+  })
+
+  it('keeps the public label of a teammate the public lengthens to tell from a player the reader reads in full', async function () {
+    for (const [id, name] of [
+      [61, 'Chris Sale'],
+      [62, 'Chris Sabo']
+    ] as const) {
+      await user(id, name)
+      await f.h.db
+        .insertInto('memberships')
+        .values({
+          id: makeId('membership'),
+          user_id: userIdOfGumbo(id),
+          team_id: f.teamA,
+          is_player: true
+        })
+        .execute()
+    }
+    await link(f.people.guardian, 61)
+    const as = async (reader: number): Promise<Map<string, RosterEntry>> => {
+      const response = await f.h.request(
+        'GET',
+        `/teams/${f.teamA}/roster`,
+        undefined,
+        reader
+      )
+      expect(response.status).equals(200)
+      const raw = (await response.json()) as unknown[]
+      return new Map(
+        raw.map(asRosterEntry).map(row => [row.userId, row] as const)
+      )
+    }
+    const named = (
+      roster: Map<string, RosterEntry>,
+      id: number
+    ): Pick<RosterEntry, 'shortName' | 'nameFormat' | 'compactName'> => {
+      const { shortName, nameFormat, compactName } = roster.get(
+        userIdOfGumbo(id)
+      )!
+      return { shortName, nameFormat, compactName }
+    }
+    // The public tells the two apart by a second letter.
+    const follower = await as(f.people.follower)
+    expect([named(follower, 61), named(follower, 62)]).deep.equals([
+      { shortName: 'Chris Sal', nameFormat: undefined, compactName: undefined },
+      { shortName: 'Chris Sab', nameFormat: undefined, compactName: undefined }
+    ])
+    // Sale's guardian reads him in full, so his own list needs no second
+    // letter for Sabo; Sabo keeps the label everyone else reads beside it.
+    const guardian = await as(f.people.guardian)
+    expect([named(guardian, 61), named(guardian, 62)]).deep.equals([
+      {
+        shortName: 'Chris Sale',
+        nameFormat: 'full',
+        compactName: 'Chris Sal'
+      },
+      { shortName: 'Chris S', nameFormat: undefined, compactName: 'Chris Sab' }
+    ])
   })
 
   it('lists followers last, through a team merged into this one, never twice and never a disabled one', async function () {

@@ -6,15 +6,17 @@ import { mostRestrictive, type PlayerNamePrivacy } from './playerNamePrivacy'
  * another public format (`playerNamePrivacy.ts`), which only the server picks.
  *
  * The full name is stored — it is what the import sent, what a parent would
- * search for, and what an admin needs to tell two children apart — but it is
- * drawn only in authorized roster management and player Settings. The API
- * sends it to nobody except whoever may edit it —
- * `mayEditName` on the server: a guardian, the player, a site
- * administrator, and an administrator, coach, assistant or scorekeeper of a
- * team the player plays for, set on the team or carried down from its season
- * or league, or that team's owner or manager — through
- * `GET /players/:userId/name`, and a roster read with `includeFullNames` by
- * the team's roster managers. A songkeeper or videographer never reads it.
+ * search for, and what an admin needs to tell two children apart. The API
+ * sends it to nobody except whoever may edit it — `mayEditName` on the
+ * server: a guardian, the player, a site administrator, and an
+ * administrator, coach, assistant or scorekeeper of a team the player plays
+ * for, set on the team or carried down from its season or league, or that
+ * team's owner or manager. To them every read that names the person to them
+ * names them in full; its halves come through `GET /players/:userId/name`
+ * and a roster read with `includeFullNames` by the team's roster managers.
+ * A songkeeper or videographer never reads it, and nothing that goes to
+ * somebody else — the live board, mail, push, a stored document, a model —
+ * carries it.
  */
 
 /**

@@ -87,11 +87,18 @@ function shortNameMatches(
   return rest !== '' && !rest.includes('.') && fold(last).startsWith(rest)
 }
 
+/**
+ * Whether a scanned player is this one: by his first and last names, his
+ * label, or the public label he keeps beside a full one (`compactName`), the
+ * name a lineup QR this app made carries.
+ */
 function namesMatch(
   scanned: GameChangerPlayer,
   parts: { firstName?: string | null; lastName?: string | null },
   name: string,
-  format: PlayerNamePrivacy | undefined
+  format: PlayerNamePrivacy | undefined,
+  compact?: string,
+  compactFormat?: PlayerNamePrivacy
 ): boolean {
   const full = fold(`${scanned.f} ${scanned.l}`)
   const hasParts =
@@ -102,7 +109,13 @@ function namesMatch(
   )
     return true
   if (fold(name) === full) return true
-  return !hasParts && shortNameMatches(name, scanned.f, scanned.l, format)
+  if (compact != null && fold(compact) === full) return true
+  if (hasParts) return false
+  return (
+    shortNameMatches(name, scanned.f, scanned.l, format) ||
+    (compact != null &&
+      shortNameMatches(compact, scanned.f, scanned.l, compactFormat))
+  )
 }
 
 const nameOf = (player: ScoringPlayer): string => player.fullName
@@ -177,7 +190,14 @@ export async function applyLineupQr(
       return (
         !claimed.has(id) &&
         player.jersey.trim() === jersey &&
-        namesMatch(scanned, player, player.fullName, player.nameFormat)
+        namesMatch(
+          scanned,
+          player,
+          player.fullName,
+          player.nameFormat,
+          player.compactName,
+          player.compactFormat
+        )
       )
     })
     if (existing != null) {
@@ -194,7 +214,9 @@ export async function applyLineupQr(
           scanned,
           entry.nameDetails ?? {},
           entry.shortName,
-          entry.nameFormat
+          entry.nameFormat,
+          entry.compactName,
+          entry.compactFormat
         )
     )
     if (entry?.gumboId != null) {

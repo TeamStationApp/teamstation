@@ -23,8 +23,9 @@ import type { CurrentPlay, GumboPlay } from '../gumboPlay'
 import type { ScoringAction } from './actions'
 import type { EventSaid } from './document'
 import { newSetup } from './lineup'
+import { withReaderNames } from './readerNames'
 import { ScoringSession, type SessionContext, type StoredGame } from './session'
-import { setupOf } from './state'
+import { asGameSetup, setupOf } from './state'
 import {
   creditLabel,
   eventSaid,
@@ -1330,6 +1331,38 @@ describe('stored and named forms of a game document', function () {
   })
 
   describe('records', function () {
+    it('keeps a compact name on a read setup and stores none of it', async function () {
+      // Mookie Betts named in full for a reader who may read it, beside the
+      // label everyone reads.
+      const read = withReaderNames(
+        JSON.parse(
+          JSON.stringify(await inProgressGame()).replaceAll(
+            'Mookie Betts',
+            'Mookie B'
+          )
+        ) as StoredGame,
+        { 9201: 'Mookie Betts' }
+      )
+      const setup = replaySetup()
+      setup.players[9201] = {
+        ...setup.players[9201],
+        fullName: 'Mookie Betts',
+        nameFormat: 'full',
+        compactName: 'Mookie B'
+      }
+      expect(asGameSetup(setup).players[9201]).include({
+        fullName: 'Mookie Betts',
+        nameFormat: 'full',
+        compactName: 'Mookie B'
+      })
+      expect(JSON.stringify(read)).include('"compactName":"Mookie B"')
+      for (const play of documentsOf(read)) {
+        const text = JSON.stringify(withoutNames(play))
+        expect(text).not.include('compactName')
+        expect(text).not.include('Mookie Betts')
+      }
+    })
+
     it('stores a pregame record with no names, and names it again', async function () {
       const stored = await scoredWith([
         {

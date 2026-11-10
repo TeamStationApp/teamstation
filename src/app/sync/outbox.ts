@@ -3,6 +3,7 @@ import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
+import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FOLD_VERSION } from '../../common/scoring/actions'
 import type { SaveChange, SessionLog } from '../../common/scoring/session'
@@ -118,7 +119,9 @@ export type QueuedCall =
        * A person who already exists put on a team's roster, or on one side
        * of a game: `POST` with his `userId`, on the team's or the game's
        * chain. Queued only by a screen that does not wait. `names` holds
-       * his short name by user id, and by gumbo id when he has one.
+       * his short name by user id, and by gumbo id when he has one, and
+       * beside a name full only for this reader its `nameFormat` and the
+       * public label, `compactName` and `compactFormat`.
        */
       kind: 'existingPlayer'
       teamId?: string
@@ -1412,10 +1415,21 @@ export class Outbox {
           document == null ? [] : listOf(document.body)
         )
       ))
+    // A name full only for this reader keeps the public label beside it, as
+    // the server's entry does: the field and the QR draw that one.
+    const format = (key: string): Json =>
+      PLAYER_NAME_PRIVACY.some(value => value === names[key])
+        ? { [key]: names[key] }
+        : {}
     const entry: Json = {
       userId,
       gumboId,
       shortName: names[userId] ?? names[String(gumboId)] ?? 'Player',
+      ...format('nameFormat'),
+      ...(typeof names.compactName === 'string'
+        ? { compactName: names.compactName }
+        : {}),
+      ...format('compactFormat'),
       avatarUrl: null,
       jersey: typeof body.jersey === 'string' ? body.jersey : null,
       positions: Array.isArray(body.positions) ? body.positions : [],
@@ -1528,8 +1542,46 @@ export class Outbox {
       names: {
         ...(withServerIds(names, await this.landedIds(tx)) as DeviceNames),
         ...names
-      }
+      },
+      compact: await this.compactNames(tx, call.gameId)
     })
+  }
+
+  /**
+   * By gumbo id, the public label beside each player the game's rosters and
+   * guests on the phone name otherwise for this reader (`compactName`), and
+   * whether they name him in full.
+   */
+  private async compactNames(
+    tx: CacheTransaction,
+    gameId: string
+  ): Promise<Record<string, { name: string; full: boolean }>> {
+    const held = await tx.read(gameKey(gameId))
+    if (held == null) return {}
+    const game = parsed(held.body)
+    const lists: Json[][] = []
+    for (const side of ['away', 'home'] as const) {
+      const guests = ((game.guestPlayers ?? {}) as Json)[side]
+      if (Array.isArray(guests)) lists.push(guests.filter(isJson))
+      const teamId = game[side === 'home' ? 'homeTeamId' : 'awayTeamId']
+      if (typeof teamId === 'string')
+        for (const key of [rosterKey(teamId), fullRosterKey(teamId)]) {
+          const document = await tx.read(key)
+          if (document != null) lists.push(listOf(document.body))
+        }
+    }
+    const compact: Record<string, { name: string; full: boolean }> = {}
+    for (const list of lists)
+      for (const entry of list)
+        if (
+          typeof entry.gumboId === 'number' &&
+          typeof entry.compactName === 'string'
+        )
+          compact[String(entry.gumboId)] = {
+            name: entry.compactName,
+            full: entry.nameFormat === 'full'
+          }
+    return compact
   }
 
   /**

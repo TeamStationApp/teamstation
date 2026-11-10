@@ -1,4 +1,5 @@
 import type { RosterEntry } from '../../common/api'
+import { formatName, shortName } from '../../common/names'
 import {
   JERSEY_MAX_LENGTH,
   type NewRosterPlayer,
@@ -99,7 +100,10 @@ export function rosterPlayerBody(draft: PlayerDraft): NewRosterPlayer {
 export function addRosteredPlayer(
   session: ScoringSessionState,
   side: Side,
-  entry: Pick<RosterEntry, 'gumboId' | 'shortName' | 'nameFormat'>,
+  entry: Pick<
+    RosterEntry,
+    'gumboId' | 'shortName' | 'nameFormat' | 'compactName' | 'compactFormat'
+  >,
   draft: PlayerDraft
 ): number {
   const error = playerDraftError(draft)
@@ -114,6 +118,11 @@ export function addRosteredPlayer(
     teamId: session.gameData.teams[side].id,
     fullName: entry.shortName,
     ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat }),
+    // A label full only for this reader keeps the public one for the field.
+    ...(entry.compactName == null ? {} : { compactName: entry.compactName }),
+    ...(entry.compactFormat == null
+      ? {}
+      : { compactFormat: entry.compactFormat }),
     firstName,
     lastName,
     jersey: draft.jersey.trim(),
@@ -126,7 +135,14 @@ export function addRosteredPlayer(
   }
   const existing = session.gameData.players[id]
   if (existing == null) session.gameData.players[id] = player
-  else Object.assign(existing, player, { id })
+  else {
+    // What the entry leaves out is not his any more: a format or a public
+    // label held from an earlier entry would misread the new one.
+    if (entry.nameFormat == null) delete existing.nameFormat
+    if (entry.compactName == null) delete existing.compactName
+    if (entry.compactFormat == null) delete existing.compactFormat
+    Object.assign(existing, player, { id })
+  }
   if (!team.players.includes(id)) team.players.push(id)
   return id
 }
@@ -145,12 +161,18 @@ export function draftOfLocalPlayer(player: ScoringPlayer): PlayerDraft {
   }
 }
 
-/** Correct a game-only identity in place; Save Rosters persists its setup. */
+/**
+ * Correct a game-only identity in place; Save Rosters persists its setup.
+ * `shownAs` is the draft the sheet opened on when it drew his public label
+ * in place of the name the game holds: a name left as it showed keeps his
+ * own, and only the rest changes.
+ */
 export function editLocalPlayerDraft(
   session: ScoringSessionState,
   side: Side,
   id: number,
-  draft: PlayerDraft
+  draft: PlayerDraft,
+  shownAs?: PlayerDraft
 ): void {
   const player = session.gameData.players[id]
   if (
@@ -164,15 +186,31 @@ export function editLocalPlayerDraft(
   if (error != null) throw new Error(error)
   const firstName = draft.firstName.trim()
   const lastName = draft.lastName.trim()
-  Object.assign(player, {
-    firstName,
-    lastName,
-    fullName: [firstName, lastName].filter(Boolean).join(' '),
+  const rest = {
     jersey: draft.jersey.trim(),
     bats: draft.bats,
     throws: draft.throws,
     positions: PLAYER_POSITIONS.filter(position =>
       draft.positions.includes(position)
     )
-  })
+  }
+  if (
+    firstName === shownAs?.firstName.trim() &&
+    lastName === shownAs.lastName.trim()
+  ) {
+    Object.assign(player, rest)
+    return
+  }
+  const fullName = [firstName, lastName].filter(Boolean).join(' ')
+  // Named in full for this reader: the public label he keeps was written of
+  // the old name, so the field, board strip and QR take the new one's, in
+  // the public format it was written in.
+  if (player.compactName != null) {
+    const person = { id, firstName, lastName, displayName: fullName }
+    player.compactName =
+      player.compactFormat == null
+        ? shortName(person)
+        : formatName(person, player.compactFormat)
+  }
+  Object.assign(player, { firstName, lastName, fullName, ...rest })
 }

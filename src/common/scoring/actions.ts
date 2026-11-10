@@ -1043,10 +1043,18 @@ export function shortName(player: {
   firstName?: string
   lastName?: string
   nameFormat?: PlayerNamePrivacy
+  compactName?: string
+  compactFormat?: PlayerNamePrivacy
 }): string {
   const first = player.firstName?.trim() ?? ''
   const last = player.lastName?.trim() ?? ''
   if (first !== '' && last !== '') return `${first} ${initial(last)}`
+  // A label full only for this reader is shortened from the public one.
+  if (player.compactName != null)
+    return shortName({
+      fullName: player.compactName,
+      nameFormat: player.compactFormat
+    })
   const words = player.fullName
     .trim()
     .split(/\s+/)

@@ -421,12 +421,14 @@ async function main(): Promise<void> {
     await inject(lineupQrFixture2.text)
     await gone('Import Lineup')
     const lines = await texts()
+    // The scorekeeper reads the roster's names in full.
     assert(
-      lines.some(text => /^1\. #1 Mookie B$/.test(text)),
-      'Mookie B leads off'
+      lines.some(text => /^1\. #1 Mookie Betts$/.test(text)),
+      'Mookie Betts leads off'
     )
-    assert(
-      !lines.some(text => text.includes('Mookie Betts')),
+    assert.equal(
+      lines.filter(text => text.includes('Mookie')).length,
+      1,
       'No second Mookie'
     )
     // Fixture 2 puts Marcus Semien at SS, so N2's SS leaves the order for the

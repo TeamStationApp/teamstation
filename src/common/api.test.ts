@@ -1379,9 +1379,11 @@ describe('api client', function () {
     ])
     expect(list.calls[0].url).equals('http://x/api/v1/chat/conversations')
 
+    // A coach reads Hank Conger in full; the public label rides beside it.
     const member = {
       userId: userIdOfGumbo(42),
-      shortName: 'Hank C',
+      shortName: 'Hank Conger',
+      compactName: 'Hank C',
       avatarUrl: null,
       label: 'Coach',
       isModerator: true,
@@ -1424,7 +1426,8 @@ describe('api client', function () {
 
     const person = {
       userId: userIdOfGumbo(42),
-      shortName: 'Hank C',
+      shortName: 'Hank Conger',
+      compactName: 'Hank C',
       avatarUrl: null
     }
     const candidates = client([person])
@@ -1441,6 +1444,7 @@ describe('api client', function () {
     const adult = {
       userId: userIdOfGumbo(7),
       shortName: 'Gale G',
+      compactName: undefined,
       label: 'Guardian'
     }
     const adults = client([adult])
@@ -2512,6 +2516,53 @@ describe('api client', function () {
     expect((await dictating.gameEvents('g')).modelNames).deep.equals({
       7: 'Alex L.'
     })
+    // The players its reader reads in full, beside plays named for everyone.
+    const reading = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, { plays: [], readerNames: { 7: 'Alex Lee' } }).fetch
+    })
+    expect((await reading.gameEvents('g')).readerNames).deep.equals({
+      7: 'Alex Lee'
+    })
+    // ...which the cleaner gives the game's players: the full name, with the
+    // public label beside it; the play's references stay as everyone's.
+    const setupPlayer = {
+      id: 7,
+      teamId: 'tem_1',
+      fullName: 'Alex L',
+      jersey: '7',
+      bats: 'right',
+      throws: 'right',
+      positions: [],
+      local: false
+    }
+    const withSetup = {
+      ...play,
+      matchup: {
+        batter: { id: 7, fullName: 'Alex L' },
+        pitcher: { id: 8, fullName: 'Gerrit C' }
+      },
+      teamStation: {
+        version: 2,
+        setupBefore: { players: { 7: setupPlayer } },
+        actions: []
+      }
+    }
+    const named = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: stubFetch(200, {
+        plays: [{ id: 'evt_1', gameId: 'gam_1', gumbo: withSetup }],
+        readerNames: { 7: 'Alex Lee' }
+      }).fetch
+    }).gameEvents('g')
+    const held = named.plays[0] as unknown as typeof withSetup
+    expect(held.teamStation.setupBefore.players[7]).deep.equals({
+      ...setupPlayer,
+      fullName: 'Alex Lee',
+      nameFormat: 'full',
+      compactName: 'Alex L'
+    })
+    expect(held.matchup.batter.fullName).equals('Alex L')
     const none = stubFetch(200, { plays: [] })
     const bare = new TeamStationClient({
       baseUrl: 'http://x/api/v1',
@@ -3506,8 +3557,12 @@ describe('who is signed in, with no signal', function () {
       userId: 'usr_a',
       gumboId: 1,
       externalIds: [],
-      shortName: 'Mookie B',
-      shortParts: { first: 'Mookie', last: 'B' },
+      // Read in full, with the public label beside it.
+      shortName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'M Betts',
+      compactFormat: 'initialLast',
+      shortParts: { first: 'Mookie', last: 'Betts' },
       avatarUrl: null,
       bats: 'right',
       throws: null,

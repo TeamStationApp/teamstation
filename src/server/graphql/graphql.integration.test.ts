@@ -128,10 +128,10 @@ describe('the GraphQL API', function () {
       ['his guardian', 106],
       ['a site administrator', 105]
     ] as const)
-      it(`gives ${who} the full name`, async function () {
+      it(`gives ${who} the full name, as his name too`, async function () {
         const answer = await ask(person, ROSTER, { team: f.teamA })
         expect(alfonsoOf(answer)).deep.include({
-          name: 'Alfonso S',
+          name: 'Alfonso Soriano',
           fullName: 'Alfonso Soriano'
         })
       })
@@ -280,14 +280,16 @@ describe('the GraphQL API', function () {
         arrivalTimeDelta: 45
       })
       expect(game.lineScore.home.h).equals(8)
+      // The Hawks' coach reads his players in full, as the box score names
+      // them to him.
       expect(game.boxScore.batting).deep.include({
-        player: { name: 'Alfonso S' },
+        player: { name: 'Alfonso Soriano' },
         ab: 4,
         h: 3,
         avg: 0.75
       })
       expect(game.boxScore.pitching).deep.equals([
-        { player: { name: 'Ben C' }, ip: '6.0', era: 2 }
+        { player: { name: 'Ben Chapman' }, ip: '6.0', era: 2 }
       ])
     })
 
@@ -551,9 +553,10 @@ describe('the GraphQL API', function () {
           }>
         ).map(line => [line.player.name, line.team.name, line.pa, line.rbi])
       ).deep.equals([
-        ['Alfonso S', 'Demo Hawks', 4, 2],
+        // The site administrator reads every player in full.
+        ['Alfonso Soriano', 'Demo Hawks', 4, 2],
         // Drew Ellis's only line is a run batted in pinch-hitting.
-        ['Drew E', 'Demo Hawks', 0, 1]
+        ['Drew Ellis', 'Demo Hawks', 0, 1]
       ])
       // A date alone would be UTC midnight, not the caller's: a time with
       // its offset is required.
@@ -582,7 +585,8 @@ describe('the GraphQL API', function () {
       })
       expect(ben.body.errors).equals(undefined)
       expect(ben.body.data.stats[0]).deep.include({
-        player: { id: userIdOfGumbo(202), name: 'Ben C' },
+        // His coach reads him in full.
+        player: { id: userIdOfGumbo(202), name: 'Ben Chapman' },
         pa: 3,
         k: 2,
         outsMade: 3,
@@ -613,9 +617,21 @@ describe('the GraphQL API', function () {
           }>
         ).map(line => [line.player.name, line.pa, line.outsMade, line.ip])
       ).deep.equals([
-        ['Ben C', 3, 3, '1.0'],
-        ['Cody D', 0, 1, '0.1']
+        ['Ben Chapman', 3, 3, '1.0'],
+        ['Cody Decker', 0, 1, '0.1']
       ])
+      // A songkeeper of the team reads the same lines short.
+      const songkeeper = await stats(211, {
+        perspective: 'PITCHING',
+        filter: { teamId: f.teamA },
+        groupBy: ['PLAYER']
+      })
+      expect(
+        (songkeeper.body.data.stats as Array<{ player: { name: string } }>).map(
+          line => line.player.name
+        )
+      ).deep.equals(['Ben C', 'Cody D'])
+      expect(songkeeper.text).not.includes('Chapman')
     })
 
     it('orders, limits, and keeps to its bounds', async function () {
@@ -814,8 +830,9 @@ describe('the GraphQL API', function () {
         `{ player(id: "${alfonso}") { name fullName } }`
       )
       expect(answer.body.errors).equals(undefined)
+      // The key reads as its person, his coach, does.
       expect(answer.body.data.player).deep.equals({
-        name: 'Alfonso S',
+        name: 'Alfonso Soriano',
         fullName: 'Alfonso Soriano'
       })
     })

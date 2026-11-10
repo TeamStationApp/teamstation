@@ -18,6 +18,8 @@ export type ScoringRosterEntry = Pick<
   | 'isPlayer'
   | 'shortName'
   | 'nameFormat'
+  | 'compactName'
+  | 'compactFormat'
   | 'jersey'
   | 'positions'
   | 'bats'
@@ -149,6 +151,39 @@ export function appearedIn(state: GameState): Set<number> {
   return new Set([...away, ...home])
 }
 
+/**
+ * A side's game players as roster entries: its guests (`local`) or, with no
+ * roster to hand, the players it fields. Each keeps the label he is held by
+ * with its format, and the public label beside a full one (`compactName`,
+ * `compactFormat`), so a player rebuilt from his entry, as one moved between
+ * sides is, keeps the short name on the field.
+ */
+export function gameRosterEntries(
+  state: GameState,
+  side: Side,
+  local: boolean
+): ScoringRosterEntry[] {
+  return state.liveData.boxscore.teams[side].players
+    .map(id => state.gameData.players[id])
+    .filter(player => player.local === local)
+    .map(player => ({
+      gumboId: player.id,
+      shortName: player.fullName,
+      ...(player.nameFormat == null ? {} : { nameFormat: player.nameFormat }),
+      ...(player.compactName == null
+        ? {}
+        : { compactName: player.compactName }),
+      ...(player.compactFormat == null
+        ? {}
+        : { compactFormat: player.compactFormat }),
+      jersey: player.jersey,
+      positions: player.positions,
+      bats: player.bats,
+      throws: player.throws,
+      isPlayer: true
+    }))
+}
+
 /** Rebuild live options while preserving the placements of players still available. */
 export function reconcileRoster(
   held: GameSetup,
@@ -200,6 +235,12 @@ export function reconcileRoster(
               teamId: teams[side].id,
               fullName: row.shortName,
               ...(row.nameFormat == null ? {} : { nameFormat: row.nameFormat }),
+              ...(row.compactName == null
+                ? {}
+                : { compactName: row.compactName }),
+              ...(row.compactFormat == null
+                ? {}
+                : { compactFormat: row.compactFormat }),
               jersey: row.jersey ?? '',
               bats: row.bats ?? 'right',
               throws: row.throws,

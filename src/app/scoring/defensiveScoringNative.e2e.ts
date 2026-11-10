@@ -117,12 +117,14 @@ async function main(): Promise<void> {
     await m.assertVisible({ text: '^Assign pitcher$' })
     await m.assertVisible({ text: 'Assign P Hawks A' })
     await capture('placeholder-return')
+    // The field keeps short names; the sheet names a roster player in full
+    // when the signed-in scorer may read him in full, and short otherwise.
     await m.scrollUntilVisible({
-      element: { text: 'Assign P #27 Mike T' },
+      element: { text: 'Assign P #27 Mike T\\w*' },
       direction: 'DOWN',
       timeout: 15000
     })
-    await tap('Assign P #27 Mike T')
+    await tap('Assign P #27 Mike T\\w*')
     await m.assertVisible({ text: '^Assign C$', timeout: 15000 })
     await capture('catcher-vacated')
     await tap('Assign C')
@@ -136,7 +138,7 @@ async function main(): Promise<void> {
     await tap('Cancel')
     await tap('Assign LF')
     await m.assertVisible({ text: '^Assign left field$' })
-    await tap('Assign LF #50 Mookie B')
+    await tap('Assign LF #50 Mookie B\\w*')
     await m.assertNotVisible({
       text: 'Assign a pitcher',
       timeout: 15000

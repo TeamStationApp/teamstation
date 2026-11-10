@@ -144,6 +144,32 @@ describe('the phone document cache', function () {
     expect(existsSync(path)).equals(false)
   })
 
+  it('gives a second account on the same device none of the first account’s documents', async function () {
+    // The coach's answers name players in full; the next person to sign in
+    // on the phone opens a file of their own, empty.
+    const coach = await openCacheStore(
+      nodeSqliteExecutor(join(dir, cacheFileName('usr_7')))
+    )
+    await coach.store('events.g1', {
+      body: '{"plays":[],"readerNames":{"7":"Mookie Betts"}}',
+      revision: '1',
+      serverDigest: 'd1'
+    })
+    await coach.close()
+    const next = await openCacheStore(
+      nodeSqliteExecutor(join(dir, cacheFileName('usr_8')))
+    )
+    expect(await next.read('events.g1')).equals(undefined)
+    const held = await next.atomically(async tx => await tx.outbox())
+    expect(held).deep.equals([])
+    await next.close()
+    const again = await openCacheStore(
+      nodeSqliteExecutor(join(dir, cacheFileName('usr_7')))
+    )
+    expect(await again.read('events.g1')).property('serverDigest', 'd1')
+    await again.close()
+  })
+
   it('keeps nothing on the web', async function () {
     const web = await openDocumentCache('usr_1')
     const document = { body: '[]', revision: '1', serverDigest: null }

@@ -105,6 +105,12 @@ export interface StoredGame {
    */
   halves?: string[]
   /**
+   * Gumbo id → full name, for each of the game's players this reader reads
+   * in full though its plays name them as the public reads them, as
+   * `GET /games/:gameId/events` answers it. Absent for none, and when spoken.
+   */
+  readerNames?: Record<string, string>
+  /**
    * The digest the server keeps of the game's lineups, as it read them or as
    * this save left them: what the next save names as its `lineupsBase`.
    * Absent from a store that keeps none.

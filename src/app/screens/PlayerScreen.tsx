@@ -18,7 +18,8 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { rosterFullName, shortName } from '../../common/names'
+import { formatName, rosterFullName } from '../../common/names'
+import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { coachesTeam, keepsSongs, managesRoster } from '../../common/roles'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import { PersonMessageButton } from '../chat/PersonMessageButton'
@@ -212,6 +213,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
 
   const savedPlayer = useRef<
     { userId: string; entry: RosterEntry; profileName: string } | undefined
+  >(undefined)
+  // The name the page draws after a save, the saved entry's until the
+  // player is read again: drawn even while the page's own first read has
+  // not landed. `savedPlayer` holds the same for reads still in flight.
+  // `publicName` is drawn instead once the viewer may no longer manage the
+  // player: the save named him in full only for the viewer it answered.
+  const [savedName, setSavedName] = useState<
+    { userId: string; name: string; publicName: string } | undefined
   >(undefined)
   // Whether the viewer manages `forTeam`'s roster, and so may read the
   // player's whole name from it: undefined while their roles are asked.
@@ -444,16 +453,18 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
   // what goes up there: it is the same name, and a header that appears half a
   // second late reads as the page having jumped.
   const publicName =
-    savedPlayer.current?.userId === userId
-      ? savedPlayer.current.profileName
+    savedName?.userId === userId
+      ? canManage === true
+        ? savedName.name
+        : savedName.publicName
       : player?.name
   const shown =
     tab === 'settings' && rosterManager === true && !privateNameDenied
       ? (privateName ?? publicName ?? title ?? '')
       : (publicName ?? (privateNameDenied ? '' : title) ?? '')
   // What a guardian invitation or request, or taking them off the team,
-  // names the player by: the short name, even where a roster manager's header
-  // shows the whole one.
+  // names the player by: the name the server gives the page, even where a
+  // roster manager's Settings header shows the private one.
   const shortShown = publicName ?? (privateNameDenied ? '' : title) ?? ''
   const head = usePinnedHandoff()
   const { handoff } = head
@@ -786,31 +797,55 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                       )
                       return
                     }
-                    // A roster may extend surnames to resolve collisions. The
-                    // ordinary player page always uses its own abbreviated name.
-                    const profileName =
-                      entry.nameDetails == null
-                        ? entry.shortName
-                        : entry.nameFormat != null
-                          ? (player?.name ?? entry.shortName)
-                          : shortName({
-                              id: entry.userId,
-                              ...entry.nameDetails
-                            })
-                    const saved = { userId, entry, profileName }
+                    // The page draws the name the server gives it, which
+                    // only the server can write: the saved entry's until the
+                    // player is read again.
+                    const saved = {
+                      userId,
+                      entry,
+                      profileName: entry.shortName
+                    }
                     savedPlayer.current = saved
-                    // In a chosen format only the server can write it.
-                    if (entry.nameFormat != null)
-                      client
-                        .player(userId, forTeam)
-                        .then(({ name }) => {
-                          saved.profileName = name
-                          if (savedPlayer.current === saved)
-                            setPlayer(held =>
-                              held == null ? held : { ...held, name }
+                    // A full name only for this viewer keeps the public label
+                    // beside it; any other name the page is given is public.
+                    const publicOf = (name: string): string =>
+                      entry.compactName ?? name
+                    setSavedName({
+                      userId,
+                      name: entry.shortName,
+                      publicName: publicOf(entry.shortName)
+                    })
+                    // Should the server never answer, the page's own name: a
+                    // full one is the entry's, and otherwise the saved parts
+                    // in the entry's format (the page tells nobody apart),
+                    // or what the page drew before, never the roster's
+                    // label, which may be lengthened to tell a teammate
+                    // apart.
+                    const pageName =
+                      entry.nameFormat === 'full'
+                        ? entry.shortName
+                        : entry.nameDetails != null
+                          ? formatName(
+                              { id: entry.userId, ...entry.nameDetails },
+                              entry.nameFormat ?? DEFAULT_PLAYER_NAME_PRIVACY
                             )
-                        })
-                        .catch(() => undefined)
+                          : player?.name
+                    const named = (name: string): void => {
+                      saved.profileName = name
+                      if (savedPlayer.current !== saved) return
+                      setSavedName({ userId, name, publicName: publicOf(name) })
+                      setPlayer(held =>
+                        held == null ? held : { ...held, name }
+                      )
+                    }
+                    client
+                      .player(userId, forTeam)
+                      .then(({ name }) => {
+                        named(name)
+                      })
+                      .catch(() => {
+                        if (pageName != null) named(pageName)
+                      })
                     props.onSettingsSaved?.(entry)
                     if (entry.nameDetails != null) {
                       privateNameGeneration.current++
@@ -828,7 +863,7 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                         ? held
                         : {
                             ...held,
-                            name: profileName,
+                            name: saved.profileName,
                             bats: entry.bats,
                             throws: entry.throws
                           }

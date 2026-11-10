@@ -271,7 +271,7 @@ describe('real event info and guardian attendance', function () {
     expect(
       read.attendees.find(row => row.userId === userIdOfGumbo(108))
     ).includes({
-      name: 'Mookie B',
+      name: 'Mookie Betts',
       isPlayer: true,
       isTeamParticipant: true,
       bats: 'switch',
@@ -285,9 +285,38 @@ describe('real event info and guardian attendance', function () {
     ).deep.equals(['SS', 'CF'])
     expect(
       read.attendees.find(row => row.userId === userIdOfGumbo(105))?.guardianOf
-    ).deep.equals(['Mike T'])
+    ).deep.equals(['Mike Trout'])
+    // The team's admin reads its players in full; a member with no role
+    // reads them short, and once a guardian, only their own child in full.
+    const nameOf = (shown: EventInfo, id: number): string | undefined =>
+      shown.attendees.find(row => row.userId === userIdOfGumbo(id))?.name
+    const member = await info(gameId, 107)
+    expect([nameOf(member, 108), nameOf(member, 113)]).deep.equals([
+      'Mookie B',
+      'Willie M'
+    ])
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: 'link_info2_member',
+        user_id: userIdOfGumbo(107),
+        related_user_id: userIdOfGumbo(113),
+        kind: 'guardian',
+        can_manage: false
+      })
+      .execute()
+    const guardian = await info(gameId, 107)
+    expect([nameOf(guardian, 113), nameOf(guardian, 108)]).deep.equals([
+      'Willie Mays',
+      'Mookie B'
+    ])
     expect(
       read.attendees.find(row => row.userId === userIdOfGumbo(101))?.name
+    ).equals('Babe Ruth')
+    expect(
+      (await info(gameId, 107)).attendees.find(
+        row => row.userId === userIdOfGumbo(101)
+      )?.name
     ).equals('Babe R')
     expect(
       read.attendees.find(row => row.userId === userIdOfGumbo(115))

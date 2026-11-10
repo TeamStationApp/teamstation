@@ -3,7 +3,11 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { asGameDetail, type GameDetail } from '../../common/api'
+import {
+  asGameDetail,
+  asGameStatistics,
+  type GameDetail
+} from '../../common/api'
 import {
   GameSocket,
   type GameSocketListener,
@@ -478,6 +482,49 @@ describe('the replay screen', function () {
     )
     expect(pitcher?.jersey).match(/^\d+$/)
     expect(scoreboard?.pitcherJersey).equals(pitcher?.jersey)
+  })
+
+  it('keeps the public label on the field and the scoreboard for a player read in full', async function () {
+    resize(402, 874)
+    // As the server answers a reader who may read them in full: the public
+    // label in the documents, and the whole name beside it.
+    const setup = replaySetup()
+    const full = new Map<string, string>()
+    for (const [id, player] of Object.entries(setup.players))
+      if (
+        player.fullName === 'Juan Soto' ||
+        player.fullName === 'Tyler Glasnow'
+      ) {
+        full.set(id, player.fullName)
+        player.fullName = player.fullName === 'Juan Soto' ? 'Juan S' : 'Tyler G'
+      }
+    const game = gameOf()
+    const events = finalGame(setup)
+    const client = fakeClient(
+      async () => game,
+      async () => await events
+    )
+    client.gameStatistics = async () => {
+      const native = nativeStatistics(game, await events)
+      return asGameStatistics(
+        JSON.parse(
+          JSON.stringify({
+            ...native,
+            source: { generation: 0, ...native.source },
+            readerNames: Object.fromEntries(full)
+          })
+        )
+      )
+    }
+    await show(game, events, client)
+    await showCatcher()
+    await firstPitch()
+    const { players, scoreboard } = field()
+    const labels = players.map(player => player.displayName ?? '')
+    expect(labels).includes('Juan S')
+    expect(labels.some(label => /Soto|Glasnow/.test(label))).equals(false)
+    expect(scoreboard?.batter.firstName).equals('Juan S')
+    expect(scoreboard?.pitcher.firstName).equals('Tyler G')
   })
 
   it('puts the speaker upper left and Exit upper right, and the rewind and pause in the bottom corners', async function () {

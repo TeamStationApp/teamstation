@@ -52,11 +52,11 @@ import { swapOrReset } from '../games/resetSwap'
 import { gameSwapEffect } from '../games/swapEffect'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { namedScoringGame } from '../scoring/openRow'
+import { namedScoringGame, type ReaderNames } from '../scoring/openRow'
 import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { modelNames } from '../users/nameBook'
-import { isSpoken } from '../users/readerNames'
+import { isSpoken, type Reader, readerOf } from '../users/readerNames'
 import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
@@ -154,9 +154,13 @@ function requireCurrentApp(
  * answers `namesDigest`, the digest of the book its plays are named from: a
  * player's public name can change with nothing written, when a hold lapses,
  * so a `playEdits` change naming another digest does not apply to this read.
+ * The plays are named as the public reads them, for every reader; `GET` adds
+ * `readerNames`, each of the game's players its reader reads in full, by
+ * gumbo id.
  *
- * A post answers every stored play as `GET` does, as builds before the
- * edits answer read it and a phone's queue writes it over the game it holds.
+ * A post answers every stored play as `GET` does, `readerNames` included, as
+ * builds before the edits answer read it and a phone's queue writes it over
+ * the game it holds.
  * A live post with `?answer=edits` answers only what it wrote: `edits`, a
  * put of each play it wrote or its tag repair rewrote and a remove of each
  * index it took away, and the at-bat in progress, with those digests and the
@@ -332,6 +336,7 @@ export function eventRoutes(
                   game
                 ),
               answer: edits ? 'edits' : 'all',
+              listFullNamesFor: readerOf(actor),
               cache: options.cache
             }
           )
@@ -358,16 +363,26 @@ export function eventRoutes(
               .setIsolationLevel('repeatable read')
               .execute(
                 async trx =>
-                  await storedGameRead(trx, gameId, async game =>
-                    lineupTeams(
-                      await roleScopes(trx, actor.userId, actor.isAdmin),
-                      game
-                    )
+                  await storedGameRead(
+                    trx,
+                    gameId,
+                    async game =>
+                      lineupTeams(
+                        await roleScopes(trx, actor.userId, actor.isAdmin),
+                        game
+                      ),
+                    // Edits are the shared record: nobody is named apart.
+                    edits ? undefined : readerOf(actor)
                   )
               )
           )
           if (!edits) return { status: 200, body: { ...current, ...kept } }
-          const { plays, currentPlay, ...digests } = current
+          const {
+            plays,
+            currentPlay,
+            readerNames: _readerNames,
+            ...digests
+          } = current
           return {
             status: 200,
             body: {
@@ -408,6 +423,7 @@ export function eventRoutes(
               )
               return teams
             },
+            readerOf(actor),
             plays
           )
       )
@@ -567,13 +583,19 @@ interface StoredGameAnswer {
   lineupsDigest: string | null
   generation: number
   swap: SwapEffect
+  /**
+   * Gumbo id → full name, for each of the game's players its reader reads in
+   * full and the plays, named as the public reads them, do not. Absent when
+   * there are none, or the read goes to a model.
+   */
+  readerNames?: ReaderNames
 }
 
 /**
  * The answer read through `db`: each stored play, the at-bat in progress,
- * both digests, and what a swap does. Before the first pitch its at-bat is
- * the pregame shell, and `fold` replays it (`pregameFold`), reading nothing,
- * once the caller has let the game row go.
+ * both digests, what a swap does, and whom `reader` reads in full. Before the
+ * first pitch its at-bat is the pregame shell, and `fold` replays it
+ * (`pregameFold`), reading nothing, once the caller has let the game row go.
  */
 async function storedGameRead(
   db: Kysely<Database>,
@@ -582,6 +604,7 @@ async function storedGameRead(
     home_team_id: string
     away_team_id: string
   }) => Promise<readonly string[]>,
+  reader: Reader | undefined,
   held?: StoredPlay[]
 ): Promise<{
   answer: StoredGameAnswer
@@ -605,13 +628,17 @@ async function storedGameRead(
     .executeTakeFirstOrThrow()
   const current = atBatOf(game, stored.length > 0)
   const lineups = await halves(game)
-  const { game: resolved, names } = await namedScoringGame(
+  const {
+    game: resolved,
+    names,
+    readerNames
+  } = await namedScoringGame(
     db,
     {
       plays: stored.map(row => row.gumbo as GumboPlay),
       currentPlay: current as CurrentPlay | null
     },
-    { halves: lineups, gameId }
+    { halves: lineups, gameId, listFullNamesFor: reader }
   )
   const teams = teamsOfRow(game)
   const answer: StoredGameAnswer = {
@@ -631,7 +658,8 @@ async function storedGameRead(
     swap: gameSwapEffect(
       game,
       stored.map(row => row.gumbo)
-    )
+    ),
+    ...(readerNames == null ? {} : { readerNames })
   }
   return {
     answer,

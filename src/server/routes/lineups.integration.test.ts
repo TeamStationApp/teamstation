@@ -863,12 +863,23 @@ describe('the lineup routes (U11)', function () {
         expect(answered.lineup?.batters.map(person => person.name)).deep.equals(
           ['Shohei O', 'H2', 'H3', 'H4', 'H5', 'H6', 'H7', 'H8', 'H9']
         )
+        // The site administrator, who may read every name in full, reads it
+        // so on the default and on DJ Game; a member does not.
+        expect(
+          asDefaultLineup(
+            (await get(`/teams/${home}/default-lineup`, ADMIN)).body
+          ).lineup?.batters[0].name
+        ).equals('Shohei Ohtani')
         const dj = asDjGame((await get(`/games/${fresh}/dj`, ADMIN)).body)
         expect(dj.home.source).equals('default')
         expect(dj.home.batters[0]).deep.include({
           userId: renamed,
-          name: 'Shohei O'
+          name: 'Shohei Ohtani'
         })
+        expect(
+          asDjGame((await get(`/games/${fresh}/dj`, MEMBER)).body).home
+            .batters[0]
+        ).deep.include({ userId: renamed, name: 'Shohei O' })
         // Nothing stored changed.
         expect(await storedOf()).deep.equals(stored)
       } finally {

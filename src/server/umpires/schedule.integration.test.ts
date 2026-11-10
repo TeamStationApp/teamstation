@@ -25,6 +25,7 @@ import { actor, type GroupFixture } from '../../test/groupFixtures'
 import { UMPIRE_TEST_NOW, umpireFixture } from '../../test/umpireFixture'
 import { seedUmpireCounts } from '../../test/umpireTypes'
 import { now } from '../clock'
+import { readerOf } from '../users/readerNames'
 import { umpireIdentity, umpireIsPlaying } from './context'
 import { parseUmpireFilters, schedule, umpireSchedulePage } from './schedule'
 
@@ -800,8 +801,16 @@ describe('umpire schedule pages (U9)', function () {
         'viewerId'
       ].toSorted()
     )
+    // The route names its people to its reader.
     expect(
-      await schedule(f.h.db, actor(101), f.leagueA, 'schedule', {})
+      await schedule(
+        f.h.db,
+        actor(101),
+        f.leagueA,
+        'schedule',
+        {},
+        readerOf(actor(101))
+      )
     ).deep.equals(whole)
     const page: UmpirePage = await read('&paged=1')
     expect(page.games).equals(undefined)

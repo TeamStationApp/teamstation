@@ -20,6 +20,7 @@ import {
   keyterms,
   LINEUP_KINDS,
   mapPlayers,
+  modelNameOf,
   namesFieldersById,
   OUT_KINDS,
   PITCH_CALLS,
@@ -468,6 +469,16 @@ describe('scoring actions', function () {
     // A player with no number on the roster is named without one.
     bottom.gameData.players[14].jersey = '  '
     expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(13)})`)
+    // One named in full for this reader is named to the model by the label
+    // everyone reads.
+    Object.assign(bottom.gameData.players[14], {
+      fullName: 'Francisco Lindor',
+      nameFormat: 'full',
+      compactName: 'Francisco L'
+    })
+    expect(promptContext(bottom))
+      .includes(`SS Francisco L. (tag ${tagOf(13)})`)
+      .and.not.include('Lindor')
   })
 
   it('reads a dictated action’s players back from their tags, and tags them again for the model', function () {
@@ -893,6 +904,15 @@ describe('scoring actions', function () {
     expect(shortName({ fullName: 'Unlisted' })).equals('Unlisted')
     expect(shortName({ fullName: '  ', firstName: 'Ana' })).equals('Ana')
     expect(shortName({ fullName: '' })).equals('')
+    // A label full only for this reader: the public one, shortened.
+    const mookie = {
+      id: 7,
+      fullName: 'Mookie Betts',
+      nameFormat: 'full' as const,
+      compactName: 'Mookie B'
+    }
+    expect(shortName(mookie)).equals('Mookie B.')
+    expect(modelNameOf({ meta: {} }, mookie)).equals('Mookie B.')
 
     const game = sampleGame()
     for (const player of Object.values(game.gameData.players)) {

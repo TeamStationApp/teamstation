@@ -25,6 +25,7 @@ import type {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { TagTarget } from '../../common/eventTags'
+import { gamePlayerNames } from '../../common/replay/replayNames'
 import { managesRoster } from '../../common/roles'
 import type { ScoringAction } from '../../common/scoring/actions'
 import {
@@ -36,6 +37,7 @@ import {
   swapEffect,
   WITHDRAWN_GAME
 } from '../../common/scoring/playsLost'
+import { withoutReaderNames } from '../../common/scoring/readerNames'
 import {
   awaitingResult,
   completesHitOffer,
@@ -83,6 +85,7 @@ import {
 import { WalkUpReadinessModals } from '../walkup/WalkUpReadinessModals'
 import { startingAngle, trajectoryLabel } from './battedBall'
 import { battedBallField, fieldStageInstruction } from './battedBallField'
+import { candidateNames } from './candidateNames'
 import {
   assignDefender,
   battingWarningKey,
@@ -105,7 +108,6 @@ import {
 import { useDictationControls } from './DictationButton'
 import { ErrorCreditSheet } from './ErrorCreditSheet'
 import { EventTagEditor } from './EventTagEditor'
-import { candidateNames } from './ExistingPlayerSheet'
 import { guestRenames, sendGuestRenames } from './guestRenames'
 import { HeldGameNotice } from './HeldGameNotice'
 import { MoreMenu } from './MoreMenu'
@@ -148,7 +150,7 @@ import {
 import { SCORING_MENU, ScoringMenuButton } from './ScoringMenuAppearance'
 import { scoringFieldPlayers } from './scoringMotion'
 import { scoringPreferences } from './scoringPreferences'
-import { withoutPrivateNames } from './scoringRosterCache'
+import { withoutPrivateNames, withPublicNames } from './scoringRosterCache'
 import { rosterStaffSide, scorekeeperSide } from './scoringRosterEdit'
 import {
   baseIds,
@@ -278,6 +280,11 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const authorizationRevision = useRef(0)
   const authorizationPending = useRef(false)
   const rightsRef = useRef(rosterRights)
+  /**
+   * The rights the game was opened with: its players' full names
+   * (`withReaderNames`) are theirs, and hidden once they are gone.
+   */
+  const openedRights = useRef<Record<string, boolean>>({})
   const openedContext = useRef<
     | {
         client: TeamStationClient
@@ -313,6 +320,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     setGuests([])
     authorizationPending.current = false
     rightsRef.current = {}
+    openedRights.current = {}
     setRosterRights({})
     setRosterDefaultSide(undefined)
     setKeeperSide(undefined)
@@ -356,6 +364,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         generation: value.generation ?? game.generation
       })
       rightsRef.current = rights
+      openedRights.current = { ...rights }
       setRosterRights(rights)
       setRosterDefaultSide(
         rosterStaffSide(roles, game.awayTeamId, game.homeTeamId)
@@ -424,7 +433,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           Object.fromEntries(
             Object.entries(held).map(([id, rows]) => [
               id,
-              rights[id] ? rows : withoutPrivateNames(rows)
+              rights[id] ? rows : withPublicNames(rows)
             ])
           )
         )
@@ -456,12 +465,17 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             Object.fromEntries(
               teams.map((id, index) => {
                 const entry = entries[index]
-                const rows =
-                  entry.status === 'fulfilled' ? entry.value : (held[id] ?? [])
-                return [
-                  id,
-                  currentRights[id] ? rows : withoutPrivateNames(rows)
-                ]
+                // A fresh read names its reader; held rows, whose reader
+                // may no longer read them, take the public label.
+                if (entry.status === 'fulfilled')
+                  return [
+                    id,
+                    currentRights[id]
+                      ? entry.value
+                      : withoutPrivateNames(entry.value)
+                  ]
+                const rows = held[id] ?? []
+                return [id, currentRights[id] ? rows : withPublicNames(rows)]
               })
             )
           )
@@ -499,7 +513,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
               Object.fromEntries(
                 Object.entries(held).map(([id, rows]) => [
                   id,
-                  withoutPrivateNames(rows)
+                  withPublicNames(rows)
                 ])
               )
             )
@@ -521,6 +535,24 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   )
   const wasActive = useRef(props.active !== false)
   const returning = props.active !== false && !wasActive.current
+  // The teams whose full names the held game and rosters stop showing: every
+  // team while the reader's rights are asked again, and a team whose rights
+  // the game was opened with are gone.
+  const hiddenKey =
+    openedSides == null
+      ? ''
+      : [openedSides.awayTeamId, openedSides.homeTeamId]
+          .filter(
+            id =>
+              returning ||
+              authorizationPending.current ||
+              (openedRights.current[id] && !rosterRights[id])
+          )
+          .join('\n')
+  const hiddenTeams = useMemo(
+    () => (hiddenKey === '' ? [] : hiddenKey.split('\n')),
+    [hiddenKey]
+  )
   const { onSettingsRefresh } = props
   useEffect(() => {
     const active = props.active !== false
@@ -786,7 +818,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             ? Object.fromEntries(
                 Object.entries(rosters).map(([id, rows]) => [
                   id,
-                  withoutPrivateNames(rows)
+                  withPublicNames(rows)
                 ])
               )
             : rosters
@@ -797,7 +829,8 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         allowNavigation={props.allowNavigation}
         onNavigationApproved={props.onNavigationApproved}
         rosterRights={returning ? {} : rosterRights}
-        guests={guests}
+        hiddenTeams={hiddenTeams}
+        guests={hiddenTeams.length === 0 ? guests : withPublicNames(guests)}
         lookUpGuests={async () => {
           const game = await props.client.game(props.gameId)
           const now = [...game.guestPlayers.away, ...game.guestPlayers.home]
@@ -894,6 +927,11 @@ function ScoringPanel(props: {
   allowNavigation?: ScoringScreenProps['allowNavigation']
   onNavigationApproved?: ScoringScreenProps['onNavigationApproved']
   rosterRights: Record<string, boolean>
+  /**
+   * The teams whose players the held game names in full for a reader who may
+   * no longer read them: drawn by their public label.
+   */
+  hiddenTeams: readonly string[]
   /** The game's guests as it opened: whose accounts Save Rosters renames. */
   guests: readonly RosterEntry[]
   /**
@@ -1299,9 +1337,38 @@ function ScoringPanel(props: {
   const session = state.session
   const currentSetup = useRef(session)
   currentSetup.current = session
+  const { hiddenTeams } = props
+  /** A game as this reader may read it now: names hidden from him public. */
+  const readable = useCallback(
+    <T extends GameState>(game: T): T =>
+      hiddenTeams.length === 0
+        ? game
+        : withoutReaderNames(game, teamId => hiddenTeams.includes(teamId)),
+    [hiddenTeams]
+  )
+  // The state as its reader may read it now, for everything that draws a
+  // name. What it does still goes through `state`: only the names differ.
+  const readableState = useMemo(() => {
+    const named = readable(state.session)
+    return named === state.session ? state : { ...state, session: named }
+  }, [readable, state])
+  // Words the scoring wrote of a player by the full name the game holds
+  // (a step's label, a dictated question), by the label he may be read by.
+  const publicText = useMemo(() => {
+    const held = state.session.gameData.players
+    const shown = readableState.session.gameData.players
+    const swaps = Object.keys(held)
+      .map(Number)
+      .filter(id => shown[id] !== held[id] && held[id].fullName !== '')
+      .map(id => [held[id].fullName, shown[id].fullName] as const)
+      .filter(([full, label]) => full !== label)
+      .sort(([a], [b]) => b.length - a.length)
+    return (text: string): string =>
+      swaps.reduce((out, [full, label]) => out.split(full).join(label), text)
+  }, [state.session, readableState])
   const displaySession = useMemo(
-    () => withRosterDetails(session, props.rosters),
-    [session, props.rosters]
+    () => withRosterDetails(readableState.session, props.rosters),
+    [readableState, props.rosters]
   )
   const missing = missingDefense(session)
   const battingCount =
@@ -1524,15 +1591,26 @@ function ScoringPanel(props: {
   const { log, past, checkpoints } = state
   const lastPlay = useMemo(
     () =>
-      describeLastPlay(log, past, session, logLength =>
-        sessionAt({ log, checkpoints }, logLength, () => game.opening)
+      describeLastPlay(log, past, readableState.session, logLength =>
+        readable(sessionAt({ log, checkpoints }, logLength, () => game.opening))
       ),
-    [game, log, past, session, checkpoints]
+    [game, log, past, readableState, checkpoints, readable]
   )
   const historyVisible = historyActive || tagTarget != null
   const tagHistory = useMemo(() => {
     if (!historyVisible) return { rows: [], detail: undefined }
-    const rows = game.historyTargetsFor(session).slice(-6)
+    // A per-event row's words come from the play event, named in full:
+    // by the label its reader may read them by. The tag goes by `id`.
+    const rows = game
+      .historyTargetsFor(session)
+      .slice(-6)
+      .map(target => {
+        const title = publicText(target.title)
+        const description = publicText(target.description)
+        return title === target.title && description === target.description
+          ? target
+          : { ...target, title, description }
+      })
     const previous = sessionAt(
       { log, checkpoints },
       lastEntry?.logLength ?? Math.max(0, log.length - 1),
@@ -1556,7 +1634,8 @@ function ScoringPanel(props: {
           .filter(target => target.completed === true)
           .map(target => target.atBatIndex)
       ),
-      length => sessionAt({ log, checkpoints }, length, () => game.opening)
+      length =>
+        readable(sessionAt({ log, checkpoints }, length, () => game.opening))
     )
     const describedRows = rows.map((target, index) => {
       const described =
@@ -1587,7 +1666,9 @@ function ScoringPanel(props: {
     log,
     lastEntry,
     lastPlay,
-    checkpoints
+    checkpoints,
+    readable,
+    publicText
   ])
   useEffect(() => {
     setTagTarget(current => {
@@ -1627,24 +1708,55 @@ function ScoringPanel(props: {
         ? {
             id: entryId(lastEntry),
             lines: describeEntryPlays(log, past, logLength =>
-              sessionAt({ log, checkpoints }, logLength, () => game.opening)
+              readable(
+                sessionAt({ log, checkpoints }, logLength, () => game.opening)
+              )
             ).flatMap(play => [
               play.primary,
               ...(play.secondary == null ? [] : [play.secondary])
             ])
           }
         : undefined,
-    [state.dictation, lastEntry, log, past, checkpoints, game]
+    [state.dictation, lastEntry, log, past, checkpoints, game, readable]
   )
   // What the last sentence left out, once per sentence, beside its plays.
   const leftOut = useMemo(
     () =>
       state.dictation?.note != null &&
       lastEntry?.label === state.dictation.transcript
-        ? { id: entryId(lastEntry), text: state.dictation.note }
+        ? { id: entryId(lastEntry), text: publicText(state.dictation.note) }
         : undefined,
-    [state.dictation, lastEntry]
+    [state.dictation, lastEntry, publicText]
   )
+  const dictationProblem = state.dictation?.problem
+  const publicProblem = useMemo(
+    () =>
+      dictationProblem == null
+        ? undefined
+        : {
+            ...dictationProblem,
+            message: publicText(dictationProblem.message)
+          },
+    [dictationProblem, publicText]
+  )
+  const { dictationQuestion } = state
+  const publicQuestion = useMemo(() => {
+    if (dictationQuestion == null) return undefined
+    const { question, note, options, pick } = dictationQuestion
+    const labelled = <T extends { label: string }>(choice: T): T => ({
+      ...choice,
+      label: publicText(choice.label)
+    })
+    return {
+      ...dictationQuestion,
+      question: publicText(question),
+      ...(note == null ? {} : { note: publicText(note) }),
+      ...(options == null ? {} : { options: options.map(labelled) }),
+      ...(pick == null
+        ? {}
+        : { pick: { ...pick, choices: pick.choices.map(labelled) } })
+    }
+  }, [dictationQuestion, publicText])
   // A dictated undo: the step back the Undo button takes, but at once, so the
   // rest of the sentence is applied after it. What it took back — the
   // actions, and the game they were applied to — or null for nothing.
@@ -1705,11 +1817,12 @@ function ScoringPanel(props: {
     const described =
       shown.length === 0
         ? undefined
-        : describePlay(taken.before, shown, state.session)?.primary
+        : describePlay(readable(taken.before), shown, readable(state.session))
+            ?.primary
     return `Undid ${
       described != null && described !== 'Play changed'
         ? described
-        : (taken.label ?? 'the last step')
+        : publicText(taken.label ?? 'the last step')
     }`
   }
   // The log's line for a dictated undo; `id` changes per undo.
@@ -1718,7 +1831,10 @@ function ScoringPanel(props: {
   // refusal.
   const [refused, setRefused] = useState<{ id: number; message: string }>()
   const refuse = (message: string): void => {
-    setRefused(last => ({ id: (last?.id ?? 0) + 1, message }))
+    setRefused(last => ({
+      id: (last?.id ?? 0) + 1,
+      message: publicText(message)
+    }))
   }
   // While the roster sheet is open, its own dictation has the microphone
   // and the Space key.
@@ -1731,9 +1847,9 @@ function ScoringPanel(props: {
     model: dictationModel,
     session,
     log: state.log,
-    problem: state.dictation?.problem,
+    problem: publicProblem,
     note: leftOut,
-    question: props.walkUpOpen === true ? undefined : state.dictationQuestion,
+    question: props.walkUpOpen === true ? undefined : publicQuestion,
     played,
     onAnswer: answer => {
       if (
@@ -1809,7 +1925,9 @@ function ScoringPanel(props: {
     }
   })
   const line = session.liveData.linescore
-  const shownNames = shortPlayerNames(
+  // The spoken summary names the batter and pitcher as the lineup does, in
+  // full for a reader who may read it; the field keeps the short labels.
+  const shownNames = gamePlayerNames(
     Object.values(displaySession.gameData.players)
   )
   const scoredHere = useRef(state.past.length)
@@ -2358,7 +2476,7 @@ function ScoringPanel(props: {
   const [runnerDrag] = useState(() => createRelay<RunnerDragView | null>(null))
   const [selected, setSelected] = useState('')
   const switchable = state.phase === 'ready' && canSwitchBatter(session)
-  const note = useWalkUpNote(state, props.rosters, props.music, {
+  const note = useWalkUpNote(readableState, props.rosters, props.music, {
     resolve: props.resolveSong,
     fadeAppleMusic: props.fadeAppleMusic
   })
@@ -2490,7 +2608,7 @@ function ScoringPanel(props: {
         (state.phase === 'resolveBatter'
           ? unresolvedRunner?.from === 0
             ? 'Drag batter to a base, or hold to mark Out'
-            : `Resolve ${session.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
+            : `Resolve ${displaySession.gameData.players[unresolvedRunner?.playerId ?? 0]?.fullName ?? 'runner'}: drag to a base, or hold to mark Out`
           : undefined))
   const celebrationPaused =
     !props.active ||
@@ -2837,7 +2955,7 @@ function ScoringPanel(props: {
       }
       moreControl={
         <MoreMenu
-          state={state}
+          state={readableState}
           disabled={
             menu ||
             sheet != null ||
@@ -2969,8 +3087,11 @@ function ScoringPanel(props: {
       historyLabel={
         status.readOnly
           ? undefined
-          : (state.past.at(-1)?.label ??
-            (state.log.length > 0 ? 'Last play' : undefined))
+          : lastEntry?.label != null
+            ? publicText(lastEntry.label)
+            : state.log.length > 0
+              ? 'Last play'
+              : undefined
       }
       historyDetail={status.readOnly ? undefined : lastPlay}
       // Read-only asks nothing of the scorer, so it shows no instruction.
@@ -3122,7 +3243,7 @@ function ScoringPanel(props: {
         />
       )}
       {priorRunner.overlay}
-      <ErrorCreditSheet state={state} dispatch={dispatch} />
+      <ErrorCreditSheet state={readableState} dispatch={dispatch} />
       <RelayedRunnerDragTargets
         relay={runnerDrag}
         hides={view =>
@@ -3157,7 +3278,7 @@ function ScoringPanel(props: {
         !tiebreaker.active &&
         state.presentation == null && (
           <RunnerControls
-            state={state}
+            state={readableState}
             anchor={null}
             projection={baseProjection}
             dispatch={dispatchRunner}
@@ -3333,6 +3454,7 @@ function ScoringPanel(props: {
             ) : (
               <RosterEditor
                 key={rosterRead}
+                hiddenTeams={hiddenTeams}
                 initialDraft={rosterInitial}
                 defaultSide={props.rosterDefaultSide}
                 scorekeeperSide={props.scorekeeperSide}
@@ -3443,7 +3565,7 @@ function ScoringPanel(props: {
             ))}
           {sheet === 'overrides' && (
             <OverridesEditor
-              state={state}
+              state={readableState}
               onApply={draft => {
                 dispatch({ type: 'OVERRIDE', draft })
                 closeSheet()

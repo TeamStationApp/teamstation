@@ -495,22 +495,34 @@ describe('the highlight routes', function () {
       await rename('Fernando', 'Tatis')
     })
 
+    // Read by the site administrator, who reads every name in full; a video's
+    // highlights read signed out name them in the public format.
     it("words a video's titles and descriptions, naming each person once", async function () {
       expect(await videoAnswer()).deep.equals([
         {
-          title: 'Home run: Fernando T',
+          title: 'Home run: Fernando Tatis',
           description:
-            'Top 1st: Fernando T hits a home run. Fernando T scores. 0–0'
+            'Top 1st: Fernando Tatis hits a home run. Fernando Tatis scores. 0–0'
         },
         {
-          title: 'Out at 1st: Fernando T (1B) from Adam L (SS)',
+          title: 'Out at 1st: Fernando Tatis (1B) from Adam LaRoche (SS)',
           description:
-            'Top 1st: Out at 1st, Fernando T (1B) from Adam L (SS). 0–0'
+            'Top 1st: Out at 1st, Fernando Tatis (1B) from Adam LaRoche (SS). 0–0'
         },
         {
           title: 'Single: Kyle Tucker',
           description: 'Top 1st: Kyle Tucker singles. Kyle Tucker scores. 0–0'
         }
+      ])
+      const signedOut = (await (
+        await fetch(`${base}/videos/${namedGame.videoId}/highlights`)
+      ).json()) as { highlights: Array<{ title: string }> }
+      expect(
+        signedOut.highlights.map(highlight => highlight.title)
+      ).deep.equals([
+        'Home run: Fernando T',
+        'Out at 1st: Fernando T (1B) from Adam L (SS)',
+        'Single: Kyle Tucker'
       ])
     })
 
@@ -518,12 +530,12 @@ describe('the highlight routes', function () {
       expect(await playerAnswer()).deep.equals([
         {
           eventId: 'evt_named_out',
-          title: 'Out at 1st: Fernando T (1B) from Adam L (SS)',
+          title: 'Out at 1st: Fernando Tatis (1B) from Adam LaRoche (SS)',
           outcome: 'Out at 1st'
         },
         {
           eventId: 'evt_named_hr',
-          title: 'Home run: Fernando T',
+          title: 'Home run: Fernando Tatis',
           outcome: 'Home run'
         }
       ])
@@ -544,18 +556,18 @@ describe('the highlight routes', function () {
       expect(
         (await videoAnswer()).map(highlight => highlight.title)
       ).deep.equals([
-        'Home run: Manny M',
-        'Out at 1st: Manny M (1B) from Adam L (SS)',
+        'Home run: Manny Machado',
+        'Out at 1st: Manny Machado (1B) from Adam LaRoche (SS)',
         'Single: Kyle Tucker'
       ])
       expect((await videoAnswer())[0].description).equals(
-        'Top 1st: Manny M hits a home run. Manny M scores. 0–0'
+        'Top 1st: Manny Machado hits a home run. Manny Machado scores. 0–0'
       )
       expect(
         (await playerAnswer()).map(highlight => highlight.title)
       ).deep.equals([
-        'Out at 1st: Manny M (1B) from Adam L (SS)',
-        'Home run: Manny M'
+        'Out at 1st: Manny Machado (1B) from Adam LaRoche (SS)',
+        'Home run: Manny Machado'
       ])
       expect(await stored()).deep.equals(before)
     })

@@ -371,7 +371,8 @@ describe('adding an existing player from Set Team Rosters', function () {
       css: '[data-testid="notification-reject"]',
       timeout: 30000
     })
-    expect(await pageText()).includes('Mookie B')
+    // His guardian reads him in full.
+    expect(await pageText()).includes('Mookie Betts')
     await shot('web-guardian-notice')
   })
 

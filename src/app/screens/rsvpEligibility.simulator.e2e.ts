@@ -97,7 +97,8 @@ async function main(): Promise<void> {
     await m.tapOn({ text: 'RSVP' })
     await m.assertVisible({ text: childName })
     await m.assertVisible({ text: ownName })
-    await m.assertNotVisible({ text: 'Ken G' })
+    // The coach is Ken's guardian, so would read him in full.
+    await m.assertNotVisible({ text: 'Ken Griffey' })
     await capture(m, out, 'eligible-rsvp-modal.png')
     await f.h.db
       .deleteFrom('memberships')

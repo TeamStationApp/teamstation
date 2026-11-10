@@ -5,6 +5,7 @@ import { rosterError } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
+import { shortPlayerNames } from './currentSetup'
 import { fieldPlayersFor } from './fieldAdapter'
 import { gameFixture } from './isUnscoredGame.test'
 import {
@@ -222,5 +223,85 @@ describe('local player entry', function () {
     expect(
       session.liveData.boxscore.teams.home.players.filter(row => row === id)
     ).has.length(1)
+  })
+
+  it('keeps the public label of a roster player named in full for the field', function () {
+    const session = scoringSession(gameFixture)
+    const draft = {
+      ...emptyPlayerDraft(),
+      firstName: 'Cliff',
+      lastName: 'Lee',
+      positions: ['SS']
+    }
+    const entry = {
+      userId: userIdOfGumbo(8800002),
+      gumboId: 8800002,
+      shortName: 'Cliff Lee',
+      nameFormat: 'full' as const,
+      compactName: 'Cliff L',
+      compactFormat: 'initials' as const
+    }
+    const id = addRosteredPlayer(session, 'home', entry, draft)
+    expect(session.gameData.players[id]).include({
+      fullName: 'Cliff Lee',
+      nameFormat: 'full',
+      compactName: 'Cliff L',
+      compactFormat: 'initials'
+    })
+    expect(
+      shortPlayerNames(Object.values(session.gameData.players)).get(id)
+    ).equals('Cliff L')
+    // Added again from a roster that names him as everyone reads him.
+    addRosteredPlayer(
+      session,
+      'home',
+      { gumboId: entry.gumboId, shortName: 'Cliff L' },
+      draft
+    )
+    expect(session.gameData.players[id].fullName).equals('Cliff L')
+    expect(session.gameData.players[id]).not.have.property('compactName')
+    // Nor the format of the full name: a short label is lengthened again.
+    expect(session.gameData.players[id]).not.have.property('nameFormat')
+    expect(session.gameData.players[id]).not.have.property('compactFormat')
+  })
+  it('writes the public label of a corrected name for a guest named in full', function () {
+    const session = scoringSession(gameFixture)
+    const id = session.liveData.boxscore.teams.away.players[0]
+    Object.assign(session.gameData.players[id], {
+      fullName: 'Cliff Lee',
+      firstName: 'Cliff',
+      lastName: 'Lee',
+      nameFormat: 'full',
+      compactName: 'Cliff L'
+    })
+    const draft = draftOfLocalPlayer(session.gameData.players[id])
+    editLocalPlayerDraft(session, 'away', id, {
+      ...draft,
+      firstName: 'Clifton'
+    })
+    expect(session.gameData.players[id]).include({
+      fullName: 'Clifton Lee',
+      nameFormat: 'full',
+      compactName: 'Clifton L'
+    })
+    expect(session.gameData.players[id]).not.have.property('compactFormat')
+    expect(
+      shortPlayerNames(Object.values(session.gameData.players)).get(id)
+    ).equals('Clifton L')
+    // Another public format is kept, and written of the new name.
+    Object.assign(session.gameData.players[id], {
+      compactName: 'C L',
+      compactFormat: 'initialLast'
+    })
+    editLocalPlayerDraft(session, 'away', id, {
+      ...draft,
+      firstName: 'Cliff',
+      lastName: 'Floyd'
+    })
+    expect(session.gameData.players[id]).include({
+      fullName: 'Cliff Floyd',
+      compactName: 'C Floyd',
+      compactFormat: 'initialLast'
+    })
   })
 })

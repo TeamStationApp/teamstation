@@ -13,6 +13,7 @@ import {
 } from '../../test/leaderboardFixture'
 import { umpireFixture } from '../../test/umpireFixture'
 import { openApiDocument } from '../openapi'
+import { people as umpirePeople } from './admin'
 import { leaderboard } from './assignments'
 
 describe('umpire leaderboard pages', function () {
@@ -316,16 +317,71 @@ describe('umpire leaderboard pages', function () {
 
   it('names everyone as the roster does, under a stricter format', async () => {
     const child = userIdOfGumbo(104)
-    const pageName = async (): Promise<string | undefined> =>
-      (await board('?order=asc')).scheduled.find(p => p.userId === child)?.name
-    const loose = await pageName()
+    const publicName = async (): Promise<string | undefined> =>
+      (await umpirePeople(f.h.db, f.leagueA)).find(p => p.id === child)?.name
+    const loose = await publicName()
     await f.h.db
       .updateTable('teams')
       .set({ player_name_privacy: 'initials' })
       .where('id', '=', f.teamA)
       .execute()
-    expect(await pageName()).not.equals(loose)
+    // The public list takes the format; the page, the league admin's alone,
+    // names the child in full, as the roster does to them.
+    expect(await publicName()).not.equals(loose)
+    expect(
+      (await board('?order=asc')).scheduled.find(p => p.userId === child)?.name
+    ).equals('Ichiro')
     await expectRosterNames()
+  })
+
+  it('breaks ties on the public name, whatever name it shows its reader', async () => {
+    const child = userIdOfGumbo(104)
+    const held = await f.h.db
+      .selectFrom('users')
+      .select(['first_name', 'last_name', 'display_name'])
+      .where('id', '=', child)
+      .executeTakeFirstOrThrow()
+    const rename = async (
+      id: string,
+      first: string | null,
+      last: string | null,
+      display: string
+    ): Promise<void> => {
+      await f.h.db
+        .updateTable('users')
+        .set({ first_name: first, last_name: last, display_name: display })
+        .where('id', '=', id)
+        .execute()
+    }
+    try {
+      // The child reads `Z G` in public, before `Zach E`, and in full to the
+      // league admin as `Zack Greinke`, after `Zach Eflin`.
+      await rename(child, 'Zack', 'Greinke', 'Zack Greinke')
+      await rename(idle, 'Zach', 'Eflin', 'Zach Eflin')
+      await f.h.db
+        .updateTable('teams')
+        .set({ player_name_privacy: 'initials' })
+        .where('id', '=', f.teamA)
+        .execute()
+      const shown = new Map(
+        (await umpirePeople(f.h.db, f.leagueA)).map(p => [p.id, p.name])
+      )
+      expect(shown.get(child)).equals('Z G')
+      const zero = (await board('?order=asc')).scheduled.filter(
+        p => p.count === 0
+      )
+      expect(zero.find(p => p.userId === child)?.name).equals('Zack Greinke')
+      const order = zero.map(p => p.userId)
+      expect(order.indexOf(child)).lessThan(order.indexOf(idle))
+      expect(order).deep.equals(
+        [...order].sort((a, b) => {
+          const name = shown.get(a)!.localeCompare(shown.get(b)!)
+          return name === 0 ? a.localeCompare(b) : name
+        })
+      )
+    } finally {
+      await rename(child, held.first_name, held.last_name, held.display_name)
+    }
   })
 
   it('names everyone as the roster does, through a collision', async () => {

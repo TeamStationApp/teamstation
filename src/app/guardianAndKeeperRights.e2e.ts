@@ -432,14 +432,16 @@ async function roster(run: Run): Promise<void> {
     return match!
   }
   const row = (name: string): string => found(name).text
+  // The admin reads themselves and the team's players in full, and the
+  // other adults short.
   expect(row('Mike T')).includes('Season coach')
-  expect(row('Babe R')).includes('League admin')
+  expect(row('Babe Ruth')).includes('League admin')
   expect(row('Owen M')).includes('Assistant')
   expect(row('Nick P')).includes('Scorekeeper')
   expect(row('Ichiro')).includes('Coach')
   expect(row('Ichiro')).not.includes('Season')
-  expect(row('Alfonso S')).includes('SS · 2B')
-  expect(row('Alfonso S')).includes('#7')
+  expect(row('Alfonso Soriano')).includes('SS · 2B')
+  expect(row('Alfonso Soriano')).includes('#7')
   expect(row('Tim R')).not.includes('#')
   expect(row('Hank M')).not.includes('#')
   expect(row('Sandy L')).includes('Season spectator')
@@ -450,7 +452,7 @@ async function roster(run: Run): Promise<void> {
   // For the team's admin every row opens, with a chevron: a player's page,
   // and staff, family, spectators and followers their profile.
   for (const name of [
-    'Babe R',
+    'Babe Ruth',
     'Mike T',
     'Owen M',
     'Nick P',
@@ -461,11 +463,11 @@ async function roster(run: Run): Promise<void> {
     'Sandy L',
     'Felipe A',
     'Grant H',
-    'Alfonso S',
-    'Ben C',
-    'Cody D',
-    'Drew E',
-    'Elijah D'
+    'Alfonso Soriano',
+    'Ben Chapman',
+    'Cody Decker',
+    'Drew Ellis',
+    'Elijah Dukes'
   ]) {
     expect(found(name).button, name).equals(true)
     expect(row(name), name).includes('chevron_right')
@@ -664,7 +666,8 @@ async function people(run: Run): Promise<void> {
   })
   await contains(coach.page, 'Tim Raines')
   await contains(coach.page, 'PARENT/GUARDIAN OF')
-  await contains(coach.page, 'Alfonso S')
+  // The coach reads their player in full.
+  await contains(coach.page, 'Alfonso Soriano')
   const coachView = await heldRows(coach, 'team')
   expect(coachView.admin).equals('—')
   expect(coachView.coach).equals('Off')
@@ -677,7 +680,7 @@ async function people(run: Run): Promise<void> {
     ).equals(false)
   await run.shot(coach, 'person-profile-team.png', { fit: true })
   // Alfonso's row opens Alfonso, on the Hawks.
-  await coach.m.tapOn({ text: 'Alfonso S', timeout: 15000 })
+  await coach.m.tapOn({ text: 'Alfonso Soriano', timeout: 15000 })
   await coach.page.waitForFunction(
     () => location.pathname.startsWith('/players/'),
     { timeout: 15000 }
@@ -689,7 +692,7 @@ async function people(run: Run): Promise<void> {
     url: `${f.h.origin}/seasons/${f.seasonA}/people/${people.guardian}`
   })
   await contains(admin.page, 'Season · Demo Regular')
-  await contains(admin.page, 'Alfonso S')
+  await contains(admin.page, 'Alfonso Soriano')
   const page =
     (await admin.page.evaluate(() => document.body.textContent)) ?? ''
   expect(page).includes('SEASON ROLES')
@@ -757,7 +760,7 @@ async function people(run: Run): Promise<void> {
   await until(async () => !(await onHawks(ben.id)))
   expect(await roleRows(ben.id)).deep.equals([])
   await contains(admin.page, 'Removed Ben C from Demo Hawks')
-  await contains(admin.page, 'Alfonso S')
+  await contains(admin.page, 'Alfonso Soriano')
   const rosterNames = await admin.page.evaluate(() => {
     const roster = document.querySelector('[data-testid="teamTabContent"]')
     if (roster === null) throw new Error('No roster')
@@ -765,9 +768,11 @@ async function people(run: Run): Promise<void> {
       .filter(node => node.children.length === 0)
       .map(node => String(node.textContent))
   })
-  expect(rosterNames).includes('Alfonso S')
-  expect(rosterNames).includes('Cody D')
+  // The admin reads the players left in full.
+  expect(rosterNames).includes('Alfonso Soriano')
+  expect(rosterNames).includes('Cody Decker')
   expect(rosterNames).not.includes('Ben C')
+  expect(rosterNames).not.includes('Ben Chapman')
   await run.shot(admin, 'player-remove-from-team.png', { fit: true })
 
   // By the API: adding an account by address applies at once, tells them,
@@ -1371,9 +1376,11 @@ async function guardian(run: Run): Promise<void> {
     playerName: 'Cody D',
     teamName: 'Demo Hawks'
   })
+  // The mail names Cody short; the coach, who may read him in full, reads
+  // his own sent request so.
   const sent = await api('GET', '/me/notifications?sent=1', people.teamCoach)
   expect(sent.body.items.map((item: any) => item.title)).deep.equals([
-    'Be a guardian of Cody D'
+    'Be a guardian of Cody Decker'
   ])
   const jade = await api(
     'POST',
@@ -1428,7 +1435,7 @@ async function guardian(run: Run): Promise<void> {
   expect(mailed).not.has.property('teamName')
   const timSent = await api('GET', '/me/notifications?sent=1', people.guardian)
   expect(timSent.body.items.map((item: any) => item.title)).deep.equals([
-    'Be a guardian of Alfonso S'
+    'Be a guardian of Alfonso Soriano'
   ])
   const beforeTeams = await api('GET', '/teams', invitee)
   expect(beforeTeams.body).deep.equals([])
@@ -1450,9 +1457,10 @@ async function guardian(run: Run): Promise<void> {
   await tap(faye.m, 'History')
   await contains(faye.page, 'Accepted')
   expect(await guardiansOf(avery.id)).deep.equals([people.guardian, invitee])
+  // A guardian now, she reads Alfonso in full.
   const inbox = await api('GET', '/me/notifications?history=1', invitee)
   expect(inbox.body.items[0]).deep.include({
-    title: 'Be a guardian of Alfonso S',
+    title: 'Be a guardian of Alfonso Soriano',
     status: 'accepted'
   })
   const roles = await api('GET', '/me/roles', invitee)
@@ -2213,7 +2221,7 @@ async function home(run: Run): Promise<void> {
   }
   const guardianOrder = inOrder(guardianHome, [
     'YOUR PLAYERS',
-    'Alfonso S',
+    'Alfonso Soriano',
     'YOUR TEAMS',
     'Demo Hawks',
     'Create League',
@@ -2233,8 +2241,12 @@ async function home(run: Run): Promise<void> {
   )
   await run.shot(guardian, 'home-after.png', { fit: true })
 
-  // Opened from Home, Alfonso's page has no team: his whole career.
-  await guardian.m.tapOn({ css: '[aria-label="Alfonso S"]', timeout: 15000 })
+  // Opened from Home, Alfonso's page has no team: his whole career. His
+  // guardian reads his name in full.
+  await guardian.m.tapOn({
+    css: '[aria-label="Alfonso Soriano"]',
+    timeout: 15000
+  })
   await guardian.page.waitForSelector('[aria-label="Filter videos"]', {
     timeout: 20000
   })

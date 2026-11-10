@@ -362,6 +362,54 @@ describe('current scoring setup', function () {
     ).deep.equals(['Luis Ga', 'Luis Go'])
     expect(shown.gameData.players[ids[0]].lastName).equals('Garcia')
   })
+  it('keeps the public label beside a roster name full only for its reader, and drops it when the roster does', function () {
+    const original = game()
+    const player = original.gameData.players[1]
+    player.local = false
+    player.fullName = 'Mookie B'
+    const entry = asRosterEntry({
+      userId: userIdOfGumbo(101),
+      gumboId: 1,
+      shortName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'Mookie B',
+      jersey: '50',
+      positions: [],
+      isPlayer: true,
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
+    })
+    const shown = withRosterDetails(original, { [player.teamId]: [entry] })
+    expect(shown.gameData.players[1]).include({
+      fullName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'Mookie B'
+    })
+    // The field draws the public label; the lineup the full one.
+    expect(
+      shortPlayerNames(Object.values(shown.gameData.players)).get(1)
+    ).equals('Mookie B')
+    expect(defensiveRosterLabel(shown.gameData.players[1])).equals(
+      '#50 Mookie Betts'
+    )
+    expect(withRosterDetails(shown, { [player.teamId]: [entry] })).equals(shown)
+    const { nameFormat: _f, compactName: _c, ...plain } = entry
+    const public_ = withRosterDetails(shown, {
+      [player.teamId]: [{ ...plain, shortName: 'Mookie B' }]
+    })
+    expect(public_.gameData.players[1].fullName).equals('Mookie B')
+    expect(public_.gameData.players[1]).not.have.property('compactName')
+    // A roster with no label keeps the game's, and the public one beside it.
+    const unnamed = withRosterDetails(shown, {
+      [player.teamId]: [{ ...plain, shortName: ' ', jersey: '5' }]
+    })
+    expect(unnamed.gameData.players[1]).include({
+      fullName: 'Mookie Betts',
+      compactName: 'Mookie B'
+    })
+  })
   it('displays current team jerseys without changing saved setup or placeholders', function () {
     const original = game()
     const player = original.gameData.players[1]
@@ -623,6 +671,32 @@ describe('names drawn on the field', function () {
     ])
     expect(names.get(1)).equals('Alex R')
     expect(names.get(2)).equals('Daniel M')
+  })
+
+  it('draws the public label of a player named in full only for this reader', function () {
+    const names = shortPlayerNames([
+      {
+        ...player(1, 'Mookie Betts'),
+        nameFormat: 'full',
+        compactName: ' Mookie B '
+      },
+      player(2, 'Daniel M')
+    ])
+    expect(names.get(1)).equals('Mookie B')
+    expect(names.get(2)).equals('Daniel M')
+  })
+
+  it('lengthens a typed player against a public label he would read as (Q7)', function () {
+    const names = shortPlayerNames([
+      {
+        ...player(1, 'Mookie Betts'),
+        nameFormat: 'full',
+        compactName: 'Mookie B'
+      },
+      player(2, 'Mookie Bell', { firstName: 'Mookie', lastName: 'Bell' })
+    ])
+    expect(names.get(1)).equals('Mookie B')
+    expect(names.get(2)).equals('Mookie Be')
   })
 
   it('keeps an initial that already has its period', function () {

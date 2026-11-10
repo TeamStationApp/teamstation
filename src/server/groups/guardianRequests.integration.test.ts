@@ -11,6 +11,7 @@ import {
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { createSession } from '../auth/sessions'
+import { inbox as pageOf } from '../notifications/inbox'
 import { createRelationshipRequest } from './requests'
 
 const DAY = 24 * 3600 * 1000
@@ -219,6 +220,52 @@ describe('guardian invitations and requests', function () {
   }
 
   describe('invitations', () => {
+    it('finds whom a page of sent invitations names in full once, however many', async () => {
+      const queries: string[] = []
+      const watched = f.h.db.withPlugin({
+        transformQuery: args => {
+          queries.push(JSON.stringify(args.node))
+          return args.node
+        },
+        transformResult: async args => await Promise.resolve(args.result)
+      })
+      const coach = {
+        userId: userIdOfGumbo(f.people.teamCoach),
+        isAdmin: false,
+        scopes: []
+      }
+      // `mayEditNames` reads the related ids of the reader's guardian and
+      // family links, and only those.
+      const linkRead =
+        '"from":{"kind":"FromNode","froms":[{"kind":"TableNode","table":{"kind":"SchemableIdentifierNode","identifier":{"kind":"IdentifierNode","name":"user_links"}}}]},"selections":[{"kind":"SelectionNode","selection":{"kind":"ReferenceNode","column":{"kind":"ColumnNode","column":{"kind":"IdentifierNode","name":"related_user_id"}}}}],'
+      const nameReads = async (): Promise<number> => {
+        queries.length = 0
+        await pageOf(watched, coach, { sent: true })
+        return queries.filter(query => query.includes(linkRead)).length
+      }
+      expect((await invite(202, { email: 'one@example.com' })).status).equals(
+        201
+      )
+      expect(await nameReads()).equals(1)
+      for (const [player, email] of [
+        [203, 'two@example.com'],
+        [204, 'three@example.com'],
+        [205, 'four@example.com']
+      ] as const)
+        expect((await invite(player, { email })).status).equals(201)
+      expect(await nameReads()).equals(1)
+      // Each still names its player in full to the coach who sent it.
+      const titles = (await pageOf(watched, coach, { sent: true })).items
+        .map(item => item.title)
+        .sort()
+      expect(titles).deep.equals([
+        'Be a guardian of Ben Chapman',
+        'Be a guardian of Cody Decker',
+        'Be a guardian of Drew Ellis',
+        'Be a guardian of Elijah Dukes'
+      ])
+    })
+
     it('lets a coach invite an address, mails it, and makes whoever verifies it and accepts the guardian', async () => {
       const sent = await invite(202, { email: 'New.Parent@example.com' })
       expect(sent.status).equals(201)
@@ -230,13 +277,16 @@ describe('guardian invitations and requests', function () {
         invitedBy: 'Ichiro',
         link: `/notifications/${id}`
       })
+      // The coach who sent it reads the child in full in their sent list,
+      // and the mail to somebody else carries the short name.
       expect(
         (await inbox(f.people.teamCoach, '?sent=1')).items.map(item => [
           item.requestId,
+          item.title,
           item.canWithdraw,
           item.canResend
         ])
-      ).deep.equals([[id, true, false]])
+      ).deep.equals([[id, 'Be a guardian of Ben Chapman', true, false]])
 
       await person(301, 'Pat Neshek', 'new.parent@example.com')
       const waiting = await inbox(301)
@@ -452,13 +502,15 @@ describe('guardian invitations and requests', function () {
       )!
       expect(notification).deep.include({
         type: 'guardian',
-        title: "Nick Punto asks to be Cody D's guardian",
+        // The player reads their own name in full.
+        title: "Nick Punto asks to be Cody Decker's guardian",
         description:
-          "Approving lets them see Cody D's teams and manage Cody D's details.",
+          "Approving lets them see Cody Decker's teams and manage Cody Decker's details.",
         canAct: true
       })
       // The sender and the player are named as they are now: nothing stored
-      // holds either name.
+      // holds either name, though the sender, a scorekeeper of the player's
+      // team, may read the player in full.
       const stored = await f.h.db
         .selectFrom('notification_events')
         .select('metadata')
@@ -479,9 +531,9 @@ describe('guardian invitations and requests', function () {
       expect(
         (await inbox(203)).items.find(item => item.requestId === sent.body.id)
       ).deep.include({
-        title: "Joe Mauer asks to be Carlos D's guardian",
+        title: "Joe Mauer asks to be Carlos Delgado's guardian",
         description:
-          "Approving lets them see Carlos D's teams and manage Carlos D's details."
+          "Approving lets them see Carlos Delgado's teams and manage Carlos Delgado's details."
       })
       const own = (await inbox(f.people.scorekeeper, '?sent=1')).items
       expect(own.map(item => [item.requestId, item.canResend])).deep.equals([
@@ -675,7 +727,7 @@ describe('guardian invitations and requests', function () {
           item.title,
           item.canWithdraw
         ])
-      ).deep.equals([[sent.body.id, 'Be a guardian of Ben C', true]])
+      ).deep.equals([[sent.body.id, 'Be a guardian of Ben Chapman', true]])
       expect(
         (await decide(sent.body.id, 'withdraw', f.people.teamCoach)).body.status
       ).equals('cancelled')
@@ -708,7 +760,8 @@ describe('guardian invitations and requests', function () {
       expect(
         waiting.items.find(item => item.requestId === sent.body.id)
       ).deep.include({
-        title: "Nick Punto asks to be Alfonso S's guardian",
+        // His guardian reads him in full.
+        title: "Nick Punto asks to be Alfonso Soriano's guardian",
         canAct: true
       })
       expect(

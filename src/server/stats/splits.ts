@@ -6,6 +6,7 @@ import { survivorsOf } from '../admin/people'
 import type { Database } from '../db/database'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { battingRates, DEFAULT_ERA_INNINGS, pitchingRates } from '../stats'
+import type { Reader } from '../users/readerNames'
 
 /**
  * Stats split by anything a plate appearance records, worked out in one SQL
@@ -235,11 +236,15 @@ export class TooManyLines extends Error {
   }
 }
 
-/** The lines `query` asks for, in its order, at most its limit. */
+/**
+ * The lines `query` asks for, in its order, at most its limit, each player
+ * named as `options.reader` may read them.
+ */
 export async function statSplits(
   db: Kysely<Database>,
   scopes: VisibleScopes,
-  query: SplitQuery
+  query: SplitQuery,
+  options: { reader?: Reader } = {}
 ): Promise<SplitRow[]> {
   const filter = query.filter ?? {}
   const groups = new Set(query.groupBy ?? [])
@@ -477,7 +482,7 @@ export async function statSplits(
     return keyOf(a).localeCompare(keyOf(b))
   })
   // Only the lines returned are named.
-  return await named(db, rated.slice(0, query.limit), filter)
+  return await named(db, rated.slice(0, query.limit), filter, options.reader)
 }
 
 /**
@@ -529,11 +534,15 @@ const COUNT_NAMES: Array<keyof SplitCounts> = [
 const isCount = (name: string): boolean =>
   (COUNT_NAMES as string[]).includes(name)
 
-/** Each line's names: the player's short name, and the teams' and season's. */
+/**
+ * Each line's names: the player's, as the reader may read it, and the teams'
+ * and season's.
+ */
 async function named(
   db: Kysely<Database>,
   rows: Array<SplitKey & SplitCounts & SplitRates>,
-  filter: SplitFilter
+  filter: SplitFilter,
+  reader: Reader | undefined
 ): Promise<SplitRow[]> {
   const userIds = [
     ...new Set(rows.flatMap(row => (row.userId == null ? [] : [row.userId])))
@@ -558,7 +567,8 @@ async function named(
       return person == null
         ? []
         : [{ person, teamId: row.teamId ?? filter.teamId }]
-    })
+    }),
+    { reader }
   )
   const teamIds = [
     ...new Set(

@@ -402,6 +402,14 @@ export interface GamePlayer {
    * one: the label is final, drawn as sent. Only a read carries it.
    */
   nameFormat?: PlayerNamePrivacy
+  /**
+   * The public label, kept when `fullName` is a full name only its reader
+   * reads: drawn where the label must stay compact or leaves the reader.
+   * Only a read carries it.
+   */
+  compactName?: string
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat?: PlayerNamePrivacy
   jersey: string
   bats: 'left' | 'right' | 'switch'
   throws: 'left' | 'right' | null
@@ -743,6 +751,8 @@ const playerShape = {
   firstName: asOptional(asString),
   lastName: asOptional(asString),
   nameFormat: asOptional(asPlayerNamePrivacy),
+  compactName: asOptional(asString),
+  compactFormat: asOptional(asPlayerNamePrivacy),
   jersey: asString,
   bats: asLiteral('left', 'right', 'switch'),
   throws: asNullable(asLiteral('left', 'right')),
@@ -750,7 +760,12 @@ const playerShape = {
   local: asBoolean
 }
 const asPlayer = asObject(playerShape)
-const { nameFormat: _readOnly, ...legacyPlayerShape } = playerShape
+const {
+  nameFormat: _readOnly,
+  compactName: _readOnlyToo,
+  compactFormat: _readOnlyThree,
+  ...legacyPlayerShape
+} = playerShape
 const asLegacyPlayer = asObject({
   ...legacyPlayerShape,
   userId: asNullable(asNumber)

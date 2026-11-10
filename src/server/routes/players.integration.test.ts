@@ -517,19 +517,39 @@ describe('a player, and who may change their name', function () {
     otherCoachId
   ]
 
-  it('never puts the whole name on the player page, for anybody', async function () {
+  // Who may read the child's whole name (`mayEditName`): the team's roster
+  // managers and the coach above it, the child, and a site administrator.
+  // A songkeeper, a videographer, a stranger and another team's coach may not.
+  const readsInFull = (): number[] => [
+    teamCoachId,
+    assistantId,
+    leagueCoachId,
+    coachId,
+    childId,
+    siteAdminId,
+    scorekeeperId
+  ]
+
+  it('names the player on their page in full to whoever may read it, and short to everybody else', async function () {
     for (const viewer of everyViewer()) {
       const answer = await get(`/players/${userIdOfGumbo(childId)}`, viewer)
       expect(answer.status, String(viewer)).equals(200)
-      expect(asPlayerDetail(answer.body).name).equals('Jordan P')
-      expect(JSON.stringify(answer.body), String(viewer)).not.includes(
-        'Pacheco'
+      const full = readsInFull().includes(viewer)
+      expect(asPlayerDetail(answer.body).name, String(viewer)).equals(
+        full ? 'Jordan Pacheco' : 'Jordan P'
       )
+      if (!full)
+        expect(JSON.stringify(answer.body), String(viewer)).not.includes(
+          'Pacheco'
+        )
       expect(answer.body, String(viewer)).not.have.property('fullName')
     }
+    // Their guardian reads them in full too.
+    const parent = await get(`/players/${userIdOfGumbo(childId)}`, parentId)
+    expect(asPlayerDetail(parent.body).name).equals('Jordan Pacheco')
   })
 
-  it('never puts the whole name on the roster, for anybody', async function () {
+  it('names the player on the roster in full to whoever may read it, with the public label beside it', async function () {
     for (const viewer of everyViewer()) {
       const answer = await get(`/teams/${teamId}/roster`, viewer)
       expect(answer.status, String(viewer)).equals(200)
@@ -537,7 +557,15 @@ describe('a player, and who may change their name', function () {
       const child = answer.body
         .map(asRosterEntry)
         .find(entry => entry.userId === userIdOfGumbo(childId))
-      expect(child?.shortName).equals('Jordan P')
+      if (readsInFull().includes(viewer)) {
+        expect(child, String(viewer)).includes({
+          shortName: 'Jordan Pacheco',
+          compactName: 'Jordan P'
+        })
+        continue
+      }
+      expect(child?.shortName, String(viewer)).equals('Jordan P')
+      expect(child?.compactName, String(viewer)).equals(undefined)
       expect(JSON.stringify(answer.body), String(viewer)).not.includes(
         'Pacheco'
       )
@@ -865,9 +893,19 @@ describe('a player, and who may change their name', function () {
         login_enabled: false,
         bats_source: original.bats_source
       })
+      // The plain roster names the new name in full to the scorekeeper, who
+      // may read it, and keeps it from a songkeeper, who may not.
+      expect(
+        (
+          (await get(`/teams/${teamId}/roster`, scorekeeperId))
+            .body as unknown[]
+        )
+          .map(asRosterEntry)
+          .find(row => row.userId === userIdOfGumbo(childId))?.shortName
+      ).equals('Mookie Betts')
       expect(
         JSON.stringify(
-          (await get(`/teams/${teamId}/roster`, scorekeeperId)).body
+          (await get(`/teams/${teamId}/roster`, songkeeperId)).body
         )
       ).not.includes('Betts')
       const surnameOnly = await put(
@@ -915,7 +953,11 @@ describe('a player, and who may change their name', function () {
       const entry = asRosterEntry(answer.body)
       expect(entry.userId).equals(userIdOfGumbo(childId))
       expect(entry.jersey).equals(jersey)
-      expect(entry.shortName).equals('Jordan P')
+      // Each of them may read the player's whole name.
+      expect(entry, String(viewer)).includes({
+        shortName: 'Jordan Pacheco',
+        compactName: 'Jordan P'
+      })
     }
   })
 
@@ -1347,7 +1389,9 @@ describe('a player, and who may change their name', function () {
       expect(entry.positions).deep.equals(['SS', 'DH'])
       expect(entry.bats).equals('left')
       expect(entry.throws).equals('right')
-      expect(entry.shortName).equals(`Alex ${lastName[0]}`)
+      // A roster manager reads their new player in full.
+      expect(entry.shortName).equals(`Alex ${lastName}`)
+      expect(entry.compactName).equals(`Alex ${lastName[0]}`)
       expect(entry.nameDetails).deep.equals({
         firstName: 'Alex',
         lastName,
@@ -1505,28 +1549,29 @@ describe('a player, and who may change their name', function () {
       .where('id', '=', userIdOfGumbo(childId))
       .executeTakeFirstOrThrow()
     try {
+      // The site administrator reads the player in full.
       await rename('Jose', 'Altuve')
       expect(await read()).deep.equals({
         player: {
-          title: 'Ground out: Jose A (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Jose Altuve (SS) to Kyle Tucker (1B)',
           outcome: 'Ground out'
         },
         video: {
-          title: 'Ground out: Jose A (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Jose Altuve (SS) to Kyle Tucker (1B)',
           description:
-            'Top 2nd: Ground out, Jose A (SS) to Kyle Tucker (1B). 0–0'
+            'Top 2nd: Ground out, Jose Altuve (SS) to Kyle Tucker (1B). 0–0'
         }
       })
       await rename('Mookie', 'Betts')
       expect(await read()).deep.equals({
         player: {
-          title: 'Ground out: Mookie B (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Mookie Betts (SS) to Kyle Tucker (1B)',
           outcome: 'Ground out'
         },
         video: {
-          title: 'Ground out: Mookie B (SS) to Kyle Tucker (1B)',
+          title: 'Ground out: Mookie Betts (SS) to Kyle Tucker (1B)',
           description:
-            'Top 2nd: Ground out, Mookie B (SS) to Kyle Tucker (1B). 0–0'
+            'Top 2nd: Ground out, Mookie Betts (SS) to Kyle Tucker (1B). 0–0'
         }
       })
     } finally {

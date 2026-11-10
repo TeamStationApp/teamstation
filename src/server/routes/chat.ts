@@ -31,6 +31,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { survivors } from '../teams/teamStaff'
+import { readerOf } from '../users/readerNames'
 
 /** At most this many people come back from a candidate search. */
 export const MAX_CANDIDATES = 50
@@ -64,7 +65,7 @@ export function chatRoutes(
     requireActor,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
-      res.json(await blocksFor(db, media, caller.userId))
+      res.json(await blocksFor(db, media, caller.userId, readerOf(req.actor)))
     })
   )
   for (const method of ['put', 'delete'] as const) {
@@ -75,7 +76,7 @@ export function chatRoutes(
         const caller = chatCaller(req.actor)
         const target = cleanBody(asUserId, pathParam(req.params.userId))
         await setBlock(db, caller.userId, target, method === 'put', clock())
-        res.json(await blocksFor(db, media, caller.userId))
+        res.json(await blocksFor(db, media, caller.userId, readerOf(req.actor)))
       })
     )
   }
@@ -97,7 +98,14 @@ export function chatRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       res.json(
-        await conversationsFor(db, media, actor.userId, actor.isAdmin, clock())
+        await conversationsFor(
+          db,
+          media,
+          actor.userId,
+          actor.isAdmin,
+          clock(),
+          readerOf(actor)
+        )
       )
     })
   )
@@ -162,7 +170,7 @@ export function chatRoutes(
       if (actor == null) throw unauthorized()
       const id = pathParam(req.params.conversationId)
       await mustBeMember(id, actor.userId)
-      res.json(await membersOf(db, media.space, id, clock()))
+      res.json(await membersOf(db, media.space, id, clock(), readerOf(actor)))
     })
   )
 
@@ -207,7 +215,8 @@ export function chatRoutes(
       const people = await chatPeople(
         db,
         media.space,
-        target == null ? ids : ids.filter(id => id === canonical)
+        target == null ? ids : ids.filter(id => id === canonical),
+        { reader: readerOf(actor) }
       )
       res.json(
         [...people.values()]
@@ -217,6 +226,9 @@ export function chatRoutes(
           .map(person => ({
             userId: person.userId,
             shortName: person.shortName,
+            ...(person.compactName == null
+              ? {}
+              : { compactName: person.compactName }),
             avatarUrl: person.avatarUrl
           }))
       )
@@ -257,7 +269,8 @@ export function chatRoutes(
       const people = await chatPeople(
         db,
         media.space,
-        adults.map(adult => adult.userId)
+        adults.map(adult => adult.userId),
+        { reader: readerOf(actor) }
       )
       res.json(
         adults.flatMap(adult => {
@@ -267,6 +280,9 @@ export function chatRoutes(
             {
               userId: adult.userId,
               shortName: person.shortName,
+              ...(person.compactName == null
+                ? {}
+                : { compactName: person.compactName }),
               label: adult.label ?? ''
             }
           ]
@@ -296,7 +312,8 @@ export function chatRoutes(
             media,
             made.conversationId,
             actor.userId,
-            actor.isAdmin
+            actor.isAdmin,
+            readerOf(actor)
           )
         )
     })

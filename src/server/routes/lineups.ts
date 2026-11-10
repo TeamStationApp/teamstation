@@ -109,6 +109,7 @@ import { withAsync } from '../middleware/withErrors'
 import { scoringUsers } from '../scoring/gumboIds'
 import { resolveScoringGame } from '../scoring/openRow'
 import { contextOf } from '../scoring/replayContext'
+import { type Reader, readerOf } from '../users/readerNames'
 import { tellGameWritten } from './gameWritten'
 import { teamWalkUpSongs } from './walkUpSongs'
 
@@ -300,8 +301,9 @@ export function lineupRoutes(
         .executeTakeFirst()
       if (team == null) throw notFound()
       res.json(
-        (await resolvedDefaultOf(db, teamId, team.default_lineup)) ??
-          NO_DEFAULT_LINEUP
+        (await resolvedDefaultOf(db, teamId, team.default_lineup, {
+          reader: readerOf(actor)
+        })) ?? NO_DEFAULT_LINEUP
       )
     })
   )
@@ -464,20 +466,30 @@ export function lineupRoutes(
       )
         throw notFound()
       const roles = await roleScopes(db, actor.userId, actor.isAdmin)
-      const lineups = await gameLineups(db, {
-        id: gameId,
-        home_team_id: game.home_team_id,
-        away_team_id: game.away_team_id,
-        currentPlay: game.currentPlay,
-        pregame: game.pregame
-      })
+      const reader = readerOf(actor)
+      const lineups = await gameLineups(
+        db,
+        {
+          id: gameId,
+          home_team_id: game.home_team_id,
+          away_team_id: game.away_team_id,
+          currentPlay: game.currentPlay,
+          pregame: game.pregame
+        },
+        { reader }
+      )
       const side = async (which: Side): Promise<DjSide> => {
         const read = lineups[which]
         return {
           teamId: read.teamId,
           teamName: read.teamName,
           canEditWalkUp: canKeepSongs(roles, read.teamId),
-          ...(await djBatters(db, read, canSeeTeam(scopes, read.teamId)))
+          ...(await djBatters(
+            db,
+            read,
+            canSeeTeam(scopes, read.teamId),
+            reader
+          ))
         }
       }
       // Before the first pitch no at-bat is stored: the away leadoff is up.
@@ -1030,12 +1042,14 @@ function refusal(problem: Problem): HttpError {
 
 /**
  * One side's batters for DJ Game, and where they came from, each with his
- * walk-up song on that team. A placeholder has none.
+ * walk-up song on that team. A placeholder has none. A default or a roster
+ * names in full everyone `reader` may read in full, as `read` already does.
  */
 async function djBatters(
   db: Kysely<Database>,
   read: TeamSideLineups,
-  maySeeTeam: boolean
+  maySeeTeam: boolean,
+  reader: Reader | undefined
 ): Promise<Pick<DjSide, 'source' | 'batters'>> {
   // Game visibility shares this game’s lineup, never an unrelated team default
   // or roster. Check before querying either fallback or its private songs.
@@ -1067,7 +1081,9 @@ async function djBatters(
     .select('default_lineup')
     .where('id', '=', read.teamId)
     .executeTakeFirst()
-  const kept = await resolvedDefaultOf(db, read.teamId, team?.default_lineup)
+  const kept = await resolvedDefaultOf(db, read.teamId, team?.default_lineup, {
+    reader
+  })
   if (kept?.lineup != null) {
     return { source: 'default', batters: await withSongs(kept.lineup) }
   }
@@ -1095,7 +1111,8 @@ async function djBatters(
         displayName: row.displayName
       },
       teamId: read.teamId
-    }))
+    })),
+    { reader }
   )
   const nameOf = (row: (typeof rows)[number]): string =>
     names.get(row.userId) ?? row.displayName

@@ -139,11 +139,14 @@ describe('account settings HTTP API', function () {
         await h.request('GET', '/players/usr_111111111111111111112k')
       ).json()
     )
-    expect(player.name).equals('Alex R')
+    // They read their own name in full, and the public label beside it.
+    expect(player.name).equals('Alex Rodriguez')
     const team = await (
       await h.request('GET', '/teams/tem_account/roster')
     ).json()
-    expect(JSON.stringify(team)).includes('Alex R')
+    expect(JSON.stringify(team)).includes(
+      '"shortName":"Alex Rodriguez","nameFormat":"full","compactName":"Alex R"'
+    )
     const other = await h.db
       .selectFrom('users')
       .select('display_name')

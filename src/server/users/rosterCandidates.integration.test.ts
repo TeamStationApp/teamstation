@@ -657,6 +657,44 @@ describe('roster candidates', function () {
     expect(teamsOf('Mookie B')).deep.equals([])
   })
 
+  it('sends the public label beside a name full only for the asker', async function () {
+    // Coaching the Owls too, the coach reads their players in full.
+    const role = makeId('scopeRole')
+    await db!
+      .insertInto('scope_roles')
+      .values({
+        id: role,
+        user_id: id('Dave Roberts'),
+        scope_type: 'team',
+        scope_id: team.owls,
+        role: 'coach'
+      })
+      .execute()
+    try {
+      const answer = await ask(COACH, { forTeam: team.falcons, q: 'mook' })
+      expect(answer.body).has.length(1)
+      expect(answer.body[0]).to.include({
+        shortName: 'Mookie Betts',
+        nameFormat: 'full',
+        compactName: 'Mookie B'
+      })
+      expect(answer.body[0]).not.have.property('compactFormat')
+      // The parts the add-to-roster form stores, and the lineup QR sends,
+      // are the public label's.
+      expect(answer.body[0].shortParts).deep.equals({
+        first: 'Mookie',
+        last: 'B'
+      })
+      // Nobody else is told more than the public label.
+      const other = await ask(HERON_SCORER, { forTeam: team.herons, q: 'mook' })
+      expect(other.body[0]).to.include({ shortName: 'Mookie B' })
+      expect(other.body[0]).not.have.property('compactName')
+      expect(other.body[0]).not.have.property('nameFormat')
+    } finally {
+      await db!.deleteFrom('scope_roles').where('id', '=', role).execute()
+    }
+  })
+
   it('pages thirty at a time with no row twice, and a row added before the cursor does not move the next page', async function () {
     const pages: any[][] = []
     let cursor: string | undefined

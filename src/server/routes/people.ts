@@ -47,6 +47,7 @@ import { noteScopeChange } from '../socket/syncRevision'
 import { personProfile } from '../teams/personProfile'
 import { teamHeadCoach } from '../teams/teamHeadCoach'
 import { levelPeople, onPeopleList } from '../teams/teamRoster'
+import { readerOf } from '../users/readerNames'
 
 /**
  * People at a team, a season or a league, with nobody's acceptance needed.
@@ -89,7 +90,13 @@ export function peopleRoutes(
         const actor = await actorOf(req.actor)
         const ref = { kind, id: pathParam(req.params.id) }
         if (!(await seesPeopleOf(db, actor, ref))) throw notFound()
-        const people = await levelPeople(db, media.space, ref, actor)
+        const people = await levelPeople(
+          db,
+          media.space,
+          ref,
+          actor,
+          readerOf(req.actor)
+        )
         if (people == null) throw notFound()
         const manages = await canManagePeople(db, actor, ref)
         res.json({

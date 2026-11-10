@@ -27,6 +27,7 @@ import {
 import { playerSplits } from '../stats/playerSplits'
 import { playerFilterOf, statRows } from '../stats/rows'
 import { seasonParticipants, seasonResults } from '../stats/seasonTeams'
+import { readerOf } from '../users/readerNames'
 
 /**
  * A player's stats by season and for their career, a season's standings, and
@@ -267,7 +268,8 @@ export function statsRoutes(
             displayName: row.displayName
           },
           teamId: row.teamId
-        }))
+        })),
+        { reader: readerOf(actor) }
       )
       res.json({
         seasonId,
