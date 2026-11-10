@@ -78,8 +78,11 @@ describe('default rendered test runner', function () {
       expect(chunks.map(chunk => chunk.file)).deep.equals(
         chunks.map((_, index) => `${dir}/scoring-tests-chunk-${index}.cjs`)
       )
-      // Every app test file once, in path order, its bytes counted there.
-      const files = globSync('src/**/*.test.tsx').sort()
+      // Every unit-tier app test file once, in path order, its bytes counted
+      // there; the integration tier's are bundled by `--tier=integration`.
+      const files = globSync('src/**/*.test.tsx')
+        .filter(file => !file.endsWith('.integration.test.tsx'))
+        .sort()
       expect(chunks.flatMap(chunk => chunk.files)).deep.equals(files)
       const size = (file: string): number => statSync(file).size
       for (const [index, chunk] of chunks.entries()) {

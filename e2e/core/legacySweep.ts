@@ -107,7 +107,9 @@ function maestroBin(): string {
       )
     ) as { maestroBin?: string }
     if (raw.maestroBin != null) return raw.maestroBin
-  } catch {}
+  } catch {
+    // No local settings: the shared install below.
+  }
   return join(homedir(), '.maestro-d/bin/maestro-d')
 }
 
@@ -133,7 +135,9 @@ function daemonEnv(): NodeJS.ProcessEnv {
     if (raw.maestroHome != null) {
       return { ...process.env, MAESTRO_RUNNER_HOME: raw.maestroHome }
     }
-  } catch {}
+  } catch {
+    // No local settings: the daemon finds its drivers beside its binary.
+  }
   return process.env
 }
 
@@ -145,7 +149,9 @@ export function restartDaemon(bin: string, name: string): void {
     try {
       process.kill(pid, 0)
       process.kill(pid, 'SIGKILL')
-    } catch {}
+    } catch {
+      // `stop` ended it already.
+    }
   }
   const started = spawnSync(
     bin,

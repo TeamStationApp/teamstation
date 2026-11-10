@@ -25,6 +25,7 @@ export const SERIAL = [
  * (`test:portable`).
  */
 export const SCRIPT_TESTS = [
+  'scripts/testModels.test.ts',
   'scripts/testTiers.test.ts',
   'scripts/testTools.test.ts'
 ]
