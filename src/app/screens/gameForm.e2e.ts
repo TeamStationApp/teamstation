@@ -667,10 +667,21 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
   await tap('Skip')
   await wait(`document.querySelector('[data-testid="team-selector"]')==null`)
   await tap('Save')
-  await wait(`location.pathname.startsWith('/notifications/')`)
-  const requestId = await evaluate<string>(
-    `location.pathname.split('/').at(-1)`
+  // A proposal opens its request; a game applied at once opens the game.
+  await wait(
+    `location.pathname.startsWith('/notifications/') || location.pathname.startsWith('/games/')`
   )
+  const landed = await evaluate<string>(`location.pathname`)
+  const last = landed.split('/').at(-1)!
+  const requestId = landed.startsWith('/notifications/')
+    ? last
+    : (
+        await f.h.db
+          .selectFrom('group_requests')
+          .select('id')
+          .where('game_id', '=', last)
+          .executeTakeFirstOrThrow()
+      ).id
   const made = await placeholders()
   assert.equal(made.length, 1)
   assert.equal(made[0].locality, null)
