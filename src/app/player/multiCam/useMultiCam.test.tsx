@@ -1600,6 +1600,20 @@ describe('useMultiCam buffering', function () {
     expect(tiles.B.currentTime).equals(63 + JOIN_LEAD_SEC)
   })
 
+  it('leaves an active download alone during alignment but honors a new user seek', async function () {
+    this.timeout(8000)
+    const { mc, tiles } = await grid()
+    await ticks(1)
+    tiles.A.currentTime = 125
+    tiles.B.currentTime = 60
+    tiles.B.readyState = 2
+    Object.assign(tiles.B, { seeking: true })
+    await ticks(1)
+    expect(tiles.B.currentTime).equals(60)
+    await act(async () => mc().goTo(T0 + 140_000))
+    expect(tiles.B.currentTime).equals(80)
+  })
+
   it('sends a joining tile further ahead when the game passes it before it is ready', async function () {
     this.timeout(8000)
     const { tiles } = await grid()
@@ -1739,62 +1753,85 @@ describe('useMultiCam buffering', function () {
 })
 
 describe('useMultiCam bounded recovery', () => {
-  it('refreshes a follower that never completes its join without restarting healthy tiles', async () => {
-    const realNow = Date.now
-    const realSet = globalThis.setInterval
-    const realClear = globalThis.clearInterval
-    let now = T0
-    const intervals = new Map<unknown, () => void>()
-    Date.now = () => now
-    globalThis.setInterval = ((callback: () => void) => {
-      const id = {}
-      intervals.set(id, callback)
-      return id
-    }) as unknown as typeof setInterval
-    globalThis.clearInterval = (id: unknown) => {
-      if (!intervals.delete(id))
-        realClear(id as Parameters<typeof clearInterval>[0])
-    }
-    try {
-      const client = new TeamStationClient({ baseUrl: '/api/v1' })
-      const requests: Record<string, number> = {}
-      client.playback = async (id: string) => {
-        requests[id] = (requests[id] ?? 0) + 1
-        return {
-          videoId: id,
-          storage: 'spaces',
-          url: `https://media/${id}-${requests[id]}.m3u8`,
-          expiresAt: null,
-          durationSec: null,
-          unavailable: false
+  for (const mode of ['stuck', 'browser', 'native'])
+    it(`allows a slow follower join and bounds a stuck browser seek (${mode})`, async () => {
+      const realNow = Date.now
+      const realSet = globalThis.setInterval
+      const realClear = globalThis.clearInterval
+      let now = T0
+      const intervals = new Map<unknown, () => void>()
+      Date.now = () => now
+      globalThis.setInterval = ((callback: () => void) => {
+        const id = {}
+        intervals.set(id, callback)
+        return id
+      }) as unknown as typeof setInterval
+      globalThis.clearInterval = (id: unknown) => {
+        if (!intervals.delete(id))
+          realClear(id as Parameters<typeof clearInterval>[0])
+      }
+      try {
+        const client = new TeamStationClient({ baseUrl: '/api/v1' })
+        const requests: Record<string, number> = {}
+        client.playback = async (id: string) => {
+          requests[id] = (requests[id] ?? 0) + 1
+          return {
+            videoId: id,
+            storage: 'spaces',
+            url: `https://media/${id}-${requests[id]}.m3u8`,
+            expiresAt: null,
+            durationSec: null,
+            unavailable: false
+          }
         }
+        const { mc, tiles } = await grid({ client })
+        const tick = async (seconds: number): Promise<void> => {
+          now = T0 + seconds * 1000
+          tiles.A.currentTime = 120 + seconds
+          await act(async () => {
+            for (const callback of [...intervals.values()]) callback()
+          })
+        }
+        await tick(1)
+        tiles.B.currentTime = 58
+        await tick(2)
+        tiles.B.readyState = 2
+        Object.assign(tiles.B, { seeking: true })
+        let supervised = 0
+        if (mode === 'native')
+          Object.assign(tiles.B, {
+            checkSeekTimeout: () => {
+              supervised++
+            }
+          })
+        const pendingUntil = mode === 'native' ? 145 : 45
+        const landingAt = tiles.B.currentTime
+        for (let second = 3; second <= pendingUntil; second++)
+          await tick(second)
+        expect(tiles.B.currentTime).equals(landingAt)
+        expect(requests.B).equals(1)
+        if (mode !== 'stuck') {
+          Object.assign(tiles.B, { seeking: false })
+          tiles.B.readyState = 4
+          await tick(pendingUntil + 1)
+          expect(requests.B).equals(1)
+          expect(tiles.B.paused).equals(false)
+          if (mode === 'native') expect(supervised).greaterThan(100)
+        } else {
+          for (let second = 46; second <= 123; second++) await tick(second)
+          expect(requests.B).equals(2)
+          expect(mc().urls.B).contains('B-2')
+        }
+        expect(requests.A).equals(1)
+        expect(tiles.A.paused).equals(false)
+      } finally {
+        await act(async () => root?.unmount())
+        root = undefined
+        Date.now = realNow
+        globalThis.setInterval = realSet
+        globalThis.clearInterval = realClear
       }
-      const { mc, tiles } = await grid({ client })
-      const tick = async (seconds: number): Promise<void> => {
-        now = T0 + seconds * 1000
-        tiles.A.currentTime = 120 + seconds
-        await act(async () => {
-          for (const callback of [...intervals.values()]) callback()
-        })
-      }
-      await tick(1)
-      tiles.B.currentTime = 58
-      await tick(2)
-      tiles.B.readyState = 2
-      Object.assign(tiles.B, { seeking: true })
-      for (let second = 3; second <= 13; second++) await tick(second)
-      expect(requests.B).equals(2)
-      expect(requests.A).equals(1)
-      expect(mc().urls.B).contains('B-2')
-      expect(tiles.A.paused).equals(false)
-    } finally {
-      await act(async () => root?.unmount())
-      root = undefined
-      Date.now = realNow
-      globalThis.setInterval = realSet
-      globalThis.clearInterval = realClear
-    }
-  })
+    })
 })
 
 describe('useMultiCam on each tile’s own dates (U22)', function () {
