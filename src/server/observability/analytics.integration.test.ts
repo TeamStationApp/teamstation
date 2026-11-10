@@ -561,7 +561,9 @@ describe('analytics PostgreSQL and HTTP isolation', function () {
       await new Promise<void>((resolve, reject) => {
         const timeout = setTimeout(() => {
           reject(Error('Application startup timeout'))
-        }, 10000)
+          // A first start compiles the server with sucrase, which a busy
+          // machine can take well over ten seconds to do.
+        }, 60000)
         child.once('exit', () => {
           clearTimeout(timeout)
           reject(Error('Application exited before readiness'))
