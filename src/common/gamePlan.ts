@@ -71,8 +71,8 @@ const LEGACY_BENCH = '-'
 /**
  * What a cell's text means: a value of `PLAN_CELLS` in any case, or `''`,
  * once trimmed. Anything else is null, which the plan never takes. A cell
- * holds two characters, so longer text (a paste of `SSS`, or of `LF ` with
- * its space) is null before it is trimmed.
+ * holds two characters, so longer text (`SSS`, or `LF ` with its space) is
+ * null before it is trimmed.
  */
 export function planCellOf(text: string): PlanCell | null {
   if (text.length > 2) return null
@@ -135,47 +135,49 @@ export const asGamePlan: Cleaner<GamePlan> = raw => {
   return { ...plan, enabled: planHasPositions(plan) }
 }
 
-/** The first letters a two-letter value starts with that are no value. */
-const PLAN_PREFIXES: ReadonlySet<string> = new Set(
-  PLAN_CELLS.filter(cell => cell.length === 2)
-    .map(cell => cell[0])
-    .filter(letter => planCellOf(letter) == null)
-)
+/**
+ * The value each first key completes to on the web: the one value it
+ * starts, or for P and C the one-letter value itself.
+ */
+const COMPLETIONS: Readonly<Record<string, PlanCell>> = {
+  P: 'P',
+  C: 'C',
+  '1': '1B',
+  '2': '2B',
+  '3': '3B',
+  S: 'SS',
+  L: 'LF',
+  R: 'RF',
+  D: 'DH',
+  E: 'EH'
+}
+
+/**
+ * What a key typed into a highlighted web cell writes, in either case:
+ * `1` → 1B, `2` → 2B, `3` → 3B, `S` → SS, `L` → LF, `R` → RF, `D` → DH,
+ * `E` → EH, `P` → P and `C` → C. Null for any other key.
+ */
+export function completeCell(first: string): PlanCell | null {
+  return COMPLETIONS[first.toUpperCase()] ?? null
+}
 
 export type PlanCellEntry =
   { commit: PlanCell } | { pending: string } | { refuse: true }
 
-function entryOf(text: string): PlanCellEntry {
-  const cell = planCellOf(text)
-  if (cell != null) return { commit: cell }
-  const typed = text.trim().toUpperCase()
-  if (text.length <= 2 && PLAN_PREFIXES.has(typed)) return { pending: typed }
-  return { refuse: true }
-}
-
 /**
- * A key typed into a web cell, checked against the values as it arrives.
- * `previous` is what the input showed before it and `text` what it shows
- * now. A whole value commits, and so does an emptied cell, which benches;
- * `S`, `1`, `2`, `3`, `L`, `R`, `D` and `E`, which only start one, are held
- * pending while the cell keeps its stored value; anything else is refused.
- * P and C commit at once, so a key typed after one is read with it (C then F
- * is CF) and, when the two make nothing, on its own (P then S is a pending
- * S).
+ * A key typed into a highlighted web cell, where `editing` is what the cell
+ * is being given so far ('' before the first key). A first key commits its
+ * completion (`completeCell`) at once, except C: C then F is CF, so C is
+ * held pending, and F after it commits CF. Anything else is refused.
  */
-export function planCellEntry(previous: string, text: string): PlanCellEntry {
-  const entry = entryOf(text)
-  if (!('refuse' in entry)) return entry
-  const shown = previous.trim().toUpperCase()
-  const typed = text.trim().toUpperCase()
-  if (
-    text.length <= 2 &&
-    shown !== '' &&
-    planCellOf(shown) != null &&
-    typed.startsWith(shown)
-  )
-    return entryOf(typed.slice(shown.length))
-  return entry
+export function planCellEntry(editing: string, key: string): PlanCellEntry {
+  if (editing === '') {
+    const cell = completeCell(key)
+    if (cell == null) return { refuse: true }
+    return cell === 'C' ? { pending: cell } : { commit: cell }
+  }
+  const cell = planCellOf(`${editing}${key}`)
+  return cell == null || cell === editing ? { refuse: true } : { commit: cell }
 }
 
 const fitted = (cells: readonly PlanCell[], innings: number): PlanCell[] =>

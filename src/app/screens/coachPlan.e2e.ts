@@ -75,14 +75,19 @@ import {
  * Cancel, a red button as large as Save Rosters, left of the microphone on
  * Save Rosters' row; P3 reads the coach's Defense field, whose nine cards
  * sit on six rows with names at 13.75 points; P4 to P9 work the Plan tab:
- * its grid, each player named then numbered (P4), typing and pasting into a
- * cell (P5), the field picker (P6), moving a player's row (P7), the live
+ * its grid, each player named then numbered (P4), a clicked cell
+ * highlighted with no text field and the keys and paste it takes (P5), the
+ * field picker (P6), moving a player's row (P7), the live
  * playing-time warnings and the save's summary (P8), and Clear, at the top
  * (P9); P15 finds Help left of Clear above the sheet, no toggle and no Clear
  * below, and Help's sheet as tall as its words; P16 deletes an added
  * inning, whose number is red, once confirmed; P17 measures the picker:
  * 15% narrower, P on the mound and the infielders slid along their base
- * paths, closed by a click outside it; P10 scores the game with the plan on and
+ * paths, closed by a click outside it; P20 edits the plan as a
+ * spreadsheet with real key presses and a real copy and paste, the focus
+ * never in a text field, and records it as `plan-keyboard.mp4` in
+ * `TS_LINEUP_ARTIFACTS` (with `TS_FFMPEG` naming ffmpeg if it is not on the
+ * path); P10 scores the game with the plan on and
  * then with no positions in it, ending halves from the scoring menu, and
  * reads the defence the game stores after each inning's end, with a
  * mid-game edit of the plan made while the scoring screen is open; P11 finds the
@@ -733,7 +738,57 @@ class Browser {
   async cell(row: number, inning: number): Promise<string> {
     return await this.page.$eval(
       `[data-testid="Plan cell ${row}-${inning}"]`,
-      node => (node as HTMLInputElement).value
+      node => String(node.textContent)
+    )
+  }
+
+  /**
+   * Where the web's keys go: the focused element, whether any text field is
+   * drawn on the Plan tab or any text selected, and the highlighted cell.
+   */
+  async planFocus(): Promise<{
+    focused: string
+    inputs: number
+    selection: string
+    lit: string[]
+  }> {
+    return await this.page.evaluate(() => {
+      const active = document.activeElement
+      return {
+        focused:
+          active == null
+            ? ''
+            : `${active.tagName} ${String(active.getAttribute('data-testid'))}`,
+        inputs: document.querySelectorAll('[data-testid="Plan tab"] input')
+          .length,
+        selection: String(window.getSelection()),
+        lit: Array.from(
+          document.querySelectorAll(
+            '[data-testid^="Plan cell "][aria-selected="true"]'
+          )
+        ).map(node => String(node.getAttribute('data-testid')))
+      }
+    })
+  }
+
+  /** A clipboard shortcut, Command held, as the browser's own command. */
+  async clipboard(command: 'copy' | 'paste'): Promise<void> {
+    await this.page.keyboard.down('Meta')
+    await this.page.keyboard.press(command === 'copy' ? 'KeyC' : 'KeyV', {
+      commands: [command]
+    })
+    await this.page.keyboard.up('Meta')
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+
+  /** Lets the page write and read the clipboard, for a real paste. */
+  async allowClipboard(): Promise<void> {
+    await this.page.browserContext().setPermission(
+      new URL(APP).origin,
+      ...['clipboard-read', 'clipboard-write'].map(name => ({
+        permission: { name },
+        state: 'granted' as const
+      }))
     )
   }
 
@@ -750,7 +805,7 @@ class Browser {
         if (match == null) continue
         const row = Number(match[1]) - 1
         while (rows.length <= row) rows.push([])
-        rows[row][Number(match[2]) - 1] = (node as HTMLInputElement).value
+        rows[row][Number(match[2]) - 1] = String(node.textContent)
       }
       return rows
     })
@@ -763,7 +818,7 @@ class Browser {
     )
   }
 
-  /** A click into a cell, which takes the focus there. */
+  /** A click, which on a cell highlights it. */
   async click(css: string): Promise<void> {
     await this.page.waitForSelector(css, { visible: true })
     await this.page.click(css)
@@ -1308,7 +1363,9 @@ describe('Coach Plan', function () {
       const cell = document.querySelector('[data-testid="Plan cell 1-1"]')!
       // Two characters of the cell's own font.
       const probe = document.createElement('span')
-      probe.style.font = getComputedStyle(cell).font
+      probe.style.font = getComputedStyle(
+        cell.querySelector('[dir="auto"]')!
+      ).font
       probe.style.position = 'absolute'
       probe.style.width = '2ch'
       document.body.appendChild(probe)
@@ -1356,85 +1413,77 @@ describe('Coach Plan', function () {
     expect(sheet.track).equals(0)
   })
 
-  it('P5 selects a clicked cell’s text, opens the picker, takes values a key at a time and refuses X and a pasted SSS', async function () {
+  it('P5 highlights a clicked cell with no text field, opens the picker, writes a position from its first key, ignores X and refuses a pasted SSS', async function () {
     if (CAPTURING) this.skip()
     const fixture = await lineupFixture()
     await coach.as(fixture, 'headCoach')
-    await coach.page.browserContext().setPermission(
-      new URL(APP).origin,
-      ...['clipboard-read', 'clipboard-write'].map(name => ({
-        permission: { name },
-        state: 'granted' as const
-      }))
-    )
+    await coach.allowClipboard()
     await coach.coachGame(fixture.gameId)
     await coach.plan()
     const first = '[data-testid="Plan cell 1-1"]'
     await coach.click(first)
-    await coach.page.keyboard.type('c')
-    expect(await coach.cell(1, 1)).equals('C')
-    // Clicked again, the cell's text is selected and the picker opens.
-    await coach.click('[data-testid="Plan help row"]')
-    await coach.page.waitForFunction(
-      () => document.querySelector('[data-testid="Plan field picker"]') == null
-    )
-    await coach.click(first)
-    const selected = await coach.page.$eval(first, node => {
-      const input = node as HTMLInputElement
-      return [input.selectionStart, input.selectionEnd, input.value.length]
+    // Highlighted: the grid holds the focus, no text field is drawn and no
+    // text is selected, and the picker opens.
+    expect(await coach.planFocus()).deep.equals({
+      focused: 'DIV Plan grid',
+      inputs: 0,
+      selection: '',
+      lit: ['Plan cell 1-1']
     })
-    expect(selected).deep.equals([0, 1, 1])
     await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
       visible: true
     })
     await coach.shot('coach-plan-picker-web.png')
-    // S then S is SS; the S alone waits.
-    await coach.page.keyboard.type('s')
-    expect(await coach.cell(1, 1)).equals('S')
+    // C waits for an F, and Enter makes it C.
+    await coach.page.keyboard.type('c')
+    expect(await coach.cell(1, 1)).equals('C')
+    expect(await coach.page.$('[data-testid="Plan field picker"]')).equals(null)
+    await coach.page.keyboard.press('Enter')
+    // X is no position: nothing happens.
+    await coach.page.keyboard.type('X')
+    expect(await coach.cell(1, 1)).equals('C')
+    expect(
+      await coach.page.$eval(
+        '[data-testid="Plan refusal"]',
+        node => node.textContent
+      )
+    ).equals('')
+    // S is SS at once.
     await coach.page.keyboard.type('s')
     expect(await coach.cell(1, 1)).equals('SS')
-    await coach.click('[data-testid="Plan cell 2-1"]')
-    await coach.page.keyboard.type('1')
-    await coach.page.keyboard.type('b')
-    expect(await coach.cell(2, 1)).equals('1B')
-    // X is no value: refused, the cell outlined in red, its value kept.
-    await coach.click('[data-testid="Plan cell 3-1"]')
-    await coach.page.keyboard.type('p')
-    await coach.click('[data-testid="Plan cell 3-1"]')
-    await coach.page.keyboard.type('X')
-    const refused = await coach.page.$eval(
-      '[data-testid="Plan cell 3-1"]',
-      node => getComputedStyle(node).borderTopColor
-    )
-    expect(refused).equals('rgb(248, 113, 113)')
-    expect(await coach.cell(3, 1)).equals('P')
-    // A real paste of SSS, read whole and refused, not cut to SS.
-    await coach.click('[data-testid="Plan cell 2-1"]')
+    // A real paste of SSS, read whole and refused in red, not cut to SS.
     await coach.page.evaluate(async () => {
       await navigator.clipboard.writeText('SSS')
     })
-    await coach.page.keyboard.down('Meta')
-    await coach.page.keyboard.press('KeyV', { commands: ['paste'] })
-    await coach.page.keyboard.up('Meta')
-    await new Promise(resolve => setTimeout(resolve, 200))
-    expect(await coach.cell(2, 1)).equals('1B')
+    await coach.clipboard('paste')
+    expect(
+      await coach.page.$eval(
+        first,
+        node => getComputedStyle(node).borderTopColor
+      )
+    ).equals('rgb(248, 113, 113)')
+    expect(await coach.cell(1, 1)).equals('SS')
     expect(
       await coach.page.$eval(
         '[data-testid="Plan refusal"]',
         node => node.textContent
       )
     ).includes('SSS is not a position')
-    // The picker, open over the rows below, closes on Escape.
+    // Escape closes the picker and keeps the highlight.
+    await coach.click('[data-testid="Plan cell 2-1"]')
+    await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+      visible: true
+    })
     await coach.page.keyboard.press('Escape')
     await coach.page.waitForFunction(
       () => document.querySelector('[data-testid="Plan field picker"]') == null
     )
+    expect((await coach.planFocus()).lit).deep.equals(['Plan cell 2-1'])
     // The bench is blank: Backspace empties a cell.
-    await coach.click('[data-testid="Plan cell 4-1"]')
     await coach.page.keyboard.type('p')
-    expect(await coach.cell(4, 1)).equals('P')
+    expect(await coach.cell(2, 1)).equals('P')
     await coach.page.keyboard.press('Backspace')
-    expect(await coach.cell(4, 1)).equals('')
+    expect(await coach.cell(2, 1)).equals('')
   })
 
   it('P6 writes the position clicked on the picker, and does nothing on hover', async function () {
@@ -2283,5 +2332,161 @@ describe('Coach Plan', function () {
     )
     expect(await coach.page.$('[data-testid="Help sheet text"]')).equals(null)
     expect(await coach.cells()).deep.equals(before)
+    // So does a click on the Lineup tab, or on the Box Score pill, above
+    // the sheet: the Plan tab stays.
+    for (const target of [
+      '[role="tab"][aria-label="Lineup"]',
+      '[data-testid="Box Score pill"]'
+    ]) {
+      await coach.click('[data-testid="Plan cell 2-3"]')
+      await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+        visible: true
+      })
+      const control = await coach.box(target)
+      await coach.page.mouse.click(
+        control.x + control.width / 2,
+        control.y + control.height / 2
+      )
+      await coach.page.waitForFunction(
+        () =>
+          document.querySelector('[data-testid="Plan field picker"]') == null,
+        { timeout: 5000 }
+      )
+      await new Promise(resolve => setTimeout(resolve, 500))
+      expect(
+        await coach.page.$('[data-testid="Plan sheet"]'),
+        `${target} leaves the Plan tab`
+      ).not.equals(null)
+    }
+    expect(await coach.cells()).deep.equals(before)
+  })
+
+  it('P20 edits the plan like a spreadsheet: a click highlights, a first key writes, the arrows move, and copy and paste need no text field', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await coach.as(fixture, 'headCoach')
+    await coach.allowClipboard()
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    // Where the focus was before each key: never a text field.
+    const focused: string[] = []
+    const press = async (key: string): Promise<void> => {
+      const { focused: at, inputs } = await coach.planFocus()
+      expect(inputs).equals(0)
+      focused.push(at)
+      await coach.page.keyboard.press(
+        key as Parameters<Page['keyboard']['press']>[0]
+      )
+      // Long enough, when recorded, for each key's frame to be seen.
+      await new Promise(resolve =>
+        setTimeout(resolve, ARTIFACTS == null ? 250 : 700)
+      )
+    }
+    // Recorded as VP9, which ffmpeg then makes the H.264 a Mac plays.
+    const ffmpeg = process.env.TS_FFMPEG ?? 'ffmpeg'
+    const raw = join(tmpdir(), `plan-keyboard-${process.pid}.webm`)
+    const recorder =
+      ARTIFACTS == null
+        ? undefined
+        : // eslint-disable-next-line @typescript-eslint/no-deprecated -- `record` needs a newer browser than the one maestro-d starts
+          await coach.page.screencast({
+            path: raw as `${string}.webm`,
+            ffmpegPath: ffmpeg
+          })
+    try {
+      await coach.click('[data-testid="Plan cell 1-1"]')
+      await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+        visible: true
+      })
+      await new Promise(resolve => setTimeout(resolve, 400))
+      await press('1')
+      expect(await coach.cell(1, 1)).equals('1B')
+      await press('ArrowRight')
+      await press('s')
+      expect(await coach.cell(1, 2)).equals('SS')
+      await press('ArrowDown')
+      await press('c')
+      // C waits, shown, for an F.
+      expect(await coach.cell(2, 2)).equals('C')
+      await press('f')
+      expect(await coach.cell(2, 2)).equals('CF')
+      expect((await coach.planFocus()).lit).deep.equals(['Plan cell 2-2'])
+      // Copy SS from inning 2 and paste it two cells away, in inning 4.
+      await press('ArrowUp')
+      await coach.clipboard('copy')
+      expect(
+        await coach.page.evaluate(
+          async () => await navigator.clipboard.readText()
+        )
+      ).equals('SS')
+      await press('ArrowRight')
+      await press('ArrowRight')
+      await coach.clipboard('paste')
+      expect(await coach.cell(1, 4)).equals('SS')
+      // Pasted with no edit opened: still highlighted, and no field holds
+      // the focus.
+      expect(await coach.planFocus()).deep.equals({
+        focused: 'DIV Plan grid',
+        inputs: 0,
+        selection: '',
+        lit: ['Plan cell 1-4']
+      })
+      // X is no position: refused, the cell kept.
+      await coach.page.evaluate(async () => {
+        await navigator.clipboard.writeText('X')
+      })
+      await coach.clipboard('paste')
+      expect(await coach.cell(1, 4)).equals('SS')
+      expect(
+        await coach.page.$eval(
+          '[data-testid="Plan refusal"]',
+          node => node.textContent
+        )
+      ).includes('X is not a position')
+      await new Promise(resolve => setTimeout(resolve, 800))
+    } finally {
+      await recorder?.stop()
+    }
+    if (ARTIFACTS != null)
+      await promisify(execFile)(ffmpeg, [
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-y',
+        '-i',
+        raw,
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-movflags',
+        '+faststart',
+        join(ARTIFACTS, 'plan-keyboard.mp4')
+      ])
+    expect(
+      focused.every(at => at === 'DIV Plan grid'),
+      focused.join(', ')
+    ).equals(true)
+    const cells = await coach.cells()
+    expect([cells[0].slice(0, 4), cells[1].slice(0, 2)]).deep.equals([
+      ['1B', 'SS', cells[0][2], 'SS'],
+      [cells[1][0], 'CF']
+    ])
+    console.log(`    P20 focus before each key: ${focused.join(', ')}`)
+    // Tab after a letter writes it, the cell still lit and taking keys; a
+    // Tab with nothing typed leaves the cells, none lit.
+    await coach.click('[data-testid="Plan cell 3-1"]')
+    await coach.page.waitForSelector('[data-testid="Plan field picker"]', {
+      visible: true
+    })
+    await press('Escape')
+    await press('c')
+    await press('Tab')
+    expect(await coach.cell(3, 1)).equals('C')
+    expect((await coach.planFocus()).lit).deep.equals(['Plan cell 3-1'])
+    await press('Tab')
+    expect((await coach.planFocus()).lit).deep.equals([])
+    await coach.page.keyboard.press('p')
+    expect(await coach.cell(3, 1)).equals('C')
   })
 })

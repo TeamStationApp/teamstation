@@ -7,6 +7,7 @@ import {
   alignPlan,
   asGamePlan,
   clearPlan,
+  completeCell,
   DEFAULT_PLAN_INNINGS,
   type GamePlan,
   inningDefense,
@@ -77,42 +78,57 @@ describe('game plan model', function () {
     })
   })
 
+  describe('completeCell', function () {
+    it('completes each first key, in either case, to the one value it starts', function () {
+      const table: Array<[string, PlanCell]> = [
+        ['1', '1B'],
+        ['2', '2B'],
+        ['3', '3B'],
+        ['S', 'SS'],
+        ['L', 'LF'],
+        ['R', 'RF'],
+        ['D', 'DH'],
+        ['E', 'EH'],
+        ['P', 'P'],
+        ['C', 'C']
+      ]
+      for (const [key, cell] of table) {
+        expect(completeCell(key), key).equals(cell)
+        expect(completeCell(key.toLowerCase()), key).equals(cell)
+      }
+      // Every value but CF is one first key away.
+      expect(
+        PLAN_CELLS.filter(cell => !table.some(([, each]) => each === cell))
+      ).deep.equals(['CF'])
+    })
+
+    it('completes nothing else', function () {
+      for (const key of ['X', 'q', 'F', 'B', 'H', '4', '-', ' ', '', 'Shift'])
+        expect(completeCell(key), key).equals(null)
+    })
+  })
+
   describe('planCellEntry', function () {
-    it('commits whole values', function () {
-      expect(planCellEntry('', 'ss')).deep.equals({ commit: 'SS' })
+    it('commits a first key’s completion at once, and holds C for an F', function () {
+      expect(planCellEntry('', '1')).deep.equals({ commit: '1B' })
+      expect(planCellEntry('', 's')).deep.equals({ commit: 'SS' })
       expect(planCellEntry('', 'P')).deep.equals({ commit: 'P' })
-      // An emptied cell commits the bench; a dash is no value.
-      expect(planCellEntry('LF', '')).deep.equals({ commit: '' })
-      expect(planCellEntry('', '-')).deep.equals({ refuse: true })
-      // C commits at once, and F after it makes CF.
-      expect(planCellEntry('', 'c')).deep.equals({ commit: 'C' })
-      expect(planCellEntry('C', 'CF')).deep.equals({ commit: 'CF' })
-      expect(planCellEntry('S', 'Ss')).deep.equals({ commit: 'SS' })
-      expect(planCellEntry('1', '1b')).deep.equals({ commit: '1B' })
+      expect(planCellEntry('', 'c')).deep.equals({ pending: 'C' })
+      expect(planCellEntry('C', 'f')).deep.equals({ commit: 'CF' })
+      expect(planCellEntry('C', 'F')).deep.equals({ commit: 'CF' })
     })
 
-    it('holds each prefix as pending', function () {
-      for (const prefix of ['S', '1', '2', '3', 'L', 'R', 'D', 'E'])
-        expect(planCellEntry('', prefix.toLowerCase())).deep.equals({
-          pending: prefix
-        })
-      // A key after a one-letter value that makes nothing with it starts
-      // over.
-      expect(planCellEntry('P', 'Ps')).deep.equals({ pending: 'S' })
-      expect(planCellEntry('C', 'Cl')).deep.equals({ pending: 'L' })
-    })
-
-    it('refuses what starts no value', function () {
-      for (const [previous, text] of [
+    it('refuses what completes nothing', function () {
+      for (const [editing, key] of [
         ['', 'X'],
         ['', 'q'],
-        ['S', 'SX'],
-        ['1', '1C'],
-        ['P', 'PX'],
-        ['SS', 'SSS'],
-        ['', 'S  ']
+        ['', '-'],
+        ['C', 'C'],
+        ['C', 'x'],
+        ['C', ' '],
+        ['C', '1']
       ])
-        expect(planCellEntry(previous, text), text).deep.equals({
+        expect(planCellEntry(editing, key), `${editing}${key}`).deep.equals({
           refuse: true
         })
     })

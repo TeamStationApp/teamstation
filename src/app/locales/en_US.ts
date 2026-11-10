@@ -190,6 +190,9 @@ export const enUs = {
   plan_add_inning: 'Add inning',
   /** A cell's accessible name: the player, and the inning. */
   plan_cell_label: '%1$s, inning %2$s',
+  /** The web's grid of cells, which takes the keys for the highlighted one. */
+  plan_grid_label:
+    'Innings. Arrow keys move between cells; a position\u2019s first letter sets one, and Delete benches.',
   plan_refused:
     '%s is not a position. Use P, C, 1B, 2B, 3B, SS, LF, CF, RF, DH or EH, or leave it blank to bench.',
   /** The field picker's title: who and which inning it assigns. */

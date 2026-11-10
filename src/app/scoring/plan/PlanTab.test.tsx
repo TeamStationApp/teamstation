@@ -136,8 +136,14 @@ async function mount({
 }
 const byId = <T extends HTMLElement = HTMLElement>(id: string): T | null =>
   document.querySelector<T>(`[data-testid="${id}"]`)
-const cell = (row: number, inning: number): HTMLInputElement =>
-  byId<HTMLInputElement>(`Plan cell ${row}-${inning}`)!
+const cell = (row: number, inning: number): HTMLElement =>
+  byId(`Plan cell ${row}-${inning}`)!
+/** What a web cell shows: its value, or the letter being typed into it. */
+const shown = (row: number, inning: number): string =>
+  String(cell(row, inning).textContent)
+const lit = (row: number, inning: number): boolean =>
+  cell(row, inning).getAttribute('aria-selected') === 'true'
+const grid = (): HTMLElement => byId('Plan grid')!
 const cells = (): PlanCell[][] => latest.rows.map(row => row.cells)
 const picker = (): HTMLElement | null => byId('Plan field picker')
 async function press(element: HTMLElement | null): Promise<void> {
@@ -147,35 +153,51 @@ async function press(element: HTMLElement | null): Promise<void> {
   })
   await settle()
 }
-/** A key typed into a web cell: the field's text as it now reads. */
-async function typeText(input: HTMLInputElement, text: string): Promise<void> {
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      'value'
-    )!.set!.call(input, text)
-    input.dispatchEvent(new window.Event('input', { bubbles: true }))
-  })
-  await settle(1)
-}
-async function paste(input: HTMLInputElement, text: string): Promise<Event> {
-  const event = new window.Event('paste', { bubbles: true, cancelable: true })
-  Object.defineProperty(event, 'clipboardData', {
-    value: { getData: (kind: string) => (kind === 'text' ? text : '') }
+/** A key pressed on the grid, which holds the focus for its cells. */
+async function key(
+  name: string,
+  modifiers: { metaKey?: boolean; ctrlKey?: boolean } = {}
+): Promise<KeyboardEvent> {
+  const event = new window.KeyboardEvent('keydown', {
+    key: name,
+    bubbles: true,
+    cancelable: true,
+    ...modifiers
   })
   await act(async () => {
-    input.dispatchEvent(event)
+    grid().dispatchEvent(event)
   })
   await settle(1)
   return event
 }
-/** A click into a cell, which a browser focuses afresh. */
-async function focus(input: HTMLInputElement): Promise<void> {
-  await act(async () => {
-    if (document.activeElement === input) input.blur()
-    input.focus()
+/** A clipboard event on the grid, whose clipboard holds `text`. */
+async function clipboard(
+  type: 'copy' | 'paste',
+  text = ''
+): Promise<{ event: Event; copied: string[] }> {
+  const copied: string[] = []
+  const event = new window.Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'clipboardData', {
+    value: {
+      getData: (kind: string) => (kind === 'text' ? text : ''),
+      setData: (kind: string, value: string) => {
+        copied.push(`${kind}:${value}`)
+      }
+    }
   })
-  await settle()
+  await act(async () => {
+    grid().dispatchEvent(event)
+  })
+  await settle(1)
+  return { event, copied }
+}
+/** Nothing the sheet draws is a text field, and no text is selected. */
+function expectNoTextField(): void {
+  expect(document.activeElement).equals(grid())
+  expect(document.querySelector('[data-testid="Plan tab"] input')).equals(null)
+  expect(String(window.getSelection())).equals('')
+  // A collapsed selection in the grid aims Chromium's copy and paste at it.
+  expect(window.getSelection()!.anchorNode).equals(grid())
 }
 interface Fiber {
   memoizedProps: Record<string, unknown>
@@ -270,92 +292,7 @@ describe('the game plan tab', function () {
     expect(byId('Plan add inning')).equals(null)
   })
 
-  it('takes every value a key at a time on the web, in either case', async function () {
-    await mount()
-    const entries: Array<[string[], PlanCell]> = [
-      [['s', 'Ss'], 'SS'],
-      [['1', '1b'], '1B'],
-      [['2', '2B'], '2B'],
-      [['3', '3b'], '3B'],
-      [['l', 'Lf'], 'LF'],
-      [['r', 'RF'], 'RF'],
-      [['d', 'Dh'], 'DH'],
-      [['e', 'eh'], 'EH'],
-      [['p'], 'P']
-    ]
-    for (const [at, [keys, value]] of entries.entries()) {
-      const input = cell((at % 3) + 1, Math.floor(at / 3) + 1)
-      await focus(input)
-      for (const [step, text] of keys.entries()) {
-        await typeText(input, text)
-        // A first letter waits, shown, while the plan keeps the cell blank.
-        if (step < keys.length - 1) {
-          expect(input.value).equals(text.toUpperCase())
-          expect(cells()[at % 3][Math.floor(at / 3)]).equals('')
-        }
-      }
-      expect(cells()[at % 3][Math.floor(at / 3)], keys.join('')).equals(value)
-      expect(input.value).equals(value)
-    }
-    // C is written at once, and F after it makes CF.
-    const catcher = cell(1, 5)
-    await focus(catcher)
-    await typeText(catcher, 'c')
-    expect(cells()[0][4]).equals('C')
-    await typeText(catcher, 'Cf')
-    expect(cells()[0][4]).equals('CF')
-    // A deleted value blanks the cell.
-    await typeText(catcher, '')
-    expect(cells()[0][4]).equals('')
-  })
-
-  it('refuses X, Q, a first letter never finished and a pasted SSS, keeping the old value', async function () {
-    await mount()
-    const input = cell(2, 3)
-    await focus(input)
-    await typeText(input, 'c')
-    await typeText(input, 'Cf')
-    expect(cells()[1][2]).equals('CF')
-    // The bench is blank, so a dash is no value either.
-    for (const text of ['X', 'q', '-']) {
-      await typeText(input, text)
-      expect(cells()[1][2], text).equals('CF')
-      expect(input.value, text).equals('CF')
-      expect(byId('Plan refusal')!.textContent).includes(
-        `${text} is not a position`
-      )
-    }
-    // Refused in red for a moment.
-    expect(getComputedStyle(input).borderTopColor).not.equals('transparent')
-    await act(async () => {
-      await new Promise(resolve => setTimeout(resolve, PLAN_REFUSAL_MS + 50))
-    })
-    expect(getComputedStyle(input).borderTopColor).not.equals(
-      'rgb(248, 113, 113)'
-    )
-    // A dangling S is refused as the cell is left.
-    await typeText(input, 's')
-    expect(input.value).equals('S')
-    await act(async () => {
-      input.blur()
-    })
-    await settle()
-    expect(cells()[1][2]).equals('CF')
-    expect(input.value).equals('CF')
-    expect(byId('Plan refusal')!.textContent).includes('S is not a position')
-    // A paste is read whole: SSS is no value, and is not cut to SS.
-    await focus(input)
-    const pasted = await paste(input, 'SSS')
-    expect(pasted.defaultPrevented).equals(true)
-    expect(cells()[1][2]).equals('CF')
-    expect(input.value).equals('CF')
-    expect(byId('Plan refusal')!.textContent).includes('SSS is not a position')
-    // A whole value pasted is written.
-    await paste(input, 'lf')
-    expect(cells()[1][2]).equals('LF')
-  })
-
-  it('selects a web cell’s text as it is clicked, opens the picker, and writes what is picked there', async function () {
+  it('highlights a clicked web cell, with no text field focused and nothing selected, opens the picker, and writes what is picked there', async function () {
     await mount({
       plan: {
         ...PLAN,
@@ -365,11 +302,17 @@ describe('the game plan tab', function () {
       }
     })
     expect(picker()).equals(null)
-    const input = cell(1, 2)
-    await focus(input)
-    expect(input.selectionStart).equals(0)
-    expect(input.selectionEnd).equals(1)
-    expect(picker()).not.equals(null)
+    // The grid is the one tab stop; no cell is.
+    expect(grid().getAttribute('tabindex')).equals('0')
+    expect(cell(1, 2).getAttribute('tabindex')).equals('-1')
+    await press(cell(1, 2))
+    expectNoTextField()
+    expect(lit(1, 2)).equals(true)
+    expect(lit(1, 1)).equals(false)
+    expect(shown(1, 2)).equals('C')
+    expect(cell(1, 2).getAttribute('aria-label')).equals(
+      'Babe Ruth, inning 2, C'
+    )
     expect(picker()!.textContent).includes('Assign: Babe Ruth #3 (Inn 2)')
     // The cell's own value is lit there.
     expect(byId('Plan pick C')!.getAttribute('aria-selected')).equals('true')
@@ -377,49 +320,284 @@ describe('the game plan tab', function () {
     await press(byId('Plan pick CF'))
     expect(cells()[0]).deep.equals(['P', 'CF', '', '', '', ''])
     expect(picker()).equals(null)
+    // The keys come back to the grid, the cell still highlighted.
+    expectNoTextField()
+    expect(lit(1, 2)).equals(true)
     // Picked again, the cell's own value takes it off.
-    await focus(cell(1, 2))
+    await press(cell(1, 2))
     await press(byId('Plan pick CF'))
     expect(cells()[0][1]).equals('')
     // Bench blanks the cell, and is lit for a blank one; the close button
     // leaves the cell alone.
-    await focus(cell(1, 1))
+    await press(cell(1, 1))
     expect(byId('Plan pick bench')!.getAttribute('aria-selected')).equals(
       'false'
     )
     await press(byId('Plan pick bench'))
     expect(cells()[0][0]).equals('')
-    await focus(cell(1, 3))
+    await press(cell(1, 3))
     expect(byId('Plan pick bench')!.getAttribute('aria-selected')).equals(
       'true'
     )
     await press(byId('Plan pick bench'))
     expect(cells()[0][2]).equals('')
-    await focus(cell(1, 4))
+    await press(cell(1, 4))
     await press(byId('Plan picker close'))
     expect(picker()).equals(null)
     expect(cells()[0][3]).equals('')
-    // Escape closes it too.
-    await focus(cell(1, 4))
-    await act(async () => {
-      cell(1, 4).dispatchEvent(
-        new window.KeyboardEvent('keydown', { key: 'Escape', bubbles: true })
-      )
-    })
-    await settle()
+    expectNoTextField()
+    // Escape closes it too, and keeps the highlight.
+    await press(cell(1, 4))
+    expect(picker()).not.equals(null)
+    await key('Escape')
     expect(picker()).equals(null)
+    expect(lit(1, 4)).equals(true)
+    expectNoTextField()
   })
 
-  it('closes the web picker when focus leaves the sheet and it, and keeps it when moving between cells', async function () {
+  it('moves the web highlight with the arrow keys, held at the sheet’s edges, closing the picker', async function () {
     await mount()
-    await focus(cell(1, 1))
-    await focus(cell(2, 2))
-    expect(picker()!.textContent).includes('(Inn 2)')
+    // Tabbed to, with nothing highlighted, an arrow starts at the first
+    // cell.
     await act(async () => {
-      cell(2, 2).blur()
+      grid().focus()
+    })
+    await key('Enter')
+    await key('Delete')
+    expect(
+      cells()
+        .flat()
+        .every(each => each === '')
+    ).equals(true)
+    await key('ArrowDown')
+    expect(lit(1, 1)).equals(true)
+    await press(cell(2, 2))
+    expect(picker()).not.equals(null)
+    const right = await key('ArrowRight')
+    // The arrow moves the highlight, not the sheet's scroll.
+    expect(right.defaultPrevented).equals(true)
+    expect(lit(2, 3)).equals(true)
+    expect(lit(2, 2)).equals(false)
+    expect(picker()).equals(null)
+    for (const [name, times, row, inning] of [
+      ['ArrowUp', 3, 1, 3],
+      ['ArrowRight', 9, 1, 6],
+      ['ArrowDown', 5, 3, 6],
+      ['ArrowLeft', 9, 3, 1]
+    ] as const) {
+      for (let at = 0; at < times; at++) await key(name)
+      expect(lit(row, inning), name).equals(true)
+    }
+    expect(
+      document.querySelectorAll(
+        '[data-testid^="Plan cell "][aria-selected="true"]'
+      )
+    ).has.length(1)
+    expectNoTextField()
+    // Nothing was written on the way.
+    expect(
+      cells()
+        .flat()
+        .every(each => each === '')
+    ).equals(true)
+  })
+
+  it('writes a position from its first key on the web, in either case, staying in the highlight; C waits for an F; other keys do nothing', async function () {
+    await mount()
+    const table: Array<[string, PlanCell]> = [
+      ['1', '1B'],
+      ['2', '2B'],
+      ['3', '3B'],
+      ['s', 'SS'],
+      ['L', 'LF'],
+      ['r', 'RF'],
+      ['D', 'DH'],
+      ['e', 'EH'],
+      ['p', 'P']
+    ]
+    for (const [at, [name, value]] of table.entries()) {
+      const [row, inning] = [(at % 3) + 1, Math.floor(at / 3) + 1]
+      await press(cell(row, inning))
+      expect(picker()).not.equals(null)
+      const typed = await key(name)
+      expect(typed.defaultPrevented).equals(true)
+      expect(cells()[row - 1][inning - 1], name).equals(value)
+      expect(shown(row, inning)).equals(value)
+      // Written at once: no edit is left open, the picker closes, and the
+      // cell stays highlighted.
+      expect(byId(`Plan cell ${row}-${inning} caret`)).equals(null)
+      expect(picker()).equals(null)
+      expect(lit(row, inning)).equals(true)
+      expectNoTextField()
+    }
+    // C then F is CF. C alone shows, with a caret, while the plan keeps
+    // the cell's old value.
+    await press(cell(1, 4))
+    await key('c')
+    expect(shown(1, 4)).equals('C')
+    expect(byId('Plan cell 1-4 caret')).not.equals(null)
+    expect(cells()[0][3]).equals('')
+    expect(picker()).equals(null)
+    await key('f')
+    expect(cells()[0][3]).equals('CF')
+    expect(byId('Plan cell 1-4 caret')).equals(null)
+    // C then Enter, Tab, an arrow or leaving the grid is C.
+    await key('C')
+    await key('Enter')
+    expect(cells()[0][3]).equals('C')
+    await key('ArrowDown')
+    await key('c')
+    // Tab writes it and keeps the focus, and the highlight, on the grid.
+    expect((await key('Tab')).defaultPrevented).equals(true)
+    expect(cells()[1][3]).equals('C')
+    expect(lit(2, 4)).equals(true)
+    // With nothing being typed, Tab leaves the grid as usual, and nothing
+    // stays lit, wherever the focus lands.
+    expect((await key('Tab')).defaultPrevented).equals(false)
+    expect(lit(2, 4)).equals(false)
+    await press(cell(2, 4))
+    await key('Escape')
+    await key('ArrowDown')
+    await key('c')
+    await key('ArrowRight')
+    expect(cells()[2][3]).equals('C')
+    expect(lit(3, 5)).equals(true)
+    await key('c')
+    await act(async () => {
+      grid().blur()
+    })
+    await settle()
+    expect(cells()[2][4]).equals('C')
+    expect(lit(3, 5)).equals(false)
+    // Escape drops a C being typed; Backspace there benches.
+    await press(cell(1, 1))
+    await key('c')
+    await key('Escape')
+    expect(shown(1, 1)).equals('1B')
+    expect(cells()[0][0]).equals('1B')
+    await key('c')
+    await key('Backspace')
+    expect(cells()[0][0]).equals('')
+    // X, Q, F and a dash start nothing: nothing changes, and nothing is
+    // refused.
+    await press(cell(2, 1))
+    for (const name of ['x', 'Q', 'f', '-', 'Shift'])
+      expect((await key(name)).defaultPrevented, name).equals(name.length === 1)
+    expect(cells()[1][0]).equals('2B')
+    expect(byId('Plan refusal')!.textContent).equals('')
+    // A key held with Command or Control is the browser's.
+    const command = await key('s', { metaKey: true })
+    expect(command.defaultPrevented).equals(false)
+    await key('d', { ctrlKey: true })
+    expect(cells()[1][0]).equals('2B')
+    // After C, a key that makes nothing with it is refused in red, and the
+    // C waits on.
+    await key('c')
+    await key('x')
+    expect(shown(2, 1)).equals('C')
+    expect(byId('Plan refusal')!.textContent).includes('CX is not a position')
+    expect(getComputedStyle(cell(2, 1)).borderTopColor).equals(
+      'rgb(248, 113, 113)'
+    )
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, PLAN_REFUSAL_MS + 50))
+    })
+    expect(getComputedStyle(cell(2, 1)).borderTopColor).not.equals(
+      'rgb(248, 113, 113)'
+    )
+    await key('f')
+    expect(cells()[1][0]).equals('CF')
+  })
+
+  it('pastes a whole value into the highlighted web cell, refuses anything else, copies its value and benches it on Delete, all without a text field', async function () {
+    await mount({
+      plan: {
+        ...PLAN,
+        rows: PLAN.rows.map((row, at) =>
+          at === 0 ? { ...row, cells: ['P', '', '', '', '', ''] } : row
+        )
+      }
+    })
+    await press(cell(2, 3))
+    const pasted = await clipboard('paste', 'ss')
+    expect(pasted.event.defaultPrevented).equals(true)
+    expect(cells()[1][2]).equals('SS')
+    // Written whole, with no edit opened: the cell stays highlighted.
+    expect(lit(2, 3)).equals(true)
+    expect(byId('Plan cell 2-3 caret')).equals(null)
+    expect(picker()).equals(null)
+    expectNoTextField()
+    // The clipboard's text is trimmed.
+    await clipboard('paste', ' lf\n')
+    expect(cells()[1][2]).equals('LF')
+    // X, a dash and SSS are refused in red, the value kept.
+    for (const text of ['X', '-', 'SSS']) {
+      const refused = await clipboard('paste', text)
+      expect(refused.event.defaultPrevented, text).equals(true)
+      expect(cells()[1][2], text).equals('LF')
+      expect(byId('Plan refusal')!.textContent).includes(
+        `${text} is not a position`
+      )
+      expect(getComputedStyle(cell(2, 3)).borderTopColor).equals(
+        'rgb(248, 113, 113)'
+      )
+    }
+    // Copy takes the highlighted cell's value, blank or not.
+    const copied = await clipboard('copy')
+    expect(copied.event.defaultPrevented).equals(true)
+    expect(copied.copied).deep.equals(['text/plain:LF'])
+    await key('ArrowLeft')
+    expect((await clipboard('copy')).copied).deep.equals(['text/plain:'])
+    await key('ArrowUp')
+    await key('ArrowLeft')
+    expect((await clipboard('copy')).copied).deep.equals(['text/plain:P'])
+    // Pasted two cells away, the value lands there.
+    await key('ArrowRight')
+    await key('ArrowRight')
+    await clipboard('paste', 'P')
+    expect(cells()[0]).deep.equals(['P', '', 'P', '', '', ''])
+    // A paste over a C being typed drops the C.
+    await key('c')
+    await clipboard('paste', 'dh')
+    expect(cells()[0][2]).equals('DH')
+    expect(byId('Plan cell 1-3 caret')).equals(null)
+    // Delete and Backspace bench.
+    await key('Delete')
+    expect(cells()[0][2]).equals('')
+    await key('ArrowLeft')
+    await key('ArrowLeft')
+    await key('Backspace')
+    expect(cells()[0][0]).equals('')
+    expectNoTextField()
+    // With nothing highlighted, the clipboard is the browser's.
+    await act(async () => {
+      grid().blur()
+    })
+    await settle()
+    expect((await clipboard('copy')).event.defaultPrevented).equals(false)
+    expect((await clipboard('paste', 'P')).event.defaultPrevented).equals(false)
+    expect(cells()[0][0]).equals('')
+  })
+
+  it('closes the web picker and drops the highlight when focus leaves the grid and the picker, and keeps both moving between cells', async function () {
+    await mount()
+    await press(cell(1, 1))
+    await press(cell(2, 2))
+    expect(picker()!.textContent).includes('(Inn 2)')
+    expect(lit(2, 2)).equals(true)
+    // Focus on the picker keeps both.
+    await act(async () => {
+      byId('Plan pick CF')!.focus()
+    })
+    await settle()
+    expect(picker()).not.equals(null)
+    expect(lit(2, 2)).equals(true)
+    await act(async () => {
+      byId('Plan help')!.focus()
     })
     await settle()
     expect(picker()).equals(null)
+    expect(lit(2, 2)).equals(false)
   })
 
   it('has no hover handler on a web cell', async function () {
@@ -550,12 +728,12 @@ describe('the game plan tab', function () {
     await settle()
     expect(order).deep.equals([3, 1, 2])
     expect(byId('Plan player 1')!.textContent).equals('Willie Mays #24')
-    expect([1, 2, 3].map(inning => cell(1, inning).value)).deep.equals([
+    expect([1, 2, 3].map(inning => shown(1, inning))).deep.equals([
       'CF',
       '',
       'LF'
     ])
-    expect([1, 2, 3].map(inning => cell(3, inning).value)).deep.equals([
+    expect([1, 2, 3].map(inning => shown(3, inning))).deep.equals([
       'C',
       'C',
       'C'
@@ -594,7 +772,7 @@ describe('the game plan tab', function () {
     await settle()
     expect(order).deep.equals([1, 2, 3])
     expect(byId('Plan player 3')!.textContent).equals('Willie Mays #24')
-    expect([1, 2, 3].map(inning => cell(3, inning).value)).deep.equals([
+    expect([1, 2, 3].map(inning => shown(3, inning))).deep.equals([
       'CF',
       '',
       'LF'
@@ -606,15 +784,14 @@ describe('the game plan tab', function () {
     expect(byId('Plan toggle row')).equals(null)
     expect(document.body.textContent).not.includes('Enable per-inning')
     expect(document.querySelector('[role="switch"]')).equals(null)
-    const input = cell(1, 2)
-    await focus(input)
-    await typeText(input, 'p')
+    await press(cell(1, 2))
+    await key('p')
     expect(latest.enabled).equals(true)
     // DH bats without fielding: no position, so still off once P is gone.
-    await focus(cell(2, 2))
-    await typeText(cell(2, 2), 'dh')
-    await focus(input)
-    await typeText(input, '')
+    await press(cell(2, 2))
+    await key('d')
+    await press(cell(1, 2))
+    await key('Delete')
     expect(cells()[1][1]).equals('DH')
     expect(latest.enabled).equals(false)
   })
@@ -638,19 +815,19 @@ describe('the game plan tab', function () {
         ]
       }
     })
-    const shown = (): string[] =>
+    const listed = (): string[] =>
       [...document.querySelectorAll('[data-testid^="Plan warning "]')].map(
         node => String(node.getAttribute('data-testid'))
       )
     // Ruth's six outs are still reachable in the innings not planned yet:
     // yellow; nothing red yet.
-    expect(shown()).deep.equals(['Plan warning yellow mandatoryPlay'])
+    expect(listed()).deep.equals(['Plan warning yellow mandatoryPlay'])
     // Planning the third inning without him is a second sit, which breaks
     // Max Sits at once, before any save.
-    const input = cell(2, 3)
-    await focus(input)
-    await typeText(input, 'c')
-    expect(shown()).deep.include('Plan warning red maxSitsPerGame')
+    await press(cell(2, 3))
+    await key('c')
+    await key('Enter')
+    expect(listed()).deep.include('Plan warning red maxSitsPerGame')
     const red = byId('Plan warning red maxSitsPerGame')!
     expect(red.textContent).includes('Babe Ruth')
     expect(red.getAttribute('aria-label')).match(/^Red warning: /)
@@ -664,7 +841,7 @@ describe('the game plan tab', function () {
       byId('Plan clear')!.compareDocumentPosition(byId('Plan sheet')!) &
         Node.DOCUMENT_POSITION_FOLLOWING
     ).not.equals(0)
-    expect(shown()).not.include('Plan warning yellow rotateLeadoff')
+    expect(listed()).not.include('Plan warning yellow rotateLeadoff')
     // Gehrig led off last game: leading off again warns, softly.
     const gehrig = document.querySelector<HTMLElement>(
       '[aria-label="Reorder Lou Gehrig"]'
@@ -676,8 +853,8 @@ describe('the game plan tab', function () {
         )
       })
     await settle()
-    expect(shown()).deep.include('Plan warning yellow rotateLeadoff')
-    expect(shown().filter(id => id.includes('rotateLeadoff'))).deep.equals([
+    expect(listed()).deep.include('Plan warning yellow rotateLeadoff')
+    expect(listed().filter(id => id.includes('rotateLeadoff'))).deep.equals([
       'Plan warning yellow rotateLeadoff'
     ])
   })
@@ -852,7 +1029,7 @@ describe('the game plan tab', function () {
     host!.remove()
     await mount()
     expect(byId('Plan picker backdrop')).equals(null)
-    await focus(cell(2, 3))
+    await press(cell(2, 3))
     expect(picker()).not.equals(null)
     // A press on another cell, or on the picker, keeps it.
     for (const inside of [cell(1, 1), picker()!]) {
@@ -870,6 +1047,71 @@ describe('the game plan tab', function () {
     await settle()
     expect(picker()).equals(null)
     expect(cells()[1][2]).equals('')
+    // The click that follows a closing press, on a tab outside the sheet,
+    // closes the picker only: the tab never sees it. A later click does.
+    const tab = document.createElement('button')
+    document.body.appendChild(tab)
+    let clicked = 0
+    tab.addEventListener('click', () => {
+      clicked++
+    })
+    const clickTab = async (): Promise<MouseEvent> => {
+      const click = new window.MouseEvent('click', {
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => {
+        tab.dispatchEvent(click)
+      })
+      return click
+    }
+    const pressTab = async (button: number): Promise<void> => {
+      await act(async () => {
+        tab.dispatchEvent(
+          new window.MouseEvent('pointerdown', { bubbles: true, button })
+        )
+      })
+      await settle()
+    }
+    try {
+      // A right press outside closes the picker too, but no click follows
+      // it, so the next real click is not stopped.
+      await press(cell(2, 3))
+      await pressTab(2)
+      expect(picker()).equals(null)
+      expect((await clickTab()).defaultPrevented).equals(false)
+      expect(clicked).equals(1)
+      clicked = 0
+      await press(cell(2, 3))
+      expect(picker()).not.equals(null)
+      await pressTab(0)
+      expect(picker()).equals(null)
+      expect((await clickTab()).defaultPrevented).equals(true)
+      expect(clicked).equals(0)
+      expect((await clickTab()).defaultPrevented).equals(false)
+      expect(clicked).equals(1)
+      // Nor is a click stopped that comes long after its press, or lands
+      // elsewhere.
+      for (const late of [true, false]) {
+        await press(cell(2, 3))
+        await pressTab(0)
+        if (late) {
+          const now = Date.now
+          Date.now = () => now() + 1001
+          try {
+            await clickTab()
+          } finally {
+            Date.now = now
+          }
+        } else
+          await act(async () => {
+            document.body.click()
+          })
+      }
+      expect(clicked).equals(2)
+    } finally {
+      tab.remove()
+    }
   })
 
   it('assigns on a phone by holding a picker position, whose enlarged box shows and follows the finger, and writes where it lets go', async function () {
@@ -936,6 +1178,32 @@ describe('the game plan tab', function () {
     await letGo('CF')
     expect(cells()[0][1]).equals('')
     expect(picker()).equals(null)
+  })
+
+  it('gives the web’s keys back to the grid after a picker position is held and let go', async function () {
+    await mount()
+    await press(cell(1, 2))
+    placeTargets()
+    const target = byId('Plan pick CF')!
+    await act(async () => {
+      ;(
+        propsWith(target, 'onLongPress').onLongPress as (
+          event: GestureResponderEvent
+        ) => void
+      )(touch(210, 110))
+    })
+    await settle()
+    await act(async () => {
+      target.focus()
+      ;(propsWith(target, 'onPressOut').onPressOut as () => void)()
+    })
+    await settle()
+    expect(cells()[0][1]).equals('CF')
+    expect(picker()).equals(null)
+    expect(document.activeElement).equals(grid())
+    // The next key reaches the highlighted cell.
+    await key('s')
+    expect(cells()[0][1]).equals('SS')
   })
 
   it('judges a final game that stopped short on the innings it played', async function () {

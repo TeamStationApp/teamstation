@@ -1,17 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react'
-import {
-  type GestureResponderEvent,
-  Pressable,
-  Text,
-  TextInput,
-  View
-} from 'react-native'
+import React from 'react'
+import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
 
-import {
-  type PlanCell as PlanCellValue,
-  planCellEntry,
-  planCellOf
-} from '../../../common/gamePlan'
+import type { PlanCell as PlanCellValue } from '../../../common/gamePlan'
 import { useScoringSheetTheme } from '../scoringSheetTheme'
 import { PLAN_CELL_FONT } from './planLayout'
 
@@ -61,118 +51,69 @@ function useCellStyle(
 }
 
 /**
- * A plan cell on the web: a two-character field. A click focuses it, which
- * selects its text and opens the field picker. Keys are read as they come:
- * a whole value is written at once, the first letter of a two-letter one
- * waits for the second, and anything else is refused, as is a paste that is
- * not a whole value. A refusal keeps the cell's value and outlines it in red.
- * The bench is blank: the field shows nothing, and emptying it (Delete or
- * Backspace) benches. There is no hover style.
+ * A plan cell on the web: its value, or the letter being typed into it, in
+ * a box the sheet outlines while it is highlighted, and in red for a moment
+ * when it refuses what was typed or pasted. It is no text field: a click
+ * highlights it and opens the field picker, and the sheet, which takes the
+ * focus, reads the keys, so no text is ever selected or edited in it. The
+ * bench is blank. There is no hover style.
  */
 export function WebPlanCell({
   value,
   label,
-  selected,
+  highlighted,
+  editing,
+  refused,
   testID,
-  onFocus,
-  onBlur,
-  onCommit,
-  onRefuse,
-  onEscape
+  onPress
 }: {
   value: PlanCellValue
   label: string
-  selected: boolean
+  highlighted: boolean
+  /** What is being typed into it, which replaces its value once whole. */
+  editing?: string
+  refused: boolean
   testID: string
-  onFocus: () => void
-  onBlur: () => void
-  onCommit: (value: PlanCellValue) => void
-  /** What was typed or pasted, which the cell would not take. */
-  onRefuse: (text: string) => void
-  onEscape: () => void
+  onPress: () => void
 }): React.ReactElement {
-  const [pending, setPending] = useState<string>()
-  const [refused, setRefused] = useState(0)
-  const style = useCellStyle(selected, refused > 0)
-  const input = useRef<React.ComponentRef<typeof TextInput>>(null)
-  const latest = useRef({ onCommit, onRefuse })
-  latest.current = { onCommit, onRefuse }
-  const refuse = (text: string): void => {
-    setPending(undefined)
-    setRefused(count => count + 1)
-    latest.current.onRefuse(text)
-  }
-  const refuseRef = useRef(refuse)
-  refuseRef.current = refuse
-  useEffect(() => {
-    if (refused === 0) return
-    const timer = setTimeout(() => {
-      setRefused(0)
-    }, PLAN_REFUSAL_MS)
-    return () => {
-      clearTimeout(timer)
-    }
-  }, [refused])
-  // A paste is read whole, before the field cuts it to two characters.
-  useEffect(() => {
-    const node = input.current as unknown as HTMLInputElement | null
-    if (node?.addEventListener == null) return
-    const paste = (event: ClipboardEvent): void => {
-      event.preventDefault()
-      const text = event.clipboardData?.getData('text') ?? ''
-      const cell = planCellOf(text)
-      if (cell == null) refuseRef.current(text)
-      else {
-        setPending(undefined)
-        latest.current.onCommit(cell)
-      }
-    }
-    node.addEventListener('paste', paste)
-    return () => {
-      node.removeEventListener('paste', paste)
-    }
-  }, [])
-  const shown = pending ?? value
+  const style = useCellStyle(highlighted, refused)
+  const shown = editing ?? value
   return (
-    <TextInput
-      ref={input}
+    <Pressable
       testID={testID}
-      accessibilityLabel={label}
-      value={shown}
-      maxLength={2}
-      autoCapitalize="characters"
-      autoCorrect={false}
-      spellCheck={false}
-      selectTextOnFocus
-      onFocus={onFocus}
-      onBlur={() => {
-        // A first letter never finished is not a value.
-        if (pending != null) refuse(pending)
-        onBlur()
-      }}
-      onKeyPress={event => {
-        // Left, so the next click opens the picker again.
-        if (event.nativeEvent.key !== 'Escape') return
-        onEscape()
-        input.current?.blur()
-      }}
-      onChangeText={text => {
-        const entry = planCellEntry(shown, text)
-        if ('commit' in entry) {
-          setPending(undefined)
-          onCommit(entry.commit)
-        } else if ('pending' in entry) setPending(entry.pending)
-        else refuse(text)
-      }}
+      accessibilityRole="button"
+      accessibilityLabel={shown === '' ? label : `${label}, ${shown}`}
+      accessibilityState={{ selected: highlighted }}
+      aria-selected={highlighted}
+      // A click leaves the focus to the sheet, which reads the keys; the
+      // cell is no tab stop.
+      tabIndex={-1}
+      onPress={onPress}
       style={{
         ...style.box,
-        ...style.text,
-        padding: 0,
-        // The cell's own border shows focus; the browser's ring would
+        alignItems: 'center',
+        justifyContent: 'center',
+        flexDirection: 'row',
+        // The sheet's focus shows as this outline; the browser's ring would
         // spill into its neighbours.
         outlineWidth: 0
       }}
-    />
+    >
+      <Text selectable={false} style={style.text}>
+        {shown}
+      </Text>
+      {editing != null && (
+        <View
+          testID={`${testID} caret`}
+          style={{
+            width: 1.5,
+            height: PLAN_CELL_FONT.fontSize,
+            marginLeft: 1,
+            backgroundColor: style.text.color
+          }}
+        />
+      )}
+    </Pressable>
   )
 }
 

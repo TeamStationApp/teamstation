@@ -1484,30 +1484,38 @@ describe('Coach Game (U25)', function () {
 })
 
 describe('the coach’s game plan', function () {
-  const cell = (row: number, inning: number): HTMLInputElement =>
-    document.querySelector<HTMLInputElement>(
+  const cell = (row: number, inning: number): HTMLElement =>
+    document.querySelector<HTMLElement>(
       `[data-testid="Plan cell ${row}-${inning}"]`
     )!
-  /** A value typed into a plan cell, a key at a time. */
+  /**
+   * A value typed into a plan cell: a click that highlights it, its keys on
+   * the grid that holds the focus, then the focus taken away.
+   */
   async function type(
     row: number,
     inning: number,
     keys: string[]
   ): Promise<void> {
-    const input = cell(row, inning)
     await act(async () => {
-      input.focus()
+      cell(row, inning).click()
     })
-    for (const text of keys)
+    await settle()
+    const grid = document.querySelector<HTMLElement>(
+      '[data-testid="Plan grid"]'
+    )!
+    for (const key of keys)
       await act(async () => {
-        Object.getOwnPropertyDescriptor(
-          window.HTMLInputElement.prototype,
-          'value'
-        )!.set!.call(input, text)
-        input.dispatchEvent(new window.Event('input', { bubbles: true }))
+        grid.dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key,
+            bubbles: true,
+            cancelable: true
+          })
+        )
       })
     await act(async () => {
-      input.blur()
+      grid.blur()
     })
     await settle()
   }
@@ -1618,12 +1626,12 @@ describe('the coach’s game plan', function () {
     await plan(held)
     expect(saveDisabled()).equals(true)
     await type(1, 1, ['p'])
-    expect(cell(1, 1).value).equals('P')
+    expect(cell(1, 1).textContent).equals('P')
     expect(saveDisabled()).equals(false)
     // A cell put back is no change.
-    await type(1, 1, [''])
+    await type(1, 1, ['Delete'])
     expect(saveDisabled()).equals(true)
-    await type(1, 1, ['c', 'Cf'])
+    await type(1, 1, ['c', 'f'])
     await click('Save Rosters')
     await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
     expect(held.writes).deep.equals(['plan'])
@@ -1685,7 +1693,7 @@ describe('the coach’s game plan', function () {
         )
       })
     await settle()
-    expect(cell(1, 1).value).equals('1B')
+    expect(cell(1, 1).textContent).equals('1B')
     expect(saveDisabled()).equals(false)
     await click('Save Rosters')
     await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
@@ -1724,7 +1732,7 @@ describe('the coach’s game plan', function () {
     await click('Plan', 'tab')
     await waitFor(() => cell(3, 1) != null, 'the plan sheet')
     // His plan's rows follow the game's order, Hawk 3's cells with him.
-    expect(cell(3, 1).value).equals('1B')
+    expect(cell(3, 1).textContent).equals('1B')
     expect(saveDisabled()).equals(true)
     await click('Back')
     expect(document.body.textContent).not.includes(
@@ -1813,7 +1821,10 @@ describe('the coach’s game plan', function () {
             .textContent
       )
     ).deep.equals(['Hawk 3 #3', 'Hawk 2 #2', 'Hawk 1 #1'])
-    expect([cell(1, 1).value, cell(3, 1).value]).deep.equals(['1B', ''])
+    expect([cell(1, 1).textContent, cell(3, 1).textContent]).deep.equals([
+      '1B',
+      ''
+    ])
     await click('Save Rosters')
     await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
     expect(held.writes).deep.equals(['lineups', 'plan'])
@@ -1852,7 +1863,7 @@ describe('the coach’s game plan', function () {
     })
     await click('Plan', 'tab')
     await waitFor(() => cell(1, 1) != null, 'the plan sheet')
-    expect(cell(3, 1).value).equals('1B')
+    expect(cell(3, 1).textContent).equals('1B')
     expect(saveDisabled()).equals(true)
     await waitFor(() => held.reads.lineups >= 2, 'the digest read')
     // The scorekeeper moves Hawk 3 to lead off, and says so.
@@ -1877,7 +1888,7 @@ describe('the coach’s game plan', function () {
     })
     await scorekeeper.flush()
     await changes.change('lineups', 'theirs')
-    await waitFor(() => cell(1, 1)?.value === '1B', 'his reorder')
+    await waitFor(() => cell(1, 1)?.textContent === '1B', 'his reorder')
     expect(
       document.querySelector('[data-testid="Plan player 1"]')!.textContent
     ).equals('Hawk 3 #3')
@@ -1940,9 +1951,9 @@ describe('the coach’s game plan', function () {
       }
     }
     await plan(held)
-    expect(cell(1, 1).value).equals('P')
+    expect(cell(1, 1).textContent).equals('P')
     expect(cell(1, 7)).not.equals(null)
-    await type(1, 1, [''])
+    await type(1, 1, ['Delete'])
     expect(saveDisabled()).equals(false)
     await click('Back')
     expect(document.body.textContent).includes(
@@ -1950,7 +1961,7 @@ describe('the coach’s game plan', function () {
     )
     await click('Keep editing')
     await click('Cancel')
-    await waitFor(() => cell(1, 1)?.value === 'P', 'the saved plan')
+    await waitFor(() => cell(1, 1)?.textContent === 'P', 'the saved plan')
     expect(saveDisabled()).equals(true)
   })
 
@@ -1991,19 +2002,22 @@ describe('the coach’s game plan', function () {
       const held = accepted()
       held.plans = hawkPlan('P')
       const { changes, reads } = await opened(held)
-      expect(cell(1, 1).value).equals('P')
+      expect(cell(1, 1).textContent).equals('P')
       const before = reads()
       // The other team's save is not his.
       held.plans = hawkPlan('C')
       await changes.plans('away')
       expect(reads()).equals(before)
-      expect(cell(1, 1).value).equals('P')
+      expect(cell(1, 1).textContent).equals('P')
       await changes.plans('home')
-      await waitFor(() => cell(1, 1)?.value === 'C', 'the newer plan')
+      await waitFor(() => cell(1, 1)?.textContent === 'C', 'the newer plan')
       expect(saveDisabled()).equals(true)
       held.plans = hawkPlan('SS')
       await changes.emit({ type: 'resync', gameId: 'g1' })
-      await waitFor(() => cell(1, 1)?.value === 'SS', 'the plan on resync')
+      await waitFor(
+        () => cell(1, 1)?.textContent === 'SS',
+        'the plan on resync'
+      )
       expect(saveDisabled()).equals(true)
       expect(held.writes).deep.equals([])
     })
@@ -2012,24 +2026,27 @@ describe('the coach’s game plan', function () {
       const held = accepted()
       held.plans = hawkPlan('P')
       const { changes } = await opened(held)
-      await type(1, 2, ['s', 'Ss'])
+      await type(1, 2, ['s'])
       expect(saveDisabled()).equals(false)
       held.plans = hawkPlan('C')
       await changes.plans('home')
       // His draft stands: the first inning as he opened it, his edit kept.
-      expect(cell(1, 1).value).equals('P')
-      expect(cell(1, 2).value).equals('SS')
+      expect(cell(1, 1).textContent).equals('P')
+      expect(cell(1, 2).textContent).equals('SS')
       expect(saveDisabled()).equals(false)
       await click('Cancel')
-      await waitFor(() => cell(1, 1)?.value === 'C', 'the newer saved plan')
-      expect(cell(1, 2).value).equals('')
+      await waitFor(
+        () => cell(1, 1)?.textContent === 'C',
+        'the newer saved plan'
+      )
+      expect(cell(1, 2).textContent).equals('')
       expect(saveDisabled()).equals(true)
       // Edited again over the newer plan and the plan saved elsewhere once
       // more, his Save is the one stored.
-      await type(1, 2, ['l', 'Lf'])
+      await type(1, 2, ['l'])
       held.plans = hawkPlan('1B')
       await changes.plans('home')
-      expect(cell(1, 1).value).equals('C')
+      expect(cell(1, 1).textContent).equals('C')
       await click('Save Rosters')
       await waitFor(() => held.savedPlans.length === 1, 'the plan save')
       expect(held.savedPlans[0].rows[0].cells.slice(0, 2)).deep.equals([
@@ -2250,7 +2267,7 @@ describe('the coach’s game plan', function () {
       await moveFielder('2B', 'SS')
       await click('Plan', 'tab')
       await waitFor(() => cell(1, 1) != null, 'the plan sheet')
-      await type(9, 2, ['l', 'Lf'])
+      await type(9, 2, ['l'])
       await click('Save Rosters')
       await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
       await waitFor(
@@ -2299,7 +2316,7 @@ describe('the coach’s game plan', function () {
       })
       await click('Plan', 'tab')
       await waitFor(() => cell(1, 1) != null, 'the plan sheet')
-      await type(1, 2, ['s', 'Ss'])
+      await type(1, 2, ['s'])
       await click('Save Rosters')
       await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
       await settle()
@@ -2373,7 +2390,7 @@ describe('the coach’s game plan', function () {
     await waitFor(() => cell(1, 1) != null, 'the plan sheet')
     await changes.plans('home')
     expect(answer).not.equals(undefined)
-    await type(1, 2, ['s', 'Ss'])
+    await type(1, 2, ['s'])
     await click('Save Rosters')
     await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
     await waitFor(() => saveDisabled(), 'a clean plan')
@@ -2382,7 +2399,7 @@ describe('the coach’s game plan', function () {
     })
     await settle()
     // The plan he saved stands, clean: the older answer is not his base.
-    expect(cell(1, 2).value).equals('SS')
+    expect(cell(1, 2).textContent).equals('SS')
     expect(saveDisabled()).equals(true)
   })
 
@@ -2392,13 +2409,13 @@ describe('the coach’s game plan', function () {
       throw new Error('offline')
     }
     await plan(held)
-    await type(3, 2, ['s', 'Ss'])
+    await type(3, 2, ['s'])
     await click('Save Rosters')
     await waitFor(
       () => document.body.textContent!.includes('Unable to save the lineup'),
       'the failure'
     )
-    expect(cell(3, 2).value).equals('SS')
+    expect(cell(3, 2).textContent).equals('SS')
     expect(saveDisabled()).equals(false)
   })
 

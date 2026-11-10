@@ -19,6 +19,8 @@ import {
   type GamePlan,
   MAX_PLAN_INNINGS,
   type PlanCell,
+  planCellEntry,
+  planCellOf,
   planHasPositions,
   removeInning
 } from '../../../common/gamePlan'
@@ -38,7 +40,7 @@ import {
   useRosterGesture
 } from '../RosterDragContext'
 import { useScoringSheetTheme } from '../scoringSheetTheme'
-import { NativePlanCell, WebPlanCell } from './PlanCell'
+import { NativePlanCell, PLAN_REFUSAL_MS, WebPlanCell } from './PlanCell'
 import { PlanFieldPicker } from './PlanFieldPicker'
 import {
   type AssignDrag,
@@ -91,6 +93,44 @@ export const planBatterLabel = ({ name, jersey }: PlanBatter): string =>
 
 /** The vertical scroll the row drag auto-scrolls. */
 const SCROLL_NAME = 'Plan sheet'
+/**
+ * How soon after the press that closed the web's picker its click comes, at
+ * most, to be taken as that press's and stopped.
+ */
+const PLAN_CLOSING_CLICK_MS = 1000
+
+/** The rows and innings each arrow key moves the web's highlight by. */
+const ARROWS: Readonly<Record<string, readonly [number, number]>> = {
+  ArrowUp: [-1, 0],
+  ArrowDown: [1, 0],
+  ArrowLeft: [0, -1],
+  ArrowRight: [0, 1]
+}
+
+/**
+ * The cell an arrow key highlights: the next one its way, held at the
+ * sheet's edges, or the first cell when none is highlighted yet.
+ */
+function steppedCell(
+  at: PlanCellAddress | undefined,
+  [rows, innings]: readonly [number, number],
+  plan: Pick<GamePlan, 'innings' | 'rows'>
+): PlanCellAddress {
+  if (at == null) return { row: 0, inning: 0 }
+  const held = (value: number, count: number): number =>
+    Math.max(0, Math.min(count - 1, value))
+  return {
+    row: held(at.row + rows, plan.rows.length),
+    inning: held(at.inning + innings, plan.innings)
+  }
+}
+
+/** Whether a DOM node holds another (or is it), for the web's focus. */
+const holds = (node: unknown, other: EventTarget | null): boolean =>
+  other != null &&
+  (node as { contains?: (other: Node) => boolean } | null)?.contains?.(
+    other as Node
+  ) === true
 
 /**
  * The coach's game plan: a row of a blue Help and a red Clear, then a sheet
@@ -270,37 +310,201 @@ function PlanSheet({
     }
   }, [engine, measure])
 
-  // The web closes the picker when focus leaves both the cells and it.
-  const sheetNode = useRef<React.ComponentRef<typeof View>>(null)
+  // The web's spreadsheet. A click highlights a cell and opens the picker
+  // for it, and the grid, which takes the focus, reads the keys, the copy
+  // and the paste for that cell: no text field is focused, and no text is
+  // selected. A position's first key writes it at once (C waits for an F,
+  // which makes CF); Delete benches; the arrows move the highlight.
+  const tab = useRef<React.ComponentRef<typeof View>>(null)
+  const grid = useRef<React.ComponentRef<typeof View>>(null)
   const pickerNode = useRef<React.ComponentRef<typeof View>>(null)
-  const closeUnlessFocused = (): void => {
-    setTimeout(() => {
-      const active = document.activeElement
-      const inside = (node: unknown): boolean =>
-        active != null &&
-        (node as { contains?: (other: Node) => boolean } | null)?.contains?.(
-          active
-        ) === true
-      if (inside(pickerNode.current)) return
-      if (inside(sheetNode.current) && active?.tagName === 'INPUT') return
-      setPicking(undefined)
-    }, 0)
+  const [highlight, setHighlight] = useState<PlanCellAddress>()
+  const [editing, setEditing] = useState('')
+  const [refused, setRefused] = useState<PlanCellAddress>()
+  useEffect(() => {
+    if (refused == null) return
+    const timer = setTimeout(() => {
+      setRefused(undefined)
+    }, PLAN_REFUSAL_MS)
+    return () => {
+      clearTimeout(timer)
+    }
+  }, [refused])
+  // A cell of a lineup or plan that has since shrunk is highlighted no
+  // longer.
+  const lit =
+    highlight != null &&
+    highlight.row < aligned.rows.length &&
+    highlight.inning < aligned.innings
+      ? highlight
+      : undefined
+  const focusGrid = (): void => {
+    ;(grid.current as unknown as HTMLElement | null)?.focus()
   }
+  const refuse = (at: PlanCellAddress, text: string): void => {
+    setRefused({ ...at })
+    setRefusal(sprintf(lstrings.plan_refused, text))
+  }
+  /** The letter being typed, written as it stands: C is the catcher. */
+  const finishEditing = (): void => {
+    const cell = planCellOf(editing)
+    if (lit != null && editing !== '' && cell != null) setCell(lit, cell)
+    setEditing('')
+  }
+  const highlightCell = (at: PlanCellAddress): void => {
+    finishEditing()
+    setHighlight(at)
+    setPicking(at)
+    focusGrid()
+  }
+  const keyDown = (event: KeyboardEvent): void => {
+    if (
+      event.target !== grid.current ||
+      event.altKey ||
+      event.ctrlKey ||
+      event.metaKey
+    )
+      return
+    const step = ARROWS[event.key]
+    if (step != null) {
+      event.preventDefault()
+      if (aligned.rows.length === 0) return
+      finishEditing()
+      setPicking(undefined)
+      setHighlight(steppedCell(lit, step, aligned))
+      return
+    }
+    if (lit == null) return
+    switch (event.key) {
+      case 'Escape':
+        // A letter being typed is dropped; else the picker closes.
+        if (editing !== '') setEditing('')
+        else setPicking(undefined)
+        return
+      case 'Enter':
+      case 'Tab':
+        if (editing === '') {
+          // A Tab with nothing typed leaves the sheet's cells, even for a
+          // button inside the grid such as +: nothing stays lit.
+          if (event.key === 'Tab') {
+            setHighlight(undefined)
+            setPicking(undefined)
+          }
+          return
+        }
+        // The letter is written and the cell stays highlighted: a Tab that
+        // moved the focus on would leave it lit with the keys gone elsewhere.
+        event.preventDefault()
+        finishEditing()
+        return
+      case 'Backspace':
+      case 'Delete':
+        event.preventDefault()
+        setEditing('')
+        setPicking(undefined)
+        setCell(lit, '')
+        return
+    }
+    if (event.key.length !== 1) return
+    event.preventDefault()
+    const entry = planCellEntry(editing, event.key)
+    if ('commit' in entry) {
+      setEditing('')
+      // Typed whole, the picture has done its part, and no longer covers
+      // the cells under it.
+      setPicking(undefined)
+      setCell(lit, entry.commit)
+    } else if ('pending' in entry) {
+      setEditing(entry.pending)
+      setPicking(undefined)
+    } else if (editing !== '')
+      refuse(lit, `${editing}${event.key.toUpperCase()}`)
+  }
+  const copy = (event: ClipboardEvent): void => {
+    if (lit == null || event.clipboardData == null) return
+    event.clipboardData.setData(
+      'text/plain',
+      aligned.rows[lit.row].cells[lit.inning]
+    )
+    event.preventDefault()
+  }
+  const paste = (event: ClipboardEvent): void => {
+    if (lit == null) return
+    event.preventDefault()
+    const text = (event.clipboardData?.getData('text') ?? '').trim()
+    const cell = planCellOf(text)
+    setEditing('')
+    if (cell == null) refuse(lit, text)
+    else {
+      setPicking(undefined)
+      setCell(lit, cell)
+    }
+  }
+  /** Focus gone from the grid and the picker: nothing is highlighted. */
+  const left = (): void => {
+    finishEditing()
+    setHighlight(undefined)
+    setPicking(undefined)
+  }
+  const keys = useRef({ keyDown, copy, paste, left })
+  keys.current = { keyDown, copy, paste, left }
+  useEffect(() => {
+    const node = grid.current as unknown as HTMLElement | null
+    const whole = tab.current as unknown as HTMLElement | null
+    if (!web || node?.addEventListener == null || whole == null) return
+    const keyDown = (event: KeyboardEvent): void => {
+      keys.current.keyDown(event)
+    }
+    const copy = (event: ClipboardEvent): void => {
+      keys.current.copy(event)
+    }
+    const paste = (event: ClipboardEvent): void => {
+      keys.current.paste(event)
+    }
+    // Chromium aims a copy or a paste made with nothing selected at the
+    // page's body, not at the focused grid, so the grid holds a collapsed
+    // selection of its own, which draws nothing, while it has the focus.
+    const focusIn = (event: FocusEvent): void => {
+      if (event.target === node) window.getSelection()?.collapse(node, 0)
+    }
+    const focusOut = (): void => {
+      setTimeout(() => {
+        const active = document.activeElement
+        if (holds(node, active) || holds(pickerNode.current, active)) return
+        keys.current.left()
+      }, 0)
+    }
+    node.addEventListener('keydown', keyDown)
+    node.addEventListener('copy', copy)
+    node.addEventListener('paste', paste)
+    node.addEventListener('focusin', focusIn)
+    // From the grid, or from the picker the grid's cell opened.
+    whole.addEventListener('focusout', focusOut)
+    return () => {
+      node.removeEventListener('keydown', keyDown)
+      node.removeEventListener('copy', copy)
+      node.removeEventListener('paste', paste)
+      node.removeEventListener('focusin', focusIn)
+      whole.removeEventListener('focusout', focusOut)
+    }
+  }, [web])
 
-  // A web click anywhere but the picker and the cells closes the picker,
-  // changing nothing, even where the click takes no focus from the cell.
+  // A web click anywhere but the picker and the grid closes the picker,
+  // changing nothing: the click that follows the press is stopped before
+  // what it landed on sees it, as the phone's backdrop takes its tap, so a
+  // tab or the Box Score pill under it does not open too.
+  const closingClick = useRef<{ target: EventTarget | null; at: number }>(
+    undefined
+  )
   useEffect(() => {
     if (!web || picking == null) return
     const press = (event: Event): void => {
-      const target = event.target as Node | null
-      const holds = (node: unknown): boolean =>
-        target != null &&
-        (node as { contains?: (other: Node) => boolean } | null)?.contains?.(
-          target
-        ) === true
-      if (holds(pickerNode.current)) return
-      if (holds(sheetNode.current) && (target as Element).tagName === 'INPUT')
-        return
+      if (holds(pickerNode.current, event.target)) return
+      if (holds(grid.current, event.target)) return
+      // Only a primary press is followed by a click; a right or middle one
+      // must not leave a record that stops the next real click.
+      if ((event as MouseEvent).button === 0)
+        closingClick.current = { target: event.target, at: Date.now() }
       setPicking(undefined)
     }
     document.addEventListener('pointerdown', press, true)
@@ -308,6 +512,26 @@ function PlanSheet({
       document.removeEventListener('pointerdown', press, true)
     }
   }, [web, picking])
+  // Kept past the picker's closing, which comes before the click.
+  useEffect(() => {
+    if (!web) return
+    const click = (event: Event): void => {
+      const closing = closingClick.current
+      closingClick.current = undefined
+      if (closing === undefined) return
+      if (
+        closing.target !== event.target ||
+        Date.now() - closing.at > PLAN_CLOSING_CLICK_MS
+      )
+        return
+      event.stopPropagation()
+      event.preventDefault()
+    }
+    document.addEventListener('click', click, true)
+    return () => {
+      document.removeEventListener('click', click, true)
+    }
+  }, [web])
 
   // A phone's hold-and-drag: once the hold has opened the picker, the root
   // takes the finger's moves, wherever it goes, until it lets go.
@@ -366,6 +590,8 @@ function PlanSheet({
       if (held.over == null) return
       pick(held.cell, held.over)
       setPicking(undefined)
+      // The web's keys go back to the highlighted cell, as after a tap.
+      if (web) focusGrid()
     }, 0)
   }
 
@@ -400,6 +626,9 @@ function PlanSheet({
     },
     []
   )
+  // The cell the sheet marks: the highlighted one on the web, else the one
+  // the picker is open for.
+  const marked = web ? lit : picking
   const pickerWidth = Math.min(PLAN_PICKER_WIDTH, area.width)
   const rowTop =
     picking == null
@@ -436,6 +665,7 @@ function PlanSheet({
   }
   return (
     <View
+      ref={tab}
       testID="Plan tab"
       style={{ flex: 1, minHeight: 0 }}
       onLayout={event => {
@@ -529,7 +759,6 @@ function PlanSheet({
               </Pressable>
             </View>
             <View
-              ref={sheetNode}
               testID="Plan sheet"
               onLayout={event => {
                 setSheetTop(event.nativeEvent.layout.y)
@@ -569,7 +798,7 @@ function PlanSheet({
                 </View>
                 {aligned.rows.map((row, index) => {
                   const batter = batters[index]
-                  const active = picking?.row === index
+                  const active = marked?.row === index
                   return (
                     <View
                       key={batter.id}
@@ -671,12 +900,22 @@ function PlanSheet({
                 // The rows' rules run to the sheet's edge past the last inning.
                 contentContainerStyle={{ flexGrow: 1 }}
               >
-                <View style={{ flexGrow: 1 }}>
+                <View
+                  ref={grid}
+                  testID="Plan grid"
+                  accessibilityLabel={
+                    web ? lstrings.plan_grid_label : undefined
+                  }
+                  // The web's grid takes the focus, and the keys, for the
+                  // highlighted cell; that cell's outline shows it.
+                  tabIndex={web ? 0 : undefined}
+                  style={{ flexGrow: 1, outlineWidth: 0 }}
+                >
                   <View
                     style={{ height: PLAN_HEADER_HEIGHT, flexDirection: 'row' }}
                   >
                     {innings.map(inning => {
-                      const active = picking?.inning === inning - 1
+                      const active = marked?.inning === inning - 1
                       // An added inning's number is red, and deletes it.
                       const added = inning > DEFAULT_PLAN_INNINGS
                       const number = (
@@ -771,7 +1010,7 @@ function PlanSheet({
                       {row.cells.map((cell, inning) => {
                         const at = { row: index, inning }
                         const selected =
-                          picking?.row === index && picking.inning === inning
+                          marked?.row === index && marked.inning === inning
                         const label = sprintf(
                           lstrings.plan_cell_label,
                           row.player.fullName,
@@ -793,25 +1032,18 @@ function PlanSheet({
                                 testID={testID}
                                 label={label}
                                 value={cell}
-                                selected={selected}
-                                onFocus={() => {
-                                  setPicking(at)
-                                }}
-                                onBlur={closeUnlessFocused}
-                                onCommit={value => {
-                                  setCell(at, value)
-                                  // Typed whole, the picture has done its
-                                  // part, and no longer covers the cells
-                                  // under it.
-                                  setPicking(undefined)
-                                }}
-                                onRefuse={text => {
-                                  setRefusal(
-                                    sprintf(lstrings.plan_refused, text)
-                                  )
-                                }}
-                                onEscape={() => {
-                                  setPicking(undefined)
+                                highlighted={selected}
+                                editing={
+                                  selected && editing !== ''
+                                    ? editing
+                                    : undefined
+                                }
+                                refused={
+                                  refused?.row === index &&
+                                  refused.inning === inning
+                                }
+                                onPress={() => {
+                                  highlightCell(at)
                                 }}
                               />
                             ) : (
@@ -920,9 +1152,12 @@ function PlanSheet({
             onPick={value => {
               pick(picking, value)
               setPicking(undefined)
+              // The web's keys go back to the highlighted cell.
+              if (web) focusGrid()
             }}
             onClose={() => {
               setPicking(undefined)
+              if (web) focusGrid()
             }}
             onHold={holdTarget}
             onHoldEnd={releaseTarget}
