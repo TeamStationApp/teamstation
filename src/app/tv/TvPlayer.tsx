@@ -379,12 +379,13 @@ export function TvPlayer({
       dispatch({ type: 'reset', count: loaded.length })
       // State gets copies: `loaded` is rewritten in place by `refreshAngle`.
       setAngles([...loaded])
-      // A refresh asked for while one runs is kept and run after it: the
-      // periodic refresh's swap to a recording must not be lost to a recovery.
-      const queuedRefresh = new Map<number, 'recover' | 'finished'>()
+      // The periodic refresh's swap to a recording, asked for while another
+      // refresh of that camera runs, is kept and run after it. A recovery asked
+      // for then is dropped: the running refresh is that recovery.
+      const queuedSwap = new Set<number>()
       refreshAngle.current = async (index, reason = 'recover') => {
         if (refreshing.current.has(index)) {
-          queuedRefresh.set(index, reason)
+          if (reason === 'finished') queuedSwap.add(index)
           return
         }
         // Already a recording: a queued swap has nothing left to do.
@@ -431,10 +432,8 @@ export function TvPlayer({
         } finally {
           if (active) {
             refreshing.current.delete(index)
-            const again = queuedRefresh.get(index)
-            queuedRefresh.delete(index)
-            if (again !== undefined)
-              refreshAngle.current?.(index, again).catch(() => undefined)
+            if (queuedSwap.delete(index))
+              refreshAngle.current?.(index, 'finished').catch(() => undefined)
           }
         }
       }
