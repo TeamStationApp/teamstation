@@ -84,7 +84,7 @@ describe('NativeVideoHandle', function () {
     }
     handle.currentTime = 100
     handle.handleBuffer({ isBuffering: true })
-    now = 12_000
+    now = 90_000
     handle.checkSeekTimeout()
     expect(errors).equals(0)
     handle.handleBuffer({ isBuffering: false })
@@ -116,10 +116,10 @@ describe('NativeVideoHandle', function () {
     }
     expect(errors).equals(0)
     expect(handle.reportedTime).equals(0)
-    now = 119_999
+    now = 209_999
     handle.checkSeekTimeout()
     expect(errors).equals(0)
-    now = 120_000
+    now = 210_000
     handle.checkSeekTimeout()
     expect(errors).equals(1)
     handle.handleTransferProgress()
@@ -141,14 +141,14 @@ describe('NativeVideoHandle', function () {
       }
       handle.currentTime = 100
       handle.handleBuffer({ isBuffering: true })
-      now = 29_999
+      now = 119_999
       handle.checkSeekTimeout()
       expect(errors).equals(0)
       if (finishesBuffering) handle.handleBuffer({ isBuffering: false })
-      now = finishesBuffering ? 34_998 : 30_000
+      now = finishesBuffering ? 124_998 : 120_000
       handle.checkSeekTimeout()
       expect(errors).equals(finishesBuffering ? 0 : 1)
-      now = 34_999
+      now = 124_999
       handle.checkSeekTimeout()
       expect(errors).equals(1)
     }
