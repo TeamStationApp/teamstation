@@ -87,6 +87,8 @@ export function syncFieldNameplates(
     node.style.width = `${plate.width}px`
     node.style.height = `${plate.height}px`
     node.style.transform = `translate(${-plate.anchorX * 100}%, ${-plate.anchorY * 100}%)`
+    if (plate.position == null) node.removeAttribute('data-position')
+    else node.setAttribute('data-position', plate.position)
     node.style.visibility = plate.visible ? 'visible' : 'hidden'
     node.style.backgroundColor = nameplateColor(plate)
     node.style.border = plate.emptyPosition === true ? '2px dashed #d65454' : ''
