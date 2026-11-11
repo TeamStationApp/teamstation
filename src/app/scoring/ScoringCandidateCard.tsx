@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { RosterCandidate } from '../../common/api'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { Emblem } from '../components/Emblem'
 import { initialsOf } from '../components/initials'
 import { useScoringSheetTheme } from './scoringSheetTheme'
@@ -97,16 +98,18 @@ export function ScoringCandidateCard({
           </View>
         )}
       </View>
-      <Text
-        style={{
-          fontSize: 22,
-          paddingRight: 4,
-          color: surface.chevronActive,
-          fontFamily: theme.regularTextFont
-        }}
-      >
-        ›
-      </Text>
+      <ButtonIcon name="chevron_right">
+        <Text
+          style={{
+            fontSize: 22,
+            paddingRight: 4,
+            color: surface.chevronActive,
+            fontFamily: theme.regularTextFont
+          }}
+        >
+          ›
+        </Text>
+      </ButtonIcon>
     </Pressable>
   )
 }

@@ -24,6 +24,7 @@ import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
 import {
   Button,
+  ButtonIcon,
   Card,
   GameHeroCard,
   initialsOf,
@@ -642,10 +643,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             <ListRow
               title="Umpire Schedule"
               leading={
-                <UmpireMaskDrawing
-                  size={theme.rem(1.6)}
-                  color={theme.primaryTextColor}
-                />
+                <ButtonIcon>
+                  <UmpireMaskDrawing
+                    size={theme.rem(1.6)}
+                    color={theme.primaryTextColor}
+                  />
+                </ButtonIcon>
               }
               onPress={props.onOpenUmpireSchedule}
             />

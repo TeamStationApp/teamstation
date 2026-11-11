@@ -1,0 +1,13 @@
+// A separate variant keeps fixture installs and APKs apart from the normal app.
+gradle.beforeProject { project ->
+    project.plugins.withId('com.android.application') {
+        project.androidComponents.finalizeDsl { android ->
+            android.buildTypes.create('iconFixture') {
+                initWith(android.buildTypes.release)
+                applicationIdSuffix = '.icons'
+                matchingFallbacks = ['release']
+                manifestPlaceholders['usesCleartextTraffic'] = 'false'
+            }
+        }
+    }
+}

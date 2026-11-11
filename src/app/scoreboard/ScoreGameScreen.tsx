@@ -10,7 +10,7 @@ import {
 
 import type { GameDetail, TeamStationClient } from '../../common/api'
 import { httpOrigin, PRIMARY_HOST } from '../../common/primaryUrl'
-import { Button, Card, Icon, Screen } from '../components'
+import { Button, ButtonIcon, Card, Screen } from '../components'
 import { useSceneReveals } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { scoringEntry } from '../scoring/isUnscoredGame'
@@ -204,7 +204,11 @@ export function ScoreGameOptions(
             <Text style={[styles.header, styles.linkTitle]}>
               {lstrings.score_game_link_header}
             </Text>
-            <Icon name="content_copy" size={1.25} color={theme.activeColor} />
+            <ButtonIcon
+              name="content_copy"
+              size={1.25}
+              color={theme.activeColor}
+            />
           </View>
           <Text
             numberOfLines={2}

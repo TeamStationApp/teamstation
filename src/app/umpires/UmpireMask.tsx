@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useTheme } from '../theme/ThemeContext'
 import { UmpireMaskDrawing } from './UmpireMaskDrawing'
 export function UmpireMask({
@@ -21,7 +22,12 @@ export function UmpireMask({
         justifyContent: 'center'
       }}
     >
-      <UmpireMaskDrawing size={theme.rem(1.6)} color={theme.headerTextColor} />
+      <ButtonIcon>
+        <UmpireMaskDrawing
+          size={theme.rem(1.6)}
+          color={theme.headerTextColor}
+        />
+      </ButtonIcon>
     </Pressable>
   )
 }

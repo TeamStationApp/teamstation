@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { Modal, Pressable, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -67,7 +67,7 @@ function ViewerLayer({ html, onClose }: RichViewerProps): React.ReactElement {
           pressed && styles.pressed
         ]}
       >
-        <Icon name="close" size={1.5} />
+        <ButtonIcon name="close" size={1.5} />
       </Pressable>
     </View>
   )

@@ -7,8 +7,8 @@ import {
   type Theme,
   useTheme
 } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 import { CardDivider } from './Card'
-import { Icon } from './Icon'
 import { ListCard } from './ListCard'
 
 /** A relationship's identity and its independent right-hand action. */
@@ -42,7 +42,7 @@ export function ActionRow({
     </>
   )
   const chevron = onOpen != null && !separateEndAction && (
-    <Icon name="chevron_right" />
+    <ButtonIcon name="chevron_right" />
   )
   return (
     <View style={styles.row} testID="relationship-action-row">

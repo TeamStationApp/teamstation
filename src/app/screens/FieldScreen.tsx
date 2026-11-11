@@ -10,8 +10,8 @@ import {
 } from '../../common/venues'
 import {
   Button,
+  ButtonIcon,
   Card,
-  Icon,
   ListCard,
   Screen,
   SectionHeader,
@@ -261,7 +261,7 @@ export function FieldScreen({
             >
               <Text style={styles.rowLabel}>Dates</Text>
               <Text style={styles.rowValue}>{datesLabel(field)}</Text>
-              {editable && <Icon name="chevron_right" size={1.25} />}
+              {editable && <ButtonIcon name="chevron_right" size={1.25} />}
             </Pressable>
           </ListCard>
           {editable && (field.startsOn != null || field.endsOn != null) && (
