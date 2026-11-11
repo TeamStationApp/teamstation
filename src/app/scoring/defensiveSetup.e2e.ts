@@ -387,7 +387,7 @@ async function open(fixture: Fixture = {}): Promise<{
       }
       let body: unknown
       if (u.pathname.endsWith('/auth/me'))
-        body = { id: 999, displayName: 'Scorer', isAdmin: false }
+        body = { id: userIdOfGumbo(999), displayName: 'Scorer', isAdmin: false }
       else if (u.pathname === '/api/v1/me/roles')
         body = { teams: [], players: [] }
       else if (u.pathname === '/api/v1/me/notifications/summary')
@@ -400,6 +400,23 @@ async function open(fixture: Fixture = {}): Promise<{
           dictation: false,
           dictationModels: []
         }
+      // A signed-in scorer's app asks for these on any screen; nothing in them.
+      else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
+      else if (
+        [
+          '/api/v1/users',
+          '/api/v1/live',
+          '/api/v1/chat/conversations',
+          '/api/v1/chat/blocks'
+        ].includes(u.pathname)
+      )
+        body = []
+      else if (u.pathname === '/api/v1/me/umpire-leagues')
+        body = { leagues: [] }
+      else if (u.pathname === '/api/v1/me/home')
+        body = { teams: [], seasons: [], leagues: [] }
+      else if (u.pathname === '/api/v1/me/account/chat-age')
+        body = { confirmed: false, source: null, confirmedAt: null }
       else if (u.pathname === '/api/v1/games/g1') body = game
       // Nobody has planned the game, so no inning's end moves the defence.
       else if (u.pathname === '/api/v1/games/g1/plans')
@@ -496,7 +513,10 @@ async function open(fixture: Fixture = {}): Promise<{
         appId: url,
         stepDelay: 300,
         artifacts: 'on-failure',
-        extra: { browser: 'chrome', windowSize: `390x${fixture.height ?? 844}` }
+        extra: {
+          browser: process.env.TS_CHROME_PATH ?? 'chrome',
+          windowSize: `390x${fixture.height ?? 844}`
+        }
       }),
       url,
       dispose

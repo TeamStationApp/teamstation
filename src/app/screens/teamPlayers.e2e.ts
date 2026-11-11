@@ -120,7 +120,10 @@ describe("a team's players in the app theme", function () {
       appId: APP,
       stepDelay: 200,
       artifacts: 'on-failure',
-      extra: { browser: 'chrome', windowSize: '1280x900' }
+      extra: {
+        browser: process.env.TS_CHROME_PATH ?? 'chrome',
+        windowSize: '1280x900'
+      }
     })
     await browser.blockNetwork({
       patterns: ['*fonts.googleapis.com*', '*fonts.gstatic.com*']

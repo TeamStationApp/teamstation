@@ -45,7 +45,7 @@ async function main(): Promise<void> {
           stepDelay: 400,
           artifacts: 'on-failure',
           extra: {
-            browser: 'chrome',
+            browser: process.env.TS_CHROME_PATH ?? 'chrome',
             windowSize: mode === 'landscape' ? '844x390' : '390x844'
           }
         }
