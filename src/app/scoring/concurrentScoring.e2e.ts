@@ -16,6 +16,7 @@ import type {
 import { fourInnings } from '../../test/concurrentScoring/game'
 import { networkRecovery } from '../../test/concurrentScoring/networkRecovery'
 import { staleTail } from '../../test/concurrentScoring/staleTail'
+import { remoteUpdates } from '../../test/concurrentScoring/updates'
 import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
 import { stackBrowserCoverage } from '../../test/stackBrowserCoverage'
 
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
   const surface = option('surface', 'chromium')
   assert(
     [
+      'updates',
       'follow',
       'lineups',
       'four-innings',
@@ -93,7 +95,9 @@ async function main(): Promise<void> {
         d,
         name,
         size.width,
-        size.height,
+        size.width === 393
+          ? Number(process.env.TS_CONCURRENT_VIEWPORT_HEIGHT ?? size.height)
+          : size.height,
         artifacts
       )
       pages.push(b.page)
@@ -150,7 +154,8 @@ async function main(): Promise<void> {
       ? new ConcurrentScoringSafariRig(ctx)
       : new ConcurrentScoringRig(ctx)
   try {
-    if (scenario === 'four-innings') await fourInnings(rig, ctx)
+    if (scenario === 'updates') await remoteUpdates(rig)
+    else if (scenario === 'four-innings') await fourInnings(rig, ctx)
     else if (scenario === 'network-recovery') {
       assert.equal(surface, 'safari')
       await networkRecovery(rig)
