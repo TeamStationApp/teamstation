@@ -3,22 +3,179 @@
  * dragged to where the ball was fielded (or tapped where he stands), the
  * trajectory is dragged up or down, and a runner is dragged onto Safe or Out.
  *
- * Players are found in the live scene and projected through the live camera,
- * so a script names a position or a base, never a pixel. The page must have
- * the scene probe installed before it loads (`installSceneProbe`).
+ * A player is found by his nameplate, which names where he plays
+ * (`data-position`), and the field picks the player whose plate a press
+ * lands on. Puppeteer pages and maestro-d devices both drive it.
  */
 import type { Page } from 'puppeteer'
 
-import { BASES, createPlayers } from '../../src/app/field/fieldModel'
+import { BASES } from '../../src/app/field/fieldModel'
 
-/** Where each position stands before a play, from the field's own model. */
-const HOME_SPOTS = new Map(
-  createPlayers().map(player => [player.id, player.position])
-)
+type Point = [number, number]
+
+/** What the field needs of a browser: a probe, a tap and a drag. */
+export interface FieldDriver {
+  /** The JSON value of `expression`, evaluated in the page. */
+  evaluate: <T>(expression: string) => Promise<T>
+  tap: (at: Point) => Promise<void>
+  drag: (from: Point, to: Point) => Promise<void>
+}
+
+const pause = async (ms: number): Promise<void> => {
+  await new Promise(resolve => setTimeout(resolve, ms))
+}
+
+export function puppeteerDriver(page: Page): FieldDriver {
+  return {
+    evaluate: async <T>(expression: string) =>
+      (await page.evaluate(expression)) as T,
+    tap: async at => {
+      await page.mouse.move(...at)
+      await page.mouse.down()
+      await page.mouse.up()
+    },
+    drag: async (from, to) => {
+      await page.mouse.move(...from)
+      await page.mouse.down()
+      await page.mouse.move(...to, { steps: 12 })
+      await pause(100)
+      await page.mouse.up()
+    }
+  }
+}
+
+/** The parts of a maestro-d device the field uses. */
+export interface MaestroField {
+  evalBrowserScript: (options: {
+    script: string
+    output: string
+  }) => Promise<unknown>
+  vars: () => Promise<Record<string, string>>
+  tapOnPoint: (options: { x: number; y: number }) => Promise<unknown>
+  dragAndDrop: (options: {
+    from: { point: string }
+    to: { point: string }
+    duration?: number
+  }) => Promise<unknown>
+}
+
+export function maestroDriver(m: MaestroField): FieldDriver {
+  const point = ([x, y]: Point): string => `${Math.round(x)},${Math.round(y)}`
+  return {
+    evaluate: async <T>(expression: string) => {
+      await m.evalBrowserScript({
+        script: `return JSON.stringify(${expression})`,
+        output: 'fieldProbe'
+      })
+      return JSON.parse((await m.vars()).fieldProbe) as T
+    },
+    tap: async ([x, y]) => {
+      await m.tapOnPoint({ x: Math.round(x), y: Math.round(y) })
+    },
+    drag: async (from, to) => {
+      await m.dragAndDrop({
+        from: { point: point(from) },
+        to: { point: point(to) },
+        duration: 600
+      })
+    }
+  }
+}
+
+/** Polls `expression` until it is true, or fails with `what`. */
+async function until(
+  field: FieldDriver,
+  expression: string,
+  what: string,
+  timeout = 15000
+): Promise<void> {
+  const end = Date.now() + timeout
+  while (!(await field.evaluate<boolean>(expression))) {
+    if (Date.now() > end) throw new Error(`Timed out waiting for ${what}`)
+    await pause(100)
+  }
+}
+
+/**
+ * The centre of the nameplate of whoever plays `position` (P … RF, or R1–R3
+ * for a runner), once it stays put: the view moves after an outcome is
+ * chosen, and a press at a moving plate misses it.
+ */
+export async function playerAt(
+  field: FieldDriver,
+  position: string
+): Promise<Point> {
+  const selector = JSON.stringify(
+    `[data-nameplate][data-position="${position}"]`
+  )
+  const read = `(() => { const n = document.querySelector(${selector}); if (n == null || getComputedStyle(n).visibility !== 'visible') return null; const r = n.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
+  await until(field, `${read} != null`, `the ${position} nameplate`)
+  let last = await field.evaluate<Point>(read)
+  for (let tries = 0; tries < 50; tries++) {
+    await pause(100)
+    const next = await field.evaluate<Point>(read)
+    if (Math.abs(next[0] - last[0]) < 1 && Math.abs(next[1] - last[1]) < 1)
+      return next
+    last = next
+  }
+  return last
+}
+
+/**
+ * Drags the fielder at `position` to where the ball was fielded: `up` pixels
+ * up the screen, towards the outfield (negative is towards home), and
+ * `right` pixels across.
+ */
+export async function placeFielder(
+  field: FieldDriver,
+  position: string,
+  up = 12,
+  right = 0
+): Promise<void> {
+  const from = await playerAt(field, position)
+  await field.drag(from, [from[0] + right, from[1] - up])
+}
+
+/** Taps the fielder at `position`, taking the ball where he stands. */
+export async function tapFielder(
+  field: FieldDriver,
+  position: string
+): Promise<void> {
+  await field.tap(await playerAt(field, position))
+}
+
+const TRAJECTORY = `document.querySelector('[aria-label^="Drag up and down for ball trajectory."]') != null`
+
+/** The angle the trajectory control shows, from the screen's summary. */
+export async function shownAngle(field: FieldDriver): Promise<number> {
+  const text = await field.evaluate<string>(
+    `[...document.querySelectorAll('[aria-live]')].map(n => n.textContent).join(' ')`
+  )
+  const angle = /(-?\d+)°/.exec(text)
+  if (angle == null) throw new Error(`No trajectory angle shown: ${text}`)
+  return Number(angle[1])
+}
+
+/**
+ * Drags the trajectory to `angle` and lets go, which accepts it; with no
+ * angle, a tap accepts the one shown. Half a degree a pixel, up for higher.
+ */
+export async function setTrajectory(
+  field: FieldDriver,
+  angle?: number
+): Promise<void> {
+  await until(field, TRAJECTORY, 'the trajectory control')
+  const centre = await field.evaluate<Point>(
+    `(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
+  )
+  const up = angle == null ? 0 : (angle - (await shownAngle(field))) * 2
+  if (up === 0) await field.tap(centre)
+  else await field.drag(centre, [centre[0], centre[1] - up])
+}
 
 /**
  * Keeps React's fiber roots on `window.qaRoots`, through a stand-in for the
- * devtools hook, so the scene and camera can be read from the page.
+ * devtools hook, so `dropRunner` can read where the bases draw.
  */
 export async function installSceneProbe(page: Page): Promise<void> {
   await page.evaluateOnNewDocument(`(() => {
@@ -35,186 +192,37 @@ export async function installSceneProbe(page: Page): Promise<void> {
   })()`)
 }
 
-// Page-side, as plain script: a compiled helper is not defined in the page.
-// Finds the three.js state, then answers `point(x, y, z)` in page pixels.
-const PROJECT = `
-  const find = fiber => {
-    for (let at = fiber; at != null; at = at.sibling) {
-      const value = at.memoizedProps == null ? undefined : at.memoizedProps.value
-      const state = value == null || value.getState == null ? undefined : value.getState()
-      if (state != null && state.scene != null) return state
-      const inner = find(at.child)
-      if (inner != null) return inner
-    }
-    return undefined
-  }
-  let three
-  for (const root of window.qaRoots || []) three = three || find(root.current)
-  if (three == null) throw new Error('No field scene on the page')
-  const canvas = three.gl.domElement.getBoundingClientRect()
-  three.scene.updateMatrixWorld(true)
-  const point = (x, y, z) => {
-    const v = three.camera.position.clone().set(x, y, z).project(three.camera)
-    return [canvas.x + ((v.x + 1) * canvas.width) / 2, canvas.y + ((1 - v.y) * canvas.height) / 2]
-  }
-  const players = prefix => {
-    const found = []
-    three.scene.traverse(object => {
-      if (!object.name.startsWith(prefix)) return
-      const at = object.getWorldPosition(three.camera.position.clone())
-      found.push({ name: object.name, x: at.x, z: at.z })
-    })
-    return found
-  }
-`
-
-/** Where `[x, y, z]` in the field's world draws on the page. */
-export async function fieldPoint(
+/** Where ground point (x, z), `y` up, draws on the page, through the live camera. */
+async function groundPoint(
   page: Page,
   x: number,
   z: number,
   y = 0
-): Promise<[number, number]> {
-  return (await page.evaluate(
-    `(() => { ${PROJECT}; return point(${x}, ${y}, ${z}) })()`
-  )) as [number, number]
-}
-
-/** The defender nearest `position`'s usual spot, on the ground and on the page. */
-async function fielderNow(
-  page: Page,
-  position: string
-): Promise<{ name: string; x: number; z: number; at: [number, number] }> {
-  const spot = HOME_SPOTS.get(position)
-  if (spot == null) throw new Error(`No position ${position}`)
+): Promise<Point> {
   return (await page.evaluate(`(() => {
-    ${PROJECT}
-    const near = players('player-defense-')
-      .map(p => ({ ...p, d: (p.x - ${spot.x}) ** 2 + (p.z - ${spot.z}) ** 2 }))
-      .sort((a, b) => a.d - b.d)[0]
-    if (near == null) throw new Error('No defender near ${position}')
-    return { name: near.name, x: near.x, z: near.z, at: point(near.x, 1, near.z) }
-  })()`)) as { name: string; x: number; z: number; at: [number, number] }
+    const find = fiber => {
+      for (let at = fiber; at != null; at = at.sibling) {
+        const value = at.memoizedProps == null ? undefined : at.memoizedProps.value
+        const state = value == null || value.getState == null ? undefined : value.getState()
+        if (state != null && state.scene != null) return state
+        const inner = find(at.child)
+        if (inner != null) return inner
+      }
+      return undefined
+    }
+    let three
+    for (const root of window.qaRoots || []) three = three || find(root.current)
+    if (three == null) throw new Error('No field scene: install the scene probe')
+    const canvas = three.gl.domElement.getBoundingClientRect()
+    const v = three.camera.position.clone().set(${x}, ${y}, ${z}).project(three.camera)
+    return [canvas.x + ((v.x + 1) * canvas.width) / 2, canvas.y + ((1 - v.y) * canvas.height) / 2]
+  })()`)) as Point
 }
 
 /**
- * The defender at `position`, once the camera has stopped: the view moves
- * after an outcome is chosen, and a press at a moving point misses him.
- */
-export async function fielderAt(
-  page: Page,
-  position: string
-): Promise<{ name: string; x: number; z: number; at: [number, number] }> {
-  let last = await fielderNow(page, position)
-  for (let tries = 0; tries < 50; tries++) {
-    await pause(100)
-    const next = await fielderNow(page, position)
-    if (
-      Math.abs(next.at[0] - last.at[0]) < 1 &&
-      Math.abs(next.at[1] - last.at[1]) < 1
-    )
-      return next
-    last = next
-  }
-  return last
-}
-
-/** The runner standing nearest base `base` (1–3), on the page. */
-export async function runnerAt(
-  page: Page,
-  base: number
-): Promise<[number, number]> {
-  const { x, z } = BASES[base]
-  return (await page.evaluate(`(() => {
-    ${PROJECT}
-    const near = players('player-offense-')
-      .map(p => ({ ...p, d: (p.x - ${x}) ** 2 + (p.z - ${z}) ** 2 }))
-      .sort((a, b) => a.d - b.d)[0]
-    if (near == null || near.d > 36) throw new Error('No runner near base ${base}')
-    return point(near.x, 1, near.z)
-  })()`)) as [number, number]
-}
-
-const pause = async (ms: number): Promise<void> => {
-  await new Promise(resolve => setTimeout(resolve, ms))
-}
-
-/** A mouse press at `from`, moved in steps to `to`, and released there. */
-export async function drag(
-  page: Page,
-  from: [number, number],
-  to: [number, number],
-  hold = 0
-): Promise<void> {
-  await page.mouse.move(...from)
-  await page.mouse.down()
-  if (hold > 0) await pause(hold)
-  await page.mouse.move(...to, { steps: 12 })
-  await pause(100)
-  await page.mouse.up()
-}
-
-/** A press and release at `at`, without moving. */
-export async function tap(page: Page, at: [number, number]): Promise<void> {
-  await page.mouse.move(...at)
-  await page.mouse.down()
-  await page.mouse.up()
-}
-
-/**
- * Drags the fielder at `position` to where the ball was fielded: `forward`
- * feet towards the outfield (negative is towards home), `right` feet across.
- */
-export async function placeFielder(
-  page: Page,
-  position: string,
-  forward = 3,
-  right = 0
-): Promise<void> {
-  const fielder = await fielderAt(page, position)
-  const to = await fieldPoint(page, fielder.x + right, fielder.z - forward, 1)
-  await drag(page, fielder.at, to)
-}
-
-/** Taps the fielder at `position`, taking the ball where he stands. */
-export async function tapFielder(page: Page, position: string): Promise<void> {
-  await tap(page, (await fielderAt(page, position)).at)
-}
-
-/** The angle the trajectory control shows, from the screen's summary. */
-export async function shownAngle(page: Page): Promise<number> {
-  const text = (await page.evaluate(
-    `[...document.querySelectorAll('[aria-live]')].map(n => n.textContent).join(' ')`
-  )) as string
-  const angle = /(-?\d+)°/.exec(text)
-  if (angle == null) throw new Error(`No trajectory angle shown: ${text}`)
-  return Number(angle[1])
-}
-
-/**
- * Drags the trajectory to `angle` and lets go, which accepts it; with no
- * angle, a tap accepts the one shown. Half a degree a pixel, up for higher.
- */
-export async function setTrajectory(page: Page, angle?: number): Promise<void> {
-  await page.waitForSelector(
-    '[aria-label^="Drag up and down for ball trajectory."]'
-  )
-  const canvas = (await page.$eval('canvas', node => {
-    const r = node.getBoundingClientRect()
-    return [r.x + r.width / 2, r.y + r.height / 2]
-  })) as [number, number]
-  if (angle == null) {
-    await tap(page, canvas)
-    return
-  }
-  const up = (angle - (await shownAngle(page))) * 2
-  if (up === 0) await tap(page, canvas)
-  else await drag(page, canvas, [canvas[0], canvas[1] - up])
-}
-
-/**
- * Drags the runner at `base` towards the next base (`next`), back (`back`),
- * or barely at all (`stay`), and drops him on Safe or Out.
+ * Drags the runner at `base` (1–3) towards the next base (`next`), back
+ * (`back`), or barely at all (`stay`), and drops him on Safe or Out. The
+ * page needs the scene probe (`installSceneProbe`).
  */
 export async function dropRunner(
   page: Page,
@@ -222,12 +230,12 @@ export async function dropRunner(
   decision: 'Safe' | 'Out',
   towards: 'next' | 'stay' | 'back' = 'next'
 ): Promise<void> {
-  const from = await runnerAt(page, base)
+  const from = await playerAt(puppeteerDriver(page), `R${base}`)
   const next = BASES[(towards === 'back' ? base + 3 : base + 1) % 4]
-  const along: [number, number] =
+  const along: Point =
     towards === 'stay'
       ? [from[0], from[1] + 8]
-      : await fieldPoint(page, next.x, next.z, 1)
+      : await groundPoint(page, next.x, next.z)
   await page.mouse.move(...from)
   await page.mouse.down()
   await page.mouse.move(...along, { steps: 12 })
@@ -236,7 +244,7 @@ export async function dropRunner(
   const onto = (await page.$eval(target, node => {
     const r = node.getBoundingClientRect()
     return [r.x + r.width / 2, r.y + r.height / 2]
-  })) as [number, number]
+  })) as Point
   await page.mouse.move(...onto, { steps: 6 })
   await pause(100)
   await page.mouse.up()
