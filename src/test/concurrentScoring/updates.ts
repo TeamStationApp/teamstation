@@ -2,7 +2,9 @@
 import assert from 'node:assert/strict'
 import { writeFile } from 'node:fs/promises'
 
+import { TeamStationClient } from '../../common/api'
 import { tagTargets } from '../../common/eventTags'
+import { testPasswordKdf } from '../passwordFixtures'
 import type { ConcurrentScoringRig } from './concurrentScoring'
 
 /** Real accepted writes, peer descriptions, and decorated pitch replacement. */
@@ -30,7 +32,20 @@ export async function remoteUpdates(rig: ConcurrentScoringRig): Promise<void> {
   let saved = await rig.api.gameEvents(rig.fixture.ids.game)
   const accepted = saved.scoringUpdates!.at(-1)!
   assert.equal(accepted.userId, rig.fixture.accounts['scorer-a'].userId)
-  assert((await panelText(1)).includes(accepted.name))
+  // A viewer's public author label can differ from the author's own full name.
+  const viewer = new TeamStationClient({
+    baseUrl: `${rig.ctx.stack.origin}/api/v1`,
+    passwordKdf: testPasswordKdf
+  })
+  const account = rig.fixture.accounts['scorer-b']
+  viewer.token = (
+    await viewer.signInWithPassword(account.email, account.password)
+  ).token
+  const viewed = (
+    await viewer.gameEvents(rig.fixture.ids.game)
+  ).scoringUpdates!.find(update => update.id === accepted.id)!
+  assert.equal(viewed.userId, accepted.userId)
+  assert((await panelText(1)).includes(viewed.name))
 
   // Preserve a real decorated pitch through canonical following, then ensure
   // Undo and replacement do not inherit its identity or tag.
