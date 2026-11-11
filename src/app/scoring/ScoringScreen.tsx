@@ -702,8 +702,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // a stale save's rebase dropped and what was not saved, and on a
       // phone the writes its queue still holds for the game: they name the
       // old sides, with no swap of this phone's ahead of them, so they are
-      // given up, as Use Server's Copy does, and counted.
-      session.close()
+      // given up, as Use Server's Copy does, and counted. The web's own swap
+      // owns its session from the tap: it closes it once its changes land.
+      if (!own || props.client instanceof CachingClient) session.close()
       setClosedSession(session)
       if (!own) {
         const client = props.client

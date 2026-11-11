@@ -48,10 +48,25 @@ export interface HeldSwap extends OpenedReads {
   landed: Promise<void>
 }
 
-/** What of the open session a swap sends behind. */
+/**
+ * What of the open session a swap sends behind. The swap's queue owns it
+ * from the tap: it goes on saving (its own retries included) until nothing
+ * is left unsaved or the server refused it, and the queue closes it then.
+ */
 export interface SwappingSession {
   /** Sends what the session has not saved. */
   flush: () => Promise<void>
+  /** Changes the server has not acknowledged. */
+  readonly pending: number
+  /** The server refused to be written to: nothing more will be saved. */
+  readonly readOnly: boolean
+  /** The server read the last save and cannot store it. */
+  readonly stopped: boolean
+  /** The plays were reset under it: its changes belong to none of them. */
+  readonly replaced: boolean
+  subscribe: (listener: () => void) => () => void
+  /** Saves nothing more. */
+  close: () => void
   /** The plays digest of the server's last answer the session took up. */
   readonly playsDigest?: string
   /** The play generation the session opened the game on. */
@@ -119,8 +134,12 @@ export class WebWrites {
       homeTeamId: swap.game.homeTeamId,
       awayTeamId: swap.game.awayTeamId
     }
-    // The session's unsaved changes start out now, before the screen closes
-    // it, and the swap goes once they and every swap before it are answered.
+    // The session's unsaved changes start out now, and the swap goes only
+    // once the server has taken every one of them (the session tries a 5xx
+    // or an offline save again itself) and every swap before it is answered.
+    // Changes the server will never take refuse the swap, counted: sent
+    // ahead of them, the server's copy read in behind it would replace them.
+    const unsaved = swap.session.pending
     const flushed = swap.session.flush().catch(() => undefined)
     let land: (refused?: Error) => void = () => undefined
     const landed = new Promise<void>((resolve, reject) => {
@@ -147,8 +166,31 @@ export class WebWrites {
           }
     if (held == null) this.out.delete(swap.gameId)
     else this.out.set(swap.gameId, held)
+    const refuse = (error: unknown): void => {
+      // A swap queued behind it was made on this one: the server's copy
+      // is the game now.
+      this.out.delete(swap.gameId)
+      const refused = error instanceof Error ? error : new Error(String(error))
+      land(refused)
+      swap.onRefused(refused.message)
+    }
     const send = async (): Promise<void> => {
       await flushed
+      await saved(swap.session)
+      const left = swap.session
+      // A refusal puts the session back to what the server holds, so what
+      // it gave up is what was unsaved at the tap.
+      const lost =
+        left.pending > 0
+          ? left.pending
+          : left.readOnly || left.stopped || left.replaced
+            ? unsaved
+            : 0
+      left.close()
+      if (lost > 0) {
+        refuse(new Error(unsavedRefusal(lost)))
+        return
+      }
       const { generation, playsDigest } = swap.session
       try {
         await this.client.swapGameSides(swap.gameId, {
@@ -162,13 +204,7 @@ export class WebWrites {
             : { playsDigest })
         })
       } catch (error: unknown) {
-        // A swap queued behind it was made on this one: the server's copy
-        // is the game now.
-        this.out.delete(swap.gameId)
-        const refused =
-          error instanceof Error ? error : new Error(String(error))
-        land(refused)
-        swap.onRefused(refused.message)
+        refuse(error)
         return
       }
       if (this.out.get(swap.gameId) === held) this.out.delete(swap.gameId)
@@ -212,6 +248,33 @@ export class WebWrites {
   async settled(): Promise<void> {
     await this.tail
   }
+}
+
+/**
+ * Settles once `session` has nothing unsaved, or the server took none of it
+ * for good (refused, could not store it, or the plays were reset under it).
+ * A save that failed for now is tried again by the session itself.
+ */
+async function saved(session: SwappingSession): Promise<void> {
+  const done = (): boolean =>
+    session.pending === 0 ||
+    session.readOnly ||
+    session.stopped ||
+    session.replaced
+  if (done()) return
+  await new Promise<void>(resolve => {
+    const stop = session.subscribe(() => {
+      if (!done()) return
+      stop()
+      resolve()
+    })
+  })
+}
+
+/** Why a swap was not sent: changes ahead of it the server did not take. */
+export function unsavedRefusal(lost: number): string {
+  const changes = lost === 1 ? '1 change' : `${lost} changes`
+  return `Home and away were not swapped: the server did not save ${changes} made before the swap, so ${lost === 1 ? 'it was' : 'they were'} not kept.`
 }
 
 /** The swapped events document as the plays a session opens on. */

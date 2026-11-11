@@ -7,7 +7,21 @@ import {
   type SwapSidesRead
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
-import { type OpenedReads, type SwappingSession, WebWrites } from './webWrites'
+import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import {
+  type EventStore,
+  type SaveChange,
+  ScoringSession,
+  type StoredGame
+} from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
+import { game as scoredGame, TEAMS } from '../../test/scoringGames'
+import {
+  type OpenedReads,
+  type SwappingSession,
+  unsavedRefusal,
+  WebWrites
+} from './webWrites'
 
 /** A plate appearance in `inning`. */
 const play = (atBatIndex: number, inning: number): unknown => ({
@@ -64,6 +78,15 @@ function session(
   })
   const kept = {
     ...digests,
+    pending: 0,
+    readOnly: false,
+    stopped: false,
+    replaced: false,
+    closes: 0,
+    subscribe: () => () => undefined,
+    close: () => {
+      kept.closes++
+    },
     flushes: 0,
     flushed: () => {
       done()
@@ -78,6 +101,18 @@ function session(
   }
   return kept
 }
+
+/** A session with nothing unsaved. */
+const idle = (more: Partial<SwappingSession> = {}): SwappingSession => ({
+  pending: 0,
+  readOnly: false,
+  stopped: false,
+  replaced: false,
+  subscribe: () => () => undefined,
+  close: () => undefined,
+  flush: async () => undefined,
+  ...more
+})
 
 const settle = async (): Promise<void> => {
   for (let i = 0; i < 5; i++) await new Promise(resolve => setTimeout(resolve))
@@ -212,6 +247,12 @@ describe('the web scoring screen’s writes', function () {
       }
     })
     const second: SwappingSession = {
+      pending: 0,
+      readOnly: false,
+      stopped: false,
+      replaced: false,
+      subscribe: () => () => undefined,
+      close: () => undefined,
       flush: async () => {
         throw new Error('offline')
       }
@@ -238,6 +279,141 @@ describe('the web scoring screen’s writes', function () {
     server.release(new Error('Load failed'))
     await writes.settled()
     expect(refused).deep.equals(['Load failed'])
+  })
+
+  describe('a swap behind changes the server has not taken', function () {
+    /**
+     * A server in memory whose saves fail with each error in `fails` first,
+     * and a real session over it whose retries run on `retry()`.
+     */
+    async function failingSession(fails: Error[]): Promise<{
+      session: ScoringSession
+      saves: () => number
+      retry: () => void
+    }> {
+      let plays: GumboPlay[] = []
+      let current: CurrentPlay | null = null
+      let saves = 0
+      const store: EventStore = {
+        load: async (): Promise<StoredGame> => ({
+          plays,
+          currentPlay: current
+        }),
+        save: async (_gameId: string, change: SaveChange) => {
+          const failure = fails.shift()
+          if (failure != null) throw failure
+          saves++
+          plays = [...plays, ...change.plays]
+          if (change.currentPlay !== undefined) current = change.currentPlay
+          return { plays, currentPlay: current, playsDigest: `P${saves}` }
+        }
+      }
+      const timers: Array<() => void> = []
+      const session = await ScoringSession.open(
+        store,
+        'g1',
+        { gamePk: 'g1', teams: TEAMS, setup: setupOf(scoredGame()) },
+        {
+          setTimer: run => timers.push(run),
+          clearTimer: () => undefined
+        }
+      )
+      return {
+        session,
+        saves: () => saves,
+        retry: () => {
+          for (const run of timers.splice(0)) run()
+        }
+      }
+    }
+
+    it('sends the swap only once a save that 503s has been sent again and taken', async function () {
+      const server = heldServer()
+      const writes = new WebWrites(server.client)
+      const open = await failingSession([
+        new HttpError('internal', 'Service Unavailable')
+      ])
+      expect(
+        open.session.apply({ type: 'pitch', call: 'B' }).problems
+      ).deep.equals([])
+      expect(open.session.pending).greaterThan(0)
+      const refused: string[] = []
+      writes.queueSwap({
+        gameId: 'g1',
+        effect: 'reset',
+        game,
+        plays: { plays: [], currentPlay: null },
+        session: open.session,
+        onRefused: message => {
+          refused.push(message)
+        }
+      })
+      await settle()
+      // The 503 left the ball unsaved: the swap waits behind it.
+      expect(open.saves()).equals(0)
+      expect(open.session.pending).greaterThan(0)
+      expect(server.sent).deep.equals([])
+      open.retry()
+      await settle()
+      expect(open.saves()).equals(1)
+      expect(open.session.pending).equals(0)
+      expect(server.sent).deep.equals([
+        {
+          gameId: 'g1',
+          read: {
+            homeTeamId: 'home',
+            awayTeamId: 'away',
+            playsDigest: 'P1'
+          }
+        }
+      ])
+      server.release()
+      await writes.settled()
+      expect(refused).deep.equals([])
+      // Nothing more is saved behind the swap.
+      expect(
+        open.session.apply({ type: 'pitch', call: 'B' }).problems
+      ).deep.equals([])
+      open.retry()
+      await settle()
+      expect(open.saves()).equals(1)
+    })
+
+    it('refuses the swap, counting what was lost, when the server will never take the changes ahead of it', async function () {
+      const server = heldServer()
+      const writes = new WebWrites(server.client)
+      const open = await failingSession([
+        new HttpError('forbidden', 'Not yours to score')
+      ])
+      open.session.apply({ type: 'pitch', call: 'B' })
+      const unsaved = open.session.pending
+      expect(unsaved).greaterThan(0)
+      const refused: string[] = []
+      writes.queueSwap({
+        gameId: 'g1',
+        effect: 'swap',
+        game,
+        plays: { plays: [], currentPlay: null },
+        session: open.session,
+        onRefused: message => {
+          refused.push(message)
+        }
+      })
+      await writes.settled()
+      expect(open.session.readOnly).equals(true)
+      expect(server.sent).deep.equals([])
+      expect(refused).deep.equals([unsavedRefusal(unsaved)])
+      expect(writes.held('g1')).equals(undefined)
+    })
+
+    it('says one change or several', function () {
+      expect(unsavedRefusal(1)).contains(
+        '1 change made before the swap, so it was'
+      )
+      expect(unsavedRefusal(3)).contains(
+        '3 changes made before the swap, so they were'
+      )
+    })
   })
 
   describe('the swapped copy the screen opens on while a swap is out', function () {
@@ -327,7 +503,7 @@ describe('the web scoring screen’s writes', function () {
         effect: 'swap',
         game: { homeTeamId: 'home', awayTeamId: 'away' },
         plays: { plays: [], currentPlay: null },
-        session: { flush: async () => undefined },
+        session: idle(),
         onRefused: () => undefined
       })
       await settle()
@@ -362,7 +538,7 @@ describe('the web scoring screen’s writes', function () {
         effect: 'swap',
         game: { homeTeamId: 'away', awayTeamId: 'home', generation: 4 },
         plays: { plays: [], currentPlay: null },
-        session: { flush: async () => undefined, generation: 4 },
+        session: idle({ generation: 4 }),
         onRefused: () => undefined
       })
       const second = writes.held('g1')!
@@ -386,7 +562,7 @@ describe('the web scoring screen’s writes', function () {
         effect: 'swap',
         game,
         plays: { plays: [], currentPlay: null },
-        session: { flush: async () => undefined },
+        session: idle(),
         onRefused: () => undefined
       })
       expect(writes.held('g1')).equals(undefined)
@@ -399,7 +575,7 @@ describe('the web scoring screen’s writes', function () {
         effect: 'swap',
         game,
         plays: { plays: [], currentPlay: null },
-        session: { flush: async () => undefined },
+        session: idle(),
         onRefused: message => refused.push(message)
       })
       const held = writes.held('g1')!
