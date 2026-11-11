@@ -34,6 +34,7 @@ import {
   toolSchema,
   TRAJECTORIES,
   untaggedAction,
+  usesOverrideSlots,
   withoutBlankPlayers
 } from './actions'
 import { storedEventType } from './document'
@@ -204,6 +205,26 @@ const examples: ScoringAction[] = [
 ]
 
 describe('scoring actions', function () {
+  it('identifies stored override-slot semantics without assuming a cleaned action', () => {
+    for (const action of [
+      null,
+      undefined,
+      5,
+      'override',
+      {},
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'override', pitcher: 10 },
+      { type: 'lineup', kind: 'roster', setup: {} }
+    ])
+      expect(usesOverrideSlots(action)).equals(false)
+    for (const action of [
+      { type: 'gameFlow', kind: 'override' },
+      { type: 'gameFlow', kind: 'override', clearPitcher: true, pitcher: 10 },
+      { type: 'gameFlow', kind: 'override', batterIndex: 0, pitcher: 10 },
+      { type: 'lineup', kind: 'roster', setup: {}, replaces: 1 }
+    ])
+      expect(usesOverrideSlots(action)).equals(true)
+  })
   it('round-trips one example of every action through its cleaner', function () {
     expect(examples.map(action => action.type)).deep.equals([...ACTION_TYPES])
     for (const action of examples)

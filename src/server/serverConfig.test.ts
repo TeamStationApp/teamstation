@@ -149,14 +149,14 @@ describe('the database addresses', function () {
     )
   })
 
-  it('holds subscribes to protocol 3 and saves of plays to 4 at least, whatever a config pins', function () {
+  it('holds subscribes to protocol 3 and saves of plays to 5 at least, whatever a config pins', function () {
     expect(MINIMUM_GAME_SOCKET_PROTOCOL).equals(3)
-    expect(MINIMUM_SAVE_PROTOCOL).equals(4)
+    expect(MINIMUM_SAVE_PROTOCOL).equals(5)
     expect(minimumProtocolOf(2)).equals(3)
     expect(minimumProtocolOf(undefined)).equals(3)
     expect(minimumProtocolOf(5)).equals(5)
-    expect(saveProtocolOf(3)).equals(4)
-    expect(saveProtocolOf(undefined)).equals(4)
+    expect(saveProtocolOf(3)).equals(5)
+    expect(saveProtocolOf(undefined)).equals(5)
     expect(saveProtocolOf(5)).equals(5)
   })
 

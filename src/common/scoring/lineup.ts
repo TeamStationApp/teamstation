@@ -14,6 +14,7 @@ import {
   type GameTeam,
   lineupsOf,
   type PlayerRef,
+  type PlayEvent,
   type Position,
   POSITIONS,
   type Side,
@@ -28,6 +29,14 @@ export function battingSide(state: GameState): Side {
 }
 export function fieldingSide(state: GameState): Side {
   return battingSide(state) === 'away' ? 'home' : 'away'
+}
+/** These changes belong to the team's next fielding appearance. */
+export function isDefensiveLineupEvent(code: string): boolean {
+  return [
+    'pitching_substitution',
+    'defensive_substitution',
+    'defensive_switch'
+  ].includes(code)
 }
 export function playerRef(state: GameState, id: number): PlayerRef {
   const player = state.gameData.players[id]
@@ -58,11 +67,22 @@ export function ordinal(number: number): string {
   return `${number}${number % 100 >= 11 && number % 100 <= 13 ? 'th' : (['th', 'st', 'nd', 'rd'][number % 10] ?? 'th')}`
 }
 
+/** Removed roster identities cannot carry announcements into later appearances. */
+function prunePendingLineupEvents(state: GameState): void {
+  if (state.pendingLineupEvents == null) return
+  const pending = state.pendingLineupEvents.filter(
+    event => state.gameData.players[event.player.id] != null
+  )
+  if (pending.length === 0) delete state.pendingLineupEvents
+  else state.pendingLineupEvents = pending
+}
+
 /**
  * Brings the next batter to the plate and opens his play. When he is already
  * on base the lineup has to change first, and that is what is returned.
  */
 export function startAppearance(state: GameState): GameState['awaitingBatter'] {
+  prunePendingLineupEvents(state)
   const side = battingSide(state)
   const lineup = state.liveData.boxscore.teams[side]
   const id = lineup.battingOrder[lineup.battingIndex]
@@ -88,6 +108,20 @@ export function startAppearance(state: GameState): GameState['awaitingBatter'] {
     state.liveData.plays.currentPlay = null
     return null
   }
+  // Attach each change when its team next takes the relevant role.
+  const pending = state.pendingLineupEvents ?? []
+  const belongs = (event: PlayEvent): boolean => {
+    const defensive = isDefensiveLineupEvent(event.details.code)
+    const team = defensive ? fieldingSide(state) : side
+    return (
+      state.gameData.players[event.player.id]?.teamId ===
+      state.gameData.teams[team].id
+    )
+  }
+  const events = pending
+    .filter(belongs)
+    .map((event, index) => ({ ...event, index }))
+  const waiting = pending.filter(event => !belongs(event))
   state.liveData.plays.currentPlay = asGamePlay({
     about: {
       atBatIndex: state.liveData.plays.allPlays.length,
@@ -114,13 +148,15 @@ export function startAppearance(state: GameState): GameState['awaitingBatter'] {
       batSide: { code: state.gameData.players[id].bats === 'left' ? 'L' : 'R' }
     },
     runners: [],
-    playEvents: [],
+    playEvents: events,
     lineups: { opened: lineupsOf(state), began: lineupsOf(state) },
     source: {
       system: 'teamstation',
       teamstation: { version: 'estimated-v1', outcome: '' }
     }
   })
+  if (waiting.length > 0) state.pendingLineupEvents = waiting
+  else delete state.pendingLineupEvents
   return null
 }
 
@@ -212,7 +248,9 @@ export function applyRoster(
    * the man due: whoever the save put in that slot bats. Saves after the
    * first pitch carry it (`keepSlot` on the roster action).
    */
-  keepSlot = false
+  keepSlot = false,
+  /** Overrides begin substitution tracking even before the first pitch. */
+  recordReplacement = false
 ):
   | {
       state: GameState
@@ -232,6 +270,7 @@ export function applyRoster(
   if (error != null) return { error }
   const next = copyState(state)
   next.gameData.players = copyState(setup.players)
+  prunePendingLineupEvents(next)
   next.meta.tagOrder = [...setup.tagOrder]
   const activeSide = battingSide(next)
   if (
@@ -241,7 +280,7 @@ export function applyRoster(
     ) === true
   )
     return { error: 'Finish the at-bat before clearing the lineup.' }
-  const opening = beforeTheGame(state)
+  const opening = beforeTheGame(state) && !recordReplacement
   const activeOrder = state.liveData.boxscore.teams[activeSide].battingOrder
   const keepAwaiting =
     state.awaitingBatter != null &&
@@ -270,6 +309,7 @@ export function applyRoster(
         onBase: side === activeSide ? bases : [],
         due: before.battingOrder[before.battingIndex],
         replaced,
+        replaceOccurrence: recordReplacement,
         name: id => setup.players[id]?.fullName ?? ''
       }
     )
@@ -299,7 +339,14 @@ export function applyRoster(
       continue
     }
     if (opening) {
-      after.battingIndex = 0
+      after.battingIndex =
+        state.overrideLineupSetup === true && side === activeSide
+          ? (occurrenceIndex(
+              before,
+              after.battingOrder,
+              before.battingOrder[before.battingIndex]
+            ) ?? Math.min(before.battingIndex, after.battingOrder.length - 1))
+          : 0
       next.liveData.boxscore.teams[side] = after
       continue
     }
@@ -321,9 +368,12 @@ export function applyRoster(
       continue
     }
     const due = before.battingOrder[before.battingIndex]
-    const oldId = after.battingOrder.includes(due)
-      ? due
-      : (takers[side].get(due) ?? due)
+    const oldId =
+      recordReplacement && side === activeSide
+        ? (takers[side].get(due) ?? due)
+        : after.battingOrder.includes(due)
+          ? due
+          : (takers[side].get(due) ?? due)
     let id: number | undefined = after.battingOrder.includes(oldId)
       ? oldId
       : undefined
@@ -349,13 +399,7 @@ export function applyRoster(
       }
     // Merged accounts can occupy multiple historical turns. Keep the due
     // occurrence instead of jumping from its second turn back to its first.
-    const occurrence = before.battingOrder
-      .slice(0, before.battingIndex)
-      .filter(player => player === id).length
-    const matching = after.battingOrder
-      .map((player, index) => (player === id ? index : -1))
-      .filter(index => index >= 0)
-    after.battingIndex = matching[occurrence] ?? matching[0]
+    after.battingIndex = occurrenceIndex(before, after.battingOrder, id)!
     next.liveData.boxscore.teams[side] = after
   }
   const offense = next.liveData.linescore.offense
@@ -394,6 +438,21 @@ export function applyRoster(
   }
   next.awaitingBatter = null
   return { state: next, takers }
+}
+
+/** Follow the same historical turn when earlier slots move or disappear. */
+function occurrenceIndex(
+  before: GameSide,
+  order: number[],
+  id: number
+): number | undefined {
+  const occurrence = before.battingOrder
+    .slice(0, before.battingIndex)
+    .filter(player => player === id).length
+  const matching = order
+    .map((player, index) => (player === id ? index : -1))
+    .filter(index => index >= 0)
+  return matching[occurrence] ?? matching[0]
 }
 
 const BASE_NAMES = ['1B', '2B', '3B'] as const
@@ -435,6 +494,7 @@ export function placesTaken(
     onBase = [],
     due,
     replaced = {},
+    replaceOccurrence = false,
     name = String
   }: {
     /** The side's runners, by base. */
@@ -442,6 +502,8 @@ export function placesTaken(
     /** The batter due. */
     due?: number
     replaced?: Record<number, number>
+    /** Explicit overrides may replace one of a merged player's turns. */
+    replaceOccurrence?: boolean
     name?: (id: number) => string
   } = {}
 ): Places | { error: string } {
@@ -452,7 +514,14 @@ export function placesTaken(
   )
   const takers = new Map<number, number>()
   for (const [leaving, incoming] of Object.entries(replaced))
-    if (removed.includes(Number(leaving)) && newcomers.includes(incoming))
+    if (
+      newcomers.includes(incoming) &&
+      (removed.includes(Number(leaving)) ||
+        (replaceOccurrence &&
+          !onBase.includes(Number(leaving)) &&
+          before.filter(id => id === Number(leaving)).length >
+            after.filter(id => id === Number(leaving)).length))
+    )
       takers.set(Number(leaving), incoming)
   const taken = (id: number): boolean => [...takers.values()].includes(id)
   const running = (id: number): boolean => onBase.includes(id)
@@ -783,6 +852,19 @@ function beforeTheGame(state: GameState): boolean {
   )
 }
 
+/** An overridden turn alone does not turn a pregame roster edit into a substitution. */
+export function recordsOverrideReplacement(state: GameState): boolean {
+  return (
+    state.overrideLineupSetup === true &&
+    (begun(state) ||
+      state.overridePlayStarted === true ||
+      (state.pendingLineupEvents?.length ?? 0) > 0 ||
+      state.liveData.plays.currentPlay?.playEvents.some(
+        event => event.isSubstitution === true
+      ) === true)
+  )
+}
+
 /**
  * Who batted in a play: the batter it opened with, then each pinch hitter
  * sent in for the batter in turn, the last being the play's batter. A pinch
@@ -811,7 +893,8 @@ function announcedOrder(state: GameState, side: Side): Map<number, number> {
   const codes = new Map<number, number>()
   const plays = [
     ...state.liveData.plays.allPlays,
-    state.liveData.plays.currentPlay
+    state.liveData.plays.currentPlay,
+    { playEvents: state.pendingLineupEvents ?? [] }
   ]
   for (const play of plays)
     for (const event of play?.playEvents ?? [])
@@ -843,11 +926,12 @@ function announcedOrder(state: GameState, side: Side): Map<number, number> {
 export function lineupChanges(
   before: GameState,
   after: GameState,
-  takers: Record<Side, ReadonlyMap<number, number>>
+  takers: Record<Side, ReadonlyMap<number, number>>,
+  recordReplacement = false
 ): LineupChange[] {
-  if (!begun(before)) return []
+  if (!begun(before) && !recordReplacement) return []
   const changes = (['away', 'home'] as const).flatMap(side =>
-    sideChanges(before, after, side, takers[side])
+    sideChanges(before, after, side, takers[side], recordReplacement)
   )
   // A new pitcher is announced first, as the feed does.
   return [
@@ -860,9 +944,18 @@ function sideChanges(
   before: GameState,
   after: GameState,
   side: Side,
-  takers: ReadonlyMap<number, number>
+  takers: ReadonlyMap<number, number>,
+  recordReplacement: boolean
 ): LineupChange[] {
-  const was = before.liveData.boxscore.teams[side]
+  const original = before.liveData.boxscore.teams[side]
+  const resetPitcher = before.overridePitchers?.[side]
+  const was =
+    resetPitcher == null
+      ? original
+      : {
+          ...original,
+          defense: { ...original.defense, P: resetPitcher }
+        }
   const now = after.liveData.boxscore.teams[side]
   // The side at bat sends the players it puts in its order in to hit or to
   // run; the positions they will field only matter once it takes the field.
@@ -892,9 +985,21 @@ function sideChanges(
     codes.set(id, code)
     return String(code)
   }
-  // Changes made earlier in this play: the player a switch took the place of
-  // may have left that position in an earlier change.
-  const earlier = before.liveData.plays.currentPlay?.playEvents ?? []
+  // Include waiting changes: a position can be vacated before a play opens.
+  const priorEvents = [
+    ...(before.pendingLineupEvents ?? []),
+    ...(before.liveData.plays.currentPlay?.playEvents ?? [])
+  ]
+  // Legacy logs used the whole play, even across teams. Limit the correction
+  // to the new override/pending context so old queued saves still fold alike.
+  const earlier =
+    recordReplacement || (before.pendingLineupEvents?.length ?? 0) > 0
+      ? priorEvents.filter(
+          event =>
+            before.gameData.players[event.player.id]?.teamId ===
+            before.gameData.teams[side].id
+        )
+      : priorEvents
   const vacated = (position: Position): number | undefined =>
     earlier.findLast(event => event.details.fromPosition === position)?.player
       .id
@@ -928,7 +1033,13 @@ function sideChanges(
   ].filter((id, i, all): id is number => id != null && all.indexOf(id) === i)
   for (const id of ids) {
     const position = positionOf(now, id)
-    if (!inGame(was, id)) {
+    if (
+      !inGame(was, id) ||
+      (recordReplacement &&
+        batting &&
+        !was.battingOrder.includes(id) &&
+        orderReplaced(id) != null)
+    ) {
       const replaced = orderReplaced(id)
       const battingOrder = orderCode(id, true)
       const hitting = batting && battingOrder != null
@@ -1118,6 +1229,8 @@ export interface Override {
   strikes: number
   outs: number
   batter: number | null
+  /** The selected occurrence in a lineup with merged historical turns. */
+  batterIndex?: number
   pitcher: number | null
   bases: Array<number | null>
 }
@@ -1166,6 +1279,13 @@ export function applyOverride(
   const defense = next.liveData.boxscore.teams[opponent]
   if (draft.batter == null || !team.battingOrder.includes(draft.batter))
     return { error: 'Choose a batter from the batting team lineup.' }
+  const batterIndex =
+    draft.batterIndex ?? team.battingOrder.indexOf(draft.batter)
+  if (
+    !bounded(batterIndex, 0, team.battingOrder.length - 1) ||
+    team.battingOrder[batterIndex] !== draft.batter
+  )
+    return { error: 'Choose a matching batting-order slot.' }
   const runners = draft.bases.filter((id): id is number => id != null)
   if (
     draft.bases.length !== 3 ||
@@ -1177,7 +1297,12 @@ export function applyOverride(
       error:
         'Bases need distinct batting-team players, and cannot include the batter.'
     }
-  if (draft.pitcher == null || !defense.players.includes(draft.pitcher))
+  if (
+    draft.pitcher == null
+      ? draft.top === state.liveData.linescore.isTopInning &&
+        state.liveData.linescore.defense.P != null
+      : !defense.players.includes(draft.pitcher)
+  )
     return { error: 'Choose a pitcher from the fielding team.' }
   const line = next.liveData.linescore
   const changedHalf =
@@ -1192,10 +1317,11 @@ export function applyOverride(
   line.strikes = draft.strikes
   line.outs = draft.outs
   for (const position of POSITIONS)
-    if (defense.defense[position] === draft.pitcher)
+    if (draft.pitcher != null && defense.defense[position] === draft.pitcher)
       defense.defense[position] = null
   defense.defense.P = draft.pitcher
-  team.battingIndex = team.battingOrder.indexOf(draft.batter)
+  if (draft.pitcher != null) delete next.overridePitchers?.[opponent]
+  team.battingIndex = batterIndex
   line.offense = {
     batter: refOf(next, draft.batter),
     first: refOf(next, draft.bases[0]),
@@ -1210,7 +1336,8 @@ export function applyOverride(
       play.matchup.batSide.code =
         next.gameData.players[draft.batter].bats === 'left' ? 'L' : 'R'
     play.matchup.batter = playerRef(next, draft.batter)
-    play.matchup.pitcher = playerRef(next, draft.pitcher)
+    if (draft.pitcher != null)
+      play.matchup.pitcher = playerRef(next, draft.pitcher)
     play.count = { balls: line.balls, strikes: line.strikes, outs: line.outs }
   }
   next.awaitingBatter = null

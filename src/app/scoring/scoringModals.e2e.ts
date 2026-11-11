@@ -585,6 +585,52 @@ async function main(): Promise<void> {
       !['advanced', 'error'].includes(process.env.SCORING_MODAL_SECTION ?? '')
     )
       await open()
+    if (process.env.SCORING_MODAL_SECTION === 'overrideNumbers') {
+      assert(native, 'This regression requires native layout, not a browser')
+      await menu('Overrides')
+      for (const [row, label, initial] of [
+        ['Owls score', 'Owls', 0],
+        ['Hawks score', 'Hawks', 0],
+        ['Inning', 'Inning', 1]
+      ] as const) {
+        await tap(row)
+        await shown(`${label}: ${initial}`)
+        await m.waitForAnimationToEnd({ timeout: 3000 })
+        const nodes = flat(await m.hierarchy())
+        const title = nodes.find(node => node.text === label)?.bounds
+        const wheel = nodes.find(
+          node => node.text === `${label}: ${initial}`
+        )?.bounds
+        const done = nodes.find(node => node.text === 'Done')?.bounds
+        const cancel = nodes
+          .filter(node => node.text === 'Cancel')
+          .at(-1)?.bounds
+        assert(title != null && wheel != null && done != null && cancel != null)
+        assert(title.y + title.height <= wheel.y, 'Title overlaps wheel')
+        assert(wheel.height >= 132, 'Wheel must retain its three-row height')
+        assert(wheel.y + wheel.height < done.y, 'Done overlaps wheel')
+        assert(done.y + done.height < cancel.y, 'Cancel overlaps Done')
+        await capture(`override-${label.toLowerCase()}`)
+        await point(wheel.x + wheel.width / 2, wheel.y + wheel.height / 2 + 44)
+        await shown(`${label}: ${initial + 1}`)
+        await tap('Cancel')
+        await tap(row)
+        await shown(`${label}: ${initial}`)
+        await point(wheel.x + wheel.width / 2, wheel.y + wheel.height / 2 + 44)
+        await shown(`${label}: ${initial + 1}`)
+        await tap('Done')
+        await tap(row)
+        await shown(`${label}: ${initial + 1}`)
+        await tap('Done')
+      }
+      await tap('Apply Override')
+      await shown('Undo Override game state')
+      console.log(
+        'PASS native score/inning layout, wheel taps, Cancel, Done and Apply'
+      )
+      assert.deepEqual(fixture.unexpected, [])
+      return
+    }
     if (process.env.SCORING_MODAL_SECTION === 'settings') {
       await menu('Settings')
       await shown('Scoring sound')
@@ -645,17 +691,13 @@ async function main(): Promise<void> {
           baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
         )
         await menu('Overrides')
-        await input('inning', '0')
-        await finishKeyboard()
-        await reach(
-          'Use whole numbers: inning 1 or higher, scores 0 or higher, balls 0–3, strikes 0–2, outs 0–2.'
-        )
-        await shown('Use whole numbers')
+        await tap('Owls score')
+        await shown('Owls: 0')
+        await shown('Done')
+        await tap('Cancel')
         await tap('Cancel')
         await menu('Overrides')
-        await input('inning', '2')
-        await finishKeyboard()
-        await reach('Apply Override')
+        await tap('Balls 2')
         await tap('Apply Override')
         await shown('Undo Override')
         await tap('Undo Override')

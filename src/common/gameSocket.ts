@@ -40,25 +40,28 @@ import type { WalkUpSong } from './walkUpSong'
  * is the first whose scope frames carry no revision. 4 is the first that
  * reads an end of the half that keeps the at-bat in progress (`keepAtBat`):
  * an older app drops that at-bat on replay, and every later play moves down
- * an index. It is the socket's and the API's version only: how the engine
+ * an index. 5 reads explicit pitcher resets and selected batting slots.
+ * It is the socket's and the API's version only: how the engine
  * folds a log, which a phone's queued saves are judged by, is
  * `FOLD_VERSION`, and moves only when that does.
  */
-export const GAME_SOCKET_PROTOCOL = 4
+export const GAME_SOCKET_PROTOCOL = 5
 
 /**
  * The oldest protocol a game or scope subscribe may name on any server: an
- * app below it misreads a scope's frames. Watching a game needs no more, so
- * an app, a watcher or an API client too old to save plays still follows.
+ * app below it misreads a scope's frames. Rendered score views need no more;
+ * replay source with newer actions is gated separately at its HTTP resource.
  */
 export const MINIMUM_GAME_SOCKET_PROTOCOL = 3
 
 /**
  * The oldest protocol a save of a game's plays may name on any server: an app
- * below it drops an at-bat an end of the half kept and writes every later
- * play an index low.
+ * below it cannot replay explicit pitcher resets or selected batting slots.
  */
-export const MINIMUM_SAVE_PROTOCOL = 4
+export const MINIMUM_SAVE_PROTOCOL = 5
+
+/** Replay clients fold stored actions; rendered score-only views do not. */
+export const MINIMUM_OVERRIDE_REPLAY_PROTOCOL = 5
 
 /**
  * The minimum a server holds subscribes to: its config's, never below
@@ -70,7 +73,7 @@ export function minimumProtocolOf(configured: number | undefined): number {
   return Math.max(MINIMUM_GAME_SOCKET_PROTOCOL, configured ?? 0)
 }
 
-/** The minimum a save of plays is held to: the subscribes', and 4 at least. */
+/** The minimum a save of plays is held to: the subscribes', and 5 at least. */
 export function saveProtocolOf(configured: number | undefined): number {
   return Math.max(MINIMUM_SAVE_PROTOCOL, minimumProtocolOf(configured))
 }

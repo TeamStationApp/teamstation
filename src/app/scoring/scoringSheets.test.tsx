@@ -27,6 +27,8 @@ let root: Root | undefined
 /** What Add to Roster and Add as Pool Player sent, in order. */
 const existingSent: unknown[] = []
 let mountedClient: TeamStationClient | undefined
+let openedGame: ScoringSession
+let gameListeners: Set<() => void>
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 async function click(label: string): Promise<void> {
@@ -158,7 +160,18 @@ async function mount(
         onStoreWrite?.()
         return await save(gameId, change)
       }
-      return ScoringSession.start(store, 'g1', session)
+      openedGame = ScoringSession.start(store, 'g1', session)
+      gameListeners = new Set()
+      const subscribe = openedGame.subscribe.bind(openedGame)
+      openedGame.subscribe = listener => {
+        gameListeners.add(listener)
+        const stop = subscribe(listener)
+        return () => {
+          gameListeners.delete(listener)
+          stop()
+        }
+      }
+      return openedGame
     }
   }
   const host = document.createElement('div')
@@ -192,6 +205,52 @@ async function unmountSheet(): Promise<void> {
 describe('scoring slide-up sheets', function () {
   // Unmount portals before the root DOM hook clears their host elements.
   afterEach(unmountSheet)
+  it('keeps an override draft and its refusal visible when read-only arrives just before Apply', async function () {
+    await mount()
+    await menu('Overrides')
+    await click('Balls 2')
+    const apply = document.querySelector<HTMLElement>(
+      '[aria-label="Apply Override"]'
+    )!
+    apply.addEventListener(
+      'click',
+      () => {
+        Object.defineProperty(openedGame, 'readOnly', { get: () => true })
+        for (const listener of gameListeners) listener()
+      },
+      { capture: true, once: true }
+    )
+    await act(async () => {
+      apply.click()
+    })
+    expect(document.querySelector('[aria-label="Apply Override"]')).not.equals(
+      null
+    )
+    expect(
+      document
+        .querySelector('[aria-label="Balls 2"]')
+        ?.getAttribute('aria-checked')
+    ).equals('true')
+    expect(
+      document.querySelector('[data-testid="Scoring sheet footer"]')
+        ?.textContent
+    ).includes('Scoring is read-only')
+  })
+  it('closes an override sheet only after the reducer accepts its draft', async function () {
+    await mount()
+    await menu('Overrides')
+    await click('Balls 2')
+    const before = openedGame.actions.length
+    const apply = document.querySelector<HTMLElement>(
+      '[aria-label="Apply Override"]'
+    )!
+    await act(async () => {
+      apply.click()
+      apply.click()
+    })
+    expect(openedGame.actions.length).equals(before + 1)
+    expect(document.querySelector('[aria-label="Apply Override"]')).equals(null)
+  })
   it("renames a corrected game-only player's account before saving the rosters", async function () {
     HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
     const session = scoringSession(gameFixture)
@@ -982,29 +1041,27 @@ describe('scoring slide-up sheets', function () {
   it('validates override fields and player collisions, then reconciles the chosen half', async function () {
     await mount()
     await menu('Overrides')
-    await input('balls', '4')
-    expect(
-      document
-        .querySelector('[aria-label="Apply Override"]')
-        ?.getAttribute('aria-disabled')
-    ).equals('true')
-    await input('balls', '')
-    await input('balls', '3')
-    await click('First base')
-    await click('Choose First base Player 1')
-    expect(document.body.textContent).includes('cannot include the batter')
-    await click('First base')
-    await click('Choose First base Empty')
+    await click('Balls 3')
     await click('Bottom')
-    await click('Batter')
-    await click('Choose Batter Player 2')
-    await click('Pitcher')
-    await click('Choose Pitcher Player 3')
-    await input('inning', '2')
-    await input('homeScore', '5')
-    await input('awayScore', '4')
-    await input('outs', '2')
-    await input('strikes', '1')
+    await click('Inning')
+    const chooseWheel = async (value: string): Promise<void> => {
+      const row = [
+        ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ].find(node => node.textContent === value)!
+      await act(async () => {
+        row.click()
+      })
+    }
+    await chooseWheel('2')
+    await click('Done')
+    await click('Hawks score')
+    await chooseWheel('5')
+    await click('Done')
+    await click('Owls score')
+    await chooseWheel('4')
+    await click('Done')
+    await click('Outs 2')
+    await click('Strikes 1')
     await click('Apply Override')
     expect(document.body.textContent).includes('Owls 4 · Hawks 5 · Bottom 2nd')
     await click('Undo Override game state')
@@ -1066,14 +1123,21 @@ describe('scoring slide-up sheets', function () {
     await click('Undo Set team roster')
     expect(document.body.textContent).includes('Next batter is on base')
     await menu('Overrides')
-    await click('First base')
-    await click('Choose First base Empty')
     await click('Batter')
-    await click('Choose Batter Player 1')
-    await click('Apply Override')
+    const occupied = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label]')
+    ].find(
+      node =>
+        node.getAttribute('aria-label')?.startsWith('1. Player 1') === true
+    )!
+    expect(occupied.getAttribute('aria-disabled')).equals('true')
+    await click('Cancel')
     expect(
-      document.querySelector('[aria-label*="Batter Player 1"]')
-    ).not.equals(null)
+      document
+        .querySelector('[aria-label="Apply Override"]')
+        ?.getAttribute('aria-disabled')
+    ).equals('true')
+    await click('Cancel')
   })
   it('cancels roster pointer gestures and commits only a released drop', async function () {
     await mount()

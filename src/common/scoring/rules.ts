@@ -1,7 +1,6 @@
 import type { RunnerReason, ScoringAction, Trajectory } from './actions'
 import {
   addPlayer,
-  applyOverride,
   applyRoster,
   baseIds,
   battersOf,
@@ -12,6 +11,7 @@ import {
   newSetup,
   type Override,
   overrideOf,
+  recordsOverrideReplacement,
   refOf,
   type RosterPlayer,
   validateRoster
@@ -121,15 +121,15 @@ export function rosterError(
   /** Whether the save keeps each side's batting slot (`keepSlot`). */
   keepSlot = false
 ): string | undefined {
-  return applyRoster(state, setup, nextBatter, {}, false, keepSlot).error
-}
-
-/** Why this correction could not be made, or undefined when it could. */
-export function overrideError(
-  state: GameState,
-  draft: Override
-): string | undefined {
-  return applyOverride(state, draft).error
+  return applyRoster(
+    state,
+    setup,
+    nextBatter,
+    {},
+    false,
+    keepSlot,
+    recordsOverrideReplacement(state)
+  ).error
 }
 
 export const ADVANCE_SAFE_REASONS = [
@@ -356,8 +356,8 @@ export function moreEligibility(
 export function tiebreakerSetupError(state: GameState): string | undefined {
   const line = state.liveData.linescore
   if (state.final) return 'The game is over'
-  if (!line.isTopInning) return 'Available only at the start of a top inning'
   if (state.pending != null) return 'Finish the current play first'
+  if (!line.isTopInning) return 'Available only at the start of a top inning'
   const { currentPlay, allPlays } = state.liveData.plays
   if (
     line.balls !== 0 ||

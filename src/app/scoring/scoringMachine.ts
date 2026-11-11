@@ -33,6 +33,7 @@ import {
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreEligibility, moreReducer } from './moreActions'
+import { overrideActions } from './overrideModel'
 import {
   accepted,
   act,
@@ -56,6 +57,7 @@ import {
   CORRECTION_WINDOW_MS,
   type GameCheckpoint,
   type HistoryEntry,
+  type OverrideDraft,
   type ScoringDraft,
   type ScoringEvent,
   type ScoringScreenState,
@@ -160,6 +162,27 @@ export function snapshotOf(state: ScoringState): ScoringSnapshot {
     log,
     session: copyGame(session),
     ...(plans == null ? {} : { plans })
+  }
+}
+
+/** Runs the same lineup confirmation and readiness checks as committing the draft. */
+export function overrideProblem(
+  state: ScoringState,
+  draft: OverrideDraft
+): string | undefined {
+  if (
+    state.moreDraft != null ||
+    (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+  )
+    return 'Finish the current play before applying an override.'
+  const next = snapshotOf(state)
+  try {
+    return overrideActions(next.session, draft, (_state, action) =>
+      act(next, action)
+    ).error
+  } catch (error) {
+    if (error instanceof Refused) return error.message
+    throw error
   }
 }
 
@@ -513,7 +536,9 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
-  let next = reduce(state, event)
+  return drainDictation(reduce(state, event))
+}
+function drainDictation(next: ScoringState): ScoringState {
   // A sentence that came back while the last one was shown applies once the
   // screen is at rest again.
   while (
@@ -829,11 +854,19 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       return state
     return accepted(state, 'Set Outs', next => {
       const draft = overrideOf(next.session)
+      const team =
+        next.session.liveData.boxscore.teams[battingSide(next.session)]
       act(next, {
         type: 'gameFlow',
         kind: 'override',
         ...draft,
         outs: event.outs,
+        // A repeated identity needs its occurrence; ordinary tiebreakers
+        // keep the legacy action shape and do not enter correction setup.
+        ...(team.battingOrder[team.battingIndex] === draft.batter &&
+        team.battingOrder.indexOf(draft.batter) !== team.battingIndex
+          ? { batterIndex: team.battingIndex }
+          : {}),
         batter: draft.batter ?? undefined,
         pitcher: draft.pitcher ?? undefined
       })
@@ -852,14 +885,15 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       next => {
         if (event.type === 'ROSTER')
           applyRosterSave(next, event.draft, event.nextBatter, event.runners)
-        else
-          act(next, {
-            type: 'gameFlow',
-            kind: 'override',
-            ...event.draft,
-            batter: event.draft.batter ?? undefined,
-            pitcher: event.draft.pitcher ?? undefined
-          })
+        else {
+          const prepared = overrideActions(
+            next.session,
+            event.draft,
+            (_state, action) => act(next, action)
+          )
+          if (prepared.error != null)
+            throw new Refused([{ code: 'illegal', message: prepared.error }])
+        }
         next.phase =
           next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
         next.generation++
@@ -946,6 +980,10 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
  */
 export interface ScoringScreenModel {
   scoring: ScoringState
+  /** Successful overrides only: a refused attempt must leave its sheet open. */
+  appliedOverrides?: number
+  /** Settled attempts release the editor lock even when the draft was refused. */
+  attemptedOverrides?: number
   /** Undo taps waiting to take back play saved before the screen opened. */
   savedUndos: number
   /** How many such taps have been taken back so far. */
@@ -983,8 +1021,21 @@ export function scoringScreenReducer(
     scoring.readOnly !== true
   )
     return { ...model, savedUndos: model.savedUndos + 1 }
-  const next = scoringReducer(scoring, event)
-  return next === scoring ? model : { ...model, scoring: next }
+  const reduced = reduce(scoring, event)
+  const next = drainDictation(reduced)
+  return next === scoring && event.type !== 'OVERRIDE'
+    ? model
+    : {
+        ...model,
+        scoring: next,
+        ...(event.type === 'OVERRIDE'
+          ? {
+              attemptedOverrides: (model.attemptedOverrides ?? 0) + 1,
+              appliedOverrides:
+                (model.appliedOverrides ?? 0) + (reduced !== scoring ? 1 : 0)
+            }
+          : {})
+      }
 }
 
 /**

@@ -29,6 +29,21 @@ const count = (state: ReturnType<typeof game>): string => {
 }
 
 describe('applying pitches', function () {
+  it('keeps override setup when an in-place pitch is refused, and clears it on success', () => {
+    const state = game()
+    state.overrideLineupSetup = true
+    state.overridePlayStarted = true
+    state.awaitingBatter = { teamId: 'team-away', dueIndex: 0, duePlayerId: 1 }
+    const refused = applyAction(state, ball, { inPlace: true })
+    expect(refused.problems[0].message).includes('batter due is on base')
+    expect(state.overrideLineupSetup).equals(true)
+    expect(state.overridePlayStarted).equals(true)
+    state.awaitingBatter = null
+    const accepted = applyAction(state, ball, { inPlace: true })
+    expect(accepted.problems).deep.equals([])
+    expect(accepted.state.overrideLineupSetup).equals(undefined)
+    expect(accepted.state.overridePlayStarted).equals(undefined)
+  })
   it('reuses an existing identity on its own side without changing its profile or order', () => {
     for (const active of [true, false]) {
       const state = game()

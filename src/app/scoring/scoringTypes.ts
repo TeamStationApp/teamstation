@@ -33,7 +33,10 @@ export type ScoringSessionState = GameState
 export type ScoringPlayer = GamePlayer
 export type ScoringTeam = GameTeam
 export type ScoringSide = GameSide
-export type OverrideDraft = Override
+export interface OverrideDraft extends Override {
+  /** Staged bench player replacing the selected batter on Apply. */
+  pinchHitter?: number
+}
 
 export type ScoringPhase =
   | 'ready'

@@ -404,7 +404,10 @@ const actionCleaners = {
      * next at-bat's actions after it, so it replays as it was scored.
      */
     keepAtBat: asOptional(asBoolean),
+    /** An explicit half-change reset; absent on older saved overrides. */
+    clearPitcher: asOptional(asBoolean),
     batter: asOptional(asSessionId),
+    batterIndex: asOptional(asNumber),
     pitcher: asOptional(asSessionId),
     bases: asOptional(
       asArray((raw: unknown) => (raw == null ? null : asSessionId(raw)))
@@ -554,12 +557,15 @@ export function dictatedAction(
  * it, and a save queued under an older one is played again or judged before
  * it is sent (`Outbox`). Raise it only when an older engine would fold some
  * log into plays at other indexes or with other results. 4: an end of the
- * half can keep its at-bat (`keepAtBat`).
+ * half can keep its at-bat (`keepAtBat`). 5 reads explicit pitcher resets,
+ * selected batting slots and their pinch-hit replacement relationship.
  */
-export const FOLD_VERSION = 4
+export const FOLD_VERSION = 5
 
 /** The fold that first read an end of the half that keeps its at-bat. */
 export const KEEPS_AT_BAT_SINCE = 4
+/** Explicit pitcher resets and batting-slot overrides. */
+export const OVERRIDE_SLOTS_SINCE = 5
 
 /**
  * Whether `action` is an end of the half that keeps the at-bat in progress:
@@ -570,6 +576,27 @@ export function keepsAtBat(action: unknown): boolean {
   if (action == null || typeof action !== 'object') return false
   const { type, kind, keepAtBat } = action as Record<string, unknown>
   return type === 'gameFlow' && kind === 'endHalf' && keepAtBat === true
+}
+
+/**
+ * Corrections requiring fold 5. A missing pitcher is ambiguous without folding
+ * prior plays: older folds refused it when the resolved mound was empty.
+ * Reads and queued writes conservatively use the same compatibility boundary.
+ */
+export function usesOverrideSlots(action: unknown): boolean {
+  if (action == null || typeof action !== 'object') return false
+  const value = action as Record<string, unknown>
+  return (
+    (value.type === 'gameFlow' &&
+      value.kind === 'override' &&
+      (value.clearPitcher === true ||
+        value.batterIndex != null ||
+        value.pitcher == null)) ||
+    (value.type === 'lineup' &&
+      value.kind === 'roster' &&
+      value.setup != null &&
+      value.replaces != null)
+  )
 }
 
 /**

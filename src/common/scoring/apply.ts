@@ -40,12 +40,15 @@ import {
   applyRoster,
   baseIds,
   battingSide,
+  begun,
   canSwitchBatter,
   courtesyRunnerSaid,
   fieldingSide,
+  isDefensiveLineupEvent,
   lineupChanges,
   ordinal,
   playerRef,
+  recordsOverrideReplacement,
   saidNames,
   startAppearance
 } from './lineup'
@@ -2192,6 +2195,30 @@ function lineup(ctx: Ctx, action: LineupAction): void {
   const setup = action.setup ?? setupOf(state)
   // Who took whose place in the order: a substitute bats when his man was due.
   const replaced: Record<number, number> = {}
+  if (
+    action.setup != null &&
+    action.kind === 'roster' &&
+    action.replaces != null
+  ) {
+    const side = battingSide(state)
+    const before = state.liveData.boxscore.teams[side]
+    const after = setup.sides[side].battingOrder
+    const slot = before.battingIndex
+    if (
+      action.player == null ||
+      before.battingOrder[slot] !== action.replaces ||
+      after[slot] !== action.player ||
+      before.battingOrder.length !== after.length ||
+      !after.every(
+        (id, index) => index === slot || id === before.battingOrder[index]
+      )
+    )
+      refuse(
+        'illegal',
+        'The pinch hitter must replace the selected batting slot'
+      )
+    replaced[action.replaces] = action.player
+  }
   if (action.setup == null) {
     const sideName = action.side
     if (sideName == null) refuse('malformed', 'Say which team')
@@ -2246,17 +2273,29 @@ function lineup(ctx: Ctx, action: LineupAction): void {
       replaced[leaving] = incoming
     } else refuse('malformed', 'A roster change carries its setup')
   }
+  const recordReplacement =
+    recordsOverrideReplacement(state) ||
+    (action.setup != null &&
+      action.kind === 'roster' &&
+      action.replaces != null)
   const applied = applyRoster(
     state,
     setup,
     action.nextBatter,
     replaced,
     ctx.replay,
-    action.keepSlot === true
+    action.keepSlot === true,
+    recordReplacement
   )
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
   ctx.state = applied.state
+  if (
+    action.setup != null &&
+    action.kind === 'roster' &&
+    action.replaces != null
+  )
+    ctx.state.overrideLineupSetup = true
   // A pinch runner takes the charges of the man he runs for (9.16).
   const was = baseIds(state)
   baseIds(ctx.state).forEach((id, index) => {
@@ -2266,12 +2305,30 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     ctx.charges.delete(runner)
   })
   const play = ctx.state.liveData.plays.currentPlay
-  if (play != null) {
-    play.source.teamstation.lineupChanged = true
-    for (const change of lineupChanges(state, ctx.state, applied.takers))
-      play.playEvents.push(
+  if (play != null || recordReplacement) {
+    if (play != null) play.source.teamstation.lineupChanged = true
+    for (const change of lineupChanges(
+      state,
+      ctx.state,
+      applied.takers,
+      recordReplacement
+    )) {
+      // Later changes for a waiting team/role must not overtake its queue.
+      const waiting =
+        ctx.state.pendingLineupEvents?.some(
+          event =>
+            ctx.state.gameData.players[event.player.id]?.teamId ===
+              ctx.state.gameData.players[change.player.id].teamId &&
+            isDefensiveLineupEvent(event.details.code) ===
+              isDefensiveLineupEvent(change.eventType)
+        ) === true
+      const events =
+        play != null && !waiting
+          ? play.playEvents
+          : (ctx.state.pendingLineupEvents ??= [])
+      events.push(
         withoutUndefined({
-          index: play.playEvents.length,
+          index: events.length,
           isPitch: false,
           type: 'action',
           details: {
@@ -2288,7 +2345,11 @@ function lineup(ctx: Ctx, action: LineupAction): void {
           player: change.player
         })
       )
+    }
   }
+  for (const side of ['away', 'home'] as const)
+    if (ctx.state.liveData.boxscore.teams[side].defense.P != null)
+      delete ctx.state.overridePitchers?.[side]
   ctx.out.push({
     type: 'batterChanged',
     batter: ctx.state.liveData.linescore.offense.batter?.id ?? null
@@ -2390,13 +2451,31 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
     strikes: action.strikes ?? line(ctx).strikes,
     outs: action.outs ?? line(ctx).outs,
     batter: action.batter ?? line(ctx).offense.batter?.id ?? null,
-    pitcher: action.pitcher ?? line(ctx).defense.P?.id ?? null,
+    batterIndex: action.batterIndex,
+    pitcher:
+      action.clearPitcher === true
+        ? null
+        : (action.pitcher ?? line(ctx).defense.P?.id ?? null),
     bases: [bases[0] ?? null, bases[1] ?? null, bases[2] ?? null]
   })
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid game state')
   ctx.state = applied.state
   const before = state.liveData.linescore
+  const side = battingSide(ctx.state)
+  const changedHalf = before.isTopInning !== line(ctx).isTopInning
+  const selectedTurn =
+    action.batterIndex != null &&
+    action.batterIndex !== state.liveData.boxscore.teams[side].battingIndex
+  if ((changedHalf && action.clearPitcher === true) || selectedTurn) {
+    ctx.state.overrideLineupSetup = true
+    if (begun(state)) ctx.state.overridePlayStarted = true
+  }
+  if (changedHalf && action.clearPitcher === true) {
+    const defense = fieldingSide(ctx.state)
+    const pitcher = state.liveData.boxscore.teams[defense].defense.P
+    if (pitcher != null) (ctx.state.overridePitchers ??= {})[defense] = pitcher
+  }
   outsCorrected(ctx.state, {
     inning: before.currentInning,
     top: before.isTopInning,
@@ -2524,6 +2603,17 @@ export function applyAction(
       code: 'illegal',
       message: error instanceof Error ? error.message : String(error)
     })
+  }
+  // Only successful scoring leaves correction setup; refusals preserve it.
+  if (
+    action.type !== 'lineup' &&
+    !(
+      action.type === 'gameFlow' &&
+      ['override', 'placeRunner'].includes(action.kind)
+    )
+  ) {
+    delete ctx.state.overrideLineupSetup
+    delete ctx.state.overridePlayStarted
   }
   ctx.state.meta.sequence++
   const plays = ctx.state.liveData.plays.allPlays
