@@ -224,6 +224,23 @@ async function main(): Promise<void> {
       await m.openBrowser({ url: f.h.origin + route })
       await m.assertVisible({ id, timeout: 20000 })
     }
+    // The family's pills live in the RSVP sheet the "Are you going?" card opens.
+    const openReplies = async (): Promise<void> => {
+      await m.scrollUntilVisible({
+        element: { id: 'event-replies-open' },
+        direction: 'UP',
+        maxScrolls: 8
+      })
+      await m.tapOn({ id: 'event-replies-open' })
+      await m.assertVisible({ id: `${rsvpId(101)}-0`, timeout: 10000 })
+    }
+    const closeReplies = async (): Promise<void> => {
+      await m.tapOn({ text: 'Done' })
+      await coveragePage.waitForFunction(
+        `document.querySelector('[data-testid="event-rsvp-modal"]')==null`,
+        { timeout: 5000 }
+      )
+    }
     const shot = async (file: string): Promise<void> => {
       writeFileSync(
         join(artifacts, (process.env.EVENT_INFO_PREFIX ?? '') + file),
@@ -302,6 +319,7 @@ async function main(): Promise<void> {
       `document.querySelector('#error').style.display==='none'`
     )
     console.log('Failed map tiles recover through the visible retry button')
+    await openReplies()
     await m.scrollUntilVisible({
       element: { id: `${rsvpId(101)}-1` },
       direction: 'DOWN',
@@ -386,7 +404,7 @@ async function main(): Promise<void> {
     await m.tapOn({ id: `${rsvpId(104)}-0` })
     for (const id of [101, 103, 104])
       await m.assertVisible({
-        css: `[data-testid="event-rsvp-${id}-0"]:not([aria-disabled="true"])`,
+        css: `[data-testid="${rsvpId(id)}-0"]:not([aria-disabled="true"])`,
         timeout: 10000
       })
     const saved = await (
@@ -394,14 +412,15 @@ async function main(): Promise<void> {
     ).json()
     assert.deepEqual(
       saved.attendees
-        .filter((row: { userId: number }) =>
-          [101, 103, 104].includes(row.userId)
+        .filter((row: { userId: string }) =>
+          [101, 103, 104].map(userIdOfGumbo).includes(row.userId)
         )
         .map((row: { response: string }) => row.response)
         .sort(),
       ['no', 'yes', 'yes']
     )
     await open(`/games/${gameId}`)
+    await openReplies()
     await m.scrollUntilVisible({
       element: { id: `${rsvpId(101)}-1` },
       direction: 'DOWN',
@@ -417,6 +436,7 @@ async function main(): Promise<void> {
       maxScrolls: 8
     })
     await shot('family-rsvps.png')
+    await closeReplies()
     await m.scrollUntilVisible({
       element: { id: 'attendance-players-yes' },
       direction: 'DOWN',
@@ -426,12 +446,7 @@ async function main(): Promise<void> {
     await shot('attendance-after.png')
     // Simulate text-only enlargement, where native accessibility scales glyphs
     // without increasing the fixed capsule width. Restore the original styles.
-    await m.scrollUntilVisible({
-      element: { id: rsvpId(101) },
-      direction: 'UP',
-      centerElement: true,
-      maxScrolls: 8
-    })
+    await openReplies()
     await m.evalBrowserScript({
       script: `window.__rsvpFonts=[];for(const label of document.querySelectorAll('[role="radiogroup"] [role="radio"] > div')){window.__rsvpFonts.push([label,label.style.fontSize]);label.style.fontSize=(parseFloat(getComputedStyle(label).fontSize)*2)+'px'}`
     })
@@ -446,6 +461,7 @@ async function main(): Promise<void> {
     await m.evalBrowserScript({
       script: `for(const [label,font] of window.__rsvpFonts)label.style.fontSize=font;delete window.__rsvpFonts`
     })
+    await closeReplies()
     await m.scrollUntilVisible({
       element: { id: 'event-address' },
       direction: 'UP',
@@ -500,10 +516,11 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}`)
     await sql
       .raw(
-        `create function fail_event_rsvp_fixture() returns trigger language plpgsql as $$begin if new.user_id=103 then raise exception 'Synthetic RSVP write failure'; end if; return new; end$$;
+        `create function fail_event_rsvp_fixture() returns trigger language plpgsql as $$begin if new.user_id='${userIdOfGumbo(103)}' then raise exception 'Synthetic RSVP write failure'; end if; return new; end$$;
       create trigger fail_event_rsvp_fixture before insert or update on game_rsvps for each row execute function fail_event_rsvp_fixture();`
       )
       .execute(f.h.db)
+    await openReplies()
     await m.tapOn({ id: `${rsvpId(103)}-0` })
     await m.scrollUntilVisible({
       element: { text: 'Something went wrong' },
@@ -530,6 +547,7 @@ async function main(): Promise<void> {
         'drop trigger fail_event_rsvp_fixture on game_rsvps; drop function fail_event_rsvp_fixture();'
       )
       .execute(f.h.db)
+    await closeReplies()
     console.log('Failed HTTP write rolled back only its own pill')
     await open(`/games/${eventId}`)
     await m.assertVisible({ text: 'Team dinner' })
@@ -566,7 +584,9 @@ async function main(): Promise<void> {
             awayScore: 0,
             homeScore: 0,
             description: 'Ground out'
-          }
+          },
+          // A play begins a game once it has a pitch or a ball in play.
+          playEvents: [{ isPitch: true, details: { isInPlay: true } }]
         }
       ]
     })
@@ -774,14 +794,15 @@ async function main(): Promise<void> {
         away_team_id: f.teamB,
         season_id: null,
         start_at: new Date(Date.now() - 60000),
-        end_at: new Date(Date.now() + 3500)
+        // Long enough for the page to load on Info first.
+        end_at: new Date(Date.now() + 15000)
       })
       .execute()
     await open(`/games/${endingId}`)
     assert.equal(await selectedTab(), 'Info')
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
-      timeout: 10000
+      timeout: 25000
     })
     assert.equal(
       await evaluate(

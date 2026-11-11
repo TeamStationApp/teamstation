@@ -208,9 +208,9 @@ async function main(): Promise<void> {
       [103, 2],
       [104, 0]
     ] as const) {
-      await tap(`event-rsvp-${id}-${choice}`)
+      await tap(`${pillId(id)}-${choice}`)
       await wait(
-        `document.querySelector('[data-testid="event-rsvp-${id}-${choice}"]').getAttribute('aria-disabled')!=='true'`
+        `document.querySelector('[data-testid="${pillId(id)}-${choice}"]').getAttribute('aria-disabled')!=='true'`
       )
     }
     await tap(`${pillId(104)}-1`)
@@ -222,7 +222,7 @@ async function main(): Promise<void> {
       `document.querySelectorAll('[data-testid^="schedule-rsvp-avatar-"]').length===3`
     )
     const colors = await evaluate<string[]>(
-      `[101,103,104].map(id=>getComputedStyle(document.querySelector('[data-testid="schedule-rsvp-avatar-'+id+'"]')).borderColor)`
+      `${JSON.stringify([101, 103, 104].map(userIdOfGumbo))}.map(id=>getComputedStyle(document.querySelector('[data-testid="schedule-rsvp-avatar-'+id+'"]')).borderColor)`
     )
     assert(
       await evaluate<boolean>(`(()=>{
@@ -262,7 +262,7 @@ async function main(): Promise<void> {
     )
     assert(
       await evaluate<boolean>(`(()=>{
-      const cards=Array.from(document.querySelectorAll('[data-testid^="attendance-"]')).filter(node=>/^attendance-(staff|players|others)-(yes|maybe|no|noReply)-\\d+$/.test(node.dataset.testid));
+      const cards=Array.from(document.querySelectorAll('[data-testid^="attendance-"]')).filter(node=>/^attendance-(staff|players|others)-(yes|maybe|no|noReply)-usr_\\w+$/.test(node.dataset.testid));
       return cards.length>0 && cards.every(card=>parseFloat(getComputedStyle(card).paddingLeft)===0 && parseFloat(getComputedStyle(card.firstElementChild).paddingLeft)===16 && parseFloat(getComputedStyle(card.firstElementChild).paddingTop)===16);
     })()`)
     )
@@ -438,18 +438,19 @@ async function main(): Promise<void> {
     )
     await wait(`Array.from(document.querySelectorAll('[data-testid="schedule-display-row"]')).every(row=>{
       const date=row.querySelector('[data-testid="schedule-date"]').getBoundingClientRect(), details=row.querySelector('[data-testid="schedule-details"]').getBoundingClientRect();
-      return Math.abs(date.bottom-details.bottom)<1;
+      return Math.abs((date.top+date.bottom)/2-(details.top+details.bottom)/2)<1;
     })`)
     assert(
       await evaluate<boolean>(`Array.from(document.querySelectorAll('[data-testid="schedule-display-row"]')).every(row=>{
-      const date=row.querySelector('[data-testid="schedule-date"]'), weekday=date.querySelector('[data-testid="schedule-weekday"]'), day=date.lastElementChild;
+      const date=row.querySelector('[data-testid="schedule-date"]'), weekday=date.querySelector('[data-testid="schedule-weekday"]'), day=date.lastElementChild, month=day.previousElementSibling;
       const ratio=parseFloat(getComputedStyle(day).fontSize)/parseFloat(getComputedStyle(weekday).fontSize);
-      return Math.abs(ratio-32/15)<.01 && parseFloat(getComputedStyle(weekday).fontSize)<15 && row.querySelector('[data-testid^="schedule-rsvps-"]')==null;
+      // The weekday is a quarter smaller than the month.
+      return Math.abs(ratio-32/15)<.01 && Math.abs(parseFloat(getComputedStyle(weekday).fontSize)/parseFloat(getComputedStyle(month).fontSize)-.75)<.01 && row.querySelector('[data-testid^="schedule-rsvps-"]')==null;
     })`)
     )
     writeFileSync(join(artifacts, 'display-schedule.png'), await m.screenshot())
     console.log(
-      'Non-RSVP date columns shrink proportionally to the unchanged detail column height'
+      'Non-RSVP date columns sit centred on the details, with the smaller weekday in proportion'
     )
     const keysFile = process.env.GOOGLE_MAPS_KEY_FILE
     if (keysFile != null) {
