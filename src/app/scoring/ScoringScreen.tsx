@@ -2140,11 +2140,15 @@ function ScoringPanel(props: {
       stopWalkUp.current()
       if (props.persistent) {
         const game = props.game
-        if (props.client instanceof CachingClient)
-          await game.flush().catch(() => undefined)
-        else closeOnceSaved(game)
+        const queued = props.client instanceof CachingClient
+        if (queued) await game.flush().catch(() => undefined)
         // Changes the server will never take are the only ones to ask about.
-        if (!game.readOnly && !game.stopped) return true
+        // The web's session is let go only once leaving is settled: a Cancel
+        // stays on a session that still reads and saves.
+        if ((game.readOnly || game.stopped) && !(await requestConfirmation()))
+          return false
+        if (!queued) closeOnceSaved(game)
+        return true
       } else if (scoredHere.current === 0) return true
       return await requestConfirmation()
     })()

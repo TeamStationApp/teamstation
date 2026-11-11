@@ -508,6 +508,46 @@ describe('scoring shell and exit', function () {
     expect(await left).equals(true)
   })
 
+  it('keeps a refused web session open when the scorer cancels leaving, and closes it once they leave', async function () {
+    const game = await heldWebGame()
+    game.refuse.error = new HttpError('forbidden', 'Not yours to score')
+    game.release()
+    await click('Ball')
+    await act(async () => {
+      await game.session().flush()
+    })
+    expect(game.session().readOnly).equals(true)
+    const session = game.session()
+    const close = session.close.bind(session)
+    let closes = 0
+    session.close = () => {
+      closes++
+      close()
+    }
+    let left: Promise<boolean> | undefined
+    await act(async () => {
+      left = game.leave()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(
+      document.querySelector('[aria-label="Discard and Exit"]')
+    ).not.equals(null)
+    expect(closes).equals(0)
+    await click('Cancel')
+    expect(await left).equals(false)
+    // Still the live session: the scorer goes on scoring on it.
+    expect(closes).equals(0)
+    await click('Ball')
+    expect(closes).equals(0)
+    await act(async () => {
+      left = game.leave()
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    await click('Discard and Exit')
+    expect(await left).equals(true)
+    expect(closes).equals(1)
+  })
+
   it('retains the standalone field controls and repeated undo', async function () {
     let exits = 0
     await render(
