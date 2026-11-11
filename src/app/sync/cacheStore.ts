@@ -423,6 +423,60 @@ async function writeScheduleIn(
       page.meta.prevCursor
     ]
   )
+  await pruneSchedule(tx, page)
+}
+
+/**
+ * Bounds the schedule after `page` is written: of its scope's window, the
+ * pages a stored first page or whole list reaches through its cursors, and
+ * `page` itself, stay; a page its chain moved past (a first page read again
+ * with other cursors, as `around=next` does as days pass) goes. Then every
+ * game no stored page names goes.
+ */
+async function pruneSchedule(
+  tx: SqlTransaction,
+  page: SchedulePage
+): Promise<void> {
+  const rows = await tx.execute(
+    `SELECT cursor, next_cursor, prev_cursor FROM schedule_pages
+     WHERE scope = ? AND "window" = ?`,
+    [page.scope, page.window]
+  )
+  const byCursor = new Map(rows.map(row => [String(row.cursor), row]))
+  const reached = new Set<string>()
+  const pending = [FIRST_PAGE, WHOLE_LIST]
+  for (let at = pending.pop(); at != null; at = pending.pop()) {
+    const row = byCursor.get(at)
+    if (row == null || reached.has(at)) continue
+    reached.add(at)
+    for (const next of [row.next_cursor, row.prev_cursor])
+      if (typeof next === 'string') pending.push(next)
+  }
+  const kept = new Set([...reached, page.cursor])
+  for (const cursor of byCursor.keys())
+    if (!kept.has(cursor))
+      await tx.execute(
+        `DELETE FROM schedule_pages
+         WHERE scope = ? AND "window" = ? AND cursor = ?`,
+        [page.scope, page.window, cursor]
+      )
+  const named = new Set<string>()
+  for (const row of await tx.execute('SELECT game_ids FROM schedule_pages')) {
+    try {
+      const ids: unknown = JSON.parse(String(row.game_ids))
+      if (Array.isArray(ids)) for (const id of ids) named.add(String(id))
+    } catch {
+      // A page this version cannot read names nothing.
+    }
+  }
+  for (const row of await tx.execute(
+    'SELECT shape, game_id FROM schedule_games'
+  ))
+    if (!named.has(String(row.game_id)))
+      await tx.execute(
+        'DELETE FROM schedule_games WHERE shape = ? AND game_id = ?',
+        [row.shape, row.game_id]
+      )
 }
 
 function schedulePageOfRow(row: SqlRow): SchedulePage {

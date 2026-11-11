@@ -9,7 +9,8 @@ import { openDocumentCache } from './cache'
 import {
   cacheFileName,
   openCacheStore,
-  QUERY_DOCUMENTS_KEPT
+  QUERY_DOCUMENTS_KEPT,
+  type SchedulePageMeta
 } from './cacheStore'
 
 describe('the phone document cache', function () {
@@ -207,10 +208,8 @@ describe('the phone document cache', function () {
     }))
     expect(read.pages).deep.equals([{ ...page, gameIds: ['g2'] }])
     expect(read.none).deep.equals([])
-    expect(read.rows).deep.equals([
-      { id: 'g2', body: '{"id":"g2","v":2}' },
-      { id: 'g1', body: '{"id":"g1"}' }
-    ])
+    // No stored page names g1 any more: it went with the page's new read.
+    expect(read.rows).deep.equals([{ id: 'g2', body: '{"id":"g2","v":2}' }])
     expect([read.next, read.prev, read.other]).deep.equals([
       'all+asc',
       'all+asc',
@@ -221,6 +220,72 @@ describe('the phone document cache', function () {
     await (
       await openCacheStore(nodeSqliteExecutor(join(dir, 'before.sqlite')))
     ).close()
+  })
+
+  it('keeps only the schedule pages a first page or whole list reaches, and the games they name', async function () {
+    const store = await openCacheStore(
+      nodeSqliteExecutor(join(dir, 'bounded.sqlite'))
+    )
+    const meta = (
+      nextCursor: string | null,
+      prevCursor: string | null = null
+    ): SchedulePageMeta => ({
+      nextCursor,
+      prevCursor,
+      anchorId: null,
+      counts: null
+    })
+    const write = async (
+      window: string,
+      cursor: string,
+      ids: string[],
+      next: string | null,
+      prev: string | null = null
+    ): Promise<void> => {
+      await store.atomically(async tx => {
+        await tx.writeSchedule(
+          'SeasonGame',
+          { scope: 'me', window, cursor, gameIds: ids, meta: meta(next, prev) },
+          ids.map(id => ({ id, body: JSON.stringify({ id }) }))
+        )
+      })
+    }
+    const cursors = async (window: string): Promise<string[]> =>
+      (
+        await store.atomically(
+          async tx => await tx.schedulePages('me', [window])
+        )
+      )
+        .map(page => page.cursor)
+        .sort()
+    const rows = async (ids: string[]): Promise<string[]> =>
+      (
+        await store.atomically(
+          async tx => await tx.scheduleRows('SeasonGame', ids)
+        )
+      ).map(row => row.id)
+    // Monday: the first page, and the two it leads to.
+    await write('upcoming', 'first', ['g1', 'g2'], 'c2')
+    await write('upcoming', 'c2', ['g3'], 'c3')
+    await write('upcoming', 'c3', ['g4'], null)
+    // Another window keeps its own.
+    await write('past', 'list', ['g0'], null)
+    expect(await cursors('upcoming')).deep.equals(['c2', 'c3', 'first'])
+    // Tuesday the first page moved on: its old chain goes, and the games
+    // only that chain named.
+    await write('upcoming', 'first', ['g2', 'g3'], 'd2')
+    expect(await cursors('upcoming')).deep.equals(['first'])
+    expect(await cursors('past')).deep.equals(['list'])
+    expect(await rows(['g0', 'g1', 'g2', 'g3', 'g4'])).deep.equals([
+      'g0',
+      'g2',
+      'g3'
+    ])
+    // A page read by its cursor stays as the newest written, and is reached
+    // once the first page leads to it.
+    await write('upcoming', 'd2', ['g5'], null, 'first')
+    expect(await cursors('upcoming')).deep.equals(['d2', 'first'])
+    await store.close()
   })
 
   it('reads the schedule list documents an older build kept into the set once', async function () {
