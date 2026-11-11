@@ -936,6 +936,51 @@ describe('a scoring session', function () {
     expect(last.playEvents).length(2)
   })
 
+  it('stops retrying a consistently malformed save reply after three attempts', async () => {
+    const { session, store, clock } = await open()
+    store.fail = new TypeError('Invalid successful reply')
+    session.apply(ball)
+    await session.flush()
+    await clock.tick()
+    await clock.tick()
+    expect(store.posts).length(3)
+    expect(
+      store.posts.every(
+        post => JSON.stringify(post) === JSON.stringify(store.posts[0])
+      )
+    ).equals(true)
+    expect(clock.waiting).deep.equals([])
+    expect(session.pending).greaterThan(0)
+    session.close()
+  })
+
+  it('blocks a local rebase failure instead of resending an accepted post', async () => {
+    const clock = new Clock()
+    let reads = 0
+    let posts = 0
+    const session = await ScoringSession.open(
+      {
+        load: async () => {
+          if (++reads > 1) throw new TypeError('Invalid local rebase')
+          return { plays: [], currentPlay: null }
+        },
+        save: async () => {
+          posts++
+          return { plays: [], currentPlay: null, superseded: true }
+        }
+      },
+      'g1',
+      context,
+      clock.options
+    )
+    session.apply(ball)
+    await session.flush()
+    expect(posts).equals(1)
+    expect(clock.waiting).deep.equals([])
+    expect(session.problem).equals('Invalid local rebase')
+    session.close()
+  })
+
   it('backs off a retry after a server error', async function () {
     const { session, store, clock } = await open()
     store.fail = new HttpError('internal', 'Something broke')
