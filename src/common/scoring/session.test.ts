@@ -954,6 +954,34 @@ describe('a scoring session', function () {
     session.close()
   })
 
+  it('gives unknown replies their own retry budget after network failures and new input', async () => {
+    const { session, store, clock } = await open()
+    session.apply(ball)
+    store.fail = new HttpError('offline', 'Offline')
+    await session.flush()
+    for (let i = 0; i < 4; i++) await clock.tick()
+    store.fail = new TypeError('Invalid reply')
+    await clock.tick()
+    expect(clock.waiting).length(1)
+    await clock.tick()
+    store.fail = new HttpError('unavailable', 'Try again')
+    await clock.tick()
+    store.fail = new TypeError('Invalid reply')
+    await clock.tick()
+    await clock.tick()
+    expect(clock.waiting).length(1)
+    await clock.tick()
+    expect(clock.waiting).length(0)
+    session.apply(strike)
+    await session.flush()
+    expect(clock.waiting).length(1)
+    store.fail = null
+    await clock.tick()
+    expect(session.pending).equals(0)
+    expect(session.actions).deep.equals([ball, strike])
+    session.close()
+  })
+
   it('blocks a local rebase failure instead of resending an accepted post', async () => {
     const clock = new Clock()
     let reads = 0
