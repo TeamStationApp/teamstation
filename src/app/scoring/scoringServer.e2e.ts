@@ -22,6 +22,7 @@ import {
   dictatedAction,
   type ScoringAction
 } from '../../common/scoring/actions'
+import { comparablePlay } from '../../common/scoring/comparable'
 import { freshGame } from '../../common/scoring/rules'
 import {
   applyAction,
@@ -29,17 +30,18 @@ import {
   ScoringSession,
   type StoredGame
 } from '../../common/scoring/session'
-import type {
-  FielderRef,
-  GameSetup,
-  GameState,
-  Position
+import {
+  type FielderRef,
+  type GameSetup,
+  type GameState,
+  type Position,
+  POSITIONS
 } from '../../common/scoring/state'
 import { makeDatabase } from '../../server/db/database'
 import { serverConfig } from '../../server/serverConfig'
 import { ensureGumboId } from '../../server/users/insertUser'
 import { signInTestAccount } from '../../test/passwordFixtures'
-import { createDevelopmentSession, teamsOf } from './developmentSession'
+import { teamsOf } from './developmentSession'
 
 /**
  * The scoring screen against the running API, with nothing intercepted: every
@@ -199,7 +201,23 @@ async function click(page: Page, label: string): Promise<void> {
   )
   for (const match of (await page.$$(selector)).reverse()) {
     if (!(await match.isVisible())) continue
-    await match.click()
+    // A sheet that has just opened takes no press until it has settled, as
+    // no finger could press it sooner: the control is pressed where it has
+    // rested a moment.
+    await match.evaluate(node => {
+      node.scrollIntoView({ block: 'nearest' })
+    })
+    let box = await match.boundingBox()
+    for (let still = 0; still < 3;) {
+      await new Promise(resolve => setTimeout(resolve, 100))
+      const next = await match.boundingBox()
+      still = JSON.stringify(next) === JSON.stringify(box) ? still + 1 : 0
+      box = next
+    }
+    if (box == null) throw new Error(`${label} has no box to press`)
+    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+    await page.mouse.down()
+    await page.mouse.up()
     // Let the sheet transition finish before targeting its next control.
     await new Promise(resolve => setTimeout(resolve, 350))
     break
@@ -347,22 +365,6 @@ async function openScoring(page: Page): Promise<void> {
     timeout: 30000
   })
   if ((await page.$('[aria-label="OK"]')) != null) await click(page, 'OK')
-}
-
-/** A play as two scorings of the same game can be compared. */
-function comparable(play: unknown): unknown {
-  const copy = JSON.parse(JSON.stringify(play)) as Record<string, unknown>
-  delete copy.source
-  const about = copy.about as Record<string, unknown> | undefined
-  if (about != null) {
-    delete about.startTime
-    delete about.endTime
-    delete about.halfOuts
-  }
-  if (Array.isArray(copy.credits))
-    for (const credit of copy.credits as Array<Record<string, unknown>>)
-      delete credit.teamId
-  return copy
 }
 
 describe('scoring into the server', function () {
@@ -513,11 +515,11 @@ describe('scoring into the server', function () {
       }
     }
     expect(reads[0].plays).length(1)
-    expect(reads[0].plays.map(row => comparable(row.gumbo))).deep.equals(
-      reads[1].plays.map(row => comparable(row.gumbo))
+    expect(reads[0].plays.map(row => comparablePlay(row.gumbo))).deep.equals(
+      reads[1].plays.map(row => comparablePlay(row.gumbo))
     )
-    expect(comparable(reads[0].currentPlay)).deep.equals(
-      comparable(reads[1].currentPlay)
+    expect(comparablePlay(reads[0].currentPlay)).deep.equals(
+      comparablePlay(reads[1].currentPlay)
     )
     // Opened again, both screens stand at the same place.
     const reopened: string[] = []
@@ -580,23 +582,17 @@ describe('scoring into the server', function () {
     const setup = first.teamStation.setupBefore
     const teams = teamsOf(detail)
 
-    // The fixture names the players of a game built from empty rosters; the
-    // same batting slot or position here is the same player.
-    const authored = createDevelopmentSession(detail, [], []).liveData.boxscore
+    // The fixture numbers the visitors' batters 1–9 by slot and the hosts'
+    // fielders 10–18 by position: the same slot or position here is the
+    // same player.
     const idOf = new Map<number, number>()
-    for (const side of ['away', 'home'] as const) {
-      authored.teams[side].battingOrder.forEach((id, slot) => {
-        idOf.set(id, setup.sides[side].battingOrder[slot])
-      })
-      for (const [position, id] of Object.entries(authored.teams[side].defense))
-        if (id != null)
-          idOf.set(
-            id,
-            setup.sides[side].defense[
-              position as keyof typeof setup.sides.home.defense
-            ]!
-          )
-    }
+    setup.sides.away.battingOrder.forEach((id, slot) => {
+      idOf.set(slot + 1, id)
+    })
+    POSITIONS.forEach((position, index) => {
+      const id = setup.sides.home.defense[position]
+      if (id != null) idOf.set(10 + index, id)
+    })
     const mapped = <T extends FielderRef>(id: T): T => {
       // A stand-in's position is no fixture id.
       if (typeof id !== 'number') return id
@@ -698,8 +694,10 @@ describe('scoring into the server', function () {
     expect(
       tapped.liveData.plays.allPlays.map(play => play.result.eventType)
     ).deep.equals(['single', 'strikeout', 'field_out', 'field_out'])
-    expect(tapped.liveData.plays.allPlays.map(comparable)).deep.equals(
-      dictated.liveData.plays.allPlays.map(comparable)
+    expect(
+      tapped.liveData.plays.allPlays.map(play => comparablePlay(play))
+    ).deep.equals(
+      dictated.liveData.plays.allPlays.map(play => comparablePlay(play))
     )
     expect(tapped.liveData.linescore).deep.equals(dictated.liveData.linescore)
     expect(tapped.liveData.boxscore).deep.equals(dictated.liveData.boxscore)
@@ -1195,11 +1193,11 @@ describe('scoring into the server', function () {
     console.log(`      walk: ${String(walk.details.description)}`)
 
     // Undoing the walk and the balk leaves what was stored before them.
-    expect(plays(undone).map(comparable)).deep.equals(
-      plays(before).map(comparable)
+    expect(plays(undone).map(play => comparablePlay(play))).deep.equals(
+      plays(before).map(play => comparablePlay(play))
     )
-    expect(comparable(undone.currentPlay)).deep.equals(
-      comparable(before.currentPlay)
+    expect(comparablePlay(undone.currentPlay)).deep.equals(
+      comparablePlay(before.currentPlay)
     )
     expect(
       sql(`select count(*) from events where "gameId"='${gameId}'`)
