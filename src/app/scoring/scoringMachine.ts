@@ -1029,6 +1029,8 @@ export function scoringScreenReducer(
     }
   if (
     event.type === 'UNDO' &&
+    scoring.runnerDraft == null &&
+    scoring.moreDraft == null &&
     scoring.past.length === 0 &&
     scoring.log.length > 0 &&
     scoring.readOnly !== true

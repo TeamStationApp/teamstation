@@ -756,6 +756,40 @@ describe('the scoring screen on the game socket', function () {
     expect(session().actions).deep.equals(peer.actions)
   })
 
+  it('resumes peer following after Undo cancels an uncommitted runner out', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    const before = [...session().actions]
+    await act(async () => {
+      const view = field()
+      const runner = view.players!.find(
+        player =>
+          player.playerId === peer.state.liveData.linescore.offense.first?.id
+      )!
+      view.onRunnerDrop!(runner.id, 2, 'out', view.interaction!.generation)
+    })
+    expect(document.body.textContent).includes('Tap or drag a player')
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(before)
+    await click(
+      document
+        .querySelector('[aria-label^="Undo "]')!
+        .getAttribute('aria-label')!
+    )
+    await settle()
+    expect(session().actions).deep.equals(peer.actions)
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+  })
+
   it('authors the explicit Finish tap after following an unfinished play', async function () {
     const { changes, other, session, store } = await scoring()
     const peer = await other()

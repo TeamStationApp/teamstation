@@ -1037,27 +1037,50 @@ function ScoringPanel(props: {
   const follow = useRef(new ScoringFollow())
   const latestInput = useRef<ScoringMutation | undefined>(undefined)
   const followAllowed = useRef(false)
+  type FollowModel = ScoringScreenModel & {
+    authorship?: ScoringMutation
+    observedDraft?: readonly ScoringAction[]
+    resumeObservation?: number
+  }
   const [model, reduceEvent] = useReducer(
     (
-      model: ScoringScreenModel & { authorship?: ScoringMutation },
+      model: FollowModel,
       input: {
         event: ScoringEvent | SavedUndone
         authorship?: ScoringMutation
+        observing: boolean
+        generation: number
       }
-    ) => {
+    ): FollowModel => {
       const next = reduceVisible(model, input.event, visibleDefaults)
-      return next === model
-        ? model
-        : {
-            ...next,
-            authorship:
-              input.event.type === 'RESET'
-                ? undefined
-                : (input.authorship ?? model.authorship)
-          }
+      if (input.event.type === 'RESET')
+        return {
+          ...next,
+          authorship: undefined,
+          observedDraft: undefined,
+          resumeObservation: undefined
+        }
+      const drafting =
+        next.scoring.runnerDraft != null || next.scoring.moreDraft != null
+      const observedDraft =
+        model.observedDraft ??
+        (input.observing && drafting ? model.scoring.log : undefined)
+      // An abandoned selection has authored no play. Restore the observer
+      // only after the whole draft ends, and only if its log is unchanged.
+      const resume =
+        (!drafting &&
+          observedDraft != null &&
+          sameActions(observedDraft, next.scoring.log)) ||
+        (next === model && input.observing && input.authorship != null)
+      return {
+        ...next,
+        authorship: input.authorship ?? model.authorship,
+        observedDraft: drafting ? observedDraft : undefined,
+        resumeObservation: resume ? input.generation : undefined
+      }
     },
     props.game,
-    (game): ScoringScreenModel & { authorship?: ScoringMutation } => {
+    (game): FollowModel => {
       const resumed = game.resumable()
       return scoringScreenModel(
         withVisibleLineups(
@@ -1069,6 +1092,7 @@ function ScoringPanel(props: {
   )
   const dispatch = useCallback(
     (event: ScoringEvent | SavedUndone): void => {
+      const observing = follow.current.observing
       const authored = follow.current.input(event)
       const authorship =
         authored && event.type !== 'GESTURE'
@@ -1077,6 +1101,8 @@ function ScoringPanel(props: {
       if (authorship != null) latestInput.current = authorship
       reduceEvent({
         event,
+        observing,
+        generation: follow.current.snapshot(),
         ...(authorship == null ? {} : { authorship })
       })
     },
@@ -1194,6 +1220,13 @@ function ScoringPanel(props: {
   // and a count that asks the screen to look again whether it can be.
   const stale = useRef(false)
   const [staleCheck, setStaleCheck] = useState(0)
+  useEffect(() => {
+    if (
+      model.resumeObservation != null &&
+      follow.current.adopt(model.resumeObservation)
+    )
+      setStaleCheck(value => value + 1)
+  }, [model.resumeObservation])
   // The digests of the plays and lineups heard since, or null when what was
   // heard must be read whatever it is (a resync, a notice with no digest).
   // When this screen's session holds every one, they were its own saves'
