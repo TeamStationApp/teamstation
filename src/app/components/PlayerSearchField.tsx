@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, TextInput, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 import { Icon } from './Icon'
 
 /**
@@ -78,7 +79,11 @@ export function PlayerSearchField({
             justifyContent: 'center'
           }}
         >
-          <Icon name="close" size={1.125} color={theme.secondaryTextColor} />
+          <ButtonIcon
+            name="close"
+            size={1.125}
+            color={theme.secondaryTextColor}
+          />
         </Pressable>
       )}
     </View>

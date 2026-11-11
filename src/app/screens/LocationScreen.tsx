@@ -14,7 +14,8 @@ import {
 
 import type { TeamStationClient } from '../../common/api'
 import type { CitySuggestion, Locality } from '../../common/locality'
-import { Button, DangerText, Icon, Screen, TextField } from '../components'
+import { Button, DangerText, Screen, TextField } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -268,7 +269,7 @@ export function LocationScreen({
                       pressed && styles.pressed
                     ]}
                   >
-                    <Icon name="place" size={1.25} />
+                    <ButtonIcon name="place" size={1.25} />
                     <View style={styles.words}>
                       <Text style={styles.primary} numberOfLines={1}>
                         {item.primary}

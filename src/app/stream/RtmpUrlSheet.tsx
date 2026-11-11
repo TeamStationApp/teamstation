@@ -7,7 +7,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { Button } from '../components/Button'
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { copyToClipboard } from '../platform/clipboard'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -119,7 +119,7 @@ export function RtmpUrlSheet(props: RtmpUrlSheetProps): React.ReactElement {
                 setCopied(true)
               }}
             >
-              <Icon name="content_copy" color={theme.linkTextColor} />
+              <ButtonIcon name="content_copy" color={theme.linkTextColor} />
             </Pressable>
           </>
         )}

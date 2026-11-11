@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 import { Icon, type IconName } from './Icon'
 
 export interface TextFieldProps {
@@ -158,7 +159,11 @@ export function TextField(props: TextFieldProps): React.ReactElement {
             }}
             style={({ pressed }) => [styles.clear, pressed && styles.pressed]}
           >
-            <Icon name="close" size={0.875} color={theme.clearIconColor} />
+            <ButtonIcon
+              name="close"
+              size={0.875}
+              color={theme.clearIconColor}
+            />
           </Pressable>
         )}
       </View>
