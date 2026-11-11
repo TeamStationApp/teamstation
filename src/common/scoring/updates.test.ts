@@ -108,6 +108,7 @@ describe('accepted scoring update descriptions', () => {
       name: 'Mike T.',
       lines: ['Ball']
     }
-    expect(storedScoringUpdates({ updates: [update] })).deep.equals([update])
+    const { name: _name, ...stored } = update
+    expect(storedScoringUpdates({ updates: [update] })).deep.equals([stored])
   })
 })
