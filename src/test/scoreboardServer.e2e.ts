@@ -36,6 +36,8 @@ import { makeDatabase } from '../server/db/database'
  *   TS_E2E_REDIS_KEY     the key prefix, gs:<database name>
  *   TS_CHROME_PATH       the Chrome puppeteer drives, for E3
  *   TS_E2E_SERVER_PID    the server's primary, which E4 restarts
+ *   TS_E2E_REDIS_STOP / TS_E2E_REDIS_START  commands that stop and start the
+ *                        store for E4; Homebrew's Redis service when unset
  */
 
 const HOST = process.env.TS_E2E_HOST ?? 'http://127.0.0.1:9100'
@@ -159,6 +161,23 @@ async function getJson(
   return { status: answer.status, body }
 }
 
+/**
+ * Stops or starts the store the API uses: `TS_E2E_REDIS_STOP` and
+ * `TS_E2E_REDIS_START` where the machine names its own commands, and
+ * Homebrew's Redis service otherwise.
+ */
+function redisService(action: 'stop' | 'start'): void {
+  const named =
+    action === 'stop'
+      ? process.env.TS_E2E_REDIS_STOP
+      : process.env.TS_E2E_REDIS_START
+  if (named != null && named !== '') {
+    execFileSync('sh', ['-c', named], { stdio: 'inherit' })
+    return
+  }
+  execFileSync('brew', ['services', action, 'redis'], { stdio: 'inherit' })
+}
+
 function redis(...args: string[]): string {
   return execFileSync('redis-cli', args, { encoding: 'utf8' }).trim()
 }
@@ -198,8 +217,10 @@ function socketsByWorker(): Record<string, number> {
   )
   const counts: Record<string, number> = {}
   for (const line of out.split('\n').slice(1)) {
-    const [command, pid, ...rest] = line.split(/\s+/)
-    if (command !== 'node' || !rest.some(field => served.test(field))) continue
+    // The server's own end of each connection, by process: the command's
+    // name is not relied on, as Linux lists a thread's name there.
+    const [, pid, ...rest] = line.split(/\s+/)
+    if (!rest.some(field => served.test(field))) continue
     counts[pid] = (counts[pid] ?? 0) + 1
   }
   return counts
@@ -536,7 +557,7 @@ async function e4(): Promise<void> {
 
   // 3. Redis stopped.
   const logBefore = readFileSync(SERVER_LOG, 'utf8').length
-  execFileSync('brew', ['services', 'stop', 'redis'], { stdio: 'inherit' })
+  redisService('stop')
   await sleep(1500)
   const board = await getJson(`/scoreboard/${gameId}`)
   observe('GET /scoreboard/<id> answers 503', board.status === 503, board)
@@ -573,7 +594,7 @@ async function e4(): Promise<void> {
   )
 
   // 4. Redis back, and homeScore 8.
-  execFileSync('brew', ['services', 'start', 'redis'], { stdio: 'inherit' })
+  redisService('start')
   const startedAt = Date.now()
   await until(
     'Redis',
