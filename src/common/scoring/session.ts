@@ -34,6 +34,7 @@ import type { SwapEffect } from './playsLost'
 import { awaitingResult, closesFirst, nextDecision } from './rules'
 import {
   authoredScoringMutation,
+  MAX_SCORING_TIME,
   sameScoringMutation,
   type ScoringMutation
 } from './scoringMutation'
@@ -520,11 +521,14 @@ export class ScoringSession {
   captureScoringAction(at = this.now().getTime()): ScoringMutation {
     // Calibration may move wall time backwards. Keep local action identities
     // increasing; the server resolves conflicts against the observed base.
-    this.lastAuthoredAt = Math.max(
-      at,
-      this.lastAuthoredAt + 1,
-      (this.knownMutation?.at ?? -1) + 1,
-      (this.authoredMutation?.at ?? -1) + 1
+    this.lastAuthoredAt = Math.min(
+      MAX_SCORING_TIME,
+      Math.max(
+        at,
+        this.lastAuthoredAt + 1,
+        (this.knownMutation?.at ?? -1) + 1,
+        (this.authoredMutation?.at ?? -1) + 1
+      )
     )
     return authoredScoringMutation(this.lastAuthoredAt)
   }

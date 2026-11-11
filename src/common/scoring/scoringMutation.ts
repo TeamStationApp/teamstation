@@ -1,5 +1,8 @@
 import { asNumber, asObject, asString } from 'cleaners'
 
+/** JavaScript's last representable date, below the integer overflow boundary. */
+export const MAX_SCORING_TIME = 8.64e15
+
 /** Original user authorship; automatic completion keeps at/id and advances revision. */
 export interface ScoringMutation {
   at: number
@@ -15,6 +18,10 @@ const shape = asObject({
 })
 export function asScoringMutation(raw: unknown): ScoringMutation {
   const value = shape(raw)
+  if (value.at > MAX_SCORING_TIME)
+    throw new TypeError(
+      'Scoring mutation time exceeds the supported date range'
+    )
   if (
     !Number.isSafeInteger(value.at) ||
     value.at < 0 ||

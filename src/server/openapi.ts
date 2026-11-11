@@ -873,7 +873,7 @@ const scoringMutationSchema = {
       type: 'integer',
       minimum: 0,
       description:
-        'Original user action time, Unix milliseconds, retained as retry identity even when the offline device clock is ahead. Acceptance depends on the observed scoring base, not this timestamp.'
+        'Original user action time, Unix milliseconds, at most 8640000000000000 (the supported date range), retained as retry identity even when the offline device clock is ahead. Acceptance depends on the observed scoring base, not this timestamp.'
     },
     id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
     revision: {

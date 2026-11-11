@@ -5,6 +5,7 @@ import {
   asScoringMutation,
   authoredScoringMutation,
   compareScoringMutations,
+  MAX_SCORING_TIME,
   sameScoringMutation,
   scoringFingerprintInput
 } from './scoringMutation'
@@ -20,6 +21,8 @@ describe('scoring authorship', () => {
       { ...stamp, at: Infinity },
       { ...stamp, at: -1 },
       { ...stamp, at: 1.5 },
+      { ...stamp, at: Number.MAX_SAFE_INTEGER },
+      { ...stamp, at: MAX_SCORING_TIME + 1 },
       { ...stamp, id: '' },
       { ...stamp, id: 'a b' },
       { ...stamp, id: 'a'.repeat(129) },
@@ -29,6 +32,9 @@ describe('scoring authorship', () => {
       { ...stamp, frontier: Number.MAX_SAFE_INTEGER + 1 }
     ])
       expect(() => asScoringMutation(invalid)).throws()
+    expect(asScoringMutation({ ...stamp, at: MAX_SCORING_TIME }).at).equals(
+      MAX_SCORING_TIME
+    )
   })
   it('orders time first, deterministic identity second, normalization last', () => {
     expect(compareScoringMutations(stamp, { ...stamp, at: 1001 })).below(0)
