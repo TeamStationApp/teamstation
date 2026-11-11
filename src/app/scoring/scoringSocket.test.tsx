@@ -766,7 +766,7 @@ describe('the scoring screen on the game socket', function () {
     const before = [...session().actions]
     await act(async () => {
       const view = field()
-      const runner = view.players!.find(
+      const runner = view.players.find(
         player =>
           player.playerId === peer.state.liveData.linescore.offense.first?.id
       )!
@@ -788,6 +788,60 @@ describe('the scoring screen on the game socket', function () {
     await peer.flush()
     await changes.plays()
     expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+  })
+
+  it('keeps following after a same-base Safe drop and its batched gesture release', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    await act(async () => {
+      field().onGestureActive?.(true)
+    })
+    await act(async () => {
+      const view = field()
+      const runner = view.players.find(
+        player =>
+          player.playerId === peer.state.liveData.linescore.offense.first?.id
+      )!
+      view.onRunnerDrop!(runner.id, 1, 'safe', view.interaction!.generation)
+      view.onGestureActive?.(false)
+    })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(peer.actions)
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+  })
+
+  it('keeps a committed runner advance locally owned through gesture release', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    await act(async () => {
+      const view = field()
+      const runner = view.players.find(
+        player =>
+          player.playerId === peer.state.liveData.linescore.offense.first?.id
+      )!
+      view.onRunnerDrop!(runner.id, 2, 'safe', view.interaction!.generation)
+      view.onGestureActive?.(false)
+    })
+    await session().flush()
+    const authored = [...session().actions]
+    expect(authored.at(-1)).deep.includes({ type: 'runnerMovement', to: '2B' })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(authored)
   })
 
   it('authors the explicit Finish tap after following an unfinished play', async function () {
