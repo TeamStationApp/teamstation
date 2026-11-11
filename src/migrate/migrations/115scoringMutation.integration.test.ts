@@ -7,14 +7,14 @@ import {
   addScorableTeams,
   scratchDatabase
 } from '../../test/scoreboardKit'
-import { migration113ScoringMutation } from './113scoringMutation'
+import { migration115ScoringMutation } from './115scoringMutation'
 
-describe('113 scoring mutation migration', function () {
+describe('115 scoring mutation migration', function () {
   this.timeout(60000)
   it('keeps existing games unstamped and reverses without deleting scoring data', async () => {
     const { db, drop } = await scratchDatabase('mutation_migration')
     try {
-      await sql.raw(migration113ScoringMutation.down).execute(db)
+      await sql.raw(migration115ScoringMutation.down).execute(db)
       const context = await addScorableTeams(db, {
         home: 'Hawks',
         away: 'Gulls'
@@ -24,7 +24,7 @@ describe('113 scoring mutation migration', function () {
         awayTeamId: context.teams.away.id,
         startAt: new Date()
       })
-      await sql.raw(migration113ScoringMutation.up).execute(db)
+      await sql.raw(migration115ScoringMutation.up).execute(db)
       expect(
         (
           await db
@@ -41,7 +41,27 @@ describe('113 scoring mutation migration', function () {
         })
         .where('id', '=', id)
         .execute()
-      await sql.raw(migration113ScoringMutation.down).execute(db)
+      await sql`insert into schema_migrations (name) values ('113scoringMutation')`.execute(
+        db
+      )
+      await sql.raw(migration115ScoringMutation.up).execute(db)
+      expect(
+        (
+          await db
+            .selectFrom('games')
+            .select('scoring_mutation')
+            .where('id', '=', id)
+            .executeTakeFirstOrThrow()
+        ).scoring_mutation
+      ).deep.equals({ at: 1, id: 'test', revision: 0, frontier: 0 })
+      expect(
+        (
+          await sql`select name from schema_migrations where name = '113scoringMutation'`.execute(
+            db
+          )
+        ).rows
+      ).deep.equals([])
+      await sql.raw(migration115ScoringMutation.down).execute(db)
       expect(
         (
           await db

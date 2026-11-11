@@ -78,7 +78,7 @@ const test = spawnSync(
           'src/server/games/*.test.ts',
           'src/common/api.test.ts',
           'src/common/gumboPlay.test.ts',
-          'src/migrate/migrations/113scoringMutation.integration.test.ts',
+          'src/migrate/migrations/115scoringMutation.integration.test.ts',
           'src/common/replay/*.test.ts',
           'src/app/replay/*.test.ts',
           'src/server/routes/lineups.integration.test.ts',
