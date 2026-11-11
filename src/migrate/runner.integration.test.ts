@@ -119,6 +119,25 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
+  it('rolls back scoring mutation before the existing game plans migration', async () => {
+    await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '115scoringMutation'
+    ])
+    expect(
+      (await pool.query("select to_regclass('game_plans') as name")).rows[0]
+        .name
+    ).equals('game_plans')
+    expect(
+      (
+        await pool.query(
+          "select column_name from information_schema.columns where table_name = 'games' and column_name = 'scoring_mutation'"
+        )
+      ).rows
+    ).deep.equals([])
+    await migrateUp(pool, migrations)
+  })
+
   it('upgrades and rolls back the two coach migrations without touching master’s camera data', async () => {
     const current = ['103TeamHeadCoach', '104ManagerScheduling']
     await migrateUp(pool, migrations)
@@ -601,8 +620,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '112videoSpaceSecret',
           '113chatHistoryRecovery',
           '113playingTimeRules',
-          '113scoringMutation',
-          '114gamePlans'
+          '114gamePlans',
+          '115scoringMutation'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
