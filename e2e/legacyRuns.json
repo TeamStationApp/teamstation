@@ -3213,5 +3213,11 @@
         "TS_UMPIRE_WEB": "dist"
       }
     }
+  ],
+  "src/app/scoring/scoringOverrides.e2e.ts": [
+    {
+      "label": "safari",
+      "needs": "ios-sim"
+    }
   ]
 }

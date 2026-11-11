@@ -135,7 +135,10 @@ async function stopListeners(port: number): Promise<void> {
   for (const pid of pids) {
     try {
       process.kill(Number(pid), 'SIGTERM')
-    } catch {}
+    } catch (error) {
+      // Gone between the listing and the signal.
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
   }
   const until = Date.now() + 20_000
   while (Date.now() < until) {
