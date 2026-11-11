@@ -10,11 +10,11 @@ import { imageKey, isPublicImagePrefix } from './images'
 import { imageUrl } from './imageUrls'
 import {
   MISSING_PREFIX,
-  RETIRED_GRACE_MS,
-  RETIRED_PREFIX,
   releasePictures,
   releaseReplacedPicture,
   republishOwnedImages,
+  RETIRED_GRACE_MS,
+  RETIRED_PREFIX,
   settlesWithin
 } from './republishImages'
 import type { SpaceSettings } from './spacesHls'
@@ -608,7 +608,12 @@ describe('republishing owned pictures', function () {
       }
       try {
         // No connection at all: the reference check fails.
-        await releaseReplacedPicture({} as typeof h.db, h.space, PUBLIC)
+        const unconnected: unknown = {}
+        await releaseReplacedPicture(
+          unconnected as typeof h.db,
+          h.space,
+          PUBLIC
+        )
       } finally {
         console.error = realError
       }
