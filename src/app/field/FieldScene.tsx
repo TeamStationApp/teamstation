@@ -237,6 +237,13 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   const selectablePolicyKey = props.interaction?.selectableIds
     .filter(id => props.tapIds?.includes(id) !== true)
     .join()
+  // The same players drawn again keep a grab: a screen redrawn mid-drag (a
+  // save answered, a roster read) hands over new objects for the same ids.
+  const playersKey = players.map(player => player.id).join()
+  useEffect(() => {
+    const grabbed = players.find(item => item.id === drag.current?.id)
+    if (grabbed != null) grabbed.dragging = true
+  }, [players])
   useEffect(() => {
     setPreview(null)
     return () => {
@@ -247,7 +254,9 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         callbacks.current.onRunnerDrag?.(null)
       }
       if (drag.current != null) {
-        const player = players.find(item => item.id === drag.current?.id)
+        const player = callbacks.current.players.find(
+          item => item.id === drag.current?.id
+        )
         const touch = drag.current.touch === true
         if (player != null) finishMove(player, drag.current, true)
         drag.current = null
@@ -258,7 +267,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   }, [
     arcMode,
     view,
-    players,
+    playersKey,
     props.interaction?.generation,
     gesturePolicyKey,
     selectablePolicyKey,
