@@ -498,6 +498,8 @@ export class ScoringSession {
   private mutationPending = false
   private knownMutation: ScoringMutation | undefined
   private authoredMutation: ScoringMutation | undefined
+  /** Sent identities whose acknowledgments may have been lost. */
+  private unconfirmedScoring: ScoringMutation[] = []
   private lastAuthoredAt = -1
 
   /** The scoring identity restored with this session's cached picture. */
@@ -1575,6 +1577,7 @@ export class ScoringSession {
     this.scoringUpdates = fresh.scoringUpdates
     this.knownMutation = fresh.knownMutation
     this.authoredMutation = undefined
+    this.unconfirmedScoring = []
     this.mutationPending = false
     this.context = fresh.context
     this.readSwap = fresh.readSwap
@@ -1659,7 +1662,11 @@ export class ScoringSession {
       ownMutation != null &&
       (this.knownMutation != null || fresh.knownMutation != null)
     const oursWins =
-      ordered && sameScoringMutation(this.knownMutation, fresh.knownMutation)
+      ordered &&
+      (sameScoringMutation(this.knownMutation, fresh.knownMutation) ||
+        this.unconfirmedScoring.some(mutation =>
+          sameScoringMutation(mutation, fresh.knownMutation)
+        ))
     const fork = agree(this.log, fresh.log)
     const same = oursWins ? fork : agree(this.savedLog, this.log)
     const kept = oursWins ? fork : agree(this.savedLog, fresh.log)
@@ -2520,6 +2527,16 @@ export class ScoringSession {
           },
           context: { ...this.context, fenceDistanceFt: fenceOf(this.game) }
         }
+      // A plain browser save can commit while its reply is lost. Retain the
+      // attempted identity so a later read recognizes our accepted ancestor,
+      // without granting ownership of a subsequent peer's scoring identity.
+      if (
+        change.scoringMutation != null &&
+        !this.unconfirmedScoring.some(sent =>
+          sameScoringMutation(sent, change.scoringMutation)
+        )
+      )
+        this.unconfirmedScoring.push(change.scoringMutation)
       let answer: PostedEdits | StoredGame | undefined
       try {
         answer = await this.store.save(this.gameId, {
@@ -2568,6 +2585,7 @@ export class ScoringSession {
         }
         continue
       }
+      this.unconfirmedScoring = []
       if (this.authoredMutation === mutation) this.mutationPending = false
       if (answer?.scoringUpdates != null)
         this.scoringUpdates = answer.scoringUpdates

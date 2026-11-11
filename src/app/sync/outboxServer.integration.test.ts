@@ -8,12 +8,18 @@ import { after, before, describe, it } from 'mocha'
 import {
   asGameLineupsResponse,
   asRosterEntry,
-  type SaveLineupsBody
+  type SaveLineupsBody,
+  TeamStationClient
 } from '../../common/api'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import { ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
+import {
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { startingContext } from '../../server/routes/lineups'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
@@ -333,6 +339,73 @@ describe('the outbox against the server', function () {
       }
     })
 
+  for (const peerAdvances of [false, true])
+    it(`keeps browser input after an accepted lost reply, unless a peer advanced (${peerAdvances})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      let drop = true
+      const client = new TeamStationClient({
+        baseUrl: `${f.h.origin}/api/v1`,
+        token: f.h.tokens.get(101),
+        fetch: (async (url: string, init: RequestInit) => {
+          const response = await fetch(url, init)
+          if (drop && init.method === 'POST' && response.ok) {
+            drop = false
+            await response.text()
+            throw new TypeError('Accepted browser reply was lost')
+          }
+          return response
+        }) as typeof fetch
+      })
+      const open = async (): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context },
+          { setTimer: () => null, clearTimer: () => undefined }
+        )
+      const ours = await open()
+      try {
+        expect(ours.apply({ type: 'pitch', call: 'B' }).problems).deep.equals(
+          []
+        )
+        await ours.flush()
+        expect(ours.offline).equals(true)
+        if (peerAdvances) {
+          const peer = await open()
+          expect(peer.apply({ type: 'pitch', call: 'S' }).problems).deep.equals(
+            []
+          )
+          await peer.flush()
+          peer.close()
+        }
+        expect(ours.apply({ type: 'pitch', call: 'C' }).problems).deep.equals(
+          []
+        )
+        await ours.flush()
+        expect(ours.pending).equals(0)
+        expect(ours.problem).equals(null)
+        const reloaded = await open()
+        expect(reloaded.actions).deep.equals([
+          { type: 'pitch', call: 'B' },
+          { type: 'pitch', call: peerAdvances ? 'S' : 'C' }
+        ])
+        reloaded.close()
+      } finally {
+        ours.close()
+      }
+    })
+
   it('recovers an older full-history acknowledgment after SQLite restart without rescoring', async () => {
     const context = await addScorableTeams(f.h.db, {
       home: 'Owls',
@@ -380,8 +453,16 @@ describe('the outbox against the server', function () {
     const body = JSON.parse(row.body)
     expect(body.scoringHistory).length(1)
     // The previous build sent the stored full body and lost its successful reply.
-    const landed = await f.h.request('POST', row.path, body, 101, {
-      headers: { 'idempotency-key': row.idempotency_key }
+    const landed = await fetch(`${f.h.origin}/api/v1${row.path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${f.h.tokens.get(101)}`,
+        'idempotency-key': row.idempotency_key,
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+        [SCORING_FEATURE_HEADER]: SCORING_FEATURES
+      },
+      body: row.body
     })
     expect(landed.status).equals(200)
     const restarted = phoneOn(f, ownDir)
@@ -392,13 +473,16 @@ describe('the outbox against the server', function () {
       expect(restarted.transport.posts.map(post => post.status)).deep.equals([
         409, 200
       ])
+      expect(restarted.transport.posts[0].body.code).equals(
+        'idempotencyKeyReused'
+      )
       expect(restarted.transport.posts.map(post => post.key)).deep.equals([
         row.idempotency_key,
         row.idempotency_key
       ])
       const stored = await restarted.client.gameEvents(gameId)
       expect(stored.plays).length(1)
-      expect(stored.currentPlay?.count?.balls).equals(1)
+      expect(stored.currentPlay?.count).deep.includes({ balls: 1 })
     } finally {
       await restarted.client.sessionRefused()
     }

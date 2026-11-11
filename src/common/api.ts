@@ -7498,6 +7498,7 @@ export class TeamStationClient {
           Array.isArray((body as SaveChange | undefined)?.scoringHistory)
         ) {
           const { scoringHistory: _history, ...delta } = body as SaveChange
+          const owner = this.token
           try {
             return await this.requestUnobserved(
               method,
@@ -7508,6 +7509,7 @@ export class TeamStationClient {
             )
           } catch (error) {
             if (
+              this.token !== owner ||
               !(error instanceof HttpError) ||
               (error.code !== 'conflict' &&
                 error.code !== 'idempotencyKeyReused')

@@ -899,6 +899,62 @@ describe('a scoring session', function () {
     expect(clock.waiting.map(entry => entry.ms)).deep.equals([2000])
   })
 
+  for (const peerAdvances of [false, true])
+    it(`recognizes its accepted lost acknowledgment without replacing a later peer (peer ${peerAdvances})`, async () => {
+      const memory = new FakeStore()
+      let accepted: StoredGame = { plays: [], currentPlay: null }
+      let loseReply = true
+      const store: EventStore = {
+        load: async () => accepted,
+        save: async (id, change) => {
+          if (
+            JSON.stringify(change.scoringBase ?? null) !==
+            JSON.stringify(accepted.scoringMutation ?? null)
+          )
+            return { ...accepted, superseded: true }
+          accepted = {
+            ...(await memory.save(id, change)),
+            scoringMutation: change.scoringMutation
+          }
+          if (loseReply) {
+            loseReply = false
+            throw new HttpError('offline', 'Accepted reply was lost')
+          }
+          return accepted
+        }
+      }
+      const clock = new Clock()
+      const ours = await ScoringSession.open(
+        store,
+        'g1',
+        context,
+        clock.options
+      )
+      ours.apply(ball)
+      await ours.flush()
+      expect(ours.offline).equals(true)
+      if (peerAdvances) {
+        const peer = await ScoringSession.open(
+          store,
+          'g1',
+          context,
+          clock.options
+        )
+        peer.apply({ type: 'pitch', call: 'S' })
+        await peer.flush()
+        peer.close()
+      }
+      ours.apply(strike)
+      await ours.flush()
+      expect(ours.actions).deep.equals([
+        ball,
+        peerAdvances ? { type: 'pitch', call: 'S' } : strike
+      ])
+      expect(ours.pending).equals(0)
+      expect(ours.problem).equals(null)
+      ours.close()
+    })
+
   for (const failure of ['read', 'post'] as const)
     it(`recovers a superseded score after an offline ${failure} through its scheduled retry`, async function () {
       const peerClock = new Clock()

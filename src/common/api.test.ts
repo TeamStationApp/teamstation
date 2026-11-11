@@ -2784,6 +2784,36 @@ describe('api client', function () {
       )
     })
 
+  it('never retries retained scoring history as a newly signed-in user', async () => {
+    const calls: Call[] = []
+    const refused = stubFetch(
+      409,
+      { code: 'conflict', message: 'Stale lineups' },
+      calls
+    )
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      token: 'first-session',
+      fetch: (async (...args: Parameters<typeof fetch>) => {
+        const response = await refused.fetch(...args)
+        client.token = 'second-session'
+        return response
+      }) as typeof fetch
+    })
+    try {
+      await client.saveGameEvents('gam_1', {
+        plays: [],
+        remove: [],
+        scoringHistory: []
+      })
+      expect.fail('The interrupted account must not retry')
+    } catch (error) {
+      expect(error).instanceOf(HttpError)
+    }
+    expect(calls).length(1)
+    expect(calls[0].headers.authorization).equals('Bearer first-session')
+  })
+
   for (const status of [401, 503, 409])
     it(`never repeatedly retries retained ancestry after status ${status}`, async () => {
       const { fetch, calls } = stubFetch(status, {

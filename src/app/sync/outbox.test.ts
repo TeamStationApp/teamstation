@@ -2400,10 +2400,10 @@ describe('the phone outbox', function () {
       expect(sentEvents(p)[0].body).deep.include({
         scoringBase: base,
         scoringMutation: mutation,
-        scoringHistory: [play(0)],
         generation: 3,
         lineupsBase: 'D0'
       })
+      expect(sentEvents(p)[0].body).not.has.property('scoringHistory')
       expect(p.rows()).deep.equals([])
     })
 
