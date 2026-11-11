@@ -25,6 +25,7 @@ import {
   withNames,
   withoutNames
 } from '../../common/scoring/storedNames'
+import { dictatingHealth, FakeDictationSocket } from '../../test/dictationFakes'
 import {
   PLAN_SWAPPED,
   scoringPlans,
@@ -197,6 +198,7 @@ async function scoring(
     swap?: { value: StoredGame['swap'] }
     /** What every read of the game plans answers. */
     plans?: { value: GamePlansResponse }
+    dictation?: boolean
   } = {}
 ): Promise<{
   /** How many times the screen read the game plans. */
@@ -268,6 +270,7 @@ async function scoring(
   }
   const digest = { value: 'd1' }
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  if (options.dictation === true) client.health = dictatingHealth
   client.game = async () => gameFixture
   client.roster = async teamId =>
     scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
@@ -601,6 +604,81 @@ describe('the scoring screen on the game socket', function () {
     expect(JSON.stringify(await store.load('g1'))).equals(before)
   })
 
+  it('keeps following after refused dictation on a peer’s unfinished play', async () => {
+    const originalSocket = globalThis.WebSocket
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const sockets: FakeDictationSocket[] = []
+    globalThis.WebSocket = class extends FakeDictationSocket {
+      constructor(url: string) {
+        super(url)
+        sockets.push(this)
+      }
+    } as unknown as typeof WebSocket
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => await new Promise(() => {}) }
+    })
+    try {
+      const { changes, other, session } = await scoring({ dictation: true })
+      const peer = await other()
+      peer.apply({ type: 'ballInPlay', contact: 'swing' })
+      peer.apply({ type: 'result', eventType: 'single' })
+      await peer.flush()
+      await changes.plays()
+      const press = async (type: string): Promise<void> => {
+        await act(async () => {
+          document
+            .querySelector('[aria-label="Dictation"]')!
+            .dispatchEvent(new window.MouseEvent(type, { bubbles: true }))
+        })
+      }
+      await press('pointerdown')
+      await press('pointerup')
+      await settle()
+      await act(async () => {
+        sockets.at(-1)!.open()
+      })
+      await press('pointerdown')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+      })
+      const start = sockets.at(-1)!.frames.at(-1)!
+      expect(start.kind).equals('start')
+      await press('pointerup')
+      const before = session().actions
+      await act(async () => {
+        sockets.at(-1)!.reply({
+          kind: 'actions',
+          id: start.id,
+          transcript: 'Runner steals home',
+          actions: [
+            {
+              type: 'baseRunning',
+              kind: 'steal',
+              runner: 9,
+              to: 'home'
+            }
+          ],
+          roster: [],
+          dropped: []
+        })
+      })
+      await settle()
+      expect(session().actions).deep.equals(before)
+      expect(document.body.textContent).includes('That runner is not on base')
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+      expect(session().actions).deep.equals(peer.actions)
+    } finally {
+      globalThis.WebSocket = originalSocket
+      if (devices == null)
+        delete (navigator as { mediaDevices?: unknown }).mediaDevices
+      else Object.defineProperty(navigator, 'mediaDevices', devices)
+    }
+  })
   it('keeps following after adopting a peer’s unfinished single', async function () {
     const { changes, other, session } = await scoring()
     const peer = await other()

@@ -1074,10 +1074,7 @@ function ScoringPanel(props: {
         (input.observing &&
           input.authorship != null &&
           (next === model ||
-            (input.event.type === 'RUNNER_DROP' &&
-              !drafting &&
-              next.scoring.phase === model.scoring.phase &&
-              sameActions(model.scoring.log, next.scoring.log)))) ||
+            (!drafting && sameActions(model.scoring.log, next.scoring.log)))) ||
         // Pointer-up delivers its drop and gesture release in one batch.
         // Passive callbacks must not erase a restoration before its effect.
         (input.authorship == null && model.resumeObservation != null)
