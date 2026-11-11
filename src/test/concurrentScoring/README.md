@@ -78,3 +78,17 @@ and counter increases before interpreting the recovery result. Recovery reads
 are repeated to measure convergence; normal-network checks still inspect once
 after the three-second allowance. Device inspection time is included in the
 reported recovery upper bound, so it is not an exact render timestamp.
+
+## Remote scoring descriptions
+
+`--scenario updates --surface chromium` exercises the attributed update panel
+with two authenticated scorers, accepted Undo, decorated pitch replacement,
+collapse/dismiss/reopen, a scrollable stream and scoring after switching devices.
+Set `TS_CONCURRENT_VIEWPORT_HEIGHT=620` for the short mobile-web viewport; omit it
+for the normal phone height. Each attempt still requires a fresh fixture.
+
+The server retains the most recent 100 accepted scoring updates, each with at
+most 100 description lines. This is an informational recent stream, not a full
+audit archive or an input to conflict arbitration. Clients establish their
+baseline when opening a game, suppress their own user's updates and duplicate
+IDs, and retain each accepted update's authenticated author through reconnects.
