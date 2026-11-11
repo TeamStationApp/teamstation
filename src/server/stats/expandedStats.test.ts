@@ -99,6 +99,58 @@ describe('expanded game statistics', function () {
     { type: 'pitch', call: 'C' },
     close
   ]
+  it('credits called strikeouts to the charged batter and preserves callbacks', function () {
+    const called = play('strikeout')
+    const callbacks: number[] = []
+    const result = expandedGameStatLines([called], teams, known, row => {
+      callbacks.push(row.batterId!)
+    })
+    expect(callbacks).deep.equals([1])
+    if (result.kind !== 'lines') throw new Error(result.detail)
+    expect(result.lines.find(row => row.gumboId === 1)!.extra.battingKl).equals(
+      1
+    )
+    expect(result.lines.find(row => row.gumboId === 11)!.extra.kl).equals(1)
+    for (const code of ['S', 'F']) {
+      expect(
+        lines([play('strikeout', { playEvents: [pitch(0, code)] })]).get(1)!
+          .extra.battingKl
+      ).equals(0)
+    }
+    for (const playEvents of [
+      undefined,
+      [],
+      [pitch(0, 'C'), { index: 1, isPitch: true, details: {} }]
+    ]) {
+      expect(
+        lines([play('strikeout', { playEvents })]).get(1)!.extra.battingKl
+      ).equals(null)
+    }
+    expect(
+      lines([play('strikeout', { playEvents: [] }), play('strikeout')]).get(1)!
+        .extra.battingKl
+    ).equals(null)
+  })
+
+  it('charges a two-strike substitute strikeout to the original batter', function () {
+    const result = recorded(true, [
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      {
+        type: 'lineup',
+        kind: 'substitute',
+        side: 'away',
+        player: 10,
+        replaces: 1
+      },
+      { type: 'pitch', call: 'C' },
+      close
+    ])
+    expect(result.get(101)!.extra.battingKl).equals(1)
+    expect(result.get(110)?.extra.battingKl ?? 0).equals(0)
+    expect(result.get(201)!.extra.kl).equals(1)
+  })
+
   it('attributes recorded opening-PA pitches and GS to their actual pitchers', function () {
     const result = recorded(false, [
       { type: 'pitch', call: 'B' },

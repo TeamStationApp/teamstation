@@ -52,6 +52,17 @@ function game(over: Partial<StatRow> = {}): StatRow {
 }
 
 describe('stats', function () {
+  it('adds batting called strikeouts independently and preserves unknown history', function () {
+    const row = game({
+      pa: 1,
+      k: 1,
+      extra: { ...emptyStatExtras(), battingKl: 1, kl: 3 }
+    })
+    expect(battingLines([row, row])[0].kl).equals(2)
+    expect(battingLines([row, game({ pa: 1 })])[0].kl).equals(null)
+    expect(battingLines([game({ pa: 1 }), row])[0].kl).equals(null)
+  })
+
   it('adds a player’s games together', function () {
     const [line] = battingLines([
       game({ pa: 4, ab: 3, h: 2, bb: 1, rbi: 2 }),

@@ -39,7 +39,11 @@ export function expandedGameStatLines(
 ):
   | { kind: 'lines'; lines: ExpandedGameLine[] }
   | { kind: 'incomplete'; detail: string } {
-  const base = gameStatLines(plays, teams, knownGumboIds, charged)
+  const strikeoutBatters = new Map<GumboPlay, number | null>()
+  const base = gameStatLines(plays, teams, knownGumboIds, play => {
+    strikeoutBatters.set(plays[play.playIndex], play.batterId)
+    charged?.(play)
+  })
   if (base.kind === 'incomplete') return base
   const lines = new Map<number, ExpandedGameLine>(
     base.lines.map(line => [
@@ -201,12 +205,20 @@ export function expandedGameStatLines(
     }
     if (!Array.isArray(play.playEvents) && pitcher != null)
       pitcher.pitches = null
-    if (counts?.k === true && pitcher != null) {
+    if (counts?.k === true) {
       const last = pitches[pitches.length - 1]
       const details = doc(last?.details)
       const call = doc(details.call).code ?? details.code
-      if (typeof call !== 'string') pitcher.kl = null
-      else if (call === 'C' && pitcher.kl != null) pitcher.kl++
+      const chargedBatter = lines.get(strikeoutBatters.get(play) ?? -1)?.extra
+      if (pitcher != null) {
+        if (typeof call !== 'string') pitcher.kl = null
+        else if (call === 'C' && pitcher.kl != null) pitcher.kl++
+      }
+      if (chargedBatter != null) {
+        if (typeof call !== 'string') chargedBatter.battingKl = null
+        else if (call === 'C' && chargedBatter.battingKl != null)
+          chargedBatter.battingKl++
+      }
     }
 
     const battery = new Set<string>()

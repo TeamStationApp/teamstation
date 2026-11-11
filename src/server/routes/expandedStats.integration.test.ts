@@ -88,7 +88,12 @@ describe('expanded statistics routes', function () {
           pa: 2,
           ab: 2,
           h: 1,
-          extra: JSON.stringify({ ...emptyStatExtras(), roe: 1, firstPa: 4 })
+          extra: JSON.stringify({
+            ...emptyStatExtras(),
+            battingKl: 1,
+            roe: 1,
+            firstPa: 4
+          })
         }
       ])
       .execute()
@@ -102,6 +107,9 @@ describe('expanded statistics routes', function () {
       [fixture.ids[1]].map(userIdOfGumbo)
     )
     expect(batting[0].roe).equals(1)
+    expect(
+      batting.find(row => row.userId === userIdOfGumbo(fixture.ids[1]))?.kl
+    ).equals(1)
     const pitching = (
       (await (
         await ask('/teams/tem_home/stats?kind=pitching&seasonId=sea_demo')

@@ -40,6 +40,7 @@ export function battingTotals(lines: readonly BattingLine[]): BattingLine {
     cs: sum('cs'),
     sf: sum('sf'),
     sh: sum('sh'),
+    kl: null,
     roe: null,
     fc: null,
     pik: null,

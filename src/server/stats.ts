@@ -54,6 +54,7 @@ export interface StatRow {
 }
 
 export interface BattingLine {
+  kl: number | null
   roe: number | null
   fc: number | null
   pik: number | null
@@ -144,6 +145,7 @@ function emptyBatting(userId: string, teamId: string | null): BattingLine {
     roe: 0,
     fc: 0,
     pik: 0,
+    kl: 0,
     firstPa: null
   }
 }
@@ -201,6 +203,7 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
     held.cs += row.cs
     held.sf += row.sf
     held.sh += row.sh
+    held.kl = addStatCount(held.kl, row.extra?.battingKl)
     held.roe = addStatCount(held.roe, row.extra?.roe)
     held.fc = addStatCount(held.fc, row.extra?.fc)
     held.pik = addStatCount(held.pik, row.extra?.pik)

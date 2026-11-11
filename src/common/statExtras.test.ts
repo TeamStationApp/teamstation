@@ -14,6 +14,8 @@ describe('expanded statistic details', function () {
     const extra = emptyStatExtras()
     expect(asStatExtras(extra)).deep.equals(extra)
     expect(asStatExtras({}).pitches).equals(null)
+    expect(asStatExtras({}).battingKl).equals(null)
+    expect(emptyStatExtras().battingKl).equals(0)
     expect(asStatCount(0)).equals(0)
     for (const value of [-1, 0.5, NaN, Infinity, '1'])
       expect(() => asStatCount(value)).throws()

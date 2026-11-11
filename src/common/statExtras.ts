@@ -11,6 +11,7 @@ export function asStatCount(raw: unknown): number | null {
 
 export const asStatExtras = asObject({
   firstPa: asStatCount,
+  battingKl: asStatCount,
   roe: asStatCount,
   fc: asStatCount,
   pik: asStatCount,
@@ -31,6 +32,7 @@ export type StatExtras = ReturnType<typeof asStatExtras>
 export function emptyStatExtras(): StatExtras {
   return {
     firstPa: null,
+    battingKl: 0,
     roe: 0,
     fc: 0,
     pik: 0,

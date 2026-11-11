@@ -1269,6 +1269,7 @@ export const asBattingRow = asObject({
   hr: asNumber,
   bb: asNumber,
   k: asNumber,
+  kl: asOptional(asNullable(asNumber), null),
   /** Runs scored, which belongs to whoever crossed the plate. */
   r: asOptional(asNumber, 0),
   hbp: asNumber,
