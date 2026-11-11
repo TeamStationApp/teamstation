@@ -14,8 +14,10 @@ import {
   PARENT,
   SCOREKEEPER,
   seedPrivacyGame,
+  SPRING_COACH,
   STRANGER,
-  TEAMMATE
+  TEAMMATE,
+  TROUT
 } from '../test/playerNamePrivacyFixture'
 import {
   absent,
@@ -39,7 +41,10 @@ import {
  * read a player's full name reads it in full — Demo Hawks' coach on the
  * roster, the box score and his game screen, Alex's parent on Alex's page —
  * while a stranger, the scoring diamond and everything that leaves the
- * reader (the board, Tess, narration) keep the short name (E1–E5).
+ * reader (the board, Tess, narration) keep the short name (E1–E5). Spring's
+ * coach reads Mike Trout, a member of Spring who plays on none of its teams,
+ * in full, and is still refused the name's halves, which are for editing
+ * (P1).
  *
  * Run once with `TS_PRIVACY_BEFORE=1` on the base branch for the before
  * screenshots, and again without it:
@@ -138,6 +143,8 @@ async function main(): Promise<void> {
     await contains(page, text)
   }
 
+  /** The status of the last `logged` read. */
+  let lastStatus = 0
   /** One read, as a `$` line and its answer, with no secrets. */
   const logged = async (
     file: string,
@@ -155,6 +162,7 @@ async function main(): Promise<void> {
       }
     })
     const body = await answer.text()
+    lastStatus = answer.status
     await appendFile(
       join(artifacts!, file),
       `$ ${line}\n${answer.status} ${body}\n\n`
@@ -217,7 +225,8 @@ async function main(): Promise<void> {
       'full-name-read.log',
       'spoken-names.log',
       'reader-names.log',
-      'outbound-names.log'
+      'outbound-names.log',
+      'view-not-edit.log'
     ])
       await rm(join(artifacts!, log), { force: true })
     await publicNames('Nothing configured')
@@ -297,6 +306,45 @@ async function main(): Promise<void> {
       expect(await logged(reader, line, route, STRANGER)).not.include('Lee')
     expect(strangerRoster).not.include('Lee')
     console.log('E3 PASS: the stranger reads Alex L')
+
+    // P1. Spring's coach reads Mike Trout, a member of Spring who plays on no
+    // team of it, in full on Spring's people list and on his profile opened
+    // from it, and still may not change his name. No player page: he plays
+    // on no team the coach can see.
+    await signIn(SPRING_COACH)
+    await open(`/groups/season/${f.seasonA}?tab=people`, 'Mike Trout')
+    await capture(m, artifacts!, 'spring-people-after.png')
+    await m.tapOn({ text: 'Mike Trout' })
+    await page.waitForFunction(() => location.pathname.includes('/people/'))
+    await contains(page, 'Mike Trout')
+    await capture(m, artifacts!, 'spring-profile-after.png')
+    const view = 'view-not-edit.log'
+    const asSpringCoach = '-H "authorization: Bearer $SPRING_COACH"'
+    const trout = userIdOfGumbo(TROUT)
+    expect(
+      await logged(
+        view,
+        `curl -s ${asSpringCoach} "$BASE/seasons/$SPRING/people"`,
+        `/seasons/${f.seasonA}/people`,
+        SPRING_COACH
+      )
+    ).include('"shortName":"Mike Trout"')
+    expect(
+      await logged(
+        view,
+        `curl -s ${asSpringCoach} "$BASE/seasons/$SPRING/people/$TROUT"`,
+        `/seasons/${f.seasonA}/people/${trout}`,
+        SPRING_COACH
+      )
+    ).include('"fullName":"Mike Trout"')
+    await logged(
+      view,
+      `curl -s ${asSpringCoach} "$BASE/players/$TROUT/name"`,
+      `/players/${trout}/name`,
+      SPRING_COACH
+    )
+    expect(lastStatus, 'the name halves are for editing').equals(404)
+    console.log('P1 PASS: Spring’s coach reads Mike Trout, and may not edit it')
 
     // E5. Whatever leaves the reader stays short, after the coach's reads.
     const outbound = 'outbound-names.log'
