@@ -1061,7 +1061,11 @@ function ScoringPanel(props: {
           resumeObservation: undefined
         }
       const drafting =
-        next.scoring.runnerDraft != null || next.scoring.moreDraft != null
+        next.scoring.runnerDraft != null ||
+        next.scoring.moreDraft != null ||
+        next.scoring.dictationQuestion != null ||
+        next.scoring.queuedDictation != null ||
+        next.scoring.reel != null
       const observedDraft =
         model.observedDraft ??
         (input.observing && drafting ? model.scoring.log : undefined)
@@ -1076,16 +1080,26 @@ function ScoringPanel(props: {
           (next === model ||
             (!drafting &&
               model.savedUndos === next.savedUndos &&
-              model.scoring.phase === next.scoring.phase &&
-              JSON.stringify([
-                model.scoring.runnerAction,
-                model.scoring.pendingPlay
-              ]) ===
-                JSON.stringify([
-                  next.scoring.runnerAction,
-                  next.scoring.pendingPlay
-                ]) &&
-              sameActions(model.scoring.log, next.scoring.log)))) ||
+              // Refusal text and gesture/presentation bookkeeping are not
+              // authored scoring. All other fields must remain unchanged.
+              sameValue(
+                {
+                  ...model.scoring,
+                  dictation: undefined,
+                  generation: undefined,
+                  activeGesture: undefined,
+                  checkpoints: undefined,
+                  celebration: undefined
+                },
+                {
+                  ...next.scoring,
+                  dictation: undefined,
+                  generation: undefined,
+                  activeGesture: undefined,
+                  checkpoints: undefined,
+                  celebration: undefined
+                }
+              )))) ||
         // Pointer-up delivers its drop and gesture release in one batch.
         // Passive callbacks must not erase a restoration before its effect.
         (input.authorship == null && model.resumeObservation != null)
