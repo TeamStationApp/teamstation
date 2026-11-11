@@ -13,10 +13,7 @@ import { dictatingHealth } from '../../src/test/dictationFakes'
 import type { GroupFixture } from '../../src/test/groupFixtures'
 import { groupFixture } from '../../src/test/groupFixtures'
 import { fixtureEmail } from '../../src/test/insertFixtureUsers'
-import {
-  COACH,
-  seedPrivacyGame
-} from '../../src/test/playerNamePrivacyFixture'
+import { COACH, seedPrivacyGame } from '../../src/test/playerNamePrivacyFixture'
 import {
   quiet,
   requireRedis,

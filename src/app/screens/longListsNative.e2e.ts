@@ -519,7 +519,9 @@ async function main(): Promise<void> {
   }
 
   const webOnly = (name: string) => async () => {
-    await note(`${name}: a browser scenario, in the harness's app-shell/lists list-screens`)
+    await note(
+      `${name}: a browser scenario, in the harness's app-shell/lists list-screens`
+    )
   }
   const cases: Record<string, () => Promise<void>> = {
     E1: webOnly('E1'),
