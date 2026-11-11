@@ -178,9 +178,12 @@ async function coalesce({ stack, out, observe, d }: Run): Promise<void> {
     await cdp.send('Network.enable')
     cdp.on('Network.requestWillBeSent', event => {
       const url = new URL(event.request.url)
+      // The page reads the API through its own origin, or the API's.
       if (
         event.request.method !== 'GET' ||
-        url.origin !== new URL(stack.api).origin
+        ![new URL(stack.api).origin, new URL(stack.web).origin].includes(
+          url.origin
+        )
       )
         return
       if (!url.pathname.startsWith(apiPath)) return
@@ -376,6 +379,7 @@ interface Frame {
 async function watch(
   page: Awaited<ReturnType<typeof browserSession>>['page'],
   api: string,
+  web: string,
   name: string,
   print: (line: string) => void
 ): Promise<Watched> {
@@ -385,7 +389,11 @@ async function watch(
   await cdp.send('Network.enable')
   cdp.on('Network.requestWillBeSent', event => {
     const url = new URL(event.request.url)
-    if (event.request.method !== 'GET' || url.origin !== apiUrl.origin) return
+    if (
+      event.request.method !== 'GET' ||
+      ![apiUrl.origin, new URL(web).origin].includes(url.origin)
+    )
+      return
     if (!url.pathname.startsWith(apiUrl.pathname)) return
     const path = url.pathname.slice(apiUrl.pathname.length) + url.search
     watched.reads.push({ at: event.timestamp, path })
@@ -556,8 +564,20 @@ async function shown({ stack, out, observe, d }: Run): Promise<void> {
         firstPost == null ? line : `${line} at ${Date.now() - firstPost} ms`
       )
     }
-    const homeSeen = await watch(homeSession.page, stack.api, 'home', timed)
-    const gameSeen = await watch(gameSession.page, stack.api, 'game', timed)
+    const homeSeen = await watch(
+      homeSession.page,
+      stack.api,
+      stack.web,
+      'home',
+      timed
+    )
+    const gameSeen = await watch(
+      gameSession.page,
+      stack.api,
+      stack.web,
+      'game',
+      timed
+    )
     for (const session of [homeSession, gameSession])
       await session.browser.setCookie({
         name: 'ts_session',

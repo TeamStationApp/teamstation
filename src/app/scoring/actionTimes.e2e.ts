@@ -303,7 +303,7 @@ describe('E1: the time each scoring action was taken', function () {
     await pause(90_000)
     for (let undos = 0; !(await atStart()); undos++) {
       expect(undos).lessThan(30)
-      await undo()
+      console.log(`  back: ${(await undo()).label}`)
     }
     const rest = [...first, ...second, ...third].slice(1)
     rest[rest.length - 1] = 'Ball'
