@@ -81,6 +81,11 @@ export class ConcurrentScoringSafariRig extends ConcurrentScoringRig {
           visibilityPercentage: 100
         })
         await m.tapOn({ text: '^Sign out$' })
+        // Signing out awaits chat cleanup; navigation must not abort it.
+        await m.assertVisible({
+          text: '^Use a password instead$',
+          timeout: 30000
+        })
         await m.openLink({
           link: `${this.ctx.stack.origin}/sign-in`,
           browser: true
