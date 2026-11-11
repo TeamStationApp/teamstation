@@ -87,8 +87,8 @@ describe('name books', function () {
     expect(queries).equals(2)
     const both = books.get('both')!
     const one = books.get('one')!
-    expect(both.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
-    expect(both.nameOf(people.jordanPerez.userId)).equals('Jordan Pe')
+    expect(both.nameOf(people.jordanPujols.userId)).equals('Jordan P')
+    expect(both.nameOf(people.jordanPerez.userId)).equals('Jordan P')
     expect(one.nameOf(people.jordanPujols.userId)).equals('Jordan P')
     expect(one.nameOf(people.babe.userId)).equals('Babe R')
     // Only the scope's own people, and nobody unknown.
@@ -109,7 +109,7 @@ describe('name books', function () {
     expect(read.nameOf(people.jordanPujols.userId)).equals('Jordan Pujols')
     expect(read.formatOf(people.jordanPujols.userId)).equals('full')
     expect(read.nameOf(people.jordanPerez.userId)).equals('Jordan P')
-    expect(open.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
+    expect(open.nameOf(people.jordanPujols.userId)).equals('Jordan P')
     expect(read.digest).not.equals(open.digest)
     // A book going to a model names nobody in full, whoever reads it.
     const admin = { userId: pujols, isAdmin: true }
@@ -320,7 +320,7 @@ describe('name books', function () {
       )
       .execute()
     const nameOf = await teamNames(fixture.db, team, [people.babe.userId])
-    expect(nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
+    expect(nameOf(people.jordanPujols.userId)).equals('Jordan P')
     expect(nameOf(people.babe.userId)).equals('Babe R')
     expect((await teamNames(fixture.db, team))(people.babe.userId)).equals(
       undefined
@@ -384,8 +384,8 @@ describe('name books', function () {
       .execute()
     const books = await gameNames(fixture.db, [game, pregameOnly, game])
     const book = books.get(game)!
-    expect(book.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
-    expect(book.nameOf(people.jordanPerez.userId)).equals('Jordan Pe')
+    expect(book.nameOf(people.jordanPujols.userId)).equals('Jordan P')
+    expect(book.nameOf(people.jordanPerez.userId)).equals('Jordan P')
     expect(book.nameOf(people.babe.userId)).equals('Babe R')
     expect(books.get(pregameOnly)!.nameOf(people.babe.userId)).equals(undefined)
     expect((await gameNames(fixture.db, [])).size).equals(0)
@@ -571,6 +571,11 @@ describe('name books', function () {
     expect(await page()).deep.equals(first)
     expect(queries).has.length(4)
     expect(plays()).equals(0)
+    expect(
+      (await gameNames(fixture.db, [games[0]]))
+        .get(games[0])!
+        .nameOf(people.jordanPerez.userId)
+    ).equals(undefined)
     // One game tagged since: only its scope is read again, and a player its
     // tag names joins it.
     await fixture.db
@@ -592,8 +597,13 @@ describe('name books', function () {
         query => query.includes('"name":"gumbo"') && query.includes(games[1])
       )
     ).equals(false)
+    // Each name is written alone: the player who joined takes no letter
+    // from the one already there, and is named in the scope he joined.
     expect(books.get(games[0])!.nameOf(people.jordanPujols.userId)).equals(
-      'Jordan Pu'
+      'Jordan P'
+    )
+    expect(books.get(games[0])!.nameOf(people.jordanPerez.userId)).equals(
+      'Jordan P'
     )
     expect(books.get(games[1])!.nameOf(people.jordanPerez.userId)).equals(
       'Jordan P'

@@ -2247,7 +2247,7 @@ const cleanUserMatch = asObject({
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
-  /** `Jordan P`, told apart from anybody else in the same answer. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: asOptional(asString),
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: asOptional(asNullable(asString), null)

@@ -123,16 +123,16 @@ describe('merged scoring names on public reads', function () {
     )
     expect(response.status).equals(200)
     const board = await response.json()
-    expect(board.state.batterName).equals('Hank Aa')
-    expect(board.state.pitcherName).equals('Hank Al')
+    expect(board.state.batterName).equals('Hank A')
+    expect(board.state.pitcherName).equals('Hank A')
     const stored = await member.gameEvents(f.gameId)
     const players = recordOf(
       stored.currentPlay,
       ownTeams(stored.currentPlay?.teamStation)
     )!.setupBefore.players
     for (const [id, label] of [
-      [batter.gumboId, 'Hank Aa'],
-      [pitcher.gumboId, 'Hank Al']
+      [batter.gumboId, 'Hank A'],
+      [pitcher.gumboId, 'Hank A']
     ] as const) {
       expect(players[id].fullName).equals(label)
       expect(players[id].firstName).equals(undefined)

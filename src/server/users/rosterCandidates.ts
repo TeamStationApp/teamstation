@@ -32,7 +32,7 @@ export interface RosterCandidate {
   userId: string
   gumboId: number | null
   externalIds: string[]
-  /** `Jordan P`, told apart from anybody else on the same page. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: string
   /**
    * The public label split where it was built: "Mookie" and "B", even for an

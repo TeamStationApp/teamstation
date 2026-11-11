@@ -1244,14 +1244,14 @@ describe('a player’s Settings tab', function () {
     await press('Videos')
     expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
   })
-  it('falls back to its own name, not the roster label, when the read after a save fails', async function () {
+  it('falls back to its own short name when the read after a save fails', async function () {
     for (const details of [true, false]) {
       const client = playerClient()
-      // The roster tells him from a teammate by a second letter; the page,
-      // which names him alone, does not.
+      // The roster writes him alone, as the page does, even beside a
+      // teammate whose name shares his short form.
       const entry = {
         ...jordan,
-        shortName: 'Jordan Pa',
+        shortName: 'Jordan P',
         ...(details
           ? {
               nameDetails: {
@@ -1295,6 +1295,7 @@ describe('a player’s Settings tab', function () {
       expect(text(), `with details ${details}`)
         .includes('Jordan P')
         .and.not.includes('Jordan Pa')
+        .and.not.includes('Pacheco')
       await act(async () => {
         root?.unmount()
       })

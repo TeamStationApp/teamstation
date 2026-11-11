@@ -216,7 +216,7 @@ describe('a label on a client', function () {
       firstName: 'A Lee',
       lastName: ''
     })
-    // The field draws the same public label, unlengthened.
+    // The field draws the same public label, as it stands.
     expect(
       shortPlayerNames(Object.values(state.gameData.players)).get(
         batterOf(state)

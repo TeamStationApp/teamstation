@@ -82,7 +82,7 @@ const roster = (
     gumboId: (side === 'away' ? 100 : 200) + i,
     shortName:
       collisionNames && side === 'home' && i < 2
-        ? ['Luis Ga', 'Luis Gi'][i]
+        ? ['Luis G', 'Luis G'][i]
         : shortName({ id: i, displayName: names[i] }),
     jersey: collisionNames && side === 'home' && i < 2 ? '' : String(i + 1),
     positions: [POSITIONS[i % 9]],
@@ -535,6 +535,17 @@ async function click(page: Page, label: string): Promise<void> {
   }, selector)
   await page.mouse.click(point.x, point.y)
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
+}
+
+/** Clicks the defensive roster card of this player, whatever it reads. */
+async function clickPlayer(page: Page, id: number): Promise<void> {
+  const selector = `[data-testid="Defensive player ${id}"]:not([aria-disabled="true"])`
+  await page.waitForSelector(selector)
+  const point = await page.evaluate(s => {
+    const box = document.querySelector(s)!.getBoundingClientRect()
+    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  }, selector)
+  await page.mouse.click(point.x, point.y)
 }
 
 async function text(page: Page): Promise<string> {
@@ -1127,22 +1138,21 @@ describe('current defensive scoring setup browser', function () {
       }
     }
   })
-  it('E13 distinguishes server roster abbreviations with matching initials and blank jerseys', async () => {
+  it('E13 draws two server roster players who share a short name and a blank jersey the same, and assigns each by his own row', async () => {
     const { page, peer, unexpected } = await open({
       collisionNames: true,
       missing: ['P', 'C']
     })
     try {
       await tapSlot(page, 'P')
-      expect(await page.$('[aria-label="Assign P Luis G"]')).equals(null)
-      expect(await text(page)).includes('Luis Ga')
-      expect(await text(page)).includes('Luis Gi')
-      await click(page, 'Assign P Luis Ga')
+      expect(await page.$$('[aria-label="Assign P Luis G"]')).length(2)
+      expect(await text(page)).not.match(/Luis G[a-z]/)
+      await clickPlayer(page, 200)
       await page.waitForFunction(
         () => document.querySelector('[data-nameplate="empty-P"]') == null
       )
       await tapSlot(page, 'C')
-      await click(page, 'Assign C Luis Gi')
+      await clickPlayer(page, 201)
       await page.waitForFunction(
         () => document.querySelector('[data-nameplate="empty-C"]') == null
       )
@@ -1150,8 +1160,8 @@ describe('current defensive scoring setup browser', function () {
         () => document.querySelector('[aria-label="Save status"]') == null
       )
       const team = (await peer([])).liveData.boxscore.teams.home
-      expect(team.defense.P).equals(team.players[0])
-      expect(team.defense.C).equals(team.players[1])
+      expect(team.defense.P).equals(200)
+      expect(team.defense.C).equals(201)
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()

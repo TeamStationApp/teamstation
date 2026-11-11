@@ -335,8 +335,8 @@ async function describe(
  * its current members, and those who left no earlier than the caller (last)
  * joined, marked `left`, so the app can still name a DM whose others have all gone.
  * Nobody who left before the caller came, and never the caller's own
- * accounts merged into theirs. Short names are made distinct among the
- * DM's people and the caller, as `membersOf` makes them among its members.
+ * accounts merged into theirs. Each name is written in its format alone,
+ * as `membersOf` writes its members'.
  */
 async function dmPeople(
   db: Kysely<Database>,

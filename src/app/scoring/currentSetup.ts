@@ -118,7 +118,7 @@ export function lineupCountMessage(count: number): string {
     : `Only ${words[count] ?? String(count)} ${count === 1 ? 'player' : 'players'} in lineup`
 }
 export function defensiveRosterName(player: ScoringPlayer): string {
-  // Nonlocal labels come from the roster, which already resolves collisions.
+  // Nonlocal labels come from the roster, which already wrote them.
   // Name parts may remain for editing; never use them to shorten that label.
   const name = player.local
     ? shortName({
@@ -133,11 +133,11 @@ export function defensiveRosterName(player: ScoringPlayer): string {
 
 /**
  * First name and last initial for everyone drawn from a game. A stored label
- * may already be that short name, or the whole name; two players who would
- * read the same take another letter, the same way a roster does. A player
- * named in full only for this reader is drawn by the public label he keeps
- * beside it (`compactName`), unchanged, and everyone else breaks ties
- * against it: these are the labels the field draws.
+ * may already be that short name, or the whole name; each name is written in
+ * its format alone, the same way a roster does, so two players whose names
+ * shorten the same read the same. A player named in full only for this
+ * reader is drawn by the public label he keeps beside it (`compactName`),
+ * unchanged: these are the labels the field draws.
  */
 export function shortPlayerNames(
   players: Iterable<
@@ -154,8 +154,7 @@ export function shortPlayerNames(
   >
 ): Map<number, string> {
   const list = [...players]
-  // A compact label stands in the collision check as the public label it is,
-  // so a player named here lengthens against it, as he did before full names.
+  // A compact label stands in as the public label it is.
   const names = gamePlayerNames(
     list.map(player =>
       player.compactName == null
@@ -173,7 +172,7 @@ export function shortPlayerNames(
   )
   const out = new Map<number, string>()
   for (const player of list) {
-    // The public label, written by the server with collisions broken.
+    // The public label, written by the server in its format alone.
     if (player.compactName != null) {
       out.set(player.id, player.compactName.trim())
       continue

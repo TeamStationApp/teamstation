@@ -880,7 +880,7 @@ describe('roster sections', function () {
     ).deep.equals(['Alfonso Soriano'])
   })
 
-  it('keeps the public label of a teammate the public lengthens to tell from a player the reader reads in full', async function () {
+  it('keeps the public label beside a name read in full only, and none beside a teammate who shares its short form', async function () {
     for (const [id, name] of [
       [61, 'Chris Sale'],
       [62, 'Chris Sabo']
@@ -919,22 +919,22 @@ describe('roster sections', function () {
       )!
       return { shortName, nameFormat, compactName }
     }
-    // The public tells the two apart by a second letter.
+    // The public reads the two the same: each name in its format alone.
     const follower = await as(f.people.follower)
     expect([named(follower, 61), named(follower, 62)]).deep.equals([
-      { shortName: 'Chris Sal', nameFormat: undefined, compactName: undefined },
-      { shortName: 'Chris Sab', nameFormat: undefined, compactName: undefined }
+      { shortName: 'Chris S', nameFormat: undefined, compactName: undefined },
+      { shortName: 'Chris S', nameFormat: undefined, compactName: undefined }
     ])
-    // Sale's guardian reads him in full, so his own list needs no second
-    // letter for Sabo; Sabo keeps the label everyone else reads beside it.
+    // Sale's guardian reads him in full, beside the label everyone else
+    // reads; Sabo reads as the public reads him, with nothing beside.
     const guardian = await as(f.people.guardian)
     expect([named(guardian, 61), named(guardian, 62)]).deep.equals([
       {
         shortName: 'Chris Sale',
         nameFormat: 'full',
-        compactName: 'Chris Sal'
+        compactName: 'Chris S'
       },
-      { shortName: 'Chris S', nameFormat: undefined, compactName: 'Chris Sab' }
+      { shortName: 'Chris S', nameFormat: undefined, compactName: undefined }
     ])
   })
 

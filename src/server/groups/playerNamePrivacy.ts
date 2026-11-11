@@ -1,7 +1,12 @@
 import type { Kysely } from 'kysely'
 
 import type { GroupRef } from '../../common/groupCreation'
-import { formatName, formatNames, type NamedPerson } from '../../common/names'
+import {
+  formatName,
+  formatNames,
+  modelLabel,
+  type NamedPerson
+} from '../../common/names'
 import {
   asStoredPlayerNamePrivacy,
   DEFAULT_PLAYER_NAME_PRIVACY,
@@ -345,14 +350,14 @@ export async function currentFormats(
 }
 
 /**
- * `formatNames` for this read: collisions broken, unless its names go to a
- * model, which never gets a letter past first name and last initial.
+ * `formatNames` for this read: each name in its format alone, and as a model
+ * is given it (`modelLabel`) when its names go to a model.
  */
 export function formatForReader(
   entries: Parameters<typeof formatNames>[0],
   spoken = isSpoken()
 ): ReturnType<typeof formatNames> {
-  return formatNames(entries, { lengthen: !spoken })
+  return formatNames(entries, { spoken })
 }
 
 /** Somebody a surface names outside a game. */
@@ -479,8 +484,8 @@ async function shownFormats(
 }
 
 /**
- * Public names for these people, with collisions broken across them, and
- * those the reader may read in full written whole.
+ * Public names for these people, each in their format alone, and those the
+ * reader may read in full written whole.
  */
 export async function publicNames(
   db: Db,
@@ -499,7 +504,10 @@ export interface ReaderNaming {
   names: Map<string | number, string>
   /** The format of each of `names`: `'full'` for anyone read in full. */
   formats: Map<string | number, PlayerNamePrivacy>
-  /** Each person as the public reads them, collisions broken among them. */
+  /**
+   * Each person as the public reads them (`formatName` in their format, or
+   * `modelLabel` when the read's names go to a model).
+   */
   compact: Map<string | number, string>
   /** The public format of each of `compact`. */
   compactFormats: Map<string | number, PlayerNamePrivacy>
@@ -518,25 +526,22 @@ export async function readerNaming(
   const names = formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
-  const compact =
-    formats === shown
-      ? names
-      : formatForReader(
-          people.map(({ person }) => ({
-            person,
-            format: shown.get(person.id)!
-          }))
-        )
+  // As a model is given it on a read whose names go to one, as `names` is.
+  const write = isSpoken() ? modelLabel : formatName
+  const compact = new Map(
+    people.map(({ person }) => [
+      person.id,
+      write(person, shown.get(person.id)!)
+    ])
+  )
   return { names, formats, compact, compactFormats: shown }
 }
 
 /**
- * Beside a name this reader reads otherwise than everyone else, the label
- * everyone else reads (`compactName`) and its format unless it is the
- * built-in one (`compactFormat`); nothing for anyone read as the public reads
- * them. That is a name full only for this reader, and as well a teammate's
- * the public lengthens to tell from one the reader reads in full (`Jordan Pe`
- * beside `Jordan Parker`, where this reader's list needs only `Jordan P`). A
+ * Beside a name this reader reads in another format than everyone else (in
+ * full, where the public reads it short), the label everyone else reads
+ * (`compactName`) and its format unless it is the built-in one
+ * (`compactFormat`); nothing for anyone read as the public reads them. A
  * label the list did not write falls back to the public short name, never the
  * stored one.
  */
@@ -545,15 +550,9 @@ export function compactFields(
   person: NamedPerson
 ): { compactName?: string; compactFormat?: PlayerNamePrivacy } {
   const format = naming.compactFormats.get(person.id)
-  if (format == null) return {}
+  if (format == null || naming.formats.get(person.id) === format) return {}
   const compactName =
     naming.compact.get(person.id) ?? formatName(person, format)
-  const name = naming.names.get(person.id)
-  if (
-    naming.formats.get(person.id) === format &&
-    (name == null || name === compactName)
-  )
-    return {}
   return {
     compactName,
     ...(format === DEFAULT_PLAYER_NAME_PRIVACY ? {} : { compactFormat: format })

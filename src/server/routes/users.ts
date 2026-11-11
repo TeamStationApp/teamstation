@@ -33,7 +33,7 @@ export interface UserMatch {
   userId: string
   gumboId: number | null
   externalIds: string[]
-  /** `Jordan P`, told apart from anybody else in the same answer. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: string
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: string | null

@@ -250,19 +250,34 @@ describe('lineup QR import', function () {
     expect(view.defense.LF).equals('Julio R')
   })
 
-  it('reads a lengthened short name as the same player', async function () {
+  it('tells two roster players who share a short name apart by jersey', async function () {
     const roster = ROSTER.map((person, k) =>
-      k === 0 ? { ...person, shortName: 'Mookie Be' } : person
+      k === 0
+        ? entry(100, ['Josh', 'Smith', '1'])
+        : k === 1
+          ? entry(101, ['Josh', 'Staumont', '2'])
+          : person
     )
+    expect(roster.slice(0, 2).map(one => one.shortName)).deep.equals([
+      'Josh S',
+      'Josh S'
+    ])
     const state = session(roster)
-    const { reused, added } = await scan(
+    const { draft, reused, added } = await scan(
       state,
       'away',
-      code([scanned('Mookie', 'Betts', '1', 6)]),
+      code([
+        scanned('Josh', 'Staumont', '2', 10),
+        scanned('Josh', 'Smith', '1', 7)
+      ]),
       roster
     )
     expect(added).deep.equals([])
-    expect(reused).deep.equals(['Mookie Be'])
+    expect(reused).deep.equals(['Josh S', 'Josh S'])
+    const team = draft.liveData.boxscore.teams.away
+    expect(team.battingOrder.slice(0, 2)).deep.equals([101, 100])
+    expect(team.defense.SS).equals(101)
+    expect(team.defense.LF).equals(100)
   })
 
   it('joins a roster player who is not in the game with his own details', async function () {

@@ -817,10 +817,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                     })
                     // Should the server never answer, the page's own name: a
                     // full one is the entry's, and otherwise the saved parts
-                    // in the entry's format (the page tells nobody apart),
-                    // or what the page drew before, never the roster's
-                    // label, which may be lengthened to tell a teammate
-                    // apart.
+                    // in the entry's format, written alone as the roster
+                    // writes every name, or what the page drew before.
                     const pageName =
                       entry.nameFormat === 'full'
                         ? entry.shortName

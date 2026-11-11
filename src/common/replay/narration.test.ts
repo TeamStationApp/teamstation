@@ -145,13 +145,13 @@ describe('replay narration of a whole game', function () {
     })
     expect(said.get('6-1')?.text).equals('Shohei O flies out to center.')
     expect(said.get('7-1')?.text).equals(
-      'Now pitching for the Harbor Hawks, Luis Gi.'
+      'Now pitching for the Harbor Hawks, Luis G.'
     )
     expect(said.get('8-1')?.text).equals(
       'Anthony V reaches on an error by the shortstop.'
     )
     expect(said.get('9-1')?.text).equals(
-      'Luis Ga steps in. Ball one, one and oh. Wild pitch, Anthony V moves up to second.'
+      'Luis G steps in. Ball one, one and oh. Wild pitch, Anthony V moves up to second.'
     )
     expect(said.get('10-1')?.text).equals(
       'Jose T lifts a sacrifice fly to center. Anthony V scores! Harbor Hawks lead two to one.'
@@ -230,12 +230,14 @@ describe('replay narration of a whole game', function () {
     )
   })
 
-  it('names players only by first name and last initial, telling two alike apart', async function () {
+  it('names players only by first name and last initial, two alike the same', async function () {
     const texts = [...(await narrations()).values()].map(said => said.text)
     for (const player of [...AWAY_PLAYERS, ...HOME_PLAYERS])
       for (const text of texts)
         expect(text, player.last).not.match(new RegExp(`\\b${player.last}\\b`))
-    expect(texts.join(' ')).includes('Luis Ga').and.includes('Luis Gi')
+    expect(texts.join(' '))
+      .includes('Luis G')
+      .and.not.match(/\bLuis G[a-z]/)
     for (const text of texts) expect(text.length).lessThanOrEqual(MAX_NARRATION)
   })
 

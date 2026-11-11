@@ -3,8 +3,8 @@ import type { GamePlayer, GameState } from '../scoring/state'
 
 /**
  * Every player's name as a replay's reader reads it, on the box score: a
- * first name and as much of the last as tells two players apart, or the
- * full name of one this reader reads in full.
+ * first name and last initial, each name alone, or the full name of one this
+ * reader reads in full.
  */
 export function namesOf(state: GameState): Map<number, string> {
   return gamePlayerNames(Object.values(state.gameData.players))
@@ -32,8 +32,8 @@ export function publicNamesOf(state: GameState): Map<number, string> {
 
 /**
  * Names for a game's players. A label in a chosen format is what the server
- * wrote, collisions included, and is drawn as sent. Everybody else takes the
- * first name and as much of the last as tells them apart.
+ * wrote and is drawn as sent. Everybody else takes the first name and last
+ * initial (`shortName`), each name in its format alone.
  */
 export function gamePlayerNames(
   players: ReadonlyArray<

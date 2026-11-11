@@ -18,6 +18,8 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { userRoutes } from '../routes/users'
 import { ensureGumboId, insertUser } from './insertUser'
+import { runSpoken } from './readerNames'
+import { rosterCandidates } from './rosterCandidates'
 
 /**
  * `GET /users?forTeam=`, through the real router.
@@ -362,8 +364,8 @@ describe('roster candidates', function () {
       answer.body.map((row: any) => [row.shortName, row.tier])
     ).deep.equals([
       ['Aaron J', 'mine'],
-      ['Cody Be', 'mine'],
-      ['Cody Br', 'mine'],
+      ['Cody B', 'mine'],
+      ['Cody B', 'mine'],
       ['Mookie B', 'mine'],
       ['Corbin B', 'season'],
       ['Max F', 'league'],
@@ -611,8 +613,8 @@ describe('roster candidates', function () {
     expect(names(both.body)).deep.equals(['Mookie B'])
     const cody = await ask(COACH, { forTeam: team.falcons, q: 'cody' })
     expect(cody.body.map((row: any) => row.shortParts)).deep.equals([
-      { first: 'Cody', last: 'Be' },
-      { first: 'Cody', last: 'Br' }
+      { first: 'Cody', last: 'B' },
+      { first: 'Cody', last: 'B' }
     ])
   })
 
@@ -692,6 +694,47 @@ describe('roster candidates', function () {
       expect(other.body[0]).not.have.property('nameFormat')
     } finally {
       await db!.deleteFrom('scope_roles').where('id', '=', role).execute()
+    }
+  })
+
+  it('writes a spoken answer’s short name and parts with no surname for a player stored with none but it', async function () {
+    const smith = await insertUser(db!, {
+      display_name: 'Smith',
+      first_name: null,
+      last_name: 'Smith'
+    })
+    await ensureGumboId(db!, smith)
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: smith,
+        team_id: team.owls,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    try {
+      const actor = {
+        userId: id('Oliver Marmol'),
+        isAdmin: false,
+        scopes: []
+      }
+      const ask = { teamId: team.herons, q: 'smith', limit: 30 }
+      const spoken = await runSpoken(
+        async () => await rosterCandidates(db!, actor, ask)
+      )
+      const row = spoken.find(each => each.userId === smith)!
+      expect(row.shortName).equals('S')
+      expect(row.shortParts).deep.equals({ first: '', last: 'S' })
+      expect(JSON.stringify(row)).not.includes('Smith')
+      // Read by a person, the surname is the short name it always was.
+      const read = (await rosterCandidates(db!, actor, ask)).find(
+        each => each.userId === smith
+      )!
+      expect(read.shortParts).deep.equals({ first: '', last: 'Smith' })
+    } finally {
+      await db!.deleteFrom('memberships').where('user_id', '=', smith).execute()
     }
   })
 

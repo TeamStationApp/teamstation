@@ -30,10 +30,29 @@ const specs = [
   'src/server/routes/chat.integration.test.ts',
   'src/server/users/nameBook.integration.test.ts',
   'src/server/teams/onPeopleList.unit.test.ts',
-  'src/server/teams/headCoachViews.unit.test.ts'
+  'src/server/teams/headCoachViews.unit.test.ts',
+  // M2: every name in its format alone (`formatNames`, `shortNames`).
+  'src/common/names.test.ts',
+  'src/common/replay/replayNames.test.ts',
+  'src/common/replay/replayBoxScore.test.ts',
+  'src/common/replay/narration.test.ts',
+  'src/server/scoring/openRow.integration.test.ts',
+  'src/server/routes/follows.integration.test.ts',
+  'src/server/groups/playerNamePrivacy.integration.test.ts',
+  'src/server/umpires/leaderboardPages.integration.test.ts',
+  'src/server/users/rosterCandidates.integration.test.ts',
+  'src/server/dev/userIdGuestComparison.integration.test.ts',
+  'src/app/scoring/currentSetup.test.ts',
+  'src/app/scoring/lineupQrImport.test.ts',
+  'src/app/scoring/playerDraft.test.ts',
+  'src/app/scoring/playerNameFormat.test.ts',
+  'src/app/sync/outbox.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
-const screens = []
+const screens = [
+  // M2
+  'src/app/screens/PlayerScreen.test.tsx'
+]
 
 const database = spawnSync('node', ['src/migrate/requirePostgres18.js'], {
   stdio: 'inherit'

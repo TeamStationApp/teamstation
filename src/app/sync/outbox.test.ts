@@ -3440,8 +3440,8 @@ describe('the phone outbox', function () {
     expect(p.document(eventsKey('g1'))!.pending).equals(0)
   })
 
-  it('names a guest renamed offline by the game’s short name, against everyone its plays name, and gives his halves only to his setup players', async function () {
-    // George Kell bats second; the at-bat in progress holds both in its setup,
+  it('names a guest renamed offline by his own short name, the label the server stores, beside a player who shares it, and gives his halves only to his setup players', async function () {
+    // Josh Smith bats second; the at-bat in progress holds both in its setup,
     // with the halves a scorer is answered.
     const setupPlayer = (
       id: number,
@@ -3464,7 +3464,7 @@ describe('the phone outbox', function () {
         setupBefore: {
           players: {
             901: setupPlayer(901, 'Babe R', 'Babe', 'Ruth'),
-            902: setupPlayer(902, 'George K', 'George', 'Kell')
+            902: setupPlayer(902, 'Josh S', 'Josh', 'Smith')
           },
           sides: {},
           tagOrder: []
@@ -3483,7 +3483,7 @@ describe('the phone outbox', function () {
               },
               {
                 ...play(1, 902),
-                matchup: { batter: { id: 902, fullName: 'George K' } }
+                matchup: { batter: { id: 902, fullName: 'Josh S' } }
               }
             ]) as Record<string, unknown>),
             currentPlay: atBat
@@ -3496,25 +3496,25 @@ describe('the phone outbox', function () {
     await p.client.renameGuestPlayer(
       'g1',
       userIdOfGumbo(901),
-      { firstName: 'George', lastName: 'Kirby' },
+      { firstName: 'Josh', lastName: 'Staumont' },
       901
     )
     const held = JSON.parse(String(p.document(eventsKey('g1'))!.body)) as {
       plays: Array<{ gumbo: GumboPlay }>
       currentPlay: Record<string, any>
     }
-    // "George K" is Kell's: the guest takes the letters that tell them apart.
+    // "Josh S" is Smith's too: each name is written alone, as the server does.
     expect(held.plays.map(row => row.gumbo.matchup?.batter)).deep.equals([
-      { id: 901, fullName: 'George Ki' },
-      { id: 902, fullName: 'George K' }
+      { id: 901, fullName: 'Josh S' },
+      { id: 902, fullName: 'Josh S' }
     ])
     expect(held.currentPlay.matchup.batter).deep.equals({
       id: 901,
-      fullName: 'George Ki'
+      fullName: 'Josh S'
     })
     expect(held.currentPlay.teamStation.setupBefore.players).deep.equals({
-      901: setupPlayer(901, 'George Ki', 'George', 'Kirby'),
-      902: setupPlayer(902, 'George K', 'George', 'Kell')
+      901: setupPlayer(901, 'Josh S', 'Josh', 'Staumont'),
+      902: setupPlayer(902, 'Josh S', 'Josh', 'Smith')
     })
   })
 

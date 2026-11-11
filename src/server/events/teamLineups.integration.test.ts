@@ -124,11 +124,11 @@ describe("a team's default lineup, stored by id and read named", function () {
   it('stores a lineup by ids and jerseys, keeping only a placeholder’s typed name', () => {
     const lineup: Lineup = {
       batters: [
-        { gumboId: id(people.smith), name: 'Will Smi', jersey: '16' },
+        { gumboId: id(people.smith), name: 'Will S', jersey: '16' },
         { gumboId: null, name: 'Typed Fielder', jersey: '' }
       ],
       defense: defenseOf({
-        C: { gumboId: id(people.smith), name: 'Will Smi', jersey: '16' },
+        C: { gumboId: id(people.smith), name: 'Will S', jersey: '16' },
         LF: { gumboId: null, name: 'Typed Fielder', jersey: '' }
       })
     }
@@ -146,12 +146,12 @@ describe("a team's default lineup, stored by id and read named", function () {
 
   it("names each player from his account, by the short names of the team's roster", async () => {
     const read = await resolvedDefaultOf(fixture.db, TEAM, stored())
-    // Smyly is on the roster and not in the lineup: Smith still reads apart
-    // from him. The guest is named though he is no member; the placeholder
-    // keeps his typed name.
+    // Smyly is on the roster and not in the lineup: Smith reads as his name
+    // alone writes, the same as Smyly. The guest is named though he is no
+    // member; the placeholder keeps his typed name.
     const smith: LineupPerson = {
       gumboId: id(people.smith),
-      name: 'Will Smi',
+      name: 'Will S',
       jersey: '16'
     }
     const typed: LineupPerson = {
@@ -183,7 +183,7 @@ describe("a team's default lineup, stored by id and read named", function () {
     const value = stored()
     value.lineup.batters[0] = { ...value.lineup.batters[0], name: 'Old Name' }
     const read = await resolvedDefaultOf(fixture.db, TEAM, value)
-    expect(read?.lineup?.batters[0].name).equals('Will Smi')
+    expect(read?.lineup?.batters[0].name).equals('Will S')
   })
 
   it('follows a rename, with nothing stored changing', async () => {

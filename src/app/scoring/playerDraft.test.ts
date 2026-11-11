@@ -260,7 +260,7 @@ describe('local player entry', function () {
     )
     expect(session.gameData.players[id].fullName).equals('Cliff L')
     expect(session.gameData.players[id]).not.have.property('compactName')
-    // Nor the format of the full name: a short label is lengthened again.
+    // Nor the format of the full name: a short label is the built-in one.
     expect(session.gameData.players[id]).not.have.property('nameFormat')
     expect(session.gameData.players[id]).not.have.property('compactFormat')
   })

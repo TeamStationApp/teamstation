@@ -300,7 +300,7 @@ describe('historical guest comparison against migration and HTTP', function () {
     }
   })
 
-  it('matches all guest fields from the real authorized API with collisions across both sides', async () => {
+  it('matches all guest fields from the real authorized API with names that share a short form across both sides', async () => {
     const baseline = structuredClone(original)
     for (const kind of cases) baseline.api['/games/gam_' + kind] = {}
     const expected = expectedPlaceholders(baseline, migrated, [])
@@ -342,8 +342,9 @@ describe('historical guest comparison against migration and HTTP', function () {
         )
       }
       if (kind !== 'inplace') {
-        expect(actual.guestPlayers.away[0].shortName).equals('Hank Aa')
-        expect(actual.guestPlayers.home[0].shortName).equals('Hank Al')
+        // Each written alone, as the migration rebuilt them.
+        expect(actual.guestPlayers.away[0].shortName).equals('Hank A')
+        expect(actual.guestPlayers.home[0].shortName).equals('Hank A')
       }
       expect(JSON.stringify(actual.guestPlayers))
         .not.includes('Hank Aaron')

@@ -10,10 +10,12 @@ import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { withdrawnKey } from '../games/withdrawn'
 import { runSpoken } from '../users/readerNames'
 import {
+  compactFields,
   currentFormats,
   loadPlayerNamePrivacy,
   publicFormats,
   publicNames,
+  readerNaming,
   teamFormats
 } from './playerNamePrivacy'
 
@@ -220,7 +222,7 @@ describe('player name privacy from the database', function () {
     expect((await currentFormats(f.h.db, [])).size).equals(0)
   })
 
-  it('names in full whom the reader may read, and breaks collisions among the rest', async function () {
+  it('names in full whom the reader may read, and writes each of the rest in its format alone', async function () {
     const players = [
       { id: 411, first: 'Carlos', last: 'Correa', teamId: f.teamA },
       { id: 412, first: 'Carlos', last: 'Carrasco', teamId: f.teamB },
@@ -276,20 +278,36 @@ describe('player name privacy from the database', function () {
     const coach = { userId: torre, isAdmin: false }
     expect(await publicNames(f.h.db, people)).deep.equals(
       new Map([
-        [correa, 'Carlos Co'],
-        [carrasco, 'Carlos Ca'],
-        [beltran, 'Carlos Be'],
-        [baerga, 'Carlos Ba']
+        [correa, 'Carlos C'],
+        [carrasco, 'Carlos C'],
+        [beltran, 'Carlos B'],
+        [baerga, 'Carlos B']
       ])
     )
     expect(await publicNames(f.h.db, people, { reader: coach })).deep.equals(
       new Map([
         [correa, 'Carlos Correa'],
         [carrasco, 'Carlos C'],
-        [beltran, 'Carlos Be'],
-        [baerga, 'Carlos Ba']
+        [beltran, 'Carlos B'],
+        [baerga, 'Carlos B']
       ])
     )
+    // The public label goes beside a name only this reader reads in full,
+    // and nowhere else: a teammate read in the public format keeps none,
+    // though one of the two who share `Carlos C` is read in full.
+    const naming = await readerNaming(f.h.db, people, coach)
+    const [correaPerson, carrascoPerson, beltranPerson] = people.map(
+      entry => entry.person
+    )
+    expect(compactFields(naming, correaPerson)).deep.equals({
+      compactName: 'Carlos C'
+    })
+    expect(compactFields(naming, carrascoPerson)).deep.equals({})
+    expect(compactFields(naming, beltranPerson)).deep.equals({})
+    expect(naming.compact.get(carrasco)).equals('Carlos C')
+    const nobody = await readerNaming(f.h.db, people, undefined)
+    for (const { person } of people)
+      expect(compactFields(nobody, person)).deep.equals({})
     // Staff, shown as staff, read in full by somebody who may.
     const staff = { id: torre, displayName: 'Joe Torre' }
     expect(

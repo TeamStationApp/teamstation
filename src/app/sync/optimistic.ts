@@ -1,4 +1,4 @@
-import { formatName, shortName, shortNames } from '../../common/names'
+import { formatName, shortName } from '../../common/names'
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FINAL_INDEX, storedRecordOf } from '../../common/scoring/gumbo'
@@ -374,23 +374,14 @@ function renamedIn(
 
 /**
  * The game's short name for a guest called `name`, as the server will name
- * him: short names over everyone the cached answer names, him by his new
- * halves, the others by the halves its setups hold or else by the names it
- * shows.
+ * him: his new halves written alone (`shortName`), whoever else the game
+ * names.
  */
-function guestShortName(stored: Json, gumboId: number, name: Halves): string {
-  const halves = eventsHalves(stored)
-  const people = [...eventsNames(stored)]
-    .filter(([id]) => id !== gumboId)
-    .map(([id, shown]) => ({ id, displayName: shown, ...halves.get(id) }))
+function guestShortName(gumboId: number, name: Halves): string {
   const whole = [name.firstName, name.lastName]
     .filter(part => part !== '')
     .join(' ')
-  return (
-    shortNames([...people, { id: gumboId, displayName: whole, ...name }]).get(
-      gumboId
-    ) ?? whole
-  )
+  return shortName({ id: gumboId, displayName: whole, ...name })
 }
 
 /**
@@ -405,7 +396,7 @@ export function renamedEvents(
   name: { firstName: string; lastName: string }
 ): Json {
   const stored = objectOf(document)
-  const short = guestShortName(stored, gumboId, name)
+  const short = guestShortName(gumboId, name)
   const his = new Map([[gumboId, name]])
   const renamed = (play: unknown): unknown => {
     if (play == null) return play
