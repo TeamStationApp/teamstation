@@ -26,6 +26,7 @@ import {
 } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { withNames } from '../../common/scoring/storedNames'
+import { storedScoringUpdates } from '../../common/scoring/updates'
 import {
   addGame,
   addScorableTeams,
@@ -808,7 +809,7 @@ describe('scoring mutation ordering', function () {
     load: () => Promise<StoredGame>
     gameId: string
     requests: SaveChange[]
-    hooks: { read?: () => Promise<void> }
+    hooks: { read?: () => Promise<void>; scoringUserId?: string }
   }> {
     const context = await addScorableTeams(db, { home: 'Owls', away: 'Jays' })
     const gameId = await addGame(db, {
@@ -817,7 +818,7 @@ describe('scoring mutation ordering', function () {
       startAt: new Date()
     })
     const requests: SaveChange[] = []
-    const hooks: { read?: () => Promise<void> } = {}
+    const hooks: { read?: () => Promise<void>; scoringUserId?: string } = {}
     const load = async (): Promise<StoredGame> => {
       await hooks.read?.()
       const game = await db
@@ -833,6 +834,7 @@ describe('scoring mutation ordering', function () {
         currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
       })
       return {
+        scoringUpdates: storedScoringUpdates(game.scoring_mutation),
         plays: resolveNames
           ? plays.map(play =>
               withNames(play, id => context.setup.players[id]?.fullName)
@@ -867,7 +869,7 @@ describe('scoring mutation ordering', function () {
                 }),
                 undefined,
                 undefined,
-                { scoringAuthor: true }
+                { scoringAuthor: true, scoringUserId: hooks.scoringUserId }
               )
             )
           }
@@ -2215,6 +2217,49 @@ describe('scoring mutation ordering', function () {
     expect((await load()).plays.map(play => play.result.eventType)).deep.equals(
       ['home_run']
     )
+  })
+
+  it('keeps accepted authors and Undo descriptions across retries, stale conflicts and reload', async () => {
+    const { open, load, gameId, hooks, requests } = await sessions()
+    const actors = await db.selectFrom('users').select('id').limit(2).execute()
+    const a = await open()
+    const stale = await open()
+    hooks.scoringUserId = actors[0].id
+    apply(a, { type: 'pitch', call: 'B' })
+    await a.flush()
+    expect(a.scoringUpdates).length(1)
+    expect(a.scoringUpdates[0].userId).equals(actors[0].id)
+    expect(a.scoringUpdates[0].lines).deep.equals(['Top 1: Ball'])
+    const retry = asPostEventsBody({
+      ...requests[0],
+      mode: 'live',
+      source: { system: 'teamstation' }
+    })
+    await postGamePlays(db, gameId, retry, undefined, undefined, {
+      scoringAuthor: true,
+      scoringUserId: actors[0].id
+    })
+    expect((await load()).scoringUpdates).length(1)
+    hooks.scoringUserId = actors[1].id
+    apply(stale, { type: 'pitch', call: 'C' })
+    await stale.flush()
+    expect((await load()).scoringUpdates).length(1)
+    expect(stale.scoringUpdates[0].userId).equals(actors[0].id)
+    const b = await open()
+    apply(b, { type: 'pitch', call: 'C' })
+    await b.flush()
+    b.undo()
+    await b.flush()
+    const updates = (await load()).scoringUpdates!
+    expect(updates.map(update => update.userId)).deep.equals([
+      actors[0].id,
+      actors[1].id,
+      actors[1].id
+    ])
+    expect(updates.at(-1)!.lines).deep.equals(['Undo — Top 1: Called strike'])
+    expect(updates.map(update => update.sequence)).deep.equals([1, 2, 3])
+    await a.reload()
+    expect(a.scoringUpdates).deep.equals(updates)
   })
 
   it('clears the ordering barrier on reset and refuses the old generation', async () => {

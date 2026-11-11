@@ -32,6 +32,10 @@ import {
   SCORING_FEATURE_HEADER,
   SCORING_FEATURES
 } from '../../common/scoring/teamRecord'
+import {
+  type ScoringUpdate,
+  storedScoringUpdates
+} from '../../common/scoring/updates'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -366,6 +370,7 @@ export function eventRoutes(
                 },
             {
               scoringAuthor: true,
+              scoringUserId: actor.userId,
               expectedGeneration: body.generation,
               halves: async (trx, game) =>
                 lineupTeams(
@@ -652,6 +657,7 @@ interface LivePostDigests {
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */
 interface StoredGameAnswer {
+  scoringUpdates?: ScoringUpdate[]
   scoringMutation?: ScoringMutation
   plays: unknown[]
   currentPlay: unknown
@@ -724,7 +730,9 @@ async function storedGameRead(
     { halves: lineups, gameId, listFullNamesFor: reader }
   )
   const teams = teamsOfRow(game)
+  const scoringUpdates = storedScoringUpdates(game.scoring_mutation)
   const answer: StoredGameAnswer = {
+    ...(scoringUpdates.length === 0 ? {} : { scoringUpdates }),
     plays: stored.map((row, index) => ({
       ...playJson(row),
       gumbo: playForWire(resolved.plays[index], teams)
