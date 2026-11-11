@@ -15,7 +15,10 @@ import {
 } from '../../common/gumboPlay'
 import { applyPlayEdits } from '../../common/playEdits'
 import { FINAL_INDEX } from '../../common/scoring/gumbo'
-import type { ScoringMutation } from '../../common/scoring/scoringMutation'
+import {
+  MAX_SCORING_TIME,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import {
   type SaveChange,
   ScoringSession,
@@ -1217,6 +1220,56 @@ describe('scoring mutation ordering', function () {
     )
     expect(stale.superseded).equals(true)
     expect((await load()).scoringMutation).includes(scoringMutation)
+  })
+  it('keeps modern and legacy scoring readable at the maximum supported time', async () => {
+    const { open, gameId, requests, load } = await sessions()
+    const a = await open()
+    a.apply({ type: 'pitch', call: 'B' })
+    await a.flush()
+    const original = requests[0]
+    const body = {
+      ...original,
+      mode: 'live',
+      source: { system: 'teamstation' },
+      scoringBase: (await load()).scoringMutation,
+      scoringMutation: {
+        ...original.scoringMutation!,
+        id: 'date-limit',
+        at: MAX_SCORING_TIME
+      }
+    }
+    expect(() =>
+      asPostEventsBody({
+        ...body,
+        scoringMutation: {
+          ...body.scoringMutation,
+          at: Number.MAX_SAFE_INTEGER
+        }
+      })
+    ).throws('supported date range')
+    await postGamePlays(db, gameId, asPostEventsBody(body))
+    const modern = await open()
+    modern.apply({ type: 'pitch', call: 'C' })
+    await modern.flush()
+    expect(modern.readOnly).equals(false)
+    expect((await load()).scoringMutation!.at).equals(MAX_SCORING_TIME)
+    modern.apply({ type: 'pitch', call: 'B' })
+    await modern.flush()
+    const legacy = asPostEventsBody({
+      ...requests.at(-1)!,
+      mode: 'live',
+      source: { system: 'teamstation' },
+      scoringMutation: undefined,
+      scoringBase: (await load()).scoringMutation,
+      scoringHistory: undefined
+    })
+    legacy.currentPlay!.playEvents.pop()
+    await postGamePlays(db, gameId, legacy, undefined, undefined, {
+      scoringAuthor: true
+    })
+    expect((await load()).scoringMutation!.at).equals(MAX_SCORING_TIME)
+    expect((await load()).scoringMutation!.id).matches(/^legacy-/)
+    expect((await open()).captureScoringAction().at).equals(MAX_SCORING_TIME)
   })
   it('refuses malformed deletion frontiers without changing the game', async () => {
     const { open, gameId, requests, load } = await sessions()
