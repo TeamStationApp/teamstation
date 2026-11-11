@@ -113,10 +113,23 @@ describe('player layouts in a browser', function () {
     const S = fixture().games.S
     const session: WebSession = await webSession('smoke', 402, 874)
     await open(session, `/games/${S.id}?tab=watch`)
-    await session.page.waitForFunction(
-      `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 2 })()`,
-      { timeout: 60_000 }
-    )
+    await session.page
+      .waitForFunction(
+        `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 2 })()`,
+        { timeout: 60_000 }
+      )
+      .catch(async (error: unknown) => {
+        // Why nothing played: each video's state, and what the page reported.
+        const videos = await session.page.evaluate(
+          `JSON.stringify(Array.from(document.querySelectorAll('video')).map(v => ({ root: v.closest('#root') != null, ready: v.readyState, network: v.networkState, error: v.error && v.error.message })))`
+        )
+        const shown = await session.page.evaluate(
+          `location.href + ' :: ' + document.body.innerText.slice(0, 400)`
+        )
+        throw new Error(
+          `${String(error)}; videos ${String(videos)}; page ${String(shown)}; ${session.problems.join(' | ')}`
+        )
+      })
     expect(await session.page.$$eval('video', all => all.length)).at.least(1)
   })
 
