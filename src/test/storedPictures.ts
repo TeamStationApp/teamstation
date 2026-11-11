@@ -24,6 +24,7 @@ export async function storedPictures(
       throw new Error('offline')
     },
     remove: async () => undefined,
+    unlink: async () => undefined,
     uriOf: path => `file://${path}`
   })
   directories.offline = offline
