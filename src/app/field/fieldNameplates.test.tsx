@@ -46,6 +46,19 @@ describe('the browser’s nameplates', function () {
     expect(node.style.borderStyle).equals('')
     expect(node.style.borderRadius).equals('8px')
   })
+  it('names where each player plays, and drops it when he no longer has a place', function () {
+    const host = document.createElement('div')
+    syncFieldNameplates(host, [
+      plate('defense-6', { position: 'SS' }),
+      plate('offense-9', { team: 'runner', position: 'R2' })
+    ])
+    const node = (id: string): HTMLElement =>
+      host.querySelector(`[data-nameplate="${id}"]`)!
+    expect(node('defense-6').getAttribute('data-position')).equals('SS')
+    expect(node('offense-9').getAttribute('data-position')).equals('R2')
+    syncFieldNameplates(host, [plate('defense-6')])
+    expect(node('defense-6').hasAttribute('data-position')).equals(false)
+  })
   it('keeps one plate per player, updated in place, and drops the rest', function () {
     const host = document.createElement('div')
     syncFieldNameplates(host, [plate('SS'), plate('LF', { number: '' })])
