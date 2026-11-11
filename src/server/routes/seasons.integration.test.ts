@@ -75,6 +75,9 @@ describe('GET /seasons', function () {
   const bobcats = makeId('team')
   const coyotes = makeId('team')
   const gulls = makeId('team')
+  // Inland's league has a picture, which Inland, with none of its own, is
+  // drawn with.
+  const inlandLeague = makeId('league')
 
   before(async function () {
     adminPool = new Pool({ connectionString: adminUrl })
@@ -132,6 +135,14 @@ describe('GET /seasons', function () {
       )
       .execute()
     await db
+      .insertInto('leagues')
+      .values({
+        id: inlandLeague,
+        name: 'Inland League',
+        logo_path: 'fixtures/inland-league'
+      })
+      .execute()
+    await db
       .insertInto('seasons')
       .values([
         {
@@ -155,6 +166,7 @@ describe('GET /seasons', function () {
           starts_on: `2025-03-01`,
           ends_on: `2025-05-31`,
           id: inland,
+          league_id: inlandLeague,
           name: 'Inland League 2025',
           year: 2025
         }
@@ -252,11 +264,11 @@ describe('GET /seasons', function () {
       mediaSecret: 'secret',
       publicUrl: 'http://127.0.0.1',
       space: {
-        endpoint: '',
-        region: '',
-        bucket: '',
-        accessKeyId: '',
-        secretAccessKey: '',
+        endpoint: 'https://media.example.test',
+        region: 'test',
+        bucket: 'synthetic-images',
+        accessKeyId: '00000000000000000000',
+        secretAccessKey: '0000000000000000000000000000000000000000',
         pathStyle: true
       }
     }
@@ -291,6 +303,14 @@ describe('GET /seasons', function () {
     }
   }
 
+  /** The signed league picture the list gives Inland. */
+  const inlandPicture = (body: unknown): string =>
+    String(
+      (body as Array<{ id: string; leaguePictureUrl: unknown }>).find(
+        season => season.id === inland
+      )?.leaguePictureUrl
+    )
+
   const names = (answer: Answer): string[] =>
     (answer.body as Array<{ name: string }>).map(season => season.name)
 
@@ -304,6 +324,7 @@ describe('GET /seasons', function () {
     startsOn: '2026-03-01',
     endsOn: '2026-06-30',
     logoUrl: null,
+    leaguePictureUrl: null,
     teams: 3,
     games: 2,
     videos: 0
@@ -316,6 +337,13 @@ describe('GET /seasons', function () {
 
     const admin = await list(ADMIN)
     expect(admin.status).equals(200)
+    // The league's own picture, signed, for a season with none of its own.
+    const picture = new URL(inlandPicture(admin.body))
+    expect(picture.hostname).equals('media.example.test')
+    expect(picture.pathname.endsWith('/fixtures/inland-league-96.png')).equals(
+      true
+    )
+    expect(picture.searchParams.has('X-Amz-Signature')).equals(true)
     expect(admin.body).deep.equals(
       [
         harborItem(),
@@ -329,13 +357,14 @@ describe('GET /seasons', function () {
           startsOn: '2026-03-01',
           endsOn: '2026-05-31',
           logoUrl: null,
+          leaguePictureUrl: null,
           teams: 2,
           games: 1,
           videos: 0
         },
         {
           id: inland,
-          leagueId: null,
+          leagueId: inlandLeague,
           name: 'Inland League 2025',
           year: 2025,
           term: null,
@@ -343,6 +372,7 @@ describe('GET /seasons', function () {
           startsOn: '2025-03-01',
           endsOn: '2025-05-31',
           logoUrl: null,
+          leaguePictureUrl: inlandPicture(admin.body),
           teams: 1,
           games: 0,
           videos: 0

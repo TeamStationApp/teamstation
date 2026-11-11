@@ -1,3 +1,5 @@
+import { initialsOf } from './initials'
+
 /**
  * The tile a team without a logo is drawn with: two capital letters on a
  * colour of its own.
@@ -68,19 +70,122 @@ export const TEAM_TINTS = [
 ] as const
 
 /**
- * The colour of a team's tile.
+ * One of `TEAM_TINTS`, by a 32-bit FNV-1a hash of `key`.
  *
- * Picked by a hash of the team's trimmed name, so it is
- * the same for a team on every visit, every screen, and every platform. A
- * rename may change it.
+ * The same key gives the same colour on every visit, every screen and every
+ * platform, so the key is an id, which a rename leaves alone.
  */
-export function teamTint(key: string): string {
-  // 32-bit FNV-1a.
+function tintOf(key: string): string {
   let hash = 0x811c9dc5
-  for (const unit of Array.from(key.trim())) {
+  for (const unit of Array.from(key)) {
     const code = unit.codePointAt(0) ?? 0
     hash ^= code
     hash = Math.imul(hash, 0x01000193) >>> 0
   }
   return TEAM_TINTS[hash % TEAM_TINTS.length]
+}
+
+/**
+ * A team's tile colour, by its id. A merged team's rows carry the id of the
+ * team it became, so it draws that team's colour.
+ */
+export function teamTint(teamId: string): string {
+  return tintOf(teamId)
+}
+
+/** A league's tile colour, by its id. */
+export function leagueTint(leagueId: string): string {
+  return tintOf(leagueId)
+}
+
+/**
+ * A season's tile colour: its league's, so every season of a league reads as
+ * that league, or by its own id when it has no league.
+ */
+export function seasonTint(season: {
+  id: string
+  leagueId?: string | null
+}): string {
+  return season.leagueId != null && season.leagueId !== ''
+    ? leagueTint(season.leagueId)
+    : tintOf(season.id)
+}
+
+/**
+ * The picture a season is drawn with: its own, or else its league's, or null
+ * for initials on `seasonTint`.
+ */
+export function seasonPicture(season: {
+  pictureUrl?: string | null
+  leaguePictureUrl?: string | null
+}): string | null {
+  if (season.pictureUrl != null && season.pictureUrl !== '')
+    return season.pictureUrl
+  if (season.leaguePictureUrl != null && season.leaguePictureUrl !== '')
+    return season.leaguePictureUrl
+  return null
+}
+
+/** A team, league or season, as its tile draws it. */
+export interface GroupTileSource {
+  kind: 'team' | 'league' | 'season'
+  /** Null only for a group not saved yet: the theme's untinted tile. */
+  id: string | null
+  /** A season's league. */
+  leagueId?: string | null
+  name: string
+  /** The group's own picture. */
+  uri?: string | null
+  /** A season's league's picture. */
+  leagueUri?: string | null
+}
+
+/** What a group's tile shows. */
+export interface GroupTile {
+  initials: string
+  /** None before the group has an id. */
+  tint: string | undefined
+  uri: string | null
+}
+
+/** A saved team's, league's or season's colour, by its id. */
+export function groupTint(
+  group: Pick<GroupTileSource, 'kind' | 'leagueId'> & { id: string }
+): string {
+  return group.kind === 'team'
+    ? teamTint(group.id)
+    : group.kind === 'league'
+      ? leagueTint(group.id)
+      : seasonTint({ id: group.id, leagueId: group.leagueId })
+}
+
+/**
+ * What a group's tile shows: its initials, its colour and its picture. One
+ * answer for every surface, chat included, so a team, league or season is the
+ * same tile everywhere.
+ */
+export function groupTile(group: GroupTileSource): GroupTile {
+  const name = group.name.trim()
+  const { id, kind } = group
+  const tint = id == null ? undefined : groupTint({ ...group, id })
+  if (kind === 'team') {
+    const initials = teamInitialsOf(name)
+    return {
+      initials: initials === '' ? 'T' : initials,
+      tint,
+      uri: group.uri ?? null
+    }
+  }
+  const initials = initialsOf(name)
+  return {
+    initials: initials === '' ? (kind === 'league' ? 'L' : 'S') : initials,
+    tint,
+    uri:
+      kind === 'league'
+        ? (group.uri ?? null)
+        : seasonPicture({
+            pictureUrl: group.uri,
+            leaguePictureUrl: group.leagueUri
+          })
+  }
 }

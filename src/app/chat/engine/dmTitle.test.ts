@@ -143,6 +143,8 @@ describe('public chat engine list summaries', () => {
       scope: null,
       scopeName: null,
       avatarName: null,
+      leagueId: null,
+      leaguePictureUrl: null,
       avatarUrl: null,
       lastSeq: 0,
       lastMessageAt: null,

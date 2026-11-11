@@ -350,6 +350,73 @@ describe('limited public organization profiles', function () {
       }
     }
   })
+  it("gives a season its league's picture beside its own, and choosing a season picture writes the season's alone", async () => {
+    interface Group {
+      imageUrl: string | null
+      leagueId: string | null
+      leaguePictureUrl: string | null
+    }
+    const read = async (path: string): Promise<Group> =>
+      (
+        (await (await f.h.request('GET', path, undefined, 101)).json()) as {
+          group: Group
+        }
+      ).group
+    const put = async (
+      kind: string,
+      id: string,
+      picture: unknown
+    ): Promise<void> => {
+      const answer = await f.h.request(
+        'PUT',
+        `/groups/${kind}/${id}`,
+        { picture },
+        101
+      )
+      expect(answer.status, `${kind} picture`).equals(200)
+    }
+    const logo = async (
+      table: 'leagues' | 'seasons',
+      id: string
+    ): Promise<string | null> =>
+      (
+        await f.h.db
+          .selectFrom(table)
+          .select('logo_path')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).logo_path
+    await put('league', f.leagueA, { catalogId: 'baseball' })
+    await put('season', f.seasonA, { initials: true })
+    const leagueLogo = await logo('leagues', f.leagueA)
+    try {
+      const season = await read(`/seasons/${f.seasonA}`)
+      // The season still has no picture of its own; its league's rides beside.
+      expect(season.imageUrl).equals(null)
+      expect(season.leagueId).equals(f.leagueA)
+      expect(season.leaguePictureUrl).includes('/images/catalog/')
+      expect((await read(`/leagues/${f.leagueA}`)).leaguePictureUrl).equals(
+        null
+      )
+      expect((await read(`/teams/${f.teamA}`)).leaguePictureUrl).equals(null)
+      expect(
+        (await read(`/seasons/${f.standaloneSeason}`)).leaguePictureUrl
+      ).equals(null)
+
+      // Choosing a picture for the season writes the season's logo only.
+      await put('season', f.seasonA, { catalogId: 'basketball' })
+      expect(await logo('seasons', f.seasonA)).not.equals(null)
+      expect(await logo('leagues', f.leagueA)).equals(leagueLogo)
+      const pictured = await read(`/seasons/${f.seasonA}`)
+      expect(pictured.imageUrl).includes('/images/catalog/')
+      expect(pictured.imageUrl).not.equals(pictured.leaguePictureUrl)
+      expect(pictured.leaguePictureUrl).includes('/images/catalog/')
+    } finally {
+      await put('season', f.seasonA, { initials: true })
+      await put('league', f.leagueA, { initials: true })
+    }
+  })
+
   it('includes aggregate results and parent context without private play events or stats', async () => {
     await f.h.db
       .insertInto('games')

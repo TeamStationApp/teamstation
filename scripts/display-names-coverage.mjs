@@ -57,7 +57,16 @@ const specs = [
   'src/server/umpires/savePeople.integration.test.ts',
   'src/server/openapi.test.ts',
   'src/common/api.test.ts',
-  'src/common/umpireCleaners.test.ts'
+  'src/common/umpireCleaners.test.ts',
+  // M5: team, league and season colours, and a season in its league's picture.
+  'src/app/components/teamTile.test.ts',
+  'src/app/components/teamEmblemUsage.test.ts',
+  'src/app/chat/chat2Identity.test.ts',
+  'src/server/chat/chat2Identity.integration.test.ts',
+  'src/server/routes/seasons.integration.test.ts',
+  'src/server/groups/publicSummary.integration.test.ts',
+  'src/server/home/homeLists.integration.test.ts',
+  'src/server/routes/live.integration.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = [
@@ -74,7 +83,21 @@ const screens = [
   'src/app/chat/chatUi.test.tsx',
   'src/app/chat/chat2Info.test.tsx',
   'src/app/umpires/management.test.tsx',
-  'src/app/hooks/useRosterCandidates.test.tsx'
+  'src/app/hooks/useRosterCandidates.test.tsx',
+  // M5
+  'src/app/components/GroupEmblem.test.tsx',
+  'src/app/components/settingsCleanup3Pieces.test.tsx',
+  'src/app/components/GameHeroCard.test.tsx',
+  'src/app/components/ChildCard.test.tsx',
+  'src/app/components/settingsPieces.test.tsx',
+  'src/app/chat/chat2IdentityView.test.tsx',
+  'src/app/screens/HomeScreen.test.tsx',
+  'src/app/screens/SeasonScreen.test.tsx',
+  'src/app/screens/groupCreation.test.tsx',
+  'src/app/screens/creationUi.test.tsx',
+  'src/app/umpires/appMask.test.tsx',
+  'src/app/screens/FollowTeamScreen.test.tsx',
+  'src/app/components/cardSpacingFixture.test.tsx'
 ]
 
 const database = spawnSync('node', ['src/migrate/requirePostgres18.js'], {

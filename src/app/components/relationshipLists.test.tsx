@@ -27,6 +27,7 @@ import { ActionList, ActionRow } from './ActionRow'
 import { Button } from './Button'
 import { DangerText } from './DangerText'
 import { PeopleList, peopleSubtitle, PersonRow } from './PeopleList'
+import { leagueTint, teamTint } from './teamTile'
 import { useConfirmedAction } from './useConfirmedAction'
 
 let root: Root | undefined
@@ -50,6 +51,17 @@ const group = (kind: 'team' | 'season' | 'league', id = 'one'): PublicGroup =>
     locality: null
   })
 const api = new TeamStationClient({ baseUrl: '/api/v1' })
+function rgb(hex: string): string {
+  return `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`
+}
+/** The background of the tile drawing `letters`. */
+function tileColour(letters: string): string {
+  const leaf = [...document.querySelectorAll<HTMLElement>('*')].find(
+    node => node.children.length === 0 && node.textContent === letters
+  )
+  if (leaf?.parentElement == null) throw new Error(`no tile ${letters}`)
+  return getComputedStyle(leaf.parentElement).backgroundColor
+}
 describe('relationship list presentation and confirmation', () => {
   afterEach(async () => {
     await act(async () => root?.unmount())
@@ -215,7 +227,7 @@ describe('relationship list presentation and confirmation', () => {
     expect(find('Confirm end participation')).equals(undefined)
     expect(writes).equals(0)
   })
-  it('uses the existing team tint and facts, without inventing absent details', async () => {
+  it('uses the team id’s tint and facts, without inventing absent details', async () => {
     expect(relationshipDetails(group('team'))).equals(undefined)
     expect(
       relationshipDetails({
@@ -240,7 +252,35 @@ describe('relationship list presentation and confirmation', () => {
       />
     )
     expect(text()).includes('DO')
+    expect(tileColour('DO')).equals(rgb(teamTint('one')))
     expect(find('End Demo one')?.textContent).equals('End')
+  })
+  it('draws a league on its id’s tint, and a season on its league’s tint and picture', async () => {
+    await render(
+      <ActionList bounded>
+        <GroupRelationshipRow group={group('league', 'lea_demo')} />
+        <GroupRelationshipRow
+          group={{
+            ...group('season', 'sea_plain'),
+            name: 'Plain Season',
+            leagueId: 'lea_demo'
+          }}
+        />
+        <GroupRelationshipRow
+          group={{
+            ...group('season', 'sea_pictured'),
+            leagueId: 'lea_demo',
+            leaguePictureUrl: 'https://images.example.test/league.png'
+          }}
+        />
+      </ActionList>
+    )
+    expect(tileColour('DL')).equals(rgb(leagueTint('lea_demo')))
+    // Initials on the league's colour where neither has a picture.
+    expect(tileColour('PS')).equals(rgb(leagueTint('lea_demo')))
+    // A season without a picture of its own draws its league's.
+    expect(document.body.innerHTML).includes('league.png')
+    expect(text()).not.includes('DS')
   })
   it('confirms only the selected season-side team, with retry and one success refresh', async () => {
     const calls: unknown[] = []

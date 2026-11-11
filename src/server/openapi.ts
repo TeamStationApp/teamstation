@@ -3882,7 +3882,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the latest game start comes first, a row with no game last, ' +
             'then name, then id. Each entry has `direct` and `source` ' +
             '(`member` or `follow`). A follow whose group is gone is left ' +
-            'out. The five-row window is the client\u2019s.',
+            'out. The five-row window is the client\u2019s. A member ' +
+            'season carries `leagueId` and `leaguePictureUrl`, its ' +
+            'league\u2019s signed picture (null without one), as a followed ' +
+            'season\u2019s public group does.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -6814,7 +6817,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`team` may be repeated, and narrows the list to the seasons ' +
             'those teams play in. Asked that way, a season the caller may ' +
             'schedule games in counts as one they may see. Leaving it out ' +
-            'lists every season the caller may watch.',
+            'lists every season the caller may watch. `leagueId` is the ' +
+            'season\u2019s league or null, and `leaguePictureUrl` that ' +
+            'league\u2019s signed picture (null without one), which a season ' +
+            'with no `logoUrl` of its own is drawn with.',
           security: [{}, { bearer: [] }],
           parameters: [
             {
@@ -7606,7 +7612,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
             'including a deleted post; edits, reactions and preferences do not change post recency. ' +
             'Additive `avatarName` and `avatarUrl` describe the scope’s own identity ' +
-            'and signed image URL, or null for a DM. DM people have an optional ' +
+            'and signed image URL, or null for a DM. Additive `leagueId` and ' +
+            '`leaguePictureUrl` are a season chat\u2019s league and its signed ' +
+            'picture, which its tile falls back on; null for every other chat. ' +
+            'DM people have an optional ' +
             '`avatarUrl`, null for former members. Older responses may omit these fields.',
           security: [{ bearer: [] }],
           responses: {
@@ -9827,6 +9836,10 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/live': {
         get: {
           summary: 'The games being played right now that you may watch',
+          description:
+            'Each is `{videoId, gameId, title, homeTeamId, awayTeamId, ' +
+            'homeTeamName, awayTeamName, startedAt, gameStartAt, angles}`; ' +
+            'the team ids pick each team\u2019s tile colour.',
           security: [{ bearer: [] }],
           responses: {
             200: {

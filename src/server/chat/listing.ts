@@ -291,6 +291,12 @@ async function describe(
       imageUrl(media.space, identity.logoPath)
     ])
   )
+  const leaguePictures = new Map(
+    [...identities].map(([key, identity]) => [
+      key,
+      imageUrl(media.space, identity.leagueLogoPath)
+    ])
+  )
   const counts = new Map(
     (
       await db
@@ -394,6 +400,9 @@ async function describe(
       scopeName: identity?.scopeName ?? null,
       avatarName: identity?.name ?? null,
       avatarUrl: (scope == null ? undefined : pictures.get(scope)) ?? null,
+      leagueId: identity?.leagueId ?? null,
+      leaguePictureUrl:
+        (scope == null ? undefined : leaguePictures.get(scope)) ?? null,
       lastSeq: Number(row.last_seq),
       lastMessageAt: lastAt.get(row.id) ?? null,
       lastPostAt:

@@ -166,8 +166,14 @@ export function UmpireRequirementsScreen({
               <View key={season.id}>
                 <ListRow
                   title={season.name}
-                  emblem="S"
-                  emblemUri={season.logoUrl}
+                  group={{
+                    kind: 'season',
+                    id: season.id,
+                    leagueId: season.leagueId,
+                    name: season.name,
+                    uri: season.logoUrl,
+                    leagueUri: season.leaguePictureUrl
+                  }}
                   detailContent={
                     <View
                       style={s.row}

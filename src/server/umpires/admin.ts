@@ -119,10 +119,12 @@ export async function requirements(
     .selectFrom('seasons')
     .leftJoin('season_umpire_requirements as r', 'r.season_id', 'seasons.id')
     .leftJoin('umpire_levels as l', 'l.id', 'r.level_id')
+    .innerJoin('leagues', 'leagues.id', 'seasons.league_id')
     .select([
       'seasons.id',
       'seasons.name',
       'seasons.logo_path',
+      'leagues.logo_path as league_logo_path',
       'seasons.ends_on',
       'seasons.timezone',
       'r.level_id',
@@ -160,6 +162,9 @@ export async function requirements(
       id: row.id,
       name: row.name,
       logoUrl: media == null ? null : imageUrl(media.space, row.logo_path),
+      leagueId,
+      leaguePictureUrl:
+        media == null ? null : imageUrl(media.space, row.league_logo_path),
       requirement:
         row.level_id == null
           ? null

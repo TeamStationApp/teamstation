@@ -29,7 +29,8 @@ export { ButtonIcon, type ButtonIconProps } from './ButtonIcon'
 export { Card, CardContent, CardDivider } from './Card'
 export { ListCard } from './ListCard'
 export { Emblem, type EmblemProps } from './Emblem'
-export { TeamEmblem } from './TeamEmblem'
+export { GroupEmblem, type GroupEmblemProps } from './GroupEmblem'
+export { TeamEmblem, type TeamEmblemProps } from './TeamEmblem'
 export {
   GameHeroCard,
   type TeamStatLine,

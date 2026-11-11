@@ -4,6 +4,7 @@ import { after, before, describe, it } from 'mocha'
 import { conversationIdentity } from '../../app/chat/chatIdentityModel'
 import { ChatEngine } from '../../app/chat/engine/engine'
 import type { ChatKeyStore } from '../../app/chat/keyRecord'
+import { leagueTint } from '../../app/components/teamTile'
 import {
   asChatConversation,
   type ChatConversation,
@@ -112,6 +113,10 @@ describe('chat identity metadata through authorized routes', function () {
     expect(season.scopeName).equals(seasonTitle(season.name, league.name))
     expect(season.scopeName).not.equals(season.name)
     expect(season.leagueId).equals(fixture.seed.leagueId)
+    // A season's league's logo comes from that same read, for its tile.
+    expect(season.leagueLogoPath).equals('fixtures/league')
+    expect(team.leagueLogoPath).equals(null)
+    expect(league.leagueLogoPath).equals(null)
     expect(identities.has(scopeKey('team', fixture.seed.teams.eagles))).equals(
       false
     )
@@ -221,9 +226,17 @@ describe('chat identity metadata through authorized routes', function () {
           .executeTakeFirstOrThrow()
         expect(row.avatarName).equals(season.name)
         expectImage(row.avatarUrl, 'fixtures/season')
+        expect(row.leagueId).equals(fixture.seed.leagueId)
+        expectImage(row.leaguePictureUrl, 'fixtures/league')
       } else if (row.scope?.type === 'league') {
         expectImage(row.avatarUrl, 'fixtures/league')
+        expect(row.leagueId).equals(null)
+        expect(row.leaguePictureUrl).equals(null)
       }
+    }
+    for (const row of teamRows) {
+      expect(row.leagueId).equals(null)
+      expect(row.leaguePictureUrl).equals(null)
     }
     expect(await list('Z')).deep.equals([])
     expect(
@@ -235,6 +248,44 @@ describe('chat identity metadata through authorized routes', function () {
         )
       ).status
     ).equals(404)
+  })
+
+  it('draws a season chat with no picture in its league’s, on its league’s colour', async function () {
+    await fixture.db
+      .updateTable('seasons')
+      .set({ logo_path: null })
+      .where('id', '=', fixture.seed.seasonId)
+      .execute()
+    try {
+      const rows = (await list('L')).filter(row => row.scope?.type === 'season')
+      expect(rows.length).greaterThan(0)
+      for (const row of rows) {
+        expect(row.avatarUrl).equals(null)
+        const tile = conversationIdentity({
+          ...row,
+          title: row.title ?? '',
+          unverified: false
+        }).tiles[0]
+        expectImage(tile.uri, 'fixtures/league')
+        expect(tile.tint).equals(leagueTint(fixture.seed.leagueId))
+      }
+      const league = (await list('L')).find(
+        row => row.scope?.type === 'league'
+      )!
+      expect(
+        conversationIdentity({
+          ...league,
+          title: league.title ?? '',
+          unverified: false
+        }).tiles[0].tint
+      ).equals(leagueTint(fixture.seed.leagueId))
+    } finally {
+      await fixture.db
+        .updateTable('seasons')
+        .set({ logo_path: 'fixtures/season' })
+        .where('id', '=', fixture.seed.seasonId)
+        .execute()
+    }
   })
 
   it('returns current DM participant images on create/list and removes a departed profile image', async function () {

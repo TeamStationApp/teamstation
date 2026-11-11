@@ -93,6 +93,8 @@ function fixture(): {
     scope: null,
     scopeName: null,
     avatarName: null,
+    leagueId: null,
+    leaguePictureUrl: null,
     avatarUrl: null,
     lastSeq: 1,
     lastMessageAt: null,

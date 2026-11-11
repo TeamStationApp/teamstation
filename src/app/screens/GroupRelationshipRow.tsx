@@ -4,9 +4,9 @@ import { Text, View } from 'react-native'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
-import { Button, DangerText, Emblem, initialsOf } from '../components'
+import { Button, DangerText } from '../components'
 import { ActionRow } from '../components/ActionRow'
-import { TeamEmblem } from '../components/TeamEmblem'
+import { GroupEmblem } from '../components/GroupEmblem'
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -20,7 +20,8 @@ export function GroupRelationshipRow({
   detail,
   links
 }: {
-  group: Pick<PublicGroup, 'id' | 'kind' | 'name' | 'imageUrl'>
+  group: Pick<PublicGroup, 'id' | 'kind' | 'name' | 'imageUrl'> &
+    Partial<Pick<PublicGroup, 'leagueId' | 'leaguePictureUrl'>>
   label?: string
   action?: string
   detail?: string
@@ -45,11 +46,14 @@ export function GroupRelationshipRow({
       // never grows a third.
       detail={hasLinks ? undefined : shownDetail}
       leading={
-        group.kind === 'team' ? (
-          <TeamEmblem name={group.name} uri={group.imageUrl} />
-        ) : (
-          <Emblem uri={group.imageUrl} fallback={initialsOf(group.name)} />
-        )
+        <GroupEmblem
+          kind={group.kind}
+          id={group.id}
+          leagueId={group.leagueId}
+          name={group.name}
+          uri={group.imageUrl}
+          leagueUri={group.leaguePictureUrl}
+        />
       }
       onOpen={onOpen}
       separateEndAction={onOpen != null && onLeave != null}

@@ -421,6 +421,13 @@ export const asChatConversation = asObject({
   /** The scope's own identity; absent on older servers and for DMs. */
   avatarName: asOptional(asNullable(asString), null),
   avatarUrl: asOptional(asNullable(asString), null),
+  /**
+   * A season chat's league, whose colour its tile takes, and the league's
+   * signed picture, drawn when the season has none; null for the rest and
+   * absent on older servers.
+   */
+  leagueId: asOptional(asNullable(asString), null),
+  leaguePictureUrl: asOptional(asNullable(asString), null),
   lastSeq: asNumber,
   /** When the newest message was posted, ISO; null before the first. */
   lastMessageAt: asNullable(asString),
@@ -1965,7 +1972,12 @@ export const asSeasonSummary = asObject({
    * The season's mark, from the organisation it was imported from. Signed and
    * short-lived, like every other picture the app is given.
    */
-  logoUrl: asOptional(asNullable(asString), null)
+  logoUrl: asOptional(asNullable(asString), null),
+  /**
+   * The league's picture, signed, which the season is drawn with when it has
+   * none of its own; null without a league. Absent on older servers.
+   */
+  leaguePictureUrl: asOptional(asNullable(asString), null)
 })
 export type SeasonSummary = ReturnType<typeof asSeasonSummary>
 
@@ -2529,6 +2541,9 @@ export const asLiveNow = asObject({
   videoId: asString,
   gameId: asString,
   title: asString,
+  /** The teams' ids, for their tiles' colours; absent on older servers. */
+  homeTeamId: asOptional(asString, ''),
+  awayTeamId: asOptional(asString, ''),
   homeTeamName: asString,
   awayTeamName: asString,
   startedAt: asNullable(asString),

@@ -7,12 +7,12 @@ import type { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
-import { GroupPictureChooser } from './GroupPictureChooser'
+import { GroupPictureChooser, type PictureGroup } from './GroupPictureChooser'
 
 export function PictureSheet({
   client,
   name,
-  team = false,
+  group,
   fitInitials = false,
   allowCatalog = false,
   pickPhoto,
@@ -21,7 +21,8 @@ export function PictureSheet({
 }: {
   client: TeamStationClient
   name: string
-  team?: boolean
+  /** A team, league or season; absent for a person's photo. */
+  group?: PictureGroup
   fitInitials?: boolean
   allowCatalog?: boolean
   pickPhoto?: typeof pickAccountPhoto
@@ -73,7 +74,7 @@ export function PictureSheet({
             <GroupPictureChooser
               client={client}
               name={name}
-              team={team}
+              group={group}
               fitInitials={fitInitials}
               allowCatalog={allowCatalog}
               pickPhoto={pickPhoto}

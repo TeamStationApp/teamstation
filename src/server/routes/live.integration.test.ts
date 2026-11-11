@@ -838,6 +838,9 @@ describe('a game’s stream key over the API', function () {
       expect(live.length).equals(1)
       expect(live[0].videoId).equals('vid_onNow')
       expect(live[0].homeTeamName).equals('Demo Home')
+      // The ids pick each team's tile colour on Home.
+      expect(live[0].homeTeamId).equals('tem_home')
+      expect(live[0].awayTeamId).equals('tem_away')
       expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
     // Home's scope gates this read by time: it answers no revision.

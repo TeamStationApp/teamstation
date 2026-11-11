@@ -1,7 +1,15 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { TEAM_TINTS, teamInitialsOf, teamTint } from './teamTile'
+import {
+  groupTile,
+  leagueTint,
+  seasonPicture,
+  seasonTint,
+  TEAM_TINTS,
+  teamInitialsOf,
+  teamTint
+} from './teamTile'
 
 describe('a team’s initials', function () {
   for (const [name, initials] of [
@@ -53,7 +61,161 @@ describe('a team’s tile colour', function () {
     for (let i = 0; i < 4096; i++) used.add(teamTint(`tem_sample${i}`))
     expect(used.size).equals(32)
     expect(new Set(TEAM_TINTS).size).equals(32)
-    expect(teamTint(' Winter Wolves ')).equals(teamTint('Winter Wolves'))
+  })
+
+  it('hashes the team id, so a rename keeps it and only another id moves it', function () {
+    const id = 'tem_vShybFtE3zX82D8W'
+    // A team's tile, renamed: the id is unchanged, so the colour is too.
+    expect(groupTile({ kind: 'team', id, name: 'Demo Hawks' }).tint).equals(
+      groupTile({ kind: 'team', id, name: 'Demo Owls' }).tint
+    )
+    expect(teamTint(id)).equals(teamTint(id))
+    const others = new Set(
+      Array.from({ length: 64 }, (_, i) => teamTint(`tem_other${i}`))
+    )
+    expect(others.size).greaterThan(1)
+  })
+
+  it('draws a merged team on its survivor’s colour, the id its rows carry', function () {
+    const survivor = 'tem_survivor'
+    const merged = 'tem_mergedAway'
+    expect(teamTint(merged)).not.equals(teamTint(survivor))
+    // Rows of a merged team carry the survivor's id, so they draw its tile.
+    expect(
+      groupTile({ kind: 'team', id: survivor, name: 'Old Name' }).tint
+    ).equals(teamTint(survivor))
+  })
+})
+
+describe('a league’s and a season’s tile colour', function () {
+  it('gives a league one colour for its id, always one of the 32', function () {
+    expect(leagueTint('lea_demo')).equals(leagueTint('lea_demo'))
+    for (let i = 0; i < 200; i++)
+      expect(TEAM_TINTS).includes(leagueTint(`lea_${i}`))
+  })
+
+  it('gives a season its league’s colour, or its own id’s without a league', function () {
+    for (let i = 0; i < 64; i++) {
+      expect(seasonTint({ id: `sea_${i}`, leagueId: 'lea_demo' })).equals(
+        leagueTint('lea_demo')
+      )
+    }
+    const own = seasonTint({ id: 'sea_alone' })
+    expect(seasonTint({ id: 'sea_alone', leagueId: null })).equals(own)
+    expect(seasonTint({ id: 'sea_alone', leagueId: '' })).equals(own)
+    expect(TEAM_TINTS).includes(own)
+    const spread = new Set(
+      Array.from({ length: 64 }, (_, i) => seasonTint({ id: `sea_alone${i}` }))
+    )
+    expect(spread.size).greaterThan(1)
+  })
+
+  it('draws a season in its own picture, else its league’s, else initials', function () {
+    expect(
+      seasonPicture({
+        pictureUrl: 'https://images.example.test/season.png',
+        leaguePictureUrl: 'https://images.example.test/league.png'
+      })
+    ).equals('https://images.example.test/season.png')
+    expect(
+      seasonPicture({
+        pictureUrl: null,
+        leaguePictureUrl: 'https://images.example.test/league.png'
+      })
+    ).equals('https://images.example.test/league.png')
+    expect(
+      seasonPicture({
+        pictureUrl: '',
+        leaguePictureUrl: 'https://images.example.test/league.png'
+      })
+    ).equals('https://images.example.test/league.png')
+    expect(seasonPicture({ pictureUrl: null, leaguePictureUrl: '' })).equals(
+      null
+    )
+    expect(seasonPicture({})).equals(null)
+    expect(
+      groupTile({
+        kind: 'season',
+        id: 'sea_demo',
+        leagueId: 'lea_demo',
+        name: 'Demo Spring'
+      })
+    ).deep.equals({ initials: 'DS', tint: leagueTint('lea_demo'), uri: null })
+  })
+})
+
+describe('a group’s tile', function () {
+  it('reads a team’s, a league’s and a season’s initials, with a letter for an empty name', function () {
+    expect(
+      groupTile({ kind: 'team', id: 'tem_a', name: ' Badgers ' })
+    ).includes({ initials: 'BA', uri: null })
+    expect(groupTile({ kind: 'team', id: 'tem_a', name: '' }).initials).equals(
+      'T'
+    )
+    expect(
+      groupTile({ kind: 'league', id: 'lea_a', name: '' }).initials
+    ).equals('L')
+    expect(
+      groupTile({ kind: 'season', id: 'sea_a', name: '' }).initials
+    ).equals('S')
+    expect(
+      groupTile({
+        kind: 'league',
+        id: 'lea_a',
+        name: 'Demo League',
+        uri: 'https://images.example.test/league.png'
+      })
+    ).deep.equals({
+      initials: 'DL',
+      tint: leagueTint('lea_a'),
+      uri: 'https://images.example.test/league.png'
+    })
+  })
+
+  it('has no colour before the group has an id', function () {
+    for (const kind of ['team', 'league', 'season'] as const)
+      expect(groupTile({ kind, id: null, name: 'Draft' }).tint).equals(
+        undefined
+      )
+  })
+})
+
+describe('the tile palette', function () {
+  it('is the thirty-two colours it has always been', function () {
+    expect([...TEAM_TINTS]).deep.equals([
+      '#B91C1C',
+      '#C2410C',
+      '#B45309',
+      '#15803D',
+      '#0F766E',
+      '#1D4ED8',
+      '#6D28D9',
+      '#BE185D',
+      '#991B1B',
+      '#9A3412',
+      '#92400E',
+      '#166534',
+      '#115E59',
+      '#1E40AF',
+      '#5B21B6',
+      '#9D174D',
+      '#7F1D1D',
+      '#7C2D12',
+      '#78350F',
+      '#14532D',
+      '#134E4A',
+      '#1E3A8A',
+      '#4C1D95',
+      '#831843',
+      '#9F1239',
+      '#854D0E',
+      '#3F6212',
+      '#065F46',
+      '#155E75',
+      '#075985',
+      '#3730A3',
+      '#86198F'
+    ])
   })
 
   it('keeps white letters readable on every colour', function () {

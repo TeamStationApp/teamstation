@@ -8,15 +8,21 @@ import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { Emblem } from './Emblem'
+import { GroupEmblem } from './GroupEmblem'
 import { initialsOf } from './initials'
 import { PhotoGrid } from './PhotoGrid'
-import { TeamEmblem } from './TeamEmblem'
-import { teamInitialsOf } from './teamTile'
+import { groupTile, type GroupTileSource } from './teamTile'
+
+/**
+ * The group a picture is chosen for: its tile's colour comes from its id,
+ * which a group being created does not have yet.
+ */
+export type PictureGroup = Pick<GroupTileSource, 'kind' | 'id' | 'leagueId'>
 
 export function GroupPictureChooser({
   client,
   name,
-  team = false,
+  group,
   fitInitials = false,
   allowCatalog = false,
   value,
@@ -25,7 +31,8 @@ export function GroupPictureChooser({
 }: {
   client: TeamStationClient
   name: string
-  team?: boolean
+  /** A team, league or season; absent for a person's photo. */
+  group?: PictureGroup
   fitInitials?: boolean
   allowCatalog?: boolean
   value?: GroupPicture
@@ -33,8 +40,8 @@ export function GroupPictureChooser({
   pickPhoto?: typeof pickAccountPhoto
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const initials = team ? teamInitialsOf(name) : initialsOf(name)
-  const letters = initials === '' && team ? 'T' : initials
+  const letters =
+    group == null ? initialsOf(name) : groupTile({ ...group, name }).initials
   const [entries, setEntries] = useState<AvailablePicture[]>([])
   const [error, setError] = useState('')
   const load = useCallback(async (): Promise<void> => {
@@ -128,8 +135,13 @@ export function GroupPictureChooser({
           style={styles.initials}
           accessibilityLabel={`Initials preview: ${letters}`}
         >
-          {team ? (
-            <TeamEmblem name={name} size={6} fitInitials={fitInitials} />
+          {group != null ? (
+            <GroupEmblem
+              {...group}
+              name={name}
+              size={6}
+              fitInitials={fitInitials}
+            />
           ) : (
             <Emblem
               fallback={initialsOf(name)}

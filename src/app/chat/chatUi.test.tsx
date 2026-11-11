@@ -1774,6 +1774,8 @@ describe('starting a direct message', function () {
         scope: null,
         scopeName: null,
         avatarName: null,
+        leagueId: null,
+        leaguePictureUrl: null,
         avatarUrl: null,
         lastSeq: 0,
         lastMessageAt: null,

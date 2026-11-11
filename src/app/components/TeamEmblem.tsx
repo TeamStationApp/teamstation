@@ -1,23 +1,31 @@
 import React from 'react'
 
 import { Emblem, type EmblemProps } from './Emblem'
-import { teamInitialsOf, teamTint } from './teamTile'
+import { groupTile } from './teamTile'
 
-/** Every real team, including a placeholder, shares one name-based identity. */
+export type TeamEmblemProps = {
+  /**
+   * The team's id, which picks its colour (`teamTint`). Null only for a team
+   * that is not saved yet, which draws the theme's untinted tile.
+   */
+  teamId: string | null
+  name: string
+} & Pick<EmblemProps, 'uri' | 'size' | 'fitInitials'>
+
+/** Every real team, including a placeholder, is its initials on its id's colour. */
 export function TeamEmblem({
+  teamId,
   name,
+  uri,
   ...props
-}: { name: string } & Pick<
-  EmblemProps,
-  'uri' | 'size' | 'fitInitials'
->): React.ReactElement {
-  const normalized = name.trim()
-  const initials = teamInitialsOf(normalized)
+}: TeamEmblemProps): React.ReactElement {
+  const tile = groupTile({ kind: 'team', id: teamId, name, uri })
   return (
     <Emblem
       {...props}
-      fallback={initials === '' ? 'T' : initials}
-      tint={teamTint(normalized)}
+      uri={tile.uri}
+      fallback={tile.initials}
+      tint={tile.tint}
     />
   )
 }

@@ -1,6 +1,6 @@
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { initialsOf } from '../components/initials'
-import { teamInitialsOf, teamTint } from '../components/teamTile'
+import { groupTile, groupTint, teamTint } from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import type { ConversationListItem, MemberView } from './engine/engine'
 
@@ -17,7 +17,10 @@ export interface ChatIdentity {
   tiles: ChatIdentityTile[]
 }
 
-/** A current person's tile is the same in every chat surface. */
+/**
+ * A current person's tile is the same in every chat surface. Its colour
+ * hashes the member's id for now.
+ */
 export function memberIdentity(
   member: Pick<MemberView, 'userId' | 'shortName' | 'avatarUrl'> | undefined
 ): ChatIdentity {
@@ -40,19 +43,27 @@ export function memberIdentity(
 /** Scope subgroups share their scope's tile; a DM shows its current people. */
 export function conversationIdentity(chat: ConversationListItem): ChatIdentity {
   if (chat.kind !== 'dm' && chat.scope != null) {
+    const { scope } = chat
     const name = chat.avatarName ?? chat.scopeName ?? chat.title
+    // The tile a team, league or season has everywhere else (`GroupEmblem`).
+    const group = {
+      kind: scope.type,
+      id: scope.id,
+      leagueId: chat.leagueId,
+      name,
+      uri: chat.avatarUrl,
+      leagueUri: chat.leaguePictureUrl
+    }
+    const tile = groupTile(group)
     return {
       label: name,
       tiles: [
         {
-          key: `${chat.scope.type}:${chat.scope.id}`,
+          key: `${scope.type}:${scope.id}`,
           name,
-          initials:
-            chat.scope.type === 'team'
-              ? teamInitialsOf(name)
-              : initialsOf(name),
-          tint: teamTint(chat.scope.id),
-          uri: chat.avatarUrl ?? null
+          initials: tile.initials,
+          tint: groupTint(group),
+          uri: tile.uri
         }
       ]
     }

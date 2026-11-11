@@ -199,6 +199,7 @@ function GroupContent({
           term: null,
           ageGroup: null,
           logoUrl: group.imageUrl,
+          leaguePictureUrl: group.leaguePictureUrl,
           teams: detail.competingTeams.length,
           games: detail.games.length,
           videos: 0

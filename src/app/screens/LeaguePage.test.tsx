@@ -21,6 +21,7 @@ import {
 } from '../../test/chatAgeTesting'
 import { rowLeaf, rowTextColor } from '../../test/gameFormDom'
 import type { ChatAccess } from '../chat/ChatAgeGate'
+import { seasonTint } from '../components/teamTile'
 import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
 import type { GroupLinkChoice } from './GroupScreen'
@@ -287,13 +288,17 @@ describe('the league page', () => {
       </ScopedThemeProvider>
     )
     expect(rowTextColor('Demo Spring')).equals('rgb(31, 36, 24)')
-    // The emblem's plate stays dark on the light card.
+    // The season's tile sits on its own colour (no league here, so its id's),
+    // whatever the theme.
     let tile: HTMLElement = rowLeaf('DS')
     while (getComputedStyle(tile).backgroundColor === 'rgba(0, 0, 0, 0)')
       tile = tile.parentElement!
-    expect(getComputedStyle(tile).backgroundColor).equals('rgb(31, 36, 24)')
-    // Its letters keep the theme's emblem colour, readable on that plate.
-    expect(rowTextColor('DS')).equals('rgb(239, 68, 68)')
+    const tint = seasonTint({ id: 'season_new' })
+    expect(getComputedStyle(tile).backgroundColor).equals(
+      `rgb(${[1, 3, 5].map(i => parseInt(tint.slice(i, i + 2), 16)).join(', ')})`
+    )
+    // Its letters are white, readable on every tile colour.
+    expect(rowTextColor('DS')).equals('rgb(255, 255, 255)')
   })
   it('keeps the dark Auto-Scheduler card readable beside the seasons', async () => {
     const api = new TeamStationClient({ baseUrl: '/api/v1' })

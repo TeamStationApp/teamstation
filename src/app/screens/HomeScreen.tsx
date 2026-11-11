@@ -412,7 +412,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const followedRow = (group: PublicGroup): React.ReactElement => (
     <ListRow
       title={group.name}
-      teamName={group.kind === 'team' ? group.name : undefined}
+      group={{
+        kind: group.kind,
+        id: group.id,
+        leagueId: group.leagueId,
+        name: group.name,
+        uri: group.imageUrl,
+        leagueUri: group.leaguePictureUrl
+      }}
       subtitle={
         group.kind === 'season'
           ? seasonPeriodLabel(group.startsOn, group.endsOn)
@@ -421,8 +428,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               ? undefined
               : localityLabel(group.locality)))
       }
-      emblem={initialsOf(group.name)}
-      emblemUri={group.imageUrl}
       badgeLabel="Following"
       badgeTone="neutral"
       onPress={() => {
@@ -522,7 +527,11 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 ]
                   .filter(part => part != null)
                   .join(' · ')}
-                teamName={game.homeTeamName}
+                group={{
+                  kind: 'team',
+                  id: game.homeTeamId,
+                  name: game.homeTeamName
+                }}
                 badgeLabel="live"
                 badgeTone="live"
                 onPress={() => {
@@ -550,6 +559,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               </Text>
             )}
             <GameHeroCard
+              awayTeamId={recent.awayTeamId}
+              homeTeamId={recent.homeTeamId}
               awayName={recent.awayTeamName}
               homeName={recent.homeTeamName}
               awayScore={recent.awayScore}
@@ -670,8 +681,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   key={team.id}
                   title={team.name}
                   subtitle={subtitleFor(team)}
-                  teamName={team.name}
-                  emblemUri={team.logoUrl}
+                  group={{
+                    kind: 'team',
+                    id: team.id,
+                    name: team.name,
+                    uri: team.logoUrl
+                  }}
                   onPress={() => {
                     onOpenTeam(team)
                   }}
@@ -699,8 +714,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   key={season.id}
                   title={season.name}
                   subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
-                  emblemIcon="event"
-                  emblemUri={season.logoUrl}
+                  group={{
+                    kind: 'season',
+                    id: season.id,
+                    leagueId: season.leagueId,
+                    name: season.name,
+                    uri: season.logoUrl,
+                    leagueUri: season.leaguePictureUrl
+                  }}
                   badgeLabel={season.term ?? undefined}
                   badgeTone="neutral"
                   onPress={() => {
@@ -732,8 +753,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 <ListRow
                   key={row.id}
                   title={row.name}
-                  emblem={initialsOf(row.name)}
-                  emblemUri={row.imageUrl}
+                  group={{
+                    kind: 'league',
+                    id: row.id,
+                    name: row.name,
+                    uri: row.imageUrl
+                  }}
                   onPress={() => {
                     props.onOpenGroup?.({ kind: 'league', id: row.id })
                   }}

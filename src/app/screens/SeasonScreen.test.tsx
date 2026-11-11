@@ -42,6 +42,7 @@ function season(patch: Partial<SeasonSummary> = {}): SeasonSummary {
   return {
     id: 'sea_spring',
     leagueId: null,
+    leaguePictureUrl: null,
     name: 'Spring 2026',
     year: 2026,
     term: null,

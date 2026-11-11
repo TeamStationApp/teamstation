@@ -6,6 +6,7 @@ import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
 import {
   asHighlight,
+  asLiveNow,
   asManagePage,
   asPage,
   asPlayerHighlight,
@@ -13,6 +14,7 @@ import {
   asPostedEdits,
   asSaveLineupsBody,
   asScopeGrant,
+  asSeasonSummary,
   asStandingsRow,
   type RequestOptions,
   type SaveLineupsBody,
@@ -22,6 +24,7 @@ import { asChatAge, asChatAgeBody } from './chatAge'
 import { HttpError, isUpdateRequired } from './errors'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import { asGumboPlay } from './gumboPlay'
+import { asPublicGroup } from './publicGroups'
 import { halfOutcomes, lineScore } from './scoring/linescore'
 import { userIdOfGumbo } from './userId'
 
@@ -1478,6 +1481,8 @@ describe('api client', function () {
         ...chat,
         avatarName: null,
         avatarUrl: null,
+        leagueId: null,
+        leaguePictureUrl: null,
         people: [],
         lastPostAt: null,
         lastPostId: null,
@@ -1493,6 +1498,8 @@ describe('api client', function () {
         ...dm,
         avatarName: null,
         avatarUrl: null,
+        leagueId: null,
+        leaguePictureUrl: null,
         people: dm.people.map(person => ({ ...person, avatarUrl: null })),
         lastPostAt: null,
         lastPostId: null,
@@ -3579,6 +3586,55 @@ describe('api client', function () {
     }).discoverGroups('team')
     expect(plain.seasonNames).equals(undefined)
     expect(plain.staffNames).equals(undefined)
+  })
+})
+
+describe('the ids and pictures a group’s tile is drawn from', function () {
+  const league = 'https://images.example.test/league.png'
+  it('keeps a live game’s team ids, and reads an older answer as none', function () {
+    const live = {
+      videoId: 'vid_demo',
+      gameId: 'gam_demo',
+      title: 'Demo Owls at Demo Hawks',
+      homeTeamName: 'Demo Hawks',
+      awayTeamName: 'Demo Owls',
+      startedAt: null,
+      gameStartAt: '2027-04-01T17:00:00.000Z'
+    }
+    expect(
+      asLiveNow({ ...live, homeTeamId: 'tem_hawks', awayTeamId: 'tem_owls' })
+    ).includes({ homeTeamId: 'tem_hawks', awayTeamId: 'tem_owls' })
+    expect(asLiveNow(live)).includes({ homeTeamId: '', awayTeamId: '' })
+  })
+
+  it('keeps a season’s league picture, and reads an older answer as none', function () {
+    const season = {
+      id: 'sea_demo',
+      leagueId: 'lea_demo',
+      name: 'Demo Spring',
+      year: 2027,
+      term: null,
+      ageGroup: null,
+      teams: 2,
+      games: 1,
+      videos: 0
+    }
+    expect(
+      asSeasonSummary({ ...season, leaguePictureUrl: league }).leaguePictureUrl
+    ).equals(league)
+    expect(asSeasonSummary(season).leaguePictureUrl).equals(null)
+    const group = {
+      id: 'sea_demo',
+      kind: 'season',
+      name: 'Demo Spring',
+      imageUrl: null,
+      locality: null,
+      leagueId: 'lea_demo'
+    }
+    expect(
+      asPublicGroup({ ...group, leaguePictureUrl: league }).leaguePictureUrl
+    ).equals(league)
+    expect(asPublicGroup(group).leaguePictureUrl).equals(null)
   })
 })
 

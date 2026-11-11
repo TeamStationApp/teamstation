@@ -91,7 +91,14 @@ describe('management.test.tsx', () => {
       }
     ]
     const seasons: UmpireSeason[] = [
-      { id: 'spring', name: 'Spring', logoUrl: null, requirement: null }
+      {
+        id: 'spring',
+        name: 'Spring',
+        logoUrl: null,
+        leagueId: 'lea_demo',
+        leaguePictureUrl: null,
+        requirement: null
+      }
     ]
     const changes: unknown[] = []
     client.umpireTypes = async () => fixtureTypes

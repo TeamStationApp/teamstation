@@ -15,7 +15,7 @@ import {
 } from '../../test/umpireTypes'
 import * as access from '../access'
 import { umpireRoutes } from '../routes/umpires'
-import { people } from './admin'
+import { people, requirements } from './admin'
 
 describe('umpire levels, needs and certification', function () {
   this.timeout(60000)
@@ -130,12 +130,62 @@ describe('umpire levels, needs and certification', function () {
     expect(usage.find((l: any) => l.id === minor).inUse).equals(false)
     const rows = (await (await request('GET', 'umpire-requirements')).json())
       .seasons
+    // Each season carries its league, whose colour and picture its tile takes.
+    for (const season of rows) {
+      expect(season.leagueId).equals(f.leagueA)
+      expect(season.leaguePictureUrl).equals(null)
+    }
     expect(rows.find((s: any) => s.id === f.seasonA).requirement).deep.equals({
       levelId: major,
       levelName: 'majors',
       types: fixtureCounts(true, 2)
     })
   })
+  it("signs each season's league picture, for a season with none of its own", async () => {
+    await f.h.db
+      .updateTable('leagues')
+      .set({ logo_path: 'fixtures/league-a' })
+      .where('id', '=', f.leagueA)
+      .execute()
+    try {
+      const seasons = await requirements(f.h.db, f.leagueA, Date.now(), {
+        mediaRoot: '/tmp',
+        ffmpegPath: 'ffmpeg',
+        mediaSecret: 'secret',
+        publicUrl: 'http://127.0.0.1',
+        space: {
+          endpoint: 'https://media.example.test',
+          region: 'test',
+          bucket: 'synthetic-images',
+          accessKeyId: '00000000000000000000',
+          secretAccessKey: '0000000000000000000000000000000000000000',
+          pathStyle: true
+        }
+      })
+      expect(seasons.length).greaterThan(0)
+      for (const season of seasons) {
+        expect(season.leagueId).equals(f.leagueA)
+        const picture = new URL(String(season.leaguePictureUrl))
+        expect(picture.hostname).equals('media.example.test')
+        expect(picture.pathname.endsWith('/fixtures/league-a-96.png')).equals(
+          true
+        )
+      }
+      // Without media to sign with, nothing is signed.
+      expect(
+        (await requirements(f.h.db, f.leagueA, Date.now())).every(
+          season => season.leaguePictureUrl == null
+        )
+      ).equals(true)
+    } finally {
+      await f.h.db
+        .updateTable('leagues')
+        .set({ logo_path: null })
+        .where('id', '=', f.leagueA)
+        .execute()
+    }
+  })
+
   it('searches affiliations, grants canonical people, and preserves certifications on revoke', async () => {
     expect(
       (await (await request('GET', 'umpire-candidates?q=')).json()).people

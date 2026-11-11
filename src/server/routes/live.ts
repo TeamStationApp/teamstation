@@ -883,6 +883,8 @@ export function liveRoutes(
             videoId: row.videoId,
             gameId: row.gameId,
             title: row.title,
+            homeTeamId: row.homeTeamId,
+            awayTeamId: row.awayTeamId,
             homeTeamName: row.homeTeamName,
             awayTeamName: row.awayTeamName,
             startedAt:

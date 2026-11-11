@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { asUmpirePeople } from './umpireCleaners'
+import { asUmpirePeople, asUmpireSeasons } from './umpireCleaners'
 
 describe('umpire people', () => {
   const person = {
@@ -28,5 +28,30 @@ describe('umpire people', () => {
     expect(() =>
       asUmpirePeople({ people: [{ ...person, affiliations: 7 }] })
     ).throws()
+  })
+})
+
+describe('umpire seasons', () => {
+  const season = {
+    id: 'sea_demo',
+    name: 'Demo Spring',
+    logoUrl: null,
+    requirement: null
+  }
+
+  it('keeps the league and its picture a season is drawn with', () => {
+    const tile = {
+      leagueId: 'lea_demo',
+      leaguePictureUrl: 'https://images.example.test/league.png'
+    }
+    expect(asUmpireSeasons({ seasons: [{ ...season, ...tile }] })).deep.equals({
+      seasons: [{ ...season, ...tile }]
+    })
+  })
+
+  it('reads an older answer as no league picture', () => {
+    expect(asUmpireSeasons({ seasons: [season] })).deep.equals({
+      seasons: [{ ...season, leagueId: '', leaguePictureUrl: null }]
+    })
   })
 })

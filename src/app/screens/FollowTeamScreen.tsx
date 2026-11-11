@@ -5,7 +5,6 @@ import type { FollowableTeam, TeamStationClient } from '../../common/api'
 import {
   Button,
   Card,
-  initialsOf,
   ListRow,
   Screen,
   SectionHeader,
@@ -148,8 +147,12 @@ export function FollowTeamScreen(
                           ? undefined
                           : team.seasons.map(season => season.title).join(' · ')
                       }
-                      emblem={initialsOf(team.name)}
-                      emblemUri={team.logoUrl}
+                      group={{
+                        kind: 'team',
+                        id: team.id,
+                        name: team.name,
+                        uri: team.logoUrl
+                      }}
                       onPress={
                         team.following
                           ? () => {

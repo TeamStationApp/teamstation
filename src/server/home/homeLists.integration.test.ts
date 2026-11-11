@@ -19,6 +19,7 @@ import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
 import type { MediaContext } from '../media/mediaContext'
+import type { SpaceSettings } from '../media/spacesHls'
 import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
@@ -140,6 +141,7 @@ describe('GET /me/home', function () {
 
     const clocks = await user('Jordan Blake')
     fx.clocks = clocks.token
+    fx.clocksId = clocks.id
     fx.zuluLeague = await league('Zulu League')
     fx.alphaLeague = await league('Alpha League')
     fx.zuluSeason = await season('Zulu Season', { leagueId: fx.zuluLeague })
@@ -589,6 +591,43 @@ describe('GET /me/home', function () {
       home.seasons.every(row => !row.direct && row.source === 'member')
     ).equals(true)
     expect(home.teams).deep.equals([])
+  })
+
+  it("gives a member season its league's id and signed picture, for its tile", async () => {
+    const signed: SpaceSettings = {
+      endpoint: 'https://media.example.test',
+      region: 'test',
+      bucket: 'synthetic-images',
+      accessKeyId: '00000000000000000000',
+      secretAccessKey: '0000000000000000000000000000000000000000',
+      pathStyle: true
+    }
+    await database()
+      .updateTable('leagues')
+      .set({ logo_path: 'fixtures/zulu-league' })
+      .where('id', '=', fx.zuluLeague)
+      .execute()
+    try {
+      const home = await homeLists(database(), fx.clocksId, signed)
+      const zulu = home.seasons.find(row => row.id === fx.zuluSeason)!
+      expect(zulu.leagueId).equals(fx.zuluLeague)
+      const picture = new URL(String(zulu.leaguePictureUrl))
+      expect(picture.hostname).equals('media.example.test')
+      expect(picture.pathname.endsWith('/fixtures/zulu-league-96.png')).equals(
+        true
+      )
+      expect(picture.searchParams.has('X-Amz-Signature')).equals(true)
+      // A league with no picture gives its season none.
+      const alpha = home.seasons.find(row => row.id === fx.alphaSeason)!
+      expect(alpha.leagueId).equals(fx.alphaLeague)
+      expect(alpha.leaguePictureUrl).equals(null)
+    } finally {
+      await database()
+        .updateTable('leagues')
+        .set({ logo_path: null })
+        .where('id', '=', fx.zuluLeague)
+        .execute()
+    }
   })
 
   it('treats staff flags, memberships and follows as direct, and inheritance or admin as indirect', async () => {

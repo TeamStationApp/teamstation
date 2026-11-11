@@ -5,15 +5,16 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ButtonIcon } from './ButtonIcon'
 import { Card } from './Card'
 import { Emblem } from './Emblem'
+import { GroupEmblem } from './GroupEmblem'
 import { initialsOf } from './initials'
-import { TeamEmblem } from './TeamEmblem'
+import type { GroupTileSource } from './teamTile'
 
 export function HeroCard({
   name,
   secondary,
   uri,
   person = false,
-  team = false,
+  group,
   onEdit,
   disabled = false
 }: {
@@ -21,22 +22,28 @@ export function HeroCard({
   secondary?: string | null
   uri?: string | null
   person?: boolean
-  team?: boolean
+  /**
+   * A team, league or season, drawn as its tile (`GroupEmblem`); `uri` is
+   * still its own picture, so a season without one is offered `Add picture`
+   * while its league's is drawn.
+   */
+  group?: Omit<GroupTileSource, 'name' | 'uri'>
   onEdit?: () => void
   disabled?: boolean
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const emblem = team ? (
-    <TeamEmblem name={name} uri={uri} size={3.5} />
-  ) : (
-    <Emblem
-      key={uri}
-      uri={uri}
-      fallback={initialsOf(name)}
-      shape={person ? 'circle' : 'rounded'}
-      size={3.5}
-    />
-  )
+  const emblem =
+    group != null ? (
+      <GroupEmblem {...group} name={name} uri={uri} size={3.5} />
+    ) : (
+      <Emblem
+        key={uri}
+        uri={uri}
+        fallback={initialsOf(name)}
+        shape={person ? 'circle' : 'rounded'}
+        size={3.5}
+      />
+    )
   const label = `${uri == null || uri === '' ? 'Add' : 'Change'} ${person ? 'photo' : 'picture'}`
   return (
     <Card style={styles.card}>

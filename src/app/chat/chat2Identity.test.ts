@@ -3,7 +3,12 @@ import { describe, it } from 'mocha'
 
 import { asChatConversation, asChatDmPerson } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
-import { teamTint } from '../components/teamTile'
+import {
+  groupTile,
+  leagueTint,
+  seasonTint,
+  teamTint
+} from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import { conversationIdentity, memberIdentity } from './chatIdentityModel'
 import { chat, member } from './chatViews.test.helpers'
@@ -30,6 +35,65 @@ describe('chat identities', function () {
     }
     for (const kind of ['teamStaff', 'teamMembers', 'teamFans'] as const)
       expect(conversationIdentity({ ...team, kind })).deep.equals(expected)
+  })
+
+  it('draws a league on its id’s tint, and a season on its league’s tint and picture, as everywhere else', function () {
+    const league = conversationIdentity(
+      chat({
+        kind: 'leagueOrg',
+        scope: { type: 'league', id: 'lea_harbor' },
+        scopeName: 'Harbor League',
+        avatarName: 'Harbor League',
+        avatarUrl: null
+      })
+    ).tiles[0]
+    expect(league.tint).equals(leagueTint('lea_harbor'))
+    expect(league).includes(
+      groupTile({ kind: 'league', id: 'lea_harbor', name: 'Harbor League' })
+    )
+    const season = (
+      patch: Parameters<typeof chat>[0]
+    ): ReturnType<typeof conversationIdentity>['tiles'][number] =>
+      conversationIdentity(
+        chat({
+          kind: 'seasonStaff',
+          scope: { type: 'season', id: 'sea_harbor' },
+          scopeName: 'Autumn - Harbor League',
+          avatarName: 'Autumn',
+          leagueId: 'lea_harbor',
+          leaguePictureUrl: 'https://media.example.test/league.png',
+          ...patch
+        })
+      ).tiles[0]
+    // No picture of its own: the league's picture, on the league's colour.
+    expect(season({ avatarUrl: null })).includes({
+      tint: leagueTint('lea_harbor'),
+      uri: 'https://media.example.test/league.png'
+    })
+    // Its own picture wins.
+    expect(
+      season({ avatarUrl: 'https://media.example.test/season.png' }).uri
+    ).equals('https://media.example.test/season.png')
+    // Neither picture: initials on the league's colour.
+    expect(season({ avatarUrl: null, leaguePictureUrl: null })).includes({
+      initials: 'A',
+      tint: leagueTint('lea_harbor'),
+      uri: null
+    })
+    // A season with no league hashes its own id.
+    expect(
+      season({ avatarUrl: null, leagueId: null, leaguePictureUrl: null }).tint
+    ).equals(seasonTint({ id: 'sea_harbor' }))
+    // The team tile is the one `TeamEmblem` draws.
+    expect(
+      conversationIdentity(
+        chat({
+          scope: { type: 'team', id: 'tem_harbor' },
+          avatarName: 'Harbor',
+          avatarUrl: null
+        })
+      ).tiles[0]
+    ).includes(groupTile({ kind: 'team', id: 'tem_harbor', name: 'Harbor' }))
   })
 
   it('uses a season or league own name and keeps older response fallbacks readable', function () {

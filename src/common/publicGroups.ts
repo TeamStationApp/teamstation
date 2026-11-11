@@ -36,7 +36,13 @@ export const asPublicGroup = asObject({
   external: asOptional(asBoolean, false),
   parentNames: asOptional(asArray(asString), []),
   /** A season's or team's parent league, so a picker can keep to one. */
-  leagueId: asOptional(nullable(asString), null)
+  leagueId: asOptional(nullable(asString), null),
+  /**
+   * A season's league's picture, signed, which the season is drawn with when
+   * it has none of its own; null for a team or a league, and absent on older
+   * servers.
+   */
+  leaguePictureUrl: asOptional(nullable(asString), null)
 })
 export type PublicGroup = ReturnType<typeof asPublicGroup>
 /**

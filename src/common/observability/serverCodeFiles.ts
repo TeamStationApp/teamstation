@@ -170,6 +170,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/groups/follows.js',
   'server/groups/groupPhoto.js',
   'server/groups/guardianLimits.js',
+  'server/groups/leaguePictures.js',
   'server/groups/noticePolicy.js',
   'server/groups/openApi.js',
   'server/groups/ownershipPreflight.js',

@@ -951,6 +951,7 @@ describe('a season’s and a league’s People tab, however the page is opened',
       {
         id: 'sea_spring',
         leagueId: null,
+        leaguePictureUrl: null,
         name: 'Demo Regular',
         year: 2026,
         term: null,

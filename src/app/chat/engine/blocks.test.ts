@@ -46,6 +46,8 @@ function fixture(): {
     people: [],
     avatarUrl: null,
     avatarName: null,
+    leagueId: null,
+    leaguePictureUrl: null,
     lastPostId: null,
     lastPostAt: null,
     lastPostSeq: 0,

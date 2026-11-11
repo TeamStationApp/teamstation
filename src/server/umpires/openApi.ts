@@ -259,6 +259,10 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   const requirementsPath = paths[
     '/leagues/{leagueId}/umpire-requirements'
   ] as Record<string, Record<string, unknown>>
+  requirementsPath.get.description =
+    'Each of `seasons` is `{ id, name, logoUrl, leagueId, leaguePictureUrl, ' +
+    'requirement }`. `leaguePictureUrl` is the league\u2019s signed picture, ' +
+    'or null, which a season with no `logoUrl` is drawn with.'
   requirementsPath.put.requestBody = {
     required: true,
     content: {

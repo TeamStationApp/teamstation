@@ -29,10 +29,9 @@ import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Button,
   Card,
-  Emblem,
   GameRow,
+  GroupEmblem,
   HandoffView,
-  initialsOf,
   ManageGear,
   PillTabs,
   ScheduleRow,
@@ -313,17 +312,39 @@ export function SeasonPresentation(
   const handoff = useHandoff(headerHeight)
   const progress = handoff.progress
   const mark = publicDetail?.group.imageUrl ?? season.logoUrl
+  // The season's tile: its league's colour, and its league's picture when it
+  // has none of its own.
+  const leagueId = publicDetail?.group.leagueId ?? season.leagueId
+  const leagueMark =
+    publicDetail?.group.leaguePictureUrl ?? season.leaguePictureUrl
   useHeaderHandoff(
     useMemo(
       () => (
         <HandoffView progress={progress} style={styles.headerHandoff}>
-          <Emblem uri={mark} fallback={initialsOf(season.name)} size={1.75} />
+          <GroupEmblem
+            kind="season"
+            id={season.id}
+            leagueId={leagueId}
+            name={season.name}
+            uri={mark}
+            leagueUri={leagueMark}
+            size={1.75}
+          />
           <Text style={styles.headerName} numberOfLines={1}>
             {season.name}
           </Text>
         </HandoffView>
       ),
-      [mark, progress, season.name, styles.headerHandoff, styles.headerName]
+      [
+        leagueId,
+        leagueMark,
+        mark,
+        progress,
+        season.id,
+        season.name,
+        styles.headerHandoff,
+        styles.headerName
+      ]
     )
   )
 
@@ -623,7 +644,15 @@ export function SeasonPresentation(
       hero={
         <Card style={styles.identity} ref={handoff.ref}>
           <View style={styles.identityTop}>
-            <Emblem uri={mark} fallback={initialsOf(season.name)} size={2.25} />
+            <GroupEmblem
+              kind="season"
+              id={season.id}
+              leagueId={leagueId}
+              name={season.name}
+              uri={mark}
+              leagueUri={leagueMark}
+              size={2.25}
+            />
             <Text style={styles.seasonName}>{season.name}</Text>
             {props.onSettings != null && publicDetail == null ? (
               <ManageGear

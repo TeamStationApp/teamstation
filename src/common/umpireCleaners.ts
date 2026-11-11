@@ -40,6 +40,8 @@ export const asUmpireSeasons = asObject({
       id: asString,
       name: asString,
       logoUrl: asEither(asString, asLiteral(null)),
+      leagueId: asOptional(asString, ''),
+      leaguePictureUrl: asOptional(asEither(asString, asLiteral(null)), null),
       requirement: asEither(
         asObject({
           levelId: asString,
