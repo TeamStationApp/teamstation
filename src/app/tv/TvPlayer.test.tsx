@@ -641,6 +641,32 @@ describe('TV game playback entry', () => {
     await key('swipeUp')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
+  it('shows SO and HBP/#P with pitching totals in the TV statistics panel', async () => {
+    wide = true
+    await render()
+    const video = document.querySelector('video')!
+    await act(async () => {
+      Object.defineProperty(video, 'duration', {
+        configurable: true,
+        value: 60
+      })
+      video.dispatchEvent(new window.Event('durationchange', { bubbles: true }))
+      video.currentTime = 1
+      video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+      await pause()
+    })
+    await press('Close panel')
+    await press('Box score')
+    await press('Team and player statistics')
+    const side = document.querySelector('[data-testid="tv-stats-away"]')!
+    expect(side.textContent).includes('PitchingIPHRERBBSOHBP#P')
+    expect(side.textContent).includes('Totals')
+    const labels = [...side.querySelectorAll('*')]
+      .filter(node => node.children.length === 0)
+      .map(node => node.textContent)
+    expect(labels).includes('#P')
+    expect(labels.indexOf('#P')).equals(labels.indexOf('HBP') + 1)
+  })
   it('scrolls expanded stats at half speed on drag, directional clicks and release', async () => {
     await render()
     await press('Close panel')

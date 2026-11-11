@@ -1,5 +1,5 @@
 import type { PitchingRow } from '../../common/api'
-import { inningsPitched } from '../../common/statExtras'
+import { addStatCount, inningsPitched } from '../../common/statExtras'
 import type { BattingLine } from './BoxScore'
 
 /**
@@ -100,7 +100,10 @@ export function pitchingTotals(rows: readonly PitchingRow[]): PitchingRow {
     bb: sum('bb'),
     k: sum('k'),
     gs: null,
-    pitches: null,
+    pitches: rows.reduce<number | null>(
+      (total, row) => addStatCount(total, row.pitches),
+      0
+    ),
     kl: null,
     lob: null,
     bk: null,

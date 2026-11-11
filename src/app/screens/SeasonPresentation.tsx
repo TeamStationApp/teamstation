@@ -71,6 +71,7 @@ import { GroupRelationshipRow } from './GroupRelationshipRow'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { SeasonStandings } from './SeasonStandings'
 import { battingColumns, pitchingColumns } from './statColumns'
+import { StatKey } from './StatKey'
 import { useBreakParent } from './useBreakParent'
 import { countFor, type When } from './whenFilter'
 
@@ -827,6 +828,7 @@ export function SeasonPresentation(
                         columns={battingColumns}
                         onOpen={openPlayer}
                       />
+                      <StatKey kind="batting" />
                     </Card>
                   )}
                   <SectionHeader
@@ -846,6 +848,7 @@ export function SeasonPresentation(
                         columns={pitchingColumns}
                         onOpen={openPlayer}
                       />
+                      <StatKey kind="pitching" />
                     </Card>
                   )}
                 </>

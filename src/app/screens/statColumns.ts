@@ -2,6 +2,7 @@ import type { BattingRow, PitchingRow } from '../../common/api'
 
 export interface StatColumn<T> {
   label: string
+  meaning?: string
   /** Typical formatted value; larger actual values expand the whole column. */
   sample?: string
   value: (row: T) => string
@@ -22,61 +23,148 @@ const percentage = (value: number | undefined): string =>
 
 /** One order and one format for the team tables and the player's cards. */
 export const battingColumns: Array<StatColumn<BattingRow>> = [
-  { label: 'PA', value: row => count(row.pa) },
-  { label: 'AB', value: row => count(row.ab) },
-  { label: 'H', value: row => count(row.h) },
-  { label: 'AVG', sample: '.999', value: row => average(row.rates.avg) },
-  { label: 'OBP', sample: '.999', value: row => average(row.rates.obp) },
-  { label: 'OPS', sample: '1.999', value: row => average(row.rates.ops) },
-  { label: 'SLG', sample: '1.999', value: row => average(row.rates.slg) },
-  { label: '1B', value: row => count(row.singles) },
-  { label: '2B', value: row => count(row.doubles) },
-  { label: '3B', value: row => count(row.triples) },
-  { label: 'HR', value: row => count(row.hr) },
-  { label: 'RBI', value: row => count(row.rbi) },
-  { label: 'R', value: row => count(row.r) },
-  { label: 'BB', value: row => count(row.bb) },
-  { label: 'SO', value: row => count(row.k) },
-  { label: 'HBP', value: row => count(row.hbp) },
-  { label: 'SAC', value: row => count(row.sh) },
-  { label: 'SF', value: row => count(row.sf) },
-  { label: 'ROE', value: row => count(row.roe) },
-  { label: 'FC', value: row => count(row.fc) },
-  { label: 'SB', value: row => count(row.sb) },
-  { label: 'SB%', sample: '100.0%', value: row => percentage(row.rates.sbPct) },
-  { label: 'CS', value: row => count(row.cs) },
-  { label: 'PIK', value: row => count(row.pik) }
+  { label: 'GP', meaning: 'Games played', value: row => count(row.g) },
+  { label: 'PA', meaning: 'Plate appearances', value: row => count(row.pa) },
+  { label: 'AB', meaning: 'At bats', value: row => count(row.ab) },
+  {
+    label: 'AVG',
+    meaning: 'Batting average',
+    sample: '.999',
+    value: row => average(row.rates.avg)
+  },
+  {
+    label: 'OBP',
+    meaning: 'On-base percentage',
+    sample: '.999',
+    value: row => average(row.rates.obp)
+  },
+  {
+    label: 'OPS',
+    meaning: 'On-base percentage plus slugging percentage',
+    sample: '1.999',
+    value: row => average(row.rates.ops)
+  },
+  {
+    label: 'SLG',
+    meaning: 'Slugging percentage',
+    sample: '1.999',
+    value: row => average(row.rates.slg)
+  },
+  { label: 'H', meaning: 'Hits', value: row => count(row.h) },
+  { label: '1B', meaning: 'Single', value: row => count(row.singles) },
+  { label: '2B', meaning: 'Doubles', value: row => count(row.doubles) },
+  { label: '3B', meaning: 'Triples', value: row => count(row.triples) },
+  { label: 'HR', meaning: 'Home runs', value: row => count(row.hr) },
+  { label: 'RBI', meaning: 'Runs batted in', value: row => count(row.rbi) },
+  { label: 'R', meaning: 'Runs scored', value: row => count(row.r) },
+  {
+    label: 'BB',
+    meaning: 'Base on balls (walks)',
+    value: row => count(row.bb)
+  },
+  { label: 'SO', meaning: 'Strikeouts', value: row => count(row.k) },
+  { label: 'K-L', meaning: 'Strikeouts Looking', value: row => count(row.kl) },
+  { label: 'HBP', meaning: 'Hit by pitch', value: row => count(row.hbp) },
+  {
+    label: 'SAC',
+    meaning: 'Sacrifice hits & bunts',
+    value: row => count(row.sh)
+  },
+  { label: 'SF', meaning: 'Sacrifice flies', value: row => count(row.sf) },
+  { label: 'ROE', meaning: 'Reached on error', value: row => count(row.roe) },
+  {
+    label: 'FC',
+    meaning: "Hit into fielder's choice",
+    value: row => count(row.fc)
+  },
+  { label: 'SB', meaning: 'Stolen bases', value: row => count(row.sb) },
+  {
+    label: 'SB%',
+    meaning: 'Stolen base percentage',
+    sample: '100.0%',
+    value: row => percentage(row.rates.sbPct)
+  },
+  { label: 'CS', meaning: 'Caught stealing', value: row => count(row.cs) },
+  { label: 'PIK', meaning: 'Picked off', value: row => count(row.pik) }
 ]
 
 export const pitchingColumns: Array<StatColumn<PitchingRow>> = [
-  { label: 'IP', sample: '99.2', value: row => row.ip },
-  { label: 'GP', value: row => count(row.g) },
-  { label: 'GS', value: row => count(row.gs) },
-  { label: 'BF', value: row => count(row.bf) },
-  { label: '#P', sample: '999', value: row => count(row.pitches) },
+  {
+    label: 'IP',
+    meaning: 'Innings pitched',
+    sample: '99.2',
+    value: row => row.ip
+  },
+  { label: 'GP', meaning: 'Games played', value: row => count(row.g) },
+  { label: 'GS', meaning: 'Games started', value: row => count(row.gs) },
+  { label: 'BF', meaning: 'Batters faced', value: row => count(row.bf) },
+  {
+    label: '#P',
+    meaning: 'Pitches',
+    sample: '999',
+    value: row => count(row.pitches)
+  },
   // Official scorer decisions are not present in the stored game record.
-  ...['W', 'L', 'SV', 'SVO', 'BS', 'SV%'].map(label => ({
+  ...(
+    [
+      ['W', 'Wins'],
+      ['L', 'Losses'],
+      ['SV', 'Saves'],
+      ['SVO', 'Save opportunities'],
+      ['BS', 'Blown saves'],
+      ['SV%', 'Save percentage']
+    ] as const
+  ).map(([label, meaning]) => ({
     label,
+    meaning,
     sample: label === 'SV%' ? '100.0%' : '99',
     value: () => '—'
   })),
-  { label: 'H', value: row => count(row.h) },
-  { label: 'R', value: row => count(row.r) },
-  { label: 'ER', value: row => count(row.er) },
-  { label: 'BB', value: row => count(row.bb) },
-  { label: 'SO', value: row => count(row.k) },
-  { label: 'K-L', value: row => count(row.kl) },
-  { label: 'HBP', value: row => count(row.hbp) },
-  { label: 'ERA', sample: '9.99', value: row => decimal(row.rates.era) },
-  { label: 'WHIP', sample: '9.99', value: row => decimal(row.rates.whip) },
-  { label: 'LOB', value: row => count(row.lob) },
-  { label: 'BK', value: row => count(row.bk) },
-  { label: 'PIK', value: row => count(row.pik) },
-  { label: 'CS', value: row => count(row.cs) },
-  { label: 'SB', value: row => count(row.sb) },
-  { label: 'SB%', sample: '100.0%', value: row => percentage(row.rates.sbPct) },
-  { label: 'WP', value: row => count(row.wp) },
-  { label: 'BAA', sample: '.999', value: row => average(row.rates.baa) }
+  { label: 'H', meaning: 'Hits', value: row => count(row.h) },
+  { label: 'R', meaning: 'Runs scored', value: row => count(row.r) },
+  { label: 'ER', meaning: 'Earned runs', value: row => count(row.er) },
+  {
+    label: 'BB',
+    meaning: 'Base on balls (walks)',
+    value: row => count(row.bb)
+  },
+  { label: 'SO', meaning: 'Strikeouts', value: row => count(row.k) },
+  { label: 'K-L', meaning: 'Strikeouts Looking', value: row => count(row.kl) },
+  { label: 'HBP', meaning: 'Hit by pitch', value: row => count(row.hbp) },
+  {
+    label: 'ERA',
+    meaning: 'Earned run average',
+    sample: '9.99',
+    value: row => decimal(row.rates.era)
+  },
+  {
+    label: 'WHIP',
+    meaning: 'Walks and hits per inning pitched',
+    sample: '9.99',
+    value: row => decimal(row.rates.whip)
+  },
+  {
+    label: 'LOB',
+    meaning: 'Runners left on base',
+    value: row => count(row.lob)
+  },
+  { label: 'BK', meaning: 'Balks', value: row => count(row.bk) },
+  { label: 'PIK', meaning: 'Picked off', value: row => count(row.pik) },
+  { label: 'CS', meaning: 'Caught stealing', value: row => count(row.cs) },
+  { label: 'SB', meaning: 'Stolen bases', value: row => count(row.sb) },
+  {
+    label: 'SB%',
+    meaning: 'Stolen base percentage',
+    sample: '100.0%',
+    value: row => percentage(row.rates.sbPct)
+  },
+  { label: 'WP', meaning: 'Wild pitches', value: row => count(row.wp) },
+  {
+    label: 'BAA',
+    meaning: 'Opponent batting average',
+    sample: '.999',
+    value: row => average(row.rates.baa)
+  }
 ]
 
 /** A quarter rem separates adjacent figures; the first column has no gutter. */

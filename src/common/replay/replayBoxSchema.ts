@@ -4,6 +4,7 @@ import {
   asEither,
   asNumber,
   asObject,
+  asOptional,
   asString,
   type Cleaner
 } from 'cleaners'
@@ -35,6 +36,7 @@ const asPitching = asObject({
   er: asNumber,
   bb: asNumber,
   k: asNumber,
+  hbp: asOptional(asNullable(asNumber), null),
   pc: asNullable(asNumber),
   current: asBoolean
 })

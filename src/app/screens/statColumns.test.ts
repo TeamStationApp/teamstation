@@ -36,6 +36,7 @@ export const battingFixture = asBattingRow({
   hr: 1,
   bb: 1,
   k: 2,
+  kl: 1,
   r: 2,
   rbi: 3,
   hbp: 1,
@@ -79,18 +80,19 @@ export const pitchingFixture = asPitchingRow({
 describe('expanded statistics columns', function () {
   it('formats every batting statistic in the requested order', function () {
     expect(battingColumns.map(c => c.label).join(' ')).equals(
-      'PA AB H AVG OBP OPS SLG 1B 2B 3B HR RBI R BB SO HBP SAC SF ROE FC SB SB% CS PIK'
+      'GP PA AB AVG OBP OPS SLG H 1B 2B 3B HR RBI R BB SO K-L HBP SAC SF ROE FC SB SB% CS PIK'
     )
     expect(
       formatted(battingFixture, battingColumns).map(c => c.value)
     ).deep.equals([
+      '2',
       '8',
       '6',
-      '3',
       '.500',
       '.625',
       '1.792',
       '1.167',
+      '3',
       '1',
       '1',
       '0',
@@ -99,6 +101,7 @@ describe('expanded statistics columns', function () {
       '2',
       '1',
       '2',
+      '1',
       '1',
       '0',
       '0',

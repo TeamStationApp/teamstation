@@ -43,6 +43,7 @@ function side(name: string, innings: number[]): ReplaySide {
         er: 1,
         bb: 2,
         k: 9,
+        hbp: 0,
         pc: 101,
         current: false
       }
@@ -131,10 +132,10 @@ describe('the replay box score', () => {
     expect(rows.map(row => row.textContent)).deep.equals([
       // AB R H RBI BB K
       'Totals523202',
-      // IP H R ER BB K PC
-      'Totals3.082241851',
+      // IP H R ER BB SO HBP #P
+      'Totals3.0822418051',
       'Totals412101',
-      'Totals9.041129101'
+      'Totals9.0411290101'
     ])
     for (const row of rows) {
       expect(row.getAttribute('data-testid')).equals(null)
@@ -175,7 +176,7 @@ describe('the replay box score', () => {
     expect(text).includes('Harbor Hawks batting')
     expect(text).includes('Valley Pines pitching')
     expect(text).includes('Harbor Hawks Batter412101')
-    expect(text).includes('Valley Pines Pitcher9.041129101')
+    expect(text).includes('Valley Pines Pitcher9.0411290101')
     expect(
       column.querySelector('[data-testid="replay-box-score-line-figures"]')
     ).equals(null)

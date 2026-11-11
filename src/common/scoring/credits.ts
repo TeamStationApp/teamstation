@@ -153,6 +153,7 @@ export interface BattingLine {
   hbp: number
 }
 export interface PitchingLine {
+  hbp: number
   pitches: number
   outs: number
   h: number
@@ -165,7 +166,7 @@ function blankBatting(): BattingLine {
   return { pa: 0, ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0, hbp: 0 }
 }
 function blankPitching(): PitchingLine {
-  return { pitches: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0 }
+  return { pitches: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0, hbp: 0 }
 }
 
 /**
@@ -283,7 +284,10 @@ export function statLines(plays: readonly GamePlay[]): {
       line.bb++
       pitcher.bb++
     }
-    if (type === 'hit_by_pitch') line.hbp++
+    if (type === 'hit_by_pitch') {
+      line.hbp++
+      pitcher.hbp++
+    }
     if (play.result.rbi > 0) bat(batter).rbi += play.result.rbi
   }
   return { batting, pitching }

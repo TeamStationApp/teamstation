@@ -239,6 +239,7 @@ describe('the replay box score totals', function () {
     er: 0,
     bb: 1,
     k: 2,
+    hbp: 0,
     pc: 20,
     current: false,
     ...figures
@@ -262,9 +263,20 @@ describe('the replay box score totals', function () {
     })
   })
 
+  it('keeps missing historical HBP detail unknown in pitching totals', function () {
+    expect(
+      pitchingTotals([pitcher(1, 3, { hbp: null }), pitcher(2, 3, { hbp: 1 })])
+        .hbp
+    ).equals(null)
+    expect(pitchingTotals([]).hbp).equals(0)
+  })
+
   it('adds innings as outs, and the other pitching columns as they are', function () {
     expect(
-      pitchingTotals([pitcher(1, 4), pitcher(2, 5, { er: 1, pc: 31 })])
+      pitchingTotals([
+        pitcher(1, 4, { hbp: 2 }),
+        pitcher(2, 5, { er: 1, hbp: 1, pc: 31 })
+      ])
     ).deep.equals({
       outs: 9,
       ip: '3.0',
@@ -273,6 +285,7 @@ describe('the replay box score totals', function () {
       er: 1,
       bb: 2,
       k: 4,
+      hbp: 3,
       pc: 51
     })
   })

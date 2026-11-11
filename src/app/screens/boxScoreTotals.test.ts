@@ -52,6 +52,15 @@ const pitcher = (
   })
 
 describe('box score totals arithmetic', function () {
+  it('sums pitch counts and keeps unknown totals unknown', function () {
+    const a = { ...pitcher(10, 4, '1.1'), pitches: 23 }
+    const b = { ...pitcher(11, 5, '1.2'), pitches: 31 }
+    expect(pitchingTotals([a, b]).pitches).equals(54)
+    expect(pitchingTotals([{ ...a, pitches: 0 }]).pitches).equals(0)
+    expect(pitchingTotals([a, { ...b, pitches: null }]).pitches).equals(null)
+    expect(pitchingTotals([]).pitches).equals(0)
+  })
+
   it('sums each batting count, and averages the summed hits over the summed at-bats', function () {
     const total = battingTotals([
       batter(1, { ab: 3, h: 2, r: 1, k: 1 }, 0.4),

@@ -757,7 +757,26 @@ describe('Coach Game', function () {
     expect(at('Hosts')).lessThan(at('The game has not started'))
     expect(at('The game has not started')).lessThan(at('Batting — Hosts'))
     inOrder(text.slice(at('Batting — Hosts')), HOSTS)
-    expect(text).includes('Ohtani00000000–')
+    const firstBatter = await coach.page.$eval(
+      '[data-testid="Roster box score"]',
+      root => {
+        const names = Array.from(
+          root.querySelectorAll('[data-testid="frozen-names"]')
+        ).find(column =>
+          Array.from(column.children).some(row => row.textContent === 'Ohtani')
+        )!
+        const index = Array.from(names.children).findIndex(
+          row => row.textContent === 'Ohtani'
+        )
+        const figures =
+          names.nextElementSibling!.firstElementChild!.firstElementChild!
+        return (
+          String(names.children[index].textContent) +
+          String(figures.children[index].textContent)
+        )
+      }
+    )
+    expect(firstBatter).equals('Ohtani00000000–')
     // Nobody has pitched, and the visitors' order is not the game's yet.
     expect(text).not.includes('Pitching')
     expect(text).not.includes('Batting — Visitors')

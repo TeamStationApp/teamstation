@@ -193,7 +193,17 @@ async function main(): Promise<void> {
         })),
         ...expected[side].pitching.map(p => ({
           side,
-          cells: [p.name, p.ip, p.h, p.r, p.er, p.bb, p.k, p.pc]
+          cells: [
+            p.name,
+            p.ip,
+            p.h,
+            p.r,
+            p.er,
+            p.bb,
+            p.k,
+            p.hbp ?? '—',
+            p.pc ?? '—'
+          ]
         }))
       ])
       if (
@@ -363,7 +373,17 @@ async function main(): Promise<void> {
               containsRow(tree, [p.name, p.ab, p.r, p.h, p.rbi, p.bb, p.k])
             ) &&
             expected[side].pitching.every(p =>
-              containsRow(tree, [p.name, p.ip, p.h, p.r, p.er, p.bb, p.k, p.pc])
+              containsRow(tree, [
+                p.name,
+                p.ip,
+                p.h,
+                p.r,
+                p.er,
+                p.bb,
+                p.k,
+                p.hbp ?? '—',
+                p.pc ?? '—'
+              ])
             )
         )
         if (matches) {

@@ -73,6 +73,7 @@ export function startingBox(
           er: 0,
           bb: 0,
           k: 0,
+          hbp: 0,
           pc: 0,
           current: false
         }
