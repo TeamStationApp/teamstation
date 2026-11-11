@@ -778,7 +778,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         await click('Batter Out — Other')
         await settle(80)
         expect(rows()).has.length.greaterThan(0)
-        if (rename)
+        if (rename !== false)
           await act(async () => {
             await client.renameGuestPlayer(
               'g1',
