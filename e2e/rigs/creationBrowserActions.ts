@@ -237,3 +237,67 @@ export async function frameText(
       )
     })
 }
+
+/** The value an event schedule row shows, from its label `<field>: <value>`. */
+async function scheduleValue(page: Page, field: string): Promise<string> {
+  const css = `[data-scene-role="top"] [role="button"][aria-label^="${field}: "]`
+  await page.waitForSelector(css, { timeout: 15000 })
+  const label = await page.$eval(css, node => node.getAttribute('aria-label'))
+  return String(label).slice(field.length + 2)
+}
+
+/** Waits for the event schedule row `field` to show `value`. */
+async function rowShows(
+  page: Page,
+  field: string,
+  value: string
+): Promise<void> {
+  await page.waitForSelector(
+    `[data-scene-role="top"] [role="button"][aria-label="${field}: ${value}"]`,
+    { timeout: 15000 }
+  )
+}
+
+/**
+ * Picks `date` (YYYY-MM-DD) for the event schedule row `field` ("Date",
+ * "End date"): opens its calendar, steps from the month it shows to the
+ * date's, chooses the day and uses it.
+ */
+export async function chooseDate(
+  page: Page,
+  field: string,
+  date: string
+): Promise<void> {
+  const shown = await scheduleValue(page, field)
+  const months = (value: string): number =>
+    Number(value.slice(0, 4)) * 12 + Number(value.slice(5, 7))
+  await press(page, `${field}: ${shown}`)
+  const delta = months(date) - months(shown)
+  for (let i = 0; i < Math.abs(delta); i++)
+    await press(page, delta > 0 ? 'Next month' : 'Previous month')
+  await press(page, `Choose ${date}`)
+  await press(page, 'Use date')
+  await rowShows(page, field, date)
+}
+
+/**
+ * Picks `time` (HH:MM, 24-hour, minutes in fives) for the event schedule row
+ * `field` ("Start time", "End time") on its hour, minute and period wheels.
+ */
+export async function chooseTime(
+  page: Page,
+  field: string,
+  time: string
+): Promise<void> {
+  const shown = await scheduleValue(page, field)
+  const [hour, minute] = time.split(':').map(Number)
+  const twelve = hour % 12 === 0 ? 12 : hour % 12
+  const minutes = String(minute).padStart(2, '0')
+  const period = hour < 12 ? 'AM' : 'PM'
+  await press(page, `${field}: ${shown}`)
+  await press(page, `Hour ${String(twelve).padStart(2, '0')}`)
+  await press(page, `Minute ${minutes}`)
+  await press(page, `Period ${period}`)
+  await press(page, 'Use time')
+  await rowShows(page, field, `${twelve}:${minutes} ${period}`)
+}
