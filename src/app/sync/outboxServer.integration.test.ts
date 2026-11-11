@@ -1581,7 +1581,7 @@ describe('the outbox against the server', function () {
       await client.drainOutbox()
       expect((await client.outboxSummary()).count).equals(0)
       expect(transport.posts.at(-1)?.body.superseded === true).equals(
-        !acceptedFirst || advanced
+        !acceptedFirst
       )
       const winner = await client.gameEvents(gameId)
       expect(winner.plays[0].result.eventType).equals(

@@ -25,7 +25,6 @@ import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import {
   asScoringMutation,
-  sameScoringMutation,
   type ScoringMutation
 } from '../../common/scoring/scoringMutation'
 import {
@@ -414,13 +413,9 @@ export function eventRoutes(
                   )
               )
           )
-          const superseded =
-            kept.superseded === true ||
-            (body.scoringMutation != null &&
-              !sameScoringMutation(
-                body.scoringMutation,
-                current.scoringMutation
-              ))
+          // Acceptance belongs to the original transaction. A peer may
+          // have advanced its accepted result before this reply is retried.
+          const superseded = kept.superseded === true
           if (superseded)
             return {
               status: 200,
