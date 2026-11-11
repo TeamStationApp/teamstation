@@ -1051,17 +1051,18 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
 }
 /**
  * The sessions whose screens have closed with changes still unsaved, and
- * the page's warning before unloading while any is: leaving the screen does
- * not wait for them, but reloading or closing the tab would lose them.
+ * the web's swaps not yet sent or refused, and the page's warning before
+ * unloading while any is: leaving the screen does not wait for them, but
+ * reloading or closing the tab would lose them.
  */
-const savingAfterLeave = new Set<GameSession>()
+const savingAfterLeave = new Set<object>()
 const warnUnsaved = (event: BeforeUnloadEvent): void => {
   if (savingAfterLeave.size === 0) return
   event.preventDefault()
   // eslint-disable-next-line @typescript-eslint/no-deprecated
   event.returnValue = ''
 }
-function holdUnload(game: GameSession, held: boolean): void {
+function holdUnload(game: object, held: boolean): void {
   const before = savingAfterLeave.size
   if (held) savingAfterLeave.add(game)
   else savingAfterLeave.delete(game)
@@ -1735,6 +1736,18 @@ function ScoringPanel(props: {
           session: props.game,
           onRefused: props.onSwapRefused
         })
+        // The swap and the changes ahead of it are sent behind the screen,
+        // which the swapped session replaces, with nothing pending of its
+        // own: until they are sent or refused, the page warns before it
+        // unloads, as it does for a game left still saving.
+        const out = {}
+        holdUnload(out, true)
+        props.webWrites
+          .settled()
+          .finally(() => {
+            holdUnload(out, false)
+          })
+          .catch(() => undefined)
       }
       if (!swapMounted.current) return
       const replacing = await props.onSwapped(answer, swapped)

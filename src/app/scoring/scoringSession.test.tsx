@@ -1315,6 +1315,46 @@ describe('swapping from the scoring menu', function () {
     expect(screen.opens()).equals(2)
   })
 
+  it('on the web, warns before the page unloads while a swap confirmed over a held save is still out, and not once it is sent', async function () {
+    const screen = await swappable({ holdSaves: true })
+    await click('Ball')
+    await click(MENU)
+    await click(SWAP)
+    await click('Reset and Swap')
+    await settle()
+    expect(screen.order()).deep.equals([])
+    // The screen is gone, and its own warning with it.
+    await unmount()
+    const reload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(reload)
+    expect(reload.defaultPrevented).equals(true)
+    screen.release()
+    await settle()
+    expect(screen.order()).deep.equals(['save', 'swap'])
+    const sent = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(sent)
+    expect(sent.defaultPrevented).equals(false)
+  })
+
+  it('on the web, warns before the page unloads until a swap the server refuses is answered', async function () {
+    const screen = await swappable({
+      holdSwaps: true,
+      refuse: new HttpError('conflict', 'Not now')
+    })
+    await click(MENU)
+    await click(SWAP)
+    await click('Confirm Swap')
+    await settle()
+    const reload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(reload)
+    expect(reload.defaultPrevented).equals(true)
+    screen.release()
+    await settle()
+    const refused = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(refused)
+    expect(refused.defaultPrevented).equals(false)
+  })
+
   it('on the web, opens on the swapped sides at once, takes a pitch, and sends it behind a swap request that is not answered', async function () {
     const screen = await swappable({ holdSwaps: true })
     await click(MENU)
