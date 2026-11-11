@@ -119,6 +119,24 @@ async function main(): Promise<void> {
       .selectAll()
       .where('id', '=', id)
       .executeTakeFirstOrThrow()
+  /** Scrolls the schedule until every game its header counts is loaded. */
+  const allGames = async (b: BrowserSession): Promise<void> => {
+    await b.page.waitForFunction(
+      () => {
+        const counted = /(\d+) games?/.exec(document.body.innerText)
+        const rows = document.querySelectorAll(
+          '[data-scene-role="top"] [data-testid="schedule-display-row"]'
+        )
+        if (counted !== null && rows.length >= Number(counted[1])) return true
+        // The list scrolls inside its own container; the last row's
+        // reaching the end asks for the next page.
+        if (rows.length > 0)
+          rows[rows.length - 1].scrollIntoView({ block: 'end' })
+        return false
+      },
+      { timeout: 30000, polling: 500 }
+    )
+  }
   const openSettings = async (b: BrowserSession, id: string): Promise<void> => {
     await visit(b, `/games/${id}/settings`)
     await contains(b.page, 'Swap home and away')
@@ -746,11 +764,13 @@ async function main(): Promise<void> {
     expect((await game(seed.managedGameId)).away_team_id).equals(
       f.standaloneTeam
     )
+    // The Eagles' own admin proposes: the season's admin, who also runs the
+    // Hawks, consents for both sides of a season game and saves at once.
     const finalId = 'baseline-hawks-eagles'
-    await openSettings(admin, finalId)
-    await fill(admin.m, 'Venue name (optional)', 'Demo Proposed Final Field')
-    await tap(admin.m, 'Save')
-    await contains(admin.page, 'Game proposal sent')
+    await openSettings(opponent, finalId)
+    await fill(opponent.m, 'Venue name (optional)', 'Demo Proposed Final Field')
+    await tap(opponent.m, 'Save')
+    await contains(opponent.page, 'Game proposal sent')
     const finalProposal = await f.h.db
       .selectFrom('group_requests')
       .selectAll()
@@ -759,16 +779,18 @@ async function main(): Promise<void> {
       .executeTakeFirstOrThrow()
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
     await contains(admin.page, 'Pending approval')
+    await allGames(admin)
     await absent(admin.page, '2–5')
-    await visit(opponent, `/notifications/${finalProposal.id}`)
-    await tap(opponent.m, 'Decline invitation')
-    await contains(opponent.page, 'Declined')
+    await visit(admin, `/notifications/${finalProposal.id}`)
+    await tap(admin.m, 'Decline invitation')
+    await contains(admin.page, 'Declined')
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
+    await allGames(admin)
     await contains(admin.page, '2–5')
-    await openSettings(admin, finalId)
-    await fill(admin.m, 'Venue name (optional)', 'Demo Expiring Final Field')
-    await tap(admin.m, 'Save')
-    await contains(admin.page, 'Game proposal sent')
+    await openSettings(opponent, finalId)
+    await fill(opponent.m, 'Venue name (optional)', 'Demo Expiring Final Field')
+    await tap(opponent.m, 'Save')
+    await contains(opponent.page, 'Game proposal sent')
     const expiring = await f.h.db
       .selectFrom('group_requests')
       .select('id')
@@ -784,6 +806,7 @@ async function main(): Promise<void> {
       .where('id', '=', expiring.id)
       .execute()
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
+    await allGames(admin)
     await contains(admin.page, '2–5')
     expect((await game(finalId)).venue).equals('Demo Field')
     await pass(
