@@ -118,6 +118,31 @@ that a location has not been set.
 
 ## Buttons
 
+### Icons use shared placement
+
+Use `ButtonIcon` for artwork inside a button or tab, including icon-and-label
+buttons and custom vector glyphs. It keeps web artwork in place and centers
+native icons. The existing control owns its touch target, accessibility label
+and action. Pass custom web text as its child with the matching icon name;
+pass vector artwork as a child without a name. Paired input-row icons and
+editable/read-only variants use the same placement so their artwork stays
+aligned. Keep unrelated decorative/status icons on `Icon`. Screens do not add baseline nudges.
+
+The native gallery checks painted glyph bounds against their circular targets
+within one point, at default and large sizes. Build it with
+`TS_ICON_FIXTURE_DIR=<output> node scripts/build-button-icons-native.mjs ios gallery`
+(or `android gallery`); use `principal` for the screen fixture. iOS requires
+installed pods and builds a simulator app; Android requires the SDK and uses
+a local debug keystore. Its separate iconFixture variant uses the host ABI
+(arm64-v8a or x86_64; override with TS_ICON_ANDROID_ABI), an `.icons` application
+ID suffix, and a separate APK output. It does not replace the normal app or
+release APK. Install the printed app on your selected simulator/emulator, then run
+`node -r sucrase/register src/test/buttonIcons.gallery.e2e.ts` with
+`TS_ICON_SURFACE`, `TS_ICON_APP_ID`, `TS_ICON_ARTIFACTS`, `MAESTRO_DEVICE`, and
+a task-specific `MAESTRO_D`, plus `TS_MAESTRO_D_CLIENT` and `MAESTRO_D_BIN`
+pointing to the locally built Maestro D client and executable. The runner
+checks placement, action targets and disabled states, saves screenshots, and shuts down its own daemon.
+
 ### Game hero actions stay compact
 
 Order hero actions Score, Record, Coach, DJ, filtering each by its capability

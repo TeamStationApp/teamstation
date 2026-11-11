@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { Icon } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { bindMessageTooltips, messageTooltipProps } from './chatWebInteractions'
@@ -53,22 +53,26 @@ export function MessageActions(props: {
       {props.reply &&
         button(
           lstrings.chat_reply,
-          <Text
-            style={{ color: theme.primaryTextColor, fontSize: theme.rem(1) }}
-          >
-            ↩
-          </Text>,
+          <ButtonIcon name="reply">
+            <Text
+              style={{ color: theme.primaryTextColor, fontSize: theme.rem(1) }}
+            >
+              ↩
+            </Text>
+          </ButtonIcon>,
           props.onReply
         )}
       {props.react &&
         button(
           lstrings.chat_send_emoji,
-          <Icon name="mood" size={1} color={theme.primaryTextColor} />,
+          <ButtonIcon name="mood" size={1} color={theme.primaryTextColor} />,
           props.onReact
         )}
       {button(
         lstrings.chat_more_message_actions,
-        <Text style={{ color: theme.primaryTextColor }}>•••</Text>,
+        <ButtonIcon name="more">
+          <Text style={{ color: theme.primaryTextColor }}>•••</Text>
+        </ButtonIcon>,
         props.onMore
       )}
     </View>

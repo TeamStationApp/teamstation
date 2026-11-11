@@ -372,8 +372,14 @@ async function main(): Promise<void> {
       await m.openLink({
         link: f.h.origin + `/groups/team/${f.teamA}/settings`
       })
-      await m.scrollUntilVisible({ element: { text: 'Leave Harbor League' } })
-      await tap(m, 'Leave Harbor League')
+      await m.scrollUntilVisible({
+        element: { css: '[aria-label="Leave Harbor League"]' },
+        timeout: 15000
+      })
+      await m.tapOn({
+        css: '[aria-label="Leave Harbor League"]',
+        timeout: 15000
+      })
       await page.waitForSelector('[aria-label="Review relationship changes"]')
       await shot('new-leave-parent', `/groups/team/${f.teamA}/settings`)
     }
@@ -391,16 +397,20 @@ async function main(): Promise<void> {
       `${phase} sweep: ${results.length} states, ${results.reduce((count, row) => count + row.pills.length, 0)} visible shared pills checked`
     )
   } finally {
-    if (!before)
-      await recordBrowserCoverage(
-        [page],
-        f.h.origin,
-        resolve('coverage/creation/settings-sweep-browser.json')
-      )
-    await m.detach()
-    await browser.disconnect()
-    await daemon.shutdown()
-    await f.h.close()
+    try {
+      if (!before)
+        await recordBrowserCoverage(
+          [page],
+          f.h.origin,
+          resolve('coverage/creation/settings-sweep-browser.json'),
+          root
+        )
+    } finally {
+      await m.detach()
+      await browser.disconnect()
+      await daemon.shutdown()
+      await f.h.close()
+    }
   }
 }
 main().catch((error: unknown) => {

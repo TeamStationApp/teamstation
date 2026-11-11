@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import type { Dictation } from './dictationTypes'
 import { ControlBackdrop } from './ScoringControlArt'
@@ -180,7 +180,7 @@ export function PushToTalkButton(
       }
     >
       {!round && <ControlBackdrop kind={kind} />}
-      <Icon
+      <ButtonIcon
         name={enabled ? 'mic' : 'mic_off'}
         size={round ? 1.5 : 1.75}
         color={CONTROL_COLORS[kind].text}

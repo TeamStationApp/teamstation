@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import type { ChatPin } from '../../common/api'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
@@ -54,13 +55,15 @@ export function PinnedMessageSummary(props: {
           paddingVertical: theme.rem(0.5)
         }}
       >
-        <Text
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-          style={{ color: theme.activeColor, fontSize: theme.rem(1.5) }}
-        >
-          ⌖
-        </Text>
+        <ButtonIcon name="pin">
+          <Text
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            style={{ color: theme.activeColor, fontSize: theme.rem(1.5) }}
+          >
+            ⌖
+          </Text>
+        </ButtonIcon>
         <View style={{ flex: 1, minWidth: 0 }}>
           <Text
             numberOfLines={1}
