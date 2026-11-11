@@ -8,14 +8,24 @@ import { after, before, describe, it } from 'mocha'
 import {
   asGameLineupsResponse,
   asRosterEntry,
-  type SaveLineupsBody
+  type SaveLineupsBody,
+  TeamStationClient
 } from '../../common/api'
+import { tagTargets } from '../../common/eventTags'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
+import { ScoringSession } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
+import {
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { startingContext } from '../../server/routes/lineups'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
+import { addGame, addScorableTeams } from '../../test/scoreboardKit'
 import { listenScreenScopes } from '../../test/screenScopeNotices'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
 import { cacheFileName, openCacheStore } from './cacheStore'
@@ -58,7 +68,15 @@ interface Transport {
   /** The next request reaches the server, and its answer is lost. */
   dropNext: boolean
   /** Every POST sent, with its key. */
-  posts: Array<{ path: string; key: string | undefined; status: number }>
+  posts: Array<{
+    path: string
+    key: string | undefined
+    status: number
+    body: Record<string, unknown>
+  }>
+  dropRecovered?: 'waiting' | 'armed'
+  holdAfterNextPost?: boolean
+  dropRecoveryRead?: 'waiting' | 'armed'
 }
 
 function phoneOn(
@@ -69,17 +87,55 @@ function phoneOn(
   const transport: Transport = { held: false, dropNext: false, posts: [] }
   const fetchThrough = (async (url: string, init: RequestInit) => {
     if (transport.held) throw new TypeError('Load failed')
+    if (transport.dropRecoveryRead === 'armed' && init.method !== 'POST') {
+      transport.dropRecoveryRead = undefined
+      throw new TypeError('Connection lost while reading canonical scoring.')
+    }
     const response = await fetch(url, init)
+    if (
+      transport.dropRecoveryRead === 'waiting' &&
+      (response.status === 409 ||
+        (init.method === 'POST' &&
+          response.ok &&
+          ((await response.clone().json()) as { superseded?: boolean })
+            .superseded === true))
+    )
+      transport.dropRecoveryRead = 'armed'
+    if (init.method === 'POST') {
+      const body = JSON.parse(init.body as string) as Record<string, unknown>
+      expect(body).not.has.property('deviceLineupRecovery')
+      expect(body).not.has.property('lineupRecovery')
+    }
     if (init.method === 'POST')
       transport.posts.push({
         path: url.replace(`${f.h.origin}/api/v1`, ''),
         key: (init.headers as Record<string, string>)['idempotency-key'],
-        status: response.status
+        status: response.status,
+        body: (await response.clone().json()) as Record<string, unknown>
       })
+    if (
+      init.method === 'POST' &&
+      transport.dropRecovered === 'armed' &&
+      response.ok
+    ) {
+      transport.dropRecovered = undefined
+      await response.text()
+      throw new TypeError('The recovered response was lost.')
+    }
+    if (
+      init.method === 'POST' &&
+      transport.dropRecovered === 'waiting' &&
+      response.status === 409
+    )
+      transport.dropRecovered = 'armed'
     if (transport.dropNext) {
       transport.dropNext = false
       await response.text()
       throw new TypeError('The network connection was lost.')
+    }
+    if (init.method === 'POST' && transport.holdAfterNextPost === true) {
+      transport.holdAfterNextPost = false
+      transport.held = true
     }
     return response
   }) as unknown as typeof fetch
@@ -176,6 +232,1441 @@ describe('the outbox against the server', function () {
     await f?.h.close()
   })
 
+  for (const scenario of ['append', 'conflict', 'final'] as const)
+    it(`recovers only verified legacy queued scoring after restart (${scenario})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      const ownDir = mkdtempSync(join(dir, 'legacy-protocol-'))
+      let a = phoneOn(f, ownDir)
+      const b = phoneOn(f, mkdtempSync(join(dir, 'legacy-peer-')))
+      const open = async (client: CachingClient): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context },
+          { setTimer: () => null, clearTimer: () => undefined }
+        )
+      const peer = await open(b.client)
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await peer.flush()
+      const accepted = await b.client.gameEvents(gameId)
+      // The real screen caches these before offline scoring; replay reads its
+      // setup locally and obtains the accepted scoring history from the server.
+      await a.client.game(gameId)
+      await a.client.roster(context.teams.home.id)
+      await a.client.roster(context.teams.away.id)
+      const ours = await open(a.client)
+      a.transport.held = true
+      expect(ours.apply({ type: 'pitch', call: 'C' }).problems).deep.equals([])
+      await ours.flush()
+      expect((await a.client.outboxSummary()).count).equals(1)
+      ours.close()
+      await a.client.sessionRefused()
+      const file = nodeSqliteExecutor(
+        join(ownDir, cacheFileName(userIdOfGumbo(101)))
+      )
+      try {
+        const kept = file.db.prepare('SELECT * FROM outbox').all()
+        expect(kept).length(1)
+        expect(kept[0].log).not.equals(null)
+        file.db.exec(
+          "UPDATE outbox SET fold_version = 5, body = json_remove(body, '$.scoringBase', '$.scoringMutation', '$.scoringHistory')"
+        )
+      } finally {
+        await file.close()
+      }
+      if (scenario === 'conflict')
+        expect(peer.apply({ type: 'pitch', call: 'S' }).problems).deep.equals(
+          []
+        )
+      if (scenario === 'final') {
+        expect(
+          peer.apply({ type: 'result', eventType: 'intent_walk' }).problems
+        ).deep.equals([])
+        expect(
+          peer.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+        ).deep.equals([])
+        expect(
+          peer.apply({ type: 'gameFlow', kind: 'endGame' }).problems
+        ).deep.equals([])
+      }
+      await peer.flush()
+      const before = await b.client.gameEvents(gameId)
+      a = phoneOn(f, ownDir)
+      try {
+        a.client.wakeOutbox(true)
+        await a.client.drainOutbox()
+        const summary = await a.client.outboxSummary()
+        const after = await b.client.gameEvents(gameId)
+        expect(a.transport.posts.some(post => post.status === 400)).equals(
+          false
+        )
+        if (scenario === 'append') {
+          expect(summary.count).equals(0)
+          expect(after.currentPlay?.count).deep.includes({
+            balls: 1,
+            strikes: 1
+          })
+          expect(after.scoringMutation?.id).not.equals(
+            accepted.scoringMutation?.id
+          )
+          expect(
+            a.transport.posts
+              .filter(post => post.path.endsWith('/events'))
+              .map(post => post.status)
+          ).deep.equals([200])
+        } else {
+          expect(summary.count).equals(1)
+          expect(summary.games[gameId]?.state).equals('parked')
+          expect(after).deep.equals(before)
+          expect(
+            a.transport.posts.filter(post => post.path.endsWith('/events'))
+          ).length(0)
+        }
+      } finally {
+        peer.close()
+        await a.client.sessionRefused()
+        await b.client.sessionRefused()
+      }
+    })
+
+  for (const peerAdvances of [false, true])
+    it(`keeps browser input after an accepted lost reply, unless a peer advanced (${peerAdvances})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      let drop = true
+      const client = new TeamStationClient({
+        baseUrl: `${f.h.origin}/api/v1`,
+        token: f.h.tokens.get(101),
+        fetch: (async (url: string, init: RequestInit) => {
+          const response = await fetch(url, init)
+          if (drop && init.method === 'POST' && response.ok) {
+            drop = false
+            await response.text()
+            throw new TypeError('Accepted browser reply was lost')
+          }
+          return response
+        }) as typeof fetch
+      })
+      const open = async (): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context },
+          { setTimer: () => null, clearTimer: () => undefined }
+        )
+      const ours = await open()
+      try {
+        expect(ours.apply({ type: 'pitch', call: 'B' }).problems).deep.equals(
+          []
+        )
+        await ours.flush()
+        expect(ours.offline).equals(true)
+        if (peerAdvances) {
+          const peer = await open()
+          expect(peer.apply({ type: 'pitch', call: 'S' }).problems).deep.equals(
+            []
+          )
+          await peer.flush()
+          peer.close()
+        }
+        expect(ours.apply({ type: 'pitch', call: 'C' }).problems).deep.equals(
+          []
+        )
+        await ours.flush()
+        expect(ours.pending).equals(0)
+        expect(ours.problem).equals(null)
+        const reloaded = await open()
+        expect(reloaded.actions).deep.equals([
+          { type: 'pitch', call: 'B' },
+          { type: 'pitch', call: peerAdvances ? 'S' : 'C' }
+        ])
+        reloaded.close()
+      } finally {
+        ours.close()
+      }
+    })
+
+  for (const tag of ['great pitch', null])
+    it(`retries identical scoring after a lost reply and delayed tag acknowledgment (${tag})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      let drop = false
+      const bodies: string[] = []
+      const client = new TeamStationClient({
+        baseUrl: `${f.h.origin}/api/v1`,
+        token: f.h.tokens.get(101),
+        fetch: (async (url: string, init: RequestInit) => {
+          if (init.method === 'POST' && /\/events(?:\?|$)/.test(String(url)))
+            bodies.push(typeof init.body === 'string' ? init.body : '')
+          const response = await fetch(url, init)
+          if (drop && init.method === 'POST' && response.ok) {
+            drop = false
+            await response.text()
+            throw new TypeError('Accepted scoring reply was lost')
+          }
+          return response
+        }) as typeof fetch
+      })
+      const session = await ScoringSession.open(
+        {
+          load: async id => await client.gameEvents(id),
+          save: async (id, change) => await client.saveGameEvents(id, change)
+        },
+        gameId,
+        { gamePk: gameId, ...context },
+        {
+          setTimer: () => null,
+          clearTimer: () => undefined
+        }
+      )
+      try {
+        session.apply({ type: 'pitch', call: 'B' })
+        await session.flush()
+        const target = session.eventTargets[0]
+        if (tag == null) {
+          await client.saveEventTag(gameId, target.id, 'great pitch')
+          session.setEventTag(target.id, 'great pitch')
+        }
+        drop = true
+        session.apply({ type: 'pitch', call: 'C' })
+        await session.flush()
+        expect(session.offline).equals(true)
+        await client.saveEventTag(gameId, target.id, tag)
+        expect(session.setEventTag(target.id, tag)).equals(true)
+        await session.flush()
+        expect(session.readOnly).equals(false)
+        expect(session.problem).equals(null)
+        expect(session.pending).equals(0)
+        expect(session.actions).deep.equals([
+          { type: 'pitch', call: 'B' },
+          { type: 'pitch', call: 'C' }
+        ])
+
+        expect(bodies).length(3)
+        expect(bodies[2]).equals(bodies[1])
+        expect(session.eventTargets[0].tag).equals(tag)
+        const canonical = await client.gameEvents(gameId)
+        expect(canonical.currentPlay?.count).deep.equals({
+          balls: 1,
+          strikes: 1,
+          outs: 0
+        })
+        expect(tagTargets(canonical.currentPlay!)[0].tag).equals(tag)
+        session.apply({ type: 'pitch', call: 'B' })
+        await session.flush()
+        expect(
+          (await client.gameEvents(gameId)).currentPlay?.count
+        ).deep.equals({ balls: 2, strikes: 1, outs: 0 })
+      } finally {
+        session.close()
+      }
+    })
+
+  for (const scenario of ['undo', 'coach', 'coach-undo', 'coach-read-failure'])
+    it(`recovers an ambiguous save before later input (${scenario})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      let drop = false
+      let failRead = false
+      const client = new TeamStationClient({
+        baseUrl: `${f.h.origin}/api/v1`,
+        token: f.h.tokens.get(101),
+        fetch: (async (url: string, init: RequestInit) => {
+          if (failRead && init.method === 'GET') {
+            failRead = false
+            throw new TypeError('Recovery read unavailable')
+          }
+          const response = await fetch(url, init)
+          if (drop && init.method === 'POST' && response.ok) {
+            drop = false
+            await response.text()
+            throw new TypeError('Accepted reply unavailable')
+          }
+          return response
+        }) as typeof fetch
+      })
+      const open = async (): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context },
+          { setTimer: () => null, clearTimer: () => undefined }
+        )
+      const scorer = await open()
+      try {
+        scorer.apply({ type: 'pitch', call: 'B' })
+        await scorer.flush()
+        drop = true
+        scorer.apply({ type: 'pitch', call: 'C' })
+        await scorer.flush()
+        expect(scorer.offline).equals(true)
+        const order = [...setupOf(scorer.state).sides.away.battingOrder]
+        if (scenario.startsWith('coach')) {
+          const coach = await open()
+          try {
+            ;[order[2], order[3]] = [order[3], order[2]]
+            expect(
+              coach.apply({
+                type: 'lineup',
+                kind: 'battingOrder',
+                side: 'away',
+                order
+              }).problems
+            ).deep.equals([])
+            await coach.flush()
+            expect(coach.pending).equals(0)
+          } finally {
+            coach.close()
+          }
+        }
+        if (scenario.endsWith('undo'))
+          expect(scorer.undo().problems).deep.equals([])
+        if (scenario === 'coach-read-failure') failRead = true
+        await scorer.flush()
+        if (scenario === 'coach-read-failure') {
+          expect(scorer.offline).equals(true)
+          await scorer.flush()
+        }
+        expect(scorer.offline).equals(false)
+        expect(scorer.pending).equals(0)
+        expect(scorer.problem).equals(null)
+        expect(setupOf(scorer.state).sides.away.battingOrder).deep.equals(order)
+        scorer.apply({ type: 'pitch', call: 'B' })
+        await scorer.flush()
+        const canonical = await open()
+        try {
+          expect(setupOf(canonical.state).sides.away.battingOrder).deep.equals(
+            order
+          )
+          expect(canonical.state.liveData.plays.currentPlay?.count).deep.equals(
+            {
+              balls: 2,
+              strikes: scenario.endsWith('undo') ? 0 : 1,
+              outs: 0
+            }
+          )
+          expect(scorer.actions).deep.equals(canonical.actions)
+        } finally {
+          canonical.close()
+        }
+      } finally {
+        scorer.close()
+      }
+    })
+
+  it('recovers an older full-history acknowledgment after SQLite restart without rescoring', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Owls',
+      away: 'Gulls'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const ownDir = mkdtempSync(join(dir, 'history-ack-'))
+    const a = phoneOn(f, ownDir)
+    const session = await ScoringSession.open(
+      {
+        load: async id => await a.client.gameEvents(id),
+        save: async (id, change) => await a.client.saveGameEvents(id, change)
+      },
+      gameId,
+      { gamePk: gameId, ...context },
+      { setTimer: () => null, clearTimer: () => undefined }
+    )
+    expect(
+      session.apply({ type: 'result', eventType: 'home_run' }).problems
+    ).deep.equals([])
+    expect(
+      session.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await session.flush()
+    a.transport.held = true
+    expect(session.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await session.flush()
+    session.close()
+    await a.client.sessionRefused()
+    const file = nodeSqliteExecutor(
+      join(ownDir, cacheFileName(userIdOfGumbo(101)))
+    )
+    let row: { path: string; body: string; idempotency_key: string }
+    try {
+      row = file.db
+        .prepare('SELECT path, body, idempotency_key FROM outbox')
+        .get() as unknown as typeof row
+    } finally {
+      await file.close()
+    }
+    const body = JSON.parse(row.body)
+    expect(body.scoringHistory).length(1)
+    // The previous build sent the stored full body and lost its successful reply.
+    const landed = await fetch(`${f.h.origin}/api/v1${row.path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${f.h.tokens.get(101)}`,
+        'idempotency-key': row.idempotency_key,
+        [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+        [SCORING_FEATURE_HEADER]: SCORING_FEATURES
+      },
+      body: row.body
+    })
+    expect(landed.status).equals(200)
+    const restarted = phoneOn(f, ownDir)
+    try {
+      restarted.client.wakeOutbox(true)
+      await restarted.client.drainOutbox()
+      expect((await restarted.client.outboxSummary()).count).equals(0)
+      expect(restarted.transport.posts.map(post => post.status)).deep.equals([
+        409, 200
+      ])
+      expect(restarted.transport.posts[0].body.code).equals(
+        'idempotencyKeyReused'
+      )
+      expect(restarted.transport.posts.map(post => post.key)).deep.equals([
+        row.idempotency_key,
+        row.idempotency_key
+      ])
+      const stored = await restarted.client.gameEvents(gameId)
+      expect(stored.plays).length(1)
+      expect(stored.currentPlay?.count).deep.includes({ balls: 1 })
+    } finally {
+      await restarted.client.sessionRefused()
+    }
+  })
+
+  it('never composes a known losing queued ancestor into a new canonical action', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Owls',
+      away: 'Gulls'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const ownDir = mkdtempSync(join(dir, 'known-loser-'))
+    const a = phoneOn(f, ownDir)
+    const b = phoneOn(f, mkdtempSync(join(dir, 'known-winner-')))
+    let at = Date.now() - 3000
+    const open = async (client: CachingClient): Promise<ScoringSession> =>
+      await ScoringSession.open(
+        {
+          load: async id => await client.gameEvents(id),
+          save: async (id, change) => await client.saveGameEvents(id, change)
+        },
+        gameId,
+        { gamePk: gameId, ...context },
+        {
+          now: () => new Date(at),
+          setTimer: () => null,
+          clearTimer: () => undefined
+        }
+      )
+    const ours = await open(a.client)
+    const peer = await open(b.client)
+    a.transport.held = true
+    expect(ours.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await ours.flush()
+    at += 100
+    expect(
+      ours.apply({ type: 'result', eventType: 'home_run' }).problems
+    ).deep.equals([])
+    expect(
+      ours.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await ours.flush()
+    at += 100
+    expect(
+      peer.apply({ type: 'result', eventType: 'single' }).problems
+    ).deep.equals([])
+    expect(
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await peer.flush()
+    a.transport.held = false
+    a.transport.holdAfterNextPost = true
+    a.client.wakeOutbox(true)
+    await a.client.drainOutbox()
+    expect((await a.client.outboxSummary()).count).equals(1)
+    expect(
+      (await a.client.gameEvents(gameId)).plays[0].result.eventType
+    ).equals('single')
+    await a.client.sessionRefused()
+    const restarted = phoneOn(f, ownDir)
+    restarted.transport.held = true
+    const resumed = await open(restarted.client)
+    expect(resumed.state.liveData.plays.allPlays[0].result.eventType).equals(
+      'single'
+    )
+    at += 100
+    expect(resumed.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await resumed.flush()
+    const cached = (await restarted.client.gameEvents(gameId)).plays.map(
+      p => p.result.eventType
+    )
+    restarted.transport.held = false
+    restarted.client.wakeOutbox(true)
+    await restarted.client.drainOutbox()
+    const raw = (
+      await f.h.db
+        .selectFrom('events')
+        .select('gumbo')
+        .where('gameId', '=', gameId)
+        .execute()
+    ).map(r => (r.gumbo as GumboPlay).result.eventType)
+    expect(cached).deep.equals(['single'])
+    expect(raw).deep.equals(['single'])
+    await restarted.client.sessionRefused()
+    await b.client.sessionRefused()
+  })
+
+  it('rejects a mounted session’s late child after its rejected parent drained', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Falcons',
+      away: 'Terns'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const ownDir = mkdtempSync(join(dir, 'late-child-a-'))
+    const a = phoneOn(f, ownDir)
+    const b = phoneOn(f, mkdtempSync(join(dir, 'late-child-b-')))
+    let at = Date.now() - 1000
+    const open = async (client: CachingClient): Promise<ScoringSession> =>
+      await ScoringSession.open(
+        {
+          load: async id => await client.gameEvents(id),
+          save: async (id, change) => await client.saveGameEvents(id, change)
+        },
+        gameId,
+        { gamePk: gameId, ...context },
+        {
+          now: () => new Date(at),
+          setTimer: () => null,
+          clearTimer: () => undefined
+        }
+      )
+    const ours = await open(a.client)
+    const peer = await open(b.client)
+    const hit = async (
+      session: ScoringSession,
+      eventType: 'single' | 'double' | 'home_run'
+    ): Promise<void> => {
+      expect(session.apply({ type: 'result', eventType }).problems).deep.equals(
+        []
+      )
+      expect(
+        session.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+      ).deep.equals([])
+      await session.flush()
+      expect(session.problem).equals(null)
+    }
+    a.transport.held = true
+    await hit(ours, 'single')
+    at += 100
+    await hit(peer, 'double')
+    a.transport.held = false
+    a.client.wakeOutbox(true)
+    await a.client.drainOutbox()
+    expect((await a.client.outboxSummary()).count).equals(0)
+    expect(
+      (await a.client.gameEvents(gameId)).plays[0].result.eventType
+    ).equals('double')
+    at += 100
+    a.transport.held = true
+    await hit(ours, 'home_run')
+    expect(
+      (await a.client.gameEvents(gameId)).plays.map(
+        play => play.result.eventType
+      )
+    ).deep.equals(['double'])
+    await a.client.sessionRefused()
+    const restarted = phoneOn(f, ownDir)
+    restarted.transport.held = true
+    const resumed = await open(restarted.client)
+    expect(
+      resumed.state.liveData.plays.allPlays.map(play => play.result.eventType)
+    ).deep.equals(['double'])
+    at += 100
+    expect(resumed.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await resumed.flush()
+    restarted.transport.held = false
+    restarted.client.wakeOutbox(true)
+    await restarted.client.drainOutbox()
+    expect((await restarted.client.outboxSummary()).count).equals(0)
+    const raw = await f.h.db
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', gameId)
+      .orderBy('atBatIndex', 'asc')
+      .execute()
+    expect(
+      raw.map(row => (row.gumbo as GumboPlay).result.eventType)
+    ).deep.equals(['double'])
+    expect(
+      (await restarted.client.gameEvents(gameId)).currentPlay?.count
+    ).deep.includes({ balls: 1 })
+    await restarted.client.sessionRefused()
+    await b.client.sessionRefused()
+  })
+
+  it('rebases a skipped automatic close before acknowledging the peer scoring base', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Falcons',
+      away: 'Terns'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const a = phoneOn(f, mkdtempSync(join(dir, 'skipped-a-')))
+    const b = phoneOn(f, mkdtempSync(join(dir, 'skipped-b-')))
+    let at = Date.now() - 1000
+    const open = async (client: CachingClient): Promise<ScoringSession> =>
+      await ScoringSession.open(
+        {
+          load: async id => await client.gameEvents(id),
+          save: async (id, change) => await client.saveGameEvents(id, change)
+        },
+        gameId,
+        { gamePk: gameId, ...context },
+        {
+          now: () => new Date(at),
+          setTimer: () => null,
+          clearTimer: () => undefined
+        }
+      )
+    const ours = await open(a.client)
+    const peer = await open(b.client)
+    a.transport.held = true
+    expect(
+      ours.apply({ type: 'result', eventType: 'hit_by_pitch' }).problems
+    ).deep.equals([])
+    await ours.flush()
+    at += 100
+    expect(
+      peer.apply({ type: 'result', eventType: 'intent_walk' }).problems
+    ).deep.equals([])
+    expect(
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await peer.flush()
+    a.transport.held = false
+    a.client.wakeOutbox(true)
+    await a.client.drainOutbox()
+    a.transport.held = true
+    expect(
+      ours.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await ours.flush()
+    expect(ours.problem).equals(null)
+    expect(
+      ours.state.liveData.plays.allPlays.map(p => p.result.eventType)
+    ).deep.equals(['intent_walk'])
+    at += 100
+    expect(ours.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await ours.flush()
+    a.transport.held = false
+    a.client.wakeOutbox(true)
+    await a.client.drainOutbox()
+    expect((await a.client.outboxSummary()).count).equals(0)
+    const raw = await f.h.db
+      .selectFrom('events')
+      .select('gumbo')
+      .where('gameId', '=', gameId)
+      .execute()
+    expect(
+      raw.map(row => (row.gumbo as GumboPlay).result.eventType)
+    ).deep.equals(['intent_walk'])
+    expect(
+      (await a.client.gameEvents(gameId)).currentPlay?.count
+    ).deep.includes({ balls: 1 })
+    await a.client.sessionRefused()
+    await b.client.sessionRefused()
+  })
+
+  it('requires deferred-lineup support for reads and locked writes while current clients round-trip it', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Owls',
+      away: 'Gulls'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const a = phoneOn(f, mkdtempSync(join(dir, 'compatibility-')))
+    const session = await ScoringSession.open(
+      {
+        load: async id => await a.client.gameEvents(id),
+        save: async (id, change) => await a.client.saveGameEvents(id, change)
+      },
+      gameId,
+      { gamePk: gameId, ...context },
+      { setTimer: () => null, clearTimer: () => undefined }
+    )
+    expect((await f.h.request('GET', `/games/${gameId}/events`)).status).equals(
+      200
+    )
+    const setup = setupOf(session.state)
+    ;[setup.sides.home.defense.P, setup.sides.home.defense.C] = [
+      setup.sides.home.defense.C,
+      setup.sides.home.defense.P
+    ]
+    expect(
+      session.apply({
+        type: 'lineup',
+        kind: 'roster',
+        side: 'home',
+        setup,
+        effectiveAtBat: 1,
+        effectiveSides: ['home']
+      }).problems
+    ).deep.equals([])
+    expect(session.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await session.flush()
+    expect(session.problem).equals(null)
+    const saved = await a.client.gameEvents(gameId)
+    expect(
+      (saved.currentPlay as unknown as { teamStation: { version: number } })
+        .teamStation.version
+    ).equals(4)
+    const read = await f.h.request('GET', `/games/${gameId}/events`)
+    expect(read.status).equals(409)
+    expect(((await read.json()) as { message: string }).message).contains(
+      'Update TeamStation'
+    )
+    const post = await f.h.request('POST', `/games/${gameId}/events`, {
+      plays: [],
+      currentPlay: null,
+      mode: 'live',
+      source: { system: 'teamstation' }
+    })
+    expect(post.status).equals(409)
+    expect(((await post.json()) as { message: string }).message).contains(
+      'Update TeamStation'
+    )
+    expect((await a.client.gameEvents(gameId)).currentPlay).deep.equals(
+      saved.currentPlay
+    )
+    await a.client.sessionRefused()
+  })
+
+  for (const restart of [
+    false,
+    true,
+    'recovery-offline',
+    'superseded-offline'
+  ] as const)
+    it(`preserves the independent roster in a superseded mixed scoring save (restart ${restart})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      const ownDir = mkdtempSync(join(dir, 'lineup-child-a-'))
+      let a = phoneOn(f, ownDir)
+      const b = phoneOn(f, mkdtempSync(join(dir, 'lineup-child-b-')))
+      await f.h.db
+        .updateTable('games')
+        .set({ fence_distance_ft: 400 })
+        .where('id', '=', gameId)
+        .execute()
+      await a.client.game(gameId)
+      let at = Date.now() - 2000
+      const open = async (client: CachingClient): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) =>
+              await client.saveGameEvents(
+                id,
+                // This initial appearance has no completed history. A full
+                // history writer can be acknowledged as superseded directly,
+                // before the queue reads the canonical lineup to recover it.
+                restart === 'superseded-offline' && client === a.client
+                  ? { ...change, scoringBase: null, scoringHistory: [] }
+                  : change
+              )
+          },
+          gameId,
+          { gamePk: gameId, ...context, fenceDistanceFt: 400 },
+          {
+            now: () => new Date(at),
+            setTimer: () => null,
+            clearTimer: () => undefined
+          }
+        )
+      const ours = await open(a.client)
+      const peer = await open(b.client)
+      const order = [...setupOf(ours.state).sides.away.battingOrder]
+      ;[order[4], order[5]] = [order[5], order[4]]
+      a.transport.held = true
+      expect(
+        ours.apply({
+          type: 'lineup',
+          kind: 'battingOrder',
+          side: 'away',
+          order
+        }).problems
+      ).deep.equals([])
+      expect(ours.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await ours.flush()
+      at += 100
+      expect(peer.apply({ type: 'pitch', call: 'C' }).problems).deep.equals([])
+      await peer.flush()
+      if (restart === true) {
+        await a.client.sessionRefused()
+        a = phoneOn(f, ownDir)
+      }
+      if (restart === 'recovery-offline' || restart === 'superseded-offline')
+        a.transport.dropRecoveryRead = 'waiting'
+      a.transport.held = false
+      a.client.wakeOutbox(true)
+      await a.client.drainOutbox()
+      if (restart === 'recovery-offline' || restart === 'superseded-offline') {
+        if (restart === 'superseded-offline')
+          expect(a.transport.posts.at(-1)?.status).equals(200)
+        expect((await a.client.outboxSummary()).count).equals(1)
+        expect(
+          (await a.client.outboxSummary()).games[gameId]?.state
+        ).not.equals('parked')
+        a.client.wakeOutbox(true)
+        await a.client.drainOutbox()
+      }
+      expect((await a.client.outboxSummary()).count).equals(0)
+      const final = await open(b.client)
+      expect(final.state.liveData.plays.currentPlay?.count).deep.includes({
+        balls: 0,
+        strikes: 1
+      })
+      expect(setupOf(final.state).sides.away.battingOrder).deep.equals(order)
+      await a.client.sessionRefused()
+      await b.client.sessionRefused()
+    })
+
+  for (const restart of [false, true])
+    it(`preserves peer pitcher while recovering mixed losing lineup (restart ${restart})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      const ownDir = mkdtempSync(join(dir, 'lineup-child-a-'))
+      let a = phoneOn(f, ownDir)
+      const b = phoneOn(f, mkdtempSync(join(dir, 'lineup-child-b-')))
+      await f.h.db
+        .updateTable('games')
+        .set({ fence_distance_ft: 400 })
+        .where('id', '=', gameId)
+        .execute()
+      await a.client.game(gameId)
+      let at = Date.now() - 2000
+      const open = async (client: CachingClient): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context, fenceDistanceFt: 400 },
+          {
+            now: () => new Date(at),
+            setTimer: () => null,
+            clearTimer: () => undefined
+          }
+        )
+      const ours = await open(a.client)
+      const peer = await open(b.client)
+      const original = peer.state.liveData.plays.currentPlay!.matchup.pitcher.id
+      a.transport.held = true
+      expect(
+        ours.apply({ type: 'result', eventType: 'hit_by_pitch' }).problems
+      ).deep.equals([])
+      expect(
+        ours.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+      ).deep.equals([])
+      const home = setupOf(ours.state)
+      ;[home.sides.home.defense.P, home.sides.home.defense.C] = [
+        home.sides.home.defense.C,
+        home.sides.home.defense.P
+      ]
+      expect(
+        ours.apply({
+          type: 'lineup',
+          kind: 'roster',
+          side: 'home',
+          setup: home,
+          keepSlot: true
+        }).problems
+      ).deep.equals([])
+      await ours.flush()
+      at += 100
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await peer.flush()
+      if (restart) {
+        await a.client.sessionRefused()
+        a = phoneOn(f, ownDir)
+      }
+      a.transport.held = false
+      a.client.wakeOutbox(true)
+      await a.client.drainOutbox()
+      expect((await a.client.outboxSummary()).count).equals(0)
+      const final = await open(b.client)
+      expect(final.state.liveData.plays.currentPlay?.count).deep.includes({
+        balls: 1,
+        strikes: 0
+      })
+      expect(final.state.liveData.plays.currentPlay!.matchup.pitcher.id).equals(
+        original
+      )
+      expect(
+        final.apply({ type: 'result', eventType: 'hit_by_pitch' }).problems
+      ).deep.equals([])
+      expect(
+        final.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+      ).deep.equals([])
+      await final.flush()
+      const continued = await open(b.client)
+      expect(
+        continued.state.liveData.plays.allPlays[0].matchup.pitcher.id
+      ).equals(original)
+      expect(
+        continued.state.liveData.plays.currentPlay!.matchup.pitcher.id
+      ).equals(home.sides.home.defense.P)
+      expect(continued.state.deferredLineups).equals(undefined)
+      await a.client.sessionRefused()
+      await b.client.sessionRefused()
+    })
+
+  for (const restart of [false, true])
+    it(`retains lineup-only edit across peer pending fielding (restart ${restart})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      const ownDir = mkdtempSync(join(dir, 'lineup-child-a-'))
+      let a = phoneOn(f, ownDir)
+      const b = phoneOn(f, mkdtempSync(join(dir, 'lineup-child-b-')))
+      await f.h.db
+        .updateTable('games')
+        .set({ fence_distance_ft: 400 })
+        .where('id', '=', gameId)
+        .execute()
+      await a.client.game(gameId)
+      let at = Date.now() - 2000
+      const open = async (client: CachingClient): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context, fenceDistanceFt: 400 },
+          {
+            now: () => new Date(at),
+            setTimer: () => null,
+            clearTimer: () => undefined
+          }
+        )
+      const ours = await open(a.client)
+      const peer = await open(b.client)
+      const original = peer.state.liveData.plays.currentPlay!.matchup.pitcher.id
+      a.transport.held = true
+      const home = setupOf(ours.state)
+      ;[home.sides.home.defense.P, home.sides.home.defense.C] = [
+        home.sides.home.defense.C,
+        home.sides.home.defense.P
+      ]
+      expect(
+        ours.apply({
+          type: 'lineup',
+          kind: 'roster',
+          side: 'home',
+          setup: home,
+          keepSlot: true
+        }).problems
+      ).deep.equals([])
+      await ours.flush()
+      at += 100
+      expect(
+        peer.apply({ type: 'result', eventType: 'field_error' }).problems
+      ).deep.equals([])
+      await peer.flush()
+      if (restart) {
+        await a.client.sessionRefused()
+        a = phoneOn(f, ownDir)
+      }
+      a.transport.held = false
+      a.client.wakeOutbox(true)
+      await a.client.drainOutbox()
+      expect((await a.client.outboxSummary()).count).equals(0)
+      const final = await open(b.client)
+      expect(final.state.deferredLineups).has.length(1)
+      expect(final.state.liveData.plays.currentPlay!.matchup.pitcher.id).equals(
+        original
+      )
+      const fielder = setupOf(final.state).sides.home.defense.SS!
+      expect(
+        final.apply({
+          type: 'fieldingPlay',
+          fielders: [fielder],
+          error: fielder
+        }).problems
+      ).deep.equals([])
+      expect(
+        final.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+      ).deep.equals([])
+      await final.flush()
+      const continued = await open(b.client)
+      expect(
+        continued.state.liveData.plays.allPlays[0].matchup.pitcher.id
+      ).equals(original)
+      expect(
+        continued.state.liveData.plays.currentPlay!.matchup.pitcher.id
+      ).equals(home.sides.home.defense.P)
+      expect(continued.state.deferredLineups).equals(undefined)
+      await a.client.sessionRefused()
+      await b.client.sessionRefused()
+    })
+
+  for (const variant of [
+    'lineup',
+    'undo',
+    'coach',
+    'coach-return',
+    'late',
+    'restart',
+    'lost-recovery',
+    'recovery-offline',
+    'fence',
+    'roster',
+    'roster-undo',
+    'roster-both-undo'
+  ] as const)
+    it(`rebases a queued lineup descendant onto the winning pitch (${variant})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      const ownDir = mkdtempSync(join(dir, 'lineup-child-a-'))
+      let a = phoneOn(f, ownDir)
+      const b = phoneOn(f, mkdtempSync(join(dir, 'lineup-child-b-')))
+      await f.h.db
+        .updateTable('games')
+        .set({ fence_distance_ft: 400 })
+        .where('id', '=', gameId)
+        .execute()
+      await a.client.game(gameId)
+      let at = Date.now() - 2000
+      const open = async (client: CachingClient): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context, fenceDistanceFt: 400 },
+          {
+            now: () => new Date(at),
+            setTimer: () => null,
+            clearTimer: () => undefined
+          }
+        )
+      const ours = await open(a.client)
+      const peer = await open(b.client)
+      const initialOrder = [...setupOf(ours.state).sides.away.battingOrder]
+      const order = [...initialOrder]
+      ;[order[2], order[3]] = [order[3], order[2]]
+      a.transport.held = true
+      expect(ours.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await ours.flush()
+      at += 100
+      if (variant === 'fence') {
+        expect(
+          peer.apply({
+            type: 'ballInPlay',
+            contact: 'swing',
+            location: { x: 0, z: -118 },
+            fielder: setupOf(peer.state).sides.home.defense.CF!
+          }).problems
+        ).deep.equals([])
+        expect(
+          peer.apply({ type: 'result', eventType: 'double' }).problems
+        ).deep.equals([])
+      } else
+        expect(peer.apply({ type: 'pitch', call: 'C' }).problems).deep.equals(
+          []
+        )
+      await peer.flush()
+      const peerCurrent = (await b.client.gameEvents(gameId)).currentPlay
+      if (variant === 'late' || variant === 'restart') {
+        a.transport.held = false
+        a.client.wakeOutbox(true)
+        await a.client.drainOutbox()
+        expect((await a.client.outboxSummary()).count).equals(0)
+        a.transport.held = true
+      }
+      at += 100
+      const roster = setupOf(ours.state)
+      roster.sides.away.battingOrder = order
+      if (variant === 'roster-both-undo')
+        roster.sides.home.battingOrder.reverse()
+      expect(
+        ours.apply(
+          variant.startsWith('roster')
+            ? {
+                type: 'lineup',
+                kind: 'roster',
+                setup: roster,
+                confirmed: ['away', 'home'],
+                keepSlot: true
+              }
+            : {
+                type: 'lineup',
+                kind: 'battingOrder',
+                side: 'away',
+                order
+              }
+        ).problems
+      ).deep.equals([])
+      await ours.flush()
+      if (variant.includes('undo')) {
+        expect(ours.undo().problems).deep.equals([])
+        await ours.flush()
+      }
+      let expectedOrder = variant.includes('undo') ? initialOrder : order
+      let expectedHome = setupOf(peer.state).sides.home.battingOrder
+      if (variant.startsWith('roster')) {
+        expectedHome = [...expectedHome]
+        ;[expectedHome[4], expectedHome[5]] = [expectedHome[5], expectedHome[4]]
+        at += 100
+        expect(
+          peer.apply({
+            type: 'lineup',
+            kind: 'battingOrder',
+            side: 'home',
+            order: expectedHome
+          }).problems
+        ).deep.equals([])
+        await peer.flush()
+      }
+      if (variant.startsWith('coach')) {
+        at += 100
+        const coachOrder = [...initialOrder]
+        ;[coachOrder[4], coachOrder[5]] = [coachOrder[5], coachOrder[4]]
+        expect(
+          peer.apply({
+            type: 'lineup',
+            kind: 'battingOrder',
+            side: 'away',
+            order: coachOrder
+          }).problems
+        ).deep.equals([])
+        await peer.flush()
+        expectedOrder = coachOrder
+        if (variant === 'coach-return') {
+          at += 100
+          expect(
+            peer.apply({
+              type: 'lineup',
+              kind: 'battingOrder',
+              side: 'away',
+              order: initialOrder
+            }).problems
+          ).deep.equals([])
+          await peer.flush()
+          expectedOrder = initialOrder
+        }
+      }
+      if (variant === 'restart') {
+        await a.client.sessionRefused()
+        a = phoneOn(f, ownDir)
+      }
+      if (variant === 'lost-recovery') a.transport.dropRecovered = 'waiting'
+      if (variant === 'recovery-offline')
+        a.transport.dropRecoveryRead = 'waiting'
+      a.transport.held = false
+      a.client.wakeOutbox(true)
+      await a.client.drainOutbox()
+      if (variant === 'recovery-offline') {
+        expect((await a.client.outboxSummary()).count).equals(1)
+        expect(
+          (await a.client.outboxSummary()).games[gameId]?.state
+        ).not.equals('parked')
+        a.client.wakeOutbox(true)
+        await a.client.drainOutbox()
+      }
+      if (variant === 'lost-recovery') {
+        expect((await a.client.outboxSummary()).count).equals(1)
+        a.client.wakeOutbox(true)
+        await a.client.drainOutbox()
+        const posts = a.transport.posts
+        expect(posts.at(-1)!.key).equals(posts.at(-2)!.key)
+        expect(posts.at(-2)!.key).not.equals(posts.at(-3)!.key)
+        expect(posts.slice(-3).map(post => post.status)).deep.equals([
+          409, 200, 200
+        ])
+      }
+      expect((await a.client.outboxSummary()).count).equals(0)
+      const final = await open(b.client)
+      if (variant !== 'fence')
+        expect(final.state.liveData.plays.currentPlay?.count).deep.includes({
+          balls: 0,
+          strikes: 1
+        })
+      expect(setupOf(final.state).sides.away.battingOrder).deep.equals(
+        expectedOrder
+      )
+      expect(setupOf(final.state).sides.home.battingOrder).deep.equals(
+        expectedHome
+      )
+      if (variant === 'fence') {
+        const saved = await b.client.gameEvents(gameId)
+        const hit = saved.plays[0] ?? saved.currentPlay
+        const hits = (play: unknown): unknown[] =>
+          (
+            (play as { playEvents?: Array<{ hitData?: unknown }> } | null)
+              ?.playEvents ?? []
+          ).flatMap(event => (event.hitData == null ? [] : [event.hitData]))
+        expect(hits(peerCurrent).length).greaterThan(0)
+        expect(hits(hit)).deep.equals(hits(peerCurrent))
+        expect(
+          (
+            await f.h.db
+              .selectFrom('games')
+              .select('fence_distance_ft')
+              .where('id', '=', gameId)
+              .executeTakeFirstOrThrow()
+          ).fence_distance_ft
+        ).equals(400)
+      }
+      if (variant === 'coach-return')
+        expect(final.actions.filter(action => action.type === 'lineup')).length(
+          2
+        )
+      await a.client.sessionRefused()
+      await b.client.sessionRefused()
+    })
+
+  for (const scenario of [
+    'superseded',
+    'accepted',
+    'advanced-earlier'
+  ] as const)
+    it(`rebuilds a lost response as the current winner (${scenario})`, async () => {
+      const acceptedFirst = scenario !== 'superseded'
+      const advanced = scenario === 'advanced-earlier'
+      const ownDir = mkdtempSync(join(dir, 'lost-scoring-'))
+      const { client, transport } = phoneOn(f, ownDir)
+      const gameId = makeId('game')
+      await f.h.db
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: f.teamA,
+          away_team_id: f.teamB,
+          season_id: f.seasonA,
+          start_at: new Date()
+        })
+        .execute()
+      await client.gameEvents(gameId)
+      const at = Date.now() - 1000
+      const change = (
+        n: number
+      ): Parameters<CachingClient['saveGameEvents']>[1] => ({
+        plays: [
+          {
+            ...livePlay(0),
+            result: {
+              ...livePlay(0).result,
+              eventType: n === 1 ? 'single' : 'double'
+            }
+          }
+        ],
+        remove: [],
+        currentPlay: null,
+        scoringBase: null,
+        scoringMutation: {
+          at: advanced && n === 2 ? at - 100 : at + n,
+          id: `lost-${n}`,
+          revision: 0,
+          frontier: 1
+        }
+      })
+      transport.held = !acceptedFirst
+      transport.dropNext = acceptedFirst
+      await client.saveGameEvents(gameId, change(1))
+      const peer = await f.h.request(
+        'POST',
+        `/games/${gameId}/events`,
+        {
+          ...change(2),
+          scoringBase: advanced ? change(1).scoringMutation : null,
+          mode: 'live',
+          source: { system: 'teamstation' }
+        },
+        101
+      )
+      expect(peer.status).equals(200)
+      if (!acceptedFirst) {
+        transport.held = false
+        transport.dropNext = true
+        client.wakeOutbox(true)
+        await client.drainOutbox()
+      }
+      expect((await client.outboxSummary()).count).equals(1)
+      client.wakeOutbox(true)
+      await client.drainOutbox()
+      expect((await client.outboxSummary()).count).equals(0)
+      expect(transport.posts.at(-1)?.body.superseded === true).equals(
+        !acceptedFirst
+      )
+      const winner = await client.gameEvents(gameId)
+      expect(winner.plays[0].result.eventType).equals(
+        acceptedFirst && !advanced ? 'single' : 'double'
+      )
+      expect(winner.scoringMutation?.id).equals(
+        acceptedFirst && !advanced ? 'lost-1' : 'lost-2'
+      )
+      expect(new Set(transport.posts.map(post => post.key)).size).equals(1)
+      await client.sessionRefused()
+    })
+
+  for (const nextAtBat of [false, true])
+    it(`restarts with a rejected parent and rejects its newer queued scoring child (${nextAtBat})`, async () => {
+      const ownDir = mkdtempSync(join(dir, 'scoring-order-'))
+      const first = phoneOn(f, ownDir)
+      const gameId = makeId('game')
+      await f.h.db
+        .insertInto('games')
+        .values({
+          id: gameId,
+          home_team_id: f.teamA,
+          away_team_id: f.teamB,
+          season_id: f.seasonA,
+          start_at: new Date()
+        })
+        .execute()
+      await first.client.gameEvents(gameId)
+      const at = Date.now() - 1000
+      const change = (
+        n: number
+      ): Parameters<CachingClient['saveGameEvents']>[1] => ({
+        plays: [
+          {
+            ...livePlay(nextAtBat && n === 3 ? 1 : 0),
+            result: {
+              ...livePlay(0).result,
+              eventType: n === 1 ? 'single' : n === 2 ? 'double' : 'home_run'
+            }
+          }
+        ],
+        remove: [],
+        currentPlay: null,
+        scoringBase: null,
+        scoringMutation: {
+          at: at + n,
+          id: `device-${n}`,
+          revision: 0,
+          frontier: nextAtBat && n === 3 ? 2 : 1
+        }
+      })
+      first.transport.held = true
+      await first.client.saveGameEvents(gameId, change(1))
+      await first.client.saveGameEvents(gameId, {
+        ...change(3),
+        scoringBase: change(1).scoringMutation
+      })
+      expect((await first.client.outboxSummary()).count).equals(2)
+      const peer = await f.h.request(
+        'POST',
+        `/games/${gameId}/events`,
+        {
+          ...change(2),
+          mode: 'live',
+          source: { system: 'teamstation' }
+        },
+        101
+      )
+      expect(peer.status).equals(200)
+      await first.client.sessionRefused()
+      const restarted = phoneOn(f, ownDir)
+      restarted.client.wakeOutbox(true)
+      await restarted.client.drainOutbox()
+      expect((await restarted.client.outboxSummary()).count).equals(0)
+      const result = await restarted.client.gameEvents(gameId)
+      expect(result.plays.map(play => play.result.eventType)).deep.equals([
+        'double'
+      ])
+      expect(result.scoringMutation?.id).equals('device-2')
+      expect(restarted.transport.posts.map(post => post.status)).deep.equals([
+        200, 200
+      ])
+      await restarted.client.sessionRefused()
+    })
+
   it('sends a write again when its answer was lost, and the server keeps one of each (Lost response)', async function () {
     const { client, transport } = phoneOn(f, dir)
     const gameId = makeId('game')
@@ -198,6 +1689,7 @@ describe('the outbox against the server', function () {
     transport.dropNext = true
     const queued = await client.saveGameEvents(gameId, {
       plays: [livePlay(0)],
+      scoringBase: null,
       remove: []
     })
     expect(queued.playsDigest).match(/^local-/)
@@ -297,6 +1789,7 @@ describe('S8: a stale game parks, and the other chain still lands', function () 
     transport.held = true
     note('transport held: nothing leaves the phone')
     await client.saveGameEvents(gameId, {
+      scoringBase: null,
       plays: [livePlay(0)],
       remove: [],
       lineupsBase: read.lineupsDigest

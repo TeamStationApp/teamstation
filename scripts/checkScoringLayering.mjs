@@ -57,6 +57,10 @@ function sources(dir) {
 // `withoutReaderNames` names a copy of a game by its players' public labels,
 // for a reader who may no longer read their full names.
 const READ_ONLY_EXPORTS = {
+  // The cache inspects a stored play and compares accepted identities; it
+  // never constructs a stored scoring record or applies scoring actions.
+  gumbo: ['storedRecordOf', 'FINAL_INDEX'],
+  scoringMutation: ['sameScoringMutation'],
   lineup: ['ordinal', 'begun', 'pitchThrown'],
   readerNames: ['withoutReaderNames'],
   rosterAvailability: ['gameRosterEntries'],

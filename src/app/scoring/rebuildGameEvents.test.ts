@@ -175,6 +175,9 @@ describe('rebuilding a save a build queued from the log it kept', function () {
     expect(log.actions.length).greaterThan(strikeout.length)
     const rebuilt = await rebuildGameEvents(game.id, log, reads(served))
     expect(rebuilt).not.equals(null)
+    expect(rebuilt!.scoringBase).deep.equals(served.scoringMutation ?? null)
+    expect(rebuilt!.scoringMutation).not.equals(undefined)
+    expect(rebuilt!.scoringHistory).deep.equals(rebuilt!.plays)
     const plays = results(rebuilt!.plays)
     // The at-bat the half kept stays at 2, and the strikeout goes at 6.
     expect(plays.map(([index]) => index)).deep.equals([0, 1, 2, 3, 4, 5, 6])
@@ -199,6 +202,8 @@ describe('rebuilding a save a build queued from the log it kept', function () {
     const now = copied(landed.games.get(game.id)!)
     const rebuilt = await rebuildGameEvents(game.id, queued.log!, reads(now))
     expect(results(rebuilt!.plays)).deep.equals(results(now.plays))
+    expect(rebuilt!.scoringBase).deep.equals(now.scoringMutation ?? null)
+    expect(rebuilt!.scoringMutation).equals(undefined)
   })
 
   it('starts a game the server holds nothing of from the teams’ defaults, as the scorer’s session did', async function () {

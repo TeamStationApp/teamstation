@@ -346,6 +346,8 @@ export interface GamesTable {
   lineup_started_at: Timestamp | null
   /** A sha256 of both sides' lineups after the last live post. */
   lineups_digest: string | null
+  /** Accepted scoring identity and recent attributed updates. */
+  scoring_mutation: Json | null
   /** Which set of plays the game holds: one more after each reset. */
   play_generation: Generated<number>
   created_at: Timestamp

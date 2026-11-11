@@ -865,8 +865,60 @@ const idempotencyKeyParam = {
   schema: { type: 'string', minLength: 1, maxLength: 200 }
 }
 
+const scoringMutationSchema = {
+  type: 'object',
+  required: ['at', 'id', 'revision', 'frontier'],
+  properties: {
+    at: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Original user action time, Unix milliseconds, at most 8640000000000000 (the supported date range), retained as retry identity even when the offline device clock is ahead. Acceptance depends on the observed scoring base, not this timestamp.'
+    },
+    id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+    revision: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Automatic completion and rebase revisions retain the original at and id.'
+    },
+    frontier: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Current at-bat index, or the index following the last completed at-bat. A winning mutation removes the superseded tail from this index.'
+    }
+  }
+}
+
+/** Bounded server-authenticated stream; not an input to conflict arbitration. */
+const scoringUpdatesSchema = {
+  type: 'array',
+  maxItems: 100,
+  description:
+    'Recent accepted scoring changes in server acceptance order, including Undo. Initial reads establish a baseline; clients deduplicate by id and suppress their own userId. Older history may fall outside this bounded stream.',
+  items: {
+    type: 'object',
+    required: ['id', 'sequence', 'userId', 'name', 'lines'],
+    properties: {
+      id: { type: 'string' },
+      sequence: { type: 'integer' },
+      userId: { type: 'string' },
+      name: { type: 'string' },
+      lines: { type: 'array', maxItems: 100, items: { type: 'string' } }
+    }
+  }
+}
+
 /** What every answer of a post says of the game it leaves. */
 const postedDigests = {
+  scoringMutation: scoringMutationSchema,
+  scoringUpdates: scoringUpdatesSchema,
+  superseded: {
+    type: 'boolean',
+    description:
+      'True when a scoring mutation based on a displaced version was ignored. The response contains the canonical game; the client must adopt it instead of replaying the rejected scoring.'
+  },
   currentPlay: {
     oneOf: [{ $ref: '#/components/schemas/GumboCurrentPlay' }, { type: 'null' }]
   },
@@ -5194,6 +5246,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: "Replace a game's plays",
           description:
+            'Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. ' +
             'One body is the whole set. A play is replaced when its ' +
             '`about.atBatIndex` is already stored, and a stored index that is ' +
             'not in the body is deleted, including a legacy line-score-only ' +
@@ -5245,7 +5298,15 @@ export function openApiDocument(version: string): OpenApiDocument {
             'is refused the same way with `details: { stale: true, ' +
             'generation }`: the sender opens the game again. A post answers ' +
             'every stored play, unless it is a live post and `answer=edits` ' +
-            'asks for only what it wrote (`edits`).',
+            'asks for only what it wrote (`edits`). With `scoringMutation`, ' +
+            'the request must include currentPlay (null when none). Live ' +
+            'TeamStation scoring requires scoringBase, the observed scoring version. ' +
+            'The first accepted write advances that version. Conflicting writes ' +
+            'based on a displaced version return the canonical game with ' +
+            '`superseded: true`, without changing it, even with `answer=edits`. ' +
+            'Retries retain the original identity; reuse with different content ' +
+            'is 409. Missing scoringBase is 400. Generation and team checks ' +
+            'still precede acceptance. A current-version deliberate Undo remains valid.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
@@ -5318,6 +5379,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                         "a game's first plays fixes its fence at this one. " +
                         'Anything but whole feet from 1 to 600 is ignored, ' +
                         "and the game's resolved fence is fixed instead."
+                    },
+                    scoringMutation: scoringMutationSchema,
+                    scoringHistory: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/GumboPlay' },
+                      description:
+                        'Completed editable scoring ancestry for a stamped delta. Requires scoringBase. History never authorizes replacement of a displaced base. Imported read-only plays are excluded.'
+                    },
+                    scoringBase: {
+                      anyOf: [scoringMutationSchema, { type: 'null' }],
+                      description:
+                        'Required for live TeamStation scoring. The last observed scoring mutation, or null before any scoring. A changed version returns the canonical game with superseded:true for stamped scoring, or stale 409 for lineup-only reconciliation. Device timestamps do not choose a conflicting winner.'
                     },
                     lineupsBase: {
                       type: 'string',
@@ -5426,7 +5499,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: "A game's plays",
           description:
-            'The stored plays in `atBatIndex` order. Override-slot or pitcher-less override actions require x-teamstation-protocol 5 or newer; older or missing app versions receive 503 with reason updateRequired. API keys and machine actors are exempt.',
+            'The stored plays in `atBatIndex` order. Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. Override-slot or pitcher-less override actions require x-teamstation-protocol 5 or newer; older or missing app versions receive 503 with reason updateRequired. API keys and machine actors are exempt from that protocol-version check.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
@@ -5501,6 +5574,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                       },
                       playsDigest: { type: 'string' },
                       namesDigest: { type: 'string' },
+                      scoringMutation: scoringMutationSchema,
+                      scoringUpdates: scoringUpdatesSchema,
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },
                       swap: {

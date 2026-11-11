@@ -12,8 +12,10 @@ import { HttpError } from '../../common/errors'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
 import {} from '../../common/scoring/gumbo'
+import { overrideOf } from '../../common/scoring/rules'
 import {
   type EventStore,
+  type SaveChange,
   ScoringSession as GameSession,
   type StoredGame
 } from '../../common/scoring/session'
@@ -23,18 +25,21 @@ import {
   withNames,
   withoutNames
 } from '../../common/scoring/storedNames'
+import { dictatingHealth, FakeDictationSocket } from '../../test/dictationFakes'
 import {
   PLAN_SWAPPED,
   scoringPlans,
   scoringSidePlan
 } from '../../test/scoringPlans'
 import { scoringRoster } from '../../test/scoringSession'
+import type { BaseballScreen } from '../field/BaseballScreen'
 import { lstrings } from '../locales/strings'
 import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { startingSetup, teamsOf } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import type { GameChanges } from './rosterLive'
+import { ScoringFollow } from './scoringFollow'
 import { sameActions, ScoringScreen } from './ScoringScreen'
 import { memoryStore, type ScoringSource } from './scoringSource'
 
@@ -126,6 +131,27 @@ class FakeChanges implements GameChanges {
 }
 
 let root: Root | undefined
+// Drive the exact field callbacks used by a canceled physical runner drag.
+function field(): NonNullable<Parameters<typeof BaseballScreen>[0]['field']> {
+  interface Fiber {
+    type?: { name?: string }
+    memoizedProps?: Parameters<typeof BaseballScreen>[0]
+    child?: Fiber
+    sibling?: Fiber
+  }
+  const find = (fiber?: Fiber): Fiber | undefined => {
+    for (let node = fiber; node != null; node = node.sibling) {
+      if (node.type?.name === 'BaseballScreen') return node
+      const child = find(node.child)
+      if (child != null) return child
+    }
+    return undefined
+  }
+  return find(
+    (root as unknown as { _internalRoot: { current: Fiber } })._internalRoot
+      .current
+  )!.memoizedProps!.field
+}
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 async function settle(): Promise<void> {
@@ -173,6 +199,7 @@ async function scoring(
     swap?: { value: StoredGame['swap'] }
     /** What every read of the game plans answers. */
     plans?: { value: GamePlansResponse }
+    dictation?: boolean
   } = {}
 ): Promise<{
   /** How many times the screen read the game plans. */
@@ -231,9 +258,9 @@ async function scoring(
     open: async () => {
       const session = await open()
       const reload = session.reload.bind(session)
-      session.reload = async () => {
+      session.reload = async canAdopt => {
         reloads.push(session.saving)
-        const changed = await reload()
+        const changed = await reload(canAdopt)
         // The server's copy can read back with its players in another order,
         // so a read after a save finds the game changed.
         return options.readsChanged === true || changed
@@ -244,6 +271,7 @@ async function scoring(
   }
   const digest = { value: 'd1' }
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
+  if (options.dictation === true) client.health = dictatingHealth
   client.game = async () => gameFixture
   client.roster = async teamId =>
     scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
@@ -305,6 +333,884 @@ describe('comparing logs', function () {
 })
 
 describe('the scoring screen on the game socket', function () {
+  it('accepts a pitch immediately after its own echoed save without waiting for a read', async function () {
+    const { changes, store, other, reloads } = await scoring({ digests: true })
+    await click('Ball')
+    await settle()
+    const digest = (await store.load('g1')).playsDigest!
+    await act(async () => {
+      for (const listener of changes.listeners)
+        listener({
+          type: 'change',
+          gameId: 'g1',
+          kind: 'playEdits',
+          at: '2026-11-05T12:00:00Z',
+          data: {
+            generation: 0,
+            fromDigest: 'before',
+            namesDigest: 'names',
+            edits: [],
+            currentPlay: null,
+            digest
+          }
+        })
+      document
+        .querySelector<HTMLElement>('[aria-label="Called Strike"]')!
+        .click()
+    })
+    await settle()
+    // Once the new pitch saves, the older notice needs a canonical read:
+    // the same digest could also have been restored by another scorer.
+    expect(reloads).deep.equals([false])
+    expect(document.body.textContent).not.includes(
+      'Check the play and try again'
+    )
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+  })
+
+  it('keeps a local appearance editable while an older read finishes', async function () {
+    const { changes, other, store } = await scoring()
+    await click('Ball')
+    await settle()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    await changes.plays()
+    await click('Ball')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('2 balls 0 strikes')
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' }
+    ])
+  })
+
+  it('accepts the first local pitch while an older peer read is pending', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    await changes.plays()
+    await click('Called Strike')
+    expect(document.body.textContent).includes('0 balls 1 strikes')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('0 balls 1 strikes')
+    expect((await other()).actions).deep.equals([{ type: 'pitch', call: 'C' }])
+  })
+
+  it('hands off on the first tap after displaying a peer pitch even while another read is pending', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    const save = store.save
+    let saves = 0
+    store.save = async (id, change) => {
+      saves++
+      return await save(id, change)
+    }
+    await changes.plays()
+    await click('Called Strike')
+    expect(document.body.textContent).includes('1 balls 1 strikes')
+    release()
+    await settle()
+    expect(document.body.textContent).includes('1 balls 1 strikes')
+    expect(saves).equals(1)
+    expect((await other()).actions).deep.equals([
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'C' }
+    ])
+  })
+
+  it('retries a failed remote read without waiting for another pitch', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    const load = store.load
+    let fail = true
+    store.load = async id => {
+      if (fail) {
+        fail = false
+        throw new Error('Temporary connection loss')
+      }
+      return await load(id)
+    }
+    await changes.plays()
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1100))
+    })
+    await settle()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+  })
+
+  it('follows a winning unfinished award after its own pitch is superseded', async () => {
+    const { other, store, session } = await scoring()
+    const peer = await other()
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const save = store.save
+    let saves = 0
+    store.save = async () => {
+      saves++
+      await held
+      return { ...(await store.load('g1')), superseded: true }
+    }
+    await click('Ball')
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    // Save the peer independently while the screen's earlier request is held.
+    store.save = save
+    await peer.flush()
+    const stored = store.games.get('g1')!
+    stored.scoringMutation = {
+      at: Date.now() + 1000,
+      id: 'peer-award',
+      revision: 0,
+      frontier: 0
+    }
+    store.save = async () => {
+      saves++
+      return await store.load('g1')
+    }
+    const before = JSON.stringify(await store.load('g1'))
+    release()
+    await settle()
+    expect(session().rebaseFollowsPeer).equals(true)
+    expect(saves).equals(1)
+    expect(JSON.stringify(await store.load('g1'))).equals(before)
+    expect(
+      session().actions.some(
+        action => action.type === 'gameFlow' && action.kind === 'closePlay'
+      )
+    ).equals(false)
+  })
+
+  it('keeps a peer award passive after a roster-only Undo rebases', async () => {
+    const { other, store, session } = await scoring()
+    await click('Ball')
+    await click('Open scoring menu')
+    await click('Set Team Rosters')
+    await settle()
+    const last = [
+      ...document.querySelectorAll<HTMLElement>('[aria-label^="Reorder "]')
+    ].at(-1)!
+    for (const key of ['Enter', 'ArrowUp', 'Enter'])
+      await act(async () => {
+        last.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
+    await click('Save Rosters')
+    await settle()
+    const peer = await other()
+    const save = store.save
+    let entered = false
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    store.save = async () => {
+      entered = true
+      await held
+      throw new HttpError('conflict', 'Scoring changed', { stale: true })
+    }
+    await click('Undo Set team roster')
+    for (let i = 0; i < 50; i++) {
+      if (entered) break
+      await settle()
+    }
+    expect(entered).equals(true)
+    store.save = save
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    const posts: SaveChange[] = []
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    release()
+    await settle()
+    expect(session().rebases).equals(1)
+    expect(session().rebaseFollowsPeer).equals(true)
+    expect(
+      session().actions.some(
+        action => action.type === 'gameFlow' && action.kind === 'closePlay'
+      )
+    ).equals(false)
+    expect(
+      posts.every(
+        post => post.scoringMutation == null && post.plays.length === 0
+      )
+    ).equals(true)
+    const stored = await other()
+    expect(stored.state.pending).not.equals(null)
+  })
+
+  it('never saves a close synthesized while displaying a remote award', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    const before = JSON.stringify(await store.load('g1'))
+    await changes.plays()
+    await settle()
+    expect(JSON.stringify(await store.load('g1'))).equals(before)
+  })
+
+  it('holds an out-at-home selection against peer updates while choosing the thrower', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'triple' })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(
+      document.querySelector('[aria-label^="Home plate decision"]')
+    ).not.equals(null)
+    await click('Out')
+    const before = session().actions
+    const choosing = document.body.textContent
+    peer.apply({
+      type: 'runnerMovement',
+      runner: peer.state.homeQueue[0],
+      to: 'home'
+    })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(before)
+    expect(document.body.textContent).equals(choosing)
+  })
+
+  it('keeps following after refused dictation on a peer’s unfinished play', async () => {
+    const originalSocket = globalThis.WebSocket
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const sockets: FakeDictationSocket[] = []
+    globalThis.WebSocket = class extends FakeDictationSocket {
+      constructor(url: string) {
+        super(url)
+        sockets.push(this)
+      }
+    } as unknown as typeof WebSocket
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => await new Promise(() => {}) }
+    })
+    try {
+      const { changes, other, session } = await scoring({ dictation: true })
+      const peer = await other()
+      peer.apply({ type: 'ballInPlay', contact: 'swing' })
+      peer.apply({ type: 'result', eventType: 'single' })
+      await peer.flush()
+      await changes.plays()
+      const press = async (type: string): Promise<void> => {
+        await act(async () => {
+          document
+            .querySelector('[aria-label="Dictation"]')!
+            .dispatchEvent(new window.MouseEvent(type, { bubbles: true }))
+        })
+      }
+      await press('pointerdown')
+      await press('pointerup')
+      await settle()
+      await act(async () => {
+        sockets.at(-1)!.open()
+      })
+      await press('pointerdown')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+      })
+      const start = sockets.at(-1)!.frames.at(-1)!
+      expect(start.kind).equals('start')
+      await press('pointerup')
+      const before = session().actions
+      await act(async () => {
+        sockets.at(-1)!.reply({
+          kind: 'actions',
+          id: start.id,
+          transcript: 'Runner steals home',
+          actions: [
+            {
+              type: 'baseRunning',
+              kind: 'steal',
+              runner: 9,
+              to: 'home'
+            }
+          ],
+          roster: [],
+          dropped: []
+        })
+      })
+      await settle()
+      expect(session().actions).deep.equals(before)
+      expect(document.body.textContent).includes('That runner is not on base')
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+      expect(session().actions).deep.equals(peer.actions)
+    } finally {
+      globalThis.WebSocket = originalSocket
+      if (devices == null)
+        delete (navigator as { mediaDevices?: unknown }).mediaDevices
+      else Object.defineProperty(navigator, 'mediaDevices', devices)
+    }
+  })
+  it('keeps local ownership after Undo during an accepted dictation reel', async () => {
+    // Observe the actual ownership transition, independently of whether a
+    // later peer read is safe once the scorer returns to a between-pitch state.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const adopt = ScoringFollow.prototype.adopt
+    let adoptions = 0
+    ScoringFollow.prototype.adopt = function (generation) {
+      adoptions++
+      return adopt.call(this, generation)
+    }
+    const originalSocket = globalThis.WebSocket
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const sockets: FakeDictationSocket[] = []
+    globalThis.WebSocket = class extends FakeDictationSocket {
+      constructor(url: string) {
+        super(url)
+        sockets.push(this)
+      }
+    } as unknown as typeof WebSocket
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => await new Promise(() => {}) }
+    })
+    try {
+      const { changes, other, session } = await scoring({ dictation: true })
+      const peer = await other()
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      const press = async (type: string): Promise<void> => {
+        await act(async () => {
+          document
+            .querySelector('[aria-label="Dictation"]')!
+            .dispatchEvent(new window.MouseEvent(type, { bubbles: true }))
+        })
+      }
+      await press('pointerdown')
+      await press('pointerup')
+      await settle()
+      await act(async () => {
+        sockets.at(-1)!.open()
+      })
+      await press('pointerdown')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+      })
+      const start = sockets.at(-1)!.frames.at(-1)!
+      expect(start.kind).equals('start')
+      await press('pointerup')
+      const before = [...session().actions]
+      await act(async () => {
+        sockets.at(-1)!.reply({
+          kind: 'actions',
+          id: start.id,
+          transcript: 'Single',
+          actions: [
+            { type: 'ballInPlay', contact: 'swing' },
+            { type: 'result', eventType: 'single' }
+          ],
+          roster: [],
+          dropped: []
+        })
+      })
+      await settle()
+      await session().flush()
+      expect(session().actions).not.deep.equals(before)
+      // The mounted field has not delivered its animation completion.
+      expect(field().players.some(player => player.motion != null)).equals(true)
+      adoptions = 0
+      await act(async () => {
+        document
+          .querySelector('[aria-label^="Undo "]')!
+          .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      })
+      await settle()
+      await session().flush()
+      expect(session().actions).deep.equals(before)
+      expect(adoptions).equals(0)
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+    } finally {
+      ScoringFollow.prototype.adopt = adopt
+      globalThis.WebSocket = originalSocket
+      if (devices == null)
+        delete (navigator as { mediaDevices?: unknown }).mediaDevices
+      else Object.defineProperty(navigator, 'mediaDevices', devices)
+    }
+  })
+  it('preserves a dictated question while following, then resumes after dismissal', async () => {
+    const originalSocket = globalThis.WebSocket
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const sockets: FakeDictationSocket[] = []
+    globalThis.WebSocket = class extends FakeDictationSocket {
+      constructor(url: string) {
+        super(url)
+        sockets.push(this)
+      }
+    } as unknown as typeof WebSocket
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => await new Promise(() => {}) }
+    })
+    try {
+      const { changes, other, session } = await scoring({ dictation: true })
+      const peer = await other()
+      for (let i = 0; i < 2; i++) {
+        peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+        peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      }
+      await peer.flush()
+      await changes.plays()
+      const press = async (type: string): Promise<void> => {
+        await act(async () => {
+          document
+            .querySelector('[aria-label="Dictation"]')!
+            .dispatchEvent(new window.MouseEvent(type, { bubbles: true }))
+        })
+      }
+      await press('pointerdown')
+      await press('pointerup')
+      await settle()
+      await act(async () => {
+        sockets.at(-1)!.open()
+      })
+      await press('pointerdown')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+      })
+      const start = sockets.at(-1)!.frames.at(-1)!
+      expect(start.kind).equals('start')
+      await press('pointerup')
+      const before = session().actions
+      await act(async () => {
+        sockets.at(-1)!.reply({
+          kind: 'actions',
+          id: start.id,
+          transcript: 'Ground ball, fielders choice',
+          actions: [
+            {
+              type: 'ballInPlay',
+              contact: 'swing',
+              trajectory: 'ground_ball',
+              fielder: setupOf(peer.state).sides.home.defense.SS
+            },
+            { type: 'result', eventType: 'fielders_choice' }
+          ],
+          roster: [],
+          dropped: []
+        })
+      })
+      await settle()
+      expect(session().actions).deep.equals(before)
+      expect(shown(lstrings.dictation_dismiss_question)).equals(true)
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      expect(shown(lstrings.dictation_dismiss_question)).equals(true)
+      expect(session().actions).deep.equals(before)
+      await click(lstrings.dictation_dismiss_question)
+      await settle()
+      expect(shown(lstrings.dictation_dismiss_question)).equals(false)
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+      expect(session().actions).deep.equals(peer.actions)
+    } finally {
+      globalThis.WebSocket = originalSocket
+      if (devices == null)
+        delete (navigator as { mediaDevices?: unknown }).mediaDevices
+      else Object.defineProperty(navigator, 'mediaDevices', devices)
+    }
+  })
+  it('keeps following after adopting a peer’s unfinished single', async function () {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('0 balls 0 strikes 0 outs')
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
+  for (const notice of ['plans', 'resync'] as const)
+    it(`keeps following an unfinished single after a ${notice} plan refresh`, async () => {
+      const plans = { value: scoringPlans({}) }
+      const { changes, other, session, store, planReads } = await scoring({
+        plans
+      })
+      const peer = await other()
+      peer.apply({ type: 'ballInPlay', contact: 'swing' })
+      peer.apply({ type: 'result', eventType: 'single' })
+      await peer.flush()
+      await changes.plays()
+      expect(shown('Finish at-bat')).equals(true)
+      const saved = JSON.stringify(await store.load('g1'))
+      plans.value = scoringPlans({
+        home: scoringSidePlan(10, { 2: PLAN_SWAPPED })
+      })
+      await changes.emit(
+        notice === 'resync'
+          ? { type: 'resync', gameId: 'g1' }
+          : {
+              type: 'change',
+              gameId: 'g1',
+              kind: 'plans',
+              at: '2026-10-12T12:00:00Z',
+              data: { teamId: 'home' }
+            }
+      )
+      expect(planReads()).equals(2)
+      expect(JSON.stringify(await store.load('g1'))).equals(saved)
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      await peer.flush()
+      await changes.plays()
+      expect(session().actions).deep.equals(peer.actions)
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+      expect(session().actions).deep.equals(peer.actions)
+    })
+
+  it('adopts a peer Undo that restores one of its earlier saved digests', async () => {
+    const { changes, other, session, store } = await scoring({ digests: true })
+    await click('Ball')
+    await session().flush()
+    const earlier = (await store.load('g1')).playsDigest!
+    await click('Called Strike')
+    await session().flush()
+    expect(session().holdsPlays(earlier)).equals(false)
+    const peer = await other()
+    expect(peer.undo().problems).deep.equals([])
+    await peer.flush()
+    expect((await store.load('g1')).playsDigest).equals(earlier)
+    await changes.plays(earlier)
+    expect(session().actions).deep.equals(peer.actions)
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+  })
+
+  it('reads a delayed older echo without rolling back the current score or Undo', async () => {
+    const { changes, session, store } = await scoring({ digests: true })
+    await click('Ball')
+    await session().flush()
+    const earlier = (await store.load('g1')).playsDigest!
+    await click('Called Strike')
+    await session().flush()
+    await changes.plays(earlier)
+    expect(document.body.textContent).includes('1 balls 1 strikes')
+    await click('Undo Called Strike')
+    await session().flush()
+    expect(document.body.textContent).includes('1 balls 0 strikes')
+  })
+
+  it('adopts a peer Undo while its own third-out presentation is still running', async () => {
+    const { changes, other, session } = await scoring()
+    const setup = await other()
+    const initial = overrideOf(setup.state)
+    expect(
+      setup.apply({
+        type: 'gameFlow',
+        kind: 'override',
+        ...initial,
+        batter: initial.batter ?? undefined,
+        pitcher: initial.pitcher ?? undefined,
+        outs: 2
+      }).problems
+    ).deep.equals([])
+    setup.apply({ type: 'pitch', call: 'C' })
+    setup.apply({ type: 'pitch', call: 'C' })
+    await setup.flush()
+    await changes.plays()
+    await click('Called Strike')
+    await session().flush()
+    const animated = field()
+    const motion = (
+      animated as unknown as {
+        players: Array<{ motion?: { id: string; generation: number } }>
+      }
+    ).players.find(player => player.motion != null)?.motion
+    expect(motion).not.equals(undefined)
+    const peer = await other()
+    expect(peer.undo().problems).deep.equals([])
+    while (peer.state.liveData.linescore.outs === 3)
+      expect(peer.undo().problems).deep.equals([])
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(peer.actions)
+    expect(document.body.textContent).includes('0 balls 2 strikes 2 outs')
+    await act(async () => {
+      animated.onMovementComplete?.(motion!.id, motion!.generation)
+    })
+    await session().flush()
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
+  it('keeps following peer completion after a canceled runner drag', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    await act(async () => {
+      field().onGestureActive?.(true)
+    })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(shown('Finish at-bat')).equals(true)
+    await act(async () => {
+      field().onGestureActive?.(false)
+    })
+    await settle()
+    expect(shown('Finish at-bat')).equals(false)
+    expect(session().actions).deep.equals(peer.actions)
+  })
+
+  it('resumes peer following after Undo cancels an uncommitted runner out', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    const before = [...session().actions]
+    await act(async () => {
+      const view = field()
+      const runner = view.players.find(
+        player =>
+          player.playerId === peer.state.liveData.linescore.offense.first?.id
+      )!
+      view.onRunnerDrop!(runner.id, 2, 'out', view.interaction!.generation)
+    })
+    expect(document.body.textContent).includes('Tap or drag a player')
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(before)
+    await click(
+      document
+        .querySelector('[aria-label^="Undo "]')!
+        .getAttribute('aria-label')!
+    )
+    await settle()
+    expect(session().actions).deep.equals(peer.actions)
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+  })
+
+  it('keeps following after a same-base Safe drop and its batched gesture release', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    await act(async () => {
+      field().onGestureActive?.(true)
+    })
+    await act(async () => {
+      const view = field()
+      const runner = view.players.find(
+        player =>
+          player.playerId === peer.state.liveData.linescore.offense.first?.id
+      )!
+      view.onRunnerDrop!(runner.id, 1, 'safe', view.interaction!.generation)
+      view.onGestureActive?.(false)
+    })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(peer.actions)
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+  })
+
+  it('keeps a committed runner advance locally owned through gesture release', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    await act(async () => {
+      const view = field()
+      const runner = view.players.find(
+        player =>
+          player.playerId === peer.state.liveData.linescore.offense.first?.id
+      )!
+      view.onRunnerDrop!(runner.id, 2, 'safe', view.interaction!.generation)
+      view.onGestureActive?.(false)
+    })
+    await session().flush()
+    const authored = [...session().actions]
+    expect(authored.at(-1)).deep.includes({ type: 'runnerMovement', to: '2B' })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(authored)
+  })
+
+  it('authors the explicit Finish tap after following an unfinished play', async function () {
+    const { changes, other, session, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+    await peer.flush()
+    await changes.plays()
+    const posts: SaveChange[] = []
+    const save = store.save.bind(store)
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    const before = Date.now()
+    await click('Finish at-bat')
+    await session().flush()
+    expect(posts).has.length(1)
+    expect(posts[0].scoringMutation?.at).within(before, Date.now())
+    expect(posts[0].plays).has.length(1)
+  })
+
+  it('keeps a saved-history Undo of a peer play open for local correction', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    await click('Undo Last play')
+    await session().flush()
+    const undone = session().actions
+    expect(shown('Finish at-bat')).equals(true)
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(undone)
+    expect(shown('Finish at-bat')).equals(true)
+  })
+
+  it('passes the original Undo tap identity into saved history', async () => {
+    const { changes, other, session, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    const tap = {
+      at: Date.now() - 1000,
+      id: 'undo-input',
+      revision: 0,
+      frontier: 0
+    }
+    session().captureScoringAction = () => tap
+    const posts: SaveChange[] = []
+    const save = store.save.bind(store)
+    store.save = async (id, change) => {
+      posts.push(change)
+      return await save(id, change)
+    }
+    await click('Undo Last play')
+    await session().flush()
+    expect(posts).has.length(1)
+    expect(posts[0].scoringMutation).includes({ at: tap.at, id: tap.id })
+    expect(document.body.textContent).includes('0 balls 0 strikes')
+  })
+
+  for (const dropped of [false, true])
+    it(`follows ${dropped ? 'dropped' : 'ordinary'} third strike through the next batter`, async () => {
+      const { changes, other, session } = await scoring()
+      const peer = await other()
+      const publish = async (): Promise<void> => {
+        await peer.flush()
+        await changes.plays()
+      }
+      peer.apply({ type: 'pitch', call: 'C' })
+      peer.apply({ type: 'pitch', call: 'C' })
+      await publish()
+      if (dropped) {
+        peer.apply({ type: 'result', eventType: 'strikeout' })
+        await publish()
+        const batter = peer.state.liveData.plays.currentPlay!.matchup.batter.id
+        peer.apply({ type: 'runnerMovement', runner: batter, to: '1B' })
+      } else peer.apply({ type: 'pitch', call: 'C' })
+      await publish()
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      await publish()
+      peer.apply({ type: 'pitch', call: 'B' })
+      await publish()
+      expect(document.body.textContent).includes('1 balls 0 strikes')
+      expect(session().actions).deep.equals(peer.actions)
+    })
+
   it('reads another scorer’s plays in at rest, starting again from them', async function () {
     const { changes, other, reloads } = await scoring()
     expect(document.body.textContent).includes('0 balls 0 strikes')
@@ -377,6 +1283,39 @@ describe('the scoring screen on the game socket', function () {
     await click('Dismiss outcomes')
     await settle()
     expect(reloads.length).greaterThan(asked)
+  })
+
+  it('defers a remote read that finishes after More opens, then follows when it closes', async function () {
+    const { changes, other, store } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    const load = store.load
+    let release!: () => void
+    const held = new Promise<void>(resolve => {
+      release = resolve
+    })
+    let first = true
+    store.load = async id => {
+      const snapshot = await load(id)
+      if (first) {
+        first = false
+        await held
+      }
+      return snapshot
+    }
+    await changes.plays()
+    await click('More')
+    expect(shown('More scoring actions')).equals(true)
+    release()
+    await settle()
+    expect(shown('More scoring actions')).equals(true)
+    expect(shown('Finish at-bat')).equals(false)
+    await click('Dismiss More')
+    await settle()
+    expect(shown('Finish at-bat')).equals(true)
+    expect((await other()).actions).deep.equals(peer.actions)
   })
 
   it('follows once its own save has stopped, not while it is out', async function () {
@@ -677,6 +1616,34 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     await click('Cancel')
   })
 
+  it('refreshes a clean roster when its first remote reload is deferred', async () => {
+    const { changes, other, digest, session } = await scoring()
+    await click('Open scoring menu')
+    await click('Set Team Rosters')
+    await settle()
+    const before = order()
+    const theirs = await swapLeadoff(await other())
+    expect(theirs).not.deep.equals(before)
+    const reload = session().reload.bind(session())
+    let first = true
+    session().reload = async guard => {
+      if (first) {
+        first = false
+        return false
+      }
+      return await reload(guard)
+    }
+    digest.value = 'd2'
+    await changes.lineups('d2')
+    await settle()
+    expect(
+      session().state.liveData.boxscore.teams.away.battingOrder.map(
+        id => session().state.gameData.players[id].fullName
+      )
+    ).deep.equals(theirs)
+    expect(order()).deep.equals(theirs)
+  })
+
   it('warns over a dirty draft and keeps it; Cancel takes theirs', async function () {
     const { changes, other, digest } = await scoring()
     await click('Open scoring menu')
@@ -832,7 +1799,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
           }
         }
         const reload = session.reload.bind(session)
-        session.reload = async () => {
+        session.reload = async canAdopt => {
           reloads++
           return await reload()
         }

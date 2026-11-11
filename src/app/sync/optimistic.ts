@@ -1,6 +1,11 @@
 import { formatName, shortName, shortNames } from '../../common/names'
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import { FINAL_INDEX, storedRecordOf } from '../../common/scoring/gumbo'
+import {
+  sameScoringMutation,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import { POSITIONS } from '../../common/scoring/state'
 import { namesIn, withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
@@ -198,6 +203,20 @@ function withHalves(
   }
 }
 
+/** Whether a known scoring winner prevents this optimistic write. */
+export function skipsScoringOverlay(document: unknown, post: unknown): boolean {
+  const stored = objectOf(document)
+  const body = objectOf(post)
+  const mutation = body.scoringMutation as ScoringMutation | undefined
+  const prior = stored.scoringMutation as ScoringMutation | undefined
+  const base = body.scoringBase as ScoringMutation | null | undefined
+  return (
+    (mutation == null || !sameScoringMutation(mutation, prior)) &&
+    base !== undefined &&
+    !sameScoringMutation(base, prior)
+  )
+}
+
 /**
  * `GET /games/:gameId/events` once a live post is written: its plays in
  * place by `atBatIndex`, the indexes in `remove` gone, and the at-bat in
@@ -231,6 +250,14 @@ export function appliedEvents(
 ): Json {
   const stored = objectOf(document)
   const body = objectOf(post)
+  const mutation = body.scoringMutation as ScoringMutation | undefined
+  // A queued request still needs delivery, but an already observed winner
+  // must not be replaced by a conflicting optimistic picture during drain.
+  if (skipsScoringOverlay(document, post)) {
+    const snapshot = { ...stored }
+    delete snapshot.superseded
+    return snapshot
+  }
   const held = eventsNames(stored)
   const halves = eventsHalves(stored)
   const formats = eventsFormats(stored)
@@ -275,6 +302,18 @@ export function appliedEvents(
   }
   for (const index of arrayOf(body.remove))
     if (typeof index === 'number') rows.delete(index)
+  if (mutation != null)
+    for (const index of rows.keys())
+      if (
+        index !== FINAL_INDEX &&
+        (index > mutation.frontier ||
+          (index === mutation.frontier &&
+            !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
+              action =>
+                !(action.type === 'gameFlow' && action.kind === 'closePlay')
+            )))
+      )
+        rows.delete(index)
   for (const play of arrayOf(body.plays)) {
     const index = indexOf(play)
     if (index == null) continue
@@ -286,8 +325,10 @@ export function appliedEvents(
       gumbo: named(play)
     })
   }
+  const snapshot = { ...stored }
+  delete snapshot.superseded
   return {
-    ...stored,
+    ...snapshot,
     plays: [...rows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
     currentPlay:
       body.currentPlay === undefined
@@ -296,6 +337,9 @@ export function appliedEvents(
     ...(Object.keys(listed).length === 0
       ? {}
       : { readerNames: { ...reader, ...listed } }),
+    ...(body.scoringMutation == null
+      ? {}
+      : { scoringMutation: body.scoringMutation }),
     priorPlaysDigest: stored.playsDigest ?? null,
     playsDigest: game.plays,
     lineupsDigest: game.lineups
