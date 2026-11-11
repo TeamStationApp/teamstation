@@ -1199,8 +1199,15 @@ async function main(): Promise<void> {
       .get('destination')!
       .split(',')
       .map(Number)
-    assert(Math.abs(directionsLatitude - venueCenter.lat) < 0.000001)
-    assert(Math.abs(directionsLongitude - venueCenter.lng) < 0.000001)
+    // Leaflet keeps its center on whole pixels once the frame is laid out:
+    // the directions agree with it to within one of the map's pixels.
+    const pixel = await inMapFrame<{ lat: number; lng: number }>(
+      coveragePage,
+      `(()=>{const a=window.eventMap.containerPointToLatLng([0,0]),b=window.eventMap.containerPointToLatLng([1,1]);return{lat:Math.abs(a.lat-b.lat),lng:Math.abs(a.lng-b.lng)}})()`
+    )
+    const agree = `directions ${directionsLatitude},${directionsLongitude}; map center ${venueCenter.lat},${venueCenter.lng}; a pixel ${pixel.lat},${pixel.lng}`
+    assert(Math.abs(directionsLatitude - venueCenter.lat) <= pixel.lat, agree)
+    assert(Math.abs(directionsLongitude - venueCenter.lng) <= pixel.lng, agree)
     console.log('Venue-only directions agree with the displayed map center')
     assert(
       (
@@ -1518,11 +1525,32 @@ async function main(): Promise<void> {
       id: 'event-reply-row-usr_111111111111111111112k',
       timeout: 20000
     })
-    const savedFold = await f.h.db
-      .selectFrom('team_events')
-      .selectAll()
-      .where('id', '=', dstEvent.id)
-      .executeTakeFirstOrThrow()
+    // The toast says saved as the request leaves; the row follows it.
+    interface EventRow {
+      start_at: Date
+      end_at: Date | null
+    }
+    const savedRow = async (
+      stale: (row: EventRow) => boolean
+    ): Promise<EventRow> => {
+      const read = async (): Promise<EventRow> =>
+        await f.h.db
+          .selectFrom('team_events')
+          .selectAll()
+          .where('id', '=', dstEvent.id)
+          .executeTakeFirstOrThrow()
+      let row = await read()
+      for (
+        const until = Date.now() + 10000;
+        stale(row) && Date.now() < until;
+        row = await read()
+      )
+        await new Promise(resolve => setTimeout(resolve, 250))
+      return row
+    }
+    const savedFold = await savedRow(
+      row => row.end_at?.toISOString() === '2027-11-07T09:32:00.000Z'
+    )
     assert.equal(savedFold.end_at!.toISOString(), '2027-11-07T09:30:00.000Z')
     assert.equal(
       savedFold.end_at!.getTime() - savedFold.start_at.getTime(),
@@ -1546,11 +1574,9 @@ async function main(): Promise<void> {
       id: 'event-reply-row-usr_111111111111111111112k',
       timeout: 20000
     })
-    const roundedStart = await f.h.db
-      .selectFrom('team_events')
-      .select('start_at')
-      .where('id', '=', dstEvent.id)
-      .executeTakeFirstOrThrow()
+    const roundedStart = await savedRow(
+      row => row.start_at.toISOString() === '2027-11-07T09:32:00.000Z'
+    )
     assert.equal(
       roundedStart.start_at.toISOString(),
       '2027-11-07T09:30:00.000Z'
@@ -1597,11 +1623,9 @@ async function main(): Promise<void> {
       id: 'event-reply-row-usr_111111111111111111112k',
       timeout: 20000
     })
-    const midnight = await f.h.db
-      .selectFrom('team_events')
-      .selectAll()
-      .where('id', '=', dstEvent.id)
-      .executeTakeFirstOrThrow()
+    const midnight = await savedRow(
+      row => row.start_at.toISOString() === '2027-11-08T07:58:00.000Z'
+    )
     assert.equal(midnight.start_at.toISOString(), '2027-11-08T08:00:00.000Z')
     console.log(
       'Loaded repeated-hour end remains45 minutes; near-midnight start rounds two minutes forward'
@@ -1648,10 +1672,14 @@ async function main(): Promise<void> {
       ),
       false
     )
-    assert(
-      await evaluate<boolean>(
-        `document.querySelector('[data-testid="event-reply-row-usr_111111111111111111112n"]')!=null`
-      )
+    // A guardian replies only for children who play on a participating
+    // roster: 103 no longer plays, so 109 replies for himself alone.
+    assert.deepEqual(direct.replyUserIds, [userIdOfGumbo(109)])
+    assert.equal(
+      await evaluate<string>(
+        `[...document.querySelectorAll('[data-testid^="event-reply-row-"]')].map(n=>n.getAttribute('data-testid')).join(',')`
+      ),
+      `event-reply-row-${userIdOfGumbo(109)}`
     )
     console.log(
       'Direct away affiliation wins over private guardian control for a home-team non-player'
