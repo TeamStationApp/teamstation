@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Platform, Pressable, Text, View } from 'react-native'
 
 import { Button } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ChatAnchoredMenu } from './ChatAnchoredMenu'
@@ -137,7 +138,9 @@ export function MessageMenu(props: MessageMenuProps): React.ReactElement {
         }}
         style={styles.reaction}
       >
-        <Text style={styles.emoji}>＋</Text>
+        <ButtonIcon name="add">
+          <Text style={styles.emoji}>＋</Text>
+        </ButtonIcon>
       </Pressable>
     </View>
   )

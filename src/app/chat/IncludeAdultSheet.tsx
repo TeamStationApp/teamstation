@@ -2,7 +2,8 @@ import React, { useEffect, useState } from 'react'
 import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { IncludedAdult, TeamStationClient } from '../../common/api'
-import { Button, Icon, TextField } from '../components'
+import { Button, TextField } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { getChatStyles } from './chatStyles'
@@ -149,7 +150,7 @@ export function IncludeAdultSheet(
                     <Text style={shared.small}>{adult.label}</Text>
                   </View>
                   {isPicked(adult) && (
-                    <Icon name="star" color={theme.activeColor} />
+                    <ButtonIcon name="star" color={theme.activeColor} />
                   )}
                 </Pressable>
               ))}

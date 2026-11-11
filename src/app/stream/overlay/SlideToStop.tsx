@@ -17,7 +17,7 @@ import Animated, {
   withTiming
 } from 'react-native-reanimated'
 
-import { Icon } from '../../components/Icon'
+import { ButtonIcon } from '../../components/ButtonIcon'
 import { useMotionPreference } from '../../components/useMotionPreference'
 import { lstrings } from '../../locales/strings'
 import {
@@ -221,9 +221,11 @@ export function SlideToStop(props: SlideToStopProps): React.ReactElement {
         ]}
       >
         {glyph === 'stop' ? (
-          <View style={styles.knobSquare} />
+          <ButtonIcon>
+            <View style={styles.knobSquare} />
+          </ButtonIcon>
         ) : (
-          <Icon name="chevron_right" size={1.75} color={WHITE} />
+          <ButtonIcon name="chevron_right" size={1.75} color={WHITE} />
         )}
       </Animated.View>
     </View>

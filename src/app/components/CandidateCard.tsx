@@ -3,8 +3,8 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { RosterCandidate } from '../../common/api'
 import { useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 import { Emblem } from './Emblem'
-import { Icon } from './Icon'
 import { initialsOf } from './initials'
 
 /** A pill's height; its padding is at least half of it (`docs/ui-rules.md`). */
@@ -97,7 +97,7 @@ export function CandidateCard({
           </View>
         )}
       </View>
-      <Icon name="chevron_right" color={theme.secondaryTextColor} />
+      <ButtonIcon name="chevron_right" color={theme.secondaryTextColor} />
     </Pressable>
   )
 }
