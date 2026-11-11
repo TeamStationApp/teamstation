@@ -14,6 +14,7 @@ import {
   dropRunner,
   installSceneProbe,
   placeFielder,
+  puppeteerDriver,
   setTrajectory
 } from '../../../e2e/rigs/fieldPointer'
 import type { GameDetail, RosterEntry } from '../../common/api'
@@ -248,8 +249,8 @@ async function chooseHit(page: Page, outcome: string): Promise<void> {
   await page.waitForSelector(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await placeFielder(page, 'P')
-  await setTrajectory(page)
+  await placeFielder(puppeteerDriver(page), 'P')
+  await setTrajectory(puppeteerDriver(page))
 }
 /** One frame, so the screen has taken the key before the next one. */
 async function frame(page: Page): Promise<void> {
@@ -279,8 +280,8 @@ async function hitTo(
   await page.waitForSelector(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await placeFielder(page, position)
-  await setTrajectory(page, angle)
+  await placeFielder(puppeteerDriver(page), position)
+  await setTrajectory(puppeteerDriver(page), angle)
 }
 /** Finishes a decided play when the screen leaves it open for correction. */
 async function finishAtBat(page: Page): Promise<void> {
@@ -303,7 +304,7 @@ async function placeDefender(page: Page, position: Position): Promise<void> {
   // prompt alone does not show the screen has taken the last one.
   await frame(page)
   await frame(page)
-  await placeFielder(page, position)
+  await placeFielder(puppeteerDriver(page), position)
 }
 /** The runner headed home is safe, when the screen asks. */
 async function decideHome(page: Page): Promise<void> {
@@ -321,8 +322,8 @@ async function reachOnError(page: Page): Promise<void> {
   await page.waitForSelector(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await placeFielder(page, 'SS')
-  await setTrajectory(page, -10)
+  await placeFielder(puppeteerDriver(page), 'SS')
+  await setTrajectory(puppeteerDriver(page), -10)
   await page.waitForSelector('[aria-label^="Tap or drag another defender"]', {
     timeout: 30000
   })
