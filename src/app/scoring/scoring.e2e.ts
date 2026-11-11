@@ -14,6 +14,18 @@ import {
 } from 'three'
 
 import { browserCoverageCollector } from '../../../e2e/rigs/browserCoverage'
+import {
+  aimLanding,
+  aimLandingAt,
+  dropOfferedRunner,
+  groundPoint,
+  installSceneProbe,
+  placeFielder,
+  placeOffered,
+  puppeteerDriver,
+  setTrajectory,
+  tapOffered
+} from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, type RosterEntry } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
@@ -92,7 +104,8 @@ async function open(
   page.once('close', () => {
     context.close().catch(() => undefined)
   })
-  if (probe)
+  if (!probe) await installSceneProbe(page)
+  else
     await page.evaluateOnNewDocument(() => {
       const host = window as unknown as SceneProbeWindow
       host.qaRoots = []
@@ -528,14 +541,12 @@ async function chooseHit(page: Page, outcome: string): Promise<void> {
       ? '[aria-label^="Drag where the ball was hit"]'
       : '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await page.focus('[role="application"]')
-  await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
-  await page.keyboard.press('Enter')
-  await page.waitForSelector(
-    '[aria-label^="Drag up and down for ball trajectory."]'
-  )
-  await page.keyboard.press('Enter')
+  const field = puppeteerDriver(page)
+  // A home run lands in the stands beyond center; anything else is taken by
+  // the first player the field offers, just where he stands.
+  if (outcome === 'Home Run') await aimLanding(field, 0.5, 0.18)
+  else await placeOffered(field)
+  await setTrajectory(field)
 }
 async function waitReady(page: Page): Promise<void> {
   await page.waitForFunction(
@@ -577,32 +588,6 @@ async function tapSettled(page: Page, label: string): Promise<void> {
   await page
     .locator(`[aria-label="${label}"]:not([aria-disabled="true"])`)
     .click()
-}
-async function dropRunnerWithKeyboard(
-  page: Page,
-  decision: 'Safe' | 'Out',
-  advance = false
-): Promise<void> {
-  await page.waitForSelector('canvas[data-field-ready="true"]')
-  await page.focus('[role="application"]')
-  await page.keyboard.press('[')
-  await page.keyboard.press('Space')
-  if (advance) for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
-  await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
-  await page.keyboard.press('Enter')
-}
-async function placeDefenderWithKeyboard(
-  page: Page,
-  next = false
-): Promise<void> {
-  await page.focus('[role="application"]')
-  if (next) {
-    await page.keyboard.press(']')
-    await page.keyboard.press(']')
-  }
-  await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
-  await page.keyboard.press('Enter')
 }
 async function overrideBases(
   page: Page,
@@ -845,7 +830,7 @@ describe('scoring browser', function () {
         )
         expect(await page.$('[aria-label^="Home plate decision"]')).equals(null)
         if (loaded) {
-          await placeDefenderWithKeyboard(page, true)
+          await placeOffered(puppeteerDriver(page), 1)
           await page.waitForSelector(
             '[aria-label^="Tap or drag another defender"]',
             { timeout: 10000 }
@@ -885,16 +870,12 @@ describe('scoring browser', function () {
       expect(await page.$('[aria-label="Fielder\'s Choice"]')).equals(null)
       await click(page, 'Home Run')
       await page.waitForSelector('canvas[data-field-ready="true"]')
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Space')
-      for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
-      await page.keyboard.press('Enter')
-      await page.waitForSelector(
-        '[aria-label^="Drag up and down for ball trajectory."]'
-      )
-      for (let i = 0; i < 100; i++) await page.keyboard.press('ArrowDown')
+      // Deep into the stands, then dragged as low as it goes: a ball over
+      // the fence is a line drive at the least.
+      const field = puppeteerDriver(page)
+      await aimLanding(field, 0.5, 0.08)
+      await setTrajectory(field, -45)
       await page.waitForSelector('[aria-label*="10° Line Drive"]')
-      await page.keyboard.press('Enter')
       await page.waitForSelector('[aria-label*="Batter Player 2"]', {
         timeout: 30000
       })
@@ -915,8 +896,8 @@ describe('scoring browser', function () {
           await click(page, 'Batter Out')
           await click(page, 'Ground Out')
           await page.waitForSelector('canvas[data-field-ready="true"]')
-          await placeDefenderWithKeyboard(page)
-          await page.keyboard.press('Enter')
+          await placeOffered(puppeteerDriver(page))
+          await setTrajectory(puppeteerDriver(page))
           await page.waitForSelector(
             '[aria-label^="Tap or drag the next defender"]'
           )
@@ -1010,18 +991,18 @@ describe('scoring browser', function () {
         await click(page, 'Batter Out')
         await click(page, 'Ground Out')
         await page.waitForSelector('canvas[data-field-ready="true"]')
-        await placeDefenderWithKeyboard(page)
+        await placeOffered(puppeteerDriver(page))
         if (process.env.TS_SCORING_ARTIFACT_DIR != null && assisted)
           recorder = await page.record({
             path: `${process.env.TS_SCORING_ARTIFACT_DIR}/20260923-scoring-hit-throw.mp4`,
             audio: true
           })
-        await page.keyboard.press('Enter')
+        await setTrajectory(puppeteerDriver(page))
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]'
         )
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
-        if (assisted) await placeDefenderWithKeyboard(page, true)
+        if (assisted) await placeOffered(puppeteerDriver(page), 1)
         await click(page, 'Finish defensive play')
         expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
@@ -1141,13 +1122,13 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
-      await dropRunnerWithKeyboard(page, 'Out', true)
+      await dropOfferedRunner(page, 'Out', true)
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]'
       )
       expect(await page.$('[aria-label^="Tap and Drag Thrower"]')).equals(null)
       for (let n = 0; n < 3; n++) {
-        await placeDefenderWithKeyboard(page, n % 2 === 0)
+        await placeOffered(puppeteerDriver(page), n % 2 === 0 ? 1 : 0)
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]',
           { timeout: 30000 }
@@ -1564,7 +1545,7 @@ describe('scoring browser', function () {
           await page.waitForSelector('[aria-label*="Batter Player 2"]')
         } else {
           await click(page, 'Out')
-          await placeDefenderWithKeyboard(page)
+          await placeOffered(puppeteerDriver(page))
           await click(page, 'Bottom Finish defensive play')
           await page.waitForSelector(
             scenario === 'loaded-out'
@@ -3050,19 +3031,12 @@ describe('scoring browser', function () {
         )
         expect(await page.$('[aria-label="Back"]')).equals(null)
         await page.waitForSelector('canvas[data-field-ready="true"]')
-        const field = '[role="application"]'
-        await page.focus(field)
-        await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowRight')
-        await page.keyboard.press('Enter')
-        await page.waitForSelector(
-          '[aria-label^="Drag up and down for ball trajectory."]'
-        )
-        for (let i = 0; i < 40; i++) await page.keyboard.press('ArrowDown')
+        const field = puppeteerDriver(page)
+        await placeOffered(field)
+        // Dragged down to 5°: a caught ball goes no lower than a line drive.
+        await setTrajectory(field, 5)
         const angle =
           out === 'Ball Caught' ? '10° Line Drive' : '5° Ground Ball'
-        await page.waitForSelector(`[aria-label*="${angle}"]`)
-        await page.keyboard.press('Enter')
         await page.waitForSelector(`[aria-label="Undo ${angle}"]`)
         await click(page, `Undo ${angle}`)
         await page.waitForSelector(
@@ -3114,7 +3088,7 @@ describe('scoring browser', function () {
       await page.mouse.move(500, 500)
       await page.mouse.down()
       await page.mouse.move(500, 620, { steps: 12 })
-      await page.$eval('[role="application"]', node =>
+      await page.$eval('[aria-label="Baseball field"]', node =>
         node.dispatchEvent(
           new PointerEvent('pointercancel', {
             bubbles: true,
@@ -3179,12 +3153,12 @@ describe('scoring browser', function () {
       )
       await click(page, 'Ball')
       await waitReady(page)
-      await dropRunnerWithKeyboard(page, 'Safe')
+      await dropOfferedRunner(page, 'Safe')
       await waitReady(page)
       await page.waitForSelector(
         '[aria-label*="1 balls 0 strikes 0 outs · Pitches 2"]'
       )
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropOfferedRunner(page, 'Safe', true)
       await click(page, 'Steal')
       await waitReady(page)
       await page.waitForSelector(
@@ -3442,10 +3416,7 @@ describe('scoring browser', function () {
           await click(page, 'Safe')
         }
         if (action === 'Batter Out — Other') {
-          await page.focus('[role="application"]')
-          await page.keyboard.press('Space')
-          await page.keyboard.press('ArrowUp')
-          await page.keyboard.press('Enter')
+          await placeOffered(puppeteerDriver(page))
           await click(page, 'Finish defensive play')
         }
         const windowExpected = ![
@@ -3479,110 +3450,6 @@ describe('scoring browser', function () {
         await page.close()
       }
     })
-  it('anchors keyboard decisions to the base and supports Tab activation and Escape', async function () {
-    const { page } = await open('/games/g1/score')
-    try {
-      await overrideBases(page, [['First base', 'Player 6']])
-      // Lock the switch hitter so keyboard placement selects the base runner.
-      await click(page, 'Ball')
-      await waitReady(page)
-      await page.waitForSelector('canvas[data-field-ready="true"]')
-      for (const width of [1200, 390]) {
-        await page.setViewport({ width, height: 900 })
-        await page.waitForFunction(
-          width => {
-            const canvas = document.querySelector('canvas')!
-            return canvas.width >= width && canvas.width <= width * 1.5 + 1
-          },
-          {},
-          width
-        )
-        await page.focus('[role="application"]')
-        await page.keyboard.press('[')
-        await page.keyboard.press('Space')
-        for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
-        const rect = await page.$eval('canvas', node => {
-          const r = node.getBoundingClientRect()
-          return { x: r.x, y: r.y, width: r.width, height: r.height }
-        })
-        const camera = new PerspectiveCamera()
-        applyFieldCamera(camera, {
-          width: rect.width,
-          height: rect.height,
-          view: 'home',
-          zoom: 1.25,
-          tilt: (-11 * Math.PI) / 180,
-          heightOffset: 33,
-          bottomExtension: 112
-        })
-        const projected = new Vector3(BASES[2].x, 9, BASES[2].z).project(camera)
-        const expectedX = Math.max(
-          8,
-          Math.min(rect.width - 176, ((projected.x + 1) * rect.width) / 2 - 84)
-        )
-        const expectedY = Math.max(
-          8,
-          Math.min(
-            rect.height - 194,
-            ((1 - projected.y) * rect.height) / 2 - 80
-          )
-        )
-        await page.waitForFunction(
-          (x, y) => {
-            const node = document.querySelector(
-              '[aria-label="Safe drag target"]'
-            )
-            if (node == null) return false
-            const r = node.getBoundingClientRect()
-            return Math.abs(r.x - x) < 2 && Math.abs(r.y - y) < 2
-          },
-          {},
-          rect.x + expectedX,
-          rect.y + expectedY
-        )
-        const target = await page.$eval(
-          '[aria-label="Safe drag target"]',
-          node => {
-            const r = node.getBoundingClientRect()
-            return {
-              x: r.x,
-              y: r.y,
-              role: node.getAttribute('role'),
-              tabIndex: (node as HTMLElement).tabIndex
-            }
-          }
-        )
-        expect(target.x).closeTo(rect.x + expectedX, 2)
-        expect(target.y).closeTo(rect.y + expectedY, 2)
-        expect(target.role).equals('button')
-        expect(target.tabIndex).equals(0)
-        let reached = false
-        for (let i = 0; i < 16; i++) {
-          await page.keyboard.press('Tab')
-          reached = await page.evaluate(() => {
-            const active = document.activeElement
-            if (active == null) return false
-            return active.getAttribute('aria-label') === 'Safe drag target'
-          })
-          if (reached) break
-        }
-        expect(reached).equals(true)
-        await page.keyboard.press('Enter')
-        await page.waitForSelector('[aria-label="Steal"]')
-        await tapSettled(page, 'Cancel')
-        expect(await page.$('[aria-label="Safe drag target"]')).equals(null)
-        await page.focus('[role="application"]')
-        await page.keyboard.press('[')
-        await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowUp')
-        await page.focus('[aria-label="Out drag target"]')
-        await page.keyboard.press('Escape')
-        expect(await page.$('[aria-label="Out drag target"]')).equals(null)
-      }
-    } finally {
-      await page.close()
-    }
-  })
   it('cancels an entire runner draft by button, outside or Escape and commits one edit', async function () {
     const { page } = await open('/games/g1/score')
     try {
@@ -3590,12 +3457,7 @@ describe('scoring browser', function () {
       await click(page, 'Ball')
       await waitReady(page)
       const propose = async (): Promise<void> => {
-        await page.focus('[role="application"]')
-        await page.keyboard.press('[')
-        await page.keyboard.press('Space')
-        for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
-        await page.keyboard.press('s')
-        await page.keyboard.press('Enter')
+        await dropOfferedRunner(page, 'Safe', true)
         await page.waitForSelector('[aria-label="Steal"]')
         await page.waitForSelector('[role="dialog"]')
       }
@@ -3853,12 +3715,9 @@ describe('scoring browser', function () {
         ).equals(undo)
       }
       await reject()
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Space')
-      await page.keyboard.press('Enter')
+      await tapOffered(puppeteerDriver(page))
       await reject()
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Enter')
+      await setTrajectory(puppeteerDriver(page))
       await reject()
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]',
@@ -3886,10 +3745,9 @@ describe('scoring browser', function () {
           await click(page, 'Batter Out')
           await click(page, 'Ball Caught')
         } else await click(page, 'Single')
-        await page.focus('[role="application"]')
-        await page.keyboard.press('Space')
-        for (let i = 0; i < 10; i++) await page.keyboard.press('ArrowUp')
-        await page.keyboard.press('Enter')
+        // The pitcher takes it some thirty feet out.
+        const field = puppeteerDriver(page)
+        await placeOffered(field, 0, 60)
         const target = await readGuide(page)
         const samplesPromise = page.evaluate(
           async () =>
@@ -3919,7 +3777,7 @@ describe('scoring browser', function () {
               }
             )
         )
-        await page.keyboard.press('Enter')
+        await setTrajectory(field)
         const samples = await samplesPromise
         const moving = samples
           .filter(p => p.z < -3 && p.z > target.z / 2)
@@ -3968,11 +3826,9 @@ describe('scoring browser', function () {
         const target = await readGuide(page)
         expect(Math.hypot(target.x, target.z)).closeTo(113.5, 0.01)
         expect(target.bearing).closeTo(outside ? 15 : -15, 0.01)
-        await page.focus('[role="application"]')
-        if (outside)
-          for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp')
-        await page.keyboard.press('Enter')
-        await page.keyboard.press('Enter')
+        // On the guide, or fifteen feet past it into the stands.
+        await aimLandingAt(page, target.x, target.z - (outside ? 15 : 0))
+        await setTrajectory(puppeteerDriver(page))
         await page.waitForFunction(
           () =>
             (window as unknown as SceneProbeWindow).qaScene!.getObjectByName(
@@ -4051,10 +3907,23 @@ describe('scoring browser', function () {
           bats === 'right' ? -15 : 15,
           0.01
         )
-        await page.focus('[role="application"]')
-        const toward = bats === 'right' ? 'ArrowRight' : 'ArrowLeft'
+        // The landing is held and moved in three-foot steps towards the
+        // middle, where the guide's bearing eases across the center gap.
+        const guide = await readGuide(page)
+        const toward = bats === 'right' ? 3 : -3
+        let x = guide.x
+        const moveTo = async (to: number): Promise<void> => {
+          x = to
+          await page.mouse.move(...(await groundPoint(page, x, guide.z)), {
+            steps: 3
+          })
+        }
+        await page.mouse.move(...(await groundPoint(page, x, guide.z)))
+        await page.mouse.down()
+        await moveTo(x + toward / 3)
+        await moveTo(guide.x)
         for (let i = 0; i < 9; i++) {
-          await page.keyboard.press(toward)
+          await moveTo(x + toward)
           await new Promise(resolve => setTimeout(resolve, 60))
         }
         await page.waitForFunction(() => {
@@ -4065,10 +3934,7 @@ describe('scoring browser', function () {
         })
         const start = await readGuide(page)
         expect(start.bearing).closeTo(bats === 'right' ? -5 : 5, 0.01)
-        for (const key of [
-          toward,
-          bats === 'right' ? 'ArrowLeft' : 'ArrowRight'
-        ] as const) {
+        for (const step of [toward, -toward]) {
           const samples = page.evaluate(
             async () =>
               await new Promise<number[]>(resolve => {
@@ -4087,7 +3953,7 @@ describe('scoring browser', function () {
                 requestAnimationFrame(sample)
               })
           )
-          await page.keyboard.press(key)
+          await moveTo(x + step)
           const values = await samples
           expect(
             values.some(
@@ -4099,8 +3965,8 @@ describe('scoring browser', function () {
         const final = await readGuide(page)
         expect(final.x).closeTo(start.x, 0.01)
         expect(final.z).closeTo(start.z, 0.01)
-        await page.keyboard.press('Enter')
-        await page.keyboard.press('Enter')
+        await page.mouse.up()
+        await setTrajectory(puppeteerDriver(page))
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
           timeout: 45000
         })
@@ -4116,14 +3982,12 @@ describe('scoring browser', function () {
         }
         await click(page, 'Swing in Play')
         await click(page, 'Single')
-        await page.focus('[role="application"]')
-        await page.keyboard.press('Space')
-        await page.keyboard.press('Enter')
+        await tapOffered(puppeteerDriver(page))
         await page.waitForSelector('[aria-label^="Ball trajectory:"]')
         const central = await readGuide(page)
         expect(central.x).equals(0)
         expect(Math.abs(central.bearing)).equals(5)
-        await page.keyboard.press('Enter')
+        await setTrajectory(puppeteerDriver(page))
         await page.waitForSelector('[aria-label="Finish at-bat"]', {
           timeout: 45000
         })
@@ -4194,8 +4058,7 @@ describe('scoring browser', function () {
             `[aria-label="Home run type: ${outside ? 'Home Run' : 'In-the-park Home Run'}"]`
           )
           await page.mouse.up()
-          await page.focus('[role="application"]')
-          await page.keyboard.press('Enter')
+          await setTrajectory(puppeteerDriver(page))
           await page.waitForSelector('[aria-label*="Batter Player 2"]', {
             timeout: 45000
           })
@@ -4351,12 +4214,12 @@ describe('scoring browser', function () {
         expect(await page.$('[aria-label^="Drag batter to a base"]')).equals(
           null
         )
-        await placeDefenderWithKeyboard(page, true)
+        await placeOffered(puppeteerDriver(page), 1)
         await page.waitForSelector(
           '[aria-label="Finish defensive play"]:not([aria-disabled="true"])'
         )
         if (mask === 3) {
-          await placeDefenderWithKeyboard(page, true)
+          await placeOffered(puppeteerDriver(page), 1)
           await page.waitForSelector(
             '[aria-label="Finish defensive play"]:not([aria-disabled="true"])'
           )
@@ -4629,22 +4492,22 @@ describe('scoring browser', function () {
           await overrideBases(page, [['First base', 'Player 6']])
           await click(page, 'Ball')
           await waitReady(page)
-          await dropRunnerWithKeyboard(page, decision, advance)
+          await dropOfferedRunner(page, decision, advance)
           await click(page, reason)
           if (reason === 'Wild Pitch')
             await click(page, 'Use previous pitch as wild pitch')
           else if (reason === 'Passed Ball') await click(page, 'YES')
           else if (reason === 'Throwing Error' || reason === 'Fielding Error')
-            await placeDefenderWithKeyboard(page)
+            await placeOffered(puppeteerDriver(page))
           if (decision === 'Out') {
             await page.waitForSelector(
               '[aria-label^="Tap or drag a player to where the ball was fielded."]'
             )
-            await placeDefenderWithKeyboard(page)
+            await placeOffered(puppeteerDriver(page))
             await page.waitForSelector(
               '[aria-label^="Tap or drag the next defender"]'
             )
-            await placeDefenderWithKeyboard(page, true)
+            await placeOffered(puppeteerDriver(page), 1)
             await click(page, 'Finish defensive play')
           }
           await waitReady(page)
@@ -4671,7 +4534,7 @@ describe('scoring browser', function () {
         await page.waitForSelector('[aria-label="Time to edit play"]', {
           timeout: 30000
         })
-        await dropRunnerWithKeyboard(page, 'Out')
+        await dropOfferedRunner(page, 'Out')
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]'
         )
@@ -4679,7 +4542,7 @@ describe('scoring browser', function () {
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]'
         )
-        if (!sameDefender) await placeDefenderWithKeyboard(page, true)
+        if (!sameDefender) await placeOffered(puppeteerDriver(page), 1)
         await click(page, 'Finish defensive play')
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
           timeout: 30000
@@ -4712,11 +4575,11 @@ describe('scoring browser', function () {
       await click(page, 'Batter Out')
       await click(page, 'Ball Caught')
       await page.waitForSelector('canvas[data-field-ready="true"]')
-      await placeDefenderWithKeyboard(page)
+      await placeOffered(puppeteerDriver(page))
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
-      await page.keyboard.press('Enter')
+      await setTrajectory(puppeteerDriver(page))
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
@@ -4772,7 +4635,7 @@ describe('scoring browser', function () {
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]'
         )
-        await placeDefenderWithKeyboard(page, true)
+        await placeOffered(puppeteerDriver(page), 1)
         await click(page, 'Finish defensive play')
         await page.waitForSelector('[aria-label*="0 balls 0 strikes 2 outs"]')
         await shot(page, 'did-not-tag-up-recorded')
@@ -4977,9 +4840,9 @@ describe('scoring browser', function () {
       // A pitch locks the switch hitter, leaving the base runner selectable.
       await click(page, 'Ball')
       await waitReady(page)
-      await dropRunnerWithKeyboard(page, 'Out')
+      await dropOfferedRunner(page, 'Out')
       await click(page, 'Picked Off')
-      await placeDefenderWithKeyboard(page)
+      await placeOffered(puppeteerDriver(page))
       await click(page, 'Finish defensive play')
       await page.waitForSelector('[aria-label*="Bottom 1st"]', {
         timeout: 30000
@@ -5095,13 +4958,12 @@ describe('scoring browser', function () {
       await click(page, 'Batter Out')
       await click(page, 'Ball Caught')
       await page.waitForSelector('canvas[data-field-ready="true"]')
-      await placeDefenderWithKeyboard(page)
+      await placeOffered(puppeteerDriver(page))
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
-      for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowUp')
+      await setTrajectory(puppeteerDriver(page), 50)
       await page.waitForSelector('[aria-label*="50° Pop Fly"]')
-      await page.keyboard.press('Enter')
       await page.waitForSelector('[aria-label*="Batter Player 2"]', {
         timeout: 30000
       })
@@ -5393,19 +5255,13 @@ describe('scoring browser', function () {
         if (outcome === 'Ground Out') await click(page, 'Batter Out')
         await click(page, outcome)
         await page.waitForSelector(`[aria-label="Undo Bunt: ${outcome}"]`)
-        await page.focus('[role="application"]')
-        await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowUp')
-        await page.keyboard.press('Enter')
-        await page.waitForSelector(
-          '[aria-label^="Drag up and down for ball trajectory"]'
-        )
-        await page.keyboard.press('Enter')
+        await placeOffered(puppeteerDriver(page))
+        await setTrajectory(puppeteerDriver(page))
         if (outcome === 'Ground Out') {
           await page.waitForSelector(
             '[aria-label^="Tap or drag the next defender"]'
           )
-          await placeDefenderWithKeyboard(page, true)
+          await placeOffered(puppeteerDriver(page), 1)
           await click(page, 'Finish defensive play')
         } else await click(page, 'Finish at-bat')
         await waitReady(page)
@@ -5540,10 +5396,7 @@ describe('scoring browser', function () {
           await click(page, bunt ? 'Bunt in Play' : 'Swing in Play')
           await click(page, 'Single')
           await page.waitForSelector('canvas[data-field-ready="true"]')
-          await page.focus('[role="application"]')
-          await page.keyboard.press('Space')
-          await page.keyboard.press('ArrowUp')
-          await page.keyboard.press('Enter')
+          await placeOffered(puppeteerDriver(page))
           await page.waitForSelector('[aria-label^="Ball trajectory:"]')
           await captureScene(page)
           const sampling = page.evaluate(async () => {
@@ -5575,7 +5428,7 @@ describe('scoring browser', function () {
             }
             return { samples, completed }
           })
-          await page.keyboard.press('Enter')
+          await setTrajectory(puppeteerDriver(page))
           if (bunt) {
             await page.waitForFunction(
               () => {
@@ -5645,12 +5498,11 @@ describe('scoring browser', function () {
           await page.waitForSelector('canvas[data-field-ready="true"]')
           if (homeRun)
             await page.waitForSelector('[aria-label^="Home run type:"]')
-          await page.focus('[role="application"]')
-          if (!homeRun) {
-            await page.keyboard.press('Space')
-            await page.keyboard.press('ArrowUp')
-          }
-          await page.keyboard.press('Enter')
+          if (homeRun) {
+            // Placed on the guide, where it already points.
+            const guide = await readGuide(page)
+            await aimLandingAt(page, guide.x, guide.z)
+          } else await placeOffered(puppeteerDriver(page))
           await page.waitForSelector('[aria-label^="Ball trajectory:"]')
           const style = await page.$$eval('[data-testid$=" value"]', nodes =>
             nodes.map(node => {
@@ -5862,15 +5714,10 @@ describe('scoring browser', function () {
         await click(page, 'Swing in Play')
         await click(page, outcome)
         await page.waitForSelector('canvas[data-field-ready="true"]')
-        await page.focus('[role="application"]')
-        if (outcome === 'Single') {
-          await page.keyboard.press('Space')
-          for (let n = 0; n < 8; n++)
-            await page.keyboard.press(
-              direction < 0 ? 'ArrowLeft' : 'ArrowRight'
-            )
-          for (let n = 0; n < 10; n++) await page.keyboard.press('ArrowUp')
-        } else {
+        if (outcome === 'Single')
+          // The pitcher takes it out and to the side.
+          await placeOffered(puppeteerDriver(page), 0, 60, direction * 50)
+        else {
           await captureScene(page)
           expect(
             await page.evaluate(() => {
@@ -5884,10 +5731,9 @@ describe('scoring browser', function () {
               ).parameters.outerRadius
             })
           ).equals(11)
-          if (direction > 0)
-            for (let n = 0; n < 5; n++) await page.keyboard.press('ArrowUp')
+          const guide = await readGuide(page)
+          await aimLandingAt(page, guide.x, guide.z - (direction > 0 ? 15 : 0))
         }
-        await page.keyboard.press('Enter')
         await page.waitForSelector(
           '[aria-label^="Drag up and down for ball trajectory."]'
         )
@@ -6372,15 +6218,21 @@ describe('scoring browser', function () {
             camera: host.qaCamera!.position.toArray()
           }
         })
-        await page.focus('[role="application"]')
-        await page.keyboard.press('Space')
-        // Pitcher starts 18.44m from home; five steps toward home leaves a short 3.44m landing.
-        for (let i = 0; i < 5; i++) await page.keyboard.press('ArrowDown')
-        await page.keyboard.press('Enter')
+        // The pitcher takes it on his way in, a short landing in front of
+        // home.
+        await placeOffered(puppeteerDriver(page), 0, -40)
         await page.waitForSelector(
           '[aria-label^="Drag up and down for ball trajectory."]'
         )
-        for (let i = 0; i < 50; i++) await page.keyboard.press('ArrowUp')
+        // Held while the angle is dragged up to its limit: what the screen
+        // shows before the scorer lets go.
+        const grip = await page.$eval('canvas', node => {
+          const r = node.getBoundingClientRect()
+          return [r.x + r.width / 2, r.y + r.height / 2] as [number, number]
+        })
+        await page.mouse.move(...grip)
+        await page.mouse.down()
+        await page.mouse.move(grip[0], grip[1] - 120, { steps: 20 })
         await page.waitForSelector(
           '[aria-label="Ball trajectory: 85° Pop Fly"]'
         )
@@ -6419,7 +6271,7 @@ describe('scoring browser', function () {
           }
           return samples
         })
-        await page.keyboard.press('Enter')
+        await page.mouse.up()
         const positions = await sample
         expect(
           positions.some(p => Math.abs(p[2] - before.player[2]) > 1)
@@ -6682,20 +6534,10 @@ describe('ground outs', function () {
     await page.waitForSelector(
       '[aria-label^="Tap or drag a player to where the ball was fielded"]'
     )
-    await page.focus('[role="application"]')
-    for (let i = 0; i <= 4; i++) await page.keyboard.press(']')
-    await frame(page)
-    await page.keyboard.press('Space')
-    await page.keyboard.press('ArrowUp')
-    await page.keyboard.press('Enter')
-    await page.waitForSelector(
-      '[aria-label^="Drag up and down for ball trajectory."]'
-    )
-    if (contact === 'Swing')
-      for (let value = 45; value > -10; value--)
-        await page.keyboard.press('ArrowDown')
-    await frame(page)
-    await page.keyboard.press('Enter')
+    // The shortstop, fifth of the players the field offers.
+    const field = puppeteerDriver(page)
+    await placeOffered(field, 4)
+    await setTrajectory(field, contact === 'Swing' ? -10 : undefined)
     await page.waitForSelector(
       '[aria-label^="Tap or drag the next defender"]',
       {
@@ -6704,15 +6546,11 @@ describe('ground outs', function () {
     )
   }
   /** Places the player `presses` steps along the field's choosable list. */
+  /** The player `presses` places along what the field offers takes the ball. */
   async function place(page: Page, presses: number): Promise<void> {
     await frame(page)
     await frame(page)
-    await page.focus('[role="application"]')
-    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
-    await frame(page)
-    await page.keyboard.press('Space')
-    await page.keyboard.press('ArrowUp')
-    await page.keyboard.press('Enter')
+    await placeOffered(puppeteerDriver(page), Math.max(0, presses - 1))
   }
   async function tapEither(page: Page, label: string): Promise<void> {
     const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
@@ -6749,9 +6587,12 @@ describe('ground outs', function () {
    * moves nobody.
    */
   async function atRest(page: Page): Promise<void> {
-    await page.waitForSelector('[role="application"][data-moving=""]', {
-      timeout: 30000
-    })
+    await page.waitForSelector(
+      '[aria-label="Baseball field"][data-moving=""]',
+      {
+        timeout: 30000
+      }
+    )
   }
   async function nobodyNear(page: Page, base: number): Promise<void> {
     expect(await runnerNearBase(page, base), `nobody on ${base}`).equals(false)
@@ -6909,12 +6750,7 @@ describe('ground outs', function () {
       // The runner is the last player the field offers: held where he stands.
       await frame(page)
       await frame(page)
-      await page.focus('[role="application"]')
-      await page.keyboard.press('[')
-      await frame(page)
-      await page.keyboard.press('Space')
-      await page.keyboard.press('o')
-      await page.keyboard.press('Enter')
+      await dropOfferedRunner(page, 'Out')
       if (!capturing) {
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender, or hit Done"]'
@@ -7051,15 +6887,11 @@ describe('pitcher only', function () {
     )
   }
   /** Places the player `presses` steps along the field's choosable list. */
+  /** The player `presses` places along what the field offers takes the ball. */
   async function place(page: Page, presses: number): Promise<void> {
     await frame(page)
     await frame(page)
-    await page.focus('[role="application"]')
-    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
-    await frame(page)
-    await page.keyboard.press('Space')
-    await page.keyboard.press('ArrowUp')
-    await page.keyboard.press('Enter')
+    await placeOffered(puppeteerDriver(page), Math.max(0, presses - 1))
   }
   async function tapEither(page: Page, label: string): Promise<void> {
     const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
@@ -7072,60 +6904,10 @@ describe('pitcher only', function () {
     )
   }
 
-  /** The label of the player the field has selected: '' for none. */
-  async function selectedOnField(page: Page): Promise<string> {
-    return await page.evaluate(() => {
-      const host = window as unknown as SceneProbeWindow
-      interface FieldProps {
-        selected?: unknown
-        onSelect?: unknown
-        players?: Array<{ id: string; label: string }>
-      }
-      let found = ''
-      let seen = false
-      const scan = (fiber?: ProbeFiber): void => {
-        if (fiber == null || seen) return
-        const props = fiber.memoizedProps as FieldProps | undefined
-        if (
-          props != null &&
-          typeof props.selected === 'string' &&
-          typeof props.onSelect === 'function' &&
-          Array.isArray(props.players)
-        ) {
-          const player = props.players.find(each => each.id === props.selected)
-          seen = true
-          if (player != null) found = player.label
-          return
-        }
-        scan(fiber.child)
-        scan(fiber.sibling)
-      }
-      for (const root of host.qaRoots) scan(root.current)
-      return found
-    })
-  }
-
-  /**
-   * Places the fielder at `position`: steps along the field's choosable list
-   * one press at a time, each press waiting until the field shows it, until
-   * that position is the one selected.
-   */
+  /** The fielder at `position` takes the ball, dragged where he fields it. */
   async function placePosition(page: Page, position: string): Promise<void> {
     await frame(page)
-    await page.focus('[role="application"]')
-    for (let step = 0; step < 20; step++) {
-      const before = await selectedOnField(page)
-      if (before === position) break
-      await page.keyboard.press(']')
-      for (let wait = 0; wait < 50; wait++) {
-        if ((await selectedOnField(page)) !== before) break
-        await frame(page)
-      }
-    }
-    expect(await selectedOnField(page)).equals(position)
-    await page.keyboard.press('Space')
-    await page.keyboard.press('ArrowUp')
-    await page.keyboard.press('Enter')
+    await placeFielder(puppeteerDriver(page), position)
   }
 
   it('scores with only a pitcher, and plays a ground ball to an empty short with a nameless fielder', async function () {
@@ -7200,7 +6982,7 @@ describe('pitcher only', function () {
       expect(await page.$('[aria-label="Assign 1B"]')).not.equals(null)
       // The angle the control starts at will do for a ground ball.
       await frame(page)
-      await page.keyboard.press('Enter')
+      await setTrajectory(puppeteerDriver(page))
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]',
         {
@@ -7380,15 +7162,11 @@ describe('out at first', function () {
     )
   }
   /** Places the player `presses` steps along the field's choosable list. */
+  /** The player `presses` places along what the field offers takes the ball. */
   async function place(page: Page, presses: number): Promise<void> {
     await frame(page)
     await frame(page)
-    await page.focus('[role="application"]')
-    for (let i = 0; i < presses; i++) await page.keyboard.press(']')
-    await frame(page)
-    await page.keyboard.press('Space')
-    await page.keyboard.press('ArrowUp')
-    await page.keyboard.press('Enter')
+    await placeOffered(puppeteerDriver(page), Math.max(0, presses - 1))
   }
   async function tapEither(page: Page, label: string): Promise<void> {
     const selector = `[aria-label="${label}"], [aria-label="Bottom ${label}"]`
@@ -7413,13 +7191,7 @@ describe('out at first', function () {
       '[aria-label^="Tap or drag a player to where the ball was fielded"]'
     )
     await place(page, presses)
-    await page.waitForSelector(
-      '[aria-label^="Drag up and down for ball trajectory."]'
-    )
-    for (let value = 45; value > -10; value--)
-      await page.keyboard.press('ArrowDown')
-    await frame(page)
-    await page.keyboard.press('Enter')
+    await setTrajectory(puppeteerDriver(page), -10)
   }
   async function oneOut(page: Page): Promise<void> {
     await page.waitForSelector(
@@ -7745,8 +7517,7 @@ describe('scorers leave the field', function () {
         `[aria-label="Home run type: ${outside ? 'Home Run' : 'In-the-park Home Run'}"]`
       )
     await page.mouse.up()
-    await page.focus('[role="application"]')
-    await page.keyboard.press('Enter')
+    await setTrajectory(puppeteerDriver(page))
     await page.waitForSelector('[aria-label*="Batter Player 2"]', {
       timeout: 45000
     })
@@ -8551,16 +8322,13 @@ describe('pitch animation, hit flight and celebration timing (E9)', function () 
       await page.waitForSelector(
         '[aria-label^="Tap or drag a player to where the ball was fielded"]'
       )
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Space')
-      await page.keyboard.press('ArrowUp')
-      await page.keyboard.press('Enter')
+      await placeOffered(puppeteerDriver(page))
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
       await record(page)
       const pressed = await page.evaluate(() => performance.now())
-      await page.keyboard.press('Enter')
+      await setTrajectory(puppeteerDriver(page))
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
@@ -8605,14 +8373,14 @@ describe('pitch animation, hit flight and celebration timing (E9)', function () 
       await page.waitForSelector('canvas[data-field-ready="true"]')
       await page.waitForSelector('[aria-label^="Drag where the ball was hit"]')
       await captureScene(page)
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Enter')
+      const guide = await readGuide(page)
+      await aimLandingAt(page, guide.x, guide.z)
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
       await record(page)
       const pressed = await page.evaluate(() => performance.now())
-      await page.keyboard.press('Enter')
+      await setTrajectory(puppeteerDriver(page))
       await page.waitForSelector('[aria-label*="Batter Player 2"]', {
         timeout: 45000
       })
