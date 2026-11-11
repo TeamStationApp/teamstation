@@ -1687,6 +1687,27 @@ describe('the coach’s game plan', function () {
     await waitFor(() => cell(1, 1) != null, 'the plan sheet')
   }
 
+  for (const finish of ['Save Rosters', 'Cancel'])
+    it(`reads deferred peer scoring after a plan-only ${finish}`, async () => {
+      const held = accepted()
+      const changes = new FakeChanges()
+      await coach(held, { socket: changes })
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      await type(1, 1, ['c', 'f'])
+      const before = held.reads.events
+      await changes.change('playEdits')
+      expect(held.reads.events).equals(before)
+      expect(cell(1, 1).textContent).equals('CF')
+      await click(finish)
+      await waitFor(() => saveDisabled(), 'the clean plan')
+      await waitFor(
+        () => held.reads.events > before,
+        'deferred scoring refresh'
+      )
+      expect(held.writes).deep.equals(finish === 'Save Rosters' ? ['plan'] : [])
+    })
+
   it('puts Plan in the pill after Defense, with its Help and no instruction or Choose Next Batter list', async function () {
     const held = server({ coachSides: ['away'] })
     held.plans = { away: { ...HOME_PLAN, teamId: 'away' }, home: null }

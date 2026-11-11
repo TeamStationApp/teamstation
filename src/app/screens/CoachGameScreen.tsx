@@ -543,7 +543,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       stop()
       if (retry != null) clearTimeout(retry)
     }
-  }, [socket, gameId, opened, dirty, reload])
+  }, [socket, gameId, opened, unsaved, reload])
 
   const live = useRosterLive({
     socket,
