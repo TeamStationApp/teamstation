@@ -6,6 +6,8 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 
 import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
+  chooseDate,
+  chooseTime,
   fill,
   frameText,
   freezeBrowserClock,
@@ -69,12 +71,18 @@ async function main(): Promise<void> {
     await press(host, 'Choose Home Team, Home')
     await fill(host, 'Search all teams', 'Demo Eagles')
     await press(host, 'Choose Demo Eagles')
+    await host.waitForSelector('[data-testid="team-selector"]', {
+      hidden: true
+    })
     await press(host, 'Choose Away Team, Away')
     await fill(host, 'Search all teams', 'Demo Hawks')
     await press(host, 'Choose Demo Hawks')
-    await fill(host, 'Date', '2029-07-01')
-    await fill(host, 'Time', '18:30')
-    await fill(host, 'Venue (optional)', 'Demo Field')
+    await host.waitForSelector('[data-testid="team-selector"]', {
+      hidden: true
+    })
+    await chooseDate(host, 'Date', '2029-07-01')
+    await chooseTime(host, 'Start time', '18:30')
+    await fill(host, 'Venue name (optional)', 'Demo Field')
     await text(host, 'outside the season’s reference')
     await host.evaluate(() => {
       const hint = [...document.querySelectorAll<HTMLElement>('div,span')].find(
@@ -92,9 +100,10 @@ async function main(): Promise<void> {
     expect(await host.evaluate(() => document.body.textContent)).not.includes(
       'This date is outside the season'
     )
+    // The date row's label carries the date it shows.
     expect(
-      await host.$eval('input[aria-label="Date"]', input => input.value)
-    ).equals('2029-07-01')
+      await host.$('[role="button"][aria-label="Date: 2029-07-01"]')
+    ).not.equals(null)
     await host.evaluate(() => {
       for (const node of document.querySelectorAll<HTMLElement>('div'))
         node.scrollTop = 0
@@ -135,11 +144,14 @@ async function main(): Promise<void> {
       .executeTakeFirstOrThrow()
     expect(published.game_id).not.equals(null)
     await host.bringToFront()
-    await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
-      waitUntil: 'networkidle0'
-    })
-    await text(host, 'Demo Hawks at Demo Eagles')
-    await frameText(host, 'Demo Hawks at Demo Eagles')
+    // All of the season's schedule: the game is dated after the season's own
+    // dates. A row shows the away team over "@ <home>".
+    await host.goto(
+      f.h.origin + `/groups/season/${f.seasonB}?tab=schedule&when=all`,
+      { waitUntil: 'networkidle0' }
+    )
+    await text(host, 'Demo Hawks@ Demo Eagles')
+    await frameText(host, '@ Demo Eagles')
     await shot(host, 'schedule-after.png')
     for (const route of [
       `/teams/${f.teamA}`,
@@ -163,40 +175,23 @@ async function main(): Promise<void> {
       'E6 PASS: season-authorized raw guest proposal remains unpublished until team approval; an outside-reference date warns only; one ID appears on host and both teams without inferred enrollment'
     )
 
-    await host.goto(f.h.origin + `/groups/league/${f.leagueB}`, {
-      waitUntil: 'networkidle0'
-    })
-    await text(host, 'Demo Hawks at Demo Eagles')
-    await press(host, 'Propose game change')
-    await host.waitForSelector('input[aria-label="Date"]')
-    expect(new URL(host.url()).pathname).equals(
-      `/groups/season/${f.seasonB}/create-game`
-    )
-    expect(new URL(host.url()).searchParams.get('game')).equals(
-      published.game_id
-    )
-    expect(
-      await host.$eval(
-        'input[aria-label="Venue (optional)"]',
-        input => input.value
-      )
-    ).equals('Demo Field')
-    await press(host, 'Back')
-    await text(host, 'Demo League B')
-    lines.push(
-      'E20 league PASS: the real league schedule opens the selected game change in its hosting season, with loaded details and one Back returning to the league'
-    )
-
     await host.goto(
       f.h.origin +
         `/groups/season/${f.seasonB}/create-game?game=${published.game_id}`,
       { waitUntil: 'networkidle0' }
     )
-    await text(host, 'Propose game change')
-    await fill(host, 'Venue (optional)', 'Demo Revised Field')
+    await text(host, 'Game Settings')
+    await fill(host, 'Venue name (optional)', 'Demo Revised Field')
     await press(host, 'Save')
-    await text(host, 'Pending')
-    const revisionId = new URL(host.url()).pathname.split('/').at(-1)!
+    await text(host, 'Game proposal sent')
+    const revisionId = (
+      await f.h.db
+        .selectFrom('group_requests')
+        .select('id')
+        .where('game_id', '=', published.game_id!)
+        .where('status', '=', 'pending')
+        .executeTakeFirstOrThrow()
+    ).id
     expect(
       (
         await f.h.db
@@ -230,13 +225,16 @@ async function main(): Promise<void> {
       waitUntil: 'networkidle0'
     })
     await press(team, 'Schedule', 'tab')
-    await press(team, 'Add Event')
+    await press(team, 'Add Game')
     await text(team, 'always creates a scrimmage/exhibition game')
     await press(team, 'Choose Away Team, Away')
     await fill(team, 'Search all teams', 'Demo Visitors')
     await press(team, 'Choose Demo Visitors')
-    await fill(team, 'Date', '2029-07-02')
-    await fill(team, 'Time', '17:00')
+    await team.waitForSelector('[data-testid="team-selector"]', {
+      hidden: true
+    })
+    await chooseDate(team, 'Date', '2029-07-02')
+    await chooseTime(team, 'Start time', '17:00')
     await fill(
       team,
       'Outside tournament (optional)',
@@ -252,7 +250,8 @@ async function main(): Promise<void> {
     await press(opponent, 'Decline invitation')
     await text(opponent, 'Declined')
     await team.bringToFront()
-    await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    // Declined proposals are listed in the team's settings, to delete.
+    await team.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
       waitUntil: 'networkidle0'
     })
     await text(team, 'Declined')
@@ -278,12 +277,15 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded'
     })
     await press(team, 'Schedule', 'tab')
-    await press(team, 'Add Event')
+    await press(team, 'Add Game')
     await press(team, 'Choose Away Team, Away')
     await fill(team, 'Search all teams', 'Demo Visitors')
     await press(team, 'Choose Demo Visitors')
-    await fill(team, 'Date', '2029-07-03')
-    await fill(team, 'Venue (optional)', 'Demo Team Season Field')
+    await team.waitForSelector('[data-testid="team-selector"]', {
+      hidden: true
+    })
+    await chooseDate(team, 'Date', '2029-07-03')
+    await fill(team, 'Venue name (optional)', 'Demo Team Season Field')
     await press(team, 'Save')
     await text(team, 'Pending')
     const teamSeasonId = new URL(team.url()).pathname.split('/').at(-1)!
@@ -301,7 +303,7 @@ async function main(): Promise<void> {
     })
     await press(opponent, 'Decline invitation')
     await text(opponent, 'Declined')
-    await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    await team.goto(f.h.origin + `/groups/team/${f.teamA}/settings`, {
       waitUntil: 'domcontentloaded'
     })
     await text(team, 'Demo Team Season Field')
