@@ -5,6 +5,12 @@ import { expect } from 'chai'
 import pg from 'pg'
 
 import {
+  installSceneProbe,
+  placeFielder,
+  puppeteerDriver,
+  setTrajectory
+} from '../../../e2e/rigs/fieldPointer'
+import {
   type BrowserSession,
   browserSession,
   maestro
@@ -159,6 +165,7 @@ async function main(): Promise<void> {
     )
     const { m, page } = session
     const browser = new Browser(session, page)
+    await installSceneProbe(page)
     await page.goto(APP, { waitUntil: 'domcontentloaded' })
     await page.browserContext().setCookie({
       name: 'ts_session',
@@ -227,14 +234,9 @@ async function main(): Promise<void> {
     await page.waitForSelector(
       '[aria-label^="Tap or drag a player to where the ball was fielded"]'
     )
-    await page.focus('[role="application"]')
-    await page.keyboard.press('Space')
-    await page.keyboard.press('ArrowUp')
-    await page.keyboard.press('Enter')
-    await page.waitForSelector(
-      '[aria-label^="Drag up and down for ball trajectory."]'
-    )
-    await page.keyboard.press('Enter')
+    // The pitcher fields it, at the angle the screen offers.
+    await placeFielder(puppeteerDriver(page), 'P')
+    await setTrajectory(puppeteerDriver(page))
     await pause(500)
     if (await browser.has('Finish at-bat')) await browser.tap('Finish at-bat')
     // Three strikeouts end the half inning.

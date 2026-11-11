@@ -33,6 +33,13 @@ export interface Device {
   swipe: (params: Record<string, unknown>) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
   evalBrowserScript: (params: Record<string, unknown>) => Promise<unknown>
+  vars: () => Promise<Record<string, string>>
+  tapOnPoint: (params: { x: number; y: number }) => Promise<unknown>
+  dragAndDrop: (params: {
+    from: { point: string }
+    to: { point: string }
+    duration?: number
+  }) => Promise<unknown>
   setNetworkConditions: (params: Record<string, unknown>) => Promise<unknown>
   startRecording: (params: Record<string, unknown>) => Promise<unknown>
   stopRecording: (params?: Record<string, unknown>) => Promise<unknown>
