@@ -15,6 +15,7 @@ import {
   View
 } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
@@ -122,7 +123,7 @@ export function TessChat({
           onPress={onClose}
           style={({ pressed }) => [styles.close, pressed && styles.pressed]}
         >
-          <Icon name="close" size={1.5} />
+          <ButtonIcon name="close" size={1.5} />
         </Pressable>
       </View>
       <ScrollView

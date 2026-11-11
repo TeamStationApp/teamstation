@@ -1,7 +1,7 @@
 import React from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AttachmentChip } from './TessMessage'
@@ -93,7 +93,11 @@ export function QueuedMessages({
               pressed && styles.pressed
             ]}
           >
-            <Icon name="close" size={1} color={theme.secondaryTextColor} />
+            <ButtonIcon
+              name="close"
+              size={1}
+              color={theme.secondaryTextColor}
+            />
           </Pressable>
           <Pressable
             accessibilityRole="button"
@@ -108,7 +112,7 @@ export function QueuedMessages({
               pressed && styles.pressed
             ]}
           >
-            <Icon
+            <ButtonIcon
               name="arrow_upward"
               size={1}
               color={theme.primaryButtonColor}

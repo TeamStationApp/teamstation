@@ -4,6 +4,7 @@ import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { ButtonIcon } from './ButtonIcon'
 
 export interface WarningSheetProps {
   message: string
@@ -51,7 +52,9 @@ export function WarningSheet({
             onPress={onClose}
             style={styles.close}
           >
-            <Text style={styles.closeText}>×</Text>
+            <ButtonIcon name="close">
+              <Text style={styles.closeText}>×</Text>
+            </ButtonIcon>
           </Pressable>
           <ScrollView style={styles.content}>
             <Text accessibilityRole="alert" style={styles.message}>

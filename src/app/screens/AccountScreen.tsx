@@ -14,11 +14,11 @@ import type { ChatKeyStore } from '../chat/keyRecord'
 import { keyStore } from '../chat/keyStore'
 import {
   Button,
+  ButtonIcon,
   Card,
   CardContent,
   DangerText,
   HeroCard,
-  Icon,
   ListCard,
   ListRow,
   PictureSheet,
@@ -731,7 +731,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               <Text style={styles.settingLabel}>
                 {lstrings.account_walkup_apple_music}
               </Text>
-              <Icon
+              <ButtonIcon
                 name="chevron_right"
                 size={1.25}
                 color={theme.secondaryTextColor}

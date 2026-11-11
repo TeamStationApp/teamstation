@@ -5,9 +5,9 @@ import type { WeekdayHours } from '../../common/venues'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CardThemeScope } from './ActionRow'
 import { Button } from './Button'
+import { ButtonIcon } from './ButtonIcon'
 import { CancelAction } from './CancelAction'
 import { TimePicker } from './EventScheduleFields'
-import { Icon } from './Icon'
 import { ListCard } from './ListCard'
 import { PickerDialog } from './PickerDialog'
 import { SegmentedPill } from './SegmentedPill'
@@ -135,7 +135,7 @@ function WeekRows({
             <Text style={entry == null ? styles.closed : styles.hours}>
               {hoursLabel(entry)}
             </Text>
-            {!disabled && <Icon name="chevron_right" size={1.25} />}
+            {!disabled && <ButtonIcon name="chevron_right" size={1.25} />}
           </Pressable>
         )
       })}
@@ -213,7 +213,7 @@ function DayHoursSheet({
                 <Text style={styles.hours}>
                   {clockLabel(which === 'start' ? start : end)}
                 </Text>
-                <Icon name="chevron_right" size={1.25} />
+                <ButtonIcon name="chevron_right" size={1.25} />
               </Pressable>
             ))}
           </ListCard>
