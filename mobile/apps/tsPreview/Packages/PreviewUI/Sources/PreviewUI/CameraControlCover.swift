@@ -19,7 +19,7 @@ struct CameraControlCover: View {
       if let model {
         CameraView(model: model, onClose: onClose) {
           PreviewVideoView(renderer: camera.renderer)
-            .aspectRatio(16 / 9, contentMode: .fit)
+            .aspectRatio(CGFloat(model.settings.width) / CGFloat(max(model.settings.height, 1)), contentMode: .fit)
         }
       }
     }

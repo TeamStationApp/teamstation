@@ -55,6 +55,138 @@ struct RemoteCameraControlTests {
 
   struct Quiet: Error {}
 
+  final class DelayedTransport: ParameterTransport, @unchecked Sendable {
+    let inner: ScriptedTransport
+    private let lock = NSLock()
+    private var held: (() -> Void)?
+    private var delay = true
+    var waiting: Bool { lock.withLock { held != nil } }
+    var state: ParameterTransportState { inner.state }
+    init(snapshot: CameraSnapshot) { inner = ScriptedTransport(snapshot: snapshot) }
+    func start() {}
+    func stop() {}
+    func set(_ body: String) async throws -> ParameterReply { try await inner.set(body) }
+    func get(_ body: String) async throws -> ParameterReply {
+      let reply = try await inner.get(body)
+      let shouldDelay = lock.withLock { let value = delay; delay = false; return value }
+      if !shouldDelay { return reply }
+      return await withCheckedContinuation { continuation in
+        lock.withLock { held = { continuation.resume(returning: reply) } }
+      }
+    }
+    func release() {
+      let action = lock.withLock { let value = held; held = nil; return value }
+      action?()
+    }
+  }
+
+  @Test("A delayed poll cannot restore a stopped session or overwrite a newer camera snapshot")
+  @MainActor
+  func delayedPollsLoseAuthority() async throws {
+    for stops in [false, true] {
+      var phone = Self.phone()
+      phone.focus.reset(supported: true, generation: "old")
+      let transport = DelayedTransport(snapshot: phone)
+      let model = RemoteCameraControl(transport: transport)
+      let old = Task { await model.poll() }
+      for _ in 0..<100 where !transport.waiting { try await Task.sleep(for: .milliseconds(1)) }
+      #expect(transport.waiting)
+      if stops {
+        model.stop()
+      } else {
+        transport.inner.snapshot.focus.reset(supported: true, generation: "new")
+        await model.poll()
+      }
+      transport.release()
+      await old.value
+      if stops {
+        #expect(!model.isResponding)
+        #expect(!model.hasSnapshot)
+      } else {
+        #expect(model.focus.generation == "new")
+      }
+    }
+  }
+
+  @Test("Focus waits for camera authority and Auto Focus is a separate command")
+  @MainActor
+  func focusRequiresReportedResult() async throws {
+    var phone = Self.phone()
+    phone.focus.reset(supported: true, generation: "camera")
+    let transport = ScriptedTransport(snapshot: phone)
+    let model = RemoteCameraControl(transport: transport)
+    await model.poll()
+    let point = try #require(FocusPoint(x: 0.25, y: 0.75))
+    model.focus(at: point)
+    #expect(model.focusPending)
+    #expect(model.focus.phase == .reset)
+    try await Task.sleep(for: .milliseconds(100))
+    let write = try #require(transport.sets.last)
+    let parsed = try CameraParameters.parseSet(body: write, snapshot: phone).get()
+    let command = try #require(parsed.focus)
+    #expect(command.point == point)
+    #expect(model.focusPending, "the SET echo is not an optical result")
+    #expect({ transport.snapshot.focus.begin(command) }())
+    #expect({ transport.snapshot.focus.complete(command, success: true) }())
+    await model.poll()
+    #expect(model.focus.phase == .locked)
+    #expect(!model.focusPending)
+    model.autoFocus()
+    try await Task.sleep(for: .milliseconds(100))
+    let auto = try #require(CameraParameters.parseSet(body: transport.sets.last!, snapshot: phone).get().focus)
+    #expect(auto.point == nil)
+    #expect(model.focus.phase == .locked)
+    #expect({ transport.snapshot.focus.begin(auto) }())
+    await model.poll()
+    #expect(model.focus.phase == .auto)
+    #expect(!model.focusPending)
+  }
+
+  @Test("Closing controls drops unsent settings and focus writes instead of replaying them on reconnect")
+  @MainActor
+  func queuedFocusLosesLifecycleAuthority() async throws {
+    var phone = Self.phone()
+    phone.focus.reset(supported: true, generation: "same-camera")
+    let transport = ScriptedTransport(snapshot: phone)
+    let model = RemoteCameraControl(transport: transport)
+    await model.poll()
+    model.rename(to: "Camera")
+    model.flip()
+    model.focus(at: try #require(FocusPoint(x: 0.2, y: 0.3)))
+    model.focus(at: try #require(FocusPoint(x: 0.7, y: 0.8)))
+    model.autoFocus()
+    model.stop()
+    await model.poll()
+    #expect(model.isResponding)
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(transport.sets.isEmpty)
+    model.focus(at: try #require(FocusPoint(x: 0.5, y: 0.5)))
+    try await Task.sleep(for: .milliseconds(100))
+    #expect(transport.sets.count == 1)
+  }
+
+  @Test("Unsupported peers receive no focus writes; a new camera generation clears pending focus")
+  @MainActor
+  func focusCompatibilityAndReset() async throws {
+    let transport = ScriptedTransport(snapshot: Self.phone())
+    let model = RemoteCameraControl(transport: transport)
+    await model.poll()
+    model.autoFocus()
+    model.focus(at: FocusPoint(x: 0.5, y: 0.5)!)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(transport.sets.isEmpty)
+    transport.snapshot.focus.reset(supported: true, generation: "first")
+    await model.poll()
+    model.focus(at: FocusPoint(x: 0.5, y: 0.5)!)
+    try await Task.sleep(for: .milliseconds(50))
+    #expect(model.focusPending)
+    transport.snapshot.focus.reset(supported: false, generation: "replacement")
+    await model.poll()
+    #expect(!model.focusPending)
+    #expect(model.focus.phase == .unsupported)
+    #expect(model.focus.generation == "replacement")
+  }
+
   static func phone() -> CameraSnapshot {
     CameraSnapshot(
       name: "Third Base",
@@ -315,8 +447,13 @@ struct RemoteCameraControlTests {
 
   @Test("Two missed polls mean the phone is not answering; one answer brings it back")
   @MainActor
-  func missedPolls() async {
-    let transport = ScriptedTransport(snapshot: Self.phone())
+  func missedPolls() async throws {
+    var phone = Self.phone()
+    phone.focus.reset(supported: true, generation: "camera")
+    let command = try #require(FocusCommand(generation: "camera", token: "held", point: FocusPoint(x: 0.2, y: 0.7)))
+    #expect({ phone.focus.begin(command) }())
+    #expect({ phone.focus.complete(command, success: true) }())
+    let transport = ScriptedTransport(snapshot: phone)
     let model = RemoteCameraControl(transport: transport, animatesChrome: false)
     await model.poll()
     transport.failure = Quiet()
@@ -324,9 +461,11 @@ struct RemoteCameraControlTests {
     #expect(model.isResponding, "one miss is a blip")
     await model.poll()
     #expect(!model.isResponding)
+    #expect(model.focusStatusLabel == "Focus unavailable")
     transport.failure = nil
     await model.poll()
     #expect(model.isResponding)
+    #expect(model.focusStatusLabel == "Focus locked")
   }
 
   @Test("previewThermal is a no-op remotely")

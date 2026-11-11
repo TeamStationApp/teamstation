@@ -118,6 +118,7 @@ class PhoneStreamSystemTest {
         override fun flip() = Unit
         override fun setDeviceZoom(value: Double) = Unit
         override fun setDisplayedZoom(value: Double) = Unit
+        override fun setFocus(command: app.teamstation.streamcore.core.FocusCommand) = Unit
         override fun setLensSelection(selection: LensSelection) = Unit
         override fun lensCatalog() = emptyList<app.teamstation.streamcore.core.CameraLens>()
         override fun attachEncoder(key: String, surface: Surface?) = Unit

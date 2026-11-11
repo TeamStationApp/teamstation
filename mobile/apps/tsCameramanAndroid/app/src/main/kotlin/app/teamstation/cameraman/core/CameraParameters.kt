@@ -1,6 +1,10 @@
 package app.teamstation.cameraman.core
 
 import app.teamstation.streamcore.capture.FormatCatalogue
+import app.teamstation.streamcore.core.CameraFocus
+import app.teamstation.streamcore.core.FocusCommand
+import app.teamstation.streamcore.core.FocusPoint
+import app.teamstation.streamcore.core.FocusPhase
 import app.teamstation.streamcore.core.BatteryStatus
 import app.teamstation.streamcore.core.CameraLens
 import app.teamstation.streamcore.core.CameraPosition
@@ -257,13 +261,15 @@ object CameraParameterName {
      */
     const val testDeliveredFrameRateActual = "test.deliveredFrameRate.actual"
 
+    const val focusCommand = "focus.command"
+    val focusFields = listOf("focus.supported", "focus.state", "focus.x", "focus.y", "focus.request", "focus.generation", "focus.rotation", "focus.mirrored")
     const val wildcard = "*"
 
     fun format(index: Int, field: String): String = "format.$index.$field"
     fun lens(index: Int, field: String): String = "lens.$index.$field"
 
     val writable: Set<String> = setOf(
-        deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
+        focusCommand, deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
         bitrateFloorKbps, adaptiveBitrate, audioEnabled, lensDisabled,
         testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander, testStruggle
     )
@@ -293,7 +299,7 @@ object CameraParameterName {
         listOf("id", "position", "deviceType", "title", "displayedZoom", "focalLengthMM", "native")
 
     fun isKnown(name: String): Boolean {
-        if (name in fixed) return true
+        if (name in fixed || name in focusFields || name == focusCommand) return true
         return indexedField(name, "format", formatFields) != null ||
             indexedField(name, "lens", lensFields) != null
     }
@@ -339,7 +345,8 @@ data class CameraSnapshot(
     /** The test throttle's setting. Off from a phone that predates it. */
     val frameDelivery: FrameDelivery = FrameDelivery.off,
     /** Frames per second reaching the encoder. Null until measured, and from a phone that predates it. */
-    val deliveredFrameRate: Double? = null
+    val deliveredFrameRate: Double? = null,
+    val focus: CameraFocus = CameraFocus()
 ) {
     val displayedZoom: Double get() = mapping.displayedZoom(deviceZoom)
 }
@@ -349,6 +356,7 @@ data class CameraSnapshot(
  * the phone applies exactly what was sent and nothing it was not asked to touch.
  */
 data class CameraParameterWrite(
+    val focus: FocusCommand? = null,
     val name: String? = null,
     val position: CameraPosition? = null,
     /** Displayed units, not yet clamped: clamping needs the mapping, which is the snapshot's. */
@@ -376,7 +384,7 @@ data class CameraParameterWrite(
     val requestedNames: List<String> = emptyList()
 ) {
     val isEmpty: Boolean
-        get() = name == null && position == null && displayedZoom == null && codec == null &&
+        get() = focus == null && name == null && position == null && displayedZoom == null && codec == null &&
             width == null && height == null && frameRate == null && bitrate == null &&
             bitrateFloor == null && adaptiveBitrate == null && audioEnabled == null &&
             disabledLensIDs == null && !touchesFrameDelivery
@@ -418,6 +426,15 @@ object CameraParameters {
         set.set(CameraParameterName.deviceCNAME, snapshot.cname)
         set.set(CameraParameterName.deviceModel, snapshot.model)
         set.set(CameraParameterName.controlVersion, controlVersion)
+        val focus = snapshot.focus
+        set.set("focus.supported", bool(focus.supported))
+        set.set("focus.state", focus.phase.wire)
+        set.set("focus.x", focus.point?.x?.toString() ?: "")
+        set.set("focus.y", focus.point?.y?.toString() ?: "")
+        set.set("focus.request", focus.request)
+        set.set("focus.generation", focus.generation)
+        set.set("focus.rotation", focus.rotation.toString())
+        set.set("focus.mirrored", bool(focus.mirrored))
         set.set(CameraParameterName.systemThermal, snapshot.thermalName)
         set.set(CameraParameterName.systemStatus, snapshot.status)
         set.set(CameraParameterName.systemBattery, snapshot.battery?.percent?.toString() ?: "")
@@ -607,7 +624,8 @@ object CameraParameters {
                 wander = set[CameraParameterName.testDeliveredFrameRateWander]?.let { FrameRateWander.parse(it) },
                 struggle = set[CameraParameterName.testStruggle]?.let { Struggle.parse(it) }
             ),
-            deliveredFrameRate = set[CameraParameterName.testDeliveredFrameRateActual]?.toDoubleOrNull()
+            deliveredFrameRate = set[CameraParameterName.testDeliveredFrameRateActual]?.toDoubleOrNull(),
+            focus = decodeFocus(set)
         )
     }
 
@@ -668,6 +686,14 @@ object CameraParameters {
                 ParameterOutcome.Failure(CameraParameterError(CameraParameterError.Kind.BAD_REQUEST, name, detail))
 
             when (name) {
+                CameraParameterName.focusCommand -> {
+                    val command = FocusCommand.parse(value)
+                    if (set.names.size != 1 || command == null || command.generation != snapshot.focus.generation) {
+                        return bad("expected one focus command for the current camera generation")
+                    }
+                    if (!snapshot.focus.supported) return bad("focus unsupported")
+                    write = write.copy(focus = command)
+                }
                 CameraParameterName.deviceName -> write = write.copy(name = value)
 
                 CameraParameterName.sourcePosition -> {
@@ -888,11 +914,32 @@ object CameraParameters {
         )
     }
 
+    private fun decodeFocus(set: CameraParameterSet): CameraFocus {
+        val supported = parseBool(set["focus.supported"]) ?: return CameraFocus()
+        val phase = FocusPhase.entries.firstOrNull { it.wire == set["focus.state"] } ?: return CameraFocus()
+        val generation = set["focus.generation"] ?: return CameraFocus()
+        if (FocusCommand.create(generation, "validate", null) == null) return CameraFocus()
+        val rotation = set["focus.rotation"]?.toIntOrNull() ?: return CameraFocus()
+        if (rotation !in listOf(0, 90, 180, 270)) return CameraFocus()
+        val mirrored = parseBool(set["focus.mirrored"]) ?: return CameraFocus()
+        val request = set["focus.request"] ?: ""
+        val x = set["focus.x"]?.toDoubleOrNull()
+        val y = set["focus.y"]?.toDoubleOrNull()
+        val point = if (x != null && y != null) FocusPoint.create(x, y) else null
+        if (supported && phase in listOf(FocusPhase.FOCUSING, FocusPhase.LOCKED, FocusPhase.FAILED) &&
+            ((phase != FocusPhase.FAILED && point == null) || FocusCommand.create(generation, request, point) == null)) return CameraFocus()
+        return CameraFocus(supported, if (supported) phase else FocusPhase.UNSUPPORTED, point, request, generation, rotation, mirrored)
+    }
+
     /** The reply body for a successful `SET`: the requested names with their as-applied values. */
     fun echo(write: CameraParameterWrite, applied: CameraSnapshot): CameraParameterSet {
         val everything = encode(applied)
         val subset = CameraParameterSet()
         for (name in write.requestedNames) {
+            if (name == CameraParameterName.focusCommand && write.focus != null) {
+                subset.set(name, write.focus.text)
+                continue
+            }
             everything[name]?.let { subset.set(name, it) }
         }
         return subset

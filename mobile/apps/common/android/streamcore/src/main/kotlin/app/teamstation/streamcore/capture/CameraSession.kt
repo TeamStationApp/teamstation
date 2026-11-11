@@ -9,6 +9,9 @@ import android.hardware.camera2.CameraDevice
 import android.hardware.camera2.CameraManager
 import android.hardware.camera2.CameraMetadata
 import android.hardware.camera2.CaptureRequest
+import android.hardware.camera2.CaptureResult
+import android.hardware.camera2.TotalCaptureResult
+import android.hardware.camera2.params.MeteringRectangle
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
 import android.hardware.camera2.params.StreamConfigurationMap
@@ -16,6 +19,9 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.util.Range
 import android.view.Surface
+import app.teamstation.streamcore.core.CameraFocus
+import app.teamstation.streamcore.core.FocusCommand
+import app.teamstation.streamcore.core.FocusPoint
 import app.teamstation.streamcore.core.CameraLens
 import app.teamstation.streamcore.core.CameraPosition
 import app.teamstation.streamcore.core.CaptureFormatDescriptor
@@ -40,9 +46,15 @@ import kotlin.math.roundToInt
  * destination rather than a second camera stream, which is what keeps the operator's picture and
  * the encoder's picture the same picture, including the rotation.
  */
-class CameraSession(private val context: Context) {
+class CameraSession internal constructor(
+    private val context: Context,
+    // A simulated configuration backend exercises the public recovery lifecycle without Camera2/GL.
+    private val configurationBackend: ((CameraPosition, Boolean, State) -> State)?
+) {
+    constructor(context: Context) : this(context, null)
 
     data class State(
+        val focus: CameraFocus = CameraFocus(),
         val position: CameraPosition = CameraPosition.BACK,
         val deviceType: String = "",
         val mapping: ZoomMapping = ZoomMapping(maximumDeviceZoom = 1.0),
@@ -81,12 +93,81 @@ class CameraSession(private val context: Context) {
     val manager = context.getSystemService(Context.CAMERA_SERVICE) as CameraManager
 
     private var device: CameraDevice? = null
+    private var openGeneration = 0L
     private var session: CameraCaptureSession? = null
     private var requestBuilder: CaptureRequest.Builder? = null
     private var renderer: CaptureRenderer? = null
     private var settings = StreamSettings.default
     private var state = State()
     private var cameraId: String? = null
+    private var focusRegion: MeteringRectangle? = null
+    private var activePhysicalId: String? = null
+    private val focus = FocusRequests(::submitFocus, { next ->
+        publish(state.copy(focus = next.copy(rotation = state.captureRotationAngle.toInt(),
+            mirrored = state.position == CameraPosition.FRONT)))
+    }, { error -> android.util.Log.w("TSCameraman", "FOCUS_REQUEST_FAILED", error) })
+    private val captureCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureCompleted(session: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            if (session !== this@CameraSession.session) return
+            val physical = result.get(CaptureResult.LOGICAL_MULTI_CAMERA_ACTIVE_PHYSICAL_ID)
+            if (physical != null && activePhysicalId != null && physical != activePhysicalId) {
+                // A different lens cannot inherit the previous lens's held optical focus.
+                if (focus.lensChanged()) restoreContinuousFocus()
+            }
+            if (physical != null) activePhysicalId = physical
+            focus.result(request.tag as? FocusCommand, result.get(CaptureResult.CONTROL_AF_STATE))
+        }
+    }
+
+    fun setFocus(command: FocusCommand) {
+        handler.post {
+            if (!state.isRunning || command.generation != focus.state.generation) return@post
+            if (command.point != null) {
+                val region = renderer?.focusPoint(command.point)?.let(::meteringRegion)
+                if (region == null) {
+                    focus.reject(command)
+                    return@post
+                }
+                focusRegion = region
+            } else focusRegion = null
+            focus.apply(command)
+            handler.postDelayed({ focus.timeout(command) }, 8_000)
+        }
+    }
+
+    private fun meteringRegion(point: FocusPoint): MeteringRectangle? {
+        val characteristics = manager.getCameraCharacteristics(cameraId ?: return null)
+        val builder = requestBuilder ?: return null
+        val correctionOff = builder.get(CaptureRequest.DISTORTION_CORRECTION_MODE) == CameraMetadata.DISTORTION_CORRECTION_MODE_OFF
+        val array = (if (correctionOff) characteristics.get(CameraCharacteristics.SENSOR_INFO_PRE_CORRECTION_ACTIVE_ARRAY_SIZE)
+            else characteristics.get(CameraCharacteristics.SENSOR_INFO_ACTIVE_ARRAY_SIZE)) ?: return null
+        val captureRenderer = renderer ?: return null
+        // CONTROL_ZOOM_RATIO regions already address the post-zoom field of view.
+        return focusMeteringRegion(point, captureRenderer.bufferWidth, captureRenderer.bufferHeight, array)
+    }
+
+    private fun submitFocus(mode: Int, trigger: Int, command: FocusCommand?, repeating: Boolean) {
+        val builder = checkNotNull(requestBuilder)
+        val configured = checkNotNull(session)
+        builder.set(CaptureRequest.CONTROL_AF_MODE, mode)
+        builder.set(CaptureRequest.CONTROL_AF_REGIONS, arrayOf(focusRegion ?: MeteringRectangle(0, 0, 0, 0, 0)))
+        builder.setTag(command)
+        submitWithIdleTrigger(trigger, { builder.set(CaptureRequest.CONTROL_AF_TRIGGER, it) }) {
+            val request = builder.build()
+            if (repeating) configured.setRepeatingRequest(request, captureCallback, handler)
+            else configured.capture(request, captureCallback, handler)
+        }
+    }
+
+    private fun restoreContinuousFocus() {
+        focusRegion = null
+        runCatching {
+            submitFocus(CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO,
+                CameraMetadata.CONTROL_AF_TRIGGER_CANCEL, null, false)
+            submitFocus(CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO,
+                CameraMetadata.CONTROL_AF_TRIGGER_IDLE, null, true)
+        }
+    }
     /**
      * The last display rotation handed in, kept because it arrives before the camera is open as
      * often as after. Dropping it when `cameraId` was still null is what left the rotation at its
@@ -241,6 +322,7 @@ class CameraSession(private val context: Context) {
     fun stop() {
         handler.post {
             runCatching { session?.stopRepeating() }
+            focus.reset(state.focus.supported)
             publish(state.copy(isRunning = false))
         }
     }
@@ -263,7 +345,7 @@ class CameraSession(private val context: Context) {
         val now = android.os.SystemClock.elapsedRealtime()
         if (fromAvailability && now - lastReopenAt < reopenSpacingMillis) return
         lastReopenAt = now
-        applyDevice(state.position)
+        applyDevice(state.position, recovering = true)
     }
 
     fun close() {
@@ -284,6 +366,8 @@ class CameraSession(private val context: Context) {
 
     private fun closeNow() {
         keepOpen = false
+        openGeneration += 1
+        focus.reset(false)
         runCatching { session?.close() }
         session = null
         runCatching { device?.close() }
@@ -312,6 +396,15 @@ class CameraSession(private val context: Context) {
 
     fun setDisplayedZoom(value: Double) {
         handler.post { applyZoom(state.mapping.deviceZoom(value)) }
+    }
+
+    /** Explicit reset follows configure on the same handler, even when configure reuses capture. */
+    fun resetControls() {
+        handler.post {
+            applyZoom(state.mapping.deviceZoom(1.0))
+            focus.reset(state.focus.supported)
+            restoreContinuousFocus()
+        }
     }
 
     /**
@@ -369,13 +462,14 @@ class CameraSession(private val context: Context) {
         }
         if (state.captureRotationAngle != proposed.toDouble() ||
             state.sensorOrientation != sensor ||
-            state.displayRotation != pendingDisplayRotation
+            state.displayRotation != pendingDisplayRotation || state.focus.mirrored != isFront
         ) {
             publish(
                 state.copy(
                     captureRotationAngle = proposed.toDouble(),
                     sensorOrientation = sensor,
-                    displayRotation = pendingDisplayRotation
+                    displayRotation = pendingDisplayRotation,
+                    focus = state.focus.copy(rotation = proposed, mirrored = isFront)
                 )
             )
         }
@@ -384,13 +478,44 @@ class CameraSession(private val context: Context) {
     // MARK: - Configuration
 
     @SuppressLint("MissingPermission")
-    private fun applyDevice(position: CameraPosition) {
+    private fun applyDevice(position: CameraPosition, recovering: Boolean = false) {
+        configurationBackend?.let {
+            publish(it(position, recovering, state))
+            return
+        }
         val id = preferredCameraId(position)
         if (id == null) {
             publish(state.copy(failure = "no camera available for ${position.rawValue}"))
             return
         }
 
+        // An ordinary parameter update must not recreate capture or release a focus lock.
+        if (canReuseCapture(recovering, state.failure, state.isRunning,
+                id == cameraId && device != null, session != null, requestBuilder != null) && state.activeFormat?.let {
+            it.width == settings.width && it.height == settings.height &&
+                it.supports(settings.frameRate)
+        } == true) {
+            applyLensBounds()
+            requestBuilder?.let { builder ->
+                val rate = settings.frameRate.roundToInt()
+                builder.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, Range(rate, rate))
+                runCatching { session?.setRepeatingRequest(builder.build(), captureCallback, handler) }
+                    .onFailure {
+                        focus.reset(false)
+                        publish(state.copy(isRunning = false, failure = "could not update capture: ${it.message}"))
+                    }
+            }
+            return
+        }
+        // The replacement session must start its repeating request. Keeping the old
+        // running flag makes startRepeating() return before it creates a builder.
+        // This is intentionally a transient stopped state: no capture can honor focus until
+        // the replacement starts. Observers must wait for isRunning and the new generation.
+        publish(state.copy(isRunning = false))
+        openGeneration += 1
+        focus.reset(false)
+        requestBuilder = null
+        activePhysicalId = null
         runCatching { session?.close() }
         session = null
         runCatching { device?.close() }
@@ -411,6 +536,10 @@ class CameraSession(private val context: Context) {
         hardwareMapping = mapping
 
         cameraId = id
+        val modes = characteristics.get(CameraCharacteristics.CONTROL_AF_AVAILABLE_MODES) ?: intArrayOf()
+        focus.reset((characteristics.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0) > 0 &&
+            (characteristics.get(CameraCharacteristics.LENS_INFO_MINIMUM_FOCUS_DISTANCE) ?: 0f) > 0f &&
+            CameraMetadata.CONTROL_AF_MODE_AUTO in modes && CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_VIDEO in modes)
         if (lensCatalog.isEmpty()) {
             lensCatalog = runCatching { LensDiscovery.discover(manager) }.getOrDefault(emptyList())
         }
@@ -454,14 +583,18 @@ class CameraSession(private val context: Context) {
         applyCaptureRotation()
 
         try {
-            manager.openCamera(id, executor, deviceCallback)
+            manager.openCamera(id, executor, beginCameraOpen())
         } catch (error: Exception) {
             publish(state.copy(failure = "could not open camera $id: ${error.message}"))
         }
     }
 
-    private val deviceCallback = object : CameraDevice.StateCallback() {
+    /** A callback belongs to an open attempt, including errors delivered before onOpened. */
+    internal fun beginCameraOpen(): CameraDevice.StateCallback {
+      val generation = ++openGeneration
+      return object : CameraDevice.StateCallback() {
         override fun onOpened(camera: CameraDevice) {
+            if (generation != openGeneration) { runCatching { camera.close() }; return }
             device = camera
             createSession(camera)
         }
@@ -471,7 +604,9 @@ class CameraSession(private val context: Context) {
             // AVCaptureSession's `wasInterrupted`, and the soak has to see it as a first-class fault
             // rather than as a silent `isRunning`.
             runCatching { camera.close() }
-            if (device === camera) device = null
+            if (generation != openGeneration) return
+            device = null
+            focus.reset(false)
             publish(
                 state.copy(
                     isRunning = false,
@@ -483,7 +618,9 @@ class CameraSession(private val context: Context) {
 
         override fun onError(camera: CameraDevice, error: Int) {
             runCatching { camera.close() }
-            if (device === camera) device = null
+            if (generation != openGeneration) return
+            device = null
+            focus.reset(false)
             publish(
                 state.copy(
                     isRunning = false,
@@ -491,6 +628,7 @@ class CameraSession(private val context: Context) {
                 )
             )
         }
+      }
     }
 
     private fun createSession(camera: CameraDevice) {
@@ -502,6 +640,7 @@ class CameraSession(private val context: Context) {
             executor,
             object : CameraCaptureSession.StateCallback() {
                 override fun onConfigured(configured: CameraCaptureSession) {
+                    if (device !== camera) { configured.close(); return }
                     session = configured
                     startRepeating()
                 }
@@ -519,6 +658,7 @@ class CameraSession(private val context: Context) {
     }
 
     private fun startRepeating() {
+        if (state.isRunning) return
         val camera = device ?: return
         val configured = session ?: return
         val renderer = this.renderer ?: return
@@ -552,7 +692,7 @@ class CameraSession(private val context: Context) {
 
         requestBuilder = builder
         try {
-            configured.setRepeatingRequest(builder.build(), null, handler)
+            configured.setRepeatingRequest(builder.build(), captureCallback, handler)
             publish(state.copy(isRunning = true, isInterrupted = false, interruptionReason = null, failure = null))
         } catch (error: Exception) {
             publish(state.copy(failure = "could not start capture: ${error.message}"))
@@ -597,7 +737,7 @@ class CameraSession(private val context: Context) {
         val configured = session
         if (builder != null && configured != null) {
             builder.set(CaptureRequest.CONTROL_ZOOM_RATIO, ratio.toFloat())
-            runCatching { configured.setRepeatingRequest(builder.build(), null, handler) }
+            runCatching { configured.setRepeatingRequest(builder.build(), captureCallback, handler) }
         }
         publish(state.copy(deviceZoom = clamped))
     }

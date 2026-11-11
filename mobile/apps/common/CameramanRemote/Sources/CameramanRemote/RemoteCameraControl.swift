@@ -30,6 +30,15 @@ public final class RemoteCameraControl: CameraControlling {
   /// does not undo it on screen.
   static let localOverrideSeconds: TimeInterval = 1.5
 
+  public private(set) var focus = CameraFocus()
+  public var focusPending: Bool { pendingFocus != nil }
+  private var pendingFocus: FocusCommand?
+  @ObservationIgnored private var focusWrittenAt: Date?
+  @ObservationIgnored private var focusRevision = 0
+  @ObservationIgnored private var lifecycleRevision = 0
+  @ObservationIgnored private var pollSequence = 0
+  @ObservationIgnored private var appliedPollSequence = 0
+
   public private(set) var name = ""
   public private(set) var cname = ""
   public private(set) var position: CameraPosition = .back
@@ -104,6 +113,10 @@ public final class RemoteCameraControl: CameraControlling {
 
   public func start() {
     guard pollTask == nil else { return }
+    focus = CameraFocus()
+    pendingFocus = nil
+    focusRevision += 1
+    lifecycleRevision += 1
     transport.start()
     pollTask = Task { [weak self] in
       while !Task.isCancelled {
@@ -115,22 +128,37 @@ public final class RemoteCameraControl: CameraControlling {
   }
 
   public func stop() {
+    // Closing the control ends this connection's authority. Unsent commands (including
+    // rename, flip and settings) are deliberately discarded, never replayed on reconnect.
+    // A completed SET remains applied on the camera; optimistic local values are not an ack.
     pollTask?.cancel()
     pollTask = nil
     zoomTask?.cancel()
     zoomTask = nil
+    lastWrite?.cancel()
+    lastWrite = nil
+    pendingFocus = nil
+    focusRevision += 1
+    lifecycleRevision += 1
+    isResponding = false
     transport.stop()
   }
 
   /// One `GET_PARAMETER *`. Public so a test can drive it without waiting on the timer.
   public func poll() async {
+    pollSequence += 1
+    let sequence = pollSequence
+    let revision = focusRevision
+    let lifecycle = lifecycleRevision
     let reply: ParameterReply
     do {
       reply = try await transport.get("\(CameraParameterName.wildcard)\r\n")
     } catch {
+      guard lifecycle == lifecycleRevision else { return }
       notePollMissed("\(error)")
       return
     }
+    guard lifecycle == lifecycleRevision else { return }
     guard reply.isSuccess else {
       notePollMissed("\(reply.statusCode) \(reply.reasonPhrase)")
       return
@@ -140,6 +168,16 @@ public final class RemoteCameraControl: CameraControlling {
     else {
       notePollMissed("unreadable parameter body")
       return
+    }
+    guard sequence > appliedPollSequence else { return }
+    appliedPollSequence = sequence
+    if revision == focusRevision {
+      let expired = focusWrittenAt.map { Date().timeIntervalSince($0) > 3 } ?? false
+      if pendingFocus == nil || snapshot.focus.request == pendingFocus?.token ||
+          snapshot.focus.generation != pendingFocus?.generation || expired {
+        focus = snapshot.focus
+        pendingFocus = nil
+      }
     }
     polls += 1
     missedPolls = 0
@@ -183,6 +221,35 @@ public final class RemoteCameraControl: CameraControlling {
     battery = snapshot.battery
     streamURL = snapshot.streamURL
     clientCount = snapshot.clientCount
+  }
+
+  public func focus(at point: FocusPoint) {
+    guard let converted = FocusPoint(x: 0.5 + (point.x - 0.5) / directorZoom,
+                                     y: 0.5 + (point.y - 0.5) / directorZoom) else { return }
+    requestFocus(converted)
+  }
+
+  public func autoFocus() { requestFocus(nil) }
+
+  private func requestFocus(_ point: FocusPoint?) {
+    guard focus.supported, isResponding,
+          let command = FocusCommand(generation: focus.generation, token: UUID().uuidString, point: point) else { return }
+    focusRevision += 1
+    pendingFocus = command
+    focusWrittenAt = Date()
+    let lifecycle = lifecycleRevision
+    let previous = lastWrite
+    lastWrite = Task { [weak self] in
+      await previous?.value
+      guard !Task.isCancelled, let self, self.isResponding,
+            self.lifecycleRevision == lifecycle,
+            self.focus.generation == command.generation else { return }
+      await self.flushZoom()
+      guard !Task.isCancelled, self.lifecycleRevision == lifecycle,
+            self.focus.generation == command.generation else { return }
+      await self.write([(CameraParameterName.focusCommand, command.text)])
+      await self.poll()
+    }
   }
 
   // MARK: - CameraControlling
@@ -250,10 +317,12 @@ public final class RemoteCameraControl: CameraControlling {
   /// Queues a `SET` behind the ones already on their way. Two quick changes, such as a flip and a
   /// rename, otherwise race each other to the phone.
   private func send(_ lines: [(String, String)]) {
+    let lifecycle = lifecycleRevision
     let previous = lastWrite
     lastWrite = Task { [weak self] in
       await previous?.value
-      await self?.write(lines)
+      guard !Task.isCancelled, let self, self.lifecycleRevision == lifecycle else { return }
+      await self.write(lines)
     }
   }
 

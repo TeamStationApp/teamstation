@@ -4,6 +4,7 @@ import android.content.Context
 import android.view.Surface
 import app.teamstation.streamcore.capture.CameraSession
 import app.teamstation.streamcore.core.CameraPosition
+import app.teamstation.streamcore.core.FocusCommand
 import app.teamstation.streamcore.core.EncodedVideoFrame
 import app.teamstation.streamcore.core.LensSelection
 import app.teamstation.streamcore.core.ZoomMapping
@@ -840,7 +841,8 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
                 thermal = environment.deviceStatus.thermal().rawValue,
                 recordingSeconds = recordingSeconds,
                 isRecording = isRecording,
-                error = lastError
+                error = lastError,
+                focus = cameraState.focus
             )
         }
 
@@ -939,6 +941,11 @@ class PhoneStreamEngine(val environment: PhoneStreamEnvironment) {
     suspend fun setZoom(displayed: Double) = onEngine {
         pinchStartDeviceZoom = null
         source?.device?.setDisplayedZoom(displayed)
+    }
+
+    suspend fun setFocus(text: String) = onEngine {
+        val command = FocusCommand.parse(text) ?: return@onEngine
+        if (command.generation == cameraState.focus.generation) source?.device?.setFocus(command)
     }
 
     /** A pinch, multiplicative against the zoom when it began; [ended] closes the gesture. */

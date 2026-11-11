@@ -204,13 +204,15 @@ public enum CameraParameterName {
   /// empty until two have.
   public static let testDeliveredFrameRateActual = "test.deliveredFrameRate.actual"
 
+  public static let focusCommand = "focus.command"
+  public static let focusFields = ["focus.supported", "focus.state", "focus.x", "focus.y", "focus.request", "focus.generation", "focus.rotation", "focus.mirrored"]
   public static let wildcard = "*"
 
   public static func format(_ index: Int, _ field: String) -> String { "format.\(index).\(field)" }
   public static func lens(_ index: Int, _ field: String) -> String { "lens.\(index).\(field)" }
 
   public static let writable: Set<String> = [
-    deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
+    focusCommand, deviceName, sourcePosition, ptzZoom, encoding, width, height, frameRate, bitrateKbps,
     bitrateFloorKbps, adaptiveBitrate, audioEnabled, videoOutputHDMIClean, lensDisabled,
     testDeliveredFrameRate, testDeliveredFrameRateSwing, testDeliveredFrameRateWander, testStruggle
   ]
@@ -238,7 +240,7 @@ public enum CameraParameterName {
   static let lensFields = [ "id", "position", "deviceType", "title", "displayedZoom", "focalLengthMM", "native" ]
 
   public static func isKnown(_ name: String) -> Bool {
-    if fixed.contains(name) { return true }
+    if fixed.contains(name) || focusFields.contains(name) || name == focusCommand { return true }
     return indexedField(name, prefix: "format", fields: formatFields) != nil
       || indexedField(name, prefix: "lens", fields: lensFields) != nil
   }
@@ -285,6 +287,7 @@ public struct CameraSnapshot: Sendable, Equatable {
   public var frameDelivery: FrameDelivery
   /// Frames per second reaching the encoder. Nil until measured, and from a phone that predates it.
   public var deliveredFrameRate: Double?
+  public var focus: CameraFocus
 
   public init(
     name: String,
@@ -304,7 +307,8 @@ public struct CameraSnapshot: Sendable, Equatable {
     clientCount: Int,
     currentBitrate: Int? = nil,
     frameDelivery: FrameDelivery = .off,
-    deliveredFrameRate: Double? = nil
+    deliveredFrameRate: Double? = nil,
+    focus: CameraFocus = CameraFocus()
   ) {
     self.name = name
     self.cname = cname
@@ -324,6 +328,7 @@ public struct CameraSnapshot: Sendable, Equatable {
     self.currentBitrate = currentBitrate
     self.frameDelivery = frameDelivery
     self.deliveredFrameRate = deliveredFrameRate
+    self.focus = focus
   }
 
   public var displayedZoom: Double { mapping.displayedZoom(forDevice: deviceZoom) }
@@ -334,6 +339,7 @@ public struct CameraSnapshot: Sendable, Equatable {
 /// What a `SET_PARAMETER` asked for, typed. Only the fields named in the request are non-nil, so
 /// the phone applies exactly what was sent and nothing it was not asked to touch.
 public struct CameraParameterWrite: Sendable, Equatable {
+  public var focus: FocusCommand?
   public var name: String?
   public var position: CameraPosition?
   /// Displayed units, not yet clamped: clamping needs the mapping, which is the snapshot's.
@@ -364,7 +370,7 @@ public struct CameraParameterWrite: Sendable, Equatable {
   public init() {}
 
   public var isEmpty: Bool {
-    name == nil && position == nil && displayedZoom == nil && codec == nil && width == nil
+    focus == nil && name == nil && position == nil && displayedZoom == nil && codec == nil && width == nil
       && height == nil && frameRate == nil && bitrate == nil && bitrateFloor == nil && adaptiveBitrate == nil
       && audioEnabled == nil && cleanHDMIEnabled == nil && disabledLensIDs == nil
       && !touchesFrameDelivery
@@ -405,6 +411,15 @@ public enum CameraParameters {
     set.set(CameraParameterName.deviceCNAME, snapshot.cname)
     set.set(CameraParameterName.deviceModel, snapshot.model)
     set.set(CameraParameterName.controlVersion, controlVersion)
+    let focus = snapshot.focus
+    set.set("focus.supported", bool(focus.supported))
+    set.set("focus.state", focus.phase.rawValue)
+    set.set("focus.x", focus.point.map { String($0.x) } ?? "")
+    set.set("focus.y", focus.point.map { String($0.y) } ?? "")
+    set.set("focus.request", focus.request)
+    set.set("focus.generation", focus.generation)
+    set.set("focus.rotation", String(focus.rotation))
+    set.set("focus.mirrored", bool(focus.mirrored))
     set.set(CameraParameterName.systemThermal, snapshot.thermalName)
     set.set(CameraParameterName.systemStatus, snapshot.status)
     set.set(CameraParameterName.systemBattery, snapshot.battery.map { String($0.percent) } ?? "")
@@ -584,7 +599,8 @@ public enum CameraParameters {
         wander: set[CameraParameterName.testDeliveredFrameRateWander].flatMap { FrameRateWander(text: $0) },
         struggle: set[CameraParameterName.testStruggle].flatMap { Struggle(text: $0) }
       ),
-      deliveredFrameRate: set[CameraParameterName.testDeliveredFrameRateActual].flatMap(Double.init)
+      deliveredFrameRate: set[CameraParameterName.testDeliveredFrameRateActual].flatMap(Double.init),
+      focus: decodeFocus(set)
     )
   }
 
@@ -639,6 +655,14 @@ public enum CameraParameters {
       }
 
       switch name {
+      case CameraParameterName.focusCommand:
+        guard set.count == 1, let command = FocusCommand(text: value),
+              command.generation == snapshot.focus.generation else {
+          return .failure(bad("expected one focus command for the current camera generation"))
+        }
+        guard snapshot.focus.supported else { return .failure(bad("focus unsupported")) }
+        write.focus = command
+
       case CameraParameterName.deviceName:
         write.name = value
 
@@ -845,9 +869,37 @@ public enum CameraParameters {
     let everything = encode(applied)
     var subset = CameraParameterSet()
     for name in write.requestedNames {
+      if name == CameraParameterName.focusCommand, let command = write.focus {
+        subset.set(name, command.text)
+        continue
+      }
       if let value = everything[name] { subset.set(name, value) }
     }
     return subset
+  }
+
+  private static func decodeFocus(_ set: CameraParameterSet) -> CameraFocus {
+    guard let supported = parseBool(set["focus.supported"]),
+          let phase = set["focus.state"].flatMap(FocusPhase.init(rawValue:)),
+          let generation = set["focus.generation"],
+          FocusCommand(generation: generation, token: "validate", point: nil) != nil,
+          let rotation = set["focus.rotation"].flatMap(Int.init), [0, 90, 180, 270].contains(rotation),
+          let mirrored = parseBool(set["focus.mirrored"]) else { return CameraFocus() }
+    var focus = CameraFocus()
+    focus.supported = supported
+    focus.phase = supported ? phase : .unsupported
+    focus.generation = generation
+    focus.rotation = rotation
+    focus.mirrored = mirrored
+    focus.request = set["focus.request"] ?? ""
+    if let x = set["focus.x"].flatMap(Double.init), let y = set["focus.y"].flatMap(Double.init) {
+      focus.point = FocusPoint(x: x, y: y)
+    }
+    if [.focusing, .locked, .failed].contains(focus.phase),
+       ((focus.phase != .failed && focus.point == nil) || FocusCommand(generation: generation, token: focus.request, point: focus.point) == nil) {
+      return CameraFocus()
+    }
+    return focus
   }
 
   // MARK: Formatting

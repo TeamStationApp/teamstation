@@ -10,6 +10,7 @@ import android.os.SystemClock
 import android.view.Surface
 import app.teamstation.streamcore.capture.CameraSession
 import app.teamstation.streamcore.core.CameraLens
+import app.teamstation.streamcore.core.FocusCommand
 import app.teamstation.streamcore.core.CameraPosition
 import app.teamstation.streamcore.core.LensSelection
 import app.teamstation.streamcore.gl.ProgrammeTicker
@@ -73,6 +74,7 @@ interface PhoneCaptureDevice {
     fun flip()
     fun setDeviceZoom(value: Double)
     fun setDisplayedZoom(value: Double)
+    fun setFocus(command: FocusCommand)
     fun setLensSelection(selection: LensSelection)
     fun lensCatalog(): List<CameraLens>
     fun attachEncoder(key: String, surface: Surface?)
@@ -102,6 +104,7 @@ class CameraSessionDevice(context: Context) : PhoneCaptureDevice {
     override fun flip() = session.flip()
     override fun setDeviceZoom(value: Double) = session.setDeviceZoom(value)
     override fun setDisplayedZoom(value: Double) = session.setDisplayedZoom(value)
+    override fun setFocus(command: FocusCommand) = session.setFocus(command)
     override fun setLensSelection(selection: LensSelection) = session.setLensSelection(selection)
     override fun lensCatalog(): List<CameraLens> = session.lensCatalog()
     override fun attachEncoder(key: String, surface: Surface?) = session.attachEncoder(key, surface)

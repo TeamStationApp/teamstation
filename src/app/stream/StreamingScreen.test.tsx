@@ -48,7 +48,9 @@ const IDLE: NativePhoneStreamStatus = {
   charging: false,
   thermal: 'fair',
   recordingSeconds: 0,
-  isRecording: false
+  isRecording: false,
+  videoWidth: 1920,
+  videoHeight: 1080
 }
 
 let root: Root | undefined
@@ -137,7 +139,11 @@ async function mount(
 }
 
 const byTestId = (id: string): HTMLElement | null =>
-  document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+  document.querySelector<HTMLElement>(
+    id === 'focus-state'
+      ? '[data-testid^="focus-state:"]'
+      : `[data-testid="${id}"]`
+  )
 
 async function press(id: string): Promise<void> {
   await act(async () => {
@@ -187,6 +193,106 @@ describe('the streaming screen', function () {
       await delay(10)
     })
     root = undefined
+  })
+
+  it('shows camera-reported focus and returns to auto only through the explicit action', async function () {
+    const h = await mount()
+    expect(byTestId('focus-state')?.textContent).equals('Focus unavailable')
+    await press('auto-focus')
+    expect(calls(h.native, 'setFocus')).has.length(0)
+    const focus = {
+      supported: true,
+      phase: 'locked',
+      generation: 'capture',
+      request: 'tap',
+      rotation: 0,
+      mirrored: false
+    }
+    await emit(h.native, { focus })
+    expect(byTestId('focus-state')?.textContent).equals('Focus locked')
+    await press('auto-focus')
+    expect(calls(h.native, 'setFocus')).has.length(1)
+    expect(calls(h.native, 'setFocus')[0][0]).matches(/^auto:capture:auto-/)
+    expect(byTestId('focus-state')?.textContent).equals('Focus locked')
+    await emit(h.native, { focus: { ...focus, phase: 'auto' } })
+    expect(byTestId('focus-state')?.textContent).equals('Auto Focus')
+    expect(calls(h.native, 'startRecording')).has.length(0)
+    expect(calls(h.native, 'close')).has.length(0)
+  })
+
+  it('reports focus unavailable when an Android native build omits output dimensions', async function () {
+    const h = await mount()
+    await emit(h.native, {
+      focus: {
+        supported: true,
+        phase: 'reset',
+        generation: 'capture',
+        request: '',
+        rotation: 0,
+        mirrored: false
+      },
+      videoWidth: undefined,
+      videoHeight: undefined
+    })
+    expect(byTestId('focus-state')?.textContent).equals('Focus unavailable')
+    expect(byTestId('focus-state')?.getAttribute('data-testid')).equals(
+      'focus-state:capture:none'
+    )
+    await press('auto-focus')
+    expect(calls(h.native, 'setFocus')).has.length(0)
+  })
+
+  it('maps a front-camera tap using reported dimensions and expires feedback without unlocking', async function () {
+    const h = await mount()
+    const focus = {
+      supported: true,
+      phase: 'locked',
+      generation: 'capture',
+      request: 'previous',
+      rotation: 0,
+      mirrored: true
+    }
+    await press('flip-button')
+    await emit(h.native, { focus, videoWidth: 1200, videoHeight: 900 })
+    const preview = byTestId('camera-screen')!
+    await act(async () => {
+      ;(
+        preview as HTMLElement & {
+          __reactLayoutHandler?: (event: unknown) => void
+        }
+      ).__reactLayoutHandler?.({
+        nativeEvent: { layout: { x: 0, y: 0, width: 1000, height: 600 } }
+      })
+      for (const type of ['mousedown', 'mouseup'])
+        preview.dispatchEvent(
+          new window.MouseEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            clientX: 400,
+            clientY: 400,
+            button: 0,
+            buttons: type === 'mouseup' ? 0 : 1
+          })
+        )
+      await delay(40)
+    })
+    expect(calls(h.native, 'setFocus')).has.length(1)
+    expect(calls(h.native, 'setFocus')[0][0]).matches(/^point:capture:tap-/)
+    const coordinates = String(calls(h.native, 'setFocus')[0][0])
+      .split(':')
+      .slice(-2)
+      .map(Number)
+    expect(coordinates[0]).closeTo(0.375, 0.00001)
+    expect(coordinates[1]).closeTo(2 / 3, 0.00001)
+    expect(byTestId('focus-marker')).not.equals(null)
+    await act(async () => {
+      await delay(2050)
+    })
+    expect(byTestId('focus-marker')).equals(null)
+    expect(byTestId('focus-state')?.textContent).equals('Focus locked')
+    expect(calls(h.native, 'setFocus')).has.length(1)
+    expect(calls(h.native, 'open')).has.length(1)
+    expect(calls(h.native, 'close')).has.length(0)
   })
 
   it('opens idle and starts only after the record button is pressed', async function () {

@@ -1,5 +1,16 @@
 package app.teamstation.cameraman.ui
 
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.material3.TextButton
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.withFrameNanos
+import app.teamstation.streamcore.core.FocusCommand
+import app.teamstation.streamcore.core.FocusGeometry
+import java.util.UUID
+import kotlin.math.cos
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -64,6 +75,14 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
     val radar by environment.radarState.collectAsStateWithLifecycle()
     val stream by environment.settings.collectAsStateWithLifecycle()
     val broadcasting by environment.broadcasting.collectAsStateWithLifecycle()
+    var focusMarker by remember { mutableStateOf<Pair<Offset, String>?>(null) }
+    var focusElapsed by remember { mutableStateOf(0f) }
+    LaunchedEffect(focusMarker) {
+        if (focusMarker == null) return@LaunchedEffect
+        val started = withFrameNanos { it }
+        do { withFrameNanos { focusElapsed = (it - started) / 1_000_000_000f } } while (focusElapsed < 2f)
+        focusMarker = null
+    }
     var confirmStop by remember { mutableStateOf(false) }
     LaunchedEffect(broadcasting) {
         if (!broadcasting) confirmStop = false
@@ -105,10 +124,21 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
         color = MaterialTheme.colorScheme.background
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            CameraPreview(
-                camera = environment.camera,
+            CameraPreview(camera = environment.camera, modifier = Modifier.fillMaxSize())
+            Box(
                 modifier = Modifier
                     .fillMaxSize()
+                    .pointerInput(stream.width, stream.height) {
+                        detectTapGestures { location ->
+                            val point = FocusGeometry.imagePoint(location.x.toDouble(), location.y.toDouble(),
+                                size.width.toDouble(), size.height.toDouble(), stream.width.toDouble(), stream.height.toDouble())
+                                ?: return@detectTapGestures
+                            val token = UUID.randomUUID().toString()
+                            focusElapsed = 0f
+                            focusMarker = location to token
+                            FocusCommand.create(liveState.focus.generation, token, point)?.let { environment.camera.setFocus(it) }
+                        }
+                    }
                     // Where the first finger landed, read on the Initial pass so it is settled
                     // before either detector below sees the down. The drag detector only reports a
                     // position once touch slop is crossed, which is already some way off the edge.
@@ -169,7 +199,20 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                             )
                         }
                     }
-            )
+            ) {}
+
+            focusMarker?.let { (point, _) ->
+                Canvas(Modifier.fillMaxSize().testTag("focus-marker")) {
+                    val radius = 15.dp.toPx() - 1.dp.toPx()
+                    val arm = 8.dp.toPx()
+                    val alpha = 0.35f + 0.65f * (1 + cos(focusElapsed * Math.PI.toFloat() * 4)) / 2
+                    for ((dx, dy) in listOf(-1f to -1f, 1f to -1f, -1f to 1f, 1f to 1f)) {
+                        val corner = point + Offset(dx * radius, dy * radius)
+                        drawLine(Color.Yellow, corner, corner - Offset(dx * arm, 0f), 2.dp.toPx(), alpha = alpha)
+                        drawLine(Color.Yellow, corner, corner - Offset(0f, dy * arm), 2.dp.toPx(), alpha = alpha)
+                    }
+                }
+            }
 
             CameraFrame(aspectRatio = stream.width.toFloat() / stream.height.toFloat()) {
                 Column(
@@ -192,13 +235,22 @@ fun CameraScreen(environment: AppEnvironment, onOpenSettings: () -> Unit) {
                         NameBadge(identity.name)
                     }
 
-                    Row {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         ChromeIconButton(
                             icon = Icons.Filled.Cameraswitch,
                             description = "Flip camera",
                             testTag = "flip-button",
                             onClick = { environment.camera.flip() }
                         )
+                        Column(Modifier.background(Color.Black.copy(alpha = .55f)).padding(8.dp)) {
+                            Text(cameraState.focus.phase.label, color = Color.White, modifier = Modifier.testTag("focus-state:${cameraState.focus.generation}:${cameraState.focus.request.ifEmpty { "none" }}"))
+                            if (cameraState.focus.supported) {
+                                TextButton(onClick = {
+                                    FocusCommand.create(liveState.focus.generation, UUID.randomUUID().toString(), null)
+                                        ?.let { environment.camera.setFocus(it) }
+                                }, modifier = Modifier.testTag("focus-auto")) { Text("Auto Focus", color = Color.White) }
+                            }
+                        }
                     }
                 }
 

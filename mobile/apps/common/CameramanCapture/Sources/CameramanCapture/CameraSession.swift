@@ -22,6 +22,7 @@ public struct SampleBuffer: @unchecked Sendable {
 /// attached, turned and detached on that queue too.
 public final class CameraSession: @unchecked Sendable {
   public struct State: Sendable, Equatable {
+    public var focus = CameraFocus()
     public var position: CameraPosition = .back
     public var deviceType: String = ""
     public var mapping: ZoomMapping = ZoomMapping(maximumDeviceZoom: 1)
@@ -60,12 +61,23 @@ public final class CameraSession: @unchecked Sendable {
   private var state = State()
   private var rotationCoordinator: AVCaptureDevice.RotationCoordinator?
   private var rotationObservation: NSKeyValueObservation?
+  private lazy var focusDriver = FocusDriver(
+    schedule: { [queue] delay, action in queue.asyncAfter(deadline: .now() + delay, execute: action) },
+    changed: { [weak self] focus in
+      guard let self else { return }
+      self.state.focus = focus
+      self.state.focus.rotation = Int(self.state.captureRotationAngle)
+      self.publish()
+    }
+  )
   /// Last 0°/180° applied to the capture connection. Portrait angles from the coordinator at launch
   /// would swap 1920×1080 into portrait; those are ignored and this is used instead.
   private var lastLandscapeCaptureAngle: CGFloat = 180
   private var sessionObservers: [any NSObjectProtocol] = []
   /// The preview layers drawing this session, with the angle and mirroring each was asked for.
   private var previews: [ObjectIdentifier: PreviewHold] = [:]
+  // A newly attached preview replaces the previous interactive surface during transitions.
+  private var previewOrder: [ObjectIdentifier] = []
 
   /// Delivered on the main queue, because every consumer is UI.
   public var onStateChange: (@MainActor @Sendable (State) -> Void)?
@@ -108,6 +120,7 @@ public final class CameraSession: @unchecked Sendable {
     let key = ObjectIdentifier(layer)
     queue.async { [self] in
       guard let layer = target.layer else { return }
+      if previews[key] == nil { previewOrder.append(key) }
       previews[key] = target
       Self.withoutAnimation {
         if layer.session !== session { layer.session = session }
@@ -128,6 +141,7 @@ public final class CameraSession: @unchecked Sendable {
     let key = ObjectIdentifier(layer)
     queue.async { [self] in
       previews[key] = nil
+      previewOrder.removeAll { $0 == key }
       if held.layer.session === session {
         Self.withoutAnimation { held.layer.session = nil }
       }
@@ -156,6 +170,7 @@ public final class CameraSession: @unchecked Sendable {
     queue.async { [self] in
       guard session.isRunning else { return }
       session.stopRunning()
+      resetFocus()
       state.isRunning = false
       publish()
     }
@@ -181,6 +196,73 @@ public final class CameraSession: @unchecked Sendable {
 
   public func setDisplayedZoom(_ value: Double) {
     queue.async { [self] in applyZoom(state.mapping.deviceZoom(forDisplayed: value)) }
+  }
+
+  /// An explicit harness reset, ordered after configure, also clears retained camera controls.
+  public func resetControls() {
+    queue.async { [self] in
+      applyZoom(state.mapping.deviceZoom(forDisplayed: 1))
+      resetFocus()
+    }
+  }
+
+  /// Points in the encoded picture. The capture queue validates the preview generation again,
+  /// because a camera switch can overtake a command queued by the UI or a remote peer.
+  public func setFocus(_ command: FocusCommand) {
+    queue.async { [self] in applyFocus(command) }
+  }
+
+  /// Local touches are normalized to the displayed layer, not the independently rotated encoder.
+  /// Let AVFoundation undo that layer's gravity, orientation and mirroring exactly once.
+  public func setPreviewFocus(_ command: FocusCommand) {
+    queue.async { [self] in
+      guard device != nil, state.isRunning, !state.isInterrupted else { return }
+      guard let point = command.point else {
+        applyFocus(command)
+        return
+      }
+      guard let layer = previewOrder.reversed().compactMap({ previews[$0]?.layer })
+        .first(where: { $0.session === session && $0.connection != nil }),
+        layer.bounds.width > 0, layer.bounds.height > 0 else {
+        focusDriver.apply(command, devicePoint: nil)
+        return
+      }
+      let converted = layer.captureDevicePointConverted(fromLayerPoint: CGPoint(
+        x: layer.bounds.minX + point.x * layer.bounds.width,
+        y: layer.bounds.minY + point.y * layer.bounds.height
+      ))
+      applyFocus(command, devicePoint: converted)
+    }
+  }
+
+  private func resetFocus() {
+    focusDriver.reset(device: device.map { AVFocusDevice($0, queue: queue) })
+    if let device {
+      let catalog = state.availableLenses
+      applySwitching(to: device,
+        selection: LensSelection(disabledIDs: settings.disabledLensIDs).normalized(in: catalog), catalog: catalog)
+    }
+  }
+
+  private func applyFocus(_ command: FocusCommand, devicePoint: CGPoint? = nil) {
+    guard let device, state.isRunning, !state.isInterrupted else { return }
+    let converted = command.point.flatMap { devicePoint ?? sensorPoint($0) }
+    focusDriver.apply(command, devicePoint: converted)
+    if command.point == nil {
+      let catalog = state.availableLenses
+      applySwitching(to: device, selection: LensSelection(disabledIDs: settings.disabledLensIDs).normalized(in: catalog), catalog: catalog)
+    }
+  }
+
+  private func sensorPoint(_ point: FocusPoint) -> CGPoint? {
+    // Device points are normalized to the visible, unrotated camera image. The encoder
+    // scales that whole image, with no extra crop, and capture mirroring is disabled.
+    // Hardware zoom already changes the camera's field of view: do not undo it twice.
+    // Remote control must also work when no local preview layer is attached.
+    guard let sensor = FocusGeometry.unrotated(
+      point, rotation: Int(state.captureRotationAngle), mirrored: false
+    ) else { return nil }
+    return CGPoint(x: sensor.x, y: sensor.y)
   }
 
   private func applyZoom(_ value: Double) {
@@ -221,12 +303,27 @@ public final class CameraSession: @unchecked Sendable {
       return
     }
 
+    if state.failure == nil, device?.uniqueID == selected.uniqueID,
+       let input, session.inputs.contains(where: { $0 === input }) {
+      session.beginConfiguration()
+      attachOutputs()
+      session.commitConfiguration()
+      applyFormat(to: selected)
+      applySwitching(to: selected, selection: selection, catalog: catalog)
+      state.mapping = Self.mapping(for: selected, selection: selection, catalog: catalog, position: position)
+      applyZoom(state.deviceZoom)
+      state.failure = nil
+      publish()
+      return
+    }
+
     session.beginConfiguration()
     // `inputPriority` is required before setting `activeFormat`: with any other preset the session
     // owns the format and silently overrides the chosen one.
     session.sessionPreset = .inputPriority
 
     if let input { session.removeInput(input) }
+    input = nil
     guard let newInput = try? AVCaptureDeviceInput(device: selected), session.canAddInput(newInput) else {
       session.commitConfiguration()
       state.failure = "could not open \(selected.localizedName)"
@@ -236,6 +333,7 @@ public final class CameraSession: @unchecked Sendable {
     session.addInput(newInput)
     input = newInput
     device = selected
+    resetFocus()
 
     // Position is recorded before the new input's rotation is applied so a flip publishes the
     // matching camera and angle together.
@@ -329,7 +427,7 @@ public final class CameraSession: @unchecked Sendable {
     do {
       try device.lockForConfiguration()
       defer { device.unlockForConfiguration() }
-      device.activeFormat = match
+      if device.activeFormat !== match { device.activeFormat = match }
       let duration = CMTime(value: 1, timescale: CMTimeScale(settings.frameRate.rounded()))
       // Pinning both ends holds the frame rate steady. Leaving the minimum open lets the device drop
       // to 12 fps in low light, which reads on the wire as a stalled camera.
@@ -382,6 +480,7 @@ public final class CameraSession: @unchecked Sendable {
       }
       if state.captureRotationAngle != Double(angle) {
         state.captureRotationAngle = Double(angle)
+        state.focus.rotation = Int(angle)
         publish()
       }
     }
@@ -391,6 +490,7 @@ public final class CameraSession: @unchecked Sendable {
   /// the session has an input, and made again when the input changes.
   private func applyPreviews() {
     previews = previews.filter { $0.value.layer != nil }
+    previewOrder.removeAll { previews[$0] == nil }
     guard !previews.isEmpty else { return }
     Self.withoutAnimation {
       for target in previews.values { applyPreview(target) }
@@ -444,6 +544,7 @@ public final class CameraSession: @unchecked Sendable {
       let reason = CameraSession.interruptionReason(from: notification)
       self?.queue.async {
         guard let self else { return }
+        self.resetFocus()
         self.state.isInterrupted = true
         self.state.interruptionReason = reason
         self.state.isRunning = self.session.isRunning
@@ -474,6 +575,7 @@ public final class CameraSession: @unchecked Sendable {
       } ?? "runtimeError"
       self?.queue.async {
         guard let self else { return }
+        self.resetFocus()
         self.state.failure = failure
         self.state.isRunning = self.session.isRunning
         self.publish()
@@ -605,7 +707,7 @@ public final class CameraSession: @unchecked Sendable {
       try device.lockForConfiguration()
       defer { device.unlockForConfiguration() }
       device.fallbackPrimaryConstituentDevices = fallback
-      if enabledConstituents.count <= 1 {
+      if enabledConstituents.count <= 1 || [.focusing, .locked, .failed].contains(state.focus.phase) {
         device.setPrimaryConstituentDeviceSwitchingBehavior(
           .locked,
           restrictedSwitchingBehaviorConditions: []

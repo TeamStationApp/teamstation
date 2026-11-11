@@ -2,6 +2,13 @@ package app.teamstation.streamcore.gl
 
 import kotlin.math.roundToInt
 
+/** Fits the encoded frame, independent of the sensor texture's rotation or crop. */
+internal fun encodedFrameFit(width: Int, height: Int, imageWidth: Int, imageHeight: Int): Pair<Float, Float> {
+    if (width <= 0 || height <= 0 || imageWidth <= 0 || imageHeight <= 0) return 1f to 1f
+    val ratio = (width.toFloat() / height) / (imageWidth.toFloat() / imageHeight)
+    return if (ratio > 1f) (1f / ratio) to 1f else 1f to ratio
+}
+
 /**
  * The picture's rectangle inside the preview, in GL window coordinates (origin at the bottom left).
  *

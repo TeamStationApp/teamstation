@@ -110,6 +110,7 @@ describe('the phone stream bridge', function () {
     expect(await stream.resumeInterrupted(REQUEST)).equals(true)
     await stream.stopRecording()
     stream.setZoom(2)
+    stream.setFocus('auto:camera:tap')
     stream.pinch(1.5)
     stream.pinch(1.2, true)
     await stream.setDisabledLenses(['back-77'])
@@ -153,6 +154,7 @@ describe('the phone stream bridge', function () {
       { name: 'resumeInterrupted', args: [REQUEST] },
       { name: 'stopRecording', args: [] },
       { name: 'setZoom', args: [2] },
+      { name: 'setFocus', args: ['auto:camera:tap'] },
       { name: 'pinch', args: [1.5, false] },
       { name: 'pinch', args: [1.2, true] },
       { name: 'setDisabledLenses', args: [['back-77']] },
@@ -348,6 +350,21 @@ describe('the phone stream bridge', function () {
     expect(await stream.interruptedSession()).equals(null)
   })
 
+  it('preserves authoritative focus status and supports older native status events', function () {
+    const focus = {
+      supported: true,
+      phase: 'focusing',
+      generation: 'capture',
+      request: 'tap-1',
+      rotation: 180,
+      mirrored: false,
+      x: 0.2,
+      y: 0.7
+    }
+    expect(toStatus({ ...STATUS_EVENT, focus }).focus).deep.equals(focus)
+    expect(toStatus(STATUS_EVENT).focus).equals(undefined)
+  })
+
   it('reads unknown phases, heat, and upload states as their safe defaults', function () {
     expect(
       toStatus({ ...STATUS_EVENT, phase: 'other', thermal: 'nominal' })
@@ -538,6 +555,7 @@ describe('the phone stream bridge', function () {
     ])
       expect(await rejection(call())).to.include({ code: 'unsupported' })
     stream.setZoom(2)
+    stream.setFocus('auto:capture:tap')
     stream.pinch(2)
     const stop = stream.onStatus(() => {})
     stop()

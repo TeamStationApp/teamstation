@@ -121,7 +121,7 @@ const renamed = process.env.TS_STREAM_RENAME ?? 'Third Base'
 const teamId = process.env.TS_STREAM_TEAM_ID
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
 const hold = process.env.TS_STREAM_HOLD
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 /** Cameraman's settings that the phone's sheet must not have. */
 const ABSENT = [
   'Bitrate',
@@ -462,8 +462,14 @@ async function main(): Promise<void> {
       (await find(byText('Name this camera angle'))) != null,
       'Record Video asks for the angle’s name'
     )
-    say(`$ inputText ${angle}`)
-    await m.inputText({ text: angle })
+    const suggestion = `angle-suggestion-${angle}`
+    if ((await find(byId(suggestion), 1000)) != null) {
+      say(`$ tapOn ${suggestion}`)
+      await m.tapOn({ id: suggestion })
+    } else {
+      say(`$ inputText ${angle}`)
+      await m.inputText({ text: angle })
+    }
     say('$ tapOn Record with this phone')
     await m.tapOn({ text: 'Record with this phone' })
     assert(

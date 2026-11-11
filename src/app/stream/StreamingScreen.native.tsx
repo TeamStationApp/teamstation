@@ -7,6 +7,7 @@ import React, {
   useState
 } from 'react'
 import {
+  type GestureResponderEvent,
   Modal,
   NativeModules,
   Platform,
@@ -26,8 +27,16 @@ import {
   type NativeOrientation,
   orientationLock
 } from '../player/multiCam/orientationLock'
+import {
+  focusCommand,
+  focusImagePoint,
+  focusLabel,
+  type FocusPoint,
+  focusTap
+} from './cameraFocus'
 import { applyCameraOrientation } from './cameraOrientation'
 import { BatteryBadge } from './overlay/BatteryBadge'
+import { type FocusFeedback, FocusMarker } from './overlay/FocusMarker'
 import { NameBadge } from './overlay/NameBadge'
 import { OverlayButton } from './overlay/OverlayButton'
 import {
@@ -274,6 +283,19 @@ function StreamingOverlay(
   const radar = useRadarStateOf(phone)
   const [scale, setScale] = useState<PhoneZoomScale | null>(null)
   const [front, setFront] = useState(false)
+  const [focusFeedback, setFocusFeedback] = useState<FocusFeedback | null>(null)
+  const focusSequence = useRef(0)
+  const focusRequestID = status?.focus?.request ?? ''
+  const previewSize = useRef({ width: window.width, height: window.height })
+  // Old native builds cannot map Android taps without their encoded output dimensions.
+  const canMapFocus =
+    Platform.OS === 'ios' ||
+    ((status?.videoWidth ?? 0) > 0 && (status?.videoHeight ?? 0) > 0)
+  const focusNow = useRef(status)
+  focusNow.current = status
+  useEffect(() => {
+    setFocusFeedback(null)
+  }, [status?.focus?.generation, front, settingsOpen])
   const [recordingHere, setRecordingHere] = useState(false)
   const [confirmStop, setConfirmStop] = useState(false)
   const [busy, setBusy] = useState(true)
@@ -451,7 +473,59 @@ function StreamingOverlay(
       }),
     [phone]
   )
-  const gesture = useMemo(() => zoomResponder(zoom), [zoom])
+  const gesture = useMemo(() => {
+    const responder = zoomResponder(zoom)
+    let generation: string | undefined
+    const tap = focusTap(point => {
+      const { focus, videoWidth = 0, videoHeight = 0 } = focusNow.current ?? {}
+      if (focus?.generation !== generation) return
+      const { width, height } = previewSize.current
+      // iOS converts the local layer point with AVFoundation, including orientation
+      // and mirroring. Android fits the encoded frame and ignores its letterboxes.
+      const image = focusImagePoint(
+        point.x,
+        point.y,
+        width,
+        height,
+        Platform.OS === 'ios' ? width : videoWidth,
+        Platform.OS === 'ios' ? height : videoHeight
+      )
+      if (image == null) return
+      const token = `tap-${Date.now()}-${++focusSequence.current}`
+      const command = focusCommand(focus, image, token)
+      if (command == null) return
+      setFocusFeedback({ point, token })
+      phone.setFocus(command)
+    })
+    const points = (event: GestureResponderEvent): FocusPoint[] =>
+      event.nativeEvent.touches.map(touch => ({
+        x: touch.locationX,
+        y: touch.locationY
+      }))
+    return {
+      ...responder,
+      onResponderGrant: (event: GestureResponderEvent) => {
+        generation = focusNow.current?.focus?.generation
+        tap.start(points(event))
+        responder.onResponderGrant(event)
+      },
+      onResponderStart: (event: GestureResponderEvent) => {
+        tap.move(points(event))
+      },
+      onResponderMove: (event: GestureResponderEvent) => {
+        tap.move(points(event))
+        responder.onResponderMove(event)
+      },
+      onResponderRelease: () => {
+        tap.end()
+        responder.onResponderRelease()
+      },
+      onResponderTerminate: () => {
+        tap.cancel()
+        responder.onResponderTerminate()
+      }
+    }
+  }, [zoom, phone])
   // The rail's pills take taps; a drag that starts on one still zooms.
   const railGesture = useMemo(() => zoomRailResponder(zoom), [zoom])
 
@@ -531,8 +605,50 @@ function StreamingOverlay(
       <View
         testID="camera-screen"
         style={StyleSheet.absoluteFill}
+        onLayout={event => {
+          previewSize.current = event.nativeEvent.layout
+        }}
         {...gesture}
       />
+      {focusFeedback != null ? (
+        <FocusMarker key={focusFeedback.token} feedback={focusFeedback} />
+      ) : null}
+
+      <View
+        style={[
+          styles.focusControls,
+          {
+            left: insets.left + EDGE_INSET,
+            top: top + BUTTON_SIZE + ROW_SPACING
+          }
+        ]}
+      >
+        <Text
+          testID={`focus-state:${status?.focus?.generation ?? 'none'}:${focusRequestID === '' ? 'none' : focusRequestID}`}
+          style={styles.focusText}
+        >
+          {focusLabel(canMapFocus ? status?.focus : undefined)}
+        </Text>
+        <Pressable
+          testID="auto-focus"
+          accessibilityRole="button"
+          accessibilityLabel="Auto Focus"
+          disabled={!canMapFocus || status?.focus?.supported !== true}
+          onPress={() => {
+            const command = focusCommand(
+              status?.focus,
+              null,
+              `auto-${Date.now()}-${++focusSequence.current}`
+            )
+            if (command == null) return
+            setFocusFeedback(null)
+            phone.setFocus(command)
+          }}
+          style={styles.focusAction}
+        >
+          <Text style={styles.focusText}>Auto Focus</Text>
+        </Pressable>
+      </View>
 
       <View
         pointerEvents="box-none"
@@ -723,6 +839,15 @@ function StreamingOverlay(
 }
 
 const styles = StyleSheet.create({
+  focusControls: { position: 'absolute', alignItems: 'flex-start', gap: 4 },
+  focusText: { color: WHITE, fontSize: 14 },
+  focusAction: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0,0,0,0.45)'
+  },
   screen: {
     flex: 1,
     backgroundColor: '#000000'

@@ -3,6 +3,9 @@ package app.teamstation.app.stream
 import android.content.pm.ServiceInfo
 import app.teamstation.streamcore.core.CameraLens
 import app.teamstation.streamcore.core.CameraPosition
+import app.teamstation.streamcore.core.CameraFocus
+import app.teamstation.streamcore.core.FocusPhase
+import app.teamstation.streamcore.core.FocusPoint
 import app.teamstation.streamcore.phonestream.PhoneCapabilities
 import app.teamstation.streamcore.phonestream.PhoneLens
 import app.teamstation.streamcore.phonestream.PhoneRadarState
@@ -21,9 +24,31 @@ import org.junit.Test
 /** The engine's values in the shapes `NativePhoneStream.ts` describes, and the service's types. */
 class PhoneStreamMapsTest {
     @Test
+    fun focusEventCarriesAuthorityAndOmitsCoordinatesAfterAuto() {
+        val focus = CameraFocus(supported = true, phase = FocusPhase.LOCKED,
+            generation = "camera-2", request = "tap-3", point = FocusPoint.create(0.2, 0.8),
+            rotation = 180, mirrored = true)
+        assertEquals(mapOf("supported" to true, "phase" to "locked",
+            "generation" to "camera-2", "request" to "tap-3", "rotation" to 180.0,
+            "mirrored" to true, "x" to 0.2, "y" to 0.8),
+            PhoneStreamMaps.status(PhoneStreamStatus(focus = focus))["focus"])
+        val auto = focus.copy(phase = FocusPhase.AUTO, request = "auto-4", point = null)
+        val mapped = PhoneStreamMaps.status(PhoneStreamStatus(focus = auto))["focus"] as Map<*, *>
+        assertEquals("auto", mapped["phase"])
+        assertEquals("auto-4", mapped["request"])
+        assertFalse(mapped.containsKey("x"))
+        assertFalse(mapped.containsKey("y"))
+    }
+
+    @Test
     fun statusLeavesOutWhatIsMissingAndNamesTheError() {
         val idle = PhoneStreamMaps.status(PhoneStreamStatus())
         assertEquals("idle", idle["phase"])
+        assertEquals(app.teamstation.streamcore.phonestream.PhoneStreamProfile.width.toDouble(), idle["videoWidth"])
+        assertEquals(app.teamstation.streamcore.phonestream.PhoneStreamProfile.height.toDouble(), idle["videoHeight"])
+        val resized = PhoneStreamMaps.status(PhoneStreamStatus(videoWidth = 1280, videoHeight = 720))
+        assertEquals(1280.0, resized["videoWidth"])
+        assertEquals(720.0, resized["videoHeight"])
         assertEquals("cool", idle["thermal"])
         assertFalse(idle.containsKey("retryInSeconds"))
         assertFalse(idle.containsKey("batteryPercent"))

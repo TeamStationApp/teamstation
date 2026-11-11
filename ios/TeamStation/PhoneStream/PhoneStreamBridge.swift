@@ -215,6 +215,10 @@ final class TSPhoneStreamBridge: NSObject {
     Task { @MainActor in PhoneStreamEngine.shared?.setZoom(displayed: displayed) }
   }
 
+  @objc func setFocus(_ command: String) {
+    Task { @MainActor in PhoneStreamEngine.shared?.setFocus(command) }
+  }
+
   @objc func pinch(_ scale: Double, ended: Bool) {
     Task { @MainActor in PhoneStreamEngine.shared?.pinch(scale: scale, ended: ended) }
   }
@@ -462,6 +466,18 @@ final class TSPhoneStreamBridge: NSObject {
   }
 
   static func dictionary(_ status: PhoneStreamStatus) -> [String: Any] {
+    var focus: [String: Any] = [
+      "supported": status.focus.supported,
+      "phase": status.focus.phase.rawValue,
+      "generation": status.focus.generation,
+      "request": status.focus.request,
+      "rotation": status.focus.rotation,
+      "mirrored": status.focus.mirrored
+    ]
+    if let point = status.focus.point {
+      focus["x"] = point.x
+      focus["y"] = point.y
+    }
     var value: [String: Any] = [
       "phase": status.phase,
       "bitrateKbps": status.bitrateKbps,
@@ -470,7 +486,8 @@ final class TSPhoneStreamBridge: NSObject {
       "charging": status.charging,
       "thermal": status.thermal,
       "recordingSeconds": status.recordingSeconds,
-      "isRecording": status.isRecording
+      "isRecording": status.isRecording,
+      "focus": focus
     ]
     if let retry = status.retryInSeconds { value["retryInSeconds"] = retry }
     if let battery = status.batteryPercent { value["batteryPercent"] = battery }

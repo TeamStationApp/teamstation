@@ -191,6 +191,8 @@ class PhoneStreamEngineTest {
         var closed = 0
         var flips = 0
         val zooms = mutableListOf<Pair<String, Double>>()
+        val focusCommands = mutableListOf<app.teamstation.streamcore.core.FocusCommand>()
+        override fun setFocus(command: app.teamstation.streamcore.core.FocusCommand) { focusCommands += command }
         var selection: LensSelection? = null
         var preview: Surface? = null
         val lenses = listOf(
@@ -1578,6 +1580,28 @@ class PhoneStreamEngineTest {
         assertFalse(engine.isStreaming)
         assertEquals(PhoneStreamError.RECORDING_FAILED, statuses().last().error)
         assertNotNull(engine.telemetry.lastRecordingError)
+    }
+
+    @Test
+    fun focusCommandsAndStatusUseTheCurrentCaptureGeneration() {
+        val engine = opened()
+        var focus = app.teamstation.streamcore.core.CameraFocus().reset(true, "current")
+        device.onStateChange!!(CameraSession.State(focus = focus, isRunning = true))
+        on { }
+        val command = app.teamstation.streamcore.core.FocusCommand.parse("point:current:tap:0.2:0.7")!!
+        runBlocking { engine.setFocus("invalid"); engine.setFocus("auto:old:tap") }
+        assertTrue(device.focusCommands.isEmpty())
+        runBlocking { engine.setFocus(command.text) }
+        assertEquals(listOf(command), device.focusCommands)
+        assertEquals(focus, engine.status.focus)
+        focus = focus.begin(command).complete(command, true)
+        device.onStateChange!!(CameraSession.State(focus = focus, isRunning = true))
+        on { }
+        assertEquals(focus, engine.status.focus)
+        runBlocking { engine.setFocus("auto:current:continuous") }
+        assertNull(device.focusCommands.last().point)
+        assertEquals(1, device.started)
+        assertEquals(0, device.closed)
     }
 
     @Test

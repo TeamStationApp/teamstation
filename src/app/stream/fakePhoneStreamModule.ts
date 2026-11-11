@@ -112,6 +112,7 @@ export function fakePhoneStreamModule(
     },
     listenerCount: () => status.size + radar.size + upload.size,
     setZoom: fire('setZoom'),
+    setFocus: fire('setFocus'),
     pinch: fire('pinch'),
     getConstants: () => ({})
   }
