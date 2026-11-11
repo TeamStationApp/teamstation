@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, type ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
-import { Badge, Button, Card, Icon, Screen } from '../components'
+import { Badge, Button, ButtonIcon, Card, Screen } from '../components'
 import { useBackOverride } from '../components/headerSlot'
 import { lstrings, plural, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -401,7 +401,7 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
                     <Badge label={lstrings.chat_moderator} tone="neutral" />
                   )}
                   {!me && (
-                    <Icon
+                    <ButtonIcon
                       name="chevron_right"
                       color={theme.secondaryTextColor}
                     />

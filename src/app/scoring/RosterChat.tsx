@@ -1,7 +1,7 @@
 import React, { type ReactNode, useRef } from 'react'
 import { Pressable, ScrollView, Text, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { MESSAGE_COLOR, SAID_COLOR } from './dictationControls'
@@ -144,7 +144,7 @@ export function RosterChat({
             justifyContent: 'center'
           }}
         >
-          <Icon name="close" size={1.125} color={SAID_COLOR} />
+          <ButtonIcon name="close" size={1.125} color={SAID_COLOR} />
         </Pressable>
       )}
     </Pressable>
