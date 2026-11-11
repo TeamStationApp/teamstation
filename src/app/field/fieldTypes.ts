@@ -122,6 +122,11 @@ export interface FieldCanvasProps {
   onArcFinish?: () => void
   /** Screen-space nameplates, projected after the camera transform. */
   onNameplates?: (plates: NameplatePlacement[]) => void
+  /**
+   * Changed when another screen takes a kept field (`FieldKeeper`): the
+   * scene reports its bases, board and catcher again, to that screen.
+   */
+  reportRevision?: number
   players: FieldPlayer[]
   selected: string
   onSelect: (id: string) => void

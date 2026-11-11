@@ -13,6 +13,45 @@ import type { BaseProjection, FieldPlacement } from './fieldTypes'
 import { nameplateSize, projectPlayerLabel } from './playerPresentation'
 import { TERRAIN } from './terrain'
 
+describe('a field another screen takes over', function () {
+  it('reports its bases, board and catcher again to the screen that took it, and only once', async function () {
+    const players = createPlayers()
+    const reports: string[] = []
+    const props = {
+      players,
+      selected: '',
+      onSelect: () => undefined,
+      view: 'home' as const,
+      zoom: 1,
+      reportRevision: 1,
+      onCatcherBounds: () => reports.push('catcher'),
+      onBaseProjection: () => reports.push('bases'),
+      onScoreboardBounds: () => reports.push('board')
+    }
+    const renderer = await create(React.createElement(FieldScene, props), {
+      width: 390,
+      height: 844
+    })
+    try {
+      await renderer.advanceFrames(2, 1 / 60)
+      expect([...reports].sort()).deep.equals(['bases', 'board', 'catcher'])
+      reports.length = 0
+      // A new render of the same screen tells it nothing it was told.
+      await renderer.update(React.createElement(FieldScene, { ...props }))
+      await renderer.advanceFrames(2, 1 / 60)
+      expect(reports).deep.equals([])
+      // Another screen took the field: it hears all three once.
+      await renderer.update(
+        React.createElement(FieldScene, { ...props, reportRevision: 2 })
+      )
+      await renderer.advanceFrames(3, 1 / 60)
+      expect([...reports].sort()).deep.equals(['bases', 'board', 'catcher'])
+    } finally {
+      await renderer.unmount()
+    }
+  })
+})
+
 describe('where the field says the catcher is', function () {
   it('reports the catcher once, again when it moves or the view resizes, and not for an unchanged frame', async function () {
     const players = createPlayers()

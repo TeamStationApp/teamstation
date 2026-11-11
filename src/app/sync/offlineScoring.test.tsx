@@ -20,6 +20,7 @@ import { ScoringScreen } from '../scoring/ScoringScreen'
 import { memoryStore, ServerScoringSource } from '../scoring/scoringSource'
 import { ServerClock } from '../scoring/serverClock'
 import { CoachGameScreen } from '../screens/CoachGameScreen'
+import { GameScreen } from '../screens/GameScreen'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
 import { CachingClient } from './cachingClient'
@@ -1327,6 +1328,98 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       expect(text()).includes('1 balls')
       // Not one request answered: the swap and the reopen are the phone's.
       expect(net.writes.length).equals(before)
+    })
+
+    it('keeps the field and its scoreboard mounted through Confirm Swap, and draws the exchanged sides on that same field', async function () {
+      const { client, net } = await preparedPhone()
+      holdAll(net)
+      await open(client)
+      const host = document.body.firstElementChild as HTMLElement
+      // The field as the screen opened it: with no WebGL here, the canvas's
+      // own stand-in, which a field drawn again would replace.
+      const fieldNode = (): Element | undefined =>
+        [...document.querySelectorAll('div')].find(
+          node =>
+            node.childElementCount === 0 &&
+            node.textContent === 'This browser cannot start 3D'
+        )
+      const before = fieldNode()
+      expect(before, 'the field').not.equals(undefined)
+      const teams = (): { away: string; home: string } => {
+        const { teams } = panelProps(host, 'FieldCanvas') as {
+          teams: { away: { name: string }; home: { name: string } }
+        }
+        return { away: teams.away.name, home: teams.home.name }
+      }
+      expect(teams()).deep.equals({ away: 'Owls', home: 'Hawks' })
+      await click('Open scoring menu')
+      await click('Swap Home and Away')
+      await settle()
+      await click('Reset and Swap')
+      await settle(100)
+      expect(homeOf()).equals('Hawks 0 · Owls 0')
+      // The same field, not one made again, and its scoreboard's teams are
+      // the exchanged ones.
+      expect(before!.isConnected, 'the field stayed').equals(true)
+      expect(fieldNode()).equals(before)
+      expect(teams()).deep.equals({ away: 'Hawks', home: 'Owls' })
+      await click('Ball')
+      await settle(50)
+      expect(text()).includes('1 balls')
+      expect(fieldNode()).equals(before)
+    })
+
+    it('leaves scoring for the event screen, painted at once from the phone, with every request held', async function () {
+      const { client, net } = await preparedPhone()
+      holdAll(net)
+      const source = new ServerScoringSource(
+        client,
+        new ServerClock(async () => await client.serverTime(), memoryStorage())
+      )
+      function Phone(): React.ReactElement {
+        const [scoring, setScoring] = React.useState(true)
+        return scoring ? (
+          <ScoringScreen
+            client={client}
+            gameId="g1"
+            userId="usr_scorer"
+            source={source}
+            onExit={() => {
+              setScoring(false)
+            }}
+          />
+        ) : (
+          <GameScreen
+            client={client}
+            gameId="g1"
+            onScoreGame={() => undefined}
+          />
+        )
+      }
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <GestureHandlerRootView>
+              <Phone />
+            </GestureHandlerRootView>
+          </ThemeProvider>
+        )
+      })
+      await settle(50)
+      expect(homeOf()).equals('Owls 0 · Hawks 0')
+      await click('Open scoring menu')
+      await click('Exit Current Game')
+      await settle(50)
+      // The event screen, its game the phone's: no read has answered.
+      expect(
+        document.querySelector('[role="button"][aria-label="Score"]'),
+        'the event screen, with its Score'
+      ).not.equals(null)
+      expect(text()).includes('Owls')
+      expect(text()).includes('Hawks')
     })
 
     it('refuses a pitch tapped in the same tick as Confirm Swap: never shown, so never lost', async function () {

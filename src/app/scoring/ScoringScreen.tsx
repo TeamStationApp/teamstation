@@ -1,6 +1,7 @@
 import React, {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useReducer,
   useRef,
@@ -50,7 +51,7 @@ import { type GameState, setupOf } from '../../common/scoring/state'
 import type { SwapDocumentsEffect } from '../../common/scoring/swapDocuments'
 import type { WalkUpSong } from '../../common/walkUpSong'
 import type { BallArcState } from '../field/ballArcModel'
-import { BaseballScreen } from '../field/BaseballScreen'
+import { BaseballScreen, FieldKeeper } from '../field/BaseballScreen'
 import type { FieldPlayer } from '../field/fieldModel'
 import { createRelay, type Relay, useRelay } from '../field/fieldPropsRelay'
 import { scoringMenuFrame, WEB_MENU_BUTTON } from '../field/fieldSafeArea'
@@ -649,12 +650,41 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   const reopened = opened != null && openedAttempt === retry
   /** The session a swap replaced, kept on screen until the new one opens. */
   const [closedSession, setClosedSession] = useState<GameSession>()
+  /**
+   * A swap of this screen's own, opened and about to replace the panel. The
+   * panel draws its sheet empty first: a sheet that went with the panel
+   * would be taken down after it, sliding over the swapped game.
+   */
+  const [replacing, setReplacing] = useState<{
+    reads: OpenedReads
+    value: GameSession
+    attempt: number
+    context: (typeof openedContext)['current']
+  }>()
+  useLayoutEffect(() => {
+    if (replacing == null) return
+    setReplacing(undefined)
+    // Opened again since, or read again (the server refused the swap): that
+    // open stands, and this one is let go.
+    if (
+      openedContext.current !== replacing.context ||
+      retryRef.current !== replacing.attempt - 1
+    ) {
+      replacing.value.close()
+      return
+    }
+    adopted.current = replacing.attempt
+    showOpened(replacing.reads, replacing.value, replacing.attempt)
+    setRetry(replacing.attempt)
+    // `showOpened` sets state and reads refs, the same each draw.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replacing])
   const reopenReplaced = useCallback(
-    (change: GameReplaced, own = false, swapped?: SwappedOpening): void => {
+    (change: GameReplaced, own = false, swapped?: SwappedOpening): boolean => {
       const session = opened
       // Once for each opened game, however many callers find the change.
       if (session == null || !reopened || reopenedFrom.current === session)
-        return
+        return false
       reopenedFrom.current = session
       // Its changes name the old sides, or plays a reset deleted: it saves
       // nothing more. A swap of this screen's own went behind its changes,
@@ -670,7 +700,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       setSwapNotice(replacedNotice(change, lost))
       if (swapped == null) {
         setRetry(value => value + 1)
-        return
+        return false
       }
       // A swap of this screen's own opens at once on the copy it swapped,
       // reading nothing: the panel it replaces is gone in the same draw.
@@ -685,16 +715,16 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             value.close()
             return
           }
-          adopted.current = attempt
-          showOpened(swapped.reads, value, attempt)
-          setRetry(attempt)
+          // First the panel it replaces takes its sheet away, then, before
+          // that is drawn, the swapped game replaces the panel: both in the
+          // next frame (`replacing`).
+          setReplacing({ reads: swapped.reads, value, attempt, context })
         })
         .catch(() => {
           if (openedContext.current === context) setRetry(value => value + 1)
         })
+      return true
     },
-    // `showOpened` sets state and reads refs, the same each draw.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [opened, reopened, props.client, source]
   )
   /**
@@ -868,7 +898,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       </View>
     )
   return (
-    <>
+    // The field stays on screen while a game opened again replaces the
+    // panel: a swap's own exchanged sides are drawn on it in the next frame.
+    <FieldKeeper>
       {swapNotice != null && (
         <View
           pointerEvents="none"
@@ -905,8 +937,9 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           setRetry(value => value + 1)
         }}
         accepting={reopened && closedSession !== opened}
+        vanishing={replacing != null}
         onSwapped={async (answer, swapped) => {
-          reopenReplaced(
+          return reopenReplaced(
             {
               swapped: true,
               reset:
@@ -975,7 +1008,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       {props.active !== false && (
         <WalkUpReadinessModals readiness={readiness} />
       )}
-    </>
+    </FieldKeeper>
   )
 }
 /**
@@ -1110,16 +1143,23 @@ function ScoringPanel(props: {
   /**
    * Home and away were swapped from the menu: open the game again, on a
    * phone on `swapped`, the documents its queue wrote, without reading.
+   * True when the game opens on that copy and replaces this panel, which
+   * then keeps its sheet until it goes (`vanishing`).
    */
   onSwapped: (
     answer: SwapSidesAnswer,
     swapped?: QueuedSwap['swapped']
-  ) => Promise<void>
+  ) => Promise<boolean>
   /**
    * Whether the panel takes input: not while it stays on screen behind the
    * game opening again.
    */
   accepting: boolean
+  /**
+   * The game opened again replaces this panel in the next frame: its sheet
+   * draws nothing now, so it does not linger over the game that replaces it.
+   */
+  vanishing?: boolean
   /** The web's writes sent behind the screen: its swaps. */
   webWrites: WebWrites
   /** The server refused a swap the web sent behind the screen. */
@@ -1630,10 +1670,12 @@ function ScoringPanel(props: {
         })
       }
       if (!swapMounted.current) return
-      await props.onSwapped(answer, swapped)
+      const replacing = await props.onSwapped(answer, swapped)
       // Still here, the game opens again behind this panel, which takes no
-      // input until it is replaced.
-      if (swapMounted.current) setSheet(undefined)
+      // input until it is replaced. Opening on the swap's own copy, the
+      // sheet goes in the draw that replaces the panel: closed now, a
+      // phone's modal would slide down over the panel first.
+      if (swapMounted.current && !replacing) setSheet(undefined)
     } catch (error) {
       if (!swapMounted.current) return
       setSwapRequest(undefined)
@@ -3516,6 +3558,7 @@ function ScoringPanel(props: {
       {sheet != null && (
         <ScoringSheet
           visible={props.active || sheet === 'exit'}
+          hidden={props.vanishing === true}
           headerless={sheet === 'rosters'}
           textCancel
           fullScreen={sheet === 'rosters'}
