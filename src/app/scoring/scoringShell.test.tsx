@@ -458,6 +458,35 @@ describe('scoring shell and exit', function () {
     expect(game.session().pending).equals(0)
   })
 
+  it('warns before the page unloads while a game left on the web is still saving, and not once it has saved', async function () {
+    const game = await heldWebGame()
+    await click('Ball')
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    let left: boolean | undefined
+    await act(async () => {
+      left = await game.leave()
+    })
+    expect(left).equals(true)
+    // The screen is gone, and its own warning with it.
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    const reload = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(reload)
+    expect(reload.defaultPrevented).equals(true)
+    game.release()
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(game.session().pending).equals(0)
+    const saved = new window.Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(saved)
+    expect(saved.defaultPrevented).equals(false)
+  })
+
   it('still asks before discarding the changes of a session the server refused', async function () {
     const game = await heldWebGame()
     game.refuse.error = new HttpError('forbidden', 'Not yours to score')

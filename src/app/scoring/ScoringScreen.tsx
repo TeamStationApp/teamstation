@@ -1049,8 +1049,32 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   )
 }
 /**
+ * The sessions whose screens have closed with changes still unsaved, and
+ * the page's warning before unloading while any is: leaving the screen does
+ * not wait for them, but reloading or closing the tab would lose them.
+ */
+const savingAfterLeave = new Set<GameSession>()
+const warnUnsaved = (event: BeforeUnloadEvent): void => {
+  if (savingAfterLeave.size === 0) return
+  event.preventDefault()
+  // eslint-disable-next-line @typescript-eslint/no-deprecated
+  event.returnValue = ''
+}
+function holdUnload(game: GameSession, held: boolean): void {
+  const before = savingAfterLeave.size
+  if (held) savingAfterLeave.add(game)
+  else savingAfterLeave.delete(game)
+  if (typeof window === 'undefined') return
+  if (before === 0 && savingAfterLeave.size > 0)
+    window.addEventListener('beforeunload', warnUnsaved)
+  else if (before > 0 && savingAfterLeave.size === 0)
+    window.removeEventListener('beforeunload', warnUnsaved)
+}
+
+/**
  * Lets `game` go on sending what it has not saved after its screen has
- * closed, and closes it once that is saved, or the server refused it.
+ * closed, and closes it once that is saved, or the server refused it. Until
+ * then the page warns before it unloads.
  */
 function closeOnceSaved(game: GameSession): void {
   const done = (): boolean =>
@@ -1059,9 +1083,11 @@ function closeOnceSaved(game: GameSession): void {
     game.close()
     return
   }
+  holdUnload(game, true)
   const stop = game.subscribe(() => {
     if (!done()) return
     stop()
+    holdUnload(game, false)
     game.close()
   })
   game.flush().catch(() => undefined)
