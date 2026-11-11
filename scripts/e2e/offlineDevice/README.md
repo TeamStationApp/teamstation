@@ -11,9 +11,9 @@ that the writes reach the server in the order they were entered.
 - A development seat running the commit under test, and the phone build of
   that commit aimed at that seat (app id `app.teamstation.develop`).
 - The fixture seeded on that seat (below).
-- A phone joined to a network whose traffic a shaping service can drop or
-  stall per address, with the service's API reachable from the machine that
-  runs the scenario.
+- A phone on a network whose traffic, by the phone's address, commands run
+  on the machine that runs the scenario can drop, stall and clear (the
+  config file names them).
 - A locally built maestro-d: `MAESTRO_D_BIN` is its binary and
   `TS_MAESTRO_D_CLIENT` its npm package entry.
 - `ffmpeg` and `ffprobe` on the path, to read the swap recordings.
@@ -31,38 +31,50 @@ that the writes reach the server in the order they were entered.
 
 ## The config file
 
-Where the seat and the shaper are, and how to reach them, stays out of Git.
-`TS_OFFLINE_DEVICE_CONFIG` names an untracked JSON file:
+How to reach the seat and the phone's network stays out of Git.
+`TS_OFFLINE_DEVICE_CONFIG` names an untracked JSON file of shell command
+lines, each run on the machine that runs the scenario. `{ip}` is replaced by
+the phone's address and `{ms}` by a delay in milliseconds, each quoted for
+the shell. The scenario stops at once, naming each one, when any is missing.
 
 ```json
 {
-  "shaperUrl": "https://<shaper host>:<port>",
   "fixture": "<the ids.json fixture.ts wrote, copied here>",
   "teamId": "<iOS signing team for the driver>",
+  "network": {
+    "drop": "<command: drop every packet to and from {ip}>",
+    "stall": "<command: delay every packet to and from {ip} by {ms}>",
+    "clear": "<command: clear what drop and stall set on {ip}>",
+    "check": "<command: exit 0 when {ip} is a phone these can shape>"
+  },
   "seat": {
-    "ssh": "<ssh destination of the seat's machine>",
-    "origin": "https://developN.teamstation.app",
-    "liveDir": "<the seat's live build directory>",
-    "nodeBinDir": "<directory of the node the seat runs>",
-    "serviceUser": "<the user the seat's service runs as>",
-    "service": "<the seat's API service unit>",
-    "psql": "<a command that opens psql on the seat's database>",
-    "recordFile": "<where the request recorder writes: a path the seat service may write>"
+    "origin": "https://<the seat's public address>",
+    "record": {
+      "on": "<command: switch the seat's request recorder on, empty>",
+      "off": "<command: switch it off, its lines deleted, and say so>",
+      "read": "<command: print its lines so far>"
+    },
+    "sql": "<command: run the SQL on stdin against the seat's database>"
   }
 }
 ```
 
-The shaper API is the one `POST /v1/shape` with `{ "merge": true, "shapes":
-[{ "ip", "lossPct" | "latencyMs" }] }` applies and `GET /v1/devices` lists the
-phones it can shape.
+- `drop`, `stall` and `check` fail (exit non-zero) when they are refused;
+  `clear` fails when the address is still shaped afterwards, which the
+  scenario logs as a warning. Their output is logged.
+- `record.on` sets `TS_REQUEST_RECORD` for the seat and returns once it has
+  restarted, if it must; the scenario then waits for the seat's health read
+  and stops at once when `record.read` does not print it.
+- `sql` prints each row on a line, its columns separated by `|`, with no
+  header or footer, and fails on an error (`psql -At -v ON_ERROR_STOP=1`).
 
 ## Seeding the fixture
 
-On the seat's machine, as the seat's service user, from the seat's live build
-directory, with the seat's own `node`:
+From the seat's build directory, with the `node` it runs, as a user that may
+read its configuration and write its database and Space:
 
 ```sh
-node -r sucrase/register <path to>/fixture.ts --seat <seat name> --out <ids.json>
+node -r sucrase/register <path to>/fixture.ts --database <its database> --out <ids.json>
 ```
 
 It writes one person who signs in by emailed code, two teams they belong to
@@ -73,7 +85,8 @@ game three days ago with a short video, and an upcoming game. Every name is
 invented. It refuses a second run.
 
 Sign-in reads no mailbox: once the phone asks for a code, the scenario sets
-that pending code's hash to one it chose, with the seat's own `hashEmailCode`.
+that pending code's hash to one it chose, with the server's own
+`hashEmailCode`, through `sql`.
 
 ## Running it
 
@@ -92,13 +105,13 @@ TS_MAESTRO_D_CLIENT=<maestro-d npm entry> \
 the same steps against the base build and records what it sees without
 failing. Steps:
 
-1. The phone is listed by the shaper; the build is installed and launched.
+1. `network.check` passes for the phone; the build is installed and launched.
 2. Sign in, open Upcoming only, and read the request log: no Past, All, Videos
    or team-games request. Open Past and the past game's Videos section (its
    poster), one team, the season, the league, the upcoming event and
    scoring, and search Set Team Rosters' Add Existing for the league player.
    The other team stays unopened, and the log has no games request for it.
-3. Drop the phone's traffic (`lossPct: 100`).
+3. Drop the phone's traffic (`network.drop`).
 4. Stop the app and launch it.
 5. Home, Upcoming, Past, All, Videos, the team, the season, the league, the
    past game's Videos section (the stored poster drawn, not a black box),
@@ -114,7 +127,7 @@ failing. Steps:
    frame times, the frame where the swap is drawn, the one before it and the
    last one before the tap are saved under `support/`.
 7. With the shape cleared and scoring's offline line gone, stall the link
-   (`latencyMs: 30000`) and enter a pitch: the line is absent before the
+   (`network.stall`, 30000 ms) and enter a pitch: the line is absent before the
    10 s request deadline and shows after it. A pitch and Confirm Swap pass
    the same recorded checks; the measured swap puts the opened team up to
    bat. On iOS a pitch is entered to tag, the tag saves and its editor closes
@@ -129,14 +142,11 @@ failing. Steps:
    order they were entered (`request-log-<platform>.log`) and the queued add
    to the opened team's roster, and the seat has the player on that team.
 
-The request recorder (`TS_REQUEST_RECORD`) is switched on for the seat's
-service for an `after` run and switched off, its file deleted, when it ends.
-A seat service whose filesystem is read-only outside its data directory
-drops the recorder's lines without an error, so `recordFile` belongs in that
-directory; the run stops at once if the seat's own health reads are not
-recorded.
-Every shape is cleared in `finally`, and each shape call is a `$` line in
-`<artifacts>/shape.log`.
+The request recorder (`TS_REQUEST_RECORD`) is switched on for an `after` run
+(`record.on`) and off when it ends (`record.off`); the run stops at once if
+the seat's own health reads are not recorded. The phone's traffic is
+cleared in `finally`, and each network command and its answer is a `$` line
+in `<artifacts>/network.log`.
 
 ## Running it again
 

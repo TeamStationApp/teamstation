@@ -12,21 +12,22 @@
  *
  * The server is a development seat running the commit under test, seeded by
  * `scripts/e2e/offlineDevice/fixture.ts`; the phone build is that commit's
- * build aimed at that seat, app id `app.teamstation.develop`. Where the seat
- * and the network shaper are, and how to reach them, is in the config file,
- * never here (`scripts/e2e/offlineDevice/README.md` lists its keys).
+ * build aimed at that seat, app id `app.teamstation.develop`. How to drop,
+ * stall and clear the phone's traffic, and how to switch the seat's request
+ * recorder and read its database, are commands the untracked config file
+ * names, never here (`scripts/e2e/offlineDevice/README.md` lists its keys).
  *
  * `before` runs against the base build: every check that describes the new
  * behaviour is recorded as observed, never failed, and the request recorder
  * (`TS_REQUEST_RECORD`) is not read. `after` runs against the branch build:
- * the same checks are assertions, the recorder is switched on for the seat
- * service for the run (and off, its file deleted, at the end), and any failed
- * check fails the run once every screenshot is taken.
+ * the same checks are assertions, the recorder is switched on for the run
+ * (and off, its lines deleted, at the end), and any failed check fails the
+ * run once every screenshot is taken.
  *
- * The phone must already be claimed and joined to a network the shaper
- * controls. Every shape is applied with `merge: true` on this phone's
- * address only and is cleared in `finally`; each call and its answer is a
- * `$` line in `<artifacts>/shape.log`.
+ * The phone must already be claimed and on a network whose traffic the
+ * config's commands can drop or stall. Each command names this phone's
+ * address only, and the clear runs in `finally`; each command and its
+ * answer is a `$` line in `<artifacts>/network.log`.
  *
  * Writes to the seat: scoring the fixture's upcoming game enters pitches, two
  * swaps of home and away, an event tag and a roster add on that game, which
@@ -50,31 +51,47 @@ import { join, resolve } from 'node:path'
 
 import { PNG } from 'pngjs'
 
-/** Where the seat and the shaper are; an untracked file, never in Git. */
+import { hashEmailCode } from '../../server/auth/tokens'
+
+/**
+ * The commands that reach the seat and the phone's network: an untracked
+ * file, never in Git. Each is a shell command line, run on this machine;
+ * `{ip}` and `{ms}` are replaced by the phone's address and a delay in ms,
+ * each quoted for the shell.
+ */
 interface Config {
-  /** The network shaper's API origin. */
-  shaperUrl: string
   /** The ids `fixture.ts` printed. */
   fixture: string
   /** The signing team for the iOS driver. */
   teamId?: string
+  network: {
+    /** Drops every packet to and from `{ip}`. Fails when it is refused. */
+    drop: string
+    /** Delays every packet to and from `{ip}` by `{ms}`. Fails when refused. */
+    stall: string
+    /** Clears what `drop` and `stall` set on `{ip}`; fails if it is still set. */
+    clear: string
+    /** Exits 0 when `{ip}` is a phone the commands can shape; says which. */
+    check: string
+  }
   seat: {
-    /** `ssh` destination of the machine the seat runs on. */
-    ssh: string
-    /** The seat's public origin, `https://developN.teamstation.app`. */
+    /** The seat's public origin. */
     origin: string
-    /** The seat's live build directory. */
-    liveDir: string
-    /** Directory of the `node` the seat runs. */
-    nodeBinDir: string
-    /** The user the seat's service runs as. */
-    serviceUser: string
-    /** The seat's API service unit, without `.service`. */
-    service: string
-    /** A command that opens `psql` on the seat's own database. */
-    psql: string
-    /** Where the request recorder writes during the run. */
-    recordFile: string
+    /** The seat's request recorder (`TS_REQUEST_RECORD`). */
+    record: {
+      /** Switches it on, empty; the seat may restart. */
+      on: string
+      /** Switches it off, its lines deleted, and says so. */
+      off: string
+      /** Prints its lines so far. */
+      read: string
+    }
+    /**
+     * Runs the SQL on its standard input against the seat's database, prints
+     * each row on a line, its columns separated by `|`, with no header or
+     * footer, and fails on an error (psql's `-At -v ON_ERROR_STOP=1`).
+     */
+    sql: string
   }
 }
 
@@ -82,25 +99,26 @@ function readConfig(): Config {
   const file = process.env.TS_OFFLINE_DEVICE_CONFIG
   if (file == null || file === '')
     throw new Error('Supply TS_OFFLINE_DEVICE_CONFIG')
-  const config = JSON.parse(readFileSync(file, 'utf8')) as Config
-  for (const key of [
-    'ssh',
-    'origin',
-    'liveDir',
-    'nodeBinDir',
-    'serviceUser',
-    'service',
-    'psql',
-    'recordFile'
-  ] as const)
-    if (typeof config.seat?.[key] !== 'string' || config.seat[key] === '')
-      throw new Error(`${file}: seat.${key} is missing`)
-  if (
-    typeof config.shaperUrl !== 'string' ||
-    typeof config.fixture !== 'string'
-  )
-    throw new Error(`${file}: shaperUrl and fixture are required`)
-  return config
+  const config = JSON.parse(readFileSync(file, 'utf8')) as Partial<Config>
+  const missing = Object.entries({
+    fixture: config.fixture,
+    'network.drop': config.network?.drop,
+    'network.stall': config.network?.stall,
+    'network.clear': config.network?.clear,
+    'network.check': config.network?.check,
+    'seat.origin': config.seat?.origin,
+    'seat.record.on': config.seat?.record?.on,
+    'seat.record.off': config.seat?.record?.off,
+    'seat.record.read': config.seat?.record?.read,
+    'seat.sql': config.seat?.sql
+  })
+    .filter(([, value]) => typeof value !== 'string' || value === '')
+    .map(([key]) => key)
+  if (missing.length > 0)
+    throw new Error(
+      `${file}: ${missing.join(', ')} missing (scripts/e2e/offlineDevice/README.md)`
+    )
+  return config as Config
 }
 const CONFIG = readConfig()
 
@@ -157,9 +175,8 @@ const MAESTRO_BIN = process.env.MAESTRO_D_BIN ?? ''
 const MAESTRO_CLIENT = process.env.TS_MAESTRO_D_CLIENT ?? ''
 if (MAESTRO_BIN === '' || MAESTRO_CLIENT === '')
   throw new Error('Supply MAESTRO_D_BIN and TS_MAESTRO_D_CLIENT')
-const SHAPER = CONFIG.shaperUrl
+const NETWORK = CONFIG.network
 const SEAT = CONFIG.seat
-const RECORD_DROPIN = `/etc/systemd/system/${SEAT.service}.service.d/offlineDevice-recorder.conf`
 const SIGN_IN_CODE = String(100000 + Math.floor(Math.random() * 900000))
 const TAG = 'stalled'
 const CANDIDATE_SEARCH = FIXTURE.candidate.name.split(' ')[1].slice(0, 5)
@@ -181,7 +198,7 @@ const OFFLINE_LINE = "Offline. Edits will send when you're back online."
 // ------------------------------------------------------------------ logging
 
 mkdirSync(ARTIFACTS, { recursive: true })
-const SHAPE_LOG = join(ARTIFACTS, 'shape.log')
+const NETWORK_LOG = join(ARTIFACTS, 'network.log')
 function log(line: string): void {
   const stamped = `${new Date().toISOString()} [${PLATFORM} ${MODE}] ${line}`
   appendFileSync(RUN_LOG, stamped + '\n')
@@ -207,83 +224,74 @@ const pause = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
 
-// ------------------------------------------------------------------ shaping
+// ------------------------------------------------------------------ network
 
-function shaperCall(
-  method: 'GET' | 'POST',
-  path: string,
-  body?: unknown
-): string {
-  const args = ['-sk', '-X', method, `${SHAPER}${path}`]
-  if (body != null)
-    args.push(
-      '-H',
-      'Content-Type: application/json',
-      '-d',
-      JSON.stringify(body)
-    )
-  const shown = `curl ${args.map(a => (/[\s{}"'$]/.test(a) ? `'${a}'` : a)).join(' ')}`
+const quote = (word: string): string => `'${word.replace(/'/g, `'\\''`)}'`
+/** A config command with its placeholders filled in, each quoted. */
+function filled(command: string, values: Record<string, string>): string {
+  return command.replace(/\{(\w+)\}/g, (whole, key: string) =>
+    values[key] == null ? whole : quote(values[key])
+  )
+}
+/** Runs a config command; `input` is its standard input. Throws on failure. */
+function command(line: string, input?: string): string {
+  return execFileSync('/bin/sh', ['-c', line], {
+    encoding: 'utf8',
+    input,
+    timeout: 120000
+  })
+}
+/** Runs one of the network commands, logged, and whether it succeeded. */
+function networkCall(
+  name: keyof Config['network'],
+  values: Record<string, string> = {}
+): { ok: boolean; answer: string } {
+  const line = filled(NETWORK[name], { ip: IP, ...values })
+  let ok = true
   let answer: string
   try {
-    answer = execFileSync('curl', args, { encoding: 'utf8', timeout: 20000 })
+    answer = command(line)
   } catch (error) {
+    ok = false
     answer = `ERROR ${(error as Error).message}`
   }
-  appendFileSync(SHAPE_LOG, `$ ${shown}\n${answer.trim()}\n`)
+  appendFileSync(NETWORK_LOG, `$ ${line}\n${answer.trim()}\n`)
   log(
-    `shape ${method} ${path} ${body == null ? '' : JSON.stringify(body)} -> ${answer.trim().slice(0, 200)}`
+    `network ${name} ${JSON.stringify(values)} -> ${answer.trim().slice(0, 200)}`
   )
-  return answer
+  return { ok, answer }
 }
-function shape(entry: { lossPct?: number; latencyMs?: number }): void {
-  const answer = shaperCall('POST', '/v1/shape', {
-    merge: true,
-    shapes: [{ ip: IP, ...entry }]
-  })
-  assert.ok(
-    !answer.startsWith('ERROR') && !answer.includes('"error"'),
-    `shape refused: ${answer}`
-  )
+function dropTraffic(): void {
+  const { ok, answer } = networkCall('drop')
+  assert.ok(ok, `drop refused: ${answer}`)
 }
-function clearShape(): void {
-  shaperCall('POST', '/v1/shape', { merge: true, shapes: [{ ip: IP }] })
-  const now = shaperCall('GET', '/v1/shape')
-  if (now.includes(`"${IP}"`))
-    log(`WARNING ${IP} still shaped after clear: ${now}`)
+function stallTraffic(ms: number): void {
+  const { ok, answer } = networkCall('stall', { ms: String(ms) })
+  assert.ok(ok, `stall refused: ${answer}`)
+}
+function clearTraffic(): void {
+  const { ok, answer } = networkCall('clear')
+  if (!ok) log(`WARNING ${IP} still shaped after clear: ${answer}`)
 }
 
 // --------------------------------------------------------------------- seat
 
-const quote = (word: string): string => `'${word.replace(/'/g, `'\\''`)}'`
-/** Runs a bash script on the seat's machine, its arguments as `$1`…. */
-function onSeat(script: string, args: string[] = []): string {
-  return execFileSync(
-    'ssh',
-    [
-      '-o',
-      'ConnectTimeout=15',
-      SEAT.ssh,
-      `bash -s -- ${args.map(quote).join(' ')}`
-    ],
-    {
-      encoding: 'utf8',
-      input: script,
-      timeout: 120000
-    }
-  )
+/** A string as an SQL literal. */
+const literal = (value: string): string => `'${value.replace(/'/g, "''")}'`
+/** Runs SQL on the seat's database; its rows, one a line. */
+function onSeatDb(query: string): string {
+  return command(SEAT.sql, query)
 }
 /** The fixture games' sides, plays and tags (read only). */
 function gameState(): string {
-  return onSeat(
-    `${SEAT.psql} -At -F ' | ' -v a="$1" -v b="$2" <<'SQL'
-select g.id, 'home='||ht.name, 'away='||at.name, g.status, 'gen='||coalesce(g.play_generation::text,'-'),
+  return onSeatDb(
+    `select g.id, 'home='||ht.name, 'away='||at.name, g.status, 'gen='||coalesce(g.play_generation::text,'-'),
   'current='||(g."currentPlay" is not null)::text,
   'plays='||(select count(*) from events e where e."gameId"=g.id),
   'tags='||(select count(*) from event_tags t where t.game_id=g.id)
 from games g join teams ht on ht.id=g.home_team_id join teams at on at.id=g.away_team_id
-where g.id in (:'a', :'b') order by g.start_at;
-SQL`,
-    [FIXTURE.upcomingGameId, FIXTURE.pastGameId]
+where g.id in (${literal(FIXTURE.upcomingGameId)}, ${literal(FIXTURE.pastGameId)}) order by g.start_at;
+`
   ).trim()
 }
 /**
@@ -291,43 +299,38 @@ SQL`,
  * holds it (read only): `player`, `member` or `none`.
  */
 function candidateOnOpened(): string {
-  return onSeat(
-    `${SEAT.psql} -At -v t="$1" -v u="$2" <<'SQL'
-select case when bool_or(is_player) then 'player'
+  return onSeatDb(
+    `select case when bool_or(is_player) then 'player'
             when count(*) > 0 then 'member' else 'none' end
-  from memberships where team_id = :'t' and user_id = :'u';
-SQL`,
-    [FIXTURE.teams.opened, FIXTURE.candidate.userId]
+  from memberships where team_id = ${literal(FIXTURE.teams.opened)} and user_id = ${literal(FIXTURE.candidate.userId)};
+`
   ).trim()
 }
 /**
  * Sets the fixture person's newest pending sign-in code to the hash of a code
- * this run chose, computed by the seat's own `hashEmailCode`, so no mailbox is
- * read. Touches that one row.
+ * this run chose, computed by the server's own `hashEmailCode`, so no mailbox
+ * is read. Touches that one row, and prints its id.
  */
 function setCodeOnce(after: string): string {
-  return onSeat(
-    `set -euo pipefail
-cd ${quote(SEAT.liveDir)}
-hash=$(sudo -u ${quote(SEAT.serviceUser)} env PATH=${quote(SEAT.nodeBinDir)}:$PATH node -r sucrase/register \\
-  -e 'process.stdout.write(require("./src/server/auth/tokens.ts").hashEmailCode(process.argv[1]))' "$1")
-[[ $hash =~ ^[0-9a-f]{64}$ ]] || { echo "bad hash" >&2; exit 1; }
-${SEAT.psql} -v ON_ERROR_STOP=1 -At -v email="$2" -v hash="$hash" -v after="$3" <<'SQL'
-update email_codes set code_hash = :'hash'
+  const hash = hashEmailCode(SIGN_IN_CODE)
+  assert.ok(/^[0-9a-f]{64}$/.test(hash), 'bad hash')
+  return onSeatDb(
+    `with chosen as (
+update email_codes set code_hash = ${literal(hash)}
  where id = (select id from email_codes
-              where lower(email) = lower(:'email') and purpose = 'login'
+              where lower(email) = lower(${literal(FIXTURE.email)}) and purpose = 'login'
                 and consumed_at is null and expires_at > now()
-                and created_at > :'after'::timestamptz
+                and created_at > ${literal(after)}::timestamptz
               order by created_at desc limit 1)
-returning id;
-SQL`,
-    [SIGN_IN_CODE, FIXTURE.email, after]
+returning id)
+select id from chosen;
+`
   )
 }
 async function setSignInCode(after: string): Promise<void> {
   for (let attempt = 0; attempt < 10; attempt++) {
-    const out = setCodeOnce(after)
-    if (out.includes('UPDATE 1')) {
+    const out = setCodeOnce(after).trim()
+    if (out !== '') {
       log(
         `sign-in code row set to hashEmailCode(<chosen code>): ${out.split('\n')[0]}`
       )
@@ -361,49 +364,33 @@ async function seatHealthy(): Promise<void> {
   }
   throw new Error('The seat did not come back')
 }
-/** After mode: the seat service writes the request log for the run. */
+/** After mode: the seat writes the request log for the run. */
 async function startRecorder(): Promise<void> {
-  onSeat(
-    `set -e
-mkdir -p "$(dirname "$1")"
-printf '[Service]\\nEnvironment=TS_REQUEST_RECORD=%s\\n' "$2" > "$1"
-install -o "$3" -g "$3" -m 600 /dev/null "$2"
-systemctl daemon-reload
-systemctl restart "$4"`,
-    [RECORD_DROPIN, SEAT.recordFile, SEAT.serviceUser, SEAT.service]
-  )
+  command(SEAT.record.on)
   await seatHealthy()
-  // The health reads just made go through the recorder. A service whose
-  // filesystem is read-only outside its data directory drops every line
-  // silently, which would pass every request-log check with nothing in it.
+  // The health reads just made go through the recorder. One that drops
+  // every line silently would pass every request-log check with nothing in
+  // it.
   const written = recorded().filter(line => line.includes('/api/v1/health'))
   if (written.length === 0)
     throw new Error(
-      'The request recorder wrote nothing: seat.recordFile must be a path the seat service may write (its data directory)'
+      'The request recorder wrote nothing: seat.record.read must print the lines seat.record.on has the seat write'
     )
   log(
-    `request recorder on for the seat service (TS_REQUEST_RECORD set; ${written.length} health reads recorded)`
+    `request recorder on for the seat (TS_REQUEST_RECORD set; ${written.length} health reads recorded)`
   )
 }
 /** The recorder's lines, in arrival order. */
 function recorded(): string[] {
-  return onSeat('cat "$1" 2>/dev/null || true', [SEAT.recordFile])
+  return command(SEAT.record.read)
     .split('\n')
     .filter(line => line.trim() !== '')
     .sort()
 }
 async function stopRecorder(): Promise<void> {
-  onSeat(
-    'rm -f "$1"; systemctl daemon-reload; systemctl restart "$2"; rm -f "$3"',
-    [RECORD_DROPIN, SEAT.service, SEAT.recordFile]
-  )
+  const said = command(SEAT.record.off).trim()
   await seatHealthy()
-  const left = onSeat(
-    `systemctl show -p Environment "$1" | grep -q TS_REQUEST_RECORD && echo "TS_REQUEST_RECORD still set" || echo "TS_REQUEST_RECORD unset"
-test -e "$2" && echo "record file present" || echo "record file gone"`,
-    [SEAT.service, SEAT.recordFile]
-  ).trim()
-  log(`request recorder off: ${left.replace(/\n/g, '; ')}`)
+  log(`request recorder off: ${said.replace(/\n/g, '; ')}`)
 }
 
 // ------------------------------------------------------------------- device
@@ -1578,7 +1565,7 @@ async function ensureScoring(
   log(
     `step ${step}: scoring did not open without the network on develop; clearing the shape, opening scoring online, then shaping again (deviation)`
   )
-  clearShape()
+  clearTraffic()
   await m.stopApp({ appId: APP_ID })
   await m.launchApp({ appId: APP_ID })
   await waitFor(/^Your Home$/, 60000)
@@ -1600,17 +1587,10 @@ async function step1(): Promise<void> {
     before !== 'player',
     `${FIXTURE.candidate.name} already plays on ${FIXTURE.teamNames.opened}: take him off before another run (README)`
   )
-  const devices = execFileSync('curl', ['-sk', `${SHAPER}/v1/devices`], {
-    encoding: 'utf8',
-    timeout: 20000
-  })
-  const listed = (
-    JSON.parse(devices) as {
-      devices: Array<{ ip: string; ssid: string; mac: string }>
-    }
-  ).devices.find(d => d.ip === IP)
-  assert.ok(listed != null, `${IP} is not on a test SSID (GET /v1/devices)`)
-  log(`on test SSID: ${listed.ssid} mac ${listed.mac}`)
+  assert.ok(
+    networkCall('check').ok,
+    `${IP} is not a phone the network commands can shape (network.check)`
+  )
   if (APP_FILE !== '') {
     if (PLATFORM === 'ios') {
       try {
@@ -1769,8 +1749,8 @@ async function step2(): Promise<void> {
 }
 
 async function step3(): Promise<void> {
-  log('step 3: lossPct 100')
-  shape({ lossPct: 100 })
+  log('step 3: drop the traffic')
+  dropTraffic()
 }
 
 async function step4(): Promise<void> {
@@ -1938,7 +1918,7 @@ async function step6(): Promise<void> {
   log('step 6: with the network dropped, a pitch, Confirm Swap, the next pitch')
   if (
     !(await ensureScoring(6, () => {
-      shape({ lossPct: 100 })
+      dropTraffic()
     }))
   ) {
     log('scoring is not open; step 6 cannot run')
@@ -1962,10 +1942,10 @@ async function step6(): Promise<void> {
 }
 
 async function step7(): Promise<void> {
-  log('step 7: stalled link (latencyMs 30000)')
+  log('step 7: stalled link (30000 ms)')
   if (
     !(await ensureScoring(7, () => {
-      shape({ latencyMs: 30000 })
+      stallTraffic(30000)
     }))
   ) {
     check('scoring is open for step 7', false)
@@ -2000,7 +1980,7 @@ async function step7(): Promise<void> {
       }
     return total === 0 ? 0 : lit / total
   }
-  clearShape()
+  clearTraffic()
   let online = false
   let litNow = 1
   const clearedAt = Date.now()
@@ -2071,7 +2051,7 @@ async function step7(): Promise<void> {
     n => (n.type ?? '').includes('Button') || PLATFORM === 'android'
   )
   if (ball == null) throw new Error('no Ball button for the stalled pitch')
-  shape({ latencyMs: 30000 })
+  stallTraffic(30000)
   const stalledAt = Date.now()
   await tapNode(ball)
   const pitchedAt = Date.now()
@@ -2408,7 +2388,7 @@ async function step7(): Promise<void> {
   await dumpHierarchy('addExistingStalled')
 
   // Dropped again: Add Existing finds the player kept from step 2
-  shape({ lossPct: 100 })
+  dropTraffic()
   const addAgain = await revealAddExisting()
   if (addAgain != null) await tapNode(addAgain)
   const opened = addAgain != null
@@ -2514,7 +2494,7 @@ async function step8(): Promise<void> {
   // in the foreground (no relaunch): every queued write must reach the seat
   // on its own. Wait up to 90 s for all of them and note when each arrived.
   const clearedAt = new Date()
-  clearShape()
+  clearTraffic()
   if (MODE === 'after') {
     const swaps = entered.filter(kind => kind === 'swap').length
     const gameWrites = (): string[] =>
@@ -2679,7 +2659,7 @@ async function main(): Promise<void> {
       }
     }
   } finally {
-    clearShape()
+    clearTraffic()
     closeIosCapture()
     if (recorder)
       await stopRecorder().catch((error: unknown) => {
@@ -2699,7 +2679,7 @@ main().catch((error: unknown) => {
   log(`run failed: ${(error as Error).stack ?? String(error)}`)
   closeIosCapture()
   try {
-    clearShape()
+    clearTraffic()
   } catch {}
   process.exitCode = 1
 })

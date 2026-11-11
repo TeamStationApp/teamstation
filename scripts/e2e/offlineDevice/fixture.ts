@@ -2,14 +2,14 @@
  * The offline-cache device scenario's fixture (`src/app/sync/offlineDevice.e2e.ts`),
  * written into a development seat's own database and Space.
  *
- *   node -r sucrase/register <this file> --seat <seat name> [--email <+ address>] \
- *     [--out <ids.json>] [--no-video] [--upcoming-days N]
+ *   node -r sucrase/register <this file> --database <database name> \
+ *     [--email <+ address>] [--out <ids.json>] [--no-video] [--upcoming-days N]
  *
- * Run it as the seat's service user from the seat's live build directory: it
- * loads that build's own server modules by absolute path from the working
- * directory and reads that build's `./serverConfig.json`. It refuses a
- * database other than `TeamStation_<seat>` and refuses to run twice (the
- * email is taken).
+ * Run it from the seat's build directory, as a user that may read its
+ * configuration and write its database and Space: it loads that build's own
+ * server modules by absolute path from the working directory and reads that
+ * build's `./serverConfig.json`. It refuses a database other than the one
+ * `--database` names, and refuses to run twice (the email is taken).
  *
  * Writes:
  * - one person who signs in with an emailed code (no password), onboarding
@@ -40,7 +40,7 @@ const run = promisify(execFile)
 
 const { values } = parseArgs({
   options: {
-    seat: { type: 'string' },
+    database: { type: 'string' },
     email: { type: 'string', default: 'scotty+offlinecache@vtex.net' },
     out: { type: 'string' },
     'no-video': { type: 'boolean', default: false },
@@ -130,12 +130,12 @@ async function picture(
 }
 
 async function main(): Promise<void> {
-  const seat =
-    values.seat ?? fail('--seat <name> is required, e.g. --seat offlineCache')
+  const database =
+    values.database ?? fail('--database <name> is required: the seat database')
   const url: string = serverConfig.databaseUrl
-  if (/\/([^/?]+)(?:\?.*)?$/.exec(url)?.[1] !== `TeamStation_${seat}`)
+  if (/\/([^/?]+)(?:\?.*)?$/.exec(url)?.[1] !== database)
     fail(
-      `serverConfig.databaseUrl is not TeamStation_${seat}; run from that seat's live build`
+      `serverConfig.databaseUrl is not ${database}; run from that seat's build`
     )
   const email = values.email.trim().toLowerCase()
   if (!/^[^@\s]+\+[^@\s]+@/.test(email))
@@ -421,7 +421,7 @@ async function main(): Promise<void> {
     }
 
     const ids = {
-      seat,
+      database,
       email,
       personId,
       leagueId,
