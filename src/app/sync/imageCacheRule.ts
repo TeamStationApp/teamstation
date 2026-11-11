@@ -10,13 +10,23 @@
  * A file is named for the URL without its query: a signature that is still
  * on an old picture's URL, or a still's `?t=` token, changes on every answer,
  * and must not split one picture into many files.
+ *
+ * A replaced picture has a new URL, so a new file: the directory keeps the
+ * `PICTURE_FILES_KEPT` files drawn or written most recently, and deletes the
+ * rest, so it does not grow for as long as the person stays signed in.
  */
+
+/** How many picture files one person's directory keeps. */
+export const PICTURE_FILES_KEPT = 400
 
 /** What a platform does with picture files. */
 export interface PictureStorage {
   /** The directory that holds one person's pictures. */
   directoryOf: (userId: string) => string
-  /** The names of the files in `directory`, none when it is not there. */
+  /**
+   * The names of the files in `directory`, the least recently written
+   * first; none when it is not there.
+   */
   list: (directory: string) => Promise<string[]>
   /**
    * Fetches `url` into `path`, replacing what is there only once every byte
@@ -25,6 +35,8 @@ export interface PictureStorage {
   download: (url: string, path: string) => Promise<void>
   /** Deletes `directory` and every file in it. */
   remove: (directory: string) => Promise<void>
+  /** Deletes the file at `path`, when it is there. */
+  unlink: (path: string) => Promise<void>
   /** What an `Image` is pointed at to draw the file at `path`. */
   uriOf: (path: string) => string
 }
@@ -86,7 +98,7 @@ export function choosePicture(options: {
 interface OpenDirectory {
   userId: string
   path: string
-  /** The files in it, once they have been listed. */
+  /** The files in it, once they have been listed: the least recently used first. */
   files: Set<string>
   /** The pictures fetched again since it was opened. */
   fresh: Set<string>
@@ -111,7 +123,10 @@ export class PictureDirectories {
   /** Bumped on each change, for `useSyncExternalStore`. */
   private version = 0
 
-  constructor(storage?: PictureStorage) {
+  constructor(
+    storage?: PictureStorage,
+    private readonly kept = PICTURE_FILES_KEPT
+  ) {
     this.storage = storage
   }
 
@@ -163,7 +178,12 @@ export class PictureDirectories {
     storage.list(opened.path).then(
       names => {
         if (this.opened !== opened) return
-        for (const name of names) opened.files.add(name)
+        // Older than any written or drawn since it opened.
+        opened.files = new Set([
+          ...names.filter(name => !opened.files.has(name)),
+          ...opened.files
+        ])
+        this.evict(opened)
         this.changed()
       },
       () => undefined
@@ -193,6 +213,7 @@ export class PictureDirectories {
     const storage = this.storage
     const name =
       url == null || url === '' ? '' : pictureFileName(pictureFileKey(url))
+    if (opened?.files.has(name) === true) used(opened.files, name)
     return choosePicture({
       url,
       offline: this.offlineNow,
@@ -229,7 +250,8 @@ export class PictureDirectories {
       try {
         await storage.download(url, `${opened.path}/${name}`)
         opened.fresh.add(name)
-        opened.files.add(name)
+        used(opened.files, name)
+        this.evict(opened)
       } catch {
         // The file that was there, if any, is still what is drawn.
         opened.failed.add(name)
@@ -245,8 +267,30 @@ export class PictureDirectories {
     await fetching
   }
 
+  /**
+   * Deletes the least recently used files past what a directory keeps; never
+   * one being fetched.
+   */
+  private evict(opened: OpenDirectory): void {
+    const storage = this.storage
+    if (storage == null) return
+    for (const name of [...opened.files]) {
+      if (opened.files.size <= this.kept) return
+      if (opened.fetching.has(name)) continue
+      opened.files.delete(name)
+      opened.fresh.delete(name)
+      storage.unlink(`${opened.path}/${name}`).catch(() => undefined)
+    }
+  }
+
   private changed(): void {
     this.version += 1
     for (const listener of this.listeners) listener()
   }
+}
+
+/** Moves `name` to the most recently used end of `files`. */
+function used(files: Set<string>, name: string): void {
+  files.delete(name)
+  files.add(name)
 }

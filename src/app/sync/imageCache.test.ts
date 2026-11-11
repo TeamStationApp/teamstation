@@ -5,6 +5,7 @@ import { openDocumentCache } from './cache'
 import { CachingClient } from './cachingClient'
 import {
   choosePicture,
+  PICTURE_FILES_KEPT,
   PictureDirectories,
   pictureDirectories,
   pictureFileKey,
@@ -43,6 +44,10 @@ function memoryStorage(): PictureStorage & {
     },
     remove: async (directory: string) => {
       directories.delete(directory)
+    },
+    unlink: async (path: string) => {
+      const at = path.lastIndexOf('/')
+      directories.get(path.slice(0, at))?.delete(path.slice(at + 1))
     },
     uriOf: (path: string) => `file://${path}`
   }
@@ -170,6 +175,46 @@ describe('picture files', function () {
     expect(directories.choose(URL_A).download).equals(true)
     stop()
     expect(changes.length).greaterThan(0)
+  })
+
+  it('keeps the files drawn or written most recently, and deletes the rest', async function () {
+    expect(PICTURE_FILES_KEPT).greaterThan(100)
+    const storage = memoryStorage()
+    const at = (letter: string): string =>
+      `https://cdn.example.test/images/team/${letter}-192.png`
+    const name = (letter: string): string => pictureFileName(at(letter))
+    // Listed oldest first: an earlier session's files.
+    storage.directories.set(
+      '/docs/pictures/usr_1',
+      new Map([
+        [name('old'), at('old')],
+        [name('older'), at('older')]
+      ])
+    )
+    const directories = new PictureDirectories(storage, 3)
+    directories.open('usr_1')
+    const held = (): string[] =>
+      [...(storage.directories.get('/docs/pictures/usr_1')?.keys() ?? [])]
+        .map(
+          file =>
+            ['old', 'older', 'a', 'b', 'c', 'd'].find(l => name(l) === file) ??
+            file
+        )
+        .sort()
+    // A replaced picture is drawn from a new URL, so a new file.
+    await directories.refresh(at('a'))
+    await settle()
+    expect(held()).deep.equals(['a', 'old', 'older'])
+    await directories.refresh(at('b'))
+    // The listing's first, the least recently written, goes.
+    expect(held()).deep.equals(['a', 'b', 'older'])
+    // Drawn again, a file is used most recently.
+    expect(directories.choose(at('older')).uri).contains(name('older'))
+    await directories.refresh(at('c'))
+    expect(held()).deep.equals(['b', 'c', 'older'])
+    directories.offline = true
+    expect(directories.choose(at('a')).uri).equals(undefined)
+    expect(directories.choose(at('b')).uri).contains(name('b'))
   })
 
   it('ignores a listing or download that lands after its directory closed', async function () {

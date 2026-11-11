@@ -14,8 +14,17 @@ const { fs } = ReactNativeBlobUtil
 const storage: PictureStorage = {
   directoryOf: userId =>
     `${fs.dirs.DocumentDir}/pictures/${encodeURIComponent(userId)}`,
+  // The least recently written first: every picture drawn online is
+  // fetched again once a session, so that is how recently it was drawn.
   list: async directory =>
-    (await fs.isDir(directory)) ? await fs.ls(directory) : [],
+    (await fs.isDir(directory))
+      ? (await fs.lstat(directory))
+          .filter(
+            file => file.type === 'file' && !file.filename.endsWith('.part')
+          )
+          .sort((a, b) => Number(a.lastModified) - Number(b.lastModified))
+          .map(file => file.filename)
+      : [],
   download: async (url, path) => {
     const directory = path.slice(0, path.lastIndexOf('/'))
     if (!(await fs.isDir(directory))) await fs.mkdir(directory)
@@ -38,6 +47,9 @@ const storage: PictureStorage = {
   },
   remove: async directory => {
     if (await fs.exists(directory)) await fs.unlink(directory)
+  },
+  unlink: async path => {
+    if (await fs.exists(path)) await fs.unlink(path)
   },
   uriOf: path => `file://${path}`
 }
