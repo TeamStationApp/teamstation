@@ -367,7 +367,10 @@ async function isolation(run: Run): Promise<void> {
     'meta[http-equiv="Content-Security-Policy"]',
     node => node.getAttribute('content')
   )
-  expect(policy).equals(cspFor(originsFor('/api/v1', '')))
+  // The policy the build was made with: the media origins it was given.
+  expect(policy).equals(
+    cspFor(originsFor('/api/v1', process.env.TS_MEDIA_ORIGINS ?? ''))
+  )
   expect(policy).includes("script-src 'self' 'wasm-unsafe-eval';")
   // Google's fonts are the page's own; nothing else of Google's may be named,
   // wildcards included.

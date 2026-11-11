@@ -442,8 +442,15 @@ async function confirmChatAge(page: Page): Promise<void> {
 
 /** The id of the chat called `title` in the page's person's list. */
 async function chatIdOf(page: Page, title: string): Promise<string> {
-  return await until(`the chat ${title}`, async () => {
-    const list = (await apiGet(page, '/chat/conversations')).body as Array<{
+  let lastAnswer: unknown
+  const found = until(`the chat ${title}`, async () => {
+    const answer = await apiGet(page, '/chat/conversations')
+    // Anything but the list (the API restarting, a refusal) is tried again.
+    if (!Array.isArray(answer.body)) {
+      lastAnswer = answer
+      return undefined
+    }
+    const list = answer.body as Array<{
       id: string
       title: string | null
       members?: unknown
@@ -466,6 +473,11 @@ async function chatIdOf(page: Page, title: string): Promise<string> {
           .slice('chat-conversation-'.length)
       },
       title
+    )
+  })
+  return await found.catch((error: unknown) => {
+    throw new Error(
+      `${String(error)}; the chat list answered ${JSON.stringify(lastAnswer)}`
     )
   })
 }
@@ -624,6 +636,9 @@ async function legacyAction(
     define: { __DEV__: 'false', 'process.env.TS_BUILD_INFO': 'undefined' }
   }).then(result => result.outputFiles[0].text)
   await page.evaluate(await legacyActionBundle)
+  // The module the page will fetch, so its integrity is that of the build served.
+  const wasmUrl = `${WEB}/chat-crypto.wasm`
+  const wasm = Buffer.from(await (await fetch(wasmUrl)).arrayBuffer())
   const input: Parameters<typeof retainedBrowserAction>[0] = {
     apiUrl: API,
     userId,
@@ -631,12 +646,9 @@ async function legacyAction(
     messageId: messageId!,
     action,
     ...(body == null ? {} : { body }),
-    wasmUrl: `${WEB}/chat-crypto.wasm`,
+    wasmUrl,
     wasmIntegrity:
-      'sha256-' +
-      createHash('sha256')
-        .update(readFileSync('dist/chat-crypto.wasm'))
-        .digest('base64')
+      'sha256-' + createHash('sha256').update(wasm).digest('base64')
   }
   await page.evaluate(async input => {
     await (

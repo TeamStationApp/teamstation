@@ -331,8 +331,10 @@ describe("a team's players in the app theme", function () {
     const falcons = fixture.teams.falcons.id
     await openAs(fixture.emails.coach, `/groups/team/${falcons}/settings`)
     await browser.assertVisible({ text: 'TEAM MANAGEMENT', timeout: 60000 })
+    // The app reaches the API on its own host or, served beside it, on the
+    // app's origin under /api/.
     await browser.blockNetwork({
-      patterns: [`*${new URL(API).host}/*`]
+      patterns: [`*${new URL(API).host}/*`, `*${new URL(APP).host}/api/*`]
     })
     try {
       await browser.tapOn({ text: 'Add Player', timeout: 15000 })
