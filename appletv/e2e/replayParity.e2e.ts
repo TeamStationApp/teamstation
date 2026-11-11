@@ -5,7 +5,10 @@ import path from 'node:path'
 import { startingBox } from '../../src/app/tv/replayStatistics'
 import { TeamStationClient } from '../../src/common/api'
 import { asPostEventsBody } from '../../src/common/gumboPlay'
-import type { ReplayBoxScore } from '../../src/common/replay/replayBoxScore'
+import {
+  pitchingTotals,
+  type ReplayBoxScore
+} from '../../src/common/replay/replayBoxScore'
 import {
   replayScore,
   replaySourceOf
@@ -186,28 +189,50 @@ async function main(): Promise<void> {
         )
       }
       const tvTree = find(await tv.hierarchy(), 'tv-box-panel')
-      const rows = (['away', 'home'] as const).flatMap(side => [
-        ...expected[side].batting.map(p => ({
-          side,
-          cells: [p.name, p.ab, p.r, p.h, p.rbi, p.bb, p.k]
-        })),
-        ...expected[side].pitching.map(p => ({
-          side,
-          cells: [
-            p.name,
-            p.ip,
-            p.h,
-            p.r,
-            p.er,
-            p.bb,
-            p.k,
-            p.hbp ?? '—',
-            p.pc ?? '—'
-          ]
-        }))
-      ])
+      const rows = (['away', 'home'] as const).flatMap(side => {
+        const total = pitchingTotals(expected[side].pitching)
+        return [
+          ...expected[side].batting.map(p => ({
+            side,
+            cells: [p.name, p.ab, p.r, p.h, p.rbi, p.bb, p.k]
+          })),
+          ...expected[side].pitching.map(p => ({
+            side,
+            cells: [
+              p.name,
+              p.ip,
+              p.h,
+              p.r,
+              p.er,
+              p.bb,
+              p.k,
+              p.hbp ?? '—',
+              p.pc ?? '—'
+            ]
+          })),
+          ...(expected[side].pitching.length === 0
+            ? []
+            : [
+                {
+                  side,
+                  cells: [
+                    'Totals',
+                    total.ip,
+                    total.h,
+                    total.r,
+                    total.er,
+                    total.bb,
+                    total.k,
+                    total.hbp ?? '—',
+                    total.pc ?? '—'
+                  ]
+                }
+              ])
+        ]
+      })
       if (
         tvTree !== undefined &&
+        containsRow(tvTree, ['SO', 'HBP', '#P']) &&
         rows.every(
           row =>
             (!compareWeb || containsRow(webTree, row.cells)) &&
