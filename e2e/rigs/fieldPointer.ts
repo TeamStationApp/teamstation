@@ -121,6 +121,16 @@ const THREE_STATE = `
 /** The pitcher's mound, where the field model stands him. */
 const MOUND = { x: 0, z: -18.44 }
 
+/** Waits until no player on the field is moving and no play is being shown. */
+export async function atRest(field: FieldDriver): Promise<void> {
+  await until(
+    field,
+    `(() => { const f = document.querySelector('[aria-label="Baseball field"]'); return f != null && f.getAttribute('data-moving') === '' && f.getAttribute('data-presentation') === 'none' })()`,
+    'the field to come to rest',
+    30000
+  )
+}
+
 /**
  * The centre of the nameplate of whoever plays `position` (P … RF, or R1–R3
  * for a runner at rest), once it stays put: the
@@ -140,12 +150,7 @@ export async function playerAt(
       ? `(() => { ${THREE_STATE}; if (three == null) throw new Error('The pitcher has no nameplate: install the scene probe'); let best; three.scene.traverse(o => { if (!o.name.startsWith('player-defense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${MOUND.x}) ** 2 + (at.z - ${MOUND.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, 1, best.at.z) })()`
       : `(() => { const n = document.querySelector(${selector}); if (n == null || getComputedStyle(n).visibility !== 'visible') return null; const r = n.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
   // A press while players still run to their places is lost to the motion.
-  await until(
-    field,
-    `(() => { const f = document.querySelector('[aria-label="Baseball field"]'); return f != null && f.getAttribute('data-moving') === '' && f.getAttribute('data-presentation') === 'none' })()`,
-    'the field to come to rest',
-    30000
-  )
+  await atRest(field)
   try {
     await until(field, `${read} != null`, `the ${position} nameplate`)
   } catch (error) {
@@ -301,4 +306,6 @@ export async function dropRunner(
   await page.mouse.move(...onto, { steps: 6 })
   await pause(100)
   await page.mouse.up()
+  // The screen asks why he moved once he has run there.
+  await atRest(puppeteerDriver(page))
 }
