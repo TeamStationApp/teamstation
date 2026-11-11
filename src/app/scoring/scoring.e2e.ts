@@ -2284,6 +2284,65 @@ describe('scoring browser', function () {
       await page.close()
     }
   })
+  it('fills the bottom safe area in every shared scoring modal', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 1 })
+      const cdp = await page.createCDPSession()
+      await cdp.send('Emulation.setSafeAreaInsetsOverride', {
+        insets: { bottom: 34 }
+      })
+      for (const label of [
+        'Overrides',
+        'Settings',
+        'End Half Inning',
+        'Swap Home and Away'
+      ]) {
+        await tapSettled(page, 'Open scoring menu')
+        await tapSettled(page, label)
+        await page.waitForFunction(() =>
+          document
+            .getAnimations()
+            .every(animation => animation.playState !== 'running')
+        )
+        await page.locator('[data-testid="Scoring sheet"]').hover()
+        const geometry = await page.$eval(
+          '[data-testid="Scoring sheet"]',
+          n => {
+            const rect = n.getBoundingClientRect()
+            const style = getComputedStyle(n)
+            return {
+              bottom: rect.bottom,
+              padding: parseFloat(style.paddingBottom),
+              border: style.borderBottomWidth,
+              left: style.borderLeftWidth,
+              right: style.borderRightWidth
+            }
+          }
+        )
+        expect(geometry.bottom, label).equals(844)
+        expect(geometry.padding, label).equals(50)
+        expect(geometry.border, label).equals('0px')
+        expect(geometry.left, label).equals('1px')
+        expect(geometry.right, label).equals('1px')
+        const out = process.env.TS_SCORING_ARTIFACT_DIR
+        if (out != null)
+          await page.screenshot({
+            path: join(
+              out,
+              `${label.toLowerCase().replaceAll(' ', '-')}-safe-area-after.png`
+            )
+          })
+        await tapSettled(page, label === 'Settings' ? 'Done' : 'Cancel')
+        await page.waitForSelector('[data-testid="Scoring sheet"]', {
+          hidden: true
+        })
+      }
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
   it('edits rosters with a captured drag, validates overrides, and uses slide-up settings', async function () {
     const { page, unexpected } = await open('/games/g1/score')
     try {
