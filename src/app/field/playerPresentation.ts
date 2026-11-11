@@ -65,6 +65,8 @@ export function nameplateSize(label: NameplateLabel): {
 export interface NameplatePlacement {
   emptyPosition?: boolean
   id: string
+  /** Where the player plays: a fielding position, or R1–R3 for a runner. */
+  position?: string
   name: string
   number: string
   team: FieldPlayer['team']
@@ -138,6 +140,7 @@ export function projectPlayerLabel(
   const edgeInset = EMPTY_POSITION_SIZE / 2 + 2
   return {
     id: player.id,
+    position: player.label,
     name: label.name,
     number: label.number,
     team: player.team,
