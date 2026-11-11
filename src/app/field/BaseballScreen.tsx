@@ -40,6 +40,7 @@ import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
+import type { ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import { createRelay, type Relay, useRelay } from './fieldPropsRelay'
 import {
@@ -314,14 +315,59 @@ function KeptField(props: {
   relay: Relay<KeptFieldDraw | undefined>
 }): React.ReactElement {
   const draw = useRelay(props.relay)
+  const latest = useRef(draw)
+  latest.current = draw
+  /**
+   * What the scene last said of its bases, board and catcher. It says each
+   * only when it moves, so a screen that takes the field is told it here.
+   */
+  const heard = useRef<{
+    bases?: BaseProjection
+    board?: ScoreboardBounds
+    catcher?: ScreenRect
+  }>({})
+  const [reports] = useState(() => ({
+    handleBaseProjection: (bases: BaseProjection) => {
+      heard.current.bases = bases
+      latest.current?.field.onBaseProjection?.(bases)
+    },
+    handleScoreboardBounds: (board: ScoreboardBounds) => {
+      heard.current.board = board
+      latest.current?.field.onScoreboardBounds?.(board)
+    },
+    handleCatcherBounds: (catcher: ScreenRect) => {
+      heard.current.catcher = catcher
+      latest.current?.field.onCatcherBounds?.(catcher)
+    }
+  }))
+  const taken = draw?.taken
+  useLayoutEffect(() => {
+    const field = latest.current?.field
+    if (taken == null || taken < 2 || field == null) return
+    const { bases, board, catcher } = heard.current
+    if (bases != null) field.onBaseProjection?.(bases)
+    if (board != null) field.onScoreboardBounds?.(board)
+    if (catcher != null) field.onCatcherBounds?.(catcher)
+  }, [taken])
+  const field = draw?.field
   return (
     <View style={fieldHolderStyle(draw?.band ?? 0)}>
-      {draw != null && !draw.suspended && (
+      {field != null && draw?.suspended === false && (
         <FieldCanvas
-          {...draw.field}
+          {...field}
           {...SCORING_CAMERA}
           bottomExtension={112}
-          reportRevision={draw.taken}
+          onBaseProjection={
+            field.onBaseProjection == null
+              ? undefined
+              : reports.handleBaseProjection
+          }
+          onScoreboardBounds={reports.handleScoreboardBounds}
+          onCatcherBounds={
+            field.onCatcherBounds == null
+              ? undefined
+              : reports.handleCatcherBounds
+          }
         />
       )}
     </View>
@@ -341,8 +387,8 @@ function useKeptField(
   const taken = useRef(0)
   useLayoutEffect(() => {
     if (relay == null) return
-    // This screen takes the field: the scene tells it where the bases and
-    // the board are again, as it tells a field of its own as it starts.
+    // This screen takes the field: the keeper tells it where the bases, the
+    // board and the catcher are, as a field of its own tells it as it starts.
     if (taken.current === 0) taken.current = (relay.get()?.taken ?? 0) + 1
     relay.set({ field, band, suspended, taken: taken.current })
   })

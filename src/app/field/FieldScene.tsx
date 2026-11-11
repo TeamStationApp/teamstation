@@ -145,18 +145,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   useEffect(() => {
     invalidate()
   }, [invalidate, props.movementRevision, props.presentationPaused])
-  // A screen that took the field over hears where the bases, the board and
-  // the catcher are, which the scene tells only when they move.
-  const { reportRevision } = props
-  const reportedTo = useRef(reportRevision)
-  useEffect(() => {
-    if (reportedTo.current === reportRevision) return
-    reportedTo.current = reportRevision
-    baseKey.current = ''
-    boundsKey.current = ''
-    catcherRect.current = null
-    invalidate()
-  }, [reportRevision, invalidate])
   useEffect(() => {
     gl.shadowMap.autoUpdate = false
     gl.shadowMap.needsUpdate = true
