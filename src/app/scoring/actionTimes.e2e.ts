@@ -204,7 +204,10 @@ describe('E1: the time each scoring action was taken', function () {
       appId: url,
       stepDelay: 200,
       artifacts: 'on-failure',
-      extra: { browser: 'chrome', windowSize: '1280x720' }
+      extra: {
+        browser: process.env.TS_CHROME_PATH ?? 'chrome',
+        windowSize: '1280x720'
+      }
     })
     await browser.blockNetwork({
       patterns: ['*fonts.googleapis.com*', '*fonts.gstatic.com*']

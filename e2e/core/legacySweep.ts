@@ -295,6 +295,9 @@ async function main(): Promise<void> {
         if (needsChatSeed(source) && !continues && BLOCKED[file] == null) {
           chatReset(cwd, legacyArtifacts(file))
           stack.reseed()
+          // The database was dropped under the running API: its pools, feeds
+          // and listeners start again on the new one.
+          await stack.restartApi({ speech: stack.speech })
         }
         const shared = needsPlayerFixture(source) ? playerFixtureEnv(cwd) : {}
         const recipe = RECIPES[file]

@@ -173,7 +173,10 @@ describe('adding an existing player from Set Team Rosters', function () {
       appId: url,
       stepDelay: 200,
       artifacts: 'on-failure',
-      extra: { browser: 'chrome', windowSize: '1280x900' }
+      extra: {
+        browser: process.env.TS_CHROME_PATH ?? 'chrome',
+        windowSize: '1280x900'
+      }
     })
     await browser.blockNetwork({
       patterns: ['*fonts.googleapis.com*', '*fonts.gstatic.com*']

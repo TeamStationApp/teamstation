@@ -26,7 +26,7 @@ async function main(): Promise<void> {
       appId: url,
       artifacts: 'on-failure',
       extra: {
-        browser: 'chrome',
+        browser: process.env.TS_CHROME_PATH ?? 'chrome',
         windowSize: process.env.ROSTER_WINDOW_SIZE ?? '390x844'
       }
     })
