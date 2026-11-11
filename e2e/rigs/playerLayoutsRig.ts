@@ -138,6 +138,8 @@ export interface WebSession {
   height: number
   /** The browser's own profile, removed when the session ends. */
   profile: string
+  /** The page's console errors and failed requests, newest last, for a failure to name. */
+  problems: string[]
 }
 const sessions: WebSession[] = []
 
@@ -221,7 +223,22 @@ export async function webSession(
     domain: new URL(APP).hostname,
     path: '/'
   })
-  const session = { m, browser, page, width, height, profile }
+  const problems: string[] = []
+  const note = (line: string): void => {
+    problems.push(line.slice(0, 300))
+    if (problems.length > 40) problems.shift()
+  }
+  page.on('console', message => {
+    if (message.type() === 'error') note(`console: ${message.text()}`)
+  })
+  page.on('requestfailed', request => {
+    note(`failed: ${request.url()} ${request.failure()?.errorText ?? ''}`)
+  })
+  page.on('response', response => {
+    if (response.status() >= 400)
+      note(`${response.status()}: ${response.url()}`)
+  })
+  const session = { m, browser, page, width, height, profile, problems }
   sessions.push(session)
   return session
 }
