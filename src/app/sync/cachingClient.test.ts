@@ -31,6 +31,7 @@ import {
   scheduleReadOf,
   scheduleWindow,
   seasonScope,
+  storedSchedule,
   teamScope
 } from './scheduleReads'
 
@@ -1136,15 +1137,27 @@ describe('CachingClient', function () {
       await client.teamGamesPage('tem_hawks', { cursor: 'prev:1' })
       expect(pages().filter(row => row.scope === 'team:tem_hawks')).deep.equals(
         [
-          { scope: 'team:tem_hawks', window: 'all+asc', cursor: 'first' },
-          { scope: 'team:tem_hawks', window: 'all+asc', cursor: 'next:4' },
-          { scope: 'team:tem_hawks', window: 'all+asc', cursor: 'prev:1' }
+          {
+            scope: 'team:tem_hawks',
+            window: 'all+asc+around=next',
+            cursor: 'first'
+          },
+          {
+            scope: 'team:tem_hawks',
+            window: 'all+asc+around=next',
+            cursor: 'next:4'
+          },
+          {
+            scope: 'team:tem_hawks',
+            window: 'all+asc+around=next',
+            cursor: 'prev:1'
+          }
         ]
       )
       net.offline = true
       const painted = await client.scheduleGames(
         teamScope('tem_hawks'),
-        'all+asc',
+        'all+asc+around=next',
         asRawGame
       )
       expect(ids(painted)).deep.equals(['g1', 'g2', 'g3', 'g4', 'g5', 'g6'])
@@ -1162,6 +1175,61 @@ describe('CachingClient', function () {
           )
         )
       ).deep.equals([])
+    })
+
+    it('keeps a first page opened on the next game apart from one opened at the start, and one of another limit', async function () {
+      const rows = [1, 2, 3, 4, 5, 6].map(n =>
+        game(`g${n}`, `2026-10-0${n}T18:00:00Z`)
+      )
+      const net = server({
+        '/teams/tem_hawks/games?paged=1&order=asc&around=next': {
+          body: pageOf(rows, { limit: 2 }, { anchorIndex: 4 })
+        },
+        '/teams/tem_hawks/games?paged=1&order=asc': {
+          body: pageOf(rows, { limit: 2 })
+        },
+        '/teams/tem_hawks/games?paged=1&order=asc&limit=4': {
+          body: pageOf(rows, { limit: 4 })
+        }
+      })
+      const client = clientOf(net.fetch)
+      client.openFor('usr_1')
+      const around = await client.teamGamesPage('tem_hawks', {
+        around: 'next',
+        order: 'asc'
+      })
+      const start = await client.teamGamesPage('tem_hawks', { order: 'asc' })
+      const four = await client.teamGamesPage('tem_hawks', {
+        order: 'asc',
+        limit: 4
+      })
+      expect(ids(around)).not.deep.equals(ids(start))
+      expect(ids(four)).not.deep.equals(ids(start))
+      net.offline = true
+      expect(
+        ids(
+          await client.teamGamesPage('tem_hawks', {
+            around: 'next',
+            order: 'asc'
+          })
+        )
+      ).deep.equals(ids(around))
+      expect(
+        ids(await client.teamGamesPage('tem_hawks', { order: 'asc' }))
+      ).deep.equals(ids(start))
+      expect(
+        ids(await client.teamGamesPage('tem_hawks', { order: 'asc', limit: 4 }))
+      ).deep.equals(ids(four))
+      expect(
+        ids(
+          (await storedSchedule(
+            client,
+            teamScope('tem_hawks'),
+            { around: 'next', order: 'asc' },
+            asRawGame
+          ))!
+        )
+      ).deep.equals(ids(around))
     })
 
     it('keeps one row per game and shape: a team’s summary never replaces the person’s game', async function () {

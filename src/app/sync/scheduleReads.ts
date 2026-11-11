@@ -17,7 +17,10 @@ export type ScheduleShape = 'SeasonGame' | 'GameSummary' | 'PublicGame'
 export interface ScheduleRead {
   /** `me`, `team:<id>`, `season:<id>` or `group:<id>`. */
   scope: string
-  /** From the query: `when`, then `+videos` and `+<order>` when set. */
+  /**
+   * From the query: `when`, then `+videos`, `+<order>`, `+around=<at>` and
+   * `+limit=<n>` when set.
+   */
   window: string
   /** The request's `cursor`; `first` for a paged read without one; `list` unpaged. */
   cursor: string
@@ -51,16 +54,26 @@ export function shapeOfScope(scope: string): ScheduleShape {
       : 'SeasonGame'
 }
 
-/** The window name of a list, the same for every scope. */
+/**
+ * The window name of a list, the same for every scope. Whatever changes
+ * which games a first page holds is part of it: `around` opens the list on
+ * its next game rather than its start, and `limit` changes where the first
+ * page ends and so the cursor chain after it. Two reads that differ in
+ * either are two windows, and never overwrite each other's pages.
+ */
 export function windowName(options: {
   when?: string
   videos?: boolean
   order?: string
+  around?: string
+  limit?: number | string
 }): string {
   return [
     options.when ?? 'all',
     ...(options.videos === true ? ['videos'] : []),
-    ...(options.order == null ? [] : [options.order])
+    ...(options.order == null ? [] : [options.order]),
+    ...(options.around == null ? [] : [`around=${options.around}`]),
+    ...(options.limit == null ? [] : [`limit=${options.limit}`])
   ].join('+')
 }
 
@@ -69,7 +82,9 @@ export function scheduleWindow(query: GamesPageQuery): string {
   return windowName({
     when: query.when,
     videos: query.hasVideo,
-    order: query.order
+    order: query.order,
+    around: query.around,
+    limit: query.limit
   })
 }
 
@@ -108,6 +123,7 @@ const PAGE_PARAMS = new Set([
 ])
 const WHENS = new Set(['upcoming', 'past', 'all'])
 const ORDERS = new Set(['asc', 'desc'])
+const AROUNDS = new Set(['next'])
 
 function decoded(value: string): string | undefined {
   try {
@@ -157,15 +173,31 @@ export function scheduleReadOf(path: string): ScheduleRead | undefined {
   if (order != null && !ORDERS.has(order)) return undefined
   const hasVideo = params.get('hasVideo')
   if (hasVideo != null && hasVideo !== '1') return undefined
+  const around = params.get('around') ?? undefined
+  if (around != null && !AROUNDS.has(around)) return undefined
+  const limit = params.get('limit') ?? undefined
+  if (limit != null && !/^[1-9][0-9]*$/.test(limit)) return undefined
   const paged = params.get('paged') === '1'
   const cursor = params.get('cursor')
   return {
     scope,
-    window: windowName({ when, videos: hasVideo === '1', order }),
+    window: windowName({
+      when,
+      videos: hasVideo === '1',
+      order,
+      around,
+      limit
+    }),
     cursor: cursor ?? (paged ? FIRST_PAGE : WHOLE_LIST),
     shape: shapeOfScope(scope),
     paged,
+    // A later page's `limit` only sizes it: its window is still the one of
+    // the page that issued its cursor.
     cursorOnly:
-      cursor != null && when == null && order == null && hasVideo == null
+      cursor != null &&
+      when == null &&
+      order == null &&
+      hasVideo == null &&
+      around == null
   }
 }
