@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, StyleSheet, View } from 'react-native'
 
+import { ButtonIcon } from '../../components/ButtonIcon'
 import { lstrings } from '../../locales/strings'
 import { RECORD, WHITE } from './overlayTheme'
 
@@ -30,7 +31,9 @@ export function RecordButton(props: RecordButtonProps): React.ReactElement {
         { backgroundColor: recording ? RECORD.live : RECORD.idle }
       ]}
     >
-      <View style={recording ? styles.square : styles.dot} />
+      <ButtonIcon>
+        <View style={recording ? styles.square : styles.dot} />
+      </ButtonIcon>
     </Pressable>
   )
 }

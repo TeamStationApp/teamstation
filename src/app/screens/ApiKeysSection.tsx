@@ -4,8 +4,8 @@ import { Pressable, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { type ApiKey, secretPreview } from '../../common/apiKeys'
 import {
+  ButtonIcon,
   DangerText,
-  Icon,
   ListCard,
   ListRow,
   SectionHeader
@@ -94,7 +94,7 @@ export function ApiKeysSection(props: ApiKeysSectionProps): React.ReactElement {
                 }}
                 style={styles.copy}
               >
-                <Icon
+                <ButtonIcon
                   name="content_copy"
                   size={1.25}
                   color={theme.secondaryTextColor}

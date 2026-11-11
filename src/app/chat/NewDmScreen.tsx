@@ -13,14 +13,8 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { asUserId } from '../../common/userId'
-import {
-  Button,
-  Card,
-  Icon,
-  initialsOf,
-  Screen,
-  TextField
-} from '../components'
+import { Button, Card, initialsOf, Screen, TextField } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { Emblem } from '../components/Emblem'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
@@ -233,7 +227,7 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
                   {person.shortName}
                 </Text>
                 {isPicked(person) && (
-                  <Icon name="star" color={theme.activeColor} />
+                  <ButtonIcon name="star" color={theme.activeColor} />
                 )}
               </Pressable>
             </View>
