@@ -41,8 +41,25 @@ const VOLATILE = [
   /^\d+ unread/,
   /typing/i,
   /^✓*\s*Sent$/,
-  /^✓*\s*Delivered$/
+  /^✓*\s*Delivered$/,
+  // Linking devices, not history: a device that is not linked shows a new
+  // code each time it opens, and a linked one the request's time.
+  /^\d{3} \d{3}$/,
+  /^(Web|iOS|Android) · \d{1,2}\/\d{1,2}\/\d{4}, /
 ]
+
+/**
+ * Opens `url`, once more if the page replaced its frame while loading: the
+ * app reloads itself when a device's chat keys change under it.
+ */
+async function visit(page: Page, url: string): Promise<void> {
+  try {
+    await page.goto(url, { waitUntil: 'networkidle2' })
+  } catch (error) {
+    if (!String(error).includes('detached')) throw error
+    await page.goto(url, { waitUntil: 'networkidle2' })
+  }
+}
 
 async function settledText(page: Page): Promise<string[]> {
   let last = ''
@@ -50,7 +67,11 @@ async function settledText(page: Page): Promise<string[]> {
   const end = Date.now() + 20000
   while (Date.now() < end) {
     const now = await page.evaluate(() => document.body.innerText)
-    if (now !== last) {
+    // A chat still opening has not settled, however long it shows that.
+    if (now.includes('Opening chat…') || now.includes('Loading…')) {
+      last = now
+      stableSince = Date.now()
+    } else if (now !== last) {
       last = now
       stableSince = Date.now()
     } else if (Date.now() - stableSince > 1500) {
@@ -86,9 +107,7 @@ async function safetyNumber(
   conversationId: string,
   name: string
 ): Promise<string> {
-  await page.goto(`${WEB}/chat/${conversationId}/members`, {
-    waitUntil: 'networkidle2'
-  })
+  await visit(page, `${WEB}/chat/${conversationId}/members`)
   // Another device of this person asking to link puts its prompt over the
   // page; reading history answers nothing, so it is put off with Later.
   const prompt = await page.$('[data-testid="chat-device-approval-prompt"]')
@@ -111,6 +130,8 @@ async function safetyNumber(
   }
   // The row on the scene on top: a covered scene stays mounted beneath it.
   const row = `[aria-label^="Safety words with ${name}, "]`
+  // The members list loads after the page: wait for the row, up to a while.
+  await page.waitForSelector(row, { timeout: 15000 }).catch(() => undefined)
   const button =
     (await page.$(`[data-scene-role="top"] ${row}`)) ?? (await page.$(row))
   if (button == null) return `${name}: no button`
@@ -164,14 +185,14 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
   try {
     const page = await browser.newPage()
     await page.setViewport({ width: 1280, height: 900 })
-    await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+    await visit(page, `${WEB}/chat`)
     const chats = (await apiGet(page, '/chat/conversations')) as
       Array<{ id: string; title: string; kind: string }> | undefined
     if (chats == null) return { '': ['signed out'] }
     const read: Record<string, string[]> = {}
     for (const chat of [...chats].sort((a, b) => a.id.localeCompare(b.id))) {
       const started = Date.now()
-      await page.goto(`${WEB}/chat/${chat.id}`, { waitUntil: 'networkidle2' })
+      await visit(page, `${WEB}/chat/${chat.id}`)
       const lines = await settledText(page)
       const members = ((await apiGet(
         page,
