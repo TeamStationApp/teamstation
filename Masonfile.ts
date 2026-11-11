@@ -1070,7 +1070,7 @@ export async function archiveDistributor(ctx: Stage): Promise<void> {
 
 export async function retrieveSoakArtifacts(ctx: Stage): Promise<void> {
       for (const [workflow, name] of [['tvos', 'tvos-ipa'], ['build', 'ios-ipa'], ['build', 'android-apk']]) {
-        await ctx.artifacts.fetch({ workflow, name, commit: '5ed3a9f8118d9e96a5e0df78b22d35af46da1886', status: 'success' }, 'soak-artifacts/' + name)
+        await ctx.artifacts.fetch({ workflow, name, branch: 'paul/streamingReliabilityFixes', commit: '91be42bd789b00a7aa74b9736cef37fd4cf37485', status: 'success' }, 'soak-artifacts/' + name)
       }
       await ctx.stash('soak-artifacts', 'soak-artifacts/**/*')
 }
