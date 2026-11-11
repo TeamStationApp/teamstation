@@ -512,6 +512,7 @@ export class ScoringSession {
     playbackTimes: Array<string | undefined>
     tags: Map<string, string | null>
     sends: number
+    unknownFailures: number
   }
 
   private lastAuthoredAt = -1
@@ -1285,6 +1286,8 @@ export class ScoringSession {
     this.displaced?.stamped.push(now)
     this.record(action, applied, now)
     if (!this.holding) this.align()
+    if (this.blocked && this.attemptedSave != null)
+      this.attemptedSave.unknownFailures = 0
     this.blocked = false
     this.dropped = null
     if (save) {
@@ -1335,6 +1338,8 @@ export class ScoringSession {
     this.settle(this.cut(length - 1))
     this.rebuild()
     this.reconcileCurrent()
+    if (this.blocked && this.attemptedSave != null)
+      this.attemptedSave.unknownFailures = 0
     this.blocked = false
     this.dropped = null
     this.changed()
@@ -2581,7 +2586,8 @@ export class ScoringSession {
           times: coveringTimes,
           playbackTimes: coveringPlaybackTimes,
           tags: new Map(),
-          sends: 0
+          sends: 0,
+          unknownFailures: 0
         }
       }
       const attempt = this.attemptedSave
@@ -2724,6 +2730,10 @@ export class ScoringSession {
 
   private failed(error: unknown, retryUnknown = false): void {
     const code = error instanceof HttpError ? error.code : null
+    if (this.attemptedSave != null) {
+      if (code != null) this.attemptedSave.unknownFailures = 0
+      else if (retryUnknown) this.attemptedSave.unknownFailures++
+    }
     const message = error instanceof Error ? error.message : String(error)
     // This build is older than the server reads: what is not saved stays,
     // and nothing more is sent until the update the notice asks for.
@@ -2737,7 +2747,9 @@ export class ScoringSession {
     // Signed out, the scorer signs in again and the waiting changes go then.
     // Lineups that keep changing under each read are tried again later.
     if (
-      (code == null && retryUnknown && (this.attemptedSave?.sends ?? 0) < 3) ||
+      (code == null &&
+        retryUnknown &&
+        (this.attemptedSave?.unknownFailures ?? 0) < 3) ||
       code === 'offline' ||
       code === 'rateLimited' ||
       code === 'internal' ||
