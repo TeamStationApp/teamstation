@@ -181,6 +181,12 @@ describe('remaining scoring on game detail and schedules', function () {
   })
 
   it('keeps roster saves scheduled, starts on a pitch or in-play event, and reverses after undo', async () => {
+    await f.h.db.deleteFrom('events').where('gameId', '=', id).execute()
+    await f.h.db
+      .updateTable('games')
+      .set({ currentPlay: null, scoring_mutation: null })
+      .where('id', '=', id)
+      .execute()
     const setup = {
       about: { atBatIndex: 0, inning: 1, halfInning: 'top', isComplete: false },
       playEvents: [{ isPitch: false, isSubstitution: true }]

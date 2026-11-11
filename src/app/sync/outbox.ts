@@ -12,8 +12,8 @@ import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type LineupRecovery,
   type SaveChange,
-  type SessionLog,
   ScoringSession,
+  type SessionLog,
   type StoredGame
 } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'

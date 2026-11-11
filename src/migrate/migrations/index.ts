@@ -260,6 +260,6 @@ export const migrations: Migration[] = [
   migration112VideoSpaceSecret,
   migration113ChatHistoryRecovery,
   migration113PlayingTimeRules,
-  migration114GamePlans,
-  migration113ScoringMutation
+  migration113ScoringMutation,
+  migration114GamePlans
 ]
