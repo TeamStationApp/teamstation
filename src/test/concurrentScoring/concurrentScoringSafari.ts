@@ -54,13 +54,39 @@ export class ConcurrentScoringSafariRig extends ConcurrentScoringRig {
     let signed = false
     do {
       const nodes = flatten(await m.hierarchy())
-      signed = nodes.some(
-        node => node.text === 'Account, ' + account.displayName
-      )
+      signed = nodes.some(node => node.text?.startsWith('Account, ') === true)
       if (signed || nodes.some(node => node.text === 'Use a password instead'))
         break
       await new Promise(resolve => setTimeout(resolve, 100))
     } while (Date.now() < until)
+    const openAccount = async (): Promise<void> => {
+      await m.openLink({
+        link: `${this.ctx.stack.origin}/account`,
+        browser: true
+      })
+      await m.assertVisible({ text: '^Save name$', timeout: 30000 })
+    }
+    const isFixtureAccount = async (): Promise<boolean> =>
+      flatten(await m.hierarchy()).some(node => node.text === account.email)
+    if (signed) {
+      await openAccount()
+      signed = await isFixtureAccount()
+      if (!signed) {
+        // Repeated fixtures deliberately reuse labels, never identities.
+        // Center the action clear of Safari and the app's bottom navigation.
+        await m.scrollUntilVisible({
+          element: { text: '^Sign out$' },
+          direction: 'DOWN',
+          centerElement: true,
+          visibilityPercentage: 100
+        })
+        await m.tapOn({ text: '^Sign out$' })
+        await m.openLink({
+          link: `${this.ctx.stack.origin}/sign-in`,
+          browser: true
+        })
+      }
+    }
     if (!signed) {
       await m.tapOn({ text: '^Use a password instead$', timeout: 30000 })
       const focus = async (secure: boolean): Promise<void> => {
@@ -92,6 +118,11 @@ export class ConcurrentScoringSafariRig extends ConcurrentScoringRig {
         })
       await m.assertVisible({ text: 'Account, .*', timeout: 30000 })
     }
+    await openAccount()
+    assert(
+      await isFixtureAccount(),
+      'Safari must be signed in with the fixture email before opening its game'
+    )
     await m.openLink({
       link: `${this.ctx.stack.origin}/games/${this.fixture.ids.game}/score`,
       browser: true
