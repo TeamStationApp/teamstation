@@ -699,14 +699,29 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // nothing more. A swap of this screen's own went behind its changes,
       // on the phone's queue or the web's, and the phone's queue sends the
       // writes ahead of a swap before it. Another device's swap loses what
-      // a stale save's rebase dropped and, on the web, what was not saved.
+      // a stale save's rebase dropped and what was not saved, and on a
+      // phone the writes its queue still holds for the game: they name the
+      // old sides, with no swap of this phone's ahead of them, so they are
+      // given up, as Use Server's Copy does, and counted.
       session.close()
       setClosedSession(session)
-      const lost = own
-        ? 0
-        : session.lostToSwap +
-          (props.client instanceof CachingClient ? 0 : session.pending)
-      setSwapNotice(replacedNotice(change, lost))
+      if (!own) {
+        const client = props.client
+        const unsaved = session.lostToSwap + session.pending
+        const queued =
+          client instanceof CachingClient
+            ? discardStale(client, props.gameId)
+            : Promise.resolve(0)
+        queued
+          .catch(() => 0)
+          .then(given => {
+            setSwapNotice(replacedNotice(change, unsaved + given))
+            setRetry(value => value + 1)
+          })
+          .catch(() => undefined)
+        return false
+      }
+      setSwapNotice(replacedNotice(change, 0))
       if (swapped == null) {
         setRetry(value => value + 1)
         return false
@@ -734,7 +749,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         })
       return true
     },
-    [opened, reopened, props.client, source, vanishing]
+    [opened, reopened, props.client, props.gameId, source, vanishing]
   )
   /**
    * What a swap of this screen's own opens the game again on: the copy the
@@ -4005,6 +4020,22 @@ function ScoringPanel(props: {
       )}
     </BaseballScreen>
   )
+}
+
+/**
+ * Gives up the writes a phone's queue holds for `gameId` when another
+ * device swapped its sides, and answers how many there were: they were built
+ * on the old sides. None when nothing is queued.
+ */
+async function discardStale(
+  client: CachingClient,
+  gameId: string
+): Promise<number> {
+  const queue = await client.outboxSummary()
+  const rows = queue.chains[`game:${gameId}`] ?? 0
+  if (rows === 0 && queue.games[gameId] == null) return 0
+  await client.discardGame(gameId)
+  return Math.max(rows, 1)
 }
 
 /**
