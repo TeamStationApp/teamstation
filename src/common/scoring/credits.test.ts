@@ -203,6 +203,7 @@ describe('stat lines', function () {
     expect(batting[3]).includes({ pa: 1, ab: 0, hbp: 1 })
     expect(batting[4]).includes({ pa: 1, ab: 1, h: 1, rbi: 0 })
     expect(pitching[F.P]).deep.equals({
+      hbp: 1,
       pitches: 9,
       outs: 1,
       h: 1,

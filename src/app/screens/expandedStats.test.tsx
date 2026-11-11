@@ -142,7 +142,7 @@ describe('expanded statistics screens', function () {
     await render(
       <TeamScreen
         client={client({
-          teamStats: async () => [{ ...battingFixture, pa: 12345 }]
+          teamStats: async () => [{ ...battingFixture, g: 12345 }]
         })}
         team={team}
         initialTab="stats"
@@ -152,7 +152,7 @@ describe('expanded statistics screens', function () {
     const cells = [...host.querySelectorAll<HTMLElement>('*')].filter(
       n => n.children.length === 0
     )
-    const header = cells.find(n => n.textContent === 'PA')!
+    const header = cells.find(n => n.textContent === 'GP')!
     const value = cells.find(n => n.textContent === '12345')!
     const second = header.nextElementSibling as HTMLElement
     // The Player heading and the names sit in the column beside the
@@ -188,6 +188,12 @@ describe('expanded statistics screens', function () {
       .and.includes('Babe R')
     for (const column of [...battingColumns, ...pitchingColumns])
       expect(leaves()).includes(column.label)
+    expect(
+      host.querySelectorAll('[data-testid="batting-stat-key"]')
+    ).has.length(1)
+    expect(
+      host.querySelectorAll('[data-testid="pitching-stat-key"]')
+    ).has.length(1)
     expect(text()).includes('66.7%').and.includes('.182')
   })
   it('handles team loading, empty statistics and load errors', async function () {

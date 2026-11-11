@@ -32,6 +32,7 @@ import type {
   VideoSummary
 } from '../../common/api'
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
+import { pitchingTotals } from '../../common/replay/replayBoxScore'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
@@ -1457,7 +1458,7 @@ export function TvPlayer({
                       </Text>
                       <StatRow
                         name="Batting"
-                        values={['AB', 'R', 'H', 'RBI', 'BB', 'K']}
+                        values={['AB', 'R', 'H', 'RBI', 'BB', 'SO']}
                         heading
                       />
                       {box[side].batting.map(player => (
@@ -1476,7 +1477,7 @@ export function TvPlayer({
                       ))}
                       <StatRow
                         name="Pitching"
-                        values={['IP', 'H', 'R', 'ER', 'BB', 'K', 'PC']}
+                        values={['IP', 'H', 'R', 'ER', 'BB', 'SO', 'HBP', '#P']}
                         heading
                       />
                       {box[side].pitching.map(player => (
@@ -1490,10 +1491,14 @@ export function TvPlayer({
                             player.er,
                             player.bb,
                             player.k,
+                            player.hbp ?? '—',
                             player.pc ?? '—'
                           ]}
                         />
                       ))}
+                      {box[side].pitching.length > 0 && (
+                        <PitchingTotal rows={box[side].pitching} />
+                      )}
                     </View>
                   ))}
                 </View>
@@ -1874,3 +1879,26 @@ const styles = StyleSheet.create({
     padding: 40
   }
 })
+
+function PitchingTotal({
+  rows
+}: {
+  rows: Parameters<typeof pitchingTotals>[0]
+}): React.ReactElement {
+  const total = pitchingTotals(rows)
+  return (
+    <StatRow
+      name="Totals"
+      values={[
+        total.ip,
+        total.h,
+        total.r,
+        total.er,
+        total.bb,
+        total.k,
+        total.hbp ?? '—',
+        total.pc ?? '—'
+      ]}
+    />
+  )
+}

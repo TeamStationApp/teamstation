@@ -8,6 +8,7 @@ import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { shortDateNoWeekday } from './format'
 import { battingColumns, pitchingColumns, type StatColumn } from './statColumns'
+import { StatKey } from './StatKey'
 
 /** One row of a player's table: where it was played, and their line there. */
 interface SplitRow<T> {
@@ -63,45 +64,50 @@ export function PlayerStatsTable(props: {
     </Text>
   )
   return (
-    <FrozenNameTable<SplitRow<BattingRow | PitchingRow>>
-      compact
-      nameWidth={9.25}
-      // A game's label may wrap to a second line, which a team's does not.
-      rowHeight={by === 'game' ? 2.75 : undefined}
-      heading={
-        by === 'team' ? lstrings.player_stats_team : lstrings.player_stats_game
-      }
-      rows={rows}
-      columns={columns.map(column => ({
-        ...column,
-        value: row => column.value(row.line),
-        accessibilityValue:
-          column.accessibilityValue == null
-            ? undefined
-            : row => column.accessibilityValue!(row.line)
-      }))}
-      rowKey={(row, index) =>
-        `${row.split!.gameId ?? ''}:${row.split!.teamId ?? index}`
-      }
-      name={(row, index) => label(labels[index])}
-      rowLabel={(row, index) => labels[index]}
-      total={{
-        row: { split: null, line: total },
-        label: lstrings.player_stats_total,
-        name: (
-          <Text
-            style={{
-              fontFamily: theme.boldTextFont,
-              fontWeight: '700',
-              fontSize: theme.rem(0.875),
-              color: theme.primaryTextColor
-            }}
-          >
-            {lstrings.player_stats_total}
-          </Text>
-        )
-      }}
-    />
+    <>
+      <FrozenNameTable<SplitRow<BattingRow | PitchingRow>>
+        compact
+        nameWidth={9.25}
+        // A game's label may wrap to a second line, which a team's does not.
+        rowHeight={by === 'game' ? 2.75 : undefined}
+        heading={
+          by === 'team'
+            ? lstrings.player_stats_team
+            : lstrings.player_stats_game
+        }
+        rows={rows}
+        columns={columns.map(column => ({
+          ...column,
+          value: row => column.value(row.line),
+          accessibilityValue:
+            column.accessibilityValue == null
+              ? undefined
+              : row => column.accessibilityValue!(row.line)
+        }))}
+        rowKey={(row, index) =>
+          `${row.split!.gameId ?? ''}:${row.split!.teamId ?? index}`
+        }
+        name={(row, index) => label(labels[index])}
+        rowLabel={(row, index) => labels[index]}
+        total={{
+          row: { split: null, line: total },
+          label: lstrings.player_stats_total,
+          name: (
+            <Text
+              style={{
+                fontFamily: theme.boldTextFont,
+                fontWeight: '700',
+                fontSize: theme.rem(0.875),
+                color: theme.primaryTextColor
+              }}
+            >
+              {lstrings.player_stats_total}
+            </Text>
+          )
+        }}
+      />
+      <StatKey kind={kind} />
+    </>
   )
 }
 

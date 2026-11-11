@@ -187,7 +187,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
           'H',
           'RBI',
           'BB',
-          'K'
+          'SO'
         ])}
         {side.batting.map(line =>
           row(`b${line.id}`, line.current, [
@@ -215,8 +215,9 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
           'R',
           'ER',
           'BB',
-          'K',
-          'PC'
+          'SO',
+          'HBP',
+          '#P'
         ])}
         {side.pitching.map(line =>
           row(`p${line.id}`, line.current, [
@@ -227,6 +228,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             text(line.er),
             text(line.bb),
             text(line.k),
+            text(line.hbp ?? '—'),
             text(line.pc ?? '—')
           ])
         )}
@@ -238,6 +240,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             throwing.er,
             throwing.bb,
             throwing.k,
+            throwing.hbp ?? '—',
             throwing.pc ?? '—'
           ])}
       </View>

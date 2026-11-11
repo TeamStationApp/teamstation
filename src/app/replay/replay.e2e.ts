@@ -30,7 +30,7 @@ import { stepHalfEnds } from './replayGaps'
  *     The pills under the final and the in-progress game's hero card.
  *     `before` expects no Replay or Live pill; `after` expects them.
  *
- *   REPLAY_SCENARIO=replay [REPLAY_PITCH_MS=5000]
+ *   REPLAY_SCENARIO=replay [REPLAY_PITCH_MS=5000] [REPLAY_HAS_SPEECH=false]
  *     The final game's replay from its pill: the controls, the pitch pacing
  *     (each pitch held for the node's pitch delay, REPLAY_PITCH_MS),
  *     the first home run, pause and play, the box score's pitchers, Exit,
@@ -303,7 +303,9 @@ async function replay(m: Device): Promise<void> {
   await m.tapOn({ text: 'Replay' })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
   await m.assertVisible({ text: 'Exit' })
-  await m.assertVisible({ id: 'replay-speaker' })
+  if (process.env.REPLAY_HAS_SPEECH === 'false')
+    await m.assertNotVisible({ id: 'replay-speaker' })
+  else await m.assertVisible({ id: 'replay-speaker' })
   await m.assertVisible({ id: 'replay-pause' })
   const video = join(await artifactsDir(), 'replay-first-inning-web.mp4')
   const recorder = screenRecorder(m)

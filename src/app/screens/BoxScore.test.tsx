@@ -942,7 +942,7 @@ describe('box score totals', function () {
         stats: undefined
       }
     })
-    // IP BF H R ER BB K HR HBP
+    // IP BF H R ER BB SO HR HBP #P
     expect(rowAcross(host!, 'Totals')).deep.equals([
       'Totals',
       '3.0',
@@ -953,7 +953,8 @@ describe('box score totals', function () {
       '2',
       '4',
       '0',
-      '0'
+      '0',
+      '—'
     ])
   })
 

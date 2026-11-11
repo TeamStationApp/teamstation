@@ -552,7 +552,11 @@ const pitchingColumns: Array<StatColumn<PitchingRow>> = [
   { label: lstrings.stats_walks, value: row => String(row.bb) },
   { label: lstrings.stats_strikeouts, value: row => String(row.k) },
   { label: 'HR', value: row => String(row.hr) },
-  { label: 'HBP', value: row => String(row.hbp) }
+  { label: 'HBP', value: row => String(row.hbp) },
+  {
+    label: '#P',
+    value: row => (row.pitches == null ? '—' : String(row.pitches))
+  }
 ]
 
 const battingColumns: Array<StatColumn<BattingLine>> = [

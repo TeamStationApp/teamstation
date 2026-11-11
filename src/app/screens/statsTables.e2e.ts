@@ -129,8 +129,8 @@ async function main(): Promise<void> {
           n.bounds != null &&
           n.bounds.x >= 0 &&
           n.bounds.x + n.bounds.width <= width &&
-          n.bounds.y > 80 &&
-          n.bounds.y + n.bounds.height < height - 40
+          n.bounds.y > 110 &&
+          n.bounds.y + n.bounds.height < height - (native ? 100 : 180)
       )
     const shot = async (name: string): Promise<void> => {
       writeFileSync(

@@ -113,6 +113,7 @@ export function importedStatistics(
           er: row?.pitch_er ?? 0,
           bb: row?.pitch_bb ?? 0,
           k: row?.pitch_k ?? 0,
+          hbp: row === undefined ? (old?.hbp ?? null) : row.pitch_hbp,
           pc: row === undefined ? (old?.pc ?? null) : row.extra.pitches,
           current: old?.current ?? false
         }

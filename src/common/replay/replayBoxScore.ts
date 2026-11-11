@@ -1,6 +1,6 @@
 import { statLines } from '../scoring/credits'
 import type { GamePlay, GameState, Side } from '../scoring/state'
-import { inningsPitched } from '../statExtras'
+import { addStatCount, inningsPitched } from '../statExtras'
 import { namesOf } from './replayNames'
 
 /**
@@ -27,6 +27,7 @@ export interface ReplayBattingLine {
 }
 
 export interface ReplayPitchingLine {
+  hbp: number | null
   id: number
   name: string
   /** Outs recorded; innings pitched are `outs / 3`, written `ip`. */
@@ -230,6 +231,7 @@ export function replayBoxScore(
         er: charged?.er ?? 0,
         bb: line?.bb ?? 0,
         k: line?.k ?? 0,
+        hbp: line?.hbp ?? 0,
         pc: team.pitchCounts[id] ?? 0,
         current: !atBat && !state.final && id === mound
       }
@@ -260,6 +262,7 @@ export interface ReplayBattingTotals {
 
 /** A side's pitching added up, its innings counted as outs. */
 export interface ReplayPitchingTotals {
+  hbp: number | null
   outs: number
   ip: string
   h: number
@@ -297,7 +300,7 @@ export function pitchingTotals(
   lines: readonly ReplayPitchingLine[]
 ): ReplayPitchingTotals {
   const sum = (
-    field: Exclude<keyof ReplayPitchingTotals, 'ip' | 'pc'>
+    field: Exclude<keyof ReplayPitchingTotals, 'ip' | 'pc' | 'hbp'>
   ): number => lines.reduce((total, line) => total + line[field], 0)
   const outs = sum('outs')
   return {
@@ -308,6 +311,10 @@ export function pitchingTotals(
     er: sum('er'),
     bb: sum('bb'),
     k: sum('k'),
+    hbp: lines.reduce<number | null>(
+      (total, line) => addStatCount(total, line.hbp),
+      0
+    ),
     pc: lines.some(line => line.pc === null)
       ? null
       : lines.reduce((total, line) => total + (line.pc ?? 0), 0)
