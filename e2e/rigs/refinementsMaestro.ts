@@ -356,7 +356,8 @@ export async function capture(
   artifacts: string,
   name: string
 ): Promise<void> {
-  await m.waitForAnimationToEnd()
+  // A playing video never lets the page settle; the picture is taken anyway.
+  await m.waitForAnimationToEnd().catch(() => undefined)
   await writeFile(join(artifacts, name), await m.screenshot())
 }
 export async function diagnostic<T>(page: Page, read: () => T): Promise<T> {
