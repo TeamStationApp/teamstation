@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Text } from 'react-native'
+import { Platform, Text } from 'react-native'
 
 import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
@@ -32,6 +32,35 @@ const mount = async (children: React.ReactNode): Promise<void> => {
 }
 
 describe('scoring UI polish', () => {
+  it('reserves footer clearance in a non-scrolling sheet', async () => {
+    await mount(
+      <ScoringSheet
+        title="Correction"
+        scroll={false}
+        onClose={() => undefined}
+        footer={<ScoringButton label="Apply" onPress={() => undefined} />}
+      >
+        <Text>Last row</Text>
+      </ScoringSheet>
+    )
+    const footer = document.querySelector<HTMLElement>(
+      '[data-testid="Scoring sheet footer"]'
+    )!
+    await act(async () => {
+      ;(
+        footer as HTMLElement & {
+          __reactLayoutHandler: (event: unknown) => void
+        }
+      ).__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 350, height: 80 } }
+      })
+    })
+    const content = document.querySelector<HTMLElement>(
+      '[data-testid="Scoring sheet content"]'
+    )!
+    expect(content.style.paddingBottom).equals('92px')
+    expect(content.contains(node('Apply'))).equals(false)
+  })
   afterEach(async () => {
     await act(async () => {
       root?.unmount()
@@ -143,6 +172,60 @@ describe('scoring UI polish', () => {
           .top
       )
     ).greaterThan(spot('C').y + 48 + 24)
+  })
+
+  it('keeps the bottom safe area inside docked sheet backgrounds on phones', async () => {
+    const os = Platform.OS
+    const observer = globalThis.ResizeObserver
+    // jsdom has no layout; use the provider's window-inset fallback.
+    Object.defineProperty(globalThis, 'ResizeObserver', {
+      configurable: true,
+      value: undefined
+    })
+    const computed = window.getComputedStyle.bind(window)
+    Platform.OS = 'ios'
+    // Supply the inset measured by the provider's hidden CSS probe.
+    window.getComputedStyle = (element, pseudo) => {
+      const style = computed(element, pseudo)
+      if (
+        (element as HTMLElement).style.visibility === 'hidden' &&
+        (element as HTMLElement).style.zIndex === '-1'
+      )
+        return new Proxy(style, {
+          get: (target, key) =>
+            key === 'paddingBottom' ? '34px' : Reflect.get(target, key)
+        })
+      return style
+    }
+    try {
+      for (const tall of [false, true]) {
+        const content = (
+          <ScoringSheet title="Settings" tall={tall} onClose={() => undefined}>
+            <Text>Controls</Text>
+          </ScoringSheet>
+        )
+        if (root == null) await mount(content)
+        else
+          await act(async () => {
+            root!.render(<ThemeProvider>{content}</ThemeProvider>)
+          })
+        const sheet = document.querySelector<HTMLElement>(
+          '[data-testid="Scoring sheet"]'
+        )!
+        expect(sheet.style.paddingBottom).equals('50px')
+        expect(computed(sheet).borderBottomWidth).equals('0px')
+        expect(computed(sheet).borderLeftWidth).equals('1px')
+        expect(computed(sheet).borderRightWidth).equals('1px')
+        expect(sheet.parentElement!.style.paddingBottom).equals('0px')
+      }
+    } finally {
+      Platform.OS = os
+      Object.defineProperty(globalThis, 'ResizeObserver', {
+        configurable: true,
+        value: observer
+      })
+      window.getComputedStyle = computed
+    }
   })
 
   it('makes every sheet Cancel red text, removes the full-screen frame, and centers the rounded placeholder sheet', async () => {
