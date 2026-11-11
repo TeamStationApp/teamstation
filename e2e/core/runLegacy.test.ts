@@ -1,11 +1,11 @@
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { browserKnown, testChrome } from './runLegacy'
+import { browserKnown, rigSources, testChrome } from './runLegacy'
 
 describe('runLegacy browsers', function () {
   it('fills every variable that names a browser, and nothing else', function () {
@@ -51,6 +51,28 @@ describe('runLegacy browsers', function () {
       expect(testChrome(root)).equals(
         join(root, 'linux-160.0.1.1', 'chrome-linux64/chrome')
       )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('runLegacy rigs', function () {
+  it('reads the rigs a script imports from e2e/rigs, and nothing else', function () {
+    const root = mkdtempSync(join(tmpdir(), 'rigs-'))
+    try {
+      mkdirSync(join(root, 'e2e/rigs'), { recursive: true })
+      mkdirSync(join(root, 'src/app'), { recursive: true })
+      writeFileSync(join(root, 'e2e/rigs/one.ts'), 'process.env.ONE_BROWSER')
+      const script = join(root, 'src/app/a.e2e.ts')
+      const source = [
+        "import { a } from '../../e2e/rigs/one'",
+        "import { b } from '../../e2e/rigs/missing'",
+        "import { c } from './elsewhere'"
+      ].join('\n')
+      expect(rigSources(script, source)).deep.equals([
+        'process.env.ONE_BROWSER'
+      ])
     } finally {
       rmSync(root, { recursive: true, force: true })
     }

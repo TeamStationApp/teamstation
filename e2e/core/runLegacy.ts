@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn } from 'node:child_process'
 import {
+  existsSync,
   mkdirSync,
   openSync,
   readdirSync,
@@ -11,7 +12,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 
 import { concreteEnv, headerNames, legacyCommand } from './legacyCommand'
 import { STACK_API, STACK_ORIGIN } from './legacyStack'
@@ -65,6 +66,26 @@ export function sourceNames(source: string): string[] {
       m => m[1]
     )
   ]
+}
+
+/**
+ * The source of each rig under e2e/rigs that `source` (at `file`) imports:
+ * a rig reads variables of its own, such as the browser it asks for.
+ */
+export function rigSources(file: string, source: string): string[] {
+  const found: string[] = []
+  for (const [, spec] of source.matchAll(
+    /from\s+['"]([^'"]*\/e2e\/rigs\/[^'"]+)['"]/g
+  )) {
+    const base = join(dirname(file), spec)
+    for (const path of [base, `${base}.ts`]) {
+      if (existsSync(path) && path.endsWith('.ts')) {
+        found.push(readFileSync(path, 'utf8'))
+        break
+      }
+    }
+  }
+  return found
 }
 
 function artifactDir(file: string): string {
@@ -295,7 +316,8 @@ export async function runLegacy(
     ...new Set([
       ...Object.keys(command.env),
       ...headerNames(source),
-      ...sourceNames(source)
+      ...sourceNames(source),
+      ...rigSources(file, source).flatMap(sourceNames)
     ])
   ]
   const artifacts = artifactEnv(source, file, named)
