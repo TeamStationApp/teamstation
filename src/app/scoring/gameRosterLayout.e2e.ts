@@ -9,7 +9,7 @@ const required = (name: string): string => {
   return value
 }
 
-/** Point at a seeded coach roster with both team players and a game-only guest. */
+/** Open a seeded game, signed in as a coach whose side has team players and a game-only guest. */
 async function main(): Promise<void> {
   const client = createRequire(
     join(required('MAESTRO_D_CLIENT_ROOT'), 'package.json')
@@ -23,7 +23,9 @@ async function main(): Promise<void> {
     const m = await daemon.attach({
       device: required('ROSTER_BROWSER_DEVICE'),
       platform: 'web',
-      appId: url,
+      // The page itself is opened once, below: a sign-in link is spent by
+      // its first visit.
+      appId: new URL(url).origin,
       artifacts: 'on-failure',
       extra: {
         browser: process.env.TS_CHROME_PATH ?? 'chrome',
@@ -32,6 +34,9 @@ async function main(): Promise<void> {
     })
     try {
       await m.openBrowser({ url })
+      // The coach's game screen opens on another tab than its roster.
+      await m.assertVisible({ text: 'Roster', timeout: 30000 })
+      await m.tapOn({ text: 'Roster' })
       await m.assertVisible({ text: 'Tap player to edit.', timeout: 30000 })
       await m.evalBrowserScript({
         script: "await document.fonts.ready; return 'ready'"

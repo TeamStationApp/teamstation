@@ -213,6 +213,40 @@ function existingPlayer(file: string): Recipe {
   }
 }
 
+/**
+ * The existing-player fixture, a game-only guest on the Falcons' side of its
+ * game, and a one-time sign-in link for their coach that lands on the game.
+ */
+const gameRosterLayout: Recipe = async context => {
+  const made = await existingPlayer('src/app/scoring/gameRosterLayout.e2e.ts')(
+    context
+  )
+  if (made.some(run => run.blocked != null)) return made
+  const linked = spawnSync(
+    process.execPath,
+    [
+      '-r',
+      'sucrase/register',
+      'scripts/e2e/gameRosterLayout/fixture.ts',
+      '--origin',
+      STACK_ORIGIN
+    ],
+    { cwd: context.cwd, encoding: 'utf8' }
+  )
+  if (linked.status !== 0) {
+    return [
+      {
+        blocked: `gameRosterLayout fixture failed: ${linked.stderr.slice(-300)}`
+      }
+    ]
+  }
+  const { url } = JSON.parse(linked.stdout.trim().split('\n').pop() ?? '{}')
+  return made.map(run => ({
+    ...run,
+    env: { ...run.env, ROSTER_TEST_URL: url }
+  }))
+}
+
 const REPLAY_TWICE = ['pills', 'controls', 'liveInPlay', 'board']
 const REPLAY_ONCE = [
   'replay',
@@ -356,6 +390,7 @@ export const RECIPES: Record<string, Recipe> = {
   'src/app/screens/teamPlayers.e2e.ts': existingPlayer(
     'src/app/screens/teamPlayers.e2e.ts'
   ),
+  'src/app/scoring/gameRosterLayout.e2e.ts': gameRosterLayout,
   'src/app/replay/replay.e2e.ts': async context => {
     seedReplay(context.cwd)
     const runs: Invocation[] = []
