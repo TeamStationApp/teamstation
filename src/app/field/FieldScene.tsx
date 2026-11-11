@@ -28,7 +28,6 @@ import { Ballpark } from './Ballpark'
 import { projectBases } from './baseProjection'
 import { applyFieldCamera } from './cameraModel'
 import { catcherBounds, movedRect, type ScreenRect } from './catcherBounds'
-import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
 import { BASES, clampToField } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
@@ -172,7 +171,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       view.to,
       view.hovered,
       view.safeDisabled,
-      view.keyboard,
       view.safe,
       view.out
     ])
@@ -196,7 +194,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       y: ((1 - projected.y) * size.height) / 2
     }
   }
-  const { registerKeyboard } = props
   const gestureId = useRef(0)
   const dragGeneration = useRef(0)
   const [preview, setPreview] = useState<MoveDraft | null>(null)
@@ -235,36 +232,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     invalidate
   ])
 
-  useEffect(() => {
-    const handle = (key: string): boolean =>
-      fieldKey(callbacks.current, key, {
-        project: position => {
-          const projected = new Vector3(position.x, 9, position.z).project(
-            camera
-          )
-          return {
-            x: ((projected.x + 1) * size.width) / 2,
-            y: ((1 - projected.y) * size.height) / 2
-          }
-        },
-        width: size.width,
-        height: size.height
-      })
-    registerKeyboard?.(handle)
-    return () => {
-      registerKeyboard?.(null)
-    }
-  }, [
-    registerKeyboard,
-    camera,
-    size.width,
-    size.height,
-    view,
-    zoom,
-    cameraTilt,
-    cameraHeight
-  ])
-
   const gesturePolicyKey = props.interaction?.gestures.join()
   // Locking tap-only defender editing during a grab must not cancel that drag.
   const selectablePolicyKey = props.interaction?.selectableIds
@@ -279,14 +246,6 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         callbacks.current.onRunnerCancel?.()
         callbacks.current.onRunnerDrag?.(null)
       }
-      for (const player of players)
-        if (player.keyboardOrigin != null) {
-          player.target = { ...player.keyboardOrigin }
-          delete player.keyboardOrigin
-          callbacks.current.onRunnerDrag?.(null)
-          callbacks.current.onSelect('')
-          callbacks.current.onGestureActive?.(false)
-        }
       if (drag.current != null) {
         const player = players.find(item => item.id === drag.current?.id)
         const touch = drag.current.touch === true
@@ -1024,7 +983,7 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
             onMovementComplete={props.onMovementComplete}
             paused={props.presentationPaused}
             selected={
-              (preview?.id === player.id || player.keyboardOrigin != null) &&
+              preview?.id === player.id &&
               eligible.some(item => item.id === player.id)
             }
           />

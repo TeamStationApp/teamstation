@@ -1244,12 +1244,13 @@ describe('the dictation control', function () {
       expect(await space('keydown')).equals(false)
     })
 
-    it('takes Space before a focused field could grab a player with it', async function () {
+    it('takes Space over the scoring field', async function () {
       const h = harness()
       await h.render()
       const socket = await enable(h)
       const field = document.createElement('div')
-      field.setAttribute('role', 'application')
+      field.setAttribute('role', 'img')
+      field.setAttribute('aria-label', 'Baseball field')
       document.body.appendChild(field)
       const seen: string[] = []
       field.addEventListener('keydown', event => seen.push(event.key))

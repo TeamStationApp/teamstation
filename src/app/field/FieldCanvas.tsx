@@ -130,23 +130,6 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
     if (labelHost.current != null)
       syncFieldNameplates(labelHost.current, plates)
   }, [])
-  const keyboard = useRef<((key: string) => boolean) | null>(null)
-  const { registerKeyboard: registerParentKeyboard } = props
-  const registerKeyboard = useCallback(
-    (handler: ((key: string) => boolean) | null) => {
-      keyboard.current = handler
-      registerParentKeyboard?.(
-        handler == null
-          ? null
-          : key => {
-              const handled = handler(key)
-              if (key === 'Enter' || key === 'Escape') eventHost?.focus()
-              return handled
-            }
-      )
-    },
-    [registerParentKeyboard, eventHost]
-  )
   const cancelGesture = useRef<(() => void) | null>(null)
   const registerInterruption = useCallback((cancel: (() => void) | null) => {
     cancelGesture.current = cancel
@@ -166,16 +149,11 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       onLostPointerCaptureCapture={() => {
         cancelGesture.current?.()
       }}
-      tabIndex={0}
       data-presentation={activity.presentation}
       data-presentation-id={activity.id}
       data-moving={activity.moving}
-      role="application"
-      aria-label="Baseball field. Brackets focus a player, Space grabs, arrows move, S or O chooses runner Safe or Out, Enter releases, Escape cancels."
-      onKeyDown={event => {
-        if (event.key === 'Escape') cancelGesture.current?.()
-        if (keyboard.current?.(event.key) === true) event.preventDefault()
-      }}
+      role="img"
+      aria-label="Baseball field"
       ref={node => {
         if (node != null) setEventHost(node)
       }}
@@ -224,7 +202,6 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
               onNameplates={onNameplates}
               presentationPaused={props.presentationPaused === true || hidden}
               registerInterruption={registerInterruption}
-              registerKeyboard={registerKeyboard}
               touchPlacement={props.touchPlacement === true || mobileInput}
             />
           </Canvas>

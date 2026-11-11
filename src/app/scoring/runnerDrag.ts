@@ -7,7 +7,6 @@ export interface TargetRect {
   height: number
 }
 export interface RunnerDragView {
-  keyboard?: boolean
   id: string
   from: number
   to: number

@@ -571,35 +571,6 @@ describe('Space held to talk', function () {
 
   it('leaves Space to an element that handles it, or whose key it is', async function () {
     const { calls } = await mount(HOLD)
-    // The scoring field: Space grabs a player, and is the field's whether
-    // or not it grabbed one.
-    const field = add(document.createElement('div'))
-    field.setAttribute('role', 'application')
-    field.tabIndex = 0
-    const inside = document.createElement('span')
-    field.appendChild(inside)
-    const grabbed: string[] = []
-    field.addEventListener('keydown', event => {
-      if (event.key === ' ' && event.target === field) {
-        grabbed.push('grab')
-        event.preventDefault()
-      }
-    })
-    for (const target of [field, inside]) {
-      space('keydown', target)
-      clock!.advance(1000)
-      space('keyup', target)
-    }
-    expect(grabbed).deep.equals(['grab'])
-    const inField = new window.KeyboardEvent('keydown', {
-      key: ' ',
-      bubbles: true,
-      cancelable: true
-    })
-    inside.dispatchEvent(inField)
-    expect(inField.defaultPrevented, 'not taken inside the field').equals(false)
-    clock!.advance(1000)
-    space('keyup', inside)
     // A video plays and pauses on its own Space.
     const video = add(document.createElement('video'))
     expect(space('keydown', video)).equals(false)
