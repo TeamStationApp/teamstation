@@ -111,6 +111,41 @@ describe('override settings editor', function () {
     expect(applied[1].awayScore).equals(50)
   })
 
+  it('reserves the measured Apply action height so enlarged text does not cover the last runner', async function () {
+    await mount()
+    const footer = document.querySelector<HTMLElement>(
+      '[data-testid="Scoring sheet footer"]'
+    )!
+    const content = document.querySelector<HTMLElement>(
+      '[data-testid="Scoring sheet content"]'
+    )!
+    const measure = async (
+      target: HTMLElement,
+      height: number
+    ): Promise<void> => {
+      await act(async () => {
+        ;(
+          target as HTMLElement & {
+            __reactLayoutHandler: (event: unknown) => void
+          }
+        ).__reactLayoutHandler({
+          nativeEvent: { layout: { x: 0, y: 0, width: 350, height } }
+        })
+      })
+    }
+    await measure(content, 400)
+    for (const height of [56, 92]) {
+      await measure(footer, height)
+      expect(
+        Number.parseFloat(
+          (content.firstElementChild as HTMLElement).style.paddingBottom
+        )
+      ).at.least(height + 12)
+      expect(content.contains(node('Third base'))).equals(true)
+      expect(content.contains(node('Apply Override'))).equals(false)
+    }
+  })
+
   it('allows a count correction when the batting index is stale', async function () {
     const state = stateOf()
     state.session.liveData.boxscore.teams.away.battingIndex = 3
