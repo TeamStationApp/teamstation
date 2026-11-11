@@ -475,7 +475,7 @@ async function pruneSchedule(
     if (!named.has(String(row.game_id)))
       await tx.execute(
         'DELETE FROM schedule_games WHERE shape = ? AND game_id = ?',
-        [row.shape, row.game_id]
+        [String(row.shape), String(row.game_id)]
       )
 }
 
