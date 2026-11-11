@@ -28,11 +28,15 @@ export const STACK_DATABASE = 'AppDb_nativeScoreboard'
 /** The stack's database and store, from TS_TEST_DATABASE_URL and TS_TEST_REDIS_URL. */
 export const STACK_SERVERS = stackServers(STACK_DATABASE)
 export const STACK_DATABASE_URL = STACK_SERVERS.databaseUrl
-export const STACK_API_PORT = 9100
+/** 9100, or `TS_STACK_API_PORT` where something else on the machine holds it. */
+export const STACK_API_PORT = Number(process.env.TS_STACK_API_PORT ?? 9100)
 export const STACK_WEB_PORT = 8082
-export const STACK_PROXY_PORT = 8080
+/** 8080, or `TS_STACK_PROXY_PORT` where something else on the machine holds it. */
+export const STACK_PROXY_PORT = Number(process.env.TS_STACK_PROXY_PORT ?? 8080)
 export const STACK_SPACE_PORT = 9190
 export const STACK_METRO_PORT = 8081
+/** Live ingest's RTMP port: the server's default, which the stack keeps. */
+export const STACK_RTMP_PORT = 1936
 const FFMPEG_FULL = '/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg'
 export const STACK_API = `http://127.0.0.1:${STACK_API_PORT}/api/v1`
 export const STACK_ORIGIN = `http://127.0.0.1:${STACK_PROXY_PORT}`
@@ -249,7 +253,8 @@ export async function startLegacyStack(
     STACK_API_PORT,
     STACK_WEB_PORT,
     STACK_PROXY_PORT,
-    STACK_SPACE_PORT
+    STACK_SPACE_PORT,
+    STACK_RTMP_PORT
   ])
   const scratch = join(tmpdir(), 'teamstation-e2eSuite-stack')
   rmSync(scratch, { recursive: true, force: true })
@@ -297,6 +302,9 @@ export async function startLegacyStack(
       uploadsDir: join(scratch, 'uploads'),
       space,
       serveMediaLocally: true,
+      // Links the API hands out (playback, stills, sign-in) name the stack,
+      // not production.
+      primaryUrlOverride: `127.0.0.1:${STACK_PROXY_PORT}`,
       // Chat history recovery and fresh keys: the chat scripts exercise both.
       chatHistoryRecoveryEnabled: true,
       // Fixtures burn a clock into sample video, which needs drawtext.
@@ -521,11 +529,15 @@ export async function startLegacyStack(
         await startApi()
       },
       stop: async () => {
-        await new Promise<void>(resolve =>
+        // A browser left open keeps its connections alive, and close waits
+        // for every one: they are dropped instead.
+        const closed = new Promise<void>(resolve =>
           front.close(() => {
             resolve()
           })
         )
+        front.closeAllConnections()
+        await closed
         for (const child of children) await stopChild(child)
         await stopChild(ingest)
         await stopChild(api)
