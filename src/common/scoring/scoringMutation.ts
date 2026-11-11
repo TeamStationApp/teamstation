@@ -82,8 +82,11 @@ export function scoringFingerprintInput(value: unknown): string {
 let serial = 0
 export function authoredScoringMutation(at: number): ScoringMutation {
   const bytes = new Uint8Array(16)
-  if (globalThis.crypto?.getRandomValues != null)
-    globalThis.crypto.getRandomValues(bytes)
+  // Native targets do not include DOM globals and may not provide Web Crypto.
+  const { crypto } = globalThis as {
+    crypto?: { getRandomValues: (bytes: Uint8Array) => Uint8Array }
+  }
+  if (crypto?.getRandomValues != null) crypto.getRandomValues(bytes)
   else
     for (let i = 0; i < bytes.length; i++)
       bytes[i] = Math.floor(Math.random() * 256)

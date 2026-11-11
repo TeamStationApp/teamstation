@@ -1313,6 +1313,7 @@ export const asBattingRow = asObject({
   sf: asOptional(asNumber, 0),
   /** Sacrifice bunts. */
   sh: asOptional(asNumber, 0),
+  kl: asOptional(asNullable(asNumber), null),
   roe: asOptional(asNullable(asNumber), null),
   fc: asOptional(asNullable(asNumber), null),
   pik: asOptional(asNullable(asNumber), null),
@@ -1363,6 +1364,7 @@ export const asPitchingRow = asObject({
   k: asNumber,
   gs: asOptional(asNullable(asNumber), null),
   pitches: asOptional(asNullable(asNumber), null),
+  strikes: asOptional(asNullable(asNumber), null),
   kl: asOptional(asNullable(asNumber), null),
   lob: asOptional(asNullable(asNumber), null),
   bk: asOptional(asNullable(asNumber), null),

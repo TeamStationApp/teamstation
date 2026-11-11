@@ -43,6 +43,8 @@ function side(name: string, innings: number[]): ReplaySide {
         er: 1,
         bb: 2,
         k: 9,
+        hbp: 0,
+        strikes: 0,
         pc: 101,
         current: false
       }

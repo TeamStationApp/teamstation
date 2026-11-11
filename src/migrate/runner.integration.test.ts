@@ -119,8 +119,11 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back scoring mutation before the existing game plans migration', async () => {
+  it('rolls back the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '116pitchingStrikes'
+    ])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '115scoringMutation'
     ])
@@ -621,7 +624,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '113chatHistoryRecovery',
           '113playingTimeRules',
           '114gamePlans',
-          '115scoringMutation'
+          '115scoringMutation',
+          '116pitchingStrikes'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

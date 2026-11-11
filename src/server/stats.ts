@@ -54,6 +54,7 @@ export interface StatRow {
 }
 
 export interface BattingLine {
+  kl: number | null
   roe: number | null
   fc: number | null
   pik: number | null
@@ -87,6 +88,7 @@ export interface BattingLine {
 }
 
 export interface PitchingLine {
+  strikes: number | null
   gs: number | null
   pitches: number | null
   kl: number | null
@@ -141,6 +143,7 @@ function emptyBatting(userId: string, teamId: string | null): BattingLine {
     cs: 0,
     sf: 0,
     sh: 0,
+    kl: 0,
     roe: 0,
     fc: 0,
     pik: 0,
@@ -165,6 +168,7 @@ function emptyPitching(userId: string, teamId: string | null): PitchingLine {
     wp: 0,
     gs: 0,
     pitches: 0,
+    strikes: 0,
     kl: 0,
     pitchAb: 0,
     lob: 0,
@@ -201,6 +205,7 @@ export function battingLines(rows: StatRow[]): BattingLine[] {
     held.cs += row.cs
     held.sf += row.sf
     held.sh += row.sh
+    held.kl = addStatCount(held.kl, row.extra?.battingKl)
     held.roe = addStatCount(held.roe, row.extra?.roe)
     held.fc = addStatCount(held.fc, row.extra?.fc)
     held.pik = addStatCount(held.pik, row.extra?.pik)
@@ -254,6 +259,7 @@ export function pitchingLines(rows: StatRow[]): PitchingLine[] {
     for (const field of [
       'gs',
       'pitches',
+      'strikes',
       'kl',
       'pitchAb',
       'lob',

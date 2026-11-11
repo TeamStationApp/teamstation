@@ -191,6 +191,56 @@ describe('runs batted in', function () {
 })
 
 describe('stat lines', function () {
+  it('keeps each delivery with its pitcher and preserves unknown strike detail', function () {
+    const state = after(
+      game(),
+      strike,
+      { type: 'pitch', call: 'F' },
+      { type: 'pitch', call: 'B' }
+    )
+    const play = structuredClone(state.liveData.plays.currentPlay!)
+    const pitches = play.playEvents.filter(event => event.isPitch)
+    pitches[0].player = { id: F.P, fullName: 'Gerrit Cole' }
+    pitches[1].player = { id: F.P, fullName: 'Gerrit Cole' }
+    pitches[2].player = { id: 99, fullName: 'Luis Gil' }
+    const lines = statLines([play]).pitching
+    expect(lines[F.P]).includes({ pitches: 2, strikes: 2 })
+    expect(lines[99]).includes({ pitches: 1, strikes: 0 })
+    delete pitches[2].details.call
+    Reflect.deleteProperty(pitches[2].details, 'code')
+    expect(statLines([play]).pitching[99]).includes({
+      pitches: 1,
+      strikes: null
+    })
+  })
+  it('excludes non-deliveries marked as pitches from pitch and strike totals', function () {
+    const state = after(game(), strike)
+    const play = structuredClone(state.liveData.plays.currentPlay!)
+    const delivery = play.playEvents.find(event => event.isPitch)!
+    for (const code of [
+      'N',
+      'PSO',
+      '.',
+      '1',
+      '2',
+      '3',
+      '+1',
+      '+2',
+      '+3',
+      'A',
+      'AC',
+      'AB',
+      'VB',
+      'VC',
+      'VP',
+      'VS'
+    ]) {
+      const event = structuredClone(delivery)
+      event.details.call = { code, description: 'Non-delivery' }
+      play.playEvents.push(event)
+    }
+    expect(statLines([play]).pitching[F.P]).includes({ pitches: 1, strikes: 1 })
+  })
   it('counts each batter and pitcher from the plays', function () {
     let state = walk(game())
     state = strikeout(state)
@@ -204,6 +254,8 @@ describe('stat lines', function () {
     expect(batting[4]).includes({ pa: 1, ab: 1, h: 1, rbi: 0 })
     expect(pitching[F.P]).deep.equals({
       pitches: 9,
+      hbp: 1,
+      strikes: 4,
       outs: 1,
       h: 1,
       r: 0,

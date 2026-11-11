@@ -37,6 +37,8 @@ export interface ReplayPitchingLine {
   er: number
   bb: number
   k: number
+  hbp: number | null
+  strikes: number | null
   pc: number | null
   /** On the mound now. */
   current: boolean
@@ -230,6 +232,8 @@ export function replayBoxScore(
         er: charged?.er ?? 0,
         bb: line?.bb ?? 0,
         k: line?.k ?? 0,
+        hbp: line?.hbp ?? 0,
+        strikes: line == null ? 0 : line.strikes,
         pc: team.pitchCounts[id] ?? 0,
         current: !atBat && !state.final && id === mound
       }
@@ -267,6 +271,8 @@ export interface ReplayPitchingTotals {
   er: number
   bb: number
   k: number
+  hbp: number | null
+  strikes: number | null
   pc: number | null
 }
 
@@ -297,7 +303,7 @@ export function pitchingTotals(
   lines: readonly ReplayPitchingLine[]
 ): ReplayPitchingTotals {
   const sum = (
-    field: Exclude<keyof ReplayPitchingTotals, 'ip' | 'pc'>
+    field: Exclude<keyof ReplayPitchingTotals, 'ip' | 'pc' | 'hbp' | 'strikes'>
   ): number => lines.reduce((total, line) => total + line[field], 0)
   const outs = sum('outs')
   return {
@@ -308,6 +314,12 @@ export function pitchingTotals(
     er: sum('er'),
     bb: sum('bb'),
     k: sum('k'),
+    hbp: lines.some(line => line.hbp == null)
+      ? null
+      : lines.reduce((total, line) => total + (line.hbp ?? 0), 0),
+    strikes: lines.some(line => line.strikes == null)
+      ? null
+      : lines.reduce((total, line) => total + (line.strikes ?? 0), 0),
     pc: lines.some(line => line.pc === null)
       ? null
       : lines.reduce((total, line) => total + (line.pc ?? 0), 0)

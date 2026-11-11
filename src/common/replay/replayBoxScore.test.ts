@@ -242,6 +242,8 @@ describe('the replay box score totals', function () {
     bb: 1,
     k: 2,
     pc: 20,
+    hbp: 1,
+    strikes: 12,
     current: false,
     ...figures
   })
@@ -264,6 +266,17 @@ describe('the replay box score totals', function () {
     })
   })
 
+  it('keeps zero counts and propagates unavailable totals independently', function () {
+    expect(pitchingTotals([])).includes({ pc: 0, strikes: 0, hbp: 0 })
+    expect(
+      pitchingTotals([pitcher(1, 0), pitcher(2, 0, { strikes: null })])
+    ).includes({ pc: 40, strikes: null, hbp: 2 })
+    expect(pitchingTotals([pitcher(1, 0, { pc: null, hbp: null })])).includes({
+      pc: null,
+      strikes: 12,
+      hbp: null
+    })
+  })
   it('adds innings as outs, and the other pitching columns as they are', function () {
     expect(
       pitchingTotals([pitcher(1, 4), pitcher(2, 5, { er: 1, pc: 31 })])
@@ -275,7 +288,9 @@ describe('the replay box score totals', function () {
       er: 1,
       bb: 2,
       k: 4,
-      pc: 51
+      pc: 51,
+      hbp: 2,
+      strikes: 24
     })
   })
 })

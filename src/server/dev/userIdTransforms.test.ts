@@ -25,6 +25,7 @@ function mergedFixture(): UserIdSnapshot {
     hr: 0,
     bb: 0,
     k: 0,
+    kl: 1,
     r: 0,
     rbi: 0,
     hbp: 0,
@@ -58,6 +59,7 @@ function mergedFixture(): UserIdSnapshot {
     k: 1,
     gs: 1,
     pitches: 10,
+    strikes: 6,
     kl: 0,
     pitchAb: 3,
     wp: 0,
@@ -152,6 +154,7 @@ describe('independent merged aggregate expectations', () => {
       ab: 6,
       pa: 6,
       g: 2,
+      kl: 2,
       firstPa: 1
     })
     expect(body.batting[0].rates).deep.equals({
@@ -166,6 +169,7 @@ describe('independent merged aggregate expectations', () => {
       eraInnings: 8,
       er: 2,
       bf: 8,
+      strikes: 12,
       userId: 3
     })
     expect(body.pitching[0].rates).deep.equals({
@@ -178,12 +182,15 @@ describe('independent merged aggregate expectations', () => {
   it('preserves unknown-data failures, null counts and mixed-team dimensions', () => {
     const fixture = mergedFixture()
     const body = fixture.api['/teams/tem_one/stats'] as any
+    body.batting[0].kl = null
+    body.pitching[0].strikes = null
     body.batting[0].roe = null
     body.batting[0].teamId = 'tem_two'
     body.pitching[0].pitches = null
     expectedMergedApi(fixture, [])
-    expect(body.batting[0]).includes({ roe: null, teamId: null })
+    expect(body.batting[0]).includes({ roe: null, kl: null, teamId: null })
     expect(body.pitching[0].pitches).equals(null)
+    expect(body.pitching[0].strikes).equals(null)
     const unknown = mergedFixture()
     ;(unknown.api['/teams/tem_one/stats'] as any).batting[0].unknown = 9
     expect(() => {

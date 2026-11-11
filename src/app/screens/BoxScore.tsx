@@ -280,6 +280,7 @@ function emptyLine(batter: LineupBatter, teamId: string | null): BattingLine {
     cs: 0,
     sf: 0,
     sh: 0,
+    kl: null,
     roe: null,
     fc: null,
     pik: null,
