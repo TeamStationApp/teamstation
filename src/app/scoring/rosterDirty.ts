@@ -1,5 +1,12 @@
+import type { LineupPlayer } from '../../common/api'
+import {
+  alignPlan,
+  type GamePlan,
+  type GamePlanRow,
+  planPlayerKey
+} from '../../common/gamePlan'
 import type { StagedRunner } from '../../common/scoring/rosterCommands'
-import { setupOf } from '../../common/scoring/state'
+import { setupOf, type Side } from '../../common/scoring/state'
 import type { ScoringSessionState } from './scoringTypes'
 
 /**
@@ -24,17 +31,80 @@ export function rosterDirty(
 }
 
 /**
- * Whether Save Rosters is lit: the draft validates, and it holds a change or
- * a lineup the game has not accepted yet. A lineup the game does not hold is
- * a pending change, so saving it as it stands is how it is accepted; once it
- * is, Save waits for a change again.
+ * Whether Save Rosters is lit: the draft validates, and it holds a change, a
+ * lineup the game has not accepted yet, or a coach's changed game plan. A
+ * lineup the game does not hold is a pending change, so saving it as it
+ * stands is how it is accepted; once it is, Save waits for a change again.
  */
 export function rosterSavable(
   dirty: boolean,
   unaccepted: boolean,
-  problem: string | undefined
+  problem: string | undefined,
+  planChanged = false
 ): boolean {
-  return problem == null && (dirty || unaccepted)
+  return problem == null && (dirty || unaccepted || planChanged)
+}
+
+/** A side's batting order as the game plan names its rows. */
+export function planLineup(
+  draft: ScoringSessionState,
+  side: Side
+): LineupPlayer[] {
+  return draft.liveData.boxscore.teams[side].battingOrder.flatMap(id => {
+    const player = draft.gameData.players[id]
+    return player == null
+      ? []
+      : [
+          {
+            gumboId: player.local ? null : player.id,
+            fullName: player.fullName,
+            jersey: player.jersey
+          }
+        ]
+  })
+}
+
+/**
+ * Whether the coach's game plan differs from the one saved, read against the
+ * lineup as it stands: its cells, innings and toggle, a cell changed back
+ * being clean. The order its rows are in is the lineup's, not the plan's, so
+ * a lineup reordered on another device leaves an opened plan clean.
+ */
+export function planDirty(
+  plan: GamePlan | undefined,
+  saved: GamePlan | undefined,
+  lineup: readonly LineupPlayer[]
+): boolean {
+  if (plan == null || saved == null) return false
+  return !sameValue(alignPlan(plan, lineup), alignPlan(saved, lineup))
+}
+
+/**
+ * Whether a saved plan's rows bat in another order than the lineup being
+ * saved, so saving the lineup saves the plan again in its order: the next
+ * game's Rotate Leadoff reads its first row. Only the order of players both
+ * hold counts, so a batter added or replaced at the field is no reason.
+ */
+export function planOrderStale(
+  saved: GamePlan | undefined,
+  lineup: readonly LineupPlayer[]
+): boolean {
+  if (saved == null) return false
+  return !sameValue(...sharedOrder(saved.rows, alignPlan(saved, lineup).rows))
+}
+
+/** Two plans' rows as player keys, each kept to the players both hold. */
+function sharedOrder(
+  left: readonly GamePlanRow[],
+  right: readonly GamePlanRow[]
+): [string[], string[]] {
+  const keys = (rows: readonly GamePlanRow[]): string[] =>
+    rows.map(row => planPlayerKey(row.player))
+  const [leftKeys, rightKeys] = [keys(left), keys(right)]
+  return [
+    leftKeys.filter(key => rightKeys.includes(key)),
+    rightKeys.filter(key => leftKeys.includes(key))
+  ]
 }
 
 /** Deep equality of plain data, ignoring key order and keys set to undefined. */

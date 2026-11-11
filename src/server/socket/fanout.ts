@@ -237,7 +237,8 @@ export class GameFanout {
         : [...this.watched.keys()]
     if (games.length === 0) return
     let song: FanoutSong | undefined
-    if ('team' in change) {
+    // Only a song names a player; a plan names its team as `teamId`.
+    if (change.kind === 'walkUpSong') {
       try {
         song = {
           teamId: change.team,
@@ -378,14 +379,18 @@ export class GameFanout {
                   held.lineups!
                 )
               }
-            : {
-                ...head,
-                kind: 'playEdits',
-                data:
-                  game.play_generation !== change.generation
-                    ? readAgain(game.play_generation)
-                    : (frame ?? (await this.readEdits(game, change)))
-              }
+            : change.kind === 'plans'
+              ? // Every viewer hears it: the plan itself stays behind
+                // `GET /games/:gameId/plans`, which only its planners read.
+                { ...head, kind: 'plans', data: { teamId: change.teamId } }
+              : {
+                  ...head,
+                  kind: 'playEdits',
+                  data:
+                    game.play_generation !== change.generation
+                      ? readAgain(game.play_generation)
+                      : (frame ?? (await this.readEdits(game, change)))
+                }
     for (const subscriber of held.recipients) subscriber.send(message)
   }
 

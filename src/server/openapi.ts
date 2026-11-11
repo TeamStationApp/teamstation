@@ -26,6 +26,7 @@ import {
 } from '../common/walkUpSong'
 import { schedulePreviewPaths } from './autoScheduler/schedulePreviewsOpenApi'
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
+import { gamePlanPaths } from './games/gamePlansOpenApi'
 import { MAX_READS } from './graphql/restReader'
 import { MAX_DEPTH } from './graphql/schema'
 import { creationPaths } from './groups/openApi'
@@ -3205,6 +3206,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...schedulingSetupPaths(errorResponse),
       ...schedulePreviewPaths(errorResponse),
       ...eventInfoPaths(errorResponse),
+      ...gamePlanPaths(errorResponse),
       ...accountPaths,
       ...apiKeyPaths,
       ...graphqlPaths,

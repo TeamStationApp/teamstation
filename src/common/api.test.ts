@@ -804,6 +804,129 @@ describe('api client', function () {
     expect(refused).equals(true)
   })
 
+  it('reads and saves a game’s plans, refusing an answer that does not read', async function () {
+    const side = {
+      teamId: 'tem 1',
+      plan: {
+        enabled: true,
+        innings: 2,
+        rows: [
+          {
+            player: { gumboId: 7, fullName: 'Lou Gehrig', jersey: '4' },
+            cells: ['1B', '']
+          },
+          {
+            player: { gumboId: null, fullName: 'Yogi Berra', jersey: '8' },
+            cells: ['C', '-']
+          }
+        ]
+      },
+      rules: { defensivePlayingTime: true, measuredIn: 'outs' },
+      sameDay: {
+        before: { catcherInnings: { 'n:Yogi Berra#8': 2 } },
+        laterPitched: { 'g:7': true }
+      }
+    }
+    // An older server also answers the season's history and who caught a
+    // fourth inning, which are not read.
+    const older = {
+      ...side,
+      history: { players: {}, lastLeadoff: 'g:7', lastGameSits: {} },
+      sameDay: {
+        ...side.sameDay,
+        before: { ...side.sameDay.before, caughtFourth: { 'g:7': true } }
+      }
+    }
+    const read = stubFetch(200, { away: null, home: older })
+    const plans = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: read.fetch
+    }).gamePlans('gam 1')
+    expect(read.calls[0]).deep.include({
+      url: 'http://x/api/v1/games/gam%201/plans',
+      method: 'GET'
+    })
+    expect(plans.away).equals(null)
+    // A dash, the bench as an older server stores it, reads as blank.
+    expect(plans.home?.plan).deep.equals({
+      ...side.plan,
+      rows: [side.plan.rows[0], { ...side.plan.rows[1], cells: ['C', ''] }]
+    })
+    // A rule the server left out takes its default.
+    expect(plans.home?.rules?.measuredIn).equals('outs')
+    expect(plans.home?.rules?.outs).deep.equals({
+      required: 6,
+      consecutive: false
+    })
+    expect(Object.keys(plans.home ?? {})).not.includes('history')
+    expect(plans.home?.sameDay).deep.equals(side.sameDay)
+    // Rules in the first version's shape read into this one.
+    const first = stubFetch(200, {
+      away: null,
+      home: {
+        ...side,
+        rules: { mandatoryPlay: true, catcherInningLimit: true }
+      }
+    })
+    expect(
+      (
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: first.fetch
+        }).gamePlans('gam 1')
+      ).home?.rules
+    ).deep.include({
+      defensivePlayingTime: true,
+      measuredIn: 'outs',
+      catcherMaxInnings: 4
+    })
+
+    const saved = stubFetch(200, { ...side, plan: null, rules: null })
+    const plan = side.plan as Parameters<TeamStationClient['saveGamePlan']>[2]
+    const answer = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: saved.fetch
+    }).saveGamePlan('gam 1', 'tem 1', plan)
+    expect(saved.calls[0]).deep.include({
+      url: 'http://x/api/v1/games/gam%201/plans/tem%201',
+      method: 'PUT'
+    })
+    expect(JSON.parse(saved.calls[0].body ?? '')).deep.equals(plan)
+    expect(answer).to.include({ teamId: 'tem 1', plan: null, rules: null })
+
+    for (const bad of [
+      [],
+      { away: null },
+      { away: null, home: { ...side, plan: { ...side.plan, innings: 3 } } },
+      {
+        away: null,
+        home: {
+          ...side,
+          sameDay: { ...side.sameDay, laterPitched: { 'g:7': 1 } }
+        }
+      },
+      // A same-day load not split at the game.
+      {
+        away: null,
+        home: {
+          ...side,
+          sameDay: { catcherInnings: {}, pitched: {} }
+        }
+      }
+    ]) {
+      let refused = false
+      try {
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stubFetch(200, bad).fetch
+        }).gamePlans('g')
+      } catch {
+        refused = true
+      }
+      expect(refused, JSON.stringify(bad)).equals(true)
+    }
+  })
+
   it('cleans a lineup save, refusing an index past its players', function () {
     const players = [
       { gumboId: 7, fullName: 'Judge', jersey: '99' },

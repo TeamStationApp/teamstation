@@ -2,12 +2,18 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { type GestureResponderEvent, Text, type ViewProps } from 'react-native'
+import {
+  type GestureResponderEvent,
+  Text,
+  View,
+  type ViewProps
+} from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   rosterAccessibilityAction,
   RosterDrag,
+  RosterGrip,
   rosterItemLayout,
   rosterResponder
 } from './RosterDrag.native'
@@ -308,6 +314,147 @@ describe('native roster responder', function () {
     expect(held).not.includes(true)
     expect(engine.active).equals(null)
     expect(taps).equals(1)
+  })
+  it('picks a card up as a touch lands on its grip, holds half a second on its body, and lets a body move before then scroll (N2)', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const held: boolean[] = []
+    engine.heldListeners.add(value => held.push(value))
+    const handlers = rosterResponder(engine, {
+      children: null,
+      playerId: 7,
+      label: 'Seven'
+    })
+    try {
+      // The grip: the card lifts and every list locks as the touch lands.
+      handlers.grip()
+      handlers.onTouchStart!(event(4, 10))
+      expect(engine.active?.id).equals(7)
+      expect(held.at(-1)).equals(true)
+      // The grip holds the touch; the card follows it by its touch events,
+      // never asking for it, as a grant would stop them reaching it.
+      expect(handlers.onMoveShouldSetResponder!(event(4, 12))).equals(false)
+      handlers.onTouchMove!(event(4, 40))
+      await flush()
+      expect(engine.active?.moved).equals(true)
+      handlers.onTouchEnd!(event(4, 40))
+      await flush()
+      expect(engine.active).equals(null)
+      // The body, on the next touch: the grip's mark is spent.
+      held.length = 0
+      handlers.onTouchStart!(event(90, 10))
+      expect(engine.active).equals(null)
+      await new Promise(resolve => setTimeout(resolve, 300))
+      expect(engine.active).equals(null)
+      await new Promise(resolve => setTimeout(resolve, 210))
+      expect(engine.active?.id).equals(7)
+      handlers.onTouchEnd!(event(90, 10))
+      await flush()
+      // A body move before the hold fires scrolls, and nothing lifts.
+      held.length = 0
+      handlers.onTouchStart!(event(90, 10))
+      handlers.onTouchMove!(event(90, 40))
+      await new Promise(resolve => setTimeout(resolve, 510))
+      expect(handlers.onMoveShouldSetResponder!(event(90, 60))).equals(false)
+      handlers.onTouchEnd!(event(90, 60))
+      expect(held).not.includes(true)
+      expect(engine.active).equals(null)
+      // A grip touch that goes nowhere is the card's tap: its drag is put
+      // back, and the tap runs, as on an Add to Lineup card.
+      const taps: number[] = []
+      const tapped = rosterResponder(engine, {
+        children: null,
+        playerId: 9,
+        label: 'Nine',
+        onTap: () => taps.push(9)
+      })
+      tapped.grip()
+      tapped.onTouchStart!(event(4, 10))
+      expect(engine.active?.id).equals(9)
+      tapped.onTouchMove!(event(6, 12))
+      tapped.onTouchEnd!(event(6, 12))
+      await flush()
+      expect(engine.active).equals(null)
+      expect(taps).deep.equals([9])
+      tapped.dispose()
+      // A grip touch on a card that cannot be dragged starts nothing.
+      const disabled = rosterResponder(engine, {
+        children: null,
+        playerId: 8,
+        disabled: true
+      })
+      disabled.grip()
+      disabled.onTouchStart!(event(4, 10))
+      expect(engine.active).equals(null)
+      disabled.dispose()
+    } finally {
+      handlers.dispose()
+    }
+  })
+  it('makes the grip its own responder, which a list cannot take, and tells its card a touch started there (N2)', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const list: string[] = []
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterContext.Provider value={engine}>
+            {/* A list that wants every touch that moves, before its rows. */}
+            <View
+              onStartShouldSetResponder={() => true}
+              onMoveShouldSetResponderCapture={() => true}
+              onResponderGrant={() => {
+                list.push('grant')
+              }}
+              onResponderReject={() => {
+                list.push('reject')
+              }}
+            >
+              <RosterDrag playerId={7} label="Seven">
+                <RosterGrip label="Drag Seven" color="rgb(1, 2, 3)" />
+                <Text>Seven</Text>
+              </RosterDrag>
+            </View>
+          </RosterContext.Provider>
+        </ThemeProvider>
+      )
+    })
+    const glyph = host.querySelector<HTMLElement>('[aria-label="Drag Seven"]')!
+    expect(glyph.textContent).equals('≡')
+    expect(getComputedStyle(glyph).color).equals('rgb(1, 2, 3)')
+    const grip = glyph.parentElement!
+    // The card's whole height and its left padding.
+    expect(grip.style.marginTop).equals('-10px')
+    expect(grip.style.marginLeft).equals('-8px')
+    const touch = async (target: Element, type: string): Promise<void> => {
+      const e = new window.Event(type, { bubbles: true, cancelable: true })
+      const point = { identifier: 1, clientX: 4, clientY: 20, pageX: 4 }
+      if (type === 'touchmove') point.clientY = point.pageX = 40
+      Object.defineProperties(e, {
+        touches: { value: type === 'touchend' ? [] : [point] },
+        changedTouches: { value: [point] }
+      })
+      await act(async () => {
+        target.dispatchEvent(e)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+    }
+    await touch(glyph, 'touchstart')
+    expect(engine.active?.id).equals(7)
+    await touch(glyph, 'touchmove')
+    // The list asked for the touch and was refused it.
+    expect(list).deep.equals(['reject'])
+    await touch(glyph, 'touchend')
+    expect(engine.active).equals(null)
+    // Anywhere else on the card holds first.
+    const name = [...host.querySelectorAll('[dir="auto"]')].find(
+      node => node.textContent === 'Seven'
+    )!
+    await touch(name, 'touchstart')
+    expect(engine.active).equals(null)
+    await touch(name, 'touchend')
+    document.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
   })
   it('supports native accessibility activation and reorder, rejecting disabled or unknown actions', function () {
     const deltas: number[] = []

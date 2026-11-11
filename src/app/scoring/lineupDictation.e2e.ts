@@ -350,8 +350,11 @@ describe('the roster screen for a scorekeeper', function () {
           )
         )
       ).lessThan(1)
-      // Cancel sits under the bar.
-      expect(cancel.y).at.least(bar.bottom - 0.5)
+      // Cancel sits in the bar, left of the mic, on Save Rosters' row.
+      expect(cancel.y).at.least(bar.y - 0.5)
+      expect(cancel.bottom).at.most(bar.bottom + 0.5)
+      expect(cancel.x + cancel.width).at.most(mic.x + 0.5)
+      expect(cancel.y + cancel.height / 2).closeTo(save.y + save.height / 2, 4)
       expect(cancel.bottom).at.most(HEIGHT)
       if (tab === 'Lineup') await shot('roster-lineup-after.png')
       if (tab === 'Defense') await shot('roster-defense-after.png')

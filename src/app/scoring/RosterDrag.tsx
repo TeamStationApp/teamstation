@@ -6,14 +6,50 @@ import React, {
   useRef,
   useState
 } from 'react'
+import { Text } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import { RosterCardSlot, useRosterLifted } from './RosterCardSlot'
 import { RosterClipContext, useRosterGesture } from './RosterDragContext'
-import type { RosterDragProps } from './rosterDragProps'
+import type { RosterDragProps, RosterGripProps } from './rosterDragProps'
 import { RosterHold } from './rosterHold'
 import { ROSTER_CARD_GAP } from './rosterLayout'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
+
+/**
+ * The three bars at a roster card's left, over the card's whole height and
+ * its left padding (`scoringPlayerCardStyle`'s). A touch or a press on them
+ * picks the card up as it lands; anywhere else on the card holds first. The
+ * card finds its grip by `data-roster-grip`.
+ */
+export function RosterGrip({
+  label,
+  color
+}: RosterGripProps): React.ReactElement {
+  return (
+    <div
+      data-roster-grip=""
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        alignSelf: 'stretch',
+        margin: '-10px 0 -10px -8px',
+        padding: '0 2px 0 8px',
+        // The grip owns its touches: no list scrolls from it.
+        touchAction: 'none'
+      }}
+    >
+      <Text
+        selectable={false}
+        accessibilityLabel={label}
+        style={{ color, fontSize: 24 }}
+      >
+        ≡
+      </Text>
+    </div>
+  )
+}
+
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
   const source = useId()
@@ -61,7 +97,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       const touch = event.touches[0]
       moved.current = false
       contact.current = { pointer: touch.identifier, kind: 'touch' }
-      hold.start({ x: touch.clientX, y: touch.clientY })
+      hold.start({ x: touch.clientX, y: touch.clientY }, onGrip(event.target!))
     }
     const move = (event: TouchEvent): void => {
       if (contact.current?.kind !== 'touch') return
@@ -86,9 +122,12 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       // Prevent the synthetic click; short taps are handled exactly once here.
       if (event.cancelable) event.preventDefault()
       moved.current = true
-      if (active)
+      // A tap on the grip lifted the card as it landed: put it back.
+      if (tap) {
+        if (active) engine.cancel()
+        latest.current.onTap?.()
+      } else if (active)
         engine.release({ x: touch.clientX, y: touch.clientY }).catch(cancel)
-      else if (tap) latest.current.onTap?.()
     }
     const escape = (event: KeyboardEvent): void => {
       if (event.key === 'Escape' && contact.current != null) {
@@ -154,6 +193,11 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const childButton = (target: EventTarget): boolean => {
     const button = (target as Element).closest('button,input,[role="button"]')
     return button != null && button !== node.current
+  }
+  /** Whether a contact starts on this card's grip, which needs no hold. */
+  const onGrip = (target: EventTarget): boolean => {
+    const grip = (target as Element).closest('[data-roster-grip]')
+    return grip != null && node.current?.contains(grip) === true
   }
   const release = async (
     event: React.PointerEvent<HTMLDivElement>,
@@ -244,7 +288,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
         ) {
           engine.begin(props.playerId, props.label ?? '', point, source)
           event.currentTarget.setPointerCapture(event.pointerId)
-        } else hold.start(point)
+        } else hold.start(point, onGrip(event.target))
       }}
       onPointerMove={event => {
         if (event.pointerType === 'touch') {
@@ -267,12 +311,15 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       }}
       onPointerUp={event => {
         if (event.pointerType === 'touch') return
-        if (contact.current != null) moved.current ||= !hold.finish()
+        const tap = contact.current != null && hold.finish()
+        if (contact.current != null && !tap) moved.current = true
         contact.current = null
         if (props.playerId != null && engine.active?.id === props.playerId)
-          release(event, false).catch(() => {
+          release(event, tap).catch(() => {
             engine.cancel()
           })
+        // A press on the grip that went nowhere is a click, not a drag.
+        if (tap) moved.current = false
       }}
       onPointerCancel={event => {
         if (event.pointerType === 'touch') return

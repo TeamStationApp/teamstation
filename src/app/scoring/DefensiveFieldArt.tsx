@@ -19,7 +19,7 @@ export function DefensiveFieldArt(): React.ReactElement {
         strokeWidth="2"
       />
       <path
-        d="M180 214 L91 136 L180 66 L269 136 Z"
+        d="M180 214 L91 136 L180 96 L269 136 Z"
         fill={surface.input}
         stroke={surface.inputBorder}
         strokeWidth="2"
@@ -38,7 +38,7 @@ export function DefensiveFieldArt(): React.ReactElement {
         stroke={surface.inputBorder}
       />
       <path
-        d="M174 210 L186 210 L186 217 L180 222 L174 217 Z M86 131 L96 131 L96 141 L86 141 Z M175 61 L185 61 L185 71 L175 71 Z M264 131 L274 131 L274 141 L264 141 Z"
+        d="M174 210 L186 210 L186 217 L180 222 L174 217 Z M86 131 L96 131 L96 141 L86 141 Z M175 91 L185 91 L185 101 L175 101 Z M264 131 L274 131 L274 141 L264 141 Z"
         fill={surface.activeText}
         stroke={surface.inputBorder}
       />

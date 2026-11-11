@@ -1,4 +1,14 @@
 import {
+  alignPlan,
+  inningDefense,
+  planHasPositions
+} from '../../common/gamePlan'
+import {
+  type PlanWarning,
+  planWarnings,
+  warningSummary
+} from '../../common/planWarnings'
+import {
   type Destination,
   DESTINATIONS,
   type Problem,
@@ -23,9 +33,10 @@ import {
   runnerReasons as gameRunnerReasons
 } from '../../common/scoring/rules'
 import { type Applied, applyAction } from '../../common/scoring/session'
-import { setupOf } from '../../common/scoring/state'
+import { setupOf, type Side } from '../../common/scoring/state'
 import { BASES } from '../field/fieldModel'
 import { advanceReel, holdForLaterBeat } from './dictatedReel'
+import { planLineup } from './rosterDirty'
 import {
   closePlay,
   copyGame,
@@ -39,6 +50,7 @@ import { baseIds, battingSide, fielderName } from './scoringSelectors'
 import {
   CORRECTION_WINDOW_MS,
   type FielderRef,
+  type PlanNotice,
   type RunnerAction,
   type ScoringEvent,
   type ScoringSnapshot,
@@ -100,6 +112,7 @@ function applyLogged(
   if (applied.problems.length > 0) throw new Refused(applied.problems)
   next.session = applied.state
   next.log = [...next.log, action]
+  delete next.planNotice
   sequencesFor(next, applied.transitions, {
     homeQueue: before.homeQueue,
     batSide: before.liveData.plays.currentPlay?.matchup.batSide.code ?? 'R',
@@ -117,7 +130,107 @@ function applyLogged(
       outcome: next.session.pending.outcome,
       trajectoryAccepted: true
     }
+  // An inning's end moves each planned side to its next column: a scorer's,
+  // not a replay's, and never once the game is over.
+  const ended = applied.transitions.find(
+    transition =>
+      transition.type === 'halfEnded' && transition.half === 'bottom'
+  )
+  if (
+    ended?.type === 'halfEnded' &&
+    options.replay !== true &&
+    next.watching !== true &&
+    !next.session.final
+  )
+    shiftToPlans(next, ended.inning + 1)
   return applied
+}
+
+/** Why a column that leaves nobody pitching is not applied. */
+const NO_PITCHER = 'needs a pitcher'
+
+/**
+ * Puts each side whose game plan is on (holds a position) into the defence
+ * its column for `inning` gives (`inningDefense`; a column not planned gives
+ * none), as a roster save that keeps each side's batting slot, logged after
+ * the action that ended the inning and so taken back with it. A column
+ * that leaves nobody pitching, or that the game refuses, is skipped, and the
+ * notice says why for that side; the inning's end stands either way. The
+ * notice counts the playing-time warnings of the plans applied, judged by
+ * the rules and same-day load they were read with.
+ */
+function shiftToPlans(next: ScoringSnapshot, inning: number): void {
+  const sides: Side[] = []
+  const warnings: PlanWarning[] = []
+  const refused: PlanNotice['refused'] = []
+  for (const side of ['away', 'home'] as const) {
+    const planned = next.plans?.[side]
+    const plan = planned?.plan
+    if (planned == null || plan == null || !planHasPositions(plan)) continue
+    const defense = inningDefense(
+      plan,
+      inning,
+      next.session.liveData.boxscore.teams[side],
+      next.session.gameData.players
+    )
+    if (defense == null) continue
+    // The game takes a roster with nobody pitching, to be finished before
+    // the next pitch; a column that leaves the mound empty is not applied.
+    if (defense.P == null) {
+      refused.push({ side, reason: NO_PITCHER })
+      continue
+    }
+    const setup = setupOf(next.session)
+    setup.sides[side].defense = defense
+    try {
+      // `applyLogged` tries it on a copy, and changes nothing it refuses.
+      applyLogged(next, {
+        type: 'lineup',
+        kind: 'roster',
+        setup,
+        keepSlot: true
+      })
+    } catch (error) {
+      if (!(error instanceof Refused)) throw error
+      refused.push({
+        side,
+        reason: refusalReason(
+          error.message,
+          next.session.gameData.teams[side].name
+        )
+      })
+      continue
+    }
+    sides.push(side)
+    // Judged on every planned inning: a shift never runs once the game is
+    // final, and only a final game is judged on the innings it played.
+    warnings.push(
+      ...planWarnings({
+        plan: alignPlan(plan, planLineup(next.session, side)),
+        rules: planned.rules,
+        sameDay: planned.sameDay
+      })
+    )
+  }
+  if (sides.length === 0 && refused.length === 0) return
+  next.planNotice = {
+    inning,
+    sides,
+    summary: warningSummary(warnings).text,
+    refused
+  }
+}
+
+/**
+ * A refusal as the notice says it, without the team's name it starts with:
+ * "Hawks has an invalid or duplicate defender." is "has an invalid or
+ * duplicate defender".
+ */
+function refusalReason(message: string, team: string): string {
+  const reason = message.startsWith(`${team} `)
+    ? message.slice(team.length + 1)
+    : message
+  return reason.replace(/\.$/, '')
 }
 
 export function act(

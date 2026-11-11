@@ -321,9 +321,9 @@ async function main(): Promise<void> {
     if (run('coach') && native) {
       await open(
         `/games/${seed.boxScoreGame}/coach/${seed.coachTeam}`,
-        '.*Box.*'
+        '.*Box Score.*'
       )
-      await m.tapOn({ text: 'Box' })
+      await m.tapOn({ text: 'Box Score' })
       await m.assertVisible({ text: '.*Batting.*', timeout: 20000 })
       await sideways('Mookie Betts', 'AVG')
       await shot('coach-box-score-scrolled')

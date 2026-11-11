@@ -16,9 +16,18 @@ import type {
   GameLineupsResponse,
   RosterEntry,
   SaveLineupsBody,
+  SidePlan,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import {
+  alignPlan,
+  DEFAULT_PLAN_INNINGS,
+  type GamePlan,
+  inningDefense,
+  planHasPositions
+} from '../../common/gamePlan'
+import { planWarnings, warningSummary } from '../../common/planWarnings'
 import { begun } from '../../common/scoring/lineup'
 import type { Lineup } from '../../common/scoring/lineupHistory'
 import type { StagedRunner } from '../../common/scoring/rosterCommands'
@@ -28,6 +37,7 @@ import {
   shownWithDefault
 } from '../../common/scoring/startingSetup'
 import {
+  copyState,
   type GameState,
   POSITIONS,
   setupOf,
@@ -35,15 +45,22 @@ import {
 } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { Icon } from '../components/Icon'
-import { lstrings } from '../locales/strings'
+import { type SuccessNotice, SuccessToast } from '../components/SuccessToast'
+import { lstrings, sprintf } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
 import { candidateNames } from '../scoring/candidateNames'
 import { guestRenames, sendGuestRenames } from '../scoring/guestRenames'
 import { HeldGameNotice } from '../scoring/HeldGameNotice'
+import type { PlanContext } from '../scoring/plan/PlanTab'
 import { rosterPlayerBody } from '../scoring/playerDraft'
 import type { RosterDictationOptions } from '../scoring/rosterDictation'
-import { sameValue } from '../scoring/rosterDirty'
+import {
+  planDirty,
+  planLineup,
+  planOrderStale,
+  sameValue
+} from '../scoring/rosterDirty'
 import { RosterEditor, type RosterEditorDraft } from '../scoring/RosterEditor'
 import { type GameChanges, listen, useRosterLive } from '../scoring/rosterLive'
 import { resumedScoringState } from '../scoring/scoringMachine'
@@ -209,13 +226,40 @@ interface Opened {
   rosters: Record<string, RosterEntry[]>
 }
 
+/** A side with no plan saved yet: six blank innings, not followed. */
+const NO_PLAN: GamePlan = {
+  enabled: false,
+  innings: DEFAULT_PLAN_INNINGS,
+  rows: []
+}
+
+/**
+ * What the Plan tab's warnings are judged by: the side's rules and
+ * same-day load as the server read them, and the game as the screen holds
+ * it, final or not, and the innings it reached.
+ */
+export function planContextOf(side: SidePlan, session: GameState): PlanContext {
+  const started = begun(session)
+  return {
+    rules: side.rules,
+    sameDay: side.sameDay,
+    status: session.final ? 'final' : started ? 'inProgress' : 'scheduled',
+    ...(started
+      ? { playedInnings: session.liveData.linescore.currentInning }
+      : {})
+  }
+}
+
 /**
  * Coach Game: a head coach's own team in a game, on a screen of its own —
- * the box score, and the roster screen's Roster, Lineup and Defense, with
- * its bar and dictation. Save Rosters saves his side's lineup through
- * `client.saveLineups` and stays; Cancel discards what is staged and reads
- * the game again. The game is never scored here: the session is read, and
- * read again after each save.
+ * the box score, and the roster screen's Roster, Lineup, Defense and Plan,
+ * with its bar and dictation. Save Rosters saves his side's lineup through
+ * `client.saveLineups` when it changed, then his game plan through
+ * `client.saveGamePlan` when that changed, and stays; before the first
+ * pitch, a plan he follows sets the lineup's defence to its inning 1.
+ * Cancel discards what is staged, the plan's edits too, and reads the game
+ * again. The game is never scored here: the session is read, and read again
+ * after each save.
  *
  * It leaves by its own back chevron, the browser's Back or Android's, each
  * first asking to discard changes not saved, for the game's Box score tab.
@@ -277,6 +321,12 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const [box, setBox] = useState<BoxScoreData>()
   const [asking, setAsking] = useState<(leave: boolean) => void>()
   const [height, setHeight] = useState<number>()
+  // His side's game plan as the server answered it (undefined until read,
+  // or when it could not be), the plan being edited and the one saved.
+  const [sidePlan, setSidePlan] = useState<SidePlan>()
+  const [plan, setPlan] = useState<GamePlan>()
+  const [savedPlan, setSavedPlan] = useState<GamePlan>()
+  const [planNotice, setPlanNotice] = useState<SuccessNotice>()
   // The lineups digest last read or saved, which a save names as its base.
   const digest = useRef('')
   // His team's default, for a side a save left unseen. Null when he has
@@ -345,8 +395,24 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   // team's new one. Over a staged change he is asked first, since it names
   // his old side or the deleted plays.
   const [replaced, setReplaced] = useState<GameReplaced>()
-  const dirtyNow = useRef(dirty)
-  dirtyNow.current = dirty
+  const shownSession = state?.session
+  const planChanged = useMemo(
+    () =>
+      side != null &&
+      shownSession != null &&
+      planDirty(plan, savedPlan, planLineup(held?.draft ?? shownSession, side)),
+    [plan, savedPlan, held, shownSession, side]
+  )
+  const planContext = useMemo(
+    () =>
+      sidePlan == null || shownSession == null
+        ? undefined
+        : planContextOf(sidePlan, shownSession),
+    [sidePlan, shownSession]
+  )
+  const unsaved = dirty || planChanged
+  const dirtyNow = useRef(unsaved)
+  dirtyNow.current = unsaved
   const readSides = useCallback(
     async (): Promise<GameDetail> => await client.game(gameId),
     [client, gameId]
@@ -466,14 +532,20 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               .roster(id, { includeFullNames: true })
               .catch(async () => withoutPrivateNames(await client.roster(id)))
           : withoutPrivateNames(await client.roster(id).catch(() => []))
-      const [away, home, lineups, kept] = await Promise.all([
+      const [away, home, lineups, kept, plans] = await Promise.all([
         roster(game.awayTeamId),
         roster(game.homeTeamId),
         client.gameLineups(gameId),
         client
           .defaultLineup(teamId)
           .then(found => found.lineup)
-          .catch(() => null)
+          .catch(() => null),
+        // A plan that cannot be read leaves the Plan tab saying so, and
+        // nothing of it is saved over the server's.
+        client
+          .gamePlans(gameId)
+          .then(both => both[of] ?? undefined)
+          .catch(() => undefined)
       ])
       ownDefault.current = kept
       const session = await source.open(game, away, home)
@@ -484,6 +556,10 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       mountedOn.current = next.session
       setState(next)
       setHeld({ draft: next.session, side: of, mode: 'boxScore' })
+      const stored = plans == null ? undefined : (plans.plan ?? NO_PLAN)
+      setSidePlan(plans)
+      setPlan(stored)
+      setSavedPlan(stored)
       setDetail(game)
       copyPending.current = false
       setOpened({
@@ -535,6 +611,31 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       pending.current = null
     }
   }, [refreshBox])
+  // His side's plan, read again when a save of it is announced (his other
+  // device's, or a scorekeeper's) and after the socket was down, since a
+  // notice missed then is never sent again. The saved plan is replaced, so
+  // Cancel goes back to the newer one; the plan being edited too, unless it
+  // has changes not saved. Those are kept, and his next Save stores them
+  // over the newer plan, as the last save of a plan always wins.
+  const planReads = useRef(0)
+  const planChangedNow = useRef(planChanged)
+  planChangedNow.current = planChanged
+  const rereadPlan = useCallback((): void => {
+    const of = sideRef.current
+    if (of == null) return
+    const read = ++planReads.current
+    client.gamePlans(gameId).then(
+      both => {
+        const answer = both[of]
+        if (read !== planReads.current || answer == null) return
+        const stored = answer.plan ?? NO_PLAN
+        setSidePlan(answer)
+        setSavedPlan(stored)
+        if (!planChangedNow.current) setPlan(stored)
+      },
+      () => undefined
+    )
+  }, [client, gameId])
   useEffect(() => {
     if (socket == null) return
     return listen(socket, gameId, event => {
@@ -544,8 +645,15 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
           (event.kind === 'playEdits' || event.kind === 'game'))
       )
         refreshBox()
+      if (
+        event.type === 'resync' ||
+        (event.type === 'change' &&
+          event.kind === 'plans' &&
+          event.data.teamId === teamId)
+      )
+        rereadPlan()
     })
-  }, [socket, gameId, refreshBox])
+  }, [socket, gameId, teamId, refreshBox, rereadPlan])
   useGameReplaced(socket, gameId, opened?.game, readSides, reopenSwapped)
 
   // The dictation model the coach chose in the scoring screen's Settings.
@@ -569,11 +677,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   // editing stays.
   const confirm = useCallback(
     async (): Promise<boolean> =>
-      !dirty ||
+      !unsaved ||
       (await new Promise<boolean>(resolve => {
         setAsking(() => resolve)
       })),
-    [dirty]
+    [unsaved]
   )
   const returnTo = useMemo<Route>(
     () => ({ name: 'game', gameId, tab: 'boxScore' }),
@@ -581,7 +689,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   )
   const exit = useScoringExit(
     gameId,
-    dirty,
+    unsaved,
     onExit,
     confirm,
     true,
@@ -592,7 +700,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   // Android's Back, over changes not saved, asks as the chevron does; with
   // nothing staged it is the shell's, as for any screen.
   useEffect(() => {
-    if (Platform.OS !== 'android' || !dirty) return
+    if (Platform.OS !== 'android' || !unsaved) return
     const back = BackHandler.addEventListener('hardwareBackPress', () => {
       exit()
       return true
@@ -600,22 +708,115 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     return () => {
       back.remove()
     }
-  }, [dirty, exit])
+  }, [unsaved, exit])
   const answer = (leave: boolean): void => {
     asking?.(leave)
     setAsking(undefined)
   }
 
   const save = (
-    draft: GameState,
+    edited: GameState,
     nextBatter: number | undefined,
     runners: StagedRunner[] | undefined,
     openedOver: GameState
   ): void | Promise<void> => {
     if (opened == null || state == null) return
     const saving = opened
-    const saveNumber = ++saves.current
     setProblem(undefined)
+    // Before the game has begun, a plan that holds a position sets the
+    // defence his lineup starts in: its first inning's column
+    // (`inningDefense`, none while that inning is not planned), saved with
+    // the lineup and shown on Defense. A column that leaves nobody pitching
+    // is not applied, and the save's notice says so; so does one that
+    // changes who plays any position from the Defense tab's, by putting
+    // someone else there or by benching its fielder (a blank is the bench).
+    // Later innings are the scorekeeper's, at each inning's end.
+    const first =
+      plan != null && planHasPositions(plan) && !begun(edited)
+        ? inningDefense(
+            plan,
+            1,
+            edited.liveData.boxscore.teams[saving.side],
+            edited.gameData.players
+          )
+        : null
+    const noPitcher = first != null && first.P == null
+    const applied = first != null && !noPitcher ? first : undefined
+    const edits = edited.liveData.boxscore.teams[saving.side].defense
+    const overruled =
+      applied != null &&
+      POSITIONS.some(
+        position => (applied[position] ?? null) !== (edits[position] ?? null)
+      )
+    const draft = applied == null ? edited : copyState(edited)
+    if (applied != null)
+      draft.liveData.boxscore.teams[saving.side].defense = applied
+    /**
+     * The save's notice: the column not applied, or applied over the Defense
+     * tab's, and the plan's warnings.
+     */
+    const notify = (warnings: string): void => {
+      const message = noPitcher
+        ? warnings === ''
+          ? lstrings.coach_plan_saved_no_pitcher
+          : sprintf(lstrings.coach_plan_saved_no_pitcher_warnings, warnings)
+        : overruled
+          ? warnings === ''
+            ? lstrings.coach_plan_saved_defense
+            : sprintf(lstrings.coach_plan_saved_defense_warnings, warnings)
+          : warnings === ''
+            ? undefined
+            : sprintf(lstrings.coach_plan_saved_warnings, warnings)
+      if (message != null) setPlanNotice({ id: Date.now(), message })
+    }
+    // The plan as saved follows the order being saved with it: a changed
+    // plan is saved, and a saved one whose rows bat in another order is
+    // saved again with the lineup, so its first row is the leadoff.
+    const order = planLineup(draft, saving.side)
+    const planned =
+      plan != null && (planChanged || planOrderStale(savedPlan, order))
+        ? alignPlan(plan, order)
+        : undefined
+    const sendPlan = (): void => {
+      if (planned == null) {
+        notify('')
+        return
+      }
+      const judged = planContext
+      // A reread of the plan sent before this save could answer after it
+      // with the plan this save replaces: it is dropped.
+      planReads.current++
+      client
+        .saveGamePlan(gameId, teamId, planned)
+        .then(answer => {
+          const stored = answer.plan ?? planned
+          setSidePlan(answer)
+          setSavedPlan(stored)
+          // An edit made while the save was out stays to be saved.
+          setPlan(shown => (shown === plan ? stored : shown))
+          notify(
+            warningSummary(
+              planWarnings({
+                plan: stored,
+                rules: answer.rules,
+                sameDay: answer.sameDay,
+                playedInnings: judged?.playedInnings,
+                final: judged?.status === 'final'
+              })
+            ).text
+          )
+        })
+        .catch(() => {
+          setProblem(lstrings.coach_save_failed)
+        })
+    }
+    // Only the plan changed, and not the defence it starts: the lineup is
+    // not saved again.
+    if (!dirty && !unaccepted && applied == null && planned != null) {
+      sendPlan()
+      return
+    }
+    const saveNumber = ++saves.current
     // When the change was made: the latest change of a side wins.
     const changedAt = new Date().toISOString()
     // A game-only player's corrected name is his account's: renamed first,
@@ -685,6 +886,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       .then(lineups => {
         heard(lineups, saving.side)
         reload().catch(() => undefined)
+        sendPlan()
       })
       .catch((caught: unknown) => {
         setProblem(
@@ -701,7 +903,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         }
         mountedOn.current = shownBefore.mountedOn
         setState(shownBefore.state)
-        redraw(draft, openedOver, true)
+        redraw(edited, openedOver, true)
       })
   }
 
@@ -750,7 +952,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     >
       <View
         testID="Coach header"
-        style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+        // Seven points over the Box Score pill, half the fourteen it had.
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 12,
+          marginBottom: -1
+        }}
       >
         <Pressable
           accessibilityRole="button"
@@ -952,8 +1160,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
                 log: state.log,
                 ...props.dictation
               }}
+              plan={plan}
+              planContext={planContext}
+              planChanged={planChanged}
+              onPlanChange={setPlan}
               onReload={() => {
                 setProblem(undefined)
+                setPlan(savedPlan)
                 live.clear()
                 reload().catch(() => undefined)
               }}
@@ -993,6 +1206,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
           />
         </ScoringSheet>
       )}
+      <SuccessToast notice={planNotice} />
       {asking != null && (
         <Modal
           transparent

@@ -9,6 +9,10 @@ import {
   placeholderSuffix,
   placeholderTeamName
 } from '../../common/placeholderNames'
+import {
+  DEFAULT_PLAYING_TIME_RULES,
+  type PlayingTimeRules
+} from '../../common/playingTimeRules'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
@@ -956,6 +960,152 @@ describe('merging two rows that are one team', function () {
       .deleteFrom('schedule_preview_games')
       .where('game_key', '=', 'owls-2')
       .execute()
+  })
+
+  it('keeps the survivor’s own Playing Time Rules, and takes the other team’s when it has none', async function () {
+    if (db == null) this.skip()
+    const strict: PlayingTimeRules = {
+      ...DEFAULT_PLAYING_TIME_RULES,
+      defensivePlayingTime: true
+    }
+    const loose: PlayingTimeRules = {
+      ...DEFAULT_PLAYING_TIME_RULES,
+      continuousBatting: true
+    }
+    const rulesOf = async (id: string): Promise<unknown> =>
+      (
+        await db!
+          .selectFrom('teams')
+          .select('playing_time_rules')
+          .where('id', '=', id)
+          .executeTakeFirstOrThrow()
+      ).playing_time_rules
+    for (const [own, other, kept] of [
+      [null, strict, strict],
+      [loose, strict, loose],
+      [loose, null, loose],
+      [null, null, null]
+    ] as const) {
+      const from = makeId('team')
+      const into = makeId('team')
+      await db
+        .insertInto('teams')
+        .values([
+          {
+            id: from,
+            name: 'Copy Cubs',
+            kind: 'external',
+            playing_time_rules: other == null ? null : JSON.stringify(other)
+          },
+          {
+            id: into,
+            name: 'Cubs',
+            kind: 'full',
+            playing_time_rules: own == null ? null : JSON.stringify(own)
+          }
+        ])
+        .execute()
+      await mergeTeams(db, { fromTeamId: from, intoTeamId: into, apply: true })
+      expect(await rulesOf(into), JSON.stringify([own, other])).deep.equals(
+        kept
+      )
+    }
+  })
+
+  it('moves the team’s game plans to the survivor, keeping the survivor’s where both have one', async function () {
+    if (db == null) this.skip()
+    const from = makeId('team')
+    const into = makeId('team')
+    const opponent = makeId('team')
+    await db
+      .insertInto('teams')
+      .values([
+        { id: from, name: 'Copy Reds', kind: 'external' },
+        { id: into, name: 'Reds', kind: 'full' },
+        { id: opponent, name: 'Pirates', kind: 'full' }
+      ])
+      .execute()
+    const game = async (
+      home: string,
+      away: string,
+      at: string,
+      scored = false
+    ): Promise<string> => {
+      const id = makeId('game')
+      await db!
+        .insertInto('games')
+        .values({
+          id,
+          home_team_id: home,
+          away_team_id: away,
+          start_at: new Date(at),
+          ...(scored ? { home_score: 1, away_score: 2 } : {})
+        })
+        .execute()
+      return id
+    }
+    const atHome = await game(from, opponent, '2026-06-01T17:00:00Z')
+    const away = await game(opponent, from, '2026-06-08T17:00:00Z')
+    // One fixture written down by both clubs: the scored record stays.
+    const retired = await game(from, opponent, '2026-06-15T17:00:00Z')
+    const kept = await game(opponent, into, '2026-06-15T17:00:00Z', true)
+    const plan = async (
+      gameId: string,
+      teamId: string,
+      cell: string
+    ): Promise<void> => {
+      await db!
+        .insertInto('game_plans')
+        .values({
+          game_id: gameId,
+          team_id: teamId,
+          innings: 1,
+          rows: JSON.stringify([
+            {
+              player: { gumboId: null, fullName: 'Johnny Bench', jersey: '5' },
+              cells: [cell]
+            }
+          ])
+        })
+        .execute()
+    }
+    await plan(atHome, from, 'C')
+    await plan(atHome, opponent, 'P')
+    await plan(away, from, '1B')
+    // The survivor's own, left on a game it no longer plays: it stays.
+    await plan(away, into, 'SS')
+    await plan(retired, from, 'LF')
+    await plan(retired, opponent, 'CF')
+    await plan(kept, opponent, 'RF')
+    const report = await mergeTeams(db, {
+      fromTeamId: from,
+      intoTeamId: into,
+      apply: true
+    })
+    expect(report.repointed['game_plans.team_id']).equals(3)
+    const stored = await db
+      .selectFrom('game_plans')
+      .select(['game_id', 'team_id', 'rows'])
+      .where('game_id', 'in', [atHome, away, retired, kept])
+      .execute()
+    const held = stored
+      .map(row => [
+        row.game_id,
+        row.team_id,
+        (row.rows as Array<{ cells: string[] }>)[0].cells[0]
+      ])
+      .sort((a, b) => `${a[0]}${a[1]}`.localeCompare(`${b[0]}${b[1]}`))
+    expect(held).deep.equals(
+      [
+        [atHome, into, 'C'],
+        [atHome, opponent, 'P'],
+        [away, into, 'SS'],
+        // The retired record's plans go with its fixture, each team's
+        // only where the kept game has none of that team's.
+        [kept, into, 'LF'],
+        [kept, opponent, 'RF']
+      ].sort((a, b) => `${a[0]}${a[1]}`.localeCompare(`${b[0]}${b[1]}`))
+    )
   })
 
   it('a drain after merge writes rows with the surviving team id', async function () {

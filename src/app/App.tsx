@@ -201,6 +201,7 @@ import { OAuthScreen } from './screens/OAuthScreen'
 import { OnboardingScreen } from './screens/OnboardingScreen'
 import { PersonProfileScreen } from './screens/PersonProfileScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
+import { PlayingTimeRulesScreen } from './screens/PlayingTimeRulesScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SchedulePreviewScreen } from './screens/SchedulePreviewScreen'
 import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
@@ -2859,6 +2860,18 @@ function Shell(props: AppProps): React.ReactElement {
           pop()
         }}
       />
+    ) : top.name === 'playingTimeRules' ? (
+      <PlayingTimeRulesScreen
+        key={`${top.kind}:${top.id}`}
+        client={client}
+        kind={top.kind}
+        id={top.id}
+        onSaved={() => {
+          freshSettings(sceneKeyOf(stack.length - 2))
+          pop()
+        }}
+        onCancel={pop}
+      />
     ) : top.name === 'groupLocation' ? (
       <GroupLocationPage
         key={`${top.kind}:${top.id}`}
@@ -3060,6 +3073,9 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onOpenTimeFrame={group => {
           push({ name: 'seasonTimeFrame', kind: 'season', id: group.id })
+        }}
+        onOpenPlayingTime={group => {
+          push({ name: 'playingTimeRules', kind: group.kind, id: group.id })
         }}
         onLocation={group => {
           if (group.kind !== 'season')
@@ -4301,6 +4317,15 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     const settings = {
       name: 'groupSettings' as const,
       kind: 'season' as const,
+      id: route.id
+    }
+    return { [tab]: [...stackFor(settings)[tab]!, route] }
+  }
+  if (route.name === 'playingTimeRules') {
+    // As the date range is: the settings it was opened from are underneath.
+    const settings = {
+      name: 'groupSettings' as const,
+      kind: route.kind,
       id: route.id
     }
     return { [tab]: [...stackFor(settings)[tab]!, route] }

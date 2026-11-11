@@ -342,6 +342,14 @@ export function useRosterDictation({
     chat: (
       <RosterChat
         turns={turns}
+        // Closing drops the turns, which leaves the staged changes, and the
+        // question as its own dismiss does; the next turn opens it again.
+        onClose={() => {
+          current.current = null
+          setTurns([])
+          if (ask != null) dictation.dismiss()
+          setQuestion(undefined)
+        }}
         ask={
           ask != null ? (
             <AskCard

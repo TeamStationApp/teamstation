@@ -76,6 +76,7 @@ import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
+import { gamePlanRoutes } from './routes/gamePlans'
 import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
@@ -834,6 +835,7 @@ function runWorker(): void {
       cache: rosterCache
     })
   )
+  app.use('/api/v1', gamePlanRoutes(db))
   app.use('/api/v1', narrationRoutes(db, speechSettings(serverConfig)))
   app.use('/api/v1', scoreboardRoutes(db, scoreboard.store))
   app.use('/api/v1', adminRoutes())

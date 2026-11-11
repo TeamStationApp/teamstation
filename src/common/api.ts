@@ -50,6 +50,7 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import { asGamePlan, type GamePlan } from './gamePlan'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
@@ -99,6 +100,7 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
+import type { PlanSameDay } from './planWarnings'
 import {
   asPlayerNamePrivacy,
   type PlayerNamePrivacy
@@ -110,6 +112,7 @@ import type {
   PlayerSettings
 } from './playerSettings'
 import { asStatSplit, asStatSplitBy } from './playerStatSplits'
+import { asPlayingTimeRules, type PlayingTimeRules } from './playingTimeRules'
 import {
   asGroupDetail,
   asPublicGame,
@@ -3546,6 +3549,43 @@ export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
   }
 }
 
+/**
+ * One side's game plan, as `GET /games/:gameId/plans` answers it to whoever
+ * may save that side's lineup: the plan (null before one is saved), the
+ * Playing Time Rules its warnings are judged by (null for none), and the
+ * team's other games that day, by `planPlayerKey`. An older server's
+ * `history` is ignored.
+ */
+export interface SidePlan {
+  teamId: string
+  plan: GamePlan | null
+  rules: PlayingTimeRules | null
+  sameDay: PlanSameDay
+}
+
+/** Both sides' plans in a game; a side the caller may not plan is null. */
+export interface GamePlansResponse {
+  away: SidePlan | null
+  home: SidePlan | null
+}
+
+const asPlanSameDay: Cleaner<PlanSameDay> = asObject({
+  before: asObject({ catcherInnings: asObject(asNumber) }),
+  laterPitched: asObject(asBoolean)
+})
+
+export const asSidePlan: Cleaner<SidePlan> = asObject({
+  teamId: asString,
+  plan: asNullable(asGamePlan),
+  rules: asNullable(asPlayingTimeRules),
+  sameDay: asPlanSameDay
+})
+
+export const asGamePlansResponse: Cleaner<GamePlansResponse> = asObject({
+  away: asNullable(asSidePlan),
+  home: asNullable(asSidePlan)
+})
+
 /** One batter in DJ Game's list: a placeholder has no user id and no song. */
 export const asDjBatter = asObject({
   userId: asNullable(asUserId),
@@ -4803,6 +4843,11 @@ export class TeamStationClient {
     fields: Partial<Omit<CreateGroup, 'kind' | 'parent' | 'idempotencyKey'>> & {
       /** Null goes back to Default. */
       playerNamePrivacy?: PlayerNamePrivacy | null
+      /**
+       * A season's or team's whole set. Null is none on a season, and on a
+       * team follows its season's again.
+       */
+      playingTimeRules?: PlayingTimeRules | null
     }
   ): Promise<PublicGroup> {
     return await this.request(
@@ -5908,6 +5953,33 @@ export class TeamStationClient {
       asGameLineupsResponse,
       body,
       writeOptions(options)
+    )
+  }
+
+  /**
+   * Both sides' game plans in a game, each with the rules, season history and
+   * same-day load its warnings are judged by; a side the caller may not save
+   * the lineup of is null.
+   */
+  async gamePlans(gameId: string): Promise<GamePlansResponse> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/plans`,
+      asGamePlansResponse
+    )
+  }
+
+  /** Saves one team's game plan in a game, and answers that side's plan. */
+  async saveGamePlan(
+    gameId: string,
+    teamId: string,
+    plan: GamePlan
+  ): Promise<SidePlan> {
+    return await this.request(
+      'PUT',
+      `/games/${encodeURIComponent(gameId)}/plans/${encodeURIComponent(teamId)}`,
+      asSidePlan,
+      plan
     )
   }
 

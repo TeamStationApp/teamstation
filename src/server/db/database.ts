@@ -127,6 +127,8 @@ export interface LeaguesTable {
 
 export interface SeasonsTable {
   player_name_privacy: Generated<string | null>
+  /** Its Playing Time Rules, or null for none (113playingTimeRules). */
+  playing_time_rules: Json | null
   id: string
   timezone: Generated<string>
   picture_catalog_id: Generated<string | null>
@@ -161,6 +163,8 @@ export type TeamCreatedFrom =
 
 export interface TeamsTable {
   player_name_privacy: Generated<string | null>
+  /** Its own Playing Time Rules, or null to follow its season's. */
+  playing_time_rules: Json | null
   id: string
   league_id: Generated<string | null>
   locality: Json | null
@@ -1232,6 +1236,21 @@ export interface GameFieldWarningsTable {
   notified_at: Generated<Date>
 }
 
+/**
+ * One team's game plan in one game (114gamePlans): `GamePlan` in
+ * `src/common/gamePlan.ts`, its rows as JSON.
+ */
+export interface GamePlansTable {
+  game_id: string
+  team_id: string
+  enabled: Generated<boolean>
+  innings: number
+  rows: Json
+  updated_at: Generated<Date>
+  /** Who saved it last. */
+  updated_by: string | null
+}
+
 /** A league's claim on a venue, or its request to co-own one. */
 export interface VenueClaimsTable {
   id: string
@@ -1683,6 +1702,7 @@ export interface Database {
   external_ids: ExternalIdsTable
   games: GamesTable
   game_field_warnings: GameFieldWarningsTable
+  game_plans: GamePlansTable
   league_schedule_setups: LeagueScheduleSetupsTable
   season_schedule_settings: SeasonScheduleSettingsTable
   season_team_flags: SeasonTeamFlagsTable

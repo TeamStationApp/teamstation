@@ -6,7 +6,11 @@ export interface RosterDragProps {
   /** Player information announced with the control action. */
   value?: string
   disabled?: boolean
-  /** Mouse dragging starts immediately; touch still holds to preserve scrolling. */
+  /**
+   * Mouse dragging starts immediately anywhere on the card; touch still holds
+   * to preserve scrolling. Without it, only a press on the card's RosterGrip
+   * picks it up at once.
+   */
   immediateMouseDrag?: boolean
   /**
    * No hold on any pointer: a contact that travels 10 px drags at once and a
@@ -20,4 +24,10 @@ export interface RosterDragProps {
   insertion?: 'row' | 'end'
   onDropPlayer?: (id: number, edge?: 'before' | 'after') => void
   children: React.ReactNode
+}
+
+export interface RosterGripProps {
+  /** "Drag <name>", what a screen reader calls the grip. */
+  label: string
+  color: string
 }

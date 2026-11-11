@@ -102,7 +102,8 @@ export type PlayEdit =
   { op: 'put'; play: WirePlayRow } | { op: 'remove'; atBatIndex: number }
 
 /** What a `change` is about. */
-export type GameChangeKind = 'playEdits' | 'lineups' | 'walkUpSong' | 'game'
+export type GameChangeKind =
+  'playEdits' | 'lineups' | 'walkUpSong' | 'game' | 'plans'
 
 /**
  * How a game's stored plays changed, as a `playEdits` change carries it: the
@@ -151,6 +152,12 @@ export interface GameChangeData {
   lineups: { home: TeamLineups; away: TeamLineups; digest: string }
   /** One player's song on one team, or null once it is removed. */
   walkUpSong: { teamId: string; userId: string; song: WalkUpSong | null }
+  /**
+   * A team's game plan was saved. Only the team is named, as every viewer of
+   * the game hears it: whoever may plan that side reads `GET
+   * /games/:gameId/plans` again.
+   */
+  plans: { teamId: string }
   game: {
     status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
     awayScore: number | null
@@ -484,7 +491,8 @@ const asChangeHead = asObject({
     'playEdits',
     'lineups',
     'walkUpSong',
-    'game'
+    'game',
+    'plans'
   ) as Cleaner<GameChangeKind>,
   at: asString
 })

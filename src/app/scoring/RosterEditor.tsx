@@ -21,6 +21,7 @@ import type {
   RosterEntry,
   TeamStationClient
 } from '../../common/api'
+import type { GamePlan } from '../../common/gamePlan'
 import { playerAddToldWords } from '../../common/notifications'
 import {
   type ExistingRosterPlayer,
@@ -46,9 +47,12 @@ import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
 import { Button } from '../components/Button'
+import { useSharedFit } from '../components/fittedText'
 import { Icon } from '../components/Icon'
 import { forgetFound } from '../hooks/useRosterCandidates'
 import { lstrings, plural, sprintf } from '../locales/strings'
+import type { Insets } from '../platform/insets'
+import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { BatIcon } from './BatIcon'
 import { withRosterDetails } from './currentSetup'
@@ -56,10 +60,12 @@ import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { ExistingPlayerSheet } from './ExistingPlayerSheet'
 import { GameRosterHeader } from './GameRosterHeader'
+import { HelpSheet } from './HelpSheet'
 import type { LineupQrResult } from './lineupQrImport'
 import { LineupShareSheet } from './LineupShareSheet'
 import { addPlaceholderPlayers } from './placeholderPlayers'
 import { PlaceholderPlayersSheet } from './PlaceholderPlayersSheet'
+import { type PlanContext, PlanTab } from './plan/PlanTab'
 import {
   addPlayerDraft,
   addRosteredPlayer,
@@ -78,8 +84,14 @@ import {
   type RosterDictationOptions,
   useRosterDictation
 } from './rosterDictation'
-import { rosterDirty, rosterSavable } from './rosterDirty'
-import { RosterDrag, RosterDragGroup, RosterScrollArea } from './RosterDrag'
+import { planLineup, rosterDirty, rosterSavable } from './rosterDirty'
+import {
+  RosterDrag,
+  RosterDragGroup,
+  RosterGrip,
+  RosterScrollArea
+} from './RosterDrag'
+import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
 import { RosterConflictBanner } from './rosterLive'
 import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
@@ -98,33 +110,33 @@ import {
   type Side
 } from './scoringTypes'
 
-/** The roster screen's tabs: a coach's begins with the game's box score. */
-export type RosterMode = 'boxScore' | RosterTab
+/**
+ * The roster screen's modes: a coach's begins with the game's box score,
+ * which is a pill of its own above the tabs, and ends with his game plan.
+ */
+export type RosterMode = 'boxScore' | RosterTab | 'plan'
 /**
  * Who the roster screen is for. A scorekeeper edits either team's roster for
  * the scoring screen, and leaves by Save or Cancel; a coach edits his own
  * team's, saves without leaving, and leaves by the screen's back chevron.
  */
 export type RosterAudience = 'scorekeeper' | 'coach'
-/**
- * The Defense tab's instruction. A fielder on the field drags on his first
- * move and clears on a tap; a roster card still takes a brief hold on touch,
- * so the list scrolls.
- */
-const DEFENSE_INSTRUCTION =
-  'Drag a player into position (on touch, hold a roster card briefly first). Drag a fielder to move or swap him; tap him to clear.'
 /** Each tab's label, which is also its accessible name. */
 export const ROSTER_MODE_LABELS: Record<RosterMode, string> = {
-  boxScore: 'Box',
+  boxScore: lstrings.coach_box_score,
   editRoster: lstrings.scoring_roster_tab,
   lineup: 'Lineup',
-  defense: 'Defense'
+  defense: 'Defense',
+  plan: lstrings.coach_plan_tab
 }
-/** The tabs the mode slider offers, in order. */
+/** The modes an audience may be in, in order. */
 export const rosterModes = (audience: RosterAudience): RosterMode[] =>
   audience === 'coach'
-    ? ['boxScore', 'editRoster', 'lineup', 'defense']
+    ? ['boxScore', 'editRoster', 'lineup', 'defense', 'plan']
     : ['editRoster', 'lineup', 'defense']
+/** The tabs the mode slider offers: the box score is its own pill. */
+export const rosterPillModes = (audience: RosterAudience): RosterMode[] =>
+  rosterModes(audience).filter(mode => mode !== 'boxScore')
 /**
  * The bottom bar's sizes: Save Rosters' height, which a crowded Defense tab
  * shrinks, and the round microphone's diameter, twelve points more.
@@ -136,6 +148,29 @@ export function rosterFooterSizes(
   const save = dense && defense ? 28 : 36
   return { save, mic: save + 12 }
 }
+/**
+ * The smallest share of Cancel's and Save Rosters' 14-point labels they
+ * shrink to, together, on a narrow screen: 10.5 points. A 320-point screen
+ * fits Save Rosters whole at about 11.5.
+ */
+export const ROSTER_SAVE_FIT = 0.75
+/** The compact buttons' padding, both sides: half their 36-point shell. */
+const ROSTER_FOOTER_INSET = 36
+/**
+ * How far the bottom bar lowers into the bottom safe area: ten points, or
+ * the whole inset when it is smaller, so nothing moves on the web.
+ */
+export const rosterFooterDrop = (insets: Pick<Insets, 'bottom'>): number =>
+  Math.min(10, insets.bottom)
+/**
+ * The gap under the scorekeeper's bar where the screen has no bottom inset,
+ * as on the web: his sheet has no padding of its own there, so without it
+ * the microphone would touch the bottom edge. The coach's screen pads itself.
+ */
+export const rosterFooterGap = (
+  insets: Pick<Insets, 'bottom'>,
+  audience: RosterAudience
+): number => (audience === 'scorekeeper' && insets.bottom === 0 ? 8 : 0)
 export interface RosterEditorDraft {
   draft: ScoringSessionState
   side: Side
@@ -222,6 +257,11 @@ export function RosterEditor({
   onAddExistingGuest,
   onCancel,
   onReload,
+  bottomInset,
+  plan,
+  planContext,
+  planChanged = false,
+  onPlanChange,
   onSave
 }: {
   /** A coach's state is never read-only, so his game's own players stay editable. */
@@ -257,6 +297,21 @@ export function RosterEditor({
   }
   /** A scorekeeper's Cancel: the screen closes the sheet, dropping the draft. */
   onCancel?: () => void
+  /**
+   * The bottom safe-area inset the bar lowers into: the safe area around
+   * the editor (the scoring sheet's own, on a scorekeeper's) by default.
+   */
+  bottomInset?: number
+  /**
+   * A coach's game plan as it is being edited, which the Plan tab shows
+   * over his side's batting order, and what its warnings are judged by.
+   * Without them the tab says the plan could not be read.
+   */
+  plan?: GamePlan
+  planContext?: PlanContext
+  /** Whether the plan differs from the one saved: Save Rosters lights. */
+  planChanged?: boolean
+  onPlanChange?: (plan: GamePlan) => void
   /**
    * A coach's Cancel, after every staged change is discarded: the screen
    * reloads the game, so the draft starts again from the latest copy.
@@ -347,6 +402,12 @@ export function RosterEditor({
 }): React.ReactElement {
   const coach = audience === 'coach'
   const theme = useTheme()
+  const insets = useInsets()
+  const footerDrop = rosterFooterDrop({ bottom: bottomInset ?? insets.bottom })
+  const footerGap = rosterFooterGap(
+    { bottom: bottomInset ?? insets.bottom },
+    audience
+  )
   const { height, width } = useWindowDimensions()
   const measuredHeight = useContext(ScoringSheetHeight)
   const availableHeight =
@@ -366,6 +427,7 @@ export function RosterEditor({
     if (defaultSide != null) setSide(defaultSide)
   }, [defaultSide, rosterLoading])
   const modes = rosterModes(audience)
+  const pillModes = rosterPillModes(audience)
   // The roster first: who is on the team and how to add somebody, then the
   // lineup. A draft reopened on another tab keeps it.
   const [mode, setMode] = useState<RosterMode>(
@@ -374,6 +436,7 @@ export function RosterEditor({
       : 'editRoster'
   )
   const boxScore = mode === 'boxScore'
+  const planning = mode === 'plan'
   const [scrollOffsets, setScrollOffsets] = useState(
     initialDraft?.scrollOffsets ?? {}
   )
@@ -382,6 +445,13 @@ export function RosterEditor({
   const narrowDefense = dense && defense && width < 600
   const inlineValidation = dense && defense && !narrowDefense
   const [areaHeight, setAreaHeight] = useState(0)
+  const [gridWidth, setGridWidth] = useState(0)
+  const [helping, setHelping] = useState(false)
+  // The phone's plan picker's close while it is open: a tap on the tabs or
+  // the bar around the sheet closes it rather than acting.
+  const [closePlanPicker, setClosePlanPicker] = useState<() => void>()
+  /** The footer's height, which the dictation chat's overlay stays above. */
+  const [footerHeight, setFooterHeight] = useState(0)
   const rosterMinimum = defense ? defenseRosterMinimum(areaHeight, dense) : 0
   const [adding, setAdding] = useState(false)
   const [searching, setSearching] = useState(false)
@@ -707,6 +777,18 @@ export function RosterEditor({
   const display = (id: number): string =>
     `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
   const assigned = defense ? Object.values(team.defense) : team.battingOrder
+  // The plan's rows: his side's batting order, each batter by who he is.
+  const planBatters = useMemo(() => {
+    const players = planLineup(draft, side)
+    return team.battingOrder
+      .filter(id => draft.gameData.players[id] != null)
+      .map((id, at) => ({
+        id,
+        player: players[at],
+        name: names[id].fullName,
+        jersey: names[id].jersey
+      }))
+  }, [draft, side, team.battingOrder, names])
   const place = (id: number, index: number, boundary = false): void => {
     if (!team.players.includes(id)) return
     edit(next => {
@@ -778,6 +860,15 @@ export function RosterEditor({
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
   const sizes = rosterFooterSizes(dense, defense)
+  /** Cancel's and Save Rosters' shell, which a crowded Defense tab shrinks. */
+  const footerButton = {
+    height: sizes.save,
+    minHeight: sizes.save,
+    borderRadius: sizes.save / 2
+  }
+  // Cancel's label is drawn at Save Rosters' size, not left larger.
+  const footerFit = useSharedFit(ROSTER_SAVE_FIT, ROSTER_FOOTER_INSET)
+  const footerLabel = { fontSize: 14 * footerFit.scale }
   // A dictated sentence is staged whole: the draft, its runners and next
   // batter, and the tab, and for a scorekeeper the team, that show it.
   const spoken = useRosterDictation({
@@ -862,17 +953,13 @@ export function RosterEditor({
     importNote?.draft === draft && importNote.side === side
       ? importNote.text
       : undefined
+  const gap = dense && defense ? 2 : dense ? 4 : 8
   return (
     <View
       pointerEvents={spoken.busy ? 'none' : 'auto'}
-      style={{
-        flex: 1,
-        minHeight: 0,
-        gap: dense && defense ? 2 : dense ? 4 : 8
-      }}
+      style={{ flex: 1, minHeight: 0, gap }}
     >
       {conflict && dirty && <RosterConflictBanner />}
-      {shown?.chat}
       <ScrollView
         testID="Roster editor top"
         // Browser chrome can leave much less room than the screen height.
@@ -905,13 +992,23 @@ export function RosterEditor({
             </View>
           )}
           <View style={{ flex: dense ? 1 : undefined, minWidth: 0 }}>
+            {modes.includes('boxScore') && (
+              <BoxScorePill
+                selected={boxScore}
+                compact={narrowDefense}
+                onPress={() => {
+                  setMode('boxScore')
+                }}
+              />
+            )}
             <RosterSelector
               fitContent={!narrowDefense}
               compact={narrowDefense}
-              labels={modes.map(each => ROSTER_MODE_LABELS[each])}
-              value={Math.max(0, modes.indexOf(mode))}
+              labels={pillModes.map(each => ROSTER_MODE_LABELS[each])}
+              // On the box score no tab is chosen.
+              value={pillModes.indexOf(mode)}
               onChange={index => {
-                setMode(modes[index])
+                setMode(pillModes[index])
               }}
             />
           </View>
@@ -919,15 +1016,17 @@ export function RosterEditor({
         {mode === 'editRoster' ? (
           <GameRosterHeader information={coach} />
         ) : (
-          !boxScore && (
-            <Text numberOfLines={defense ? 3 : undefined} style={text}>
-              {defense
-                ? DEFENSE_INSTRUCTION
-                : 'Tap to add to lineup. Hold briefly, then drag to reorder.'}
+          // Defense has a Help button on its field instead, and Plan one
+          // above its sheet.
+          !boxScore &&
+          !defense &&
+          !planning && (
+            <Text style={text}>
+              Tap to add to lineup. Hold briefly, then drag to reorder.
             </Text>
           )
         )}
-        {state.phase === 'awaitingBatter' && !boxScore && (
+        {state.phase === 'awaitingBatter' && !boxScore && !planning && (
           <View style={{ gap: 6 }}>
             <Text style={text}>Choose Next Batter</Text>
             {draft.liveData.boxscore.teams[battingSide(draft)].battingOrder.map(
@@ -951,6 +1050,54 @@ export function RosterEditor({
         <View testID="Roster box score" style={{ flex: 1, minHeight: 0 }}>
           {renderBoxScore?.()}
         </View>
+      )}
+      {planning && (
+        <View
+          style={{
+            flex: 1,
+            minHeight: 0,
+            zIndex: closePlanPicker == null ? undefined : 2
+          }}
+        >
+          {plan == null || planContext == null ? (
+            <ScoringError message={lstrings.coach_plan_load_failed} />
+          ) : (
+            <PlanTab
+              plan={plan}
+              batters={planBatters}
+              context={planContext}
+              onChange={next => {
+                onPlanChange?.(next)
+              }}
+              onDrop={(player, index, edge) => {
+                if (locked) replace(player, index)
+                else place(player, index + (edge === 'after' ? 1 : 0), true)
+              }}
+              onReorder={(id, delta) => {
+                place(id, team.battingOrder.indexOf(id) + delta)
+              }}
+              locked={locked}
+              onPicker={close => {
+                setClosePlanPicker(() => close)
+              }}
+            />
+          )}
+        </View>
+      )}
+      {planning && closePlanPicker != null && (
+        <Pressable
+          testID="Plan picker screen backdrop"
+          accessibilityLabel={lstrings.plan_close_picker}
+          onPress={closePlanPicker}
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            zIndex: 1
+          }}
+        />
       )}
       <View
         style={{
@@ -1074,6 +1221,10 @@ export function RosterEditor({
                     next.liveData.boxscore.teams[side].defense[position] = null
                   })
                 }}
+                onHelp={() => {
+                  setHelping(true)
+                }}
+                onClearAll={clearDefense}
               />
             )}
             <View
@@ -1083,40 +1234,8 @@ export function RosterEditor({
                 gap: 6
               }}
             >
-              {defense ? (
-                <View
-                  testID="Defense roster header"
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    height: dense ? 18 : 22
-                  }}
-                >
-                  <Text style={{ ...text, fontWeight: '700', flexShrink: 0 }}>
-                    Roster
-                  </Text>
-                  <Pressable
-                    accessibilityRole="button"
-                    accessibilityLabel="Clear Defense"
-                    hitSlop={8}
-                    onPress={clearDefense}
-                  >
-                    <Text
-                      selectable={false}
-                      style={{
-                        ...text,
-                        fontWeight: '700',
-                        flexShrink: 0,
-                        color: theme.scoringOutColor
-                      }}
-                    >
-                      Clear
-                    </Text>
-                  </Pressable>
-                </View>
-              ) : (
+              {/* Defense's list needs no title: its Clear is on the field. */}
+              {!defense && (
                 <Text
                   style={{
                     ...text,
@@ -1128,16 +1247,32 @@ export function RosterEditor({
                   Roster
                 </Text>
               )}
-              <RosterScrollArea name="Roster players">
+              <RosterScrollArea
+                name="Roster players"
+                // Defense's two columns run from margin to margin.
+                inset={defense ? 0 : undefined}
+              >
                 <RosterDrag
                   targetId="roster"
                   onDropPlayer={defense || locked ? undefined : remove}
                 >
                   <View
                     testID={defense ? 'Defense roster grid' : undefined}
+                    onLayout={
+                      defense
+                        ? event => {
+                            setGridWidth(event.nativeEvent.layout.width)
+                          }
+                        : undefined
+                    }
                     style={
                       defense
-                        ? { flexDirection: 'row', flexWrap: 'wrap', gap: 16 }
+                        ? {
+                            flexDirection: 'row',
+                            flexWrap: 'wrap',
+                            columnGap: ROSTER_CARD_GAP,
+                            rowGap: 16
+                          }
                         : { gap: 16 }
                     }
                   >
@@ -1148,7 +1283,6 @@ export function RosterEditor({
                           <RosterDrag
                             key={id}
                             playerId={id}
-                            immediateMouseDrag={defense}
                             label={
                               defense
                                 ? names[id].fullName
@@ -1163,6 +1297,10 @@ export function RosterEditor({
                             }
                           >
                             <View style={row}>
+                              <RosterGrip
+                                label={`Drag ${names[id].fullName}`}
+                                color={text.color}
+                              />
                               <Text
                                 selectable={false}
                                 {...nameProps}
@@ -1174,7 +1312,21 @@ export function RosterEditor({
                           </RosterDrag>
                         )
                         return defense ? (
-                          <View key={id} style={{ width: '47%' }}>
+                          <View
+                            key={id}
+                            style={{
+                              // Two columns of the grid's measured width;
+                              // nearly half until it is measured.
+                              width:
+                                gridWidth > 0
+                                  ? rosterGridColumns(
+                                      gridWidth,
+                                      0,
+                                      ROSTER_CARD_GAP
+                                    )[0].width
+                                  : '47%'
+                            }}
+                          >
                             {card}
                           </View>
                         ) : (
@@ -1255,13 +1407,10 @@ export function RosterEditor({
                         }}
                       >
                         <View style={row}>
-                          <Text
-                            selectable={false}
-                            accessibilityLabel={`Drag ${names[id].fullName}`}
-                            style={{ ...text, fontSize: 24 }}
-                          >
-                            ≡
-                          </Text>
+                          <RosterGrip
+                            label={`Drag ${names[id].fullName}`}
+                            color={text.color}
+                          />
                           <Text
                             selectable={false}
                             {...nameProps}
@@ -1439,7 +1588,21 @@ export function RosterEditor({
           }}
         />
       )}
-      <View testID="Roster footer" style={{ gap: dense && defense ? 2 : 6 }}>
+      {helping && (
+        <HelpSheet
+          text={lstrings.roster_defense_help}
+          onClose={() => {
+            setHelping(false)
+          }}
+        />
+      )}
+      <View
+        testID="Roster footer"
+        onLayout={event => {
+          setFooterHeight(event.nativeEvent.layout.height)
+        }}
+        style={{ gap: dense && defense ? 2 : 6 }}
+      >
         {!inlineValidation && <ScoringError message={validation} />}
         {note != null && (
           <Text
@@ -1454,13 +1617,64 @@ export function RosterEditor({
             {note}
           </Text>
         )}
+        {/* A crowded Defense tab's problem, on one line of its own: the bar
+            has no room for it beside two buttons and the microphone. */}
+        {inlineValidation && validation != null && (
+          <Text
+            testID="Roster footer problem"
+            accessibilityRole="alert"
+            accessibilityLabel={validation}
+            numberOfLines={1}
+            ellipsizeMode="tail"
+            style={{ color: theme.dangerColor, fontSize: 11 }}
+          >
+            {validation}
+          </Text>
+        )}
         <View
           testID="Roster footer bar"
-          style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 12,
+            marginBottom: -footerDrop,
+            paddingBottom: footerGap
+          }}
         >
-          {/* Adding a player is a row at the end of the Roster tab; this
-              half keeps the microphone where it was. */}
-          <View style={{ flex: 1 }} />
+          {/* Cancel and Save Rosters, red and green, as wide as each other
+              either side of the microphone. */}
+          <View
+            testID="Roster cancel box"
+            style={{ flex: 1, minWidth: 0 }}
+            onLayout={footerFit.handleRoom}
+          >
+            <Button
+              testID="Roster cancel"
+              textColor={theme.scoringMenuActiveText}
+              compact
+              labelStyle={footerLabel}
+              // Red when pressed too, not the primary's pressed green.
+              style={{
+                ...footerButton,
+                backgroundColor: theme.scoringOutColor
+              }}
+              accessibilityLabel={lstrings.roster_cancel}
+              label={lstrings.roster_cancel}
+              onPress={() => {
+                if (!coach) {
+                  onCancel?.()
+                  return
+                }
+                setDraft(copyState(base))
+                setNextBatter(undefined)
+                setRunners([])
+                setAdding(false)
+                setEditingLocal(undefined)
+                spoken.note(lstrings.dictation_changes_discarded)
+                onReload?.()
+              }}
+            />
+          </View>
           {shown != null ? (
             <View
               testID="Roster mic"
@@ -1477,16 +1691,20 @@ export function RosterEditor({
           ) : (
             dictationAvailable && <RosterMicGlyph size={sizes.mic} />
           )}
-          <View style={{ flex: 1 }}>
+          <View style={{ flex: 1, minWidth: 0 }}>
             <Button
               color={theme.scoringMenuActiveBackground}
               textColor={theme.scoringMenuActiveText}
               compact
-              style={dense && defense ? { minHeight: sizes.save } : undefined}
+              // Beside Cancel and the microphone on a 320-point screen the
+              // label gets smaller type rather than an ellipsis.
+              labelStyle={footerLabel}
+              style={footerButton}
               accessibilityLabel="Save Rosters"
               label="Save Rosters"
               disabled={
-                spoken.busy || !rosterSavable(dirty, unaccepted, validation)
+                spoken.busy ||
+                !rosterSavable(dirty, unaccepted, validation, planChanged)
               }
               onPress={() => {
                 const saving = onSave(
@@ -1511,61 +1729,127 @@ export function RosterEditor({
             />
           </View>
         </View>
+      </View>
+      {/* The dictation chat, over the top of the screen rather than pushing
+          it down, and never over the footer. */}
+      {shown?.chat != null && (
         <View
+          testID="Roster chat overlay"
+          pointerEvents="box-none"
           style={{
-            flexDirection: inlineValidation ? 'row' : 'column',
-            alignItems: inlineValidation ? 'center' : undefined
+            position: 'absolute',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: footerHeight + gap,
+            zIndex: 1
           }}
         >
-          {inlineValidation && (
-            <View style={{ flex: 1, minWidth: 0 }}>
-              {validation != null && (
-                <Text
-                  accessibilityRole="alert"
-                  numberOfLines={1}
-                  style={{ color: theme.dangerColor, fontSize: 11 }}
-                >
-                  {validation}
-                </Text>
-              )}
-            </View>
-          )}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Cancel"
-            onPress={() => {
-              if (!coach) {
-                onCancel?.()
-                return
-              }
-              setDraft(copyState(base))
-              setNextBatter(undefined)
-              setRunners([])
-              setAdding(false)
-              setEditingLocal(undefined)
-              spoken.note(lstrings.dictation_changes_discarded)
-              onReload?.()
-            }}
-            style={{
-              minHeight: dense ? (defense ? 28 : 36) : 44,
-              minWidth: inlineValidation ? 80 : undefined,
-              alignItems: 'center',
-              justifyContent: 'center'
-            }}
-          >
+          {shown.chat}
+        </View>
+      )}
+      {/* Cancel's and Save Rosters' labels at full size, unseen and
+          unbounded, for the size the footer draws both at. */}
+      <View
+        pointerEvents="none"
+        aria-hidden
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        style={{
+          position: 'absolute',
+          width: 0,
+          height: 0,
+          overflow: 'hidden'
+        }}
+      >
+        {/* Wide enough that neither wraps; one line of text is bounded by
+            nothing here, as `numberOfLines` would bound it on the web. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'flex-start',
+            width: 1000
+          }}
+        >
+          {[lstrings.roster_cancel, 'Save Rosters'].map((label, at) => (
             <Text
+              key={label}
+              testID={`Roster footer label ${at}`}
+              onLayout={footerFit.handleNatural(at)}
               style={{
-                ...text,
-                color: theme.dangerColor,
-                fontFamily: theme.semiBoldTextFont
+                fontFamily: theme.semiBoldTextFont,
+                fontWeight: '600',
+                fontSize: 14
               }}
             >
-              Cancel
+              {label}
             </Text>
-          </Pressable>
-          {inlineValidation && <View style={{ flex: 1 }} />}
+          ))}
         </View>
       </View>
+    </View>
+  )
+}
+
+/**
+ * The coach's Box Score: a pill of its own on the row above the tabs,
+ * styled as one of their segments, and lit while the box score is shown.
+ */
+function BoxScorePill({
+  selected,
+  compact,
+  onPress
+}: {
+  selected: boolean
+  compact: boolean
+  onPress: () => void
+}): React.ReactElement {
+  const theme = useTheme()
+  const height = compact ? 40 : 36
+  return (
+    // Straight under the screen's header, whose gap above it is seven
+    // points: half the fourteen it had.
+    <View style={{ alignSelf: 'center' }}>
+      <Pressable
+        testID="Box Score pill"
+        accessibilityRole="tab"
+        accessibilityLabel={lstrings.coach_box_score}
+        accessibilityState={{ selected }}
+        aria-selected={selected}
+        hitSlop={{ top: 6, bottom: 6 }}
+        onPress={onPress}
+        style={{
+          minHeight: height,
+          // Clears the pill's rounded ends (docs/ui-rules.md).
+          paddingHorizontal: height / 2,
+          justifyContent: 'center',
+          alignItems: 'center',
+          borderRadius: theme.radiusPill,
+          borderWidth: theme.scoringSheet === true ? 1 : 0,
+          borderColor: theme.scoringSurface.badges.green.border,
+          backgroundColor: selected
+            ? theme.scoringMenuActiveBackground
+            : theme.scoringSelectorIdle,
+          shadowColor: theme.buttonShadowColor,
+          shadowOpacity: 1,
+          shadowRadius: 8,
+          shadowOffset: { width: 0, height: 3 },
+          elevation: 3
+        }}
+      >
+        <Text
+          selectable={false}
+          numberOfLines={1}
+          style={{
+            fontFamily: theme.semiBoldTextFont,
+            color: selected
+              ? theme.scoringMenuActiveText
+              : theme.primaryTextColor
+          }}
+        >
+          {lstrings.coach_box_score}
+        </Text>
+      </Pressable>
     </View>
   )
 }

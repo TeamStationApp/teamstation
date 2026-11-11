@@ -34,6 +34,7 @@ import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
+import { gamePlanRoutes } from './routes/gamePlans'
 import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
@@ -173,6 +174,7 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
+      ...routesOf(gamePlanRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
       ...routesOf(analyticsRoutes(db)),
@@ -245,6 +247,7 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
+      ...routesOf(gamePlanRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
       ...routesOf(analyticsRoutes(db)),

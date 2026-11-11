@@ -279,8 +279,8 @@ async function main(): Promise<void> {
         : `roster-footer-scorekeeper-${phase}`
     )
     if (phase === 'after') {
-      // The share row leads the Roster tab; the footer is Create Player and
-      // Save Rosters over a Cancel in the middle.
+      // The share row leads the Roster tab; the footer is one row: a red
+      // Cancel, the microphone's place in the middle, and Save Rosters.
       await tapRosterTab()
       await shown(SHARE)
       const save = (await shown('Save Rosters')).bounds!
@@ -289,20 +289,26 @@ async function main(): Promise<void> {
         !(await texts()).includes('Share Lineup'),
         'Share Lineup has left the footer'
       )
-      assert(cancel.y >= save.y + save.height - 1, 'Cancel is below Save')
-      // The Away/Home slider spans the sheet, so its ends give the middle.
-      // On iOS and in Safari "Cancel" is its whole stretched button, so only
-      // the centre is compared; it sat under Save Rosters, right of here.
+      assert(
+        Math.abs(cancel.y + cancel.height / 2 - (save.y + save.height / 2)) < 4,
+        'Cancel is on Save Rosters’ row'
+      )
+      // The Away/Home slider spans the sheet, so its ends give the middle,
+      // where the microphone sits (this fixture's server does not dictate,
+      // so the bar draws none): Cancel is left of it, Save right of it.
       const away = (await shown('Away Team')).bounds!
       const home = (await shown('Home Team')).bounds!
       const middle = (away.x + home.x + home.width) / 2
       assert(
-        Math.abs(cancel.x + cancel.width / 2 - middle) < 3,
-        'Cancel is in the middle'
+        cancel.x + cancel.width <= middle && cancel.x < save.x,
+        'Cancel is left of the middle'
       )
+      assert(save.x + save.width / 2 > middle + 20, 'Save is right of it')
+      // Cancel is a button as large as Save Rosters, not a word.
       assert(
-        Math.abs(save.x + save.width / 2 - middle) > 20,
-        'Cancel is not under Save Rosters'
+        Math.abs(cancel.width - save.width) < 2 &&
+          Math.abs(cancel.height - save.height) < 2,
+        `Cancel is as large as Save Rosters (${cancel.width}×${cancel.height}, ${save.width}×${save.height})`
       )
       await capture(`share-row-${surface}`)
       console.log('PASS W1 footer')

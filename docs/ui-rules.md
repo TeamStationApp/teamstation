@@ -170,6 +170,10 @@ touch target stay large enough. Dense tab strips reduce gaps and scroll.
   beneath a red destructive primary, red text otherwise. Header and toolbar Cancels
   retain their header alignment; the team picker places its visible text on the
   right content margin. Cancel is never a filled or pale button.
+- **Exception: the roster editor's footer.** Its bar reads Cancel, the
+  microphone, Save Rosters: a red filled Cancel and a green filled Save Rosters,
+  each with white text, the same height and width, either side of the
+  microphone, on the coach's screen and the scorekeeper's sheet alike.
 - **A long label gets smaller type, not a smaller target.** Use
   `Button small`, which keeps the 48-point height.
 

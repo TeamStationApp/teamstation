@@ -24,7 +24,7 @@ import type { Database } from '../db/database'
 export const GAME_CHANGES_CHANNEL = 'game_changes'
 
 /** What a game's own writes announce. */
-export type GameNotifyKind = 'playEdits' | 'game' | 'lineups'
+export type GameNotifyKind = 'playEdits' | 'game' | 'lineups' | 'plans'
 
 /**
  * A change to a game's stored plays. A live post that leaves stored plays
@@ -49,10 +49,15 @@ export interface PlayEditsNotice {
   removed?: number[]
 }
 
-/** The two payloads: one game's change, or a player's song on one team. */
+/**
+ * The payloads: one game's change, or a player's song on one team. A game
+ * plan's save names its team as `teamId`, never `team`, which is the song's:
+ * the plan is the game's own change, and only its viewers hear it.
+ */
 export type GameChangePayload =
   | { game: string; kind: 'game' }
   | { game: string; kind: 'lineups' }
+  | { game: string; kind: 'plans'; teamId: string }
   | PlayEditsNotice
   | { team: string; kind: 'walkUpSong'; userId: string }
 
@@ -88,6 +93,11 @@ export const asGameChangePayload = asEither(
   asObject({
     game: asString,
     kind: asLiteral('game', 'lineups')
+  }),
+  asObject({
+    game: asString,
+    kind: asLiteral('plans'),
+    teamId: asString
   }),
   asObject({
     team: asString,

@@ -53,6 +53,7 @@ export function RosterSelector({
   labelPrefix?: string
   compact?: boolean
   fitContent?: boolean
+  /** The chosen segment, or -1 for none: no thumb and no segment selected. */
   value: number
   onChange: (value: number) => void
 }): React.ReactElement {
@@ -112,6 +113,9 @@ export function RosterSelector({
     })
   ).current
   useEffect(() => {
+    // With no segment chosen the thumb is hidden where it was, and slides
+    // from there to the next one chosen.
+    if (value < 0) return
     thumb.value = withTiming((value * width) / count, {
       duration: reduced ? 0 : 150,
       reduceMotion: reduced ? ReduceMotion.Always : ReduceMotion.Never
@@ -144,21 +148,23 @@ export function RosterSelector({
         elevation: 3
       }}
     >
-      <Animated.View
-        testID="Roster selector thumb"
-        pointerEvents="none"
-        style={[
-          animated,
-          {
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            width: rosterThumbWidth(width, count, Platform.OS === 'web'),
-            borderRadius: theme.radiusPill,
-            backgroundColor: theme.scoringMenuActiveBackground
-          }
-        ]}
-      />
+      {value >= 0 && (
+        <Animated.View
+          testID="Roster selector thumb"
+          pointerEvents="none"
+          style={[
+            animated,
+            {
+              position: 'absolute',
+              top: 0,
+              bottom: 0,
+              width: rosterThumbWidth(width, count, Platform.OS === 'web'),
+              borderRadius: theme.radiusPill,
+              backgroundColor: theme.scoringMenuActiveBackground
+            }
+          ]}
+        />
+      )}
       {theme.scoringSheet === true && (
         <View
           testID="Scoring selector outline"
@@ -226,7 +232,7 @@ export function RosterSelector({
   const control = (
     <RosterSelectorDrag
       count={count}
-      value={value}
+      value={Math.max(0, value)}
       width={width}
       onMove={x => {
         cancelAnimation(thumb)

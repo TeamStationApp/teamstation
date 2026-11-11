@@ -30,6 +30,7 @@ import type {
 } from '../../common/notifications'
 import { asCatalogId, catalogPicture } from '../../common/pictureCatalog'
 import { asPlayerNamePrivacy } from '../../common/playerNamePrivacy'
+import { asPlayingTimeRules } from '../../common/playingTimeRules'
 import type { PublicGroup } from '../../common/publicGroups'
 import { asRoleFlags } from '../../common/roles'
 import { asUserId } from '../../common/userId'
@@ -1190,6 +1191,25 @@ export function groupRoutes(
           // A game's screen hears only of its own game.
           for (const gameId of await gamesAround(trx, affected, clock.now()))
             noteScopeChange(trx, { gameId })
+        }
+        if (Object.hasOwn(req.body ?? {}, 'playingTimeRules')) {
+          if (ref.kind === 'league')
+            throw badRequest('Playing time rules belong to a season or team')
+          // The whole set, cleaned: a team's override never follows a later
+          // change to its season. Null is none on a season, and on a team
+          // follows its season's.
+          const rules =
+            req.body.playingTimeRules === null
+              ? null
+              : clean(asPlayingTimeRules, req.body.playingTimeRules)
+          await trx
+            .updateTable(ref.kind === 'season' ? 'seasons' : 'teams')
+            .set({
+              playing_time_rules: rules,
+              updated_at: clock.now()
+            })
+            .where('id', '=', ref.id)
+            .execute()
         }
         if (ref.kind !== 'season' && req.body?.locality != null)
           await trx

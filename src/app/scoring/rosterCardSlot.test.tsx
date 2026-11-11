@@ -151,4 +151,58 @@ describe('roster card slot', function () {
     })
     expect(cardView('lineup').style.opacity).equals('1')
   })
+
+  it('opens the slot a fielder was dragged out of as a new view, so the 0 height his drag wrote is gone (N2)', async function () {
+    const engine = new RosterGesture(() => undefined)
+    const host = document.createElement('div')
+    document.body.append(host)
+    root = createRoot(host)
+    const shortstop = (player?: number): React.ReactElement => (
+      <RosterContext.Provider value={engine}>
+        <div data-slot="SS">
+          <RosterCardSlot source="ss" target="defense-SS" player={player}>
+            <div style={{ height: 46 }}>SS</div>
+          </RosterCardSlot>
+        </div>
+      </RosterContext.Provider>
+    )
+    await act(async () => {
+      root!.render(shortstop(6))
+    })
+    const slot = (): HTMLElement =>
+      host.querySelector('[data-slot="SS"]')!.firstElementChild as HTMLElement
+    engine.sources.set('ss', {
+      measure: async () => ({ x: 0, y: 0, width: 100, height: 46 }),
+      content: null
+    })
+    // 2B takes him, and SS is left with nobody, in the release's own commit.
+    engine.targets.set('defense-2B', {
+      measure: async () => ({ x: 200, y: 0, width: 100, height: 46 }),
+      drop: () => {
+        root!.render(shortstop())
+      }
+    })
+    await act(async () => {
+      engine.begin(6, 'Lindor', { x: 50, y: 20 }, 'ss')
+      await engine.move({ x: 250, y: 20 })
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    const lifted = slot()
+    expect(lifted.style.height).equals('0px')
+    await act(async () => {
+      expect(await engine.release({ x: 250, y: 20 })).equals(true)
+    })
+    // A phone keeps the height Reanimated last wrote on a view while the
+    // view lives, whatever its style says after: the vacated slot must be
+    // a view no drag has closed, holding its card in flow.
+    const vacated = slot()
+    expect(vacated).not.equals(lifted)
+    expect(vacated.style.height).equals('')
+    expect(
+      (vacated.firstElementChild as HTMLElement).style.position
+    ).not.equals('absolute')
+    expect(vacated.textContent).equals('SS')
+  })
 })

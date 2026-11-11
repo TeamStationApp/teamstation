@@ -7,7 +7,7 @@ import { Button } from '../components/Button'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
-import { RosterDrag } from './RosterDrag'
+import { RosterDrag, RosterGrip } from './RosterDrag'
 import { RosterContext } from './RosterDragContext'
 import type { RosterDragProps } from './rosterDragProps'
 import { RosterGesture } from './rosterGesture'
@@ -36,7 +36,10 @@ afterEach(async () => {
   down = touched = false
   document.body.innerHTML = ''
 })
-async function setup(extra: Partial<RosterDragProps> = {}): Promise<{
+async function setup(
+  extra: Partial<RosterDragProps> = {},
+  grip = false
+): Promise<{
   engine: RosterGesture
   row: HTMLElement
   taps: number[]
@@ -62,6 +65,7 @@ async function setup(extra: Partial<RosterDragProps> = {}): Promise<{
             onTap={() => taps.push(1)}
             {...extra}
           >
+            {grip && <RosterGrip label="Drag One" color="rgb(1, 2, 3)" />}
             <span>One</span>
             <button>Child</button>
           </RosterDrag>
@@ -106,7 +110,7 @@ async function touch(
   return e
 }
 describe('roster hold platform adapters', function () {
-  it('drags a defensive roster card immediately with a mouse and drops once', async () => {
+  it('drags a card with immediateMouseDrag, as the plan’s rows have, at once with a mouse and drops once', async () => {
     const { engine, row, taps, drops } = await setup({
       immediateMouseDrag: true,
       onTap: undefined
@@ -246,6 +250,95 @@ describe('roster hold platform adapters', function () {
     expect(taps).deep.equals([])
     expect(drops).deep.equals([])
   }).timeout(5000)
+  it('picks a card up as a touch or a mouse press lands on its grip, and holds half a second anywhere else on it (N2)', async () => {
+    const { engine, row, taps, drops } = await setup({}, true)
+    const grip = row.querySelector<HTMLElement>('[data-roster-grip]')!
+    expect(grip.style.touchAction).equals('none')
+    expect(grip.textContent).equals('≡')
+    expect(grip.querySelector('[aria-label="Drag One"]')!.textContent).equals(
+      '≡'
+    )
+    // A touch on the grip: lifted as it lands, then dropped, and no tap.
+    await touch(grip, 'touchstart', 4)
+    expect(engine.active?.id).equals(1)
+    const move = await touch(grip, 'touchmove', 150)
+    expect(move.defaultPrevented).equals(true)
+    await touch(grip, 'touchend', 150)
+    expect(drops).deep.equals([1])
+    expect(taps).deep.equals([])
+    // A touch on the name holds first.
+    const name = row.querySelector('span')!
+    await touch(name, 'touchstart', 60)
+    expect(engine.active).equals(null)
+    await wait()
+    expect(engine.active?.id).equals(1)
+    await touch(name, 'touchend', 60)
+    const pointer = async (
+      target: Element,
+      type: string,
+      x: number
+    ): Promise<void> => {
+      const event = new window.MouseEvent(type, {
+        bubbles: true,
+        clientX: x,
+        clientY: 10,
+        button: 0
+      })
+      Object.defineProperties(event, {
+        pointerType: { value: 'mouse' },
+        pointerId: { value: 1 }
+      })
+      await act(async () => {
+        target.dispatchEvent(event)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+    }
+    document.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
+    // A mouse press on the grip lifts at once; on the name, only after the
+    // hold, as a touch does.
+    await pointer(grip, 'pointerdown', 4)
+    expect(engine.active?.id).equals(1)
+    await pointer(row, 'pointermove', 150)
+    await pointer(row, 'pointerup', 150)
+    expect(drops).deep.equals([1, 1])
+    await pointer(name, 'pointerdown', 60)
+    expect(engine.active).equals(null)
+    await wait()
+    expect(engine.active?.id).equals(1)
+    await pointer(row, 'pointermove', 150)
+    await pointer(row, 'pointerup', 150)
+    await act(async () => {
+      row.click()
+    })
+    expect(drops).deep.equals([1, 1, 1])
+    expect(taps).deep.equals([])
+    // A touch or a mouse press on the grip that goes nowhere is the card's
+    // tap, as before it had a grip: the lifted card is put back, not
+    // dropped, and the tap runs (an Add to Lineup card adds its player).
+    await touch(grip, 'touchstart', 4)
+    expect(engine.active?.id).equals(1)
+    await touch(grip, 'touchend', 6)
+    expect(engine.active).equals(null)
+    expect(taps).deep.equals([1])
+    document.dispatchEvent(new window.MouseEvent('mouseup', { bubbles: true }))
+    await pointer(grip, 'pointerdown', 4)
+    expect(engine.active?.id).equals(1)
+    await pointer(row, 'pointerup', 5)
+    expect(engine.active).equals(null)
+    await act(async () => {
+      grip.click()
+    })
+    expect(taps).deep.equals([1, 1])
+    expect(drops).deep.equals([1, 1, 1])
+    // Pressed on the grip, held past the hold and let go in place, it is
+    // neither a tap nor a drop: the Add to Lineup card adds nobody.
+    await touch(grip, 'touchstart', 4)
+    await wait()
+    await touch(grip, 'touchend', 5)
+    expect(engine.active).equals(null)
+    expect(taps).deep.equals([1, 1])
+    expect(drops).deep.equals([1, 1, 1])
+  })
   it('uses identical small clear circles and app primary fills and shadows in both themes', async () => {
     const host = document.createElement('div')
     document.body.append(host)
