@@ -10,6 +10,12 @@ import puppeteer, {
 } from 'puppeteer'
 
 import { browserCoverageCollector } from '../../../e2e/rigs/browserCoverage'
+import {
+  dropRunner,
+  installSceneProbe,
+  placeFielder,
+  setTrajectory
+} from '../../../e2e/rigs/fieldPointer'
 import type { GameDetail, RosterEntry } from '../../common/api'
 import {
   dictatedAction,
@@ -25,7 +31,8 @@ import {
 import type {
   FielderRef,
   GameSetup,
-  GameState
+  GameState,
+  Position
 } from '../../common/scoring/state'
 import { makeDatabase } from '../../server/db/database'
 import { serverConfig } from '../../server/serverConfig'
@@ -160,6 +167,7 @@ async function openAs(
   context?: BrowserContext
 ): Promise<Page> {
   const page = await (context ?? browser).newPage()
+  await installSceneProbe(page)
   await coverage?.track(page)
   page.setDefaultTimeout(15000)
   page.on('pageerror', error => {
@@ -229,7 +237,7 @@ async function pitch(page: Page, label: string): Promise<void> {
   await waitReady(page)
   await click(page, label)
 }
-/** A ball in play through the outcome picker, placed and angled by keyboard. */
+/** A ball in play through the outcome picker, fielded by the pitcher at the angle shown. */
 async function chooseHit(page: Page, outcome: string): Promise<void> {
   await waitReady(page)
   await click(page, 'Swing in Play')
@@ -240,14 +248,8 @@ async function chooseHit(page: Page, outcome: string): Promise<void> {
   await page.waitForSelector(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await page.focus('[role="application"]')
-  await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
-  await page.keyboard.press('Enter')
-  await page.waitForSelector(
-    '[aria-label^="Drag up and down for ball trajectory."]'
-  )
-  await page.keyboard.press('Enter')
+  await placeFielder(page, 'P')
+  await setTrajectory(page)
 }
 /** One frame, so the screen has taken the key before the next one. */
 async function frame(page: Page): Promise<void> {
@@ -265,7 +267,7 @@ async function frame(page: Page): Promise<void> {
 async function hitTo(
   page: Page,
   outcome: string,
-  slot: number,
+  position: Position,
   angle: number
 ): Promise<void> {
   await waitReady(page)
@@ -277,19 +279,8 @@ async function hitTo(
   await page.waitForSelector(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await page.focus('[role="application"]')
-  for (let i = 0; i <= slot; i++) await page.keyboard.press(']')
-  await frame(page)
-  await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
-  await page.keyboard.press('Enter')
-  await page.waitForSelector(
-    '[aria-label^="Drag up and down for ball trajectory."]'
-  )
-  for (let value = 45; value > angle; value--)
-    await page.keyboard.press('ArrowDown')
-  await frame(page)
-  await page.keyboard.press('Enter')
+  await placeFielder(page, position)
+  await setTrajectory(page, angle)
 }
 /** Finishes a decided play when the screen leaves it open for correction. */
 async function finishAtBat(page: Page): Promise<void> {
@@ -306,30 +297,13 @@ async function finishAtBat(page: Page): Promise<void> {
   if ((await page.$('[aria-label="Finish at-bat"]')) != null)
     await click(page, 'Finish at-bat')
 }
-/** Places the player `presses` steps along the field's choosable list. */
-async function placeWithKeyboard(page: Page, presses: number): Promise<void> {
+/** The next defender in a relay takes the ball, dragged where he fields it. */
+async function placeDefender(page: Page, position: Position): Promise<void> {
   // A relay asks for the next defender in the same words each time, so the
   // prompt alone does not show the screen has taken the last one.
   await frame(page)
   await frame(page)
-  await page.focus('[role="application"]')
-  for (let i = 0; i < presses; i++) await page.keyboard.press(']')
-  await frame(page)
-  await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
-  await page.keyboard.press('Enter')
-}
-async function dropRunnerWithKeyboard(
-  page: Page,
-  decision: 'Safe' | 'Out',
-  advance = false
-): Promise<void> {
-  await page.waitForSelector('canvas[data-field-ready="true"]')
-  await page.focus('[role="application"]')
-  await page.keyboard.press('Space')
-  if (advance) for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
-  await page.keyboard.press(decision === 'Safe' ? 's' : 'o')
-  await page.keyboard.press('Enter')
+  await placeFielder(page, position)
 }
 /** The runner headed home is safe, when the screen asks. */
 async function decideHome(page: Page): Promise<void> {
@@ -347,19 +321,8 @@ async function reachOnError(page: Page): Promise<void> {
   await page.waitForSelector(
     '[aria-label^="Tap or drag a player to where the ball was fielded"]'
   )
-  await page.focus('[role="application"]')
-  for (let i = 0; i <= 4; i++) await page.keyboard.press(']')
-  await frame(page)
-  await page.keyboard.press('Space')
-  await page.keyboard.press('ArrowUp')
-  await page.keyboard.press('Enter')
-  await page.waitForSelector(
-    '[aria-label^="Drag up and down for ball trajectory."]'
-  )
-  for (let value = 45; value > -10; value--)
-    await page.keyboard.press('ArrowDown')
-  await frame(page)
-  await page.keyboard.press('Enter')
+  await placeFielder(page, 'SS')
+  await setTrajectory(page, -10)
   await page.waitForSelector('[aria-label^="Tap or drag another defender"]', {
     timeout: 30000
   })
@@ -442,30 +405,22 @@ describe('scoring into the server', function () {
       await pitch(page, 'Swing and Miss')
       // A ground ball to the shortstop: 6 to 4, the runner from first
       // already standing on second, then 4 to 3 for the batter.
-      await hitTo(page, 'Ground Out', 4, -10)
+      await hitTo(page, 'Ground Out', 'SS', -10)
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender, hold a runner"]'
       )
-      // The shortstop holds the ball, so the second baseman is fourth.
-      await placeWithKeyboard(page, 4)
+      await placeDefender(page, '2B')
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender, hold a runner"]'
       )
-      // The runner is the last player the field offers: [ from nothing
-      // selected goes to him. The throw beat him to second, where he stands.
+      // The throw beat the runner to second, where he stands.
       await frame(page)
       await frame(page)
-      await page.focus('[role="application"]')
-      await page.keyboard.press('[')
-      await frame(page)
-      await page.keyboard.press('Space')
-      await page.keyboard.press('o')
-      await page.keyboard.press('Enter')
-      // The second baseman still holds it, so the first baseman is third.
+      await dropRunner(page, 2, 'Out', 'stay')
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender, or hit Done"]'
       )
-      await placeWithKeyboard(page, 3)
+      await placeDefender(page, '1B')
       await click(page, 'Finish defensive play')
       await waitReady(page)
       await waitSaved(page)
@@ -588,7 +543,7 @@ describe('scoring into the server', function () {
       // A single to centre.
       await pitch(page, 'Ball')
       await pitch(page, 'Called Strike')
-      await hitTo(page, 'Single', 7, 15)
+      await hitTo(page, 'Single', 'CF', 15)
       await finishAtBat(page)
       // A strikeout.
       await pitch(page, 'Called Strike')
@@ -597,20 +552,15 @@ describe('scoring into the server', function () {
       await finishAtBat(page)
       // Short to first for the batter; the ground out takes the runner to
       // second.
-      await hitTo(page, 'Ground Out', 4, -10)
+      await hitTo(page, 'Ground Out', 'SS', -10)
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]'
       )
-      await page.focus('[role="application"]')
-      for (let i = 0; i < 3; i++) await page.keyboard.press(']')
-      await frame(page)
-      await page.keyboard.press('Space')
-      await page.keyboard.press('ArrowUp')
-      await page.keyboard.press('Enter')
+      await placeDefender(page, '1B')
       await click(page, 'Finish defensive play')
       await finishAtBat(page)
       // A fly to left for the third out.
-      await hitTo(page, 'Ball Caught', 6, 40)
+      await hitTo(page, 'Ball Caught', 'LF', 40)
       await waitReady(page)
       await waitSaved(page)
     } finally {
@@ -965,7 +915,7 @@ describe('scoring into the server', function () {
           `select id from events where "gameId"='${gameId}' and "atBatIndex"=0`
         )
       ).equals(singleId)
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 1, 'Safe')
       await click(page, 'Finish at-bat')
       await waitReady(page)
       await click(page, 'Open scoring menu')
@@ -1009,21 +959,21 @@ describe('scoring into the server', function () {
       await click(page, 'Save Rosters')
       // A single.
       await pitch(page, 'Ball')
-      await hitTo(page, 'Single', 7, 15)
+      await hitTo(page, 'Single', 'CF', 15)
       await finishAtBat(page)
       // A steal of second, then a double that scores him.
       await pitch(page, 'Ball')
       await waitReady(page)
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 1, 'Safe')
       await click(page, 'Steal')
       await waitReady(page)
-      await hitTo(page, 'Double', 8, 20)
+      await hitTo(page, 'Double', 'RF', 20)
       await decideHome(page)
       await finishAtBat(page)
       // A wild pitch takes the runner to third, and a strikeout.
       await pitch(page, 'Ball')
       await waitReady(page)
-      await dropRunnerWithKeyboard(page, 'Safe', true)
+      await dropRunner(page, 2, 'Safe')
       await click(page, 'Wild Pitch')
       await waitReady(page)
       await pitch(page, 'Called Strike')
@@ -1035,11 +985,11 @@ describe('scoring into the server', function () {
       await decideHome(page)
       await finishAtBat(page)
       // A ground-out, and the half ends there.
-      await hitTo(page, 'Ground Out', 4, -10)
+      await hitTo(page, 'Ground Out', 'SS', -10)
       await page.waitForSelector(
         '[aria-label^="Tap or drag the next defender"]'
       )
-      await placeWithKeyboard(page, 3)
+      await placeDefender(page, '1B')
       await click(page, 'Finish defensive play')
       await finishAtBat(page)
       await waitReady(page)
