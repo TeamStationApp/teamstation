@@ -651,34 +651,42 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
   /** The session a swap replaced, kept on screen until the new one opens. */
   const [closedSession, setClosedSession] = useState<GameSession>()
   /**
-   * A swap of this screen's own, opened and about to replace the panel. The
-   * panel draws its sheet empty first: a sheet that went with the panel
-   * would be taken down after it, sliding over the swapped game.
+   * The game whose panel a swap of this screen's own replaces. Its sheet is
+   * drawn empty first, alone, without drawing the panel again: a sheet that
+   * went with the panel would be taken down after it, sliding over the
+   * swapped game. Before that draw is shown, the swapped game replaces the
+   * panel (`OnVanished`, `replaceVanished`).
    */
-  const [replacing, setReplacing] = useState<{
+  const [vanishing] = useState(() =>
+    createRelay<GameSession | undefined>(undefined)
+  )
+  /** The swapped game, opened, that replaces the panel `vanishing` names. */
+  const replacing = useRef<{
     reads: OpenedReads
     value: GameSession
     attempt: number
     context: (typeof openedContext)['current']
-  }>()
-  useLayoutEffect(() => {
-    if (replacing == null) return
-    setReplacing(undefined)
+  }>(undefined)
+  const replaceVanished = useCallback((): void => {
+    const next = replacing.current
+    if (next == null) return
+    replacing.current = undefined
     // Opened again since, or read again (the server refused the swap): that
     // open stands, and this one is let go.
     if (
-      openedContext.current !== replacing.context ||
-      retryRef.current !== replacing.attempt - 1
+      openedContext.current !== next.context ||
+      retryRef.current !== next.attempt - 1
     ) {
-      replacing.value.close()
+      next.value.close()
+      vanishing.set(undefined)
       return
     }
-    adopted.current = replacing.attempt
-    showOpened(replacing.reads, replacing.value, replacing.attempt)
-    setRetry(replacing.attempt)
+    adopted.current = next.attempt
+    showOpened(next.reads, next.value, next.attempt)
+    setRetry(next.attempt)
     // `showOpened` sets state and reads refs, the same each draw.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [replacing])
+  }, [vanishing])
   const reopenReplaced = useCallback(
     (change: GameReplaced, own = false, swapped?: SwappedOpening): boolean => {
       const session = opened
@@ -716,16 +724,16 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
             return
           }
           // First the panel it replaces takes its sheet away, then, before
-          // that is drawn, the swapped game replaces the panel: both in the
-          // next frame (`replacing`).
-          setReplacing({ reads: swapped.reads, value, attempt, context })
+          // that is drawn, the swapped game replaces the panel.
+          replacing.current = { reads: swapped.reads, value, attempt, context }
+          vanishing.set(session)
         })
         .catch(() => {
           if (openedContext.current === context) setRetry(value => value + 1)
         })
       return true
     },
-    [opened, reopened, props.client, source]
+    [opened, reopened, props.client, source, vanishing]
   )
   /**
    * What a swap of this screen's own opens the game again on: the copy the
@@ -930,6 +938,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           </Text>
         </View>
       )}
+      <OnVanished relay={vanishing} onVanished={replaceVanished} />
       <ScoringPanel
         key={`${String(props.userId ?? 'local-scorer')}:${props.gameId}:${openedAttempt}`}
         onReopen={arrived => {
@@ -937,7 +946,7 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           setRetry(value => value + 1)
         }}
         accepting={reopened && closedSession !== opened}
-        vanishing={replacing != null}
+        vanishing={vanishing}
         onSwapped={async (answer, swapped) => {
           return reopenReplaced(
             {
@@ -1156,10 +1165,11 @@ function ScoringPanel(props: {
    */
   accepting: boolean
   /**
-   * The game opened again replaces this panel in the next frame: its sheet
-   * draws nothing now, so it does not linger over the game that replaces it.
+   * Names this panel's game once the game opened again replaces the panel:
+   * its sheet draws nothing from then, so it does not linger over the game
+   * that replaces it.
    */
-  vanishing?: boolean
+  vanishing: Relay<GameSession | undefined>
   /** The web's writes sent behind the screen: its swaps. */
   webWrites: WebWrites
   /** The server refused a swap the web sent behind the screen. */
@@ -3556,9 +3566,10 @@ function ScoringPanel(props: {
         </>
       )}
       {sheet != null && (
-        <ScoringSheet
+        <PanelSheet
+          vanishing={props.vanishing}
+          game={props.game}
           visible={props.active || sheet === 'exit'}
-          hidden={props.vanishing === true}
           headerless={sheet === 'rosters'}
           textCancel
           fullScreen={sheet === 'rosters'}
@@ -3817,7 +3828,7 @@ function ScoringPanel(props: {
               />
             </>
           )}
-        </ScoringSheet>
+        </PanelSheet>
       )}
       {topBand > 0 && (
         // The band's fill is dark: the status bar's text goes light over it.
@@ -3979,6 +3990,38 @@ function ScoringPanel(props: {
       )}
     </BaseballScreen>
   )
+}
+
+/**
+ * Calls `onVanished` in the draw in which a panel's sheet went
+ * (`vanishing`), before that draw is shown.
+ */
+function OnVanished(props: {
+  relay: Relay<GameSession | undefined>
+  onVanished: () => void
+}): null {
+  const gone = useRelay(props.relay)
+  const { onVanished } = props
+  useLayoutEffect(() => {
+    if (gone != null) onVanished()
+  }, [gone, onVanished])
+  return null
+}
+
+/**
+ * A panel's sheet, drawn empty once the panel's game is replaced
+ * (`vanishing`): only it draws again then, not the panel.
+ */
+function PanelSheet({
+  vanishing,
+  game,
+  ...sheet
+}: React.ComponentProps<typeof ScoringSheet> & {
+  vanishing: Relay<GameSession | undefined>
+  game: GameSession
+}): React.ReactElement {
+  const gone = useRelay(vanishing) === game
+  return <ScoringSheet {...sheet} hidden={gone} />
 }
 
 /** The drop targets, redrawn from the drag's relay on their own. */
