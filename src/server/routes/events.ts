@@ -19,6 +19,7 @@ import {
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import {
+  asScoringMutation,
   sameScoringMutation,
   type ScoringMutation
 } from '../../common/scoring/scoringMutation'
@@ -725,7 +726,7 @@ async function storedGameRead(
     ...(game.scoring_mutation == null
       ? {}
       : {
-          scoringMutation: game.scoring_mutation as unknown as ScoringMutation
+          scoringMutation: asScoringMutation(game.scoring_mutation)
         }),
     generation: game.play_generation,
     // What swapping home and away would do, as the swap route decides it.
