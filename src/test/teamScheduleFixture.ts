@@ -123,7 +123,7 @@ export function teamScheduleGames(
 }
 
 const USER = {
-  id: 7,
+  id: userIdOfGumbo(7),
   displayName: 'Pat',
   email: 'pat@example.com',
   isAdmin: false,

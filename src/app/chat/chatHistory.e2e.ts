@@ -89,11 +89,47 @@ async function safetyNumber(
   await page.goto(`${WEB}/chat/${conversationId}/members`, {
     waitUntil: 'networkidle2'
   })
-  const button = await page.$(`[aria-label^="Safety words with ${name}, "]`)
+  // Another device of this person asking to link puts its prompt over the
+  // page; reading history answers nothing, so it is put off with Later.
+  const prompt = await page.$('[data-testid="chat-device-approval-prompt"]')
+  if (prompt != null) {
+    const later = await page.$$(
+      '[data-testid="chat-device-approval-prompt"] [role="button"]'
+    )
+    for (const choice of later) {
+      if ((await choice.evaluate(node => node.textContent)) === 'Later') {
+        await choice.click()
+        await page.waitForFunction(
+          () =>
+            document.querySelector(
+              '[data-testid="chat-device-approval-prompt"]'
+            ) === null
+        )
+        break
+      }
+    }
+  }
+  // The row on the scene on top: a covered scene stays mounted beneath it.
+  const row = `[aria-label^="Safety words with ${name}, "]`
+  const button =
+    (await page.$(`[data-scene-role="top"] ${row}`)) ?? (await page.$(row))
   if (button == null) return `${name}: no button`
   await button.click()
   // Wait for the member row to go before reading the safety grid.
-  await page.waitForFunction(row => !row.isConnected, {}, button)
+  await page
+    .waitForFunction(row => !row.isConnected, {}, button)
+    .catch(async (error: unknown) => {
+      // What the tap reached, for a row that would not open.
+      const reached = await button.evaluate(row => {
+        const box = row.getBoundingClientRect()
+        const hit = document.elementFromPoint(
+          box.x + box.width / 2,
+          box.y + box.height / 2
+        )
+        return `row at ${JSON.stringify(box)}; the point holds ${hit === null ? 'nothing' : hit.outerHTML.slice(0, 300)}; scene ${String(row.closest('[data-scene-role]') === null ? 'none' : row.closest('[data-scene-role]')!.getAttribute('data-scene-role'))}`
+      })
+      throw new Error(`${String(error)}: ${reached}`)
+    })
   // The screen settles on the words, or on why there are none: somebody
   // who has not set up chat, or a number that cannot be loaded.
   const settled = await page.waitForFunction(

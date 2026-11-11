@@ -170,6 +170,18 @@ export async function seedScoreboardGames(
     const away = await ensureTeam(trx, VISITORS_NAME, 'Visitor', mint)
     await ensureRole(trx, runner, home, 'owner')
     await ensureRole(trx, other, home, 'member')
+    // Score is offered to a scorekeeper of one of the game's teams.
+    await trx
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: runner,
+        scope_type: 'team',
+        scope_id: home,
+        role: 'scorekeeper'
+      })
+      .onConflict(oc => oc.doNothing())
+      .execute()
     await trx
       .updateTable('games')
       .set({ status: 'cancelled', updated_at: new Date(now) })

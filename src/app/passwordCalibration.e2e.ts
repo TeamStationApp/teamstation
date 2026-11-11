@@ -34,7 +34,14 @@ async function main(): Promise<void> {
       device: 'web',
       platform: 'web',
       url: h.origin + '/fixture',
-      extra: { windowSize: '1100,1000' },
+      // Chrome by path where the run names one: Maestro D's own Chromium is
+      // an older build.
+      extra: {
+        windowSize: '1100,1000',
+        ...(process.env.TS_CHROME_PATH == null
+          ? {}
+          : { browser: process.env.TS_CHROME_PATH })
+      },
       artifacts: 'none'
     })
     await m.openLink({ link: h.origin + '/fixture' })
@@ -116,7 +123,7 @@ async function main(): Promise<void> {
     })
     assert.equal(
       (await login.signInWithPassword('alex@example.com', 'Another9')).user.id,
-      101
+      userIdOfGumbo(101)
     )
     await writeFile(
       path.join(artifacts, 'browser-calibration.log'),

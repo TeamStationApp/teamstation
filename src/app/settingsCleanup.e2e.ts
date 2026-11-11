@@ -213,13 +213,13 @@ async function main(): Promise<void> {
         'E-mail addresses',
         'fixture104@example.com, new-parent@example.com'
       )
-      await near('Send invites')
+      await m.scrollUntilVisible({ element: { id: 'add-people-submit' } })
       await m.command('scroll', { direction: 'down' })
       await m.waitForAnimationToEnd()
       await capture(m, artifacts!, 'add-people-actions.png')
       const sendPoint = await page.evaluate(() => {
-        const node = [...document.querySelectorAll('[role="button"]')].find(
-          node => node.textContent === 'Send invites'
+        const node = document.querySelector(
+          '[data-testid="add-people-submit"]'
         )!
         const box = node.getBoundingClientRect()
         return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
@@ -228,7 +228,7 @@ async function main(): Promise<void> {
       await contains(page, 'TEAM DETAILS')
       await near('Withdraw invitation')
       await capture(m, artifacts!, 'team-settings-people-after.png')
-      await tap(m, 'Resend')
+      await tap(m, 'Resend invitation to new-parent@example.com')
       await contains(page, 'Sent again')
       await near('MANAGE PLAYERS')
       await contains(page, 'Mike Trout')
@@ -242,21 +242,23 @@ async function main(): Promise<void> {
       )
       const managed = (await result.json()) as {
         people: Array<{
-          userId: number
+          userId: string
           emails: string[]
           teams: Array<{ id: string; isPlayer: boolean }>
         }>
       }
       expect(
-        managed.people.find(person => person.userId === 103)!.emails
+        managed.people.find(person => person.userId === userIdOfGumbo(103))!
+          .emails
       ).length(0)
       expect(
-        managed.people.find(person => person.userId === 104)!.emails
+        managed.people.find(person => person.userId === userIdOfGumbo(104))!
+          .emails
       ).not.length(0)
       for (const id of [103, 104, 106])
         expect(
           managed.people
-            .find(person => person.userId === id)!
+            .find(person => person.userId === userIdOfGumbo(id))!
             .teams.find(team => team.id === f.teamA)!.isPlayer
         ).equals(id !== 106)
       await tap(m, 'Remove Mike Trout')
@@ -283,7 +285,11 @@ async function main(): Promise<void> {
       await go(settings, 'TEAM DETAILS')
       await go(`/groups/team/${f.teamA}/settings/invites`, 'Used 13 times')
       await capture(m, artifacts!, 'invite-spectators.png')
-      await tap(m, 'Disable')
+      await tap(m, 'Disable invite link Families')
+      await tap(m, 'Confirm disable')
+      await page.waitForFunction(
+        () => !document.body.innerText.includes('Used 13 times')
+      )
       await go(settings, 'TEAM DETAILS')
       expect(
         await page.evaluate(() => {
@@ -537,25 +543,30 @@ async function main(): Promise<void> {
         .execute()
       const scheduleUrl = f.h.origin + `/teams/${f.teamA}?tab=schedule`
       await m.openLink({ link: scheduleUrl })
-      await contains(page, 'Add Event')
-      await m.scrollUntilVisible({ element: { text: 'Add Event' } })
+      await contains(page, 'Add Game')
+      await m.scrollUntilVisible({ element: { text: 'Add Game' } })
       await capture(m, artifacts!, 'team-schedule-end-after.png')
+      // The schedule ends with Add Game, centred under the rows.
       const size = await page.evaluate(() => {
-        const card = document
-          .querySelector('[data-testid="add-event-card"]')!
+        const button = document
+          .querySelector('[data-testid="add-game-button"]')!
           .getBoundingClientRect()
         const row = document
           .querySelector('[data-testid="scheduleGame"]')!
           .getBoundingClientRect()
-        return { width: card.width, rowWidth: row.width, height: card.height }
+        return {
+          centre: button.x + button.width / 2,
+          rowCentre: row.x + row.width / 2,
+          below: button.top - row.bottom
+        }
       })
-      expect(Math.abs(size.width - size.rowWidth)).lessThan(1)
-      expect(size.height).within(52, 60)
-      await tap(m, 'Add Event')
+      expect(Math.abs(size.centre - size.rowCentre)).lessThan(1)
+      expect(size.below).greaterThan(0)
+      await tap(m, 'Add Game')
       await contains(page, 'Create Game')
       await capture(m, artifacts!, 'create-game-from-card.png')
       await tap(m, 'Back')
-      await contains(page, 'Add Event')
+      await contains(page, 'Add Game')
       for (const [user, file, allowed] of [
         [103, 'team-schedule-coach.png', true],
         [106, 'team-schedule-member.png', false]
@@ -573,9 +584,9 @@ async function main(): Promise<void> {
         await m.openLink({ link: scheduleUrl })
         await contains(page, 'Bluebirds')
         await page.waitForSelector('[data-testid="scheduleGame"]')
-        expect((await page.$('[data-testid="add-event-card"]')) != null).equals(
-          allowed
-        )
+        expect(
+          (await page.$('[data-testid="add-game-button"]')) != null
+        ).equals(allowed)
         await capture(m, artifacts!, file)
       }
       console.log(
@@ -593,9 +604,9 @@ async function main(): Promise<void> {
         localStorage.clear()
       })
       await m.openLink({ link: scheduleUrl })
-      await contains(page, 'Add Event')
-      await m.scrollUntilVisible({ element: { text: 'Add Event' } })
-      await tap(m, 'Add Event')
+      await contains(page, 'Add Game')
+      await m.scrollUntilVisible({ element: { text: 'Add Game' } })
+      await tap(m, 'Add Game')
       await contains(page, 'Create Game')
       await m.tapOn({
         css: '[role="radio"][aria-label*="Practice"]',
@@ -628,10 +639,10 @@ async function main(): Promise<void> {
         link: f.h.origin + `/teams/${f.standaloneTeam}?tab=schedule`
       })
       await contains(page, 'No games scheduled')
-      await contains(page, 'Add Event')
+      await contains(page, 'Add Game')
       await capture(m, artifacts!, 'team-schedule-empty-after.png')
       console.log(
-        'E5/E7 PASS: coach creates practice through Add Event; empty schedule retains the card'
+        'E5/E7 PASS: coach creates practice through Add Game; an empty schedule keeps Add Game'
       )
       return
     }

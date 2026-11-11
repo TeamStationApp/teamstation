@@ -189,7 +189,8 @@ describe('account settings in the finished desktop application', function () {
       name: string
       avatarUrl: string
     }
-    expect(player.name).equals('Mookie B')
+    // His own profile: his whole name.
+    expect(player.name).equals('Mookie Betts')
     expect((await fetch(player.avatarUrl)).status).equals(200)
   })
   it('sets and changes a password, signs in again, and keeps code login', async () => {

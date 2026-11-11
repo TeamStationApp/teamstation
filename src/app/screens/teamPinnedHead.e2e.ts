@@ -326,7 +326,10 @@ async function press(page: Page, label: string): Promise<void> {
     var found = Array.prototype.find.call(
       document.querySelectorAll('[role="button"], [role="radio"], [role="tab"]'),
       function (node) {
-        return (node.textContent || '').trim().indexOf(label) === 0
+        return (
+          (node.textContent || '').trim().indexOf(label) === 0 ||
+          node.getAttribute('aria-label') === label
+        )
       }
     )
     if (found == null) return null
@@ -890,7 +893,7 @@ describe('team screen: pinned pills and the schedule', function () {
       )
       // A season with no pitching: the pitching card goes, and the tab is
       // shorter than it was, where it is.
-      await press(page, 'Filter')
+      await press(page, 'Filter stats')
       await press(page, 'Spring')
       await press(page, 'Show these')
       await page.waitForFunction(
