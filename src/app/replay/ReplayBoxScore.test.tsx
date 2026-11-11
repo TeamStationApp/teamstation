@@ -134,9 +134,9 @@ describe('the replay box score', () => {
       // AB R H RBI BB K
       'Totals523202',
       // IP H R ER BB K PC
-      'Totals3.082241851',
+      'Totals3.08224180510',
       'Totals412101',
-      'Totals9.041129101'
+      'Totals9.04112901010'
     ])
     for (const row of rows) {
       expect(row.getAttribute('data-testid')).equals(null)
@@ -168,7 +168,7 @@ describe('the replay box score', () => {
     ).length(2)
   })
 
-  it('leaves the batting and pitching tables as they were', async () => {
+  it('keeps every pitching column scrollable in a narrow deck and the key outside it', async () => {
     await render(<ReplayBoxScore box={nine} />)
     const column = document.querySelector(
       '[data-testid="replay-box-score-column"]'
@@ -177,7 +177,27 @@ describe('the replay box score', () => {
     expect(text).includes('Harbor Hawks batting')
     expect(text).includes('Valley Pines pitching')
     expect(text).includes('Harbor Hawks Batter412101')
-    expect(text).includes('Valley Pines Pitcher9.041129101')
+    expect(text).includes('Valley Pines Pitcher9.04112901010')
+    const tables = document.querySelector<HTMLElement>(
+      '[data-testid="replay-box-score-tables"]'
+    )!
+    expect(tables.contains(column)).equals(true)
+    expect(getComputedStyle(tables).overflowX).equals('auto')
+    expect(getComputedStyle(tables).maxWidth).equals('100%')
+    const key = document.querySelector('[data-testid="box-stats-key"]')!
+    expect(tables.contains(key)).equals(false)
+    expect(key.textContent).includes('#P - Number of pitchesS - Strikes')
+    expect(
+      document.querySelectorAll('[data-testid="box-stats-key"]')
+    ).has.length(1)
+    expect(key.textContent).includes('AB - At bats')
+    expect(key.textContent).includes('ER - Earned runs')
+    for (const absent of ['HR - ', 'AVG - ', 'BF - '])
+      expect(key.textContent).not.includes(absent)
+    expect(
+      column.compareDocumentPosition(key) &
+        window.Node.DOCUMENT_POSITION_FOLLOWING
+    ).does.not.equal(0)
     expect(
       column.querySelector('[data-testid="replay-box-score-line-figures"]')
     ).equals(null)

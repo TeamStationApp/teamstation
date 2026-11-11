@@ -25,6 +25,7 @@ import { cacheStyles } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { battingTotals, pitchingTotals } from './boxScoreTotals'
 import type { StatColumn } from './statColumns'
+import { StatsKey } from './StatsKey'
 
 /** A player's name, below the line score's: all nine figures fit a phone. */
 const PLAYER_NAME_REM = 5.75
@@ -204,6 +205,16 @@ export function BoxScore(props: BoxScoreProps): React.ReactElement {
             <View key={side.key}>{tables(side)}</View>
           ))}
         </View>
+      )}
+      {(box.batting.length > 0 || box.pitching.length > 0 || first != null) && (
+        <StatsKey
+          kind="box"
+          columns={[
+            ...battingColumns.map(column => column.label),
+            ...pitchingColumns.map(column => column.label),
+            'E'
+          ]}
+        />
       )}
     </View>
   )
@@ -552,7 +563,15 @@ const pitchingColumns: Array<StatColumn<PitchingRow>> = [
   { label: lstrings.stats_walks, value: row => String(row.bb) },
   { label: lstrings.stats_strikeouts, value: row => String(row.k) },
   { label: 'HR', value: row => String(row.hr) },
-  { label: 'HBP', value: row => String(row.hbp) }
+  { label: 'HBP', value: row => String(row.hbp) },
+  {
+    label: '#P',
+    value: row => (row.pitches == null ? '—' : String(row.pitches))
+  },
+  {
+    label: 'S',
+    value: row => (row.strikes == null ? '—' : String(row.strikes))
+  }
 ]
 
 const battingColumns: Array<StatColumn<BattingLine>> = [

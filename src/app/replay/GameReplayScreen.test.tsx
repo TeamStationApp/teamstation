@@ -743,7 +743,7 @@ describe('the replay screen', function () {
         maxWidth: '100%',
         flexDirection: 'row'
       })
-      expect(flat(propsOf('replay-box-score-column').style)).deep.equals({
+      expect(flat(propsOf('replay-box-score-tables').style)).deep.equals({
         alignSelf: 'center',
         maxWidth: '100%'
       })

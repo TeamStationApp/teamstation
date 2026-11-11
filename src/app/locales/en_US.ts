@@ -966,7 +966,7 @@ export const enUs = {
   stats_at_bats: 'AB',
   stats_hits: 'H',
   stats_walks: 'BB',
-  stats_strikeouts: 'K',
+  stats_strikeouts: 'SO',
   stats_runs_batted_in: 'RBI',
   stats_average: 'AVG',
   stats_on_base: 'OBP',

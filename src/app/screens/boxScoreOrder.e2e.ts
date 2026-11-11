@@ -29,7 +29,7 @@ async function main(): Promise<void> {
     await m.openBrowser({
       url: `${required('REPLAY_WEB_URL')}/games/${required('REPLAY_GAME')}?tab=boxScore`
     })
-    await m.assertVisible({ text: 'Luis Gi', timeout: 20000 })
+    await m.assertVisible({ text: 'Luis G', timeout: 20000 })
     // Each pitcher's last row on the page is their pitching line, which
     // follows the batting table. Bring the visitors' pitching table into view
     // and read its order.
@@ -37,10 +37,10 @@ async function main(): Promise<void> {
       script: `
         const rows = [...document.querySelectorAll('*')].filter(
           node => node.childElementCount === 0 &&
-            ['Gerrit C', 'Luis Gi'].includes(node.textContent.trim())
+            ['Gerrit C', 'Luis G'].includes(node.textContent.trim())
         );
         const last = name => rows.filter(node => node.textContent.trim() === name).at(-1);
-        const cole = last('Gerrit C'), gil = last('Luis Gi');
+        const cole = last('Gerrit C'), gil = last('Luis G');
         if (!cole || !gil) throw new Error('No pitching rows');
         (cole.compareDocumentPosition(gil) & Node.DOCUMENT_POSITION_FOLLOWING ? cole : gil)
           .scrollIntoView({ block: 'center' });

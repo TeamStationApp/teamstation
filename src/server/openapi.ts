@@ -2030,6 +2030,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                           'bb',
                           'k',
                           'pc',
+                          'hbp',
+                          'strikes',
                           'current'
                         ],
                         properties: {
@@ -2038,6 +2040,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                           ip: { type: 'string' },
                           current: { type: 'boolean' },
                           pc: { type: ['integer', 'null'] },
+                          hbp: { type: ['integer', 'null'] },
+                          strikes: { type: ['integer', 'null'] },
                           ...Object.fromEntries(
                             ['outs', 'h', 'r', 'er', 'bb', 'k'].map(key => [
                               key,

@@ -641,6 +641,56 @@ describe('TV game playback entry', () => {
     await key('swipeUp')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
+  it('shows pitching count columns, totals and the bottom stats key', async () => {
+    wide = true
+    const statistics = client.gameStatistics.bind(client)
+    try {
+      client.gameStatistics = async () => {
+        const data = await statistics('game')
+        data.boxes = [
+          { at: 0, position: null, box: data.initial, message: null }
+        ]
+        return data
+      }
+      await render()
+      await act(async () => {
+        const video = document.querySelector('video')!
+        video.currentTime = 1
+        video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+        await pause()
+      })
+      await press('Close panel')
+      await press('Box score')
+      await press('Team and player statistics')
+      const panel = document.querySelector('[data-testid="tv-stats-scroll"]')!
+      expect(panel.textContent).includes('SOHBP#PS')
+      expect(panel.textContent).includes('Totals')
+      expect(
+        panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+      ).includes('#P - Number of pitchesS - Strikes')
+      expect(
+        panel.querySelectorAll('[data-testid="box-stats-key"]')
+      ).has.length(1)
+      expect(
+        panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+      ).includes('AB - At bats')
+      expect(
+        panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+      ).includes('ER - Earned runs')
+      for (const absent of ['HR - ', 'AVG - ', 'BF - '])
+        expect(
+          panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+        ).not.includes(absent)
+      expect(
+        getComputedStyle(
+          panel.querySelector('[data-testid="box-stats-key"]')!
+            .firstElementChild!.firstElementChild!.firstElementChild!
+        ).fontSize
+      ).equals('28px')
+    } finally {
+      client.gameStatistics = statistics
+    }
+  })
   it('scrolls expanded stats at half speed on drag, directional clicks and release', async () => {
     await render()
     await press('Close panel')

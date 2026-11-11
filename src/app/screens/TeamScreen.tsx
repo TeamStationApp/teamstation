@@ -83,6 +83,7 @@ import { MembershipAccess } from './MembershipAccess'
 import { PublicTeamContent } from './PublicTeamContent'
 import { hasScheduleRsvpLine, ScheduleRsvpControl } from './ScheduleRsvpControl'
 import { battingColumns, pitchingColumns } from './statColumns'
+import { StatsKey } from './StatsKey'
 import { nameGoesBelowControls } from './teamCardLayout'
 
 /** The first read of each list, which the screen makes as it opens. */
@@ -685,6 +686,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                           columns={battingColumns}
                           onOpen={openStatsPlayer}
                         />
+                        <StatsKey kind="batting" />
                       </Card>
                     )}
                     {pitching.length > 0 && (
@@ -699,6 +701,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
                             columns={pitchingColumns}
                             onOpen={openStatsPlayer}
                           />
+                          <StatsKey kind="pitching" />
                         </Card>
                       </>
                     )}

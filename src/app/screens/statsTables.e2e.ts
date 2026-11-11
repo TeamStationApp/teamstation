@@ -38,7 +38,17 @@ interface Device {
   openLink: (args: { link: string }) => Promise<unknown>
   acceptAlert: () => Promise<unknown>
   assertVisible: (args: { text: string; timeout: number }) => Promise<unknown>
-  tapOn: (args: { text: string; index?: string }) => Promise<unknown>
+  assertNotVisible: (args: {
+    text: string
+    timeout: number
+  }) => Promise<unknown>
+  tapOn: (args: {
+    text?: string
+    id?: string
+    index?: string
+    optional?: boolean
+    timeout?: number
+  }) => Promise<unknown>
   swipe: (args: {
     startX: number
     startY: number
@@ -334,6 +344,12 @@ async function main(): Promise<void> {
       await open(`/games/${seed.nineInnings}/replay`, 'R')
       // The field draws after the deck, and moves the line score as it does.
       await new Promise(resolve => setTimeout(resolve, 8000))
+      if (native)
+        await m.tapOn({
+          id: 'logbox_dismiss_button_warn',
+          optional: true,
+          timeout: 1000
+        })
       // It opens on the inning being played and R, H and E.
       check((await find('E')) != null, 'the line score opens at its end')
       // The deck moves as the play card under the field changes, so the
@@ -386,12 +402,43 @@ async function main(): Promise<void> {
         'the replay ends batting with Totals'
       )
       await shot('replay-batting-totals')
+      if (native) {
+        for (
+          let i = 0;
+          i < 20 && (await find('Number of pitches')) == null;
+          i++
+        ) {
+          await deckSwipe(true)
+          steps++
+        }
+        check(
+          (await find('Number of pitches')) != null,
+          'bottom key explains #P'
+        )
+        check((await find('Strikes')) != null, 'bottom key explains S')
+        // Clear the floating playback controls, not merely the screen edge.
+        await deckSwipe(true)
+        await deckSwipe(true)
+        steps += 2
+        const key = await find('Number of pitches')
+        check(
+          key?.bounds != null &&
+            key.bounds.y + key.bounds.height < height - 120,
+          'bottom key scrolls above the playback controls'
+        )
+        await shot('replay-counts-key')
+      }
       for (; steps > 0; steps--) await deckSwipe(false)
       // A name in the deck opens the player.
       await reach('Open Juan Soto')
       await m.tapOn({ text: 'Open Juan Soto' })
       if (!captureOnly)
         await m.assertVisible({ text: '.*Filter.*', timeout: 10000 })
+      if (native) {
+        await open(`/games/${seed.nineInnings}/replay`, 'Exit')
+        await m.tapOn({ text: 'Exit' })
+        await m.assertNotVisible({ text: 'Exit', timeout: 10000 })
+      }
       console.log(`${surface}: replay line score passed`)
     }
 

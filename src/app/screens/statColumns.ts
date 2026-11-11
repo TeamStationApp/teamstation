@@ -22,13 +22,14 @@ const percentage = (value: number | undefined): string =>
 
 /** One order and one format for the team tables and the player's cards. */
 export const battingColumns: Array<StatColumn<BattingRow>> = [
+  { label: 'GP', value: row => count(row.g) },
   { label: 'PA', value: row => count(row.pa) },
   { label: 'AB', value: row => count(row.ab) },
-  { label: 'H', value: row => count(row.h) },
   { label: 'AVG', sample: '.999', value: row => average(row.rates.avg) },
   { label: 'OBP', sample: '.999', value: row => average(row.rates.obp) },
   { label: 'OPS', sample: '1.999', value: row => average(row.rates.ops) },
   { label: 'SLG', sample: '1.999', value: row => average(row.rates.slg) },
+  { label: 'H', value: row => count(row.h) },
   { label: '1B', value: row => count(row.singles) },
   { label: '2B', value: row => count(row.doubles) },
   { label: '3B', value: row => count(row.triples) },
@@ -37,6 +38,7 @@ export const battingColumns: Array<StatColumn<BattingRow>> = [
   { label: 'R', value: row => count(row.r) },
   { label: 'BB', value: row => count(row.bb) },
   { label: 'SO', value: row => count(row.k) },
+  { label: 'K-L', value: row => count(row.kl) },
   { label: 'HBP', value: row => count(row.hbp) },
   { label: 'SAC', value: row => count(row.sh) },
   { label: 'SF', value: row => count(row.sf) },
@@ -54,6 +56,7 @@ export const pitchingColumns: Array<StatColumn<PitchingRow>> = [
   { label: 'GS', value: row => count(row.gs) },
   { label: 'BF', value: row => count(row.bf) },
   { label: '#P', sample: '999', value: row => count(row.pitches) },
+  { label: 'S', sample: '999', value: row => count(row.strikes) },
   // Official scorer decisions are not present in the stored game record.
   ...['W', 'L', 'SV', 'SVO', 'BS', 'SV%'].map(label => ({
     label,

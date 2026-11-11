@@ -63,6 +63,32 @@ describe('replay box score', function () {
     expect(box.from).equals(null)
   })
 
+  it('keeps strikes unknown when pitch totals include unrecorded starting pitches', async function () {
+    const timeline = replayTimelineOf(await finalGame(), context)
+    const empty = structuredClone(timeline.start)
+    const id = home(8)
+    empty.liveData.boxscore.teams.home.pitchCounts[id] = 40
+    const seeded = replayBoxScore(empty)
+    expect(seeded.home.pitching.find(line => line.id === id)).includes({
+      pc: 40,
+      strikes: null
+    })
+    expect(pitchingTotals(seeded.home.pitching).strikes).equals(null)
+
+    const played = structuredClone(timeline.end)
+    const recorded = replayBoxScore(played).home.pitching.find(
+      line => line.id === id
+    )!
+    expect(recorded.strikes).a('number').greaterThan(0)
+    played.liveData.boxscore.teams.home.pitchCounts[id] += 40
+    const partial = replayBoxScore(played)
+    expect(partial.home.pitching.find(line => line.id === id)).includes({
+      pc: recorded.pc! + 40,
+      strikes: null
+    })
+    expect(pitchingTotals(partial.home.pitching).strikes).equals(null)
+  })
+
   it('puts substitutes under the slot they entered and pitchers in the order they pitched', async function () {
     const timeline = replayTimelineOf(await finalGame(), context)
     const box = replayBoxScore(timeline.end)

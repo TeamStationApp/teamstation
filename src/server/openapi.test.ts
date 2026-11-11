@@ -147,6 +147,22 @@ const UPGRADE_ONLY = new Set([
 ])
 
 describe('the API document', function () {
+  it('declares nullable replay pitcher hit batters and strikes', function () {
+    const schemas = openApiDocument('0.0.0').components.schemas as Record<
+      string,
+      any
+    >
+    for (const side of ['away', 'home']) {
+      const pitching =
+        schemas.HistoricalBox.properties[side].properties.pitching.items
+      for (const field of ['hbp', 'strikes', 'pc']) {
+        expect(pitching.required).includes(field)
+        expect(pitching.properties[field]).deep.equals({
+          type: ['integer', 'null']
+        })
+      }
+    }
+  })
   it('describes every route the server answers', function () {
     const mounted = [
       ...oauthRoutes(),
