@@ -759,9 +759,12 @@ async function people(run: Run): Promise<void> {
   await scrollTap(admin, 'Remove from Demo Hawks')
   await contains(
     admin.page,
-    'Ben C leaves Demo Hawks: off the roster, and every role they hold on it.'
+    'Ben Chapman leaves Demo Hawks: off the roster, and every role they hold on it.'
   )
-  await admin.m.tapOn({ css: '[aria-label="Remove Ben C"]', timeout: 15000 })
+  await admin.m.tapOn({
+    css: '[aria-label="Remove Ben Chapman"]',
+    timeout: 15000
+  })
   await admin.page.waitForFunction(
     teamId => location.pathname === '/teams/' + teamId,
     { timeout: 15000 },
@@ -776,7 +779,7 @@ async function people(run: Run): Promise<void> {
       .executeTakeFirst()) != null
   await until(async () => !(await onHawks(ben.id)))
   expect(await roleRows(ben.id)).deep.equals([])
-  await contains(admin.page, 'Removed Ben C from Demo Hawks')
+  await contains(admin.page, 'Removed Ben Chapman from Demo Hawks')
   await contains(admin.page, 'Alfonso Soriano')
   const rosterNames = await admin.page.evaluate(() => {
     const roster = document.querySelector('[data-testid="teamTabContent"]')
@@ -1621,7 +1624,7 @@ async function guardian(run: Run): Promise<void> {
   // Ben signs in and approves.
   const benSession = await run.signIn('guardian-player', ben.id)
   await benSession.m.openBrowser({ url: `${f.h.origin}/notifications` })
-  const asked = "Hank Majeski asks to be Ben C's guardian"
+  const asked = "Hank Majeski asks to be Ben Chapman's guardian"
   await contains(benSession.page, asked)
   await benSession.m.tapOn({
     css: `[aria-label="Accept ${asked}"]`,
