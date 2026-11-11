@@ -1782,14 +1782,13 @@ export class Outbox {
     // Renames also hold the events document. Keep the rejected input beside
     // every later writer so the final reconciliation can release its editor,
     // even if the app restarts between the scoring response and the rename.
-    const scoringKey = call.gameId == null ? undefined : eventsKey(call.gameId)
+    const scoringKey =
+      'gameId' in call && call.gameId != null
+        ? eventsKey(call.gameId)
+        : undefined
     if (rejectedScoring != null && scoringKey != null)
       for (const other of later)
-        if (
-          documentsOf(callOfRow(other)).some(
-            doc => doc.key === scoringKey
-          )
-        )
+        if (documentsOf(callOfRow(other)).some(doc => doc.key === scoringKey))
           await tx.update(other.id, {
             rejectedScoring: JSON.stringify(rejectedScoring)
           })
