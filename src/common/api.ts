@@ -457,7 +457,7 @@ export const asChatConversation = asObject({
 export type ChatConversation = ReturnType<typeof asChatConversation>
 
 /** One member of a chat, from `GET /chat/conversations/:id/members`. */
-export const asChatMember = asObject({
+const cleanChatMember = asObject({
   userId: asUserId,
   shortName: asString,
   /**
@@ -485,11 +485,12 @@ export const asChatMember = asObject({
   generation: asNullable(asNumber)
 })
 export type ChatMember = Omit<
-  ReturnType<typeof asChatMember>,
+  ReturnType<typeof cleanChatMember>,
   'compactName'
 > & {
   compactName?: string
 }
+export const asChatMember: Cleaner<ChatMember> = cleanChatMember
 
 /**
  * One row of a chat's hash-chained membership log. `prevHash` and `hash` are
@@ -508,7 +509,7 @@ export const asChatLogRow = asObject({
 export type ChatLogRow = ReturnType<typeof asChatLogRow>
 
 /** Somebody the caller may name in a DM, from `GET /chat/dm-candidates`. */
-export const asChatPerson = asObject({
+const cleanChatPerson = asObject({
   userId: asUserId,
   shortName: asString,
   /**
@@ -525,11 +526,12 @@ export const asChatPerson = asObject({
   affiliations: asOptional(asString, '')
 })
 export type ChatPerson = Omit<
-  ReturnType<typeof asChatPerson>,
+  ReturnType<typeof cleanChatPerson>,
   'compactName'
 > & {
   compactName?: string
 }
+export const asChatPerson: Cleaner<ChatPerson> = cleanChatPerson
 
 export const asChatBlock = asObject({
   userId: asUserId,
@@ -2216,7 +2218,7 @@ export interface RosterCandidate {
   affiliations: string
   tier: 'mine' | 'season' | 'league' | 'other'
 }
-export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
+const cleanRosterCandidate = asObject({
   userId: asString,
   gumboId: asNullable(asNumber),
   externalIds: asArray(asString),
@@ -2237,6 +2239,7 @@ export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
     asLiteral('other')
   )
 })
+export const asRosterCandidate: Cleaner<RosterCandidate> = cleanRosterCandidate
 
 /** The most rows one roster search answers: there are no further pages. */
 export const ROSTER_CANDIDATE_MAX = 100
@@ -2365,8 +2368,9 @@ export function canDeleteCameraVideo(stream: {
 const cleanLiveStream = asObject({
   id: asString,
   gameId: asString,
-  /** Whose camera it is, and what they are called. */
+  /** Whose camera it is. */
   userId: asUserId,
+  /** What the reader calls them: whole only for whom they may read in full. */
   ownerName: asString,
   /** Which of that person's four, and what they call it. */
   slot: asNumber,
@@ -2697,7 +2701,7 @@ export type RoleGrant = ReturnType<typeof asRoleGrant>
  * and who also joined the league holds two, and an administrator who removes
  * one and sees nothing change has been told a half-truth.
  */
-export const asScopePerson = asObject({
+const cleanScopePerson = asObject({
   userId: asUserId,
   displayName: asString,
   emails: asArray(asString),
@@ -2728,6 +2732,7 @@ export const asScopePerson = asObject({
   lastSignInAt: asNullable(asString),
   lastSeenAt: asNullable(asString)
 })
+export const asScopePerson = cleanScopePerson
 type ScopePersonFromPage = ReturnType<typeof asScopePerson>
 export type ScopePerson = Omit<
   ScopePersonFromPage,
@@ -5174,21 +5179,31 @@ export class TeamStationClient {
     })
   }
 
-  async onboarding(): Promise<{ displayName: string; onboarding: Onboarding }> {
+  async onboarding(): Promise<{
+    displayName: string
+    onboarding: Onboarding
+  }> {
     return await this.request(
       'GET',
       '/me/onboarding',
-      asObject({ displayName: asString, onboarding: asOnboarding })
+      asObject({
+        displayName: asString,
+        onboarding: asOnboarding
+      })
     )
   }
 
-  async saveOnboardingName(
+  async saveOnboardingName(displayName: string): Promise<{
     displayName: string
-  ): Promise<{ displayName: string; onboarding: Onboarding }> {
+    onboarding: Onboarding
+  }> {
     return await this.request(
       'PUT',
       '/me/onboarding/name',
-      asObject({ displayName: asString, onboarding: asOnboarding }),
+      asObject({
+        displayName: asString,
+        onboarding: asOnboarding
+      }),
       { displayName }
     )
   }

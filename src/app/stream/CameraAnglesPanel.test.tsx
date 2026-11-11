@@ -698,7 +698,7 @@ describe('the cameras on a game, on a phone', function () {
         stream({
           id: 'liv_4',
           label: 'Center Field',
-          ownerName: 'Shohei Ohtani',
+          ownerName: 'Shohei O',
           deviceModel: 'iPad Pro',
           deviceId: undefined
         })

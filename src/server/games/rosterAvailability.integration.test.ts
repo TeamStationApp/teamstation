@@ -205,11 +205,13 @@ describe('a game’s availability', function () {
       })
       .execute()
     const actor = { userId: scorer, isAdmin: false, scopes: [] }
-    await addExistingGuest(db, actor, GAME, 'away', {
+    const freddie = await addExistingGuest(db, actor, GAME, 'away', {
       userId: ids['Freddie Freeman'],
       jersey: '5',
       positions: ['1B']
     })
+    if (freddie.kind !== 'added') throw new Error('Freddie was not added')
+    expect(freddie.entry).not.have.property('publicName')
     const guest = await createGuestPlayer(db, actor, GAME, 'home', {
       firstName: 'Nolan',
       lastName: 'Arenado',

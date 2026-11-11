@@ -643,6 +643,7 @@ describe('the phone outbox', function () {
     expect(one.userId).equals(userIdOfGumbo(one.gumboId!))
     expect(one.nameDetails?.firstName).equals('Yadier')
     expect(one.shortName).equals('Yadier B')
+    expect(one).not.have.property('publicName')
     // On both rosters, the whole name only where a manager reads it.
     const plain = JSON.parse(String(p.document(rosterKey('tem_home'))!.body))
     expect(
@@ -3410,6 +3411,7 @@ describe('the phone outbox', function () {
       gumboId: 901,
       shortName: 'George Ruth'
     })
+    expect(entry).not.have.property('publicName')
     await p.client.saveLineups('g1', lineupSave('D0', [901]))
     expect(p.rows().map(row => [row.method, row.path, row.chain])).deep.equals([
       ['PUT', guestPath, 'game:g1'],
@@ -4187,6 +4189,8 @@ describe('the phone outbox', function () {
         { background: true }
       )
       expect(entry.shortName).equals('Babe B')
+      // An offline add carries no label: its tile is its id's colour.
+      expect(entry).not.have.property('publicName')
       for (let tries = 0; tries < 10; tries++)
         await new Promise(resolve => setTimeout(resolve, 5))
       // One write of the chain in flight: the pitch.

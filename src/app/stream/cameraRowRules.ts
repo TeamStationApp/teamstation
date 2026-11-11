@@ -5,7 +5,6 @@ import {
   type GameLiveStreams,
   type LiveStream
 } from '../../common/api'
-import { shortName } from '../../common/names'
 import { lstrings, sprintf } from '../locales/strings'
 
 /** One camera on the game, marked whether it is the caller's own. */
@@ -50,15 +49,16 @@ function usingWords(stream: LiveStream): string {
  * The line under a row's angle. An own row with no `deviceId` is external,
  * website and older Director cameras among them. Rows in `others` never carry
  * a `deviceId`, so they are told apart by `mine` and are never external. Only
- * a camera that is neither live nor over is waiting for video.
+ * a camera that is neither live nor over is waiting for video. Somebody
+ * else's row names its owner as the server wrote them for this reader: whole
+ * to one who may read it, otherwise their public label in its own format.
  */
 export function cameraSubtitle(stream: LiveStream, mine: boolean): string {
   const waiting = angleState(stream) === 'idle'
   if (!mine) {
-    const name = shortName({ id: stream.userId, displayName: stream.ownerName })
     return sprintf(
       waiting ? lstrings.stream_row_waiting : lstrings.stream_row_other,
-      name
+      stream.ownerName
     )
   }
   if (stream.deviceId == null) return usingWords(stream)

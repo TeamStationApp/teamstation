@@ -174,6 +174,36 @@ describe('chat routes and the DM rules (U5)', function () {
         )
       ).deep.equals(['Guardian of Pat Player · Hawks'])
     })
+
+    it('names each person for the reader alone, with no tile label, so every reader’s tile is the id’s colour', async function () {
+      const id = await chatId('Hc', 'Hawks Members')
+      const members = async (
+        who: string
+      ): Promise<Record<string, Record<string, unknown>>> => {
+        const answer = await call(
+          who,
+          'GET',
+          `/chat/conversations/${id}/members`
+        )
+        expect(answer.status).equals(200)
+        return Object.fromEntries(
+          (answer.body as Array<Record<string, unknown>>).map(m => [
+            fixture.keyOf(String(m.userId)),
+            m
+          ])
+        )
+      }
+      const coach = await members('Hc')
+      const parent = await members('A')
+      expect(coach.P.shortName).equals('Pat Player')
+      expect(parent.P.shortName).equals('Pat P')
+      expect(coach.P.userId).equals(parent.P.userId)
+      expect(coach.P).not.have.property('publicName')
+      expect(parent.P).not.have.property('publicName')
+      const picker = await call('Hc', 'GET', '/chat/dm-candidates?q=gale')
+      for (const row of picker.body as Array<Record<string, unknown>>)
+        expect(row).not.have.property('publicName')
+    })
   })
 
   describe('who is in which chat (E3)', function () {
@@ -903,7 +933,11 @@ describe('chat routes and the DM rules (U5)', function () {
         id: string
         kind: string
         memberCount: number
-        people: Array<{ userId: string; shortName: string; left: boolean }>
+        people: Array<{
+          userId: string
+          shortName: string
+          left: boolean
+        }>
       }>
       const peopleOf = async (
         who: string,
@@ -967,6 +1001,12 @@ describe('chat routes and the DM rules (U5)', function () {
         const names = alone?.people.map(person => person.shortName) ?? []
         expect(names).deep.equals([...names].sort((a, b) => a.localeCompare(b)))
         expect(names.every(name => name.length > 0)).equals(true)
+        // No label for a tile: its colour is the id's, a former member's too.
+        expect(
+          alone?.people.every(
+            person => !('publicName' in person) && person.left
+          )
+        ).equals(true)
 
         // A scope chat names nobody this way.
         const scoped = (

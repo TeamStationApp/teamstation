@@ -673,6 +673,8 @@ describe('a game named in player name privacy', function () {
       expect(await name('/users?guardedBy=me', 103)).include(
         '"shortName":"Alex Lee"'
       )
+      // No tile label beside it: the tile's colour is the id's.
+      expect(await name('/users?guardedBy=me', 103)).not.include('publicName')
       await f.h.db
         .deleteFrom('user_links')
         .where('related_user_id', '=', userIdOfGumbo(ALEX))

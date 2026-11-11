@@ -257,7 +257,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   return (
     <Screen>
       <HeroCard
-        person
+        // The account's id, so its tile is the colour its rows are.
+        person={{ userId: user.id }}
         name={user.displayName}
         secondary={user.email}
         uri={user.avatarUrl}
@@ -271,6 +272,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         <PictureSheet
           client={client}
           name={user.displayName}
+          person={{ userId: user.id }}
           allowCatalog={sportsPicturesEnabled}
           pickPhoto={pickPhoto}
           onClose={() => {

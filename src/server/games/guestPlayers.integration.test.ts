@@ -112,6 +112,7 @@ describe('persistent game guests', function () {
     for (const entry of entries)
       expect(entry).includes({
         shortName: 'Babe Ruth',
+        // A guest plays for no team: the built-in format labels the tile.
         jersey: '00',
         bats: 'left'
       })

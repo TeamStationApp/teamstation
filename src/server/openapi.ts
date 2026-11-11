@@ -4922,7 +4922,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`replayable` is whether anything TeamStation scored is stored ' +
             'for the game — a play carrying its `teamStation` record, or a ' +
             'recorded at-bat in progress — so it can be replayed. ' +
-            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null). Names are abbreviated.',
+            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {

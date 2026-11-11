@@ -129,7 +129,11 @@ export interface TeamScreenProps {
   onOpenPlayer?: (
     userId: string,
     name: string,
-    from?: { seasonId?: string; teamId?: string; onTeam?: string }
+    from?: {
+      seasonId?: string
+      teamId?: string
+      onTeam?: string
+    }
   ) => void
   /**
    * Somebody on the roster who is not a player, opened as their person

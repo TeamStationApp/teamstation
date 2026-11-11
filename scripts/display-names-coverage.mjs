@@ -66,7 +66,24 @@ const specs = [
   'src/server/routes/seasons.integration.test.ts',
   'src/server/groups/publicSummary.integration.test.ts',
   'src/server/home/homeLists.integration.test.ts',
-  'src/server/routes/live.integration.test.ts'
+  'src/server/routes/live.integration.test.ts',
+  // M6: person colours (`personTint`, by account id alone) and `PersonEmblem`.
+  'src/app/components/emblemUsage.test.ts',
+  'src/app/chat/engine/dmTitle.test.ts',
+  'src/common/eventInfo.test.ts',
+  'src/server/routes/chatBlocks.integration.test.ts',
+  'src/server/routes/manage.integration.test.ts',
+  'src/server/routes/users.integration.test.ts',
+  'src/server/routes/teamMembers.integration.test.ts',
+  'src/server/routes/phoneStreams.integration.test.ts',
+  'src/server/admin/nodeAdministration.integration.test.ts',
+  'src/server/umpires/assignments.integration.test.ts',
+  'src/server/games/rosterAvailability.integration.test.ts',
+  'src/server/groups/legacyAuthority.integration.test.ts',
+  'src/server/routes/account.integration.test.ts',
+  'src/server/routes/signup.integration.test.ts',
+  'src/server/routes/tvLogin.integration.test.ts',
+  'src/app/platform/sessionStore.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = [
@@ -97,7 +114,21 @@ const screens = [
   'src/app/screens/creationUi.test.tsx',
   'src/app/umpires/appMask.test.tsx',
   'src/app/screens/FollowTeamScreen.test.tsx',
-  'src/app/components/cardSpacingFixture.test.tsx'
+  'src/app/components/cardSpacingFixture.test.tsx',
+  // M6
+  'src/app/components/PersonEmblem.test.tsx',
+  'src/app/components/AppHeader.test.tsx',
+  'src/app/screens/NodeAdministrationScreen.test.tsx',
+  'src/app/screens/PersonProfileScreen.test.tsx',
+  'src/app/screens/EventInfoTab.test.tsx',
+  'src/app/screens/EventRsvpModal.test.tsx',
+  'src/app/screens/ScheduleRsvpControl.test.tsx',
+  'src/app/screens/teamSchedule.test.tsx',
+  'src/app/screens/peopleAccounts.test.tsx',
+  'src/app/screens/settingsPeople.test.tsx',
+  'src/app/stream/CameraAnglesPanel.test.tsx',
+  'src/app/umpires/scheduleUi.test.tsx',
+  'src/app/chat/chatBlocksView.test.tsx'
 ]
 
 const database = spawnSync('node', ['src/migrate/requirePostgres18.js'], {

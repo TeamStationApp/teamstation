@@ -247,6 +247,7 @@ describe('account selection privacy and grants', function () {
     expect(parent).length(1)
     expect(parent[0].avatarUrl).equals(null)
     expect(parent[0].affiliations).equals('Guardian of Tim R · Demo Eagles')
+    expect(parent[0]).not.have.property('publicName')
     const child = await search('Tim', 101, '', true)
     expect(child[0].affiliations).equals('Guardians: Mookie B · Demo Eagles')
     expect(JSON.stringify(parent)).not.contains('Raines')

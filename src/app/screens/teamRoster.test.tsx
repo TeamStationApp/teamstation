@@ -39,6 +39,7 @@ function entry(
     userId: userIdOfGumbo(userId),
     gumboId: userId,
     shortName,
+    // The label the server sends beside every name, which the tile hashes.
     jersey: null,
     positions: [],
     isPlayer: false,

@@ -8,13 +8,16 @@ import { PersonSearchRow } from './PersonSearchRow'
 describe('shared person search row', () => {
   afterEach(unmount)
   it('uses two letters for a single-word name', async () => {
-    await mount(<PersonSearchRow name="Ichiro" onPress={() => {}} />)
+    await mount(
+      <PersonSearchRow userId="usr_ichiro" name="Ichiro" onPress={() => {}} />
+    )
     expect(text()).contains('IC')
   })
   it('shows two compact initials and an affiliation below the name, and selects the person', async () => {
     let selected = false
     await mount(
       <PersonSearchRow
+        userId="usr_betts"
         name="Mookie Betts"
         affiliations="Guardian of Mike T · Demo Hawks"
         onPress={() => {
@@ -37,6 +40,7 @@ describe('shared person search row', () => {
   it('shows the photo instead of initials and permits missing affiliations', async () => {
     await mount(
       <PersonSearchRow
+        userId="usr_trout"
         name="Mike Trout"
         avatarUrl="https://example.test/avatar.png"
         disabled
@@ -55,12 +59,14 @@ describe('shared person search row', () => {
     await mount(
       <>
         <PersonSearchRow
+          userId="usr_ripken"
           name="Cal Ripken"
           affiliations="Guardian of Josh S · Demo Hawks"
           affiliationTestID="candidate-affiliation-usr_ripken"
           onPress={() => {}}
         />
         <PersonSearchRow
+          userId="usr_jeter"
           name="Derek Jeter"
           affiliations=""
           affiliationTestID="candidate-affiliation-usr_jeter"

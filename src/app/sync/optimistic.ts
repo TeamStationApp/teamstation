@@ -377,11 +377,11 @@ function renamedIn(
  * him: his new halves written alone (`shortName`), whoever else the game
  * names.
  */
-function guestShortName(gumboId: number, name: Halves): string {
+function guestShortName(id: number | string, name: Halves): string {
   const whole = [name.firstName, name.lastName]
     .filter(part => part !== '')
     .join(' ')
-  return shortName({ id: gumboId, displayName: whole, ...name })
+  return shortName({ id, displayName: whole, ...name })
 }
 
 /**
@@ -476,6 +476,12 @@ export function localRosterEntry(
     .filter(part => part !== '')
     .join(' ')
   const displayName = named === '' ? 'Player' : named
+  const short = shortName({
+    id: localId,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    displayName
+  })
   return {
     userId: userIdOfGumbo(localId),
     gumboId: localId,
@@ -490,12 +496,7 @@ export function localRosterEntry(
       : {}),
     bats: player.bats,
     throws: player.throws,
-    shortName: shortName({
-      id: localId,
-      firstName: player.firstName,
-      lastName: player.lastName,
-      displayName
-    }),
+    shortName: short,
     avatarUrl: null,
     jersey: player.jersey,
     positions: [...player.positions],

@@ -7,9 +7,9 @@ import type { AvailablePicture } from '../../common/pictureCatalog'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
-import { Emblem } from './Emblem'
 import { GroupEmblem } from './GroupEmblem'
-import { initialsOf } from './initials'
+import { personInitialsOf } from './initials'
+import { PersonEmblem, type PersonEmblemProps } from './PersonEmblem'
 import { PhotoGrid } from './PhotoGrid'
 import { groupTile, type GroupTileSource } from './teamTile'
 
@@ -19,10 +19,19 @@ import { groupTile, type GroupTileSource } from './teamTile'
  */
 export type PictureGroup = Pick<GroupTileSource, 'kind' | 'id' | 'leagueId'>
 
+/** A person, whose own tile previews the initials of `name`. */
+export type PicturePerson = Pick<PersonEmblemProps, 'userId'>
+
+/** Whose picture is chosen: a group's, or a person's photo. */
+export type PictureOwner =
+  | { group: PictureGroup; person?: undefined }
+  | { group?: undefined; person: PicturePerson }
+
 export function GroupPictureChooser({
   client,
   name,
   group,
+  person,
   fitInitials = false,
   allowCatalog = false,
   value,
@@ -31,17 +40,17 @@ export function GroupPictureChooser({
 }: {
   client: TeamStationClient
   name: string
-  /** A team, league or season; absent for a person's photo. */
-  group?: PictureGroup
   fitInitials?: boolean
   allowCatalog?: boolean
   value?: GroupPicture
   onChange: (picture: GroupPicture) => void
   pickPhoto?: typeof pickAccountPhoto
-}): React.ReactElement {
+} & PictureOwner): React.ReactElement {
   const styles = getStyles(useTheme())
   const letters =
-    group == null ? initialsOf(name) : groupTile({ ...group, name }).initials
+    person != null
+      ? personInitialsOf(name)
+      : groupTile({ ...group, name }).initials
   const [entries, setEntries] = useState<AvailablePicture[]>([])
   const [error, setError] = useState('')
   const load = useCallback(async (): Promise<void> => {
@@ -135,16 +144,17 @@ export function GroupPictureChooser({
           style={styles.initials}
           accessibilityLabel={`Initials preview: ${letters}`}
         >
-          {group != null ? (
-            <GroupEmblem
-              {...group}
+          {person != null ? (
+            <PersonEmblem
+              {...person}
               name={name}
               size={6}
               fitInitials={fitInitials}
             />
           ) : (
-            <Emblem
-              fallback={initialsOf(name)}
+            <GroupEmblem
+              {...group}
+              name={name}
               size={6}
               fitInitials={fitInitials}
             />

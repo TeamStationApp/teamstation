@@ -1020,6 +1020,7 @@ describe('people at a team, a season and a league', function () {
       expect(body.person).includes({
         userId: userIdOfGumbo(GUARDIAN),
         shortName: 'Pat Neshek',
+        // Read in full; the tile hashes the label everyone reads.
         fullName: 'Pat Neshek',
         canHoldRoles: true
       })

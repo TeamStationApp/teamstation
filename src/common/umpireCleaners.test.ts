@@ -15,13 +15,21 @@ describe('umpire people', () => {
     const line = 'Guardian of Tim R · Demo Eagles'
     expect(
       asUmpirePeople({ people: [{ ...person, affiliations: line }] })
-    ).deep.equals({ people: [{ ...person, affiliations: line }] })
+    ).deep.equals({
+      people: [{ ...person, affiliations: line }]
+    })
   })
 
   it('reads a missing line as none', () => {
     expect(asUmpirePeople({ people: [person] })).deep.equals({
       people: [{ ...person, affiliations: '' }]
     })
+  })
+
+  it('carries no public label, even from a server that sends one', () => {
+    expect(
+      asUmpirePeople({ people: [{ ...person, publicName: 'M B' }] }).people[0]
+    ).not.have.property('publicName')
   })
 
   it('still refuses a line that is not text', () => {

@@ -18,7 +18,7 @@ import {
   type Rsvp
 } from '../../common/eventInfo'
 import { eventLocalRange } from '../../common/eventTime'
-import { Button, Card, Emblem, initialsOf } from '../components'
+import { Button, Card, PersonEmblem } from '../components'
 import { EventRsvpPill } from '../components/EventRsvpPill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -198,10 +198,10 @@ export function EventRsvpModal({
                     testID={`quick-rsvp-row-${row.userId}`}
                   >
                     <View style={styles.line}>
-                      <Emblem
+                      <PersonEmblem
+                        userId={row.userId}
+                        name={row.name}
                         uri={row.avatarUrl}
-                        fallback={initialsOf(row.name)}
-                        shape="circle"
                         size={2}
                       />
                       <Text style={styles.name}>{row.name}</Text>

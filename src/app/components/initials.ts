@@ -23,3 +23,17 @@ export function initialsOf(name: string): string {
     .map(word => word[0]?.toUpperCase() ?? '')
     .join('')
 }
+
+/**
+ * `Ichiro` → `IC`, `Josh S` → `JS`: a person's two letters, from the name the
+ * row shows the reader. A name of one word gives its first two letters, so
+ * the tile is never a lone letter.
+ */
+export function personInitialsOf(name: string): string {
+  const initials = initialsOf(name)
+  if (initials.length !== 1) return initials
+  return Array.from(name.trim().replace(/^[^\p{L}\p{N}]+/u, ''))
+    .slice(0, 2)
+    .join('')
+    .toUpperCase()
+}

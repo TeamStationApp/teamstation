@@ -194,6 +194,10 @@ describe('umpire levels, needs and certification', function () {
       await (await request('GET', 'umpire-candidates?q=Babe')).json()
     ).people
     expect(candidates.some((p: any) => p.id === person)).equals(true)
+    // No tile label beside the name: the tile's colour is the id's.
+    expect(candidates.find((p: any) => p.id === person)).not.have.property(
+      'publicName'
+    )
     expect(
       (await request('POST', 'umpires', { userId: person })).status
     ).equals(200)

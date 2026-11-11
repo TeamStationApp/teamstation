@@ -48,7 +48,12 @@ describe('a DM’s name', function () {
     userId: string,
     shortName: string,
     left = false
-  ): ChatDmPerson => ({ userId, shortName, left, avatarUrl: null })
+  ): ChatDmPerson => ({
+    userId,
+    shortName,
+    left,
+    avatarUrl: null
+  })
 
   it('names the others who are in it now', function () {
     const people = [
@@ -292,7 +297,12 @@ describe('public chat engine list summaries', () => {
           left: false,
           avatarUrl: currentPhoto
         },
-        { userId: formerId, shortName: 'Mookie B', left: true, avatarUrl: null }
+        {
+          userId: formerId,
+          shortName: 'Mookie B',
+          left: true,
+          avatarUrl: null
+        }
       ])
       expect(item.preview).equals('')
       expect(listed.people[1].avatarUrl).equals(oldPhoto)
@@ -347,7 +357,12 @@ describe('public chat engine list summaries', () => {
         ...listed,
         people: [
           { ...listed.people[0], left: true },
-          { userId: joinedId, shortName: 'Kim K', left: false, avatarUrl: null }
+          {
+            userId: joinedId,
+            shortName: 'Kim K',
+            left: false,
+            avatarUrl: null
+          }
         ]
       }
       members = [member(me, 'Juan S'), member(joinedId, 'Kim K')]
@@ -355,8 +370,18 @@ describe('public chat engine list summaries', () => {
       expect(reads).equals(2)
       expect(item.title).equals('Kim K')
       expect(item.people).deep.equals([
-        { userId: joinedId, shortName: 'Kim K', left: false, avatarUrl: null },
-        { userId: currentId, shortName: 'Aaron J', left: true, avatarUrl: null }
+        {
+          userId: joinedId,
+          shortName: 'Kim K',
+          left: false,
+          avatarUrl: null
+        },
+        {
+          userId: currentId,
+          shortName: 'Aaron J',
+          left: true,
+          avatarUrl: null
+        }
       ])
       // A list that agrees with the members read reads them no more.
       await chat.refresh()

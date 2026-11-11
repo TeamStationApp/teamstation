@@ -1,6 +1,11 @@
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { initialsOf } from '../components/initials'
-import { groupTile, groupTint, teamTint } from '../components/teamTile'
+import {
+  groupTile,
+  groupTint,
+  personTile,
+  teamTint
+} from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import type { ConversationListItem, MemberView } from './engine/engine'
 
@@ -8,7 +13,8 @@ export interface ChatIdentityTile {
   key: string
   name: string
   initials: string
-  tint: string
+  /** None for the theme's neutral tile. */
+  tint: string | undefined
   uri: string | null
 }
 
@@ -18,23 +24,39 @@ export interface ChatIdentity {
 }
 
 /**
- * A current person's tile is the same in every chat surface. Its colour
- * hashes the member's id for now.
+ * A current person's tile is the one they have everywhere else
+ * (`PersonEmblem`): the initials of the name the chat shows on the colour of
+ * their id (`personTint`). A former member keeps one tile of their own.
  */
 export function memberIdentity(
   member: Pick<MemberView, 'userId' | 'shortName' | 'avatarUrl'> | undefined
 ): ChatIdentity {
-  const name = member?.shortName ?? lstrings.chat_former_member
-  const key = member == null ? 'former-member' : String(member.userId)
+  if (member == null) {
+    const name = lstrings.chat_former_member
+    return {
+      label: name,
+      tiles: [
+        {
+          key: 'former-member',
+          name,
+          initials: initialsOf(name),
+          tint: teamTint('former-member'),
+          uri: null
+        }
+      ]
+    }
+  }
+  const userId = String(member.userId)
+  const tile = personTile({ userId, name: member.shortName })
   return {
-    label: name,
+    label: member.shortName,
     tiles: [
       {
-        key,
-        name,
-        initials: initialsOf(name),
-        tint: teamTint(key),
-        uri: member?.avatarUrl ?? null
+        key: userId,
+        name: member.shortName,
+        initials: tile.initials,
+        tint: tile.tint,
+        uri: member.avatarUrl ?? null
       }
     ]
   }

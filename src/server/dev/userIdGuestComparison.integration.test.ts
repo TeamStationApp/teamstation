@@ -338,7 +338,8 @@ describe('historical guest comparison against migration and HTTP', function () {
             ...row,
             userId: userIdOfGumbo(Number(row.userId)),
             gumboId: row.userId,
-            // A game's guests carry no affiliation line.
+            // A game's guests carry no affiliation line, and the public
+            // label their tiles hash: the one the migration kept.
             affiliations: ''
           }))
         )

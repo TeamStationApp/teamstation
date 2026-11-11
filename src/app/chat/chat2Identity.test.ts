@@ -6,6 +6,7 @@ import { userIdOfGumbo } from '../../common/userId'
 import {
   groupTile,
   leagueTint,
+  personTint,
   seasonTint,
   teamTint
 } from '../components/teamTile'
@@ -209,6 +210,57 @@ describe('chat identities', function () {
         })
       ).tiles[0].uri
     ).equals('https://media.example.test/current.png')
+  })
+
+  it('draws a member on PersonEmblem’s colour, from their id alone', function () {
+    // Read in full by this reader; the tile's colour is the id's.
+    const tile = memberIdentity(member(userIdOfGumbo(30), 'Cal Ripken'))
+      .tiles[0]
+    expect(tile).deep.equals({
+      key: userIdOfGumbo(30),
+      name: 'Cal Ripken',
+      initials: 'CR',
+      tint: personTint(userIdOfGumbo(30)),
+      uri: null
+    })
+    // Another reader, shown the short name, sees the same tile colour.
+    expect(
+      memberIdentity(member(userIdOfGumbo(30), 'Cal R')).tiles[0].tint
+    ).equals(tile.tint)
+    // A one-word label keeps two letters, as PersonEmblem draws it.
+    expect(
+      memberIdentity(member(userIdOfGumbo(31), 'Ichiro')).tiles[0].initials
+    ).equals('IC')
+  })
+
+  it('keeps the former member on a tile of their own, and a DM’s people on theirs', function () {
+    expect(memberIdentity(undefined).tiles[0]).deep.equals({
+      key: 'former-member',
+      name: lstrings.chat_former_member,
+      initials: memberIdentity(undefined).tiles[0].initials,
+      tint: teamTint('former-member'),
+      uri: null
+    })
+    const people = [
+      asChatDmPerson({
+        userId: userIdOfGumbo(2),
+        shortName: 'Aaron Judge',
+        left: false
+      }),
+      asChatDmPerson({
+        userId: userIdOfGumbo(3),
+        shortName: 'Mookie B',
+        left: false
+      })
+    ]
+    const tiles = conversationIdentity(
+      chat({ kind: 'dm', scope: null, people })
+    ).tiles
+    expect(tiles.map(tile => tile.tint)).deep.equals([
+      personTint(userIdOfGumbo(2)),
+      personTint(userIdOfGumbo(3))
+    ])
+    expect(tiles.map(tile => tile.initials)).deep.equals(['AJ', 'MB'])
   })
 
   it('accepts old API payloads and preserves additive authorized avatar fields', function () {

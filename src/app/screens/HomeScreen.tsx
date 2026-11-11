@@ -27,7 +27,6 @@ import {
   ButtonIcon,
   Card,
   GameHeroCard,
-  initialsOf,
   ListCard,
   ListRow,
   LivePill,
@@ -635,8 +634,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 <ListRow
                   key={player.userId}
                   title={name}
-                  emblem={initialsOf(name)}
-                  emblemUri={player.avatarUrl}
+                  person={{
+                    userId: player.userId,
+                    uri: player.avatarUrl
+                  }}
                   onPress={() => {
                     props.onOpenPlayer?.(player.userId, name)
                   }}

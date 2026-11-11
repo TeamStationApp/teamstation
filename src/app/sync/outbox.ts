@@ -1511,10 +1511,11 @@ export class Outbox {
       PLAYER_NAME_PRIVACY.some(value => value === names[key])
         ? { [key]: names[key] }
         : {}
+    const short = names[userId] ?? names[String(gumboId)] ?? 'Player'
     const entry: Json = {
       userId,
       gumboId,
-      shortName: names[userId] ?? names[String(gumboId)] ?? 'Player',
+      shortName: short,
       ...format('nameFormat'),
       ...(typeof names.compactName === 'string'
         ? { compactName: names.compactName }

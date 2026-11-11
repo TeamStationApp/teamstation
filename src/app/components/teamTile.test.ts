@@ -4,6 +4,8 @@ import { describe, it } from 'mocha'
 import {
   groupTile,
   leagueTint,
+  personTile,
+  personTint,
   seasonPicture,
   seasonTint,
   TEAM_TINTS,
@@ -141,6 +143,101 @@ describe('a league’s and a season’s tile colour', function () {
         name: 'Demo Spring'
       })
     ).deep.equals({ initials: 'DS', tint: leagueTint('lea_demo'), uri: null })
+  })
+})
+
+/** The 32-bit FNV-1a the tiles use, written out again to pin the key. */
+function fnv1a(key: string): number {
+  let hash = 0x811c9dc5
+  for (const unit of Array.from(key)) {
+    hash ^= unit.codePointAt(0) ?? 0
+    hash = Math.imul(hash, 0x01000193) >>> 0
+  }
+  return hash
+}
+
+describe('a person’s tile colour', function () {
+  it('is the same every time for one account', function () {
+    expect(personTint('usr_ripken')).equals(personTint('usr_ripken'))
+  })
+
+  it('hashes the account id alone, with the teams’ FNV-1a', function () {
+    expect(personTint('usr_ripken')).equals(
+      TEAM_TINTS[fnv1a('usr_ripken') % TEAM_TINTS.length]
+    )
+    expect(personTint('usr_ripken')).equals(teamTint('usr_ripken'))
+  })
+
+  it('is always one of the 32', function () {
+    for (let i = 0; i < 200; i++)
+      expect(TEAM_TINTS).includes(personTint(`usr_${i}`))
+  })
+
+  it('has no colour without an id: the neutral tile', function () {
+    expect(personTint('')).equals(undefined)
+    expect(personTint(null)).equals(undefined)
+    expect(personTint(undefined)).equals(undefined)
+  })
+
+  it('draws every merged alias on the survivor’s colour, the id its rows carry', function () {
+    // A merged account's rows answer with the account it became.
+    const rows = ['usr_ripken_alias', 'usr_ripken'].map(() => ({
+      userId: 'usr_ripken'
+    }))
+    expect(new Set(rows.map(row => personTint(row.userId)))).deep.equals(
+      new Set([personTint('usr_ripken')])
+    )
+  })
+
+  it('is the same for a reader shown the full name and one shown the short one', function () {
+    // The name each reads differs, and picks only the letters.
+    const full = personTile({ userId: 'usr_ripken', name: 'Cal Ripken' })
+    const short = personTile({ userId: 'usr_ripken', name: 'C R' })
+    expect(full.tint).equals(short.tint)
+    expect(full.initials).equals('CR')
+    expect(short.initials).equals('CR')
+  })
+
+  it('spreads people across the colours', function () {
+    const colours = new Set(
+      Array.from({ length: 128 }, (_, i) => personTint(`usr_${i}`))
+    )
+    expect(colours.size).at.least(20)
+  })
+})
+
+describe('every tile’s colour is its id’s alone', function () {
+  const named = (name: string): string[] => [`Demo ${name}`, `${name} Renamed`]
+
+  it('keeps a team’s, a league’s, a season’s and a person’s colour through a rename', function () {
+    for (const kind of ['team', 'league', 'season'] as const) {
+      const [before, after] = named(kind).map(
+        name => groupTile({ kind, id: `${kind}_one`, name }).tint
+      )
+      expect(before).not.equals(undefined)
+      expect(after).equals(before)
+    }
+    const [before, after] = named('Ripken').map(
+      name => personTile({ userId: 'usr_ripken', name }).tint
+    )
+    expect(after).equals(before)
+  })
+
+  it('gives two of one name and different ids their ids’ colours', function () {
+    for (const kind of ['team', 'league', 'season'] as const) {
+      const [one, two] = [`${kind}_one`, `${kind}_two`].map(
+        id => groupTile({ kind, id, name: 'Demo Hawks' }).tint
+      )
+      expect(one).equals(teamTint(`${kind}_one`))
+      expect(two).equals(teamTint(`${kind}_two`))
+      expect(one).not.equals(two)
+    }
+    const [one, two] = ['usr_one', 'usr_two'].map(
+      userId => personTile({ userId, name: 'Josh S' }).tint
+    )
+    expect(one).equals(personTint('usr_one'))
+    expect(two).equals(personTint('usr_two'))
+    expect(one).not.equals(two)
   })
 })
 

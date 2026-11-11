@@ -27,10 +27,9 @@ import {
   Button,
   Card,
   CardBand,
-  Emblem,
   GameRow,
   HandoffView,
-  initialsOf,
+  PersonEmblem,
   PillBand,
   PillTabs,
   PinnedContent,
@@ -474,10 +473,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     useMemo(
       () => (
         <HandoffView progress={progress} style={styles.headerHandoff}>
-          <Emblem
+          <PersonEmblem
+            userId={userId}
+            name={shown}
             uri={avatarUrl}
-            fallback={initialsOf(shown)}
-            shape="circle"
             size={1.75}
           />
           <Text style={styles.headerName} numberOfLines={1}>
@@ -485,7 +484,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           </Text>
         </HandoffView>
       ),
-      [progress, styles.headerHandoff, styles.headerName, avatarUrl, shown]
+      [
+        progress,
+        styles.headerHandoff,
+        styles.headerName,
+        avatarUrl,
+        shown,
+        userId
+      ]
     )
   )
 
@@ -619,10 +625,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
           <View style={styles.identityTop}>
-            <Emblem
+            <PersonEmblem
+              userId={userId}
+              name={shown}
               uri={player?.avatarUrl}
-              fallback={initialsOf(shown)}
-              shape="circle"
               size={3.5}
             />
             <View style={styles.identityText}>

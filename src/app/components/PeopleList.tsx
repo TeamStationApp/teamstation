@@ -5,7 +5,6 @@ import type { RosterEntry, RosterSection } from '../../common/api'
 import type { StringKey } from '../locales/en_US'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { initialsOf } from './initials'
 import { ListCard } from './ListCard'
 import { ListRow } from './ListRow'
 import { PersonAffiliationLine } from './PersonAffiliationLine'
@@ -74,6 +73,7 @@ export function PeopleList({
 /** Shared member/public presentation; callers alone supply navigation. */
 type PersonPresentation = Pick<
   RosterEntry,
+  | 'userId'
   | 'shortName'
   | 'section'
   | 'staffRoles'
@@ -101,9 +101,10 @@ export function PersonRow({
       accessibilityLabel={[person.shortName, subtitle, person.affiliations]
         .filter(part => part != null && part !== '')
         .join(', ')}
-      emblem={initialsOf(person.shortName)}
-      emblemUri={person.avatarUrl}
-      emblemShape="circle"
+      person={{
+        userId: person.userId,
+        uri: person.avatarUrl
+      }}
       badgeLabel={inheritedPill(person)}
       badgeTone="neutral"
       trailing={

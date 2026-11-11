@@ -84,6 +84,11 @@ export const asPublicGame = withEventMetadata(
 )
 export type PublicGame = ReturnType<typeof asPublicGame>
 const cleanPublicStaff = asObject({
+  /**
+   * Their account, whose id picks their tile's colour (`personTint`); empty
+   * from an older server, which sent none.
+   */
+  userId: asOptional(asString, ''),
   name: asString,
   roles: asArray(asString),
   avatarUrl: asOptional(nullable(asString), null),

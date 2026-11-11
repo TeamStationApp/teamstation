@@ -687,6 +687,8 @@ describe('a player, and who may change their name', function () {
       const page = await get(`/players/${userIdOfGumbo(childId)}`, parent)
       expect(page.status).equals(200)
       expect(asPlayerDetail(page.body).canEditName).equals(true)
+      // No tile label: the page's tile is the id's colour for every reader.
+      expect(page.body).not.have.property('publicName')
       const name = await get(`/players/${userIdOfGumbo(childId)}/name`, parent)
       expect(name.status).equals(200)
       expect(name.body).deep.include({ lastName: 'Pacheco' })
@@ -696,6 +698,7 @@ describe('a player, and who may change their name', function () {
         strangerId
       )
       expect(asPlayerDetail(stranger.body).canEditName).equals(false)
+      expect(stranger.body).not.have.property('publicName')
     })
   })
 

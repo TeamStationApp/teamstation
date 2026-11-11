@@ -3,9 +3,8 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { RosterCandidate } from '../../common/api'
 import { ButtonIcon } from '../components/ButtonIcon'
-import { Emblem } from '../components/Emblem'
-import { initialsOf } from '../components/initials'
 import { PersonAffiliationLine } from '../components/PersonAffiliationLine'
+import { PersonEmblem } from '../components/PersonEmblem'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 
 /**
@@ -46,10 +45,10 @@ export function ScoringCandidateCard({
         opacity: disabled ? 0.4 : 1
       })}
     >
-      <Emblem
-        shape="circle"
+      <PersonEmblem
+        userId={candidate.userId}
+        name={candidate.shortName}
         uri={candidate.avatarUrl}
-        fallback={initialsOf(candidate.shortName)}
       />
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Text

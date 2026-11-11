@@ -612,16 +612,19 @@ export async function groupDetail(
       const roles = [...held.keys()]
       const placing = roles[0]
       const level = held.get(placing)
+      const unnamed = user.onboarding_step === 'name'
+      // Somebody who has not named themselves yet is named by nothing.
+      const name = unnamed
+        ? 'Staff member'
+        : publicStaffName({
+            firstName: user.first_name,
+            lastName: user.last_name,
+            displayName: user.display_name
+          })
       staff.push({
         ...(headCoach?.userId === user.id ? { isHeadCoach: true } : {}),
-        name:
-          user.onboarding_step === 'name'
-            ? 'Staff member'
-            : publicStaffName({
-                firstName: user.first_name,
-                lastName: user.last_name,
-                displayName: user.display_name
-              }),
+        userId: user.id,
+        name,
         roles,
         inheritedFrom:
           level === 'season' || level === 'league'

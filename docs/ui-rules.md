@@ -177,7 +177,7 @@ Coach green, DJ dark purple, and Record red.
 
 Whenever a collection lets the user enable or disable, join or leave, add or
 revoke, or end a relationship, render a proper list with one row per item.
-Use a leading image, initials (a team, league or season on the colour its id gives it, through `GroupEmblem`) or an appropriate icon when available;
+Use a leading image, initials (a team, league or season on the colour its id gives it, through `GroupEmblem`; a person on the colour their account id gives them, through `PersonEmblem` or `ListRow`'s `person`; every tile's colour is a hash of its entity's unique id, and names choose only the initials) or an appropriate icon when available;
 put the name above quieter details in the flexible middle and a compact action
 at the right. Use short visible labels such as **Add**, **Leave**, **Revoke** or
 **End**, with an accessible label that also names the affected item.

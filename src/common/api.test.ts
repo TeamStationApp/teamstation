@@ -4,17 +4,24 @@ import { describe, it } from 'mocha'
 
 import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
+import { asAccountSettings } from './accountSettings'
 import {
+  asChatBlock,
+  asGameDetail,
   asHighlight,
   asLiveNow,
+  asLiveStream,
   asManagePage,
   asPage,
+  asPlayerDetail,
   asPlayerHighlight,
   asPlayerStats,
   asPostedEdits,
+  asRosterEntry,
   asSaveLineupsBody,
   asScopeGrant,
   asSeasonSummary,
+  asSession,
   asStandingsRow,
   type RequestOptions,
   type SaveLineupsBody,
@@ -24,7 +31,8 @@ import { asChatAge, asChatAgeBody } from './chatAge'
 import { HttpError, isUpdateRequired } from './errors'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import { asGumboPlay } from './gumboPlay'
-import { asPublicGroup } from './publicGroups'
+import { asNodeAccount } from './nodeAdministration'
+import { asGroupDetail, asPublicGroup } from './publicGroups'
 import { halfOutcomes, lineScore } from './scoring/linescore'
 import { userIdOfGumbo } from './userId'
 
@@ -1500,7 +1508,10 @@ describe('api client', function () {
         avatarUrl: null,
         leagueId: null,
         leaguePictureUrl: null,
-        people: dm.people.map(person => ({ ...person, avatarUrl: null })),
+        people: dm.people.map(person => ({
+          ...person,
+          avatarUrl: null
+        })),
         lastPostAt: null,
         lastPostId: null,
         lastPostSeq: 0,
@@ -1528,12 +1539,15 @@ describe('api client', function () {
       identityKey: null,
       generation: null
     }
-    // An older server sends no affiliation line: it reads as none.
+    // An older server sends no affiliation line, which reads as none.
     const members = client([member])
     expect(await members.client.chatMembers('cnv 1')).deep.equals([
       { ...member, affiliations: '' }
     ])
-    const lined = { ...member, affiliations: 'Guardian of Tim R · Demo Eagles' }
+    const lined = {
+      ...member,
+      affiliations: 'Guardian of Tim R · Demo Eagles'
+    }
     expect(await client([lined]).client.chatMembers('cnv 1')).deep.equals([
       lined
     ])
@@ -1576,7 +1590,10 @@ describe('api client', function () {
     expect(await candidates.client.dmCandidates('ha nk')).deep.equals([
       { ...person, affiliations: '' }
     ])
-    const lined2 = { ...person, affiliations: 'Demo Eagles' }
+    const lined2 = {
+      ...person,
+      affiliations: 'Demo Eagles'
+    }
     expect(await client([lined2]).client.dmCandidates('ha nk')).deep.equals([
       lined2
     ])
@@ -3947,7 +3964,13 @@ describe('account selection client', () => {
         person.userId,
         userIdOfGumbo(402)
       ])
-    ).deep.equals([{ ...person, avatarUrl: null, affiliations: '' }])
+    ).deep.equals([
+      {
+        ...person,
+        avatarUrl: null,
+        affiliations: ''
+      }
+    ])
     const url = new URL(stub.calls[0].url, 'https://example.test')
     expect(url.pathname).equals('/api/v1/users')
     expect(url.searchParams.get('q')).equals('Mookie &')
@@ -4190,4 +4213,149 @@ describe('TV login phone-link request', () => {
       })
     })
   }
+})
+
+describe('a person’s tile, coloured by their id alone', function () {
+  const ripken = userIdOfGumbo(30)
+  const minimalGameDetail = {
+    id: 'gam_1',
+    nonMemberView: false,
+    awayTeamId: 'tem_owls',
+    homeTeamId: 'tem_hawks',
+    awayTeamName: 'Demo Owls',
+    homeTeamName: 'Demo Hawks',
+    seasonId: null,
+    startAt: '2026-05-10T18:00:00Z',
+    endAt: null,
+    venue: null,
+    status: 'final',
+    homeScore: 3,
+    awayScore: 2,
+    videos: [],
+    ingestStatus: 'none',
+    ingestMessage: null,
+    canScore: false,
+    replayable: true
+  }
+  const minimalGroupDetail = {
+    nonMemberView: false,
+    group: {
+      id: 'tem_hawks',
+      kind: 'team',
+      name: 'Demo Hawks',
+      locality: null,
+      imageUrl: null
+    },
+    parents: [],
+    children: [],
+    competingTeams: [],
+    participatingSeasons: [],
+    games: [],
+    canManage: false
+  }
+
+  it('carries no public label on any person, even from a server that sends one', function () {
+    const entry = mintedRosterEntry({
+      firstName: 'Cal',
+      lastName: 'Ripken',
+      jersey: null,
+      positions: [],
+      bats: null,
+      throws: null
+    })
+    const label = { publicName: 'C R' }
+    expect(asRosterEntry({ ...entry, ...label })).not.have.property(
+      'publicName'
+    )
+    const user = {
+      id: 'usr_111111111111111111112k',
+      displayName: 'Cal Ripken',
+      isAdmin: false
+    }
+    expect(
+      asSession({ token: 't', expiresAt: '', user: { ...user, ...label } }).user
+    ).not.have.property('publicName')
+    expect(
+      asAccountSettings({
+        user: { ...user, ...label, avatarUrl: null },
+        hasPassword: false,
+        emails: []
+      }).user
+    ).not.have.property('publicName')
+    const stream = {
+      id: 'liv_1',
+      gameId: 'gam_1',
+      userId: ripken,
+      ownerName: 'Cal Ripken',
+      slot: 1,
+      label: 'Home',
+      keyPrefix: 'ts_0000',
+      state: 'idle',
+      opensAt: '2026-05-20T16:00:00.000Z',
+      closesAt: null,
+      videoId: null,
+      lastError: null,
+      status: null
+    }
+    expect(asLiveStream(stream)).not.have.property('ownerPublicName')
+    expect(
+      asPlayerDetail({
+        userId: ripken,
+        name: 'Cal Ripken',
+        teams: [],
+        ...label
+      })
+    ).not.have.property('publicName')
+    expect(
+      asChatBlock({
+        userId: ripken,
+        shortName: 'Cal R',
+        avatarUrl: null,
+        userIds: [ripken],
+        createdAt: '2027-01-01T00:00:00Z',
+        ...label
+      })
+    ).not.have.property('publicName')
+    expect(
+      asNodeAccount({
+        userId: ripken,
+        displayName: 'Cal Ripken',
+        email: null,
+        isNodeAdmin: false,
+        suspended: false,
+        loginEnabled: true,
+        canRemoveNodeRole: true,
+        avatarUrl: null,
+        ...label
+      })
+    ).not.have.property('publicName')
+    const person = asGameDetail({
+      ...minimalGameDetail,
+      umpires: {
+        positions: [
+          {
+            slot: 'type:1',
+            typeId: 'type',
+            typeName: 'Plate',
+            ordinal: 1,
+            required: true,
+            person: { userId: ripken, name: 'Cal Ripken', ...label }
+          }
+        ]
+      }
+    }).umpires?.positions[0].person
+    expect(person).not.have.property('publicName')
+    expect(person).deep.include({ userId: ripken, name: 'Cal Ripken' })
+  })
+
+  it('gives public staff their id, which picks their colour, and none from an older server', function () {
+    const detail = (staff: unknown[]): ReturnType<typeof asGroupDetail> =>
+      asGroupDetail({ ...minimalGroupDetail, staff })
+    const coach = { name: 'Cal R', roles: ['coach'] }
+    expect(detail([coach]).staff[0]).deep.include({ userId: '' })
+    const sent = detail([{ ...coach, userId: ripken, publicName: 'C R' }])
+      .staff[0]
+    expect(sent).deep.include({ userId: ripken })
+    expect(sent).not.have.property('publicName')
+  })
 })

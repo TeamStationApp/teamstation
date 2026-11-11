@@ -1,4 +1,4 @@
-import { initialsOf } from './initials'
+import { initialsOf, personInitialsOf } from './initials'
 
 /**
  * The tile a team without a logo is drawn with: two capital letters on a
@@ -124,6 +124,32 @@ export function seasonPicture(season: {
   if (season.leaguePictureUrl != null && season.leaguePictureUrl !== '')
     return season.leaguePictureUrl
   return null
+}
+
+/**
+ * A person's tile colour, by their primary account id alone (the survivor a
+ * merged account resolves to, which every answer carries): one colour for
+ * every reader, on every list and every team, and no name goes into it. A
+ * missing or empty id gets none, the theme's neutral tile.
+ */
+export function personTint(
+  userId: string | null | undefined
+): string | undefined {
+  return userId == null || userId === '' ? undefined : tintOf(userId)
+}
+
+/**
+ * A person's tile without a photo: the initials of the name the row shows
+ * the reader (`personInitialsOf`), on their account's colour (`personTint`).
+ */
+export function personTile(person: { userId: string; name: string }): {
+  initials: string
+  tint: string | undefined
+} {
+  return {
+    initials: personInitialsOf(person.name),
+    tint: personTint(person.userId)
+  }
 }
 
 /** A team, league or season, as its tile draws it. */

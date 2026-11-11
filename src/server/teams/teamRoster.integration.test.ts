@@ -880,6 +880,63 @@ describe('roster sections', function () {
     ).deep.equals(['Alfonso Soriano'])
   })
 
+  it('gives a player on two teams of different formats one id and no label on both rosters and the level list', async function () {
+    const alfonso = userIdOfGumbo(201)
+    const comets = (
+      await f.h.db
+        .selectFrom('memberships')
+        .select('team_id')
+        .where('user_id', '=', alfonso)
+        .where('team_id', '<>', f.teamA)
+        .executeTakeFirstOrThrow()
+    ).team_id
+    // Each team writes his name its own way.
+    await f.h.db
+      .updateTable('teams')
+      .set({ player_name_privacy: 'initialLast' })
+      .where('id', '=', f.teamA)
+      .execute()
+    await f.h.db
+      .updateTable('teams')
+      .set({ player_name_privacy: 'initials' })
+      .where('id', '=', comets)
+      .execute()
+    const row = async (
+      path: string,
+      reader: number
+    ): Promise<RosterEntry & Record<string, unknown>> => {
+      const response = await f.h.request('GET', path, undefined, reader)
+      expect(response.status, path).equals(200)
+      const body = (await response.json()) as unknown
+      const rows = (
+        Array.isArray(body) ? body : (body as { people: unknown[] }).people
+      ) as Array<RosterEntry & Record<string, unknown>>
+      return rows.find(entry => entry.userId === alfonso)!
+    }
+    const hawks = await row(`/teams/${f.teamA}/roster`, f.people.admin)
+    const other = await row(`/teams/${comets}/roster`, f.people.admin)
+    const season = await row(`/seasons/${f.seasonA}/people`, f.people.admin)
+    // A reader who sees his full name and one who reads his team's format
+    // get the one id, which alone colours his tile.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(f.people.follower),
+        team_id: f.teamA,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const member = await row(`/teams/${f.teamA}/roster`, f.people.follower)
+    expect(member.shortName).equals('A Soriano')
+    expect(hawks.shortName).equals('Alfonso Soriano')
+    for (const entry of [hawks, other, season, member]) {
+      expect(entry.userId).equals(alfonso)
+      expect(entry).not.have.property('publicName')
+    }
+  })
+
   it('lines each person up on the team’s roster with only that team’s family, and with the teams on a season’s list', async function () {
     // Tim also guards a player of a team nobody here may see.
     await user(230, 'Willie Mays')

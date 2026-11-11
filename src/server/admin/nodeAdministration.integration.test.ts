@@ -35,6 +35,10 @@ describe('protected node account administration', function () {
     )
     const matches = await nodeAccounts(f.h.db, actor(105), 'Aaron')
     expect(matches).length(55)
+    // No label for a tile: its colour is the account id's.
+    expect(
+      matches.find(row => row.userId === userIdOfGumbo(1003))
+    ).not.have.property('publicName')
     expect(
       (await nodeAccounts(f.h.db, actor(105), 'Aaron', true)).map(
         row => row.userId

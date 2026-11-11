@@ -6,8 +6,10 @@ import { gamesFor } from '../../app/screens/whenFilter'
 import type { ListCounts } from '../../common/api'
 import type { GameRequestTerms } from '../../common/gameApprovals'
 import { makeId } from '../../common/ids'
+import { asGroupDetail } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 
 describe('limited public organization profiles', function () {
   this.timeout(60000)
@@ -150,7 +152,9 @@ describe('limited public organization profiles', function () {
     }
     expect(detail.canManage).equals(false)
     expect(detail.staff[0].name).equals('Babe R.')
-    const text = JSON.stringify(detail)
+    // Staff carry their own account, for their tiles' colours, and nobody
+    // else's id is anywhere in the answer.
+    const text = JSON.stringify({ ...detail, staff: [] })
     for (const forbidden of [
       'PRIVATE_TEAM_DATA',
       'Morgan',
@@ -160,6 +164,7 @@ describe('limited public organization profiles', function () {
       'stats'
     ])
       expect(text).not.includes(forbidden)
+    expect(JSON.stringify(detail.staff)).not.includes('alex@example.com')
     expect(detail.parents).length(2)
     expect(
       (await f.h.request('GET', '/leagues?view=public', undefined, null)).status
@@ -172,6 +177,135 @@ describe('limited public organization profiles', function () {
         .status
     ).equals(401)
   })
+  it('gives public staff their account id, which picks their colour, and nothing more', async () => {
+    const response = await f.h.request(
+      'GET',
+      `/teams/${f.teamA}`,
+      undefined,
+      null
+    )
+    expect(response.status).equals(200)
+    const detail = (await response.json()) as {
+      staff: Array<Record<string, unknown>>
+    }
+    const babe = detail.staff.find(person => person.name === 'Babe R.')!
+    // Everything a staff row said before, and the id alone.
+    expect(Object.keys(babe).sort()).deep.equals(
+      ['avatarUrl', 'inheritedFrom', 'name', 'roles', 'userId'].sort()
+    )
+    expect(babe.userId).equals(userIdOfGumbo(101))
+    for (const person of detail.staff)
+      expect(
+        Object.keys(person).filter(
+          key =>
+            ![
+              'avatarUrl',
+              'inheritedFrom',
+              'isHeadCoach',
+              'name',
+              'roles',
+              'userId'
+            ].includes(key)
+        )
+      ).deep.equals([])
+    // The client reads them, and an older server's answer as no id.
+    const cleaned = asGroupDetail(detail).staff.find(
+      person => person.name === 'Babe R.'
+    )!
+    expect(cleaned).deep.include({
+      userId: userIdOfGumbo(101)
+    })
+  })
+  it("never tells a signed-out reader more of a staffer's name than the row shows", async () => {
+    await insertFixtureUsers(f.h.db, [
+      {
+        id: 441,
+        legacyId: 'usr_staff_email_only',
+        display_name: 'demo.staff441@example.test',
+        first_name: null,
+        last_name: null
+      },
+      {
+        id: 442,
+        legacyId: 'usr_staff_full_player',
+        display_name: 'Roberto Clemente',
+        first_name: 'Roberto',
+        last_name: 'Clemente'
+      }
+    ])
+    await f.h.db
+      .updateTable('users')
+      .set({ onboarding_step: 'complete' })
+      .where('id', 'in', [userIdOfGumbo(441), userIdOfGumbo(442)])
+      .execute()
+    // The second also plays on a team that shows its players in full.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(442),
+        team_id: f.teamB,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await f.h.db
+      .updateTable('teams')
+      .set({ player_name_privacy: 'full' })
+      .where('id', '=', f.teamB)
+      .execute()
+    await f.h.db
+      .insertInto('scope_roles')
+      .values(
+        [441, 442].map(id => ({
+          id: `role_public_staff_${id}`,
+          scope_type: 'team' as const,
+          scope_id: f.teamA,
+          user_id: userIdOfGumbo(id),
+          role: 'scorekeeper' as const,
+          granted_by: userIdOfGumbo(101),
+          granted_at: new Date()
+        }))
+      )
+      .execute()
+    try {
+      const response = await f.h.request(
+        'GET',
+        `/teams/${f.teamA}`,
+        undefined,
+        null
+      )
+      expect(response.status).equals(200)
+      const text = await response.text()
+      expect(text).not.includes('demo.staff441')
+      expect(text).not.includes('example.test')
+      expect(text).not.includes('Clemente')
+      const detail = JSON.parse(text) as {
+        staff: Array<{ userId: string; name: string }>
+      }
+      const row = (id: number): { name: string } =>
+        detail.staff.find(person => person.userId === userIdOfGumbo(id))!
+      expect(row(441)).deep.include({
+        name: 'Staff member'
+      })
+      expect(row(442)).deep.include({
+        name: 'Roberto C.'
+      })
+      for (const person of detail.staff)
+        expect(person).not.have.property('publicName')
+    } finally {
+      await f.h.db
+        .deleteFrom('scope_roles')
+        .where('id', 'like', 'role_public_staff_%')
+        .execute()
+      await f.h.db
+        .updateTable('teams')
+        .set({ player_name_privacy: null })
+        .where('id', '=', f.teamB)
+        .execute()
+    }
+  })
+
   it('lists the roles staff were given, never the ones those imply', async () => {
     const given = (
       userId: number,

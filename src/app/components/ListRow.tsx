@@ -7,6 +7,7 @@ import { ButtonIcon } from './ButtonIcon'
 import { Emblem } from './Emblem'
 import { GroupEmblem, type GroupEmblemProps } from './GroupEmblem'
 import type { IconName } from './Icon'
+import { PersonEmblem, type PersonEmblemProps } from './PersonEmblem'
 
 export interface ListRowProps {
   /** Custom leading identity mark, before the name. */
@@ -16,6 +17,12 @@ export interface ListRowProps {
    * its picture inside. No row picks a group's colour of its own.
    */
   group?: GroupEmblemProps
+  /**
+   * A person: their photo, or the initials of the name the row shows (the
+   * title, unless `name` says otherwise) on the colour their account id gives
+   * them. No row picks a person's colour of its own.
+   */
+  person?: Omit<PersonEmblemProps, 'name'> & { name?: string }
   detailTestID?: string
   detail?: string
   /** Wrapping secondary content aligned beneath the title, beside the emblem. */
@@ -88,6 +95,8 @@ export function ListRow(props: ListRowProps): React.ReactElement {
       {props.leading ??
         (props.group != null ? (
           <GroupEmblem {...props.group} />
+        ) : props.person != null ? (
+          <PersonEmblem name={props.title} {...props.person} />
         ) : (
           (emblem != null || emblemIcon != null) && (
             <Emblem

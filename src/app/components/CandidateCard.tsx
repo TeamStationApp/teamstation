@@ -4,9 +4,8 @@ import { Pressable, Text, View } from 'react-native'
 import type { RosterCandidate } from '../../common/api'
 import { useTheme } from '../theme/ThemeContext'
 import { ButtonIcon } from './ButtonIcon'
-import { Emblem } from './Emblem'
-import { initialsOf } from './initials'
 import { PersonAffiliationLine } from './PersonAffiliationLine'
+import { PersonEmblem } from './PersonEmblem'
 
 /**
  * One search result in the app theme, a card of its own: the player's
@@ -47,10 +46,10 @@ export function CandidateCard({
         elevation: 1
       })}
     >
-      <Emblem
-        shape="circle"
+      <PersonEmblem
+        userId={candidate.userId}
+        name={candidate.shortName}
         uri={candidate.avatarUrl}
-        fallback={initialsOf(candidate.shortName)}
       />
       <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Text

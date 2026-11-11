@@ -109,7 +109,12 @@ describe('personal chat blocking', function () {
       (await f.call('Hc-other', 'PUT', `/chat/blocks/${f.id('Hs')}`)).status
     ).equals(200)
     expect(await block()).has.length(1)
-    expect((await clients[0].chatBlocks())[0]).includes({ userId: f.id('Hs') })
+    const [blocked] = await clients[0].chatBlocks()
+    expect(blocked).includes({ userId: f.id('Hs') })
+    // No tile label: the block's tile is the id's colour.
+    expect(
+      (await f.call('Hc', 'GET', '/chat/blocks')).body[0]
+    ).not.have.property('publicName')
     expect(await clients[1].chatBlocks()).deep.equals([])
     await block(false)
     expect(await block(false)).deep.equals([])

@@ -864,6 +864,7 @@ describe('creation and organization interface behavior', () => {
       <GroupPictureChooser
         client={api}
         name="Demo Profile"
+        person={{ userId: 'usr_profile' }}
         allowCatalog
         value={{ image: { contentType: 'image/png', base64: 'AAAA' } }}
         onChange={value => {

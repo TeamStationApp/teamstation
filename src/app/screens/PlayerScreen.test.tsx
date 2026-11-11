@@ -31,6 +31,7 @@ import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { reachEnd } from '../../test/PagedListStandIn'
 import { App } from '../App'
 import { chat } from '../chat/chatViews.test.helpers'
+import { personTint } from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -1121,6 +1122,37 @@ describe('a player’s Settings tab', function () {
     await typeName('Last name', 'Goldschmidt')
     await press('Save')
     expect(text()).includes('Paul Goldschmidt')
+  })
+
+  it('draws the tile on the account’s colour before the page loads and after, with the shown name’s letters', async function () {
+    const client = playerClient()
+    let reads = 0
+    client.player = async () => {
+      reads++
+      return asPlayerDetail({
+        userId: userIdOfGumbo(7),
+        name: 'Derek J',
+        teams: []
+      })
+    }
+    const hex = personTint(userIdOfGumbo(7))!
+    const colour = `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`
+    await render(
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        title="Derek Jeter"
+      />
+    )
+    expect(reads).greaterThan(0)
+    const tiles = [...document.querySelectorAll<HTMLElement>('*')].filter(
+      node => node.children.length === 0 && node.textContent === 'DJ'
+    )
+    expect(tiles.length).greaterThan(0)
+    for (const tile of tiles)
+      expect(getComputedStyle(tile.parentElement!).backgroundColor).equals(
+        colour
+      )
   })
 
   it('retains the saved public name while the initial player profile is delayed', async function () {

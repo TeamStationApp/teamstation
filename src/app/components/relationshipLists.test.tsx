@@ -4,7 +4,11 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
-import { asRosterEntry, TeamStationClient } from '../../common/api'
+import {
+  asRosterEntry,
+  asSessionUser,
+  TeamStationClient
+} from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import {
@@ -24,10 +28,11 @@ import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import { ActionList, ActionRow } from './ActionRow'
+import { AppHeader } from './AppHeader'
 import { Button } from './Button'
 import { DangerText } from './DangerText'
 import { PeopleList, peopleSubtitle, PersonRow } from './PeopleList'
-import { leagueTint, teamTint } from './teamTile'
+import { leagueTint, personTint, teamTint } from './teamTile'
 import { useConfirmedAction } from './useConfirmedAction'
 
 let root: Root | undefined
@@ -445,6 +450,7 @@ describe('people list rows and their affiliation lines', () => {
       userId: userIdOfGumbo(gumbo),
       gumboId: gumbo,
       shortName,
+      // The label the server sends beside every name, which the tile hashes.
       jersey: null,
       positions: [],
       isPlayer: false,
@@ -521,12 +527,68 @@ describe('people list rows and their affiliation lines', () => {
     )
   })
 
+  it('draws each person on the colour of their account id, twins apart', async () => {
+    const full = person(6, 'Cal Ripken', {
+      section: 'staff',
+      staffRoles: ['coach'],
+      compactName: 'Cal R'
+    })
+    await render(
+      <PeopleList
+        people={[people[1], people[2], full]}
+        onOpen={() => () => {}}
+      />
+    )
+    const tiles = [...document.querySelectorAll<HTMLElement>('*')]
+      .filter(node => node.children.length === 0 && node.textContent === 'JS')
+      .map(leaf => getComputedStyle(leaf.parentElement!).backgroundColor)
+    expect(tiles).deep.equals(
+      [2, 3].map(gumbo => rgb(personTint(userIdOfGumbo(gumbo))!))
+    )
+    // Read in full, the tile is still the account's colour.
+    expect(tileColour('CR')).equals(rgb(personTint(userIdOfGumbo(6))!))
+  })
+
+  it('draws the header’s own tile on the colour of the account’s roster row', async () => {
+    // The session answer, as the server sends it to Cal, who reads himself in
+    // full on the roster beside the public label every other reader gets.
+    const user = asSessionUser({
+      id: userIdOfGumbo(6),
+      displayName: 'Cal Ripken',
+      isAdmin: false
+    })
+    const row = person(6, 'Cal Ripken', {
+      section: 'staff',
+      staffRoles: ['coach'],
+      compactName: 'Cal R'
+    })
+    await render(
+      <>
+        <AppHeader
+          title="Your Home"
+          account={{
+            userId: user.id,
+            name: user.displayName,
+            onPress: () => undefined
+          }}
+        />
+        <PeopleList people={[row]} onOpen={() => () => {}} />
+      </>
+    )
+    const tiles = [...document.querySelectorAll<HTMLElement>('*')]
+      .filter(node => node.children.length === 0 && node.textContent === 'CR')
+      .map(leaf => getComputedStyle(leaf.parentElement!).backgroundColor)
+    const colour = rgb(personTint(user.id)!)
+    expect(tiles).deep.equals([colour, colour])
+  })
+
   it('draws no line for an empty one, nor for a public row that has none', async () => {
     await render(
       <>
         <PeopleList people={[people[4]]} onOpen={() => () => {}} />
         <PersonRow
           person={{
+            userId: 'usr_gwynn',
             shortName: 'Tony G',
             section: 'staff',
             staffRoles: ['coach'],

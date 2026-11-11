@@ -6,8 +6,8 @@ import { umpireEdits } from '../../common/umpireEdits'
 import type { UmpireLevel, UmpirePerson } from '../../common/umpires'
 import {
   Button,
-  Emblem,
   ListCard,
+  PersonEmblem,
   Screen,
   TextField,
   TextWidthButton
@@ -200,6 +200,7 @@ export function LeagueUmpiresScreen({
           {results.map(p => (
             <PersonSearchRow
               key={p.id}
+              userId={p.id}
               name={p.name}
               avatarUrl={p.avatarUrl}
               affiliations={p.affiliations}
@@ -303,10 +304,10 @@ export function LeagueUmpiresScreen({
                   }}
                 >
                   <View style={s.row}>
-                    <Emblem
+                    <PersonEmblem
+                      userId={p.id}
+                      name={p.name}
                       uri={p.avatarUrl}
-                      fallback={p.name.slice(0, 1)}
-                      shape="circle"
                       size={2}
                     />
                     <Text style={[s.text, { color: '#1565C0' }]}>{p.name}</Text>

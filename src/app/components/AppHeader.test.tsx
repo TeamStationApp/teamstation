@@ -12,7 +12,11 @@ import {
 } from '../../test/tessTestKit'
 import { AppHeader, type AppHeaderProps } from './AppHeader'
 
-const account = { name: 'Babe Ruth', onPress: () => undefined }
+const account = {
+  userId: 'usr_ruth',
+  name: 'Babe Ruth',
+  onPress: () => undefined
+}
 const notifications = { pending: false, onPress: () => undefined }
 const tess = { onPress: () => undefined }
 const PICTURE = 'Account, Babe Ruth'
