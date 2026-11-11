@@ -64,7 +64,8 @@ import {
   type OutboxSummary,
   PENDING_APPROVAL_MESSAGE,
   queuedCallOf,
-  STAND_IN_MESSAGE
+  STAND_IN_MESSAGE,
+  UNVERIFIED_SCORING_HELD
 } from './outbox'
 import { heldGameText, PARKED_GAME_MESSAGE } from './useOffline'
 
@@ -253,6 +254,11 @@ describe('the phone outbox', function () {
         ...outbox
       }
     })
+    // These transport fixtures model a current session starting before its
+    // first scoring mutation. Upgrade tests strip the persisted wire metadata.
+    const saveEvents = client.saveGameEvents.bind(client)
+    client.saveGameEvents = async (gameId, change) =>
+      await saveEvents(gameId, { scoringBase: null, ...change })
     client.openFor('usr_1')
     const summaries: OutboxSummary[] = []
     client.subscribeOutbox(summary => summaries.push(summary))
@@ -2117,7 +2123,8 @@ describe('the phone outbox', function () {
       /** The game's plays as the server answers them once the signal is back. */
       served: unknown = eventsDoc('g1', 'D0'),
       /** The session log the save keeps beside it, as this build's do. */
-      log?: SessionLog
+      log?: SessionLog,
+      legacyProtocol = false
     ): Promise<ReturnType<typeof phone>> {
       let online = false
       const reads: Record<string, unknown> = {
@@ -2150,6 +2157,10 @@ describe('the phone outbox', function () {
       await p.client.saveLineups('g2', lineupSave('E0'))
       if (older)
         p.sql("UPDATE outbox SET fold_version = NULL WHERE game_id = 'g1'")
+      if (legacyProtocol)
+        p.sql(
+          "UPDATE outbox SET body = json_remove(body, '$.scoringBase', '$.scoringMutation', '$.scoringHistory') WHERE game_id = 'g1'"
+        )
       // Only what goes once the signal is back is counted.
       p.sent.splice(0)
       reads['/games/g1/events'] = served
@@ -2286,6 +2297,140 @@ describe('the phone outbox', function () {
       ],
       times: ['2026-11-09T18:00:00.000Z', null]
     }
+
+    it('reconciles a persisted current-fold save missing its observed scoring base', async () => {
+      const base = { at: 1, id: 'accepted', revision: 0, frontier: 0 }
+      const mutation = { at: 2, id: 'rebuilt', revision: 0, frontier: 1 }
+      let rebuilt = 0
+      let judged = 0
+      const p = await queuedByOlderBuild(
+        {
+          rebuildEvents: async (_gameId, log) => {
+            expect(log).deep.equals(kept)
+            rebuilt++
+            return {
+              plays: [play(0), play(1)],
+              remove: [],
+              currentPlay: null,
+              scoringBase: base,
+              scoringMutation: mutation,
+              scoringHistory: [play(0)]
+            }
+          },
+          olderSave: async () => {
+            judged++
+            return true
+          }
+        },
+        false,
+        eventsDoc('g1', 'D0'),
+        kept,
+        true
+      )
+      expect(rebuilt).equals(1)
+      expect(judged).equals(0)
+      expect(sentEvents(p)).length(1)
+      expect(sentEvents(p)[0].body).deep.include({
+        scoringBase: base,
+        scoringMutation: mutation,
+        scoringHistory: [play(0)],
+        generation: 3,
+        lineupsBase: 'D0'
+      })
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('persists a new key for a verified legacy replay and reuses it after a lost response', async () => {
+      let online = false
+      let lost = true
+      let rebuilt = 0
+      const p = phone(
+        server({ '/games/g1/events': eventsDoc('g1', 'D0') }, () => {
+          if (!online) return 'offline'
+          if (lost) {
+            lost = false
+            return 'offline'
+          }
+          return { body: eventsDoc('g1', 'D1') }
+        }),
+        undefined,
+        {
+          rebuildEvents: async () => {
+            rebuilt++
+            return {
+              plays: [play(0)],
+              remove: [],
+              currentPlay: null,
+              scoringBase: null,
+              scoringMutation: {
+                at: 2,
+                id: 'replayed',
+                revision: 0,
+                frontier: 1
+              }
+            }
+          }
+        }
+      )
+      await p.client.gameEvents('g1')
+      await p.client.saveGameEvents('g1', {
+        plays: [play(0)],
+        remove: [],
+        log: kept
+      })
+      const oldKey = p.rows()[0].idempotency_key
+      p.sql("UPDATE outbox SET body = json_remove(body, '$.scoringBase')")
+      p.sent.splice(0)
+      online = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const first = sentEvents(p)[0]
+      expect(first.key).not.equals(oldKey)
+      expect(p.rows()[0].idempotency_key).equals(first.key)
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(rebuilt).equals(1)
+      expect(sentEvents(p)).length(2)
+      expect(sentEvents(p)[1].key).equals(first.key)
+      expect(sentEvents(p)[1].body).deep.equals(first.body)
+      expect(p.rows()).deep.equals([])
+    })
+
+    for (const log of [undefined, kept])
+      it(`retains legacy scoring ${log == null ? 'without a log' : 'with a conflicting log'} instead of sending an unverified base`, async () => {
+        const p = await queuedByOlderBuild(
+          {
+            rebuildEvents: async () => null,
+            olderSave: async () => true
+          },
+          false,
+          eventsDoc('g1', 'D0'),
+          log,
+          true
+        )
+        expect(sentEvents(p)).length(0)
+        expect(sentLineups(p)).length(1)
+        expect(p.rows().map(row => [row.state, row.message])).deep.equals([
+          ['parked', UNVERIFIED_SCORING_HELD]
+        ])
+        expect(JSON.parse(String(p.rows()[0].body))).not.have.property(
+          'scoringBase'
+        )
+      })
+
+    it('retains a legacy save when a replay callback provides no verified base', async () => {
+      const p = await queuedByOlderBuild(
+        {
+          rebuildEvents: async () => ({ plays: [play(0)], remove: [] })
+        },
+        false,
+        eventsDoc('g1', 'D0'),
+        kept,
+        true
+      )
+      expect(sentEvents(p)).length(0)
+      expect(p.rows().map(row => row.state)).deep.equals(['parked'])
+    })
 
     it('keeps the session log beside a queued save, never sent', async function () {
       const p = phone(

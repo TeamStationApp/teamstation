@@ -225,6 +225,114 @@ describe('the outbox against the server', function () {
     await f?.h.close()
   })
 
+  for (const scenario of ['append', 'conflict', 'final'] as const)
+    it(`recovers only verified legacy queued scoring after restart (${scenario})`, async () => {
+      const context = await addScorableTeams(f.h.db, {
+        home: 'Owls',
+        away: 'Gulls'
+      })
+      const gameId = await addGame(f.h.db, {
+        homeTeamId: context.teams.home.id,
+        awayTeamId: context.teams.away.id,
+        startAt: new Date()
+      })
+      const ownDir = mkdtempSync(join(dir, 'legacy-protocol-'))
+      let a = phoneOn(f, ownDir)
+      const b = phoneOn(f, mkdtempSync(join(dir, 'legacy-peer-')))
+      const open = async (client: CachingClient): Promise<ScoringSession> =>
+        await ScoringSession.open(
+          {
+            load: async id => await client.gameEvents(id),
+            save: async (id, change) => await client.saveGameEvents(id, change)
+          },
+          gameId,
+          { gamePk: gameId, ...context },
+          { setTimer: () => null, clearTimer: () => undefined }
+        )
+      const peer = await open(b.client)
+      expect(peer.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+      await peer.flush()
+      const accepted = await b.client.gameEvents(gameId)
+      // The real screen caches these before offline scoring; replay reads its
+      // setup locally and obtains the accepted scoring history from the server.
+      await a.client.game(gameId)
+      await a.client.roster(context.teams.home.id)
+      await a.client.roster(context.teams.away.id)
+      const ours = await open(a.client)
+      a.transport.held = true
+      expect(ours.apply({ type: 'pitch', call: 'C' }).problems).deep.equals([])
+      await ours.flush()
+      expect((await a.client.outboxSummary()).count).equals(1)
+      ours.close()
+      await a.client.sessionRefused()
+      const file = nodeSqliteExecutor(
+        join(ownDir, cacheFileName(userIdOfGumbo(101)))
+      )
+      try {
+        const kept = file.db.prepare('SELECT * FROM outbox').all()
+        expect(kept).length(1)
+        expect(kept[0].log).not.equals(null)
+        file.db.exec(
+          "UPDATE outbox SET fold_version = 5, body = json_remove(body, '$.scoringBase', '$.scoringMutation', '$.scoringHistory')"
+        )
+      } finally {
+        await file.close()
+      }
+      if (scenario === 'conflict')
+        expect(peer.apply({ type: 'pitch', call: 'S' }).problems).deep.equals(
+          []
+        )
+      if (scenario === 'final') {
+        expect(
+          peer.apply({ type: 'result', eventType: 'intent_walk' }).problems
+        ).deep.equals([])
+        expect(
+          peer.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+        ).deep.equals([])
+        expect(
+          peer.apply({ type: 'gameFlow', kind: 'endGame' }).problems
+        ).deep.equals([])
+      }
+      await peer.flush()
+      const before = await b.client.gameEvents(gameId)
+      a = phoneOn(f, ownDir)
+      try {
+        a.client.wakeOutbox(true)
+        await a.client.drainOutbox()
+        const summary = await a.client.outboxSummary()
+        const after = await b.client.gameEvents(gameId)
+        expect(a.transport.posts.some(post => post.status === 400)).equals(
+          false
+        )
+        if (scenario === 'append') {
+          expect(summary.count).equals(0)
+          expect(after.currentPlay?.count).deep.includes({
+            balls: 1,
+            strikes: 1
+          })
+          expect(after.scoringMutation?.id).not.equals(
+            accepted.scoringMutation?.id
+          )
+          expect(
+            a.transport.posts
+              .filter(post => post.path.endsWith('/events'))
+              .map(post => post.status)
+          ).deep.equals([200])
+        } else {
+          expect(summary.count).equals(1)
+          expect(summary.games[gameId]?.state).equals('parked')
+          expect(after).deep.equals(before)
+          expect(
+            a.transport.posts.filter(post => post.path.endsWith('/events'))
+          ).length(0)
+        }
+      } finally {
+        peer.close()
+        await a.client.sessionRefused()
+        await b.client.sessionRefused()
+      }
+    })
+
   it('never composes a known losing queued ancestor into a new canonical action', async () => {
     const context = await addScorableTeams(f.h.db, {
       home: 'Owls',

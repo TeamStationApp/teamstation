@@ -480,6 +480,9 @@ export interface OutboxOptions {
 export const OLDER_SAVE_HELD =
   'These plays were saved on an older version of TeamStation, and the game has been scored on a newer one since. They cannot be saved as they are.'
 
+export const UNVERIFIED_SCORING_HELD =
+  'These offline plays were saved by an older version of TeamStation. Their starting score cannot be verified. They are kept on this device; review the server score before discarding them.'
+
 type Outcome =
   | { kind: 'ok'; answer: unknown }
   | { kind: 'newer' }
@@ -538,6 +541,12 @@ const parsed = (text: string): Json => {
   return raw != null && typeof raw === 'object' && !Array.isArray(raw)
     ? (raw as Json)
     : {}
+}
+
+/** Fold versions describe replay rules, not the observed-base wire contract. */
+function missingScoringBase(row: OutboxRow): boolean {
+  const body = parsed(row.body)
+  return body.mode === 'live' && body.scoringBase === undefined
 }
 
 /** The field a game write names the lineups digest it was built on in. */
@@ -2451,7 +2460,10 @@ export class Outbox {
       // A save of plays an older build folded goes as this build folds it
       // where its game kept a log, and as it was queued only where that
       // build folded the game as this one does.
-      if (call.kind === 'events' && (row.foldVersion ?? 0) < FOLD_VERSION) {
+      if (
+        call.kind === 'events' &&
+        ((row.foldVersion ?? 0) < FOLD_VERSION || missingScoringBase(row))
+      ) {
         const go = await this.judgeOlder(store, row, call, verdicts)
         this.notify()
         if (!go) return
@@ -2488,10 +2500,12 @@ export class Outbox {
    * saves an older build queued are dropped: it holds them all, and whatever
    * else the chain queued between them still goes first, in order.
    * The row keeps what the post was built on (its lineups base and
-   * generation) and its key, and is marked as this build's: if a send of the
-   * older body did land and its answer was lost, the server refuses the
-   * rebuilt one as a reused key, and the game is read again (`reused`). One
-   * that can be neither waits, parked with why. A read that fails for want
+   * generation). A same-contract refold keeps its key; if its older body
+   * landed, a reused-key response reads that game again. A legacy request
+   * missing its observed scoring base must instead verify the canonical
+   * prefix, then persist a fresh conditional request and key. Fold agreement
+   * alone never authorizes that upgrade. Unverifiable work stays parked.
+   * A read that fails for want
    * of the signal, a sign-in or an update waits as a send that failed so
    * would; any other holds the save, parked. What this drain made of a game
    * an older build folded alike is kept in `verdicts` for the rest of its
@@ -2503,6 +2517,7 @@ export class Outbox {
     call: Extract<QueuedCall, { kind: 'events' }>,
     verdicts: Map<string, OlderVerdict>
   ): Promise<boolean> {
+    const needsBase = missingScoringBase(row)
     let verdict = verdicts.get(row.chain)
     if (verdict == null) {
       // The newest log the game's chain holds covers every save before it,
@@ -2529,10 +2544,12 @@ export class Outbox {
             ? { change }
             : {
                 alike:
-                  (await this.options.olderSave?.(
+                  !needsBase &&
+                  ((await this.options.olderSave?.(
                     call.gameId,
                     row.foldVersion
-                  )) ?? false
+                  )) ??
+                    false)
               }
       } catch (error: unknown) {
         // A read that failed as a send would waits as one: for the signal,
@@ -2551,7 +2568,7 @@ export class Outbox {
     }
     const { change, alike } = verdict
     await store.atomically(async tx => {
-      if (change != null) {
+      if (change != null && (!needsBase || change.scoringBase !== undefined)) {
         const { plays, remove, currentPlay, fenceDistanceFt } = change
         // The rebuilt game covers every save of it an older build queued.
         // The last of them sends it, in its place, on what it was built on,
@@ -2560,32 +2577,51 @@ export class Outbox {
         const older = (await tx.outbox()).filter(
           other =>
             other.chain === row.chain &&
-            (other.foldVersion ?? 0) < FOLD_VERSION &&
-            callOfRow(other).kind === 'events'
+            callOfRow(other).kind === 'events' &&
+            ((other.foldVersion ?? 0) < FOLD_VERSION ||
+              missingScoringBase(other))
         )
         const last = older.at(-1) ?? row
         for (const other of older)
           if (other.id !== last.id) await tx.remove(other.id)
         await tx.update(last.id, {
+          // This is a verified conditional write with a new wire contract.
+          // The old request may already own its key after a lost response.
+          ...(missingScoringBase(last)
+            ? { idempotencyKey: this.makeId() }
+            : {}),
           body: JSON.stringify({
             ...parsed(last.body),
             plays,
             remove,
             ...(currentPlay === undefined ? {} : { currentPlay }),
-            ...(fenceDistanceFt === undefined ? {} : { fenceDistanceFt })
+            ...(fenceDistanceFt === undefined ? {} : { fenceDistanceFt }),
+            ...(change.scoringBase === undefined
+              ? {}
+              : {
+                  scoringBase: change.scoringBase,
+                  scoringMutation: change.scoringMutation,
+                  scoringHistory: change.scoringHistory
+                })
           }),
           names: JSON.stringify(change.names ?? {}),
           foldVersion: FOLD_VERSION,
           state: 'pending',
           leaseUntil: null
         })
-      } else if (alike === true)
+      } else if (alike === true && !needsBase)
         await tx.update(row.id, {
           foldVersion: FOLD_VERSION,
           state: 'pending',
           leaseUntil: null
         })
-      else await this.park(tx, await tx.outbox(), row, OLDER_SAVE_HELD)
+      else
+        await this.park(
+          tx,
+          await tx.outbox(),
+          row,
+          needsBase ? UNVERIFIED_SCORING_HELD : OLDER_SAVE_HELD
+        )
     })
     return true
   }

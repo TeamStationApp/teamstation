@@ -2370,14 +2370,44 @@ export class ScoringSession {
     const reopened = this.atBatOpen
       ? this.game.liveData.plays.allPlays.length
       : null
-    return storedChange({
-      plays: [...picture.plays.values()],
-      remove: [...this.stored]
-        .filter(index => !picture.plays.has(index) && index !== reopened)
-        .sort((a, b) => a - b),
-      currentPlay: picture.current,
-      fenceDistanceFt: fenceOf(this.game)
-    })
+    return storedChange(
+      this.scoringMetadata({
+        plays: [...picture.plays.values()],
+        remove: [...this.stored]
+          .filter(index => !picture.plays.has(index) && index !== reopened)
+          .sort((a, b) => a - b),
+        currentPlay: picture.current,
+        fenceDistanceFt: fenceOf(this.game)
+      })
+    )
+  }
+
+  private scoringMetadata(change: SaveChange): SaveChange {
+    const mutation = this.mutationPending ? this.authoredMutation : undefined
+    if (mutation != null) {
+      const picture = this.picture()
+      // Keep ancestry for durable lineup recovery. It never authorizes a
+      // scoring write after another timeline has displaced its observed base.
+      change.scoringHistory = [...picture.plays.values()]
+      change.scoringBase = this.knownMutation ?? null
+      // An accepted current-version Undo can rewind its tail. Always state its
+      // current play explicitly; omission means unchanged for legacy writes.
+      change.currentPlay = picture.current
+      change.scoringMutation = {
+        ...mutation,
+        frontier:
+          picture.current?.about.atBatIndex ??
+          Math.max(
+            -1,
+            ...[
+              ...this.importedDocuments.keys(),
+              ...picture.plays.keys()
+            ].filter(index => index !== FINAL_INDEX)
+          ) + 1
+      }
+    }
+    change.scoringBase = this.knownMutation ?? null
+    return change
   }
 
   private change(): SaveChange {
@@ -2458,29 +2488,7 @@ export class ScoringSession {
       )
         return
       const mutation = this.mutationPending ? this.authoredMutation : undefined
-      if (mutation != null) {
-        const picture = this.picture()
-        // Keep ancestry for durable lineup recovery. It never authorizes a
-        // scoring write after another timeline has displaced its observed base.
-        change.scoringHistory = [...picture.plays.values()]
-        change.scoringBase = this.knownMutation ?? null
-        // An accepted current-version Undo can rewind its tail. Always state its
-        // current play explicitly; omission means unchanged for legacy writes.
-        change.currentPlay = picture.current
-        change.scoringMutation = {
-          ...mutation,
-          frontier:
-            picture.current?.about.atBatIndex ??
-            Math.max(
-              -1,
-              ...[
-                ...this.importedDocuments.keys(),
-                ...picture.plays.keys()
-              ].filter(index => index !== FINAL_INDEX)
-            ) + 1
-        }
-      }
-      change.scoringBase = this.knownMutation ?? null
+      this.scoringMetadata(change)
       const lineupKey = (log: readonly ScoringAction[]): string =>
         JSON.stringify(
           log
