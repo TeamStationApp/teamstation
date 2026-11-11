@@ -1917,9 +1917,23 @@ async function step7(): Promise<void> {
 
   // Leave scoring and return; Set Team Rosters
   await tryTap(/^Open scoring menu$/, 5000)
-  await tryTap(/^Exit Current Game$/, 5000)
+  const exited = await tryTap(/^Exit Current Game$/, 5000)
+  // tryTap waits 700 ms after its tap: the event screen is asked for from
+  // then, and must be there at once, painted from the phone.
+  const asked = Date.now()
   const left = await waitFor(/^Score$/, MODE === 'before' ? 150000 : 10000)
-  log(left == null ? 'leaving scoring did not reach the event' : 'left scoring')
+  const leftMs = left == null ? undefined : Date.now() - asked + 700
+  check(
+    'stalled: leaving scoring shows the event screen at once, painted from the phone',
+    exited && leftMs != null && leftMs <= 3000,
+    leftMs == null ? 'not within 10 s' : `${leftMs} ms after the tap`
+  )
+  await shot('exitStalled')
+  log(
+    left == null
+      ? 'leaving scoring did not reach the event'
+      : `left scoring: the event screen ${leftMs} ms after the tap`
+  )
   if (left == null || !(await openScoring())) {
     check('stalled: scoring reopens', false)
     return
