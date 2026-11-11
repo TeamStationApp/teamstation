@@ -11,6 +11,7 @@ import type { CreateGroup } from '../../common/groupCreation'
 import type { GumboPlay } from '../../common/gumboPlay'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FOLD_VERSION } from '../../common/scoring/actions'
+import { FINAL_INDEX } from '../../common/scoring/gumbo'
 import {
   type SaveChange,
   ScoringSession,
@@ -848,6 +849,41 @@ describe('the phone outbox', function () {
     ).deep.equals([41, 43, 44, 45, 47])
   })
 
+  it('preserves an unchanged final marker unless an offline edit explicitly removes it', async () => {
+    let online = true
+    const p = phone(
+      server({ '/games/g1/events': eventsDoc('g1', 'L0') }, () =>
+        online ? { body: eventsDoc('g1', 'L0') } : 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    online = false
+    await p.client.saveGameEvents('g1', {
+      plays: [play(0), play(FINAL_INDEX)],
+      remove: [],
+      currentPlay: null,
+      scoringMutation: { at: 1, id: 'final', revision: 0, frontier: 1 }
+    })
+    for (const removeFinal of [false, true]) {
+      const before = await p.client.gameEvents('g1')
+      await p.client.saveGameEvents('g1', {
+        plays: [play(0)],
+        remove: removeFinal ? [FINAL_INDEX] : [],
+        currentPlay: null,
+        scoringBase: before.scoringMutation,
+        scoringMutation: {
+          at: 2,
+          id: `correction-${removeFinal}`,
+          revision: 0,
+          frontier: 1
+        }
+      })
+      const stored = await p.client.gameEvents('g1')
+      expect(
+        stored.plays.some(row => row.about.atBatIndex === FINAL_INDEX)
+      ).equals(!removeFinal)
+    }
+  })
   it('keeps an offline Undo from carrying its queued parent’s discarded tail', async () => {
     let online = false
     const p = phone(
