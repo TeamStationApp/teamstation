@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { Platform, Pressable, Text, View } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
+import { UmpireMask } from '../umpires/UmpireMask'
 import { ButtonIcon } from './ButtonIcon'
 import { Icon } from './Icon'
 
@@ -170,5 +171,32 @@ describe('button icon placement', function () {
       node.querySelector<HTMLElement>('[role="button"]')!.click()
     })
     expect(presses).equals(1)
+  })
+  it('preserves the umpire mask artwork and its single action target on every platform', async function () {
+    let artwork: string | undefined
+    for (const os of ['web', 'ios', 'android'] as const) {
+      Platform.OS = os
+      let presses = 0
+      const node = await render(
+        <UmpireMask
+          onPress={() => {
+            presses++
+          }}
+        />
+      )
+      const buttons = node.querySelectorAll<HTMLElement>('[role="button"]')
+      expect(buttons.length).equals(1)
+      expect(buttons[0].getAttribute('aria-label')).equals('Umpire schedule')
+      expect(buttons[0].style.width).equals('48px')
+      expect(buttons[0].style.height).equals('48px')
+      const drawing = node.querySelector('svg')!
+      expect(drawing.getAttribute('width')).equals('25.6')
+      artwork ??= drawing.outerHTML
+      expect(drawing.outerHTML).equals(artwork)
+      await act(async () => {
+        buttons[0].click()
+      })
+      expect(presses).equals(1)
+    }
   })
 })

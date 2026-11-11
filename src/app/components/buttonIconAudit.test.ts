@@ -15,7 +15,9 @@ describe('button icon placement source audit', function () {
       'LineupQrGlyph',
       'AddPersonGlyph',
       'ScoringMenuIcon',
-      'TransportMark'
+      'TransportMark',
+      'StreamGlyph',
+      'UmpireMaskDrawing'
     ])
     function scan(directory: string): void {
       for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -60,11 +62,26 @@ describe('button icon placement source audit', function () {
             let action = false
             let placed = false
             while (parent != null) {
-              if (ts.isJsxElement(parent)) {
-                const parentTag = parent.openingElement.tagName.getText(source)
+              if (
+                ts.isJsxElement(parent) ||
+                ts.isJsxSelfClosingElement(parent)
+              ) {
+                const opening = ts.isJsxElement(parent)
+                  ? parent.openingElement
+                  : parent
+                const parentTag = opening.tagName.getText(source)
                 if (
                   /Pressable|Touchable|ScoringPlayerCard|HeaderMenu/.test(
                     parentTag
+                  )
+                )
+                  action = true
+                if (
+                  parentTag === 'ListRow' &&
+                  opening.attributes.properties.some(
+                    attribute =>
+                      ts.isJsxAttribute(attribute) &&
+                      attribute.name.getText(source) === 'onPress'
                   )
                 )
                   action = true
