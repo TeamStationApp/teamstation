@@ -1039,7 +1039,8 @@ function ScoringPanel(props: {
   const followAllowed = useRef(false)
   type FollowModel = ScoringScreenModel & {
     authorship?: ScoringMutation
-    observedDraft?: readonly ScoringAction[]
+    /** null means this draft authored scoring and cannot resume observation. */
+    observedDraft?: readonly ScoringAction[] | null
     resumeObservation?: number
   }
   const [model, reduceEvent] = useReducer(
@@ -1066,9 +1067,18 @@ function ScoringPanel(props: {
         next.scoring.dictationQuestion != null ||
         next.scoring.queuedDictation != null ||
         next.scoring.reel != null
+      const draftStart =
+        model.observedDraft !== undefined
+          ? model.observedDraft
+          : input.observing && drafting
+            ? model.scoring.log
+            : undefined
+      // A dictation reel can save scoring before its draft ends. Remember
+      // that ownership even if Undo restores the starting log mid-reel.
       const observedDraft =
-        model.observedDraft ??
-        (input.observing && drafting ? model.scoring.log : undefined)
+        draftStart != null && !sameActions(draftStart, next.scoring.log)
+          ? null
+          : draftStart
       // An abandoned selection has authored no play. Restore the observer
       // only after the whole draft ends, and only if its log is unchanged.
       const resume =
