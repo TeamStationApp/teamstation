@@ -5,6 +5,7 @@ import {
 } from '../platform/userSetting'
 
 export interface ScoringPreferences {
+  remoteUpdatesCollapsed?: boolean
   sound?: boolean
   /** Plays are drawn as they happen; off, the field just shows the result. */
   animations?: boolean
@@ -45,6 +46,9 @@ export function scoringPreferenceStore(storage: PreferenceStorage): {
         )
           return { help: true, shown: 0 }
         return {
+          ...('remoteUpdatesCollapsed' in value
+            ? { remoteUpdatesCollapsed: value.remoteUpdatesCollapsed === true }
+            : {}),
           ...('sound' in value ? { sound: value.sound !== false } : {}),
           ...('animations' in value
             ? { animations: value.animations !== false }
