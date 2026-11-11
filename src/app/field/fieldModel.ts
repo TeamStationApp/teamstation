@@ -23,7 +23,6 @@ export interface FieldPlayer {
     run?: number
   }
   suppressed?: boolean
-  keyboardOrigin?: GroundPoint
   labelOrder?: number
   motion?: {
     id: string
