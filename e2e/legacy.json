@@ -193,7 +193,12 @@
     "src/server/director/cancelInterrupted.e2e.ts",
     "src/server/live/localTail.e2e.ts",
     "src/server/media/secretPaths.e2e.ts",
-    "src/server/umpires/leaderboardPages.e2e.ts"
+    "src/server/umpires/leaderboardPages.e2e.ts",
+    "src/app/scoring/scoringOverrides.e2e.ts",
+    "src/app/screens/coachPlan.e2e.ts",
+    "src/app/screens/coachPlan.native.e2e.ts",
+    "src/app/screens/playingTimeRules.e2e.ts",
+    "src/app/stream/focus.e2e.ts"
   ],
   "helpers": [
     "src/test/stackTransitionsFixture.e2e.ts",
@@ -240,7 +245,8 @@
     "src/app/scoring/dictatedFieldersChoice.integration.ts",
     "src/app/scoring/dictatedForcePlays.integration.ts",
     "src/server/dictation/promptCases.integration.ts",
-    "src/server/tess/tess.integration.ts"
+    "src/server/tess/tess.integration.ts",
+    "mobile/apps/tsCameraman/e2e/focus.e2e.ts"
   ],
   "pendingCategories": [
     "account",
@@ -448,6 +454,11 @@
     "src/server/director/cancelInterrupted.e2e.ts": "platform",
     "src/server/live/localTail.e2e.ts": "playback",
     "src/server/media/secretPaths.e2e.ts": "platform",
-    "src/server/umpires/leaderboardPages.e2e.ts": "umpires"
+    "src/server/umpires/leaderboardPages.e2e.ts": "umpires",
+    "src/app/scoring/scoringOverrides.e2e.ts": "scoring",
+    "src/app/screens/coachPlan.e2e.ts": "scoring",
+    "src/app/screens/coachPlan.native.e2e.ts": "scoring",
+    "src/app/screens/playingTimeRules.e2e.ts": "platform",
+    "src/app/stream/focus.e2e.ts": "streaming"
   }
 }

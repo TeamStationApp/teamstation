@@ -5,16 +5,16 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import type { PlayingTimeRules } from '../../common/playingTimeRules'
-import { SESSION_COOKIE } from '../../server/auth/tokens'
-import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import {
   type BrowserSession,
   browserSession,
   capture,
   contains,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import type { PlayingTimeRules } from '../../common/playingTimeRules'
+import { SESSION_COOKIE } from '../../server/auth/tokens'
+import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 
 /**
  * Playing Time Rules end to end, self-contained like
