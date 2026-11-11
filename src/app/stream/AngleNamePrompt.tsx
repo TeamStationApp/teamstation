@@ -9,6 +9,7 @@ import {
   View
 } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { ListCard } from '../components/ListCard'
 import { ListRow } from '../components/ListRow'
 import { StreamGlyph } from '../components/StreamGlyph'
@@ -196,10 +197,12 @@ export function AngleNamePrompt(
           <ListRow
             testID="record-with-phone"
             leading={
-              <StreamGlyph
-                name="sidewaysPhone"
-                color={theme.primaryTextColor}
-              />
+              <ButtonIcon>
+                <StreamGlyph
+                  name="sidewaysPhone"
+                  color={theme.primaryTextColor}
+                />
+              </ButtonIcon>
             }
             title={lstrings.stream_prompt_phone}
             disabled={toSend == null || busy}
@@ -212,7 +215,9 @@ export function AngleNamePrompt(
           <ListRow
             testID="use-external-camera"
             leading={
-              <StreamGlyph name="filmCamera" color={theme.primaryTextColor} />
+              <ButtonIcon>
+                <StreamGlyph name="filmCamera" color={theme.primaryTextColor} />
+              </ButtonIcon>
             }
             title={lstrings.stream_prompt_external}
             disabled={toSend == null || busy}
