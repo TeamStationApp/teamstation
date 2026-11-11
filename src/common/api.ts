@@ -1621,12 +1621,20 @@ const asSwapSidesAnswer = asObject({
   homeTeamId: asString,
   awayTeamId: asString,
   generation: asOptional(asNumber, 0),
+  /**
+   * The new sides' lineups digest as the swap committed, which the first
+   * save on the swapped lineups is built on. An older server sends none.
+   */
+  lineupsDigest: asOptional(asString),
   reset: asOptional(asObject({ atBats: asNumber, innings: asNumber }), () => ({
     atBats: 0,
     innings: 0
   }))
 })
-export type SwapSidesAnswer = ReturnType<typeof asSwapSidesAnswer>
+export type SwapSidesAnswer = Omit<
+  ReturnType<typeof asSwapSidesAnswer>,
+  'lineupsDigest'
+> & { lineupsDigest?: string }
 
 /**
  * A replay step as the announcer reads it: its key, and how many of its

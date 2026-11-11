@@ -50,6 +50,7 @@ function heldServer(): {
       swapGameSides: async (gameId, read) => {
         sent.push({ gameId, read })
         order.push('swap')
+        const lineupsDigest = `S${sent.length}`
         await new Promise<void>((resolve, reject) => {
           waiting.push(error => {
             if (error == null) resolve()
@@ -60,7 +61,8 @@ function heldServer(): {
           homeTeamId: read.awayTeamId,
           awayTeamId: read.homeTeamId,
           generation: 0,
-          reset: { atBats: 0, innings: 0 }
+          reset: { atBats: 0, innings: 0 },
+          lineupsDigest
         }
       }
     }
@@ -483,16 +485,18 @@ describe('the web scoring screen’s writes', function () {
         swap: 'reset'
       })
       expect(writes.held('g2')).equals(undefined)
-      let answered = false
-      const settled = held.landed.then(() => {
-        answered = true
+      let answered: string | undefined
+      const settled = held.landed.then(digest => {
+        answered = digest
       })
       open.flushed()
       await settle()
-      expect(answered).equals(false)
+      expect(answered).equals(undefined)
       expect(landed).deep.equals([])
       server.release()
       await settled
+      // With the lineups digest the swap's answer gave the new sides.
+      expect(answered).equals('S1')
       expect(writes.held('g1')).equals(undefined)
       expect(landed).deep.equals(['g1'])
       // Unsubscribed, it is told no more.

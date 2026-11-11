@@ -449,12 +449,16 @@ describe('the server scoring source on the web’s swap still out', function () 
    * answered left: the server's events read answers `serverDigest`, and
    * each save answers `answered` as the lineups digest it left.
    */
-  async function heldOpen(serverDigest: string | undefined): Promise<{
+  async function heldOpen(
+    serverDigest: string | undefined,
+    /** Refuses a save as stale unless it names the server's digest. */
+    checked = false
+  ): Promise<{
     session: ScoringSession
     reads: () => number
     asked: string[]
     saves: Array<Record<string, unknown>>
-    land: (refused?: Error) => void
+    land: (refused?: Error, digest?: string) => void
   }> {
     const store = memoryStore()
     const seed = await ScoringSession.open(store, game.id, {
@@ -481,15 +485,18 @@ describe('the server scoring source on the web’s swap still out', function () 
     }
     fake.saveGameEvents = async (gameId, change) => {
       saves.push(change as unknown as Record<string, unknown>)
+      if (checked && change.lineupsBase !== serverDigest)
+        throw new HttpError('conflict', 'The lineups changed', { stale: true })
+      if (checked) serverDigest = 'answered'
       return {
         ...(await store.save(gameId, change)),
         lineupsDigest: 'answered'
       }
     }
-    let land: (refused?: Error) => void = () => undefined
-    const landed = new Promise<void>((resolve, reject) => {
-      land = refused => {
-        if (refused == null) resolve()
+    let land: (refused?: Error, digest?: string) => void = () => undefined
+    const landed = new Promise<string | undefined>((resolve, reject) => {
+      land = (refused, digest) => {
+        if (refused == null) resolve(digest)
         else reject(refused)
       }
     })
@@ -530,6 +537,22 @@ describe('the server scoring source on the web’s swap still out', function () 
     await held.session.flush()
     expect(held.saves[1]).deep.include({ lineupsBase: 'answered' })
     expect(held.reads()).equals(1)
+  })
+
+  it('builds the first save on the digest the swap answered, and follows the stale refusal when another device saved the lineups since', async function () {
+    // The swap answered 'swap'; another device has saved 'other' since.
+    const held = await heldOpen('other', true)
+    held.session.apply({ type: 'pitch', call: 'B' })
+    held.land(undefined, 'swap')
+    await held.session.flush()
+    // Not read again: built on the swap's own digest, and refused.
+    expect(held.saves[0]).deep.include({ lineupsBase: 'swap' })
+    // As after any stale refusal, the server's copy is read and the change
+    // saved again on top of it.
+    expect(held.reads()).equals(1)
+    expect(held.saves[1]).deep.include({ lineupsBase: 'other' })
+    expect(held.saves).to.have.length(2)
+    expect(held.session.problem).equals(null)
   })
 
   it('names no lineups digest when the server keeps none, and sends nothing behind a refused swap', async function () {

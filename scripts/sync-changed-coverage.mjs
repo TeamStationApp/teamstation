@@ -99,6 +99,8 @@ const SPECS = [
   'src/common/scoring/swapDocuments.test.ts',
   'src/app/scoring/webWrites.test.ts',
   'src/app/scoring/scoringSource.test.ts',
+  // The swap's answer names the new sides' lineups digest.
+  'src/server/routes/gameApprovals.test.ts',
   'src/app/sync/**/*.test.ts'
 ].filter(spec => spec.includes('*') || existsSync(spec))
 

@@ -1862,7 +1862,7 @@ export class Outbox {
       return
     }
     if (call.kind === 'swapSides') {
-      await this.landedSwap(tx, call, later, landing)
+      await this.landedSwap(tx, call, later, answer, landing)
       return
     }
     if (call.kind === 'unroster') {
@@ -1987,14 +1987,41 @@ export class Outbox {
    * A swap landed: each of the game's documents nothing queued after it
    * writes is the server's to answer again, and the game, its lineups and
    * its plays are read from the server before the chain's next write is
-   * sent, so it carries the new sides' digest and generation.
+   * sent, so it carries the new sides' generation. The lineups digest its
+   * answer gave the new sides is the server's for the game's lineups and
+   * plays, and the base of every later write built on the phone's own,
+   * up to the next swap: a lineup another device saved between the swap
+   * and that write is then refused as stale, not taken from the read
+   * again. An older server answers no digest; the read again gives it.
    */
   private async landedSwap(
     tx: CacheTransaction,
     call: Extract<QueuedCall, { kind: 'swapSides' }>,
     later: OutboxRow[],
+    answer: unknown,
     landing: Landing
   ): Promise<void> {
+    const digest =
+      isJson(answer) && typeof answer.lineupsDigest === 'string'
+        ? answer.lineupsDigest
+        : null
+    if (digest != null) {
+      for (const other of later) {
+        const otherCall = callOfRow(other)
+        if (otherCall.kind === 'swapSides') break
+        const field = baseField(otherCall)
+        if (field == null) continue
+        const body = parsed(other.body)
+        if (!isLocal(body[field])) continue
+        body[field] = digest
+        other.body = JSON.stringify(body)
+        await tx.update(other.id, { body: other.body })
+      }
+      for (const key of [lineupsKey(call.gameId), eventsKey(call.gameId)]) {
+        const held = await tx.read(key)
+        if (held != null) await tx.write(key, { ...held, serverDigest: digest })
+      }
+    }
     const written = new Set(
       later.flatMap(other => documentsOf(callOfRow(other)).map(doc => doc.key))
     )

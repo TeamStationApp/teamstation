@@ -58,15 +58,15 @@ async function lockedGame(
  * updated, which confirms no plays (`SWAP_REFUSED`, as it always was), for
  * a game scored outside TeamStation, whose plays TeamStation could not
  * score again, and unless `confirmed` names the game's plays digest and
- * generation as they stand. Answers whether it reset, and what that
- * deleted.
+ * generation as they stand. Answers whether it reset, what that deleted,
+ * and the lineups digest of the new sides.
  */
 export async function swapOrReset(
   trx: Transaction<Database>,
   gameId: string,
   actorUserId: string,
   confirmed: { playsDigest?: string; generation?: number }
-): Promise<{ reset: boolean; lost: PlaysLost }> {
+): Promise<{ reset: boolean; lost: PlaysLost; lineupsDigest: string }> {
   const game = await lockedGame(trx, gameId)
   const plays = await trx
     .selectFrom('events')
@@ -92,8 +92,8 @@ export async function swapOrReset(
   )
   if (effect === 'withdrawn') throw conflict(WITHDRAWN_GAME)
   if (effect === 'swap') {
-    await swapGameSides(trx, gameId)
-    return { reset: false, lost: { atBats: 0, innings: 0 } }
+    const lineupsDigest = await swapGameSides(trx, gameId)
+    return { reset: false, lost: { atBats: 0, innings: 0 }, lineupsDigest }
   }
   if (confirmed.playsDigest == null && confirmed.generation == null)
     throw conflict(SWAP_REFUSED)
@@ -159,7 +159,7 @@ export async function swapOrReset(
     })
     .where('id', '=', gameId)
     .execute()
-  await swapGameSides(trx, gameId)
+  const lineupsDigest = await swapGameSides(trx, gameId)
   await requestGameStats(trx, gameId)
   // Sent even when no lineups move: every screen holding the plays reads
   // them again. A notice the swap sent too is delivered once.
@@ -192,7 +192,7 @@ export async function swapOrReset(
       after: figures(after, 0)
     })
     .execute()
-  return { reset: true, lost }
+  return { reset: true, lost, lineupsDigest }
 }
 
 /** What the audit row says of the game, before and after. */

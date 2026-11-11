@@ -65,10 +65,12 @@ export interface HeldOpening {
   /** Both teams' default lineups, by the new sides. */
   defaults: DefaultLineups
   /**
-   * The web's: settles once the server took the swap, rejects once it
-   * refused it. A phone's queue sends each save behind the swap itself.
+   * The web's: settles once the server took the swap, with the lineups
+   * digest its answer gave the new sides (none from an older server);
+   * rejects once it refused it. A phone's queue sends each save behind the
+   * swap itself.
    */
-  landed?: Promise<void>
+  landed?: Promise<string | undefined>
 }
 
 function context(
@@ -222,12 +224,15 @@ export class ServerScoringSource implements ScoringSource {
         if (opening?.landed == null)
           return await client.saveGameEvents(gameId, change)
         // Behind the swap, as a phone's queue sends it; built on the swap's
-        // own lineups digest, it names the one the server gave the new sides.
-        await opening.landed
+        // own lineups digest, it names the one the swap's answer gave the new
+        // sides, so lineups another device saved since are refused as stale.
+        // An older server answers none: it is read again.
+        const swapped = await opening.landed
         if (change.lineupsBase !== opening.events.lineupsDigest)
           return await client.saveGameEvents(gameId, change)
         const { lineupsBase: _swapped, ...rest } = change
-        const { lineupsDigest } = await client.gameEvents(gameId)
+        const lineupsDigest =
+          swapped ?? (await client.gameEvents(gameId)).lineupsDigest
         return await client.saveGameEvents(
           gameId,
           lineupsDigest == null ? rest : { ...rest, lineupsBase: lineupsDigest }

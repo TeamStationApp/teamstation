@@ -44,8 +44,12 @@ export interface OpenedReads {
  */
 export interface HeldSwap extends OpenedReads {
   events: StoredGame
-  /** Settles once the server took the swap; rejects once it refused it. */
-  landed: Promise<void>
+  /**
+   * Settles once the server took the swap, with the lineups digest its
+   * answer gave the new sides (none from an older server); rejects once it
+   * refused it.
+   */
+  landed: Promise<string | undefined>
 }
 
 /**
@@ -141,11 +145,13 @@ export class WebWrites {
     // ahead of them, the server's copy read in behind it would replace them.
     const unsaved = swap.session.pending
     const flushed = swap.session.flush().catch(() => undefined)
-    let land: (refused?: Error) => void = () => undefined
-    const landed = new Promise<void>((resolve, reject) => {
-      land = refused => {
-        if (refused == null) resolve()
-        else reject(refused)
+    let land: (
+      outcome: { refused: Error } | { digest?: string }
+    ) => void = () => undefined
+    const landed = new Promise<string | undefined>((resolve, reject) => {
+      land = outcome => {
+        if ('refused' in outcome) reject(outcome.refused)
+        else resolve(outcome.digest)
       }
     })
     // Nothing waits on it but the saves behind it.
@@ -171,7 +177,7 @@ export class WebWrites {
       // is the game now.
       this.out.delete(swap.gameId)
       const refused = error instanceof Error ? error : new Error(String(error))
-      land(refused)
+      land({ refused })
       swap.onRefused(refused.message)
     }
     const send = async (): Promise<void> => {
@@ -192,8 +198,9 @@ export class WebWrites {
         return
       }
       const { generation, playsDigest } = swap.session
+      let answer: SwapSidesAnswer
       try {
-        await this.client.swapGameSides(swap.gameId, {
+        answer = await this.client.swapGameSides(swap.gameId, {
           ...read,
           // Only a reset the scorer confirmed names the plays it loses.
           ...(swap.effect !== 'reset' || generation == null
@@ -208,7 +215,7 @@ export class WebWrites {
         return
       }
       if (this.out.get(swap.gameId) === held) this.out.delete(swap.gameId)
-      land()
+      land({ digest: answer.lineupsDigest })
       for (const listener of [...(this.landers.get(swap.gameId) ?? [])])
         listener()
     }

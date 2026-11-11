@@ -3882,7 +3882,14 @@ describe('the phone outbox', function () {
      * A game's server: its sides, lineups and plays as the writes the phone
      * sends change them, and every request in the order it came.
      */
-    function gameServer(): {
+    function gameServer(
+      options: {
+        /** The swap's answer names the new sides' lineups digest. */
+        swapDigest?: boolean
+        /** Another device saves the lineups once the swap has landed. */
+        otherDevice?: boolean
+      } = {}
+    ): {
       handler: Handler
       online: { value: boolean }
       refuse: { swap?: Answer }
@@ -3925,6 +3932,8 @@ describe('the phone outbox', function () {
         if (sent.method !== 'GET' && !online.value) return 'offline'
         log.push(`${sent.method} ${sent.path}`)
         if (sent.method === 'GET') {
+          // Saved from the other device between the swap and the next read.
+          if (options.otherDevice === true && digest === 'S1') digest = 'X1'
           if (sent.path === '/games/g1') return { body: game() }
           if (sent.path === '/games/g1/lineups') return { body: lineups() }
           if (sent.path === '/games/g1/events') return { body: events() }
@@ -3952,7 +3961,8 @@ describe('the phone outbox', function () {
               homeTeamId: 'tem_away',
               awayTeamId: 'tem_home',
               generation,
-              reset: { atBats: lost, innings: 1 }
+              reset: { atBats: lost, innings: 1 },
+              ...(options.swapDigest === true ? { lineupsDigest: digest } : {})
             }
           }
         }
@@ -4057,6 +4067,40 @@ describe('the phone outbox', function () {
       expect(JSON.parse(String(p.document(gameKey('g1'))!.body))).deep.include({
         homeTeamId: 'tem_away'
       })
+    })
+
+    it('builds the write after a swap on the digest the swap answered, so another device’s lineups since park it', async function () {
+      const g = gameServer({ swapDigest: true, otherDevice: true })
+      const p = phone(g.handler)
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      await p.client.queueSwap('g1', 'reset')
+      const local = JSON.parse(String(p.document(lineupsKey('g1'))!.body))
+        .digest as string
+      expect(local).match(/^local-/)
+      await p.client.saveGameEvents('g1', {
+        plays: [play(0, 9)],
+        remove: [],
+        lineupsBase: local,
+        generation: 2
+      })
+      await p.client.drainOutbox()
+      g.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      // Read again after the swap, the other device's digest is the server's;
+      // the play still names the swap's, and is refused as stale.
+      expect(g.order()).includes('GET /games/g1/lineups')
+      const last = p.posts()[p.posts().length - 1]
+      expect(last.path).equals('/games/g1/events')
+      expect(last.body).deep.include({ lineupsBase: 'S1', generation: 2 })
+      expect(
+        p.rows().map(row => [row.path, row.state, row.message])
+      ).deep.equals([
+        ['/games/g1/events', 'parked', 'Somebody else changed the lineups']
+      ])
+      expect((await p.client.outboxSummary()).games.g1.state).equals('parked')
     })
 
     it('sends a reset the file cannot queue with its digest and generation, and never its effect', async function () {
