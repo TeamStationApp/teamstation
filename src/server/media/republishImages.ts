@@ -135,7 +135,7 @@ async function move(
   kind: ImageKind,
   now: () => number,
   log: (message: string) => void
-): Promise<'moved' | 'failed'> {
+): Promise<'moved' | 'skipped' | 'failed'> {
   const sizes = sizesFor(kind)
   const next = imagePathPrefix(kind)
   try {
@@ -162,21 +162,32 @@ async function move(
       })
     return 'failed'
   }
+  let updated = 0n
   try {
     // Every row moves at once, and the old prefix is retired with them.
     await db.transaction().execute(async trx => {
       for (const { table, column } of PICTURE_COLUMNS)
-        await sql`
-          update ${sql.table(table)} set ${sql.ref(column)} = ${next}
-          where ${sql.ref(column)} = ${prefix}
-        `.execute(trx)
-      await remember(trx, RETIRED_PREFIX, prefix, { kind, at: now() })
+        updated +=
+          (
+            await sql`
+              update ${sql.table(table)} set ${sql.ref(column)} = ${next}
+              where ${sql.ref(column)} = ${prefix}
+            `.execute(trx)
+          ).numAffectedRows ?? 0n
+      if (updated > 0n)
+        await remember(trx, RETIRED_PREFIX, prefix, { kind, at: now() })
     })
   } catch (error) {
     log(`republishing ${prefix}: ${String(error)}`)
     return 'failed'
   }
-  return 'moved'
+  if (updated > 0n) return 'moved'
+  // Every row that named it took another picture (an upload) after the copy
+  // began: the copy is named by none, and goes. The upload released the old.
+  await releasePictures(db, space, [next], log).catch((error: unknown) => {
+    log(`releasing ${next}: ${String(error)}`)
+  })
+  return 'skipped'
 }
 
 /**

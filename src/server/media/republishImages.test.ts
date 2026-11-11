@@ -28,6 +28,10 @@ describe('republishing owned pictures', function () {
   let sent: string[] = []
   /** The `x-amz-acl` each PUT carried, by path. */
   let acls = new Map<string, string | null>()
+  /** Runs before the Space answers a PUT, once. */
+  let beforePut: (() => Promise<void>) | undefined
+  /** Runs before the Space answers a DELETE, once. */
+  let beforeDelete: (() => Promise<void>) | undefined
   const realFetch = globalThis.fetch
 
   before(async () => {
@@ -39,11 +43,20 @@ describe('republishing owned pictures', function () {
       if (url.origin === new URL(h.space.endpoint).origin) {
         const method = init?.method ?? 'GET'
         sent.push(`${method} ${url.pathname}`)
-        if (method === 'PUT')
+        if (method === 'PUT') {
           acls.set(
             url.pathname,
             new Headers(init?.headers).get('x-amz-acl') ?? null
           )
+          const run = beforePut
+          beforePut = undefined
+          await run?.()
+        }
+        if (method === 'DELETE') {
+          const run = beforeDelete
+          beforeDelete = undefined
+          await run?.()
+        }
       }
       return await realFetch(input, init)
     }
@@ -166,6 +179,42 @@ describe('republishing owned pictures', function () {
     expect(sent.filter(each => each.startsWith('DELETE'))).deep.equals([])
     expect(isPublicImagePrefix((await avatar(101)) ?? '')).equals(true)
     expect(await remembered(RETIRED_PREFIX)).deep.equals([OLD])
+  })
+
+  it('lets the copy go, and counts the prefix skipped, when an upload replaced the picture while it was copied', async () => {
+    hold(OLD)
+    const UPLOADED = 'images/team/0123456789abcdef0123456789abcdef'
+    hold(UPLOADED)
+    await h.db
+      .updateTable('teams')
+      .set({ logo_path: OLD })
+      .where('id', '=', 'tem_account')
+      .execute()
+    // The upload lands between the copy and the rows' update.
+    beforePut = async () => {
+      await h.db
+        .updateTable('teams')
+        .set({ logo_path: UPLOADED })
+        .where('id', '=', 'tem_account')
+        .execute()
+    }
+
+    const result = await republishOwnedImages(h.db, h.space)
+
+    expect(result).deep.equals({ moved: 0, skipped: 1, failed: 0 })
+    expect(await teamLogo()).equals(UPLOADED)
+    const copied = sent
+      .filter(each => each.startsWith('PUT '))
+      .map(each => each.slice('PUT '.length))
+    expect(copied).length(2)
+    for (const key of copied) {
+      expect(sent).includes(`DELETE ${key}`)
+      expect(h.objects.has(key), key).equals(false)
+    }
+    // Neither the upload's picture nor the old prefix is retired by it.
+    for (const size of [96, 192] as const)
+      expect(h.objects.has(object(imageKey(UPLOADED, size)))).equals(true)
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([])
   })
 
   it('moves every row that names a prefix in one transaction, or none', async () => {
