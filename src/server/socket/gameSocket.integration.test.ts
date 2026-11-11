@@ -21,6 +21,7 @@ import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
 import { makeId } from '../../common/ids'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
+import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { migrations } from '../../migrate/migrations'
@@ -225,10 +226,12 @@ describe('the game socket (U14)', function () {
       const read = (await response.json()) as {
         plays: Array<{ gumbo: GumboPlay }>
         currentPlay: CurrentPlay | null
+        scoringMutation?: ScoringMutation
       }
       return {
         plays: read.plays.map(row => row.gumbo),
-        currentPlay: read.currentPlay
+        currentPlay: read.currentPlay,
+        scoringMutation: read.scoringMutation
       }
     },
     save: async (_gameId, change) => {
@@ -242,6 +245,8 @@ describe('the game socket (U14)', function () {
         body: JSON.stringify({
           mode: 'live',
           source: { system: 'teamstation' },
+          scoringBase: change.scoringBase,
+          scoringMutation: change.scoringMutation,
           plays: change.plays,
           remove: change.remove,
           ...(change.currentPlay === undefined

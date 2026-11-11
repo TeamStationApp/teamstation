@@ -2116,6 +2116,7 @@ describe('posting and reading plays', function () {
     const body = {
       mode: 'live',
       source: { system: 'teamstation' },
+      scoringBase: await observedBase(id),
       plays: [],
       currentPlay: atBat
     }
@@ -2134,11 +2135,13 @@ describe('posting and reading plays', function () {
     })
     expect(again.readerNames).deep.equals(full)
     // An answer of only the post's edits names nobody apart.
+    body.scoringBase = await observedBase(id)
     const edits = await send(scorekeeper.token, {
       body,
       query: '?answer=edits'
     })
     expect(edits).not.have.property('readerNames')
+    body.scoringBase = await observedBase(id)
     const keyed = { 'idempotency-key': `edits-${id}` }
     await send(scorekeeper.token, {
       body,

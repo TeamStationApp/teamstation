@@ -81,18 +81,24 @@ export async function remoteUpdates(rig: ConcurrentScoringRig): Promise<void> {
     return {
       height: el.clientHeight,
       content: el.scrollHeight,
+      top: el.scrollTop,
       x: bounds.x + bounds.width / 2,
       y: bounds.y
     }
   })
   assert(scroll.height <= 100)
   assert(scroll.content > scroll.height)
-  await b.m.swipe({
-    start: `${scroll.x},${scroll.y + 80}`,
-    end: `${scroll.x},${scroll.y + 10}`,
-    duration: 500
-  })
+  // Maestro's desktop swipe is a mouse drag, not a touch-scroll gesture.
+  // Exercise keyboard scrolling here; Safari verifies the touch gesture.
+  await b.m.tapOn({ css: '[data-testid="remote-scoring-update-lines"]' })
+  await b.m.pressKey({ key: 'PAGE_DOWN' })
   await new Promise(resolve => setTimeout(resolve, 500))
+  const scrolledTop = await b.page!.evaluate(() => {
+    return document.querySelector<HTMLElement>(
+      '[data-testid="remote-scoring-update-lines"]'
+    )!.scrollTop
+  })
+  assert(scrolledTop > scroll.top, 'Scrolling must reveal later update lines')
   await rig.capture('updates-short')
   await b.m.tapOn({ text: 'Collapse scoring updates' })
   await rig.capture('updates-collapsed')
