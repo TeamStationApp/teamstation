@@ -116,7 +116,12 @@ async function device(person: string, n = 1): Promise<Page> {
   const browser = await puppeteer.launch({
     headless: true,
     userDataDir: join(ARTIFACTS, 'profiles', key),
-    executablePath: process.env.TS_CHROME_PATH
+    executablePath: process.env.TS_CHROME_PATH,
+    // A desktop with a mouse, as the scenarios mean, on a machine with no
+    // pointing device too (a server): the hover actions show only for one.
+    args: [
+      '--blink-settings=primaryPointerType=4,availablePointerTypes=4,primaryHoverType=2,availableHoverTypes=2'
+    ]
   })
   browsers.push(browser)
   const page = await browser.newPage()
