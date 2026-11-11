@@ -26,6 +26,7 @@ import type { MediaContext } from '../media/mediaContext'
 import { withAudit } from '../middleware/withAudit'
 import { errorHandler } from '../middleware/withErrors'
 import { meRoutes } from './me'
+import { peopleRoutes } from './people'
 import { playerRoutes, teamsOf } from './players'
 import { teamRoutes } from './teams'
 
@@ -333,6 +334,7 @@ describe('a player, and who may change their name', function () {
     app.use(playerRoutes(db, media))
     app.use(teamRoutes(db, media))
     app.use(meRoutes(db, undefined, media))
+    app.use(peopleRoutes(db, media))
     app.use(errorHandler)
     server = await new Promise<Server>(resolve => {
       const listening = app.listen(0, '127.0.0.1', () => {
@@ -1577,5 +1579,112 @@ describe('a player, and who may change their name', function () {
     } finally {
       await rename(kept.first_name ?? 'Jordan', kept.last_name ?? 'Pacheco')
     }
+  })
+  it('shows a season member to the season’s coach in full, and grants no change', async function () {
+    // Mike Trout is a member of Spring and plays on no team of it, but on the
+    // Legends, in Fall. Joe Girardi coaches Spring and is a plain member of
+    // Fall, so the player page is his to see through the Legends.
+    const fall = makeId('season')
+    const trout = mintUser()
+    const girardi = mintUser()
+    await db
+      .insertInto('seasons')
+      .values({
+        starts_on: '2026-09-01',
+        ends_on: '2026-11-30',
+        id: fall,
+        name: 'Fall 2026',
+        year: 2026
+      })
+      .execute()
+    await db
+      .insertInto('season_teams')
+      .values({ season_id: fall, team_id: otherTeamId })
+      .execute()
+    await db
+      .insertInto('season_team_parents')
+      .values({ season_id: fall, team_id: otherTeamId })
+      .execute()
+    await insertFixtureUsers(db, [
+      {
+        id: userIdOfGumbo(trout),
+        legacyId: legacyId(trout),
+        display_name: 'Mike Trout',
+        first_name: 'Mike',
+        last_name: 'Trout'
+      },
+      {
+        id: userIdOfGumbo(girardi),
+        legacyId: legacyId(girardi),
+        display_name: 'Joe Girardi',
+        login_enabled: true
+      }
+    ])
+    await db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(trout),
+        team_id: otherTeamId,
+        is_player: true
+      })
+      .execute()
+    await db
+      .insertInto('season_members')
+      .values([
+        {
+          id: makeId('seasonMember'),
+          user_id: userIdOfGumbo(trout),
+          season_id: seasonId,
+          joined_at: new Date()
+        },
+        {
+          id: makeId('seasonMember'),
+          user_id: userIdOfGumbo(girardi),
+          season_id: fall,
+          joined_at: new Date()
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: userIdOfGumbo(girardi),
+        scope_type: 'season',
+        scope_id: seasonId,
+        role: 'coach',
+        granted_at: new Date()
+      })
+      .execute()
+    const troutId = userIdOfGumbo(trout)
+
+    const page = await get(`/players/${troutId}`, girardi)
+    expect(page.status).equals(200)
+    expect(asPlayerDetail(page.body).name).equals('Mike Trout')
+    expect(page.body).property('canEditName', false)
+    expect((await get(`/players/${troutId}/name`, girardi)).status).equals(404)
+    const rename = { name: { firstName: 'Michael', lastName: 'Trout' } }
+    expect(
+      (await put(settingsOf(otherTeamId, trout), girardi, rename)).status
+    ).equals(404)
+    // The Legends' coach, whom mayEditNames allows, still changes it.
+    expect(
+      (await put(settingsOf(otherTeamId, trout), otherCoachId, rename)).status
+    ).equals(200)
+    await put(settingsOf(otherTeamId, trout), otherCoachId, {
+      name: { firstName: 'Mike', lastName: 'Trout' }
+    })
+    // A settled player of a team in Spring is his to change, as before.
+    const child = await get(`/players/${userIdOfGumbo(childId)}`, girardi)
+    expect(child.body).property('canEditName', true)
+
+    // Spring's people list and the profile opened from it read him in full.
+    const people = await get(`/seasons/${seasonId}/people`, girardi)
+    expect(people.status).equals(200)
+    expect(JSON.stringify(people.body)).include('"shortName":"Mike Trout"')
+    const profile = await get(`/seasons/${seasonId}/people/${troutId}`, girardi)
+    expect(profile.status).equals(200)
+    expect(profile.body).nested.property('person.fullName').equals('Mike Trout')
   })
 })

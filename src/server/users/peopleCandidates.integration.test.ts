@@ -319,16 +319,21 @@ describe('account selection privacy and grants', function () {
         return args.result
       }
     })
-    for (const q of ['Alex', 'Smith']) {
+    // The same reads for a thousand matches as for one: name authority
+    // (`mayViewFullNames`) is asked once for the list.
+    const counts: number[] = []
+    for (const q of ['Alex', 'Smith', 'Alex999']) {
       queries = 0
       const rows = await peopleCandidates(db, actor(101), {
         group: { kind: 'team', id: f.teamA },
         q: q.toLowerCase(),
         exclude: []
       })
-      expect(rows).length(q === 'Alex' ? 5 : 0)
-      expect(queries).lessThan(40)
+      expect(rows).length(q === 'Smith' ? 0 : q === 'Alex' ? 5 : 1)
+      expect(queries).lessThan(60)
+      counts.push(queries)
     }
+    expect(counts[0]).equals(counts[2])
   })
   it('keeps batch and individual name authority equal across merged guardian identities', async () => {
     await insertFixtureUsers(f.h.db, [
@@ -373,6 +378,52 @@ describe('account selection privacy and grants', function () {
     expect(
       await mayEditName(f.h.db, id(101), id(104), actor(101), { player: known })
     ).equals(false)
+  })
+  it('names somebody on a list of the league its administrator manages in full, and adds them so', async () => {
+    await insertFixtureUsers(f.h.db, [
+      {
+        id: 230,
+        display_name: 'Ken Griffey',
+        first_name: 'Ken',
+        last_name: 'Griffey',
+        login_enabled: true
+      },
+      {
+        id: 231,
+        display_name: 'Ken Boyer',
+        first_name: 'Ken',
+        last_name: 'Boyer',
+        login_enabled: true
+      }
+    ])
+    await f.h.db
+      .insertInto('league_members')
+      .values({
+        id: makeId('leagueMember'),
+        user_id: id(230),
+        league_id: f.leagueA,
+        joined_at: new Date()
+      })
+      .execute()
+    // A member of League A, whose administrator 101 is, reads in full and
+    // matches by surname; somebody on no level of theirs stays short.
+    expect(await search('Griffey')).deep.equals([
+      { userId: id(230), displayName: 'Ken Griffey' }
+    ])
+    expect(await search('Boyer')).deep.equals([])
+    expect(await search('Ken B')).deep.equals([
+      { userId: id(231), displayName: 'Ken B' }
+    ])
+    const response = await add({ userId: id(230) })
+    expect(response.status, await response.clone().text()).equals(201)
+    expect(await response.json()).deep.equals({
+      added: true,
+      person: { userId: id(230), displayName: 'Ken Griffey' }
+    })
+    // Seeing grants no change: the name is not 101's to edit.
+    expect(await mayEditName(f.h.db, id(101), id(230), actor(101))).equals(
+      false
+    )
   })
   it('requires administrator rights for search and submission, including empty queries', async () => {
     for (const role of [

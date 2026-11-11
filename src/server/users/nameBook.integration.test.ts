@@ -194,6 +194,72 @@ describe('name books', function () {
     )
   })
 
+  it("keeps the public book whoever reads, and gives a league administrator's book its adults in full", async () => {
+    const posey = mint()
+    const laRussa = mint()
+    await insertFixtureUsers(fixture.db, [
+      {
+        id: posey.userId,
+        legacyId: posey.legacyId,
+        display_name: 'Buster Posey',
+        first_name: 'Buster',
+        last_name: 'Posey'
+      },
+      {
+        id: laRussa.userId,
+        legacyId: laRussa.legacyId,
+        display_name: 'Tony La Russa',
+        login_enabled: true
+      }
+    ])
+    await fixture.db
+      .insertInto('leagues')
+      .values({ id: 'lea_book', name: 'Demo Book League' })
+      .execute()
+    await fixture.db
+      .updateTable('teams')
+      .set({ league_id: 'lea_book' })
+      .where('id', '=', 'tem_home')
+      .execute()
+    await fixture.db
+      .insertInto('scope_roles')
+      .values([
+        {
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(posey.userId),
+          scope_type: 'team',
+          scope_id: 'tem_home',
+          role: 'scorekeeper',
+          granted_at: new Date()
+        },
+        {
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(laRussa.userId),
+          scope_type: 'league',
+          scope_id: 'lea_book',
+          role: 'admin',
+          granted_at: new Date()
+        }
+      ])
+      .execute()
+    const scope = new Map([[0, [posey.userId, people.babe.userId]]])
+    const before = (await booksOver(fixture.db, scope)).get(0)!
+    const reader = { userId: userIdOfGumbo(laRussa.userId), isAdmin: false }
+    const read = (await booksOver(fixture.db, scope, { reader })).get(0)!
+    const after = (await booksOver(fixture.db, scope)).get(0)!
+    // The scorekeeper is on the league's people list: read in full, in a
+    // book of the administrator's own.
+    expect(read.nameOf(posey.userId)).equals('Buster Posey')
+    expect(read.nameOf(people.babe.userId)).equals('Babe R')
+    expect(read.digest).not.equals(before.digest)
+    // The public book is the same before and after.
+    for (const book of [before, after]) {
+      expect(book.nameOf(posey.userId)).equals('Buster P')
+      expect(book.nameOf(people.babe.userId)).equals('Babe R')
+    }
+    expect(after.digest).equals(before.digest)
+  })
+
   it('reads a merged account as its survivor', async () => {
     const book = (
       await booksOver(

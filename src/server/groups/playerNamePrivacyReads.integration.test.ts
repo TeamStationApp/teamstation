@@ -30,6 +30,7 @@ import {
   until
 } from '../../test/scoreboardKit'
 import { mergeTeams } from '../admin/mergeTeams'
+import { createSession } from '../auth/sessions'
 import { chatPeople } from '../chat/listing'
 import { readPlays } from '../events/postPlays'
 import { gameAvailability } from '../games/rosterAvailability'
@@ -542,15 +543,32 @@ describe('a game named in player name privacy', function () {
 
     it('writes a roster player in the team format and nobody else', async function () {
       await privacy(f.teamA, 'full')
-      const rows = (await (
-        await f.h.request('GET', `/teams/${f.teamA}/roster`, undefined, 101)
-      ).json()) as RosterEntry[]
+      const roster = async (reader: number): Promise<RosterEntry[]> =>
+        (await (
+          await f.h.request(
+            'GET',
+            `/teams/${f.teamA}/roster`,
+            undefined,
+            reader
+          )
+        ).json()) as RosterEntry[]
+      const rows = await roster(TEAMMATE)
       const alex = rows.find(row => row.userId === userIdOfGumbo(ALEX))!
       expect(alex.shortName).equals('Alex Lee')
       expect(alex.nameFormat).equals('full')
       const staff = rows.find(row => row.userId === userIdOfGumbo(SCORER))!
       expect(staff.shortName).equals('Cal R')
       expect(staff).not.have.property('nameFormat')
+      // The league's administrator manages the team's people, and reads its
+      // staff in full (`mayViewFullNames`), the built-in public label beside.
+      const managed = (await roster(101)).find(
+        row => row.userId === userIdOfGumbo(SCORER)
+      )!
+      expect(managed).to.include({
+        shortName: 'Cal Ripken',
+        nameFormat: 'full',
+        compactName: 'Cal R'
+      })
     })
 
     it('reads no format on a roster with nothing chosen', async function () {
@@ -1110,6 +1128,101 @@ describe('a game named in player name privacy', function () {
           .where('id', '=', f.teamA)
           .executeTakeFirstOrThrow()
       ).deep.equals(before)
+    })
+
+    it('names another league administrator in full to a league administrator, and short to everybody else', async function () {
+      const jeter = 7301
+      const { db, tokens } = f.h
+      await insertFixtureUsers(db, {
+        id: jeter,
+        legacyId: 'usr_privacy_jeter',
+        display_name: 'Derek Jeter',
+        first_name: 'Derek',
+        last_name: 'Jeter',
+        login_enabled: true
+      })
+      tokens.set(
+        jeter,
+        (await createSession(db, userIdOfGumbo(jeter), 'privacy')).token
+      )
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(jeter),
+          scope_type: 'league',
+          scope_id: f.leagueA,
+          role: 'admin',
+          granted_by: userIdOfGumbo(101),
+          granted_at: new Date()
+        })
+        .execute()
+      // League B's administrator and Ichiro are plain members of League A.
+      await db
+        .insertInto('league_members')
+        .values(
+          [102, 104].map(id => ({
+            id: makeId('leagueMember'),
+            user_id: userIdOfGumbo(id),
+            league_id: f.leagueA,
+            joined_at: new Date()
+          }))
+        )
+        .execute()
+      const people = `/leagues/${f.leagueA}/people`
+      for (const reader of [101, jeter, 105])
+        expect(await name(people, reader), String(reader)).include(
+          '"shortName":"Derek Jeter"'
+        )
+      for (const reader of [102, 104]) {
+        const read = await name(people, reader)
+        expect(read, String(reader)).include('"shortName":"Derek J"')
+        expect(read, String(reader)).not.include('Jeter')
+      }
+      // The profile opened from the list, as it was: in full for the
+      // administrator who manages the league's people, and for himself.
+      const profile = async (reader: number): Promise<unknown> =>
+        (
+          (await (
+            await f.h.request(
+              'GET',
+              `${people}/${userIdOfGumbo(jeter)}`,
+              undefined,
+              reader
+            )
+          ).json()) as { person: { fullName: unknown } }
+        ).person.fullName
+      expect(await profile(101)).equals('Derek Jeter')
+      expect(await profile(jeter)).equals('Derek Jeter')
+      // Nothing that leaves the reader carries what a league administrator
+      // reads: a model's read of the list, nor guardian mail.
+      const spoken = JSON.stringify(await viaTess(people, 101))
+      expect(spoken).not.include('Derek Jeter')
+      expect(spoken).not.include('Alex Lee')
+      const email = 'parent.leagueadmin@example.test'
+      const answer = await f.h.request(
+        'POST',
+        '/relationship-requests',
+        {
+          kind: 'guardian',
+          playerUserId: userIdOfGumbo(ALEX),
+          guardian: { email },
+          sender: { kind: 'team', id: f.teamA },
+          idempotencyKey: 'privacy-guardian-league-admin'
+        },
+        101
+      )
+      expect(answer.status, await answer.clone().text()).lessThan(300)
+      const mail = JSON.stringify(f.h.invitations.get(email))
+      expect(mail).include('Alex L')
+      expect(mail).not.include('Alex Lee')
+      // The request's stored snapshot carries no name the sender read.
+      const stored = await db
+        .selectFrom('notification_events')
+        .select('metadata')
+        .where('source_type', '=', 'groupRequest')
+        .execute()
+      expect(JSON.stringify(stored)).not.include('Alex Lee')
     })
 
     it('writes a person profile and a split in the team', async function () {

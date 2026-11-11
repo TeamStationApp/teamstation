@@ -7,8 +7,7 @@ import { ROLES } from '../../common/roles'
 import {
   guardedPlayers,
   levelsAboveTeam,
-  mayEditNames,
-  openAddTeams,
+  mayViewFullNames,
   settledTeams,
   teamsPlayedOnNow,
   teamsUnder
@@ -29,9 +28,10 @@ import { followersOf, onPeopleList } from './teamRoster'
  * One person as a team, a season or a league sees them, for the profile its
  * administrators, coaches and assistants open from its people list.
  *
- * - **Who**: their photo, their name as the viewer reads it (in full for one
- *   who may read it, `mayEditName`), and their whole name for a viewer who
- *   manages the level's people or may read it anyway.
+ * - **Who**: their photo, their name as the viewer reads it, and their whole
+ *   name, both for a viewer who may see it (`mayViewFullNames`: whoever may
+ *   change it, and whoever manages the people of a level whose list holds
+ *   them, as this one does unless only an open add puts them on it).
  * - **Parent/Guardian of**: the players they guard who play now on a team
  *   this level reaches: the team itself, any team of the season, any team
  *   of the league.
@@ -93,23 +93,15 @@ export async function personProfile(
     part => part != null && part.trim() !== ''
   )
   const whole = parts.length === 0 ? person.displayName : parts.join(' ')
-  // Not while every team of theirs here holds them only by an add that may
-  // be rejected.
-  const rows = (await onePerson(db, userId)).userIds
-  const under = await teamsUnder(db, ref)
-  const here = (await teamsPlayedOnNow(db, rows)).filter(id => under.has(id))
-  const holding = await openAddTeams(db, rows)
-  const held = here.length > 0 && here.every(id => holding.includes(id))
-  // One name authority for the person and the players they guard, asked
-  // once: it answers the name field and names every label below.
+  // One answer for the person and the players they guard, asked once: it
+  // answers the name field and names every label below.
   const children = await guardedPlayers(db, userId)
-  const editsNames = await mayEditNames(
+  const readsFull = await mayViewFullNames(
     db,
     fresh.userId,
     [userId, ...children],
     fresh
   )
-  const readsName = (manages && !held) || editsNames.has(userId)
 
   return {
     context: { kind: ref.kind, id: ref.id, name },
@@ -129,21 +121,14 @@ export async function personProfile(
                     : undefined
               }
             ],
-            { reader: readerOf(viewer), readsFull: editsNames }
+            { reader: readerOf(viewer), readsFull }
           )
         ).get(userId) ?? person.displayName,
-      fullName: readsName ? whole : null,
+      fullName: readsFull.has(userId) ? whole : null,
       avatarUrl: space == null ? null : imageUrl(space, person.avatarPath),
       canHoldRoles: await canHoldRoles(db, userId)
     },
-    guardianOf: await guardianRows(
-      db,
-      space,
-      ref,
-      children,
-      viewer,
-      editsNames
-    ),
+    guardianOf: await guardianRows(db, space, ref, children, viewer, readsFull),
     sections: await sections(db, ref, userId, editable),
     viewer: { manages: editable, admin: editable && admin, self }
   }

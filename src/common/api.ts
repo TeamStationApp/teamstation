@@ -1473,7 +1473,7 @@ const cleanRosterEntry = asObject({
   gumboId: asOptional(asNullable(asGumboId), null),
   /**
    * The name as this reader reads it: the full name for somebody the reader
-   * may read in full (`mayEditName`), and otherwise the public name, first
+   * may read in full (`mayViewFullNames`), and otherwise the public name, first
    * name and last initial unless the team has chosen another format.
    */
   shortName: asString,
@@ -1766,8 +1766,9 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * One person, for their own page.
  *
  * `name` is the person's full name for a reader who may read it
- * (`mayEditName`: a guardian, the player, the staff of a team they play on),
- * and the public short form — `Jordan P` — for everybody else. The halves are
+ * (`mayViewFullNames`: a guardian, the player, the staff of a team they play
+ * on, a people manager of a level whose people list holds them), and the
+ * public short form — `Jordan P` — for everybody else. The halves are
  * fetched separately, by `playerName`, when somebody who may change them
  * opens the name field.
  *

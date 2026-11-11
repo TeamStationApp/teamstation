@@ -7042,7 +7042,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
-            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayEditName permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
+            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayViewFullNames permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
             'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
@@ -7312,7 +7312,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'name. Anybody signed in who is not a member of the team (the ' +
             'non-member view) reads the same roster, followers included, ' +
             'with `avatarUrl` null on every entry. ' +
-            'Somebody the caller may read in full (`mayEditName`) is named in ' +
+            'Somebody the caller may read in full (`mayViewFullNames`) is named in ' +
             "full, with the public name in `compactName` (its format in `compactFormat`); everybody else follows the team's player name privacy, a first name and last " +
             'initial by default, and a row in another format says so in ' +
             '`nameFormat`. includeFullNames=true ' +

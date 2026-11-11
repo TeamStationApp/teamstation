@@ -1280,4 +1280,59 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(await isClosed(bc)).equals(true)
     })
   })
+  describe('names as the reader may see them', function () {
+    it('names another league administrator in full to a league administrator, and short to a player', async function () {
+      const ripken = await fixture.person('Ripken')
+      await db
+        .updateTable('users')
+        .set({
+          display_name: 'Cal Ripken',
+          first_name: 'Cal',
+          last_name: 'Ripken'
+        })
+        .where('id', '=', ripken)
+        .execute()
+      await db
+        .insertInto('scope_roles')
+        .values({
+          id: makeId('scopeRole'),
+          user_id: ripken,
+          scope_type: 'league',
+          scope_id: fixture.seed.leagueId,
+          role: 'admin'
+        })
+        .execute()
+      await fixture.drain()
+      const candidates = async (who: string): Promise<unknown[]> => {
+        const answer = await call(who, 'GET', '/chat/dm-candidates?q=ripken')
+        expect(answer.status).equals(200)
+        return (answer.body as Array<Record<string, unknown>>).map(
+          ({ userId, shortName, compactName }) => ({
+            userId,
+            shortName,
+            compactName
+          })
+        )
+      }
+      expect(await candidates('L')).deep.equals([
+        { userId: ripken, shortName: 'Cal Ripken', compactName: 'Cal R' }
+      ])
+      expect(await candidates('P')).deep.equals([
+        { userId: ripken, shortName: 'Cal R', compactName: undefined }
+      ])
+      // The members of the league's own chat read the same.
+      const org = await chatId('L', 'Harbor League Org')
+      const members = await call(
+        'L',
+        'GET',
+        `/chat/conversations/${org}/members`
+      )
+      expect(members.status).equals(200)
+      expect(
+        (members.body as Array<{ userId: string }>).find(
+          member => member.userId === ripken
+        )
+      ).to.include({ shortName: 'Cal Ripken', compactName: 'Cal R' })
+    })
+  })
 })

@@ -21,6 +21,7 @@ import { testDatabaseUrl } from '../../migrate/testDatabase'
 import {
   mayEditName,
   mayManagePlayer,
+  mayViewFullName,
   openAdds,
   openAddsOf,
   openAddTeams,
@@ -63,7 +64,7 @@ import { battingLines } from '../stats'
 import { statRows } from '../stats/rows'
 import { addByPolicy } from '../teams/addExistingPlayer'
 import { personProfile } from '../teams/personProfile'
-import { levelPeople, teamRoster } from '../teams/teamRoster'
+import { levelPeople, onPeopleList, teamRoster } from '../teams/teamRoster'
 import { ensureGumboId, insertUser } from '../users/insertUser'
 import {
   booksOver,
@@ -2265,6 +2266,323 @@ describe('adds made with a notice', function () {
     await held.settle()
     expect(await listed()).includes(ids['Season Parent'])
     expect(await profile()).equals('Held Season')
+  })
+
+  it('keeps a held player’s family, name and details from a season people manager off the holding team', async function () {
+    const held = await heldWithParent(
+      'Javier Baez',
+      'Anthony Rizzo',
+      'tok_notice_baez_parent_00000000000000'
+    )
+    const parented = await db!
+      .selectFrom('season_team_parents')
+      .select('team_id')
+      .where('season_id', '=', SEASON)
+      .where('team_id', '=', TEAM.falcons)
+      .executeTakeFirst()
+    if (parented == null)
+      await db!
+        .insertInto('season_team_parents')
+        .values({ season_id: SEASON, team_id: TEAM.falcons })
+        .execute()
+    await person('Joe Girardi', { login: true })
+    await db!
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: ids['Joe Girardi'],
+        scope_type: 'season',
+        scope_id: SEASON,
+        role: 'coach'
+      })
+      .execute()
+    const manager = { userId: ids['Joe Girardi'], isAdmin: false }
+    const child = ids['Javier Baez']
+    const parent = ids['Anthony Rizzo']
+    const team = { kind: 'team', id: TEAM.falcons } as const
+    const gameId = await game()
+    const lists = async (): Promise<{
+      roster: Array<{ userId: string; shortName: string }>
+      listed: boolean
+      attendees: string[]
+      person: Record<string, unknown> | undefined
+    }> => ({
+      roster: await teamRoster(
+        db!,
+        undefined,
+        TEAM.falcons,
+        false,
+        manager,
+        undefined,
+        manager
+      ),
+      listed: await onPeopleList(db!, team, parent, manager),
+      attendees: (
+        await readEventInfo(
+          db!,
+          { ...manager, scopes: [] },
+          gameId,
+          { space: undefined } as unknown as MediaContext,
+          TEAM.falcons
+        )
+      ).attendees.map(row => row.userId),
+      person: (
+        await peopleInScope(
+          db!,
+          {
+            teams: [{ id: TEAM.falcons, name: 'Ridgeview Falcons' }],
+            seasons: [],
+            leagues: []
+          },
+          manager
+        )
+      ).find(each => each.userId === child) as
+        Record<string, unknown> | undefined
+    })
+    const before = await lists()
+    expect(before.roster.map(row => row.userId)).not.includes(parent)
+    expect(before.roster.find(row => row.userId === child)?.shortName).equals(
+      'Javier B'
+    )
+    expect(before.listed).equals(false)
+    expect(before.attendees).not.includes(parent)
+    expect(before.person).to.deep.include({
+      displayName: 'Javier B',
+      emails: [],
+      lastSignInAt: null,
+      lastSeenAt: null
+    })
+    expect(await mayViewFullName(db!, manager.userId, child, manager)).equals(
+      false
+    )
+    // Once the add stands, the season's coach manages his team's people.
+    await held.settle()
+    const after = await lists()
+    expect(after.roster.map(row => row.userId)).includes(parent)
+    expect(after.roster.find(row => row.userId === child)?.shortName).equals(
+      'Javier Baez'
+    )
+    expect(after.listed).equals(true)
+    expect(after.attendees).includes(parent)
+    expect(after.person).property('displayName', 'Javier Baez')
+  })
+
+  it('lets no follow or league membership of a held player give the holding team their name or family', async function () {
+    const follower = await heldWithParent(
+      'Kris Bryant',
+      'Ben Zobrist',
+      'tok_notice_bryant_parent_000000000000'
+    )
+    const member = await heldWithParent(
+      'Kyle Schwarber',
+      'Jon Lester',
+      'tok_notice_schwarber_parent_000000000'
+    )
+    await db!
+      .insertInto('follows')
+      .values({
+        user_id: ids['Kris Bryant'],
+        group_type: 'team',
+        group_id: TEAM.falcons
+      })
+      .execute()
+    await db!
+      .insertInto('league_members')
+      .values({
+        id: makeId('leagueMember'),
+        user_id: ids['Kyle Schwarber'],
+        league_id: 'lea_notice'
+      })
+      .execute()
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    const team = { kind: 'team', id: TEAM.falcons } as const
+    const gameId = await game()
+    const held: Array<[string, string, string, string]> = [
+      ['Kris Bryant', 'Ben Zobrist', 'Kris B', 'Kris Bryant'],
+      ['Kyle Schwarber', 'Jon Lester', 'Kyle S', 'Kyle Schwarber']
+    ]
+    const read = async (): Promise<void> => {
+      const roster = await teamRoster(
+        db!,
+        undefined,
+        TEAM.falcons,
+        false,
+        coach,
+        undefined,
+        coach
+      )
+      const attendees = (
+        await readEventInfo(
+          db!,
+          coach,
+          gameId,
+          { space: undefined } as unknown as MediaContext,
+          TEAM.falcons
+        )
+      ).attendees
+      const people = await peopleInScope(
+        db!,
+        {
+          teams: [{ id: TEAM.falcons, name: 'Ridgeview Falcons' }],
+          seasons: [],
+          leagues: []
+        },
+        coach
+      )
+      for (const [child, parent, short] of held) {
+        expect(
+          await mayViewFullName(db!, coach.userId, ids[child], coach),
+          child
+        ).equals(false)
+        expect(
+          roster.find(row => row.userId === ids[child])?.shortName,
+          child
+        ).equals(short)
+        expect(
+          roster.map(row => row.userId),
+          parent
+        ).not.includes(ids[parent])
+        const profile = await personProfile(
+          db!,
+          undefined,
+          coach,
+          team,
+          ids[child]
+        )
+        expect(profile.person.fullName, child).equals(null)
+        expect(profile.person.shortName, child).equals(short)
+        expect(
+          await onPeopleList(db!, team, ids[parent], coach),
+          parent
+        ).equals(false)
+        expect(
+          attendees.map(row => row.userId),
+          parent
+        ).not.includes(ids[parent])
+        const attendee = attendees.find(row => row.userId === ids[child])
+        if (attendee != null) expect(attendee.name, child).equals(short)
+        expect(
+          people.find(each => each.userId === ids[child]),
+          child
+        ).to.deep.include({ displayName: short, emails: [] })
+        expect(
+          people.map(each => each.userId),
+          parent
+        ).not.includes(ids[parent])
+      }
+    }
+    await read()
+    // Once the adds stand, the coach manages his team's people.
+    await follower.settle()
+    await member.settle()
+    for (const [child, , , full] of held) {
+      expect(
+        await mayViewFullName(db!, coach.userId, ids[child], coach),
+        child
+      ).equals(true)
+      const profile = await personProfile(
+        db!,
+        undefined,
+        coach,
+        team,
+        ids[child]
+      )
+      expect(profile.person.fullName, child).equals(full)
+    }
+  })
+
+  it('leaves a coach the team open-adds as a player whole to its other managers', async function () {
+    // One already on the team in another role, and one who holds a coach's
+    // role on it alone, so the add makes their membership.
+    await person('Kirk Gibson', { login: true })
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: ids['Kirk Gibson'],
+        team_id: TEAM.falcons,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    await role(ids['Kirk Gibson'], TEAM.falcons, 'coach')
+    await person('Orel Hershiser', { login: true })
+    await role(ids['Orel Hershiser'], TEAM.falcons, 'coach')
+    for (const name of ['Kirk Gibson', 'Orel Hershiser'])
+      await add('roster', name)
+    const held = await openAdds(db!, TEAM.falcons)
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    const team = { kind: 'team', id: TEAM.falcons } as const
+    for (const name of ['Kirk Gibson', 'Orel Hershiser']) {
+      expect(held, name).includes(ids[name])
+      expect(
+        await mayViewFullName(db!, coach.userId, ids[name], coach),
+        name
+      ).equals(true)
+      const profile = await personProfile(
+        db!,
+        undefined,
+        coach,
+        team,
+        ids[name]
+      )
+      expect(profile.person.fullName, name).equals(name)
+    }
+  })
+
+  it('leaves the parent of a settled player the team open-adds whole to its managers', async function () {
+    // One already on the team, and one there only as the player's parent,
+    // whom the add makes a member.
+    for (const [child, parent, member] of [
+      ['Corey Seager', 'Jeff Bagwell', true],
+      ['Kyle Seager', 'Jody Davis', false]
+    ] as const) {
+      await person(child, { teamId: TEAM.falcons })
+      await person(parent, { login: true })
+      await db!
+        .insertInto('user_links')
+        .values({
+          id: makeId('userLink'),
+          user_id: ids[parent],
+          related_user_id: ids[child],
+          kind: 'guardian',
+          can_manage: true
+        })
+        .execute()
+      if (member)
+        await db!
+          .insertInto('memberships')
+          .values({
+            id: makeId('membership'),
+            user_id: ids[parent],
+            team_id: TEAM.falcons,
+            role: 'member',
+            is_player: false
+          })
+          .execute()
+      await add('roster', parent)
+    }
+    const held = await openAdds(db!, TEAM.falcons)
+    const coach = { userId: ids.coach, isAdmin: false, scopes: [] }
+    const team = { kind: 'team', id: TEAM.falcons } as const
+    for (const parent of ['Jeff Bagwell', 'Jody Davis']) {
+      expect(held, parent).includes(ids[parent])
+      expect(await onPeopleList(db!, team, ids[parent], coach), parent).equals(
+        true
+      )
+      expect(
+        await mayViewFullName(db!, coach.userId, ids[parent], coach),
+        parent
+      ).equals(true)
+      const profile = await personProfile(
+        db!,
+        undefined,
+        coach,
+        team,
+        ids[parent]
+      )
+      expect(profile.person.fullName, parent).equals(parent)
+    }
   })
 
   it('answers a roster by who reads it, while the team stays held', async function () {

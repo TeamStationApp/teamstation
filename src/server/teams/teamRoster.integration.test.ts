@@ -706,8 +706,11 @@ describe('roster sections', function () {
         jersey: null,
         walkUpSong: null
       })
+    // The league's admin manages the team's people, and reads the family on
+    // its list in full too (`mayViewFullNames`), the public label beside it.
     expect(byUser.get(userIdOfGumbo(f.people.guardian))).to.include({
-      shortName: 'Tim R',
+      shortName: 'Tim Raines',
+      compactName: 'Tim R',
       bats: 'left',
       throws: 'right'
     })
@@ -848,8 +851,13 @@ describe('roster sections', function () {
       nameFormat: 'full',
       compactName: 'Alfonso S'
     })
-    // An adult with no tie the coach may read in full stays short.
-    expect(named(coach, f.people.follower).compactName).equals(undefined)
+    // The coach manages the team's people, so reads a follower on its list
+    // in full too, though they may not change the name.
+    expect(named(coach, f.people.follower)).deep.equals({
+      shortName: 'Grant Hartwig',
+      nameFormat: 'full',
+      compactName: 'Grant H'
+    })
     // A guardian reads their own child in full, and another child short.
     const guardian = await as(f.people.guardian)
     expect(named(guardian, 201)).deep.equals({

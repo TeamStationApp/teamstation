@@ -262,7 +262,8 @@ async function main(): Promise<void> {
     }
     await page.setViewport(null)
     await page.setViewport({ width: 1440, height: 900 })
-    const control = '[aria-label="Uma L, majors, Plate"]'
+    // The league's administrator reads its umpire in full.
+    const control = '[aria-label="Uma Lee, majors, Plate"]'
     const before = await page.$eval(control, n =>
       n.getAttribute('aria-pressed')
     )

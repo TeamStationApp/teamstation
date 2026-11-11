@@ -10,7 +10,8 @@ import {
   guardedPlayers,
   guardiansOfEach,
   levelsAboveTeam,
-  mayEditName,
+  mayViewFullName,
+  mayViewFullNames,
   membersOfLevels,
   openAdds,
   openAddsOf,
@@ -32,8 +33,10 @@ import { gumboIdsOf, teamRosterCore } from './rosterCore'
 import { teamHeadCoach } from './teamHeadCoach'
 
 /**
- * The rows held from this reader: not a site administrator, a guardian, the
- * player, or the staff of a team of theirs, whose rights no add takes away.
+ * The rows held from this reader: not anybody who may see the player's full
+ * name (`mayViewFullNames`: a site administrator, a guardian, the player, the
+ * staff of a team of theirs, or a people manager of a level whose list holds
+ * them otherwise), whose rights no add takes away. One answer for the list.
  */
 async function heldAgainst(
   db: Kysely<Database>,
@@ -42,15 +45,10 @@ async function heldAgainst(
   viewer?: { userId: string; isAdmin: boolean }
 ): Promise<Set<string>> {
   if (viewer == null) return held
-  const shown = await Promise.all(
-    userIds
-      .filter(id => held.has(id))
-      .map(
-        async id =>
-          [id, await mayEditName(db, viewer.userId, id, viewer)] as const
-      )
-  )
-  return new Set(shown.filter(([, may]) => !may).map(([id]) => id))
+  const asked = userIds.filter(id => held.has(id))
+  if (asked.length === 0) return new Set()
+  const shown = await mayViewFullNames(db, viewer.userId, asked, viewer)
+  return new Set(asked.filter(id => !shown.has(id)))
 }
 
 /**
@@ -400,7 +398,7 @@ export async function onPeopleList(
   )
     return true
 
-  // The team roster can show a held child's family to a viewer allowed to edit their name.
+  // The team roster can show a held child's family to a viewer who may see their full name.
   // Season and league lists only include family through a settled player.
   for (const child of await guardedPlayers(db, userId)) {
     const held = await openAddTeams(db, [child])
@@ -410,7 +408,7 @@ export async function onPeopleList(
         !held.includes(team) ||
         (ref.kind === 'team' &&
           viewer != null &&
-          (await mayEditName(db, viewer.userId, child, viewer)))
+          (await mayViewFullName(db, viewer.userId, child, viewer)))
       )
         return true
     }

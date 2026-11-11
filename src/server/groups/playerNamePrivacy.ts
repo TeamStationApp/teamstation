@@ -372,7 +372,7 @@ export interface ReaderOptions {
   reader?: Reader
   /**
    * Whom of these people the caller has already found `reader` may read in
-   * full (its own `mayEditName`), so that nobody asks again (`fullNamesFor`).
+   * full (its own `mayViewFullNames`), so that nobody asks again (`fullNamesFor`).
    */
   readsFull?: Iterable<string>
 }

@@ -120,7 +120,8 @@ describe('team-scoped manager projections', () => {
   it('exposes the incumbent in a manager’s profile section and hides it from an unrelated self-profile', async () => {
     mock.method(rights, 'currentActor', async () => actor)
     mock.method(access, 'teamsUnder', async () => new Set([team.id]))
-    mock.method(access, 'mayEditName', async () => true)
+    mock.method(access, 'mayViewFullName', async () => true)
+    mock.method(access, 'mayViewFullNames', async () => new Set([other]))
     mock.method(access, 'guardedPlayers', async () => [])
     mock.method(access, 'teamsPlayedOnNow', async () => [])
     mock.method(

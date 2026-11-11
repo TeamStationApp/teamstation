@@ -432,37 +432,37 @@ async function roster(run: Run): Promise<void> {
     return match!
   }
   const row = (name: string): string => found(name).text
-  // The admin reads themselves and the team's players in full, and the
-  // other adults short.
-  expect(row('Mike T')).includes('Season coach')
+  // The admin manages the team's people, so reads everybody on its list in
+  // full: the players, and the adults the list names beside them.
+  expect(row('Mike Trout')).includes('Season coach')
   expect(row('Babe Ruth')).includes('League admin')
-  expect(row('Owen M')).includes('Assistant')
-  expect(row('Nick P')).includes('Scorekeeper')
+  expect(row('Owen Miller')).includes('Assistant')
+  expect(row('Nick Punto')).includes('Scorekeeper')
   expect(row('Ichiro')).includes('Coach')
   expect(row('Ichiro')).not.includes('Season')
   expect(row('Alfonso Soriano')).includes('SS · 2B')
   expect(row('Alfonso Soriano')).includes('#7')
-  expect(row('Tim R')).not.includes('#')
-  expect(row('Hank M')).not.includes('#')
-  expect(row('Sandy L')).includes('Season spectator')
-  expect(row('Leo G')).includes('League spectator')
+  expect(row('Tim Raines')).not.includes('#')
+  expect(row('Hank Majeski')).not.includes('#')
+  expect(row('Sandy Leon')).includes('Season spectator')
+  expect(row('Leo Gomez')).includes('League spectator')
   // The team's own spectator and the followers carry no pill.
-  for (const name of ['Hank M', 'Grant H', 'Felipe A'])
+  for (const name of ['Hank Majeski', 'Grant Hartwig', 'Felipe Alou'])
     expect(row(name), name).not.match(/Season|League/)
   // For the team's admin every row opens, with a chevron: a player's page,
   // and staff, family, spectators and followers their profile.
   for (const name of [
     'Babe Ruth',
-    'Mike T',
-    'Owen M',
-    'Nick P',
+    'Mike Trout',
+    'Owen Miller',
+    'Nick Punto',
     'Ichiro',
-    'Tim R',
-    'Hank M',
-    'Leo G',
-    'Sandy L',
-    'Felipe A',
-    'Grant H',
+    'Tim Raines',
+    'Hank Majeski',
+    'Leo Gomez',
+    'Sandy Leon',
+    'Felipe Alou',
+    'Grant Hartwig',
     'Alfonso Soriano',
     'Ben Chapman',
     'Cody Decker',
@@ -473,17 +473,17 @@ async function roster(run: Run): Promise<void> {
     expect(row(name), name).includes('chevron_right')
   }
   // In its section's order: the team's own staff, then the season's coach.
-  expect(page.indexOf('Owen M')).lessThan(page.indexOf('Mike T'))
-  expect(page.indexOf('Mike T')).lessThan(page.indexOf('PLAYERS'))
-  expect(page.indexOf('Tim R')).greaterThan(page.indexOf('FAMILY MEMBERS'))
+  expect(page.indexOf('Owen Miller')).lessThan(page.indexOf('Mike Trout'))
+  expect(page.indexOf('Mike Trout')).lessThan(page.indexOf('PLAYERS'))
+  expect(page.indexOf('Tim Raines')).greaterThan(page.indexOf('FAMILY MEMBERS'))
   // The team's own spectator, then the league's and the season's by name,
   // then the followers by name.
-  expect(page.indexOf('Hank M')).greaterThan(page.indexOf('SPECTATORS'))
-  expect(page.indexOf('Hank M')).lessThan(page.indexOf('Leo G'))
-  expect(page.indexOf('Leo G')).lessThan(page.indexOf('Sandy L'))
-  expect(page.indexOf('Sandy L')).lessThan(page.indexOf('FOLLOWERS'))
-  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Felipe A'))
-  expect(page.indexOf('Felipe A')).lessThan(page.indexOf('Grant H'))
+  expect(page.indexOf('Hank Majeski')).greaterThan(page.indexOf('SPECTATORS'))
+  expect(page.indexOf('Hank Majeski')).lessThan(page.indexOf('Leo Gomez'))
+  expect(page.indexOf('Leo Gomez')).lessThan(page.indexOf('Sandy Leon'))
+  expect(page.indexOf('Sandy Leon')).lessThan(page.indexOf('FOLLOWERS'))
+  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Felipe Alou'))
+  expect(page.indexOf('Felipe Alou')).lessThan(page.indexOf('Grant Hartwig'))
   await run.shot(admin, 'roster-after.png', { fit: true })
   // The place and the gear share the card's right-hand column without
   // touching, and "Demo Hawks" keeps its words whole, on this phone and on a

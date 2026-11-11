@@ -48,11 +48,13 @@ export function readerOf(actor: Actor | undefined): Reader | undefined {
 }
 
 /**
- * The people of `userIds` this reader reads in full: `mayEditNames`, and
- * nobody when the read goes to a model (`isSpoken`) or there is no reader.
- * One `mayEditNames` call for the whole list, or none when the caller has
- * asked already: `known` is then whom of them it found the reader may read in
- * full (its own `mayEditName`), taken as the answer.
+ * The people of `userIds` this reader reads in full: `mayViewFullNames` (whoever
+ * may change the name, and whoever manages the people of a level whose people
+ * list holds them), and nobody when the read goes to a model (`isSpoken`) or
+ * there is no reader. One `mayViewFullNames` call for the whole list, or none
+ * when the caller has asked already: `known` is then whom of them it found the
+ * reader may read in full (its own `mayViewFullName`), taken as the answer.
+ * Reading in full never grants changing: that stays `mayEditNames`.
  */
 export async function fullNamesFor(
   db: Kysely<Database>,
@@ -68,8 +70,8 @@ export async function fullNamesFor(
   }
   // Name formats are read by migrations, which must not load the server that
   // `access.ts` brings with it: only a read for a reader loads it.
-  const { mayEditNames } = await import('../access')
-  return await mayEditNames(db, reader.userId, wanted, {
+  const { mayViewFullNames } = await import('../access')
+  return await mayViewFullNames(db, reader.userId, wanted, {
     isAdmin: reader.isAdmin
   })
 }

@@ -130,7 +130,7 @@ describe('single-person roster eligibility', () => {
     children = ['child']
     playing = ids => (ids.includes('child') ? ['unrelated', 'team'] : [])
     heldTeams = ['team']
-    mock.method(access, 'mayEditName', async () => true)
+    mock.method(access, 'mayViewFullName', async () => true)
     for (const ref of [team, league]) {
       await withQueryReplies(
         [

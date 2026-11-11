@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import { fullName, shortName } from '../../common/names'
+import { fullName } from '../../common/names'
 import { asUmpireSchedule } from '../../common/umpireCleaners'
 import { userIdOfGumbo } from '../../common/userId'
 import { actor, type GroupFixture } from '../../test/groupFixtures'
@@ -170,8 +170,10 @@ describe('umpire names for their reader', function () {
         displayName: guardian.display_name
       })
     )
+    // The league's administrator reads its umpires in full, as on their
+    // profile (`mayViewFullNames`).
     expect(await listed(101)).equals(
-      shortName({
+      fullName({
         id: guardian.id,
         firstName: guardian.first_name,
         lastName: guardian.last_name,

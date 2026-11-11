@@ -11,7 +11,7 @@ import { IMPLIED_ROLES, type Role, ROLES } from '../common/roles'
 import { onePeople, type OnePerson, onePerson } from './admin/people'
 import { anyOf } from './db/anyOf'
 import type { Database } from './db/database'
-import { openAddsOf, openAddTeams } from './openAdds'
+import { openAddsOf, openAddTeams, openArrivalsOf } from './openAdds'
 
 export {
   heldByOpenAdd,
@@ -1430,12 +1430,33 @@ export async function mayEditNames(
   about: { isAdmin: boolean },
   known: ReadonlyMap<string, OnePerson> = new Map()
 ): Promise<Set<string>> {
+  return (await nameAuthority(db, actorUserId, playerUserIds, about, known))
+    .allowed
+}
+
+/**
+ * `mayEditNames`, with the reads it made on the way for a caller that goes on
+ * to ask more of the same people: each person's rows it gathered (`people`),
+ * and the asker's roles, when it read them (`roles`).
+ */
+async function nameAuthority(
+  db: Kysely<Database>,
+  actorUserId: string,
+  playerUserIds: readonly string[],
+  about: { isAdmin: boolean },
+  known: ReadonlyMap<string, OnePerson>
+): Promise<{
+  allowed: Set<string>
+  people: ReadonlyMap<string, OnePerson>
+  roles?: RoleScopes
+}> {
   const allowed = new Set<string>()
-  if (about.isAdmin) return new Set(playerUserIds)
+  if (about.isAdmin)
+    return { allowed: new Set(playerUserIds), people: new Map() }
   const asked = [...new Set(playerUserIds)]
   if (asked.includes(actorUserId)) allowed.add(actorUserId)
   const others = asked.filter(id => id !== actorUserId)
-  if (others.length === 0) return allowed
+  if (others.length === 0) return { allowed, people: new Map() }
   const gathered = await onePeople(db, [
     actorUserId,
     ...others.filter(id => known.get(id)?.userIds.includes(id) !== true)
@@ -1463,7 +1484,7 @@ export async function mayEditNames(
     )
       allowed.add(id)
   const remaining = [...players].filter(([id]) => !allowed.has(id))
-  if (remaining.length === 0) return allowed
+  if (remaining.length === 0) return { allowed, people: players }
   const scopes = await roleScopes(db, actorUserId, false)
   const staffOf = [
     ...new Set(
@@ -1472,7 +1493,7 @@ export async function mayEditNames(
       )
     )
   ]
-  if (staffOf.length === 0) return allowed
+  if (staffOf.length === 0) return { allowed, people: players, roles: scopes }
   const rows = remaining.flatMap(([, player]) => player.userIds)
   const [plays, held] = await Promise.all([
     db
@@ -1496,7 +1517,436 @@ export async function mayEditNames(
       )
     )
       allowed.add(id)
+  return { allowed, people: players, roles: scopes }
+}
+
+/**
+ * Whether this reader may **see** this person's full name: `mayViewFullNames`
+ * of one.
+ */
+export async function mayViewFullName(
+  db: Kysely<Database>,
+  readerUserId: string,
+  userId: string,
+  about: { isAdmin: boolean },
+  known?: ReadonlyMap<string, OnePerson>
+): Promise<boolean> {
+  return (await mayViewFullNames(db, readerUserId, [userId], about, known)).has(
+    userId
+  )
+}
+
+/**
+ * Whether this reader may **see** each person's full name: whoever may change
+ * it (`mayEditNames`), and whoever manages the people (`canManagePeople`) of
+ * a level whose people list shows the person. Seeing never grants changing:
+ * everything that changes a name, or reads its halves to change them, asks
+ * `mayEditName(s)`.
+ *
+ * The level rule is the person profile's: a level's administrators, coaches
+ * and assistants (`roleScopes`, carried down from league to season to team)
+ * read in full everybody its people list holds (`onPeopleList`):
+ *
+ * - its members (a team's memberships, player or not; `season_members`;
+ *   `league_members`), its role holders (`scope_roles`) and its followers;
+ * - the players of its teams and their guardians and family (a `guardian` or
+ *   `family` link), through the teams the players play on now;
+ * - on a team's list, the members and role holders of the seasons and league
+ *   above it, and on a season's, its league's;
+ * - for a league administrator, the league's umpires, whose profile they open.
+ *
+ * A team that holds a person, or the player they guard, only by an open add
+ * does not put them on its list. A disabled person stays on a list only as a
+ * team's member or a player. An external team's people are its custodian's
+ * administrators', as `canAdminister` says. A reader whose own account is
+ * disabled, closed into another or unable to sign in gets the `mayEditNames`
+ * answer alone.
+ *
+ * A fixed number of queries whatever the length of the list; `known` is
+ * passed through to `mayEditNames`, and the rows and roles it read on the way
+ * are reused.
+ */
+export async function mayViewFullNames(
+  db: Kysely<Database>,
+  readerUserId: string,
+  userIds: readonly string[],
+  about: { isAdmin: boolean },
+  known: ReadonlyMap<string, OnePerson> = new Map()
+): Promise<Set<string>> {
+  const edit = await nameAuthority(db, readerUserId, userIds, about, known)
+  const { allowed } = edit
+  const asked = [...new Set(userIds)].filter(id => !allowed.has(id))
+  if (asked.length === 0) return allowed
+
+  const standing = await db
+    .selectFrom('users')
+    .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
+    .where('id', '=', readerUserId)
+    .executeTakeFirst()
+  if (
+    standing == null ||
+    standing.disabled_at != null ||
+    standing.merged_into != null ||
+    !standing.login_enabled
+  )
+    return allowed
+  const roles = edit.roles ?? (await roleScopes(db, readerUserId, false))
+  const manages = emptyScopes()
+  for (const role of ['admin', 'coach', 'assistant'] as const)
+    for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const)
+      for (const id of roles[role][key]) manages[key].add(id)
+  if (
+    manages.leagueIds.size === 0 &&
+    manages.seasonIds.size === 0 &&
+    manages.teamIds.size === 0
+  )
+    return allowed
+
+  const levels = await peopleListLevels(
+    db,
+    asked,
+    new Map([...edit.people, ...known])
+  )
+  const external = await externalCustodians(db, [
+    ...new Set([...levels.values()].flatMap(level => [...level.teamIds]))
+  ])
+  const administers = (custodian: Custodian): boolean =>
+    custodian.type === 'league'
+      ? roles.admin.leagueIds.has(custodian.id)
+      : custodian.type === 'season'
+        ? roles.admin.seasonIds.has(custodian.id)
+        : roles.admin.teamIds.has(custodian.id)
+  for (const [id, level] of levels) {
+    const managed =
+      [...level.leagueIds].some(league => manages.leagueIds.has(league)) ||
+      [...level.seasonIds].some(season => manages.seasonIds.has(season)) ||
+      [...level.teamIds].some(team => {
+        if (manages.teamIds.has(team)) return true
+        const custodian = external.get(team)
+        return custodian != null && administers(custodian)
+      }) ||
+      [...level.umpireLeagueIds].some(league =>
+        roles.admin.leagueIds.has(league)
+      )
+    if (managed) allowed.add(id)
+  }
   return allowed
+}
+
+/** The levels whose people lists hold one person, as `peopleListLevels` reads them. */
+interface ListLevels extends ScopeSet {
+  /** The leagues they umpire for, whose administrators open their profile. */
+  umpireLeagueIds: Set<string>
+}
+
+/**
+ * Every level whose people list (`onPeopleList`) holds each of these people,
+ * keyed by the id asked about, in a fixed number of reads however many there
+ * are: each person's rows (`onePeople`), the players they guard
+ * (`guardedPeopleOfEach`), their memberships and those players', their season
+ * and league memberships, roles, follows and umpiring, which of them are
+ * disabled, the open adds of the teams they and their players are members
+ * of or follow, and the levels above the teams they and their players play
+ * on and below the levels they belong to. A team an open add brought a person
+ * to (`openArrivalsOf`) is on none of their levels, however a season or league
+ * above it would carry them down, unless something the add did not bring put
+ * them on it: a role on it, or a settled player of it they guard. Somebody
+ * the add found on the team already stays where they were.
+ */
+async function peopleListLevels(
+  db: Kysely<Database>,
+  asked: readonly string[],
+  known: ReadonlyMap<string, OnePerson>
+): Promise<Map<string, ListLevels>> {
+  const gathered = await onePeople(
+    db,
+    asked.filter(id => known.get(id)?.userIds.includes(id) !== true)
+  )
+  const people = new Map(
+    asked.map(id => [
+      id,
+      known.get(id)?.userIds.includes(id) === true
+        ? known.get(id)!
+        : gathered.get(id)!
+    ])
+  )
+  const guarded = await guardedPeopleOfEach(db, people)
+  const ownRows = [...people.values()].flatMap(person => person.userIds)
+  const childRows = [...guarded.values()].flatMap(children =>
+    children.flatMap(child => child.userIds)
+  )
+  const [
+    memberships,
+    seasonMembers,
+    leagueMembers,
+    roleRows,
+    followRows,
+    umpireRows,
+    disabledRows
+  ] = await Promise.all([
+    db
+      .selectFrom('memberships')
+      .select(['user_id', 'team_id', 'is_player'])
+      .where('user_id', '=', anyOf([...ownRows, ...childRows]))
+      .execute(),
+    db
+      .selectFrom('season_members')
+      .select(['user_id', 'season_id'])
+      .where('user_id', '=', anyOf(ownRows))
+      .execute(),
+    db
+      .selectFrom('league_members')
+      .select(['user_id', 'league_id'])
+      .where('user_id', '=', anyOf(ownRows))
+      .execute(),
+    db
+      .selectFrom('scope_roles')
+      .select(['user_id', 'scope_type', 'scope_id'])
+      .where('user_id', '=', anyOf(ownRows))
+      .execute(),
+    db
+      .selectFrom('follows')
+      .select(['user_id', 'group_type', 'group_id'])
+      .where('user_id', '=', anyOf(ownRows))
+      .execute(),
+    db
+      .selectFrom('league_umpires')
+      .select(['user_id', 'league_id'])
+      .where('user_id', '=', anyOf(ownRows))
+      .execute(),
+    db
+      .selectFrom('users')
+      .select('id')
+      .where(
+        'id',
+        '=',
+        anyOf([...new Set([...people.values()].map(person => person.userId))])
+      )
+      .where('disabled_at', 'is not', null)
+      .execute()
+  ])
+  const disabled = new Set(disabledRows.map(row => row.id))
+  const byRow = <T extends { user_id: string }>(
+    rows: readonly T[]
+  ): Map<string, T[]> => {
+    const map = new Map<string, T[]>()
+    for (const row of rows) {
+      const list = map.get(row.user_id)
+      if (list == null) map.set(row.user_id, [row])
+      else list.push(row)
+    }
+    return map
+  }
+  const membershipsOf = byRow(memberships)
+  const seasonMembersOf = byRow(seasonMembers)
+  const leagueMembersOf = byRow(leagueMembers)
+  const rolesOf = byRow(roleRows)
+  const followsOf = byRow(followRows)
+  const umpiresOf = byRow(umpireRows)
+  const of = <T>(map: Map<string, T[]>, rows: readonly string[]): T[] =>
+    rows.flatMap(row => map.get(row) ?? [])
+
+  // What the levels a person belongs to carry down: a season's members and
+  // role holders are on its teams' lists, a league's on its seasons' and
+  // teams' too.
+  const belongs = new Map<string, ScopeSet>()
+  for (const [id, person] of people) {
+    const set = emptyScopes()
+    if (!disabled.has(person.userId)) {
+      for (const row of of(seasonMembersOf, person.userIds))
+        set.seasonIds.add(row.season_id)
+      for (const row of of(leagueMembersOf, person.userIds))
+        set.leagueIds.add(row.league_id)
+      for (const row of of(rolesOf, person.userIds)) {
+        if (row.scope_type === 'league') set.leagueIds.add(row.scope_id)
+        if (row.scope_type === 'season') set.seasonIds.add(row.scope_id)
+        if (row.scope_type === 'team') set.teamIds.add(row.scope_id)
+      }
+    }
+    belongs.set(id, set)
+  }
+  await inheritSets(db, [...belongs.values()])
+
+  const followedTeams = followRows
+    .filter(row => row.group_type === 'team')
+    .map(row => row.group_id)
+  // Only the teams memberships settle people on and the teams they follow are
+  // read, with their open adds; the teams a season or league carries down
+  // count for the comparison alone.
+  const teamIds = [
+    ...new Set([...memberships.map(row => row.team_id), ...followedTeams])
+  ]
+  const teams =
+    teamIds.length === 0
+      ? []
+      : await db
+          .selectFrom('teams')
+          .select(['id', 'league_id', 'merged_into'])
+          .where('id', '=', anyOf(teamIds))
+          .execute()
+  const teamOf = new Map(teams.map(team => [team.id, team]))
+  const openTeams = teams
+    .filter(team => team.merged_into == null)
+    .map(team => team.id)
+  // Every open add keeps its membership from settling them, and so what it
+  // carries up and to their family; only the adds that brought somebody to a
+  // team take it off their levels: one who was on it already, in another
+  // role, stays where they were (`openArrivalsOf`).
+  const [held, arrived] = await Promise.all([
+    openAddsOf(db, openTeams),
+    openArrivalsOf(db, openTeams)
+  ])
+  const holds = (
+    by: ReadonlyMap<string, Set<string>>,
+    team: string,
+    rows: readonly string[]
+  ): boolean => rows.some(row => by.get(team)?.has(row) === true)
+  /** The open teams these rows' memberships settle them on, players only or not. */
+  const settledOn = (rows: readonly string[], players: boolean): string[] =>
+    of(membershipsOf, rows)
+      .filter(row => !players || row.is_player)
+      .map(row => row.team_id)
+      .filter(
+        team =>
+          teamOf.has(team) &&
+          teamOf.get(team)!.merged_into == null &&
+          !holds(held, team, rows)
+      )
+
+  /** The teams an open add brought these rows to. */
+  const heldOn = (rows: readonly string[]): string[] =>
+    of(membershipsOf, rows)
+      .map(row => row.team_id)
+      .filter(team => holds(arrived, team, rows))
+
+  // The players' teams, and their children's, reach the levels above them.
+  const playing = new Map<string, { own: string[]; children: string[] }>()
+  for (const [id, person] of people) {
+    const children = disabled.has(person.userId)
+      ? []
+      : (guarded.get(id) ?? []).flatMap(child => settledOn(child.userIds, true))
+    playing.set(id, { own: settledOn(person.userIds, true), children })
+  }
+  const played = [
+    ...new Set(
+      [...playing.values()].flatMap(each => [...each.own, ...each.children])
+    )
+  ]
+  const parents =
+    played.length === 0
+      ? []
+      : await db
+          .selectFrom(permissionParents(db))
+          .innerJoin('seasons', 'seasons.id', 'permission_parents.season_id')
+          .select([
+            'permission_parents.team_id',
+            'permission_parents.season_id',
+            'seasons.league_id'
+          ])
+          .where('permission_parents.team_id', '=', anyOf(played))
+          .execute()
+  const above = new Map<string, Array<(typeof parents)[number]>>()
+  for (const row of parents) {
+    const list = above.get(row.team_id)
+    if (list == null) above.set(row.team_id, [row])
+    else list.push(row)
+  }
+
+  const levels = new Map<string, ListLevels>()
+  for (const [id, person] of people) {
+    const level: ListLevels = {
+      ...belongs.get(id)!,
+      umpireLeagueIds: new Set()
+    }
+    for (const team of settledOn(person.userIds, false)) level.teamIds.add(team)
+    const { own, children } = playing.get(id)!
+    for (const team of [...own, ...children]) {
+      level.teamIds.add(team)
+      const league = teamOf.get(team)?.league_id
+      if (league != null) level.leagueIds.add(league)
+      for (const row of above.get(team) ?? []) {
+        level.seasonIds.add(row.season_id)
+        if (row.league_id != null) level.leagueIds.add(row.league_id)
+      }
+    }
+    if (!disabled.has(person.userId))
+      for (const row of of(followsOf, person.userIds)) {
+        if (row.group_type === 'league') level.leagueIds.add(row.group_id)
+        if (row.group_type === 'season') level.seasonIds.add(row.group_id)
+        if (row.group_type === 'team') {
+          // A follow of a team since merged follows the team it became.
+          const team = teamOf.get(row.group_id)
+          level.teamIds.add(team?.merged_into ?? row.group_id)
+        }
+      }
+    for (const row of of(umpiresOf, person.userIds))
+      level.umpireLeagueIds.add(row.league_id)
+    // A team an open add brought them to is on none of their levels by that
+    // add, by a follow of it, or by a season or league carried down to it.
+    // It stays when something the add did not bring put them there: a role
+    // on it, or a settled player of it they guard.
+    const kept = new Set([
+      ...children,
+      ...(disabled.has(person.userId)
+        ? []
+        : of(rolesOf, person.userIds)
+            .filter(row => row.scope_type === 'team')
+            .map(row => row.scope_id))
+    ])
+    for (const team of heldOn(person.userIds))
+      if (!kept.has(team)) level.teamIds.delete(team)
+    levels.set(id, level)
+  }
+  return levels
+}
+
+/** Whose administrators manage an external team's people. */
+interface Custodian {
+  type: 'league' | 'season' | 'team'
+  id: string
+}
+
+/**
+ * The custodian of each external team among these, as `canAdminister` reads
+ * it: a season, a league, or a full team; a placeholder kept by another
+ * placeholder, or by nobody, has none. Two reads however many teams.
+ */
+async function externalCustodians(
+  db: Kysely<Database>,
+  teamIds: readonly string[]
+): Promise<Map<string, Custodian>> {
+  const custodians = new Map<string, Custodian>()
+  if (teamIds.length === 0) return custodians
+  const external = await db
+    .selectFrom('teams')
+    .select(['id', 'custodian_type', 'custodian_id'])
+    .where('id', '=', anyOf(teamIds))
+    .where('kind', '=', 'external')
+    .execute()
+  const keptByTeams = external
+    .filter(team => team.custodian_type === 'team' && team.custodian_id != null)
+    .map(team => team.custodian_id!)
+  const full = new Set(
+    keptByTeams.length === 0
+      ? []
+      : (
+          await db
+            .selectFrom('teams')
+            .select('id')
+            .where('id', '=', anyOf(keptByTeams))
+            .where('kind', '=', 'full')
+            .execute()
+        ).map(team => team.id)
+  )
+  for (const team of external) {
+    if (team.custodian_type == null || team.custodian_id == null) continue
+    if (team.custodian_type === 'team' && !full.has(team.custodian_id)) continue
+    custodians.set(team.id, {
+      type: team.custodian_type,
+      id: team.custodian_id
+    })
+  }
+  return custodians
 }
 
 /**

@@ -4,7 +4,7 @@ import { badRequest } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import { fullName, type NamedPerson, shortName } from '../../common/names'
 import { asUserId } from '../../common/userId'
-import { mayEditName, mayEditNames } from '../access'
+import { mayViewFullName, mayViewFullNames } from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { currentActor, requireGroupAdmin } from '../groups/rights'
@@ -52,13 +52,16 @@ export function peopleQueryOf(query: Record<string, unknown>): {
   return { group: { kind, id }, q: q.trim().toLowerCase(), exclude }
 }
 
-/** The name used for both matching and display; public team formats do not apply. */
+/**
+ * The name used for both matching and display, in full for a reader who may
+ * see it (`mayViewFullName`); public team formats do not apply.
+ */
 export async function accountName(
   db: Kysely<Database>,
   actor: Actor,
   person: NamedPerson & { id: string }
 ): Promise<string> {
-  return (await mayEditName(db, actor.userId, person.id, actor))
+  return (await mayViewFullName(db, actor.userId, person.id, actor))
     ? fullName(person)
     : shortName(person)
 }
@@ -90,7 +93,7 @@ export async function peopleCandidates(
       name.toLowerCase().includes(ask.q)
     )
   )
-  const full = await mayEditNames(
+  const full = await mayViewFullNames(
     db,
     fresh.userId,
     rows.map(row => row.id),

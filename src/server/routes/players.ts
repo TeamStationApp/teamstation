@@ -24,6 +24,7 @@ import {
   heldByOpenAdd,
   mayEditName,
   mayManagePlayer,
+  mayViewFullName,
   openAddTeams,
   roleScopes,
   teamsPlayedOnNow,
@@ -165,9 +166,17 @@ export function playerRoutes(
           : undefined
       }
 
-      // In full for whoever may read it in full (`mayEditName`), and the
-      // public format for everybody else. The halves are only behind `/name`
-      // below, for the person editing them.
+      // In full for whoever may see it in full (`mayViewFullName`), and the
+      // public format for everybody else. Whether the name field is offered
+      // is `mayEditName`, which seeing never grants: the halves are only
+      // behind `/name` below, for the person editing them.
+      const mayView = await mayViewFullName(
+        db,
+        actor.userId,
+        userId,
+        { isAdmin: actor.isAdmin },
+        new Map([[userId, person]])
+      )
       const mayEdit = await mayEditName(
         db,
         actor.userId,
@@ -202,8 +211,8 @@ export function playerRoutes(
                 )
               }
             ],
-            // Whether the actor reads this name in full is `mayEdit`.
-            { reader: readerOf(actor), readsFull: mayEdit ? [userId] : [] }
+            // Whether the actor reads this name in full is `mayView`.
+            { reader: readerOf(actor), readsFull: mayView ? [userId] : [] }
           )
         ).get(userId),
         /** Whether to offer this person the name field at all. */
