@@ -499,12 +499,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     },
     [gameId]
   )
+  /** Reads of the game that have answered, the stored paint's to beat. */
+  const gameAnswers = useRef(0)
   const refreshGame = useCallback(async (): Promise<void> => {
     if (live.current && currentGameId.current === gameId)
       setLocalTimezone(viewerTimezone())
     const request = ++gameRequest.current
     try {
-      showGame(await client.game(gameId), request)
+      const found = await client.game(gameId)
+      gameAnswers.current++
+      showGame(found, request)
     } catch (error) {
       if (
         live.current &&
@@ -514,11 +518,17 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         throw error
     }
   }, [client, gameId, showGame])
-  /** The game as the phone last stored it, until the read returns. */
+  /**
+   * The game as the phone last stored it, until the read returns. A read
+   * that went out after the paint began does not hold it back: with no
+   * signal that read waits out its deadline, and the screen would be empty
+   * until then. Only a read that has answered since keeps it off.
+   */
   const paintGame = useCallback(async (): Promise<void> => {
-    const request = ++gameRequest.current
+    const answers = gameAnswers.current
     const stored = await client.cached(gameKey(gameId), asGameDetail)
-    if (stored != null) showGame(stored, request)
+    if (stored != null && answers === gameAnswers.current)
+      showGame(stored, gameRequest.current)
   }, [client, gameId, showGame])
   /**
    * `refreshGame` once the event's scope allows: after its acknowledgement

@@ -732,6 +732,34 @@ describe('the event page’s screen scope', () => {
     })
   }
 
+  it('paints the stored game at once when its read goes out at once and never settles (no signal, every request held)', async () => {
+    const { client, game } = fixture()
+    let reads = 0
+    // The phone with no signal: the read goes at once, and nothing answers.
+    client.game = async () => {
+      reads++
+      return await new Promise<never>(() => undefined)
+    }
+    client.eventInfo = async () => await new Promise<never>(() => undefined)
+    client.gameScheduling = async () =>
+      await new Promise<never>(() => undefined)
+    client.cached = (async (key: string) => {
+      // The phone's file answers after the read has gone out.
+      await new Promise(resolve => setTimeout(resolve, 5))
+      return key === 'game.g1' ? { ...game } : undefined
+    }) as TeamStationClient['cached']
+    await render({ client, gameId: 'g1', onScoreGame: () => undefined })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(reads, 'the read went out').greaterThan(0)
+    expect(
+      document.querySelector('[role="button"][aria-label="Score"]'),
+      'the stored game, with its Score'
+    ).not.equals(null)
+    expect(document.body.textContent).includes('Owls')
+  })
+
   it('reads the game at once for a visitor with no socket', async () => {
     timers = heldTimers(ACK_GIVE_UP_MS)
     const { client, reads } = counted()
