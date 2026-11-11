@@ -1260,14 +1260,14 @@ describe('scoring mutation ordering', function () {
     modern.apply({ type: 'pitch', call: 'B' })
     await modern.flush()
     const legacy = asPostEventsBody({
-      ...requests.at(-1)!,
+      ...original,
       mode: 'live',
       source: { system: 'teamstation' },
       scoringMutation: undefined,
       scoringBase: (await load()).scoringMutation,
+      lineupsBase: (await load()).lineupsDigest,
       scoringHistory: undefined
     })
-    legacy.currentPlay!.playEvents.pop()
     await postGamePlays(db, gameId, legacy, undefined, undefined, {
       scoringAuthor: true
     })
@@ -2222,7 +2222,7 @@ describe('scoring mutation ordering', function () {
   })
 
   it('resolves renamed and merged update authors without persisting names', async () => {
-    const { open, load, gameId, hooks } = await sessions()
+    const { open, load, gameId, hooks, requests } = await sessions()
     await insertFixtureUsers(db, [
       {
         id: 900001,
@@ -2242,6 +2242,34 @@ describe('scoring mutation ordering', function () {
     apply(scorer, { type: 'pitch', call: 'B' })
     await scorer.flush()
     expect((await load()).scoringUpdates![0].name).equals('Mike T')
+    for (const answer of ['all', 'edits'] as const) {
+      const body = asPostEventsBody({
+        ...requests[0],
+        mode: 'live',
+        source: { system: 'teamstation' },
+        scoringBase: (await load()).scoringMutation,
+        scoringMutation: {
+          ...requests[0].scoringMutation!,
+          id: `names-${answer}`
+        }
+      })
+      for (let retry = 0; retry < 2; retry++) {
+        const posted = await postGamePlays(
+          db,
+          gameId,
+          body,
+          undefined,
+          undefined,
+          {
+            answer,
+            listFullNamesFor: { userId: hooks.scoringUserId, isAdmin: true }
+          }
+        )
+        expect(posted.scoringUpdates![0].name).equals(
+          answer === 'edits' ? 'Mike T' : 'Mike Trout'
+        )
+      }
+    }
     await db
       .updateTable('users')
       .set({
@@ -2258,6 +2286,9 @@ describe('scoring mutation ordering', function () {
       .where('id', '=', hooks.scoringUserId)
       .execute()
     expect((await load()).scoringUpdates![0].name).equals('Mookie B')
+    expect((await load()).scoringUpdates![0].userId).equals(
+      userIdOfGumbo(900002)
+    )
     const raw = await db
       .selectFrom('games')
       .select('scoring_mutation')
