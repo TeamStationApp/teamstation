@@ -4,12 +4,28 @@ import { describe, it } from 'mocha'
 import { gameFixture } from '../../app/scoring/isUnscoredGame.test'
 import { memoryStore } from '../../app/scoring/scoringSource'
 import { scoringSession } from '../../test/scoringSession'
-import { storedRecordOf } from './gumbo'
+import type { CurrentPlay, GumboPlay } from '../gumboPlay'
+import type { ScoringAction } from './actions'
+import { recordOf, replayPlays, storedRecordOf } from './gumbo'
 import { playsLost } from './playsLost'
 import { ScoringSession } from './session'
+import { setupOf } from './state'
 import { swappedDocuments } from './swapDocuments'
+import { playForWire } from './wireRecord'
 
-/** A game scored for real: a strikeout, then a ball to the next batter. */
+/** The fixture's teams by side, and the same exchanged. */
+const FIXTURE_TEAMS = {
+  away: { id: gameFixture.awayTeamId, name: gameFixture.awayTeamName },
+  home: { id: gameFixture.homeTeamId, name: gameFixture.homeTeamName }
+}
+const SWAPPED_TEAMS = { away: FIXTURE_TEAMS.home, home: FIXTURE_TEAMS.away }
+/** A stored play or at-bat as the API answers it, and the phone keeps it. */
+const wire = (play: unknown): unknown => playForWire(play, FIXTURE_TEAMS)
+
+/**
+ * A game scored for real, as the phone holds it from the API: a strikeout,
+ * then a ball to the next batter, each record by side (version 2).
+ */
 async function scored(): Promise<{
   plays: unknown[]
   currentPlay: unknown
@@ -20,7 +36,48 @@ async function scored(): Promise<{
     expect(session.apply({ type: 'pitch', call }).problems).deep.equals([])
   await session.flush()
   const stored = store.games.get('g1')!
-  return { plays: stored.plays, currentPlay: stored.currentPlay }
+  return {
+    plays: stored.plays.map(wire),
+    currentPlay: wire(stored.currentPlay)
+  }
+}
+
+/**
+ * A game whose lineups were saved before the first pitch, as the phone holds
+ * it from the API: its at-bat a version 2 record, by side, the Owls (away)
+ * batting 1–9 and the Hawks (home) 10–18.
+ */
+async function savedLineups(): Promise<{ currentPlay: unknown }> {
+  const store = memoryStore()
+  const session = ScoringSession.start(store, 'g1', scoringSession(gameFixture))
+  const action: ScoringAction = {
+    type: 'lineup',
+    kind: 'roster',
+    setup: setupOf(session.state),
+    confirmed: ['away']
+  }
+  expect(session.apply(action).problems).deep.equals([])
+  await session.flush()
+  return { currentPlay: wire(store.games.get('g1')!.currentPlay) }
+}
+
+const NINE = (from: number): number[] =>
+  Array.from({ length: 9 }, (_, i) => from + i)
+
+/** Who bats first in the game the swapped documents open on. */
+function leadoffOf(events: Record<string, unknown>): number | undefined {
+  const plays = (events.plays as Array<{ gumbo: GumboPlay }>).map(
+    row => row.gumbo
+  )
+  const { state } = replayPlays(
+    { plays, currentPlay: events.currentPlay as CurrentPlay | null },
+    {
+      gamePk: 'g1',
+      teams: SWAPPED_TEAMS,
+      setup: setupOf(scoringSession(gameFixture))
+    }
+  )
+  return state.liveData.linescore.offense.batter?.id
 }
 
 const record = (actions: unknown[]): Record<string, unknown> => ({
@@ -125,7 +182,7 @@ describe('swappedDocuments', function () {
       digest: 'local-1',
       generation: 4
     })
-    // Records name teams, not sides: the plays read the same.
+    // Records with no lineups to carry read the same.
     expect(done.events).deep.equals({ ...events, lineupsDigest: 'local-1' })
     expect(done.answer).deep.equals({
       homeTeamId: 'tem_away',
@@ -207,6 +264,88 @@ describe('swappedDocuments', function () {
     expect(pregame).not.have.property('playbackTimes')
     expect(storedRecordOf(done.events!.currentPlay)).not.equals(null)
     expect(done.answer.reset).deep.equals(playsLost(stored))
+  })
+
+  it('puts each team’s saved lineups on its new side in the at-bat the phone holds by side, as the server answers it after a swap', async function () {
+    const stored = await savedLineups()
+    const was = recordOf(stored.currentPlay, FIXTURE_TEAMS)!
+    expect(was.setupBefore.sides.away.battingOrder).deep.equals(NINE(1))
+    const done = swappedDocuments(
+      {
+        game: { ...gameFixture },
+        lineups: null,
+        events: { plays: [], currentPlay: stored.currentPlay }
+      },
+      'swap',
+      'local-s'
+    )
+    const now = recordOf(done.events!.currentPlay, SWAPPED_TEAMS)!
+    expect(now.setupBefore.sides.away).deep.equals(was.setupBefore.sides.home)
+    expect(now.setupBefore.sides.home).deep.equals(was.setupBefore.sides.away)
+    expect(now.setupBefore.sides.away.battingOrder).deep.equals(NINE(10))
+    const [saved] = now.actions as Array<{
+      setup: { sides: typeof now.setupBefore.sides }
+      confirmed: string[]
+    }>
+    expect(saved.setup.sides.away.battingOrder).deep.equals(NINE(10))
+    expect(saved.setup.sides.home.battingOrder).deep.equals(NINE(1))
+    // The Owls confirmed theirs, and they are home now.
+    expect(saved.confirmed).deep.equals(['home'])
+    // Still by side, as the API carries it.
+    expect(done.events!.currentPlay).nested.property('teamStation.version', 2)
+    // The Hawks, away now, bat first.
+    expect(leadoffOf(done.events!)).equals(10)
+  })
+
+  it('exchanges the sides of every stored play’s record on a swap', async function () {
+    const stored = await scored()
+    const done = swappedDocuments(
+      {
+        game: { ...gameFixture },
+        lineups: null,
+        events: {
+          plays: stored.plays.map(gumbo => ({ id: 'e', gumbo })),
+          currentPlay: stored.currentPlay
+        }
+      },
+      'swap',
+      'local-p'
+    )
+    const rows = done.events!.plays as Array<{ id: string; gumbo: unknown }>
+    expect(rows.map(row => row.id)).deep.equals(stored.plays.map(() => 'e'))
+    for (const [i, row] of rows.entries()) {
+      const before = recordOf(stored.plays[i], FIXTURE_TEAMS)!.setupBefore
+      const after = recordOf(row.gumbo, SWAPPED_TEAMS)!.setupBefore
+      expect(after.sides).deep.equals({
+        away: before.sides.home,
+        home: before.sides.away
+      })
+    }
+    expect(
+      recordOf(done.events!.currentPlay, SWAPPED_TEAMS)!.setupBefore.sides.home
+        .battingOrder
+    ).deep.equals(NINE(1))
+  })
+
+  it('on a Reset and Swap rewinds to each team’s lineups on its new side', async function () {
+    const stored = await scored()
+    const done = swappedDocuments(
+      {
+        game: { ...gameFixture },
+        lineups: null,
+        events: {
+          plays: stored.plays.map(gumbo => ({ gumbo })),
+          currentPlay: stored.currentPlay
+        }
+      },
+      'reset',
+      'local-q'
+    )
+    expect(done.events!.plays).deep.equals([])
+    const pregame = recordOf(done.events!.currentPlay, SWAPPED_TEAMS)!
+    expect(pregame.setupBefore.sides.away.battingOrder).deep.equals(NINE(10))
+    expect(pregame.setupBefore.sides.home.battingOrder).deep.equals(NINE(1))
+    expect(leadoffOf(done.events!)).equals(10)
   })
 
   it('names the at-bats and innings a reset loses as playsLost counts the stored plays', function () {

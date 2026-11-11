@@ -1,5 +1,7 @@
 import { storedRecordOf } from './gumbo'
 import { type PlaysLost, playsLost } from './playsLost'
+import type { SideTeams } from './teamRecord'
+import { playSwapped } from './wireRecord'
 
 /**
  * Home and away swapped on a device's own copy of a game, before the
@@ -65,6 +67,33 @@ function exchanged(value: Json): Json {
   return out
 }
 
+/**
+ * The game's teams by side, as its stored game names them, or null when it
+ * does not name two: a record is read by side under these.
+ */
+function teamsOf(game: Json): SideTeams | null {
+  const away = game.awayTeamId
+  const home = game.homeTeamId
+  return typeof away === 'string' &&
+    typeof home === 'string' &&
+    away !== '' &&
+    home !== '' &&
+    away !== home
+    ? { away: { id: away }, home: { id: home } }
+    : null
+}
+
+/**
+ * A stored play, a row holding one, or an at-bat, with its record's sides
+ * exchanged as the server's swap leaves it (`playSwapped`): every lineup,
+ * lineup change and confirmed or unseen side goes with its team.
+ */
+function swappedPlay(item: unknown, teams: SideTeams | null): unknown {
+  if (teams == null || !isJson(item)) return item
+  if ('gumbo' in item) return { ...item, gumbo: playSwapped(item.gumbo, teams) }
+  return playSwapped(item, teams)
+}
+
 /** The gumbo plays a stored events document holds, and its at-bat in progress. */
 function playsOf(events: Json | null): {
   plays: unknown[]
@@ -107,7 +136,8 @@ function generationOf(game: Json, events: Json | null): number {
 }
 
 /**
- * The stored game, lineups and events with home and away exchanged, and
+ * The stored game, lineups and events with home and away exchanged (each
+ * play's record by side too, as the server answers it after the swap), and
  * for `reset` the plays and their tags gone, the game back before its first
  * pitch, and its generation one on; with the swap's answer, whose `reset`
  * names the at-bats and innings the stored plays lose. `localDigest` stands
@@ -119,6 +149,7 @@ export function swappedDocuments(
   localDigest: string
 ): SwappedDocuments {
   const reset = effect === 'reset'
+  const teams = teamsOf(stored.game)
   const before = generationOf(stored.game, stored.events)
   const generation = before + (reset ? 1 : 0)
   const shown = playsOf(stored.events)
@@ -170,7 +201,10 @@ export function swappedDocuments(
               currentPlay:
                 pregame == null
                   ? null
-                  : { about: { ...PREGAME_ABOUT }, teamStation: pregame },
+                  : swappedPlay(
+                      { about: { ...PREGAME_ABOUT }, teamStation: pregame },
+                      teams
+                    ),
               playsDigest: null,
               priorPlaysDigest: null,
               lineupsDigest: localDigest,
@@ -178,7 +212,18 @@ export function swappedDocuments(
               swap: 'swap'
             }
           })()
-        : { ...stored.events, lineupsDigest: localDigest }
+        : {
+            ...stored.events,
+            ...(Array.isArray(stored.events.plays)
+              ? {
+                  plays: stored.events.plays.map(row => swappedPlay(row, teams))
+                }
+              : {}),
+            ...('currentPlay' in stored.events
+              ? { currentPlay: swappedPlay(stored.events.currentPlay, teams) }
+              : {}),
+            lineupsDigest: localDigest
+          }
   const homeTeamId = String(game.homeTeamId)
   const awayTeamId = String(game.awayTeamId)
   return {

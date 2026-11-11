@@ -11,6 +11,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import type { GameSocketEvent } from '../../common/gameSocket'
 import type { GumboPlay } from '../../common/gumboPlay'
 import { ScoringSession } from '../../common/scoring/session'
+import { playForWire, playFromWire } from '../../common/scoring/wireRecord'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
@@ -79,6 +80,13 @@ export function fieldServer(stored: {
   // Home and away, as a swap leaves them, and the play generation.
   let swapped = false
   let generation = 0
+  // The game's teams by side as they stand: records are kept by team and
+  // carried by side under these, as the server keeps and carries them.
+  const teams = (): Record<'away' | 'home', { id: string }> => {
+    const away = { id: gameFixture.awayTeamId }
+    const home = { id: gameFixture.homeTeamId }
+    return swapped ? { away: home, home: away } : { away, home }
+  }
   const tags = new Map<string, string>()
   const made: Array<{ teamId: string; entry: unknown }> = []
   const roster = (teamId: string): unknown[] => [
@@ -97,8 +105,12 @@ export function fieldServer(stored: {
   const eventsBody = (): unknown => ({
     plays: [...plays.values()]
       .sort((a, b) => a.about.atBatIndex - b.about.atBatIndex)
-      .map((gumbo, index) => ({ id: `evt_${index}`, gameId: 'g1', gumbo })),
-    currentPlay,
+      .map((gumbo, index) => ({
+        id: `evt_${index}`,
+        gameId: 'g1',
+        gumbo: playForWire(gumbo, teams())
+      })),
+    currentPlay: playForWire(currentPlay, teams()),
     playsDigest: `plays-${revision}`,
     lineupsDigest: swapped ? 'lineups-swapped' : 'lineups-1',
     generation
@@ -281,8 +293,9 @@ export function fieldServer(stored: {
           await state.holdPlays
           for (const index of body.remove as number[]) plays.delete(index)
           for (const play of body.plays as GumboPlay[])
-            plays.set(play.about.atBatIndex, play)
-          if ('currentPlay' in body) currentPlay = body.currentPlay
+            plays.set(play.about.atBatIndex, playFromWire(play, teams()))
+          if ('currentPlay' in body)
+            currentPlay = playFromWire(body.currentPlay, teams())
           return json(200, eventsBody())
         }
         return json(404, { code: 'notFound', message: 'Not found' })
@@ -1427,6 +1440,52 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
       await settle(50)
       expect(text()).includes('1 balls')
       expect(fieldNode()).equals(before)
+    })
+
+    it('opens the game a phone swap leaves with each team’s own lineup on its new side, from Reset and Swap and from Confirm Swap', async function () {
+      const { client, net, document: stored } = await preparedPhone()
+      holdAll(net)
+      await open(client)
+      const host = document.body.firstElementChild as HTMLElement
+      /** Who leads off, and each side's batting order, as the screen has them. */
+      const lineups = (): {
+        batter: number | undefined
+        away: number[]
+        home: number[]
+      } => {
+        const { state } = (
+          panelProps(host, 'ScoringPanel') as { game: ScoringSession }
+        ).game
+        return {
+          batter: state.liveData.linescore.offense.batter?.id,
+          away: state.liveData.boxscore.teams.away.battingOrder,
+          home: state.liveData.boxscore.teams.home.battingOrder
+        }
+      }
+      const owls = [1, 2, 3, 4, 5, 6, 7, 8, 9]
+      const hawks = [10, 11, 12, 13, 14, 15, 16, 17, 18]
+      expect(lineups()).deep.equals({ batter: 1, away: owls, home: hawks })
+      // The phone holds the plays as the API carries them: by side.
+      const held = stored(eventsKey('g1'))!.body as {
+        currentPlay: { teamStation: { version: number } }
+      }
+      expect(held.currentPlay.teamStation.version).equals(2)
+      await click('Open scoring menu')
+      await click('Swap Home and Away')
+      await settle()
+      await click('Reset and Swap')
+      await settle(100)
+      expect(homeOf()).equals('Hawks 0 · Owls 0')
+      // The Hawks, away now, lead off with their own nine.
+      expect(lineups()).deep.equals({ batter: 10, away: hawks, home: owls })
+      // Before the first pitch on the new sides: only the sides move.
+      await click('Open scoring menu')
+      await click('Swap Home and Away')
+      await settle()
+      await click('Confirm Swap')
+      await settle(100)
+      expect(homeOf()).equals('Owls 0 · Hawks 0')
+      expect(lineups()).deep.equals({ batter: 1, away: owls, home: hawks })
     })
 
     it('leaves scoring for the event screen, painted at once from the phone, with every request held', async function () {
