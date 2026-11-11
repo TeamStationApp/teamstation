@@ -825,7 +825,17 @@ describe('a game named in player name privacy', function () {
 
     it('writes a roster candidate in the format they play in', async function () {
       await privacy(f.teamB, 'initials')
-      const found = await name(`/users?forTeam=${f.teamA}&q=Riley`, SCORER)
+      // Initials hide both halves: typed whole, they find the row, and
+      // either alone finds nothing.
+      for (const q of ['Riley', 'Chen'])
+        expect(
+          await name(`/users?forTeam=${f.teamA}&q=${q}`, SCORER),
+          q
+        ).equals('[]')
+      const found = await name(
+        `/users?forTeam=${f.teamA}&q=Riley%20Chen`,
+        SCORER
+      )
       expect(found).include('"shortName":"R C"')
       expect(found).include('"shortParts":{"first":"R","last":"C"}')
       // A site administrator reads every candidate in full.

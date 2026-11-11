@@ -305,7 +305,10 @@ describe('player name privacy from the database', function () {
     expect(compactFields(naming, carrascoPerson)).deep.equals({})
     expect(compactFields(naming, beltranPerson)).deep.equals({})
     expect(naming.compact.get(carrasco)).equals('Carlos C')
+    // Whom the coach reads in full, for a caller to hand on.
+    expect([...naming.readsFull]).deep.equals([correa])
     const nobody = await readerNaming(f.h.db, people, undefined)
+    expect(nobody.readsFull.size).equals(0)
     for (const { person } of people)
       expect(compactFields(nobody, person)).deep.equals({})
     // Staff, shown as staff, read in full by somebody who may.

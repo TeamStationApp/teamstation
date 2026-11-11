@@ -4,13 +4,20 @@ import { badRequest } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import { fullName, type NamedPerson, shortName } from '../../common/names'
 import { asUserId } from '../../common/userId'
-import { mayViewFullName, mayViewFullNames } from '../access'
+import {
+  fullNameReach,
+  mayViewFullName,
+  mayViewFullNames,
+  type VisibleScopes,
+  visibleScopes
+} from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
 import { currentActor, requireGroupAdmin } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
 import { personAffiliations } from './personAffiliations'
+import { readerOf } from './readerNames'
 
 export interface PeopleCandidate {
   userId: string
@@ -66,11 +73,26 @@ export async function accountName(
     : shortName(person)
 }
 
+/** How many candidates a search answers with. */
+const CANDIDATE_LIMIT = 5
+/** How many matches name authority is asked about at a time, best first. */
+export const FULL_NAME_BATCH = 20
+/** The most matches name authority is asked about in one search. */
+export const FULL_NAME_ASKED = 100
+
+/** A matched person and the name they are ranked by. */
+interface Ranked {
+  id: string
+  name: string
+}
+
 export async function peopleCandidates(
   db: Kysely<Database>,
   actor: Actor,
   ask: ReturnType<typeof peopleQueryOf>,
-  space?: SpaceSettings
+  space?: SpaceSettings,
+  /** What the reader may see, when the route has read it already. */
+  scopes?: VisibleScopes
 ): Promise<PeopleCandidate[]> {
   const fresh = await currentActor(db, actor)
   await requireGroupAdmin(db, fresh, ask.group)
@@ -88,42 +110,94 @@ export async function peopleCandidates(
     .where('disabled_at', 'is', null)
     .where('merged_into', 'is', null)
   if (ask.exclude.length > 0) query = query.where('id', 'not in', ask.exclude)
-  const rows = (await query.execute()).filter(row =>
-    [fullName(row), shortName(row)].some(name =>
-      name.toLowerCase().includes(ask.q)
-    )
+  const rows = await query.execute()
+  const holds = (name: string): boolean => name.toLowerCase().includes(ask.q)
+  const ranked = (a: Ranked, b: Ranked): number => {
+    const prefix =
+      Number(b.name.toLowerCase().startsWith(ask.q)) -
+      Number(a.name.toLowerCase().startsWith(ask.q))
+    if (prefix !== 0) return prefix
+    const name = a.name.localeCompare(b.name)
+    return name !== 0 ? name : a.id.localeCompare(b.id)
+  }
+  // Name authority (`mayViewFullNames`) is asked only about the matches
+  // the reader might read in full (`fullNameReach`, narrowed to the matches
+  // in its query): the rest read short, and so are found by the short name
+  // alone. Somebody the reader reads in full is found by a surname however
+  // many accounts site-wide sort ahead of him.
+  const byId = new Map(rows.map(row => [row.id, row]))
+  const matched = rows.filter(
+    row => holds(shortName(row)) || holds(fullName(row))
   )
-  const full = await mayViewFullNames(
+  if (matched.length === 0) return []
+  const reach = await fullNameReach(
     db,
     fresh.userId,
-    rows.map(row => row.id),
-    fresh
+    fresh,
+    matched.map(row => row.id)
   )
-  const matches: Array<Pick<PeopleCandidate, 'userId' | 'displayName'>> = []
-  for (const row of rows) {
-    const displayName = full.has(row.id) ? fullName(row) : shortName(row)
-    if (displayName.toLowerCase().includes(ask.q))
-      matches.push({ userId: row.id, displayName })
-  }
-  const limited = matches
-    .sort((a, b) => {
-      const prefix =
-        Number(b.displayName.toLowerCase().startsWith(ask.q)) -
-        Number(a.displayName.toLowerCase().startsWith(ask.q))
-      if (prefix !== 0) return prefix
-      const name = a.displayName.localeCompare(b.displayName)
-      return name !== 0 ? name : a.userId.localeCompare(b.userId)
+  // Each is ranked by the name it may be shown: in full where the reader
+  // might read it so and it is found by it, short otherwise. One found by
+  // neither is never listed.
+  const ordered = matched
+    .map(row => {
+      const may = reach == null || reach.has(row.id)
+      return {
+        row,
+        may,
+        id: row.id,
+        name: may && holds(fullName(row)) ? fullName(row) : shortName(row)
+      }
     })
-    .slice(0, 5)
+    .filter(each => holds(each.name))
+    .sort(ranked)
+  // Read best first, asking name authority `FULL_NAME_BATCH` at a time
+  // until five are kept, and about `FULL_NAME_ASKED` at most: a site admin
+  // reaches everybody, and one letter matches a league. One not asked about
+  // reads short. Each is matched by the name it is shown, before it is
+  // kept, so one dropped is replaced.
+  const readsFull = new Set<string>()
+  const asked = new Set<string>()
+  const kept: Ranked[] = []
+  for (
+    let index = 0;
+    index < ordered.length && kept.length < CANDIDATE_LIMIT;
+    index++
+  ) {
+    const each = ordered[index]
+    if (each.may && !asked.has(each.id) && asked.size < FULL_NAME_ASKED) {
+      const batch = ordered
+        .slice(index)
+        .filter(next => next.may && !asked.has(next.id))
+        .slice(0, Math.min(FULL_NAME_BATCH, FULL_NAME_ASKED - asked.size))
+        .map(next => next.id)
+      for (const id of batch) asked.add(id)
+      for (const id of await mayViewFullNames(db, fresh.userId, batch, fresh))
+        readsFull.add(id)
+    }
+    const name = readsFull.has(each.id)
+      ? fullName(each.row)
+      : shortName(each.row)
+    if (holds(name)) kept.push({ id: each.id, name })
+  }
+  const limited = kept
+    .sort(ranked)
+    .map(({ id, name }) => ({ userId: id, displayName: name }))
   const affiliations = await personAffiliations(
     db,
-    limited.map(row => row.userId)
+    limited.map(row => row.userId),
+    {
+      reader: readerOf(fresh),
+      scopes: scopes ?? (await visibleScopes(db, fresh.userId, fresh.isAdmin)),
+      readsFull
+    }
   )
-  const avatars = new Map(rows.map(row => [row.id, row.avatar_path]))
   return limited.map(row => ({
     ...row,
     avatarUrl:
-      space == null ? null : imageUrl(space, avatars.get(row.userId) ?? null),
+      space == null
+        ? null
+        : imageUrl(space, byId.get(row.userId)?.avatar_path ?? null),
     affiliations: affiliations.get(row.userId) ?? ''
   }))
 }

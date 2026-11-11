@@ -394,6 +394,7 @@ async function readerFormats(
 ): Promise<{
   shown: Map<string | number, PlayerNamePrivacy>
   formats: Map<string | number, PlayerNamePrivacy>
+  full: Set<string>
 }> {
   // A withdrawn player's line reads as its placeholder, for every reader.
   const full = await fullNamesFor(
@@ -414,7 +415,7 @@ async function readerFormats(
             full.has(String(id)) ? 'full' : format
           ])
         )
-  return { shown, formats }
+  return { shown, formats, full }
 }
 
 /**
@@ -511,6 +512,11 @@ export interface ReaderNaming {
   compact: Map<string | number, string>
   /** The public format of each of `compact`. */
   compactFormats: Map<string | number, PlayerNamePrivacy>
+  /**
+   * Whom of these people the reader reads in full (`fullNamesFor`), for a
+   * caller to hand on as `readsFull` rather than ask again.
+   */
+  readsFull: Set<string>
 }
 
 /**
@@ -522,7 +528,7 @@ export async function readerNaming(
   people: readonly PublicPerson[],
   reader: Reader | undefined
 ): Promise<ReaderNaming> {
-  const { shown, formats } = await readerFormats(db, people, { reader })
+  const { shown, formats, full } = await readerFormats(db, people, { reader })
   const names = formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
@@ -534,7 +540,7 @@ export async function readerNaming(
       write(person, shown.get(person.id)!)
     ])
   )
-  return { names, formats, compact, compactFormats: shown }
+  return { names, formats, compact, compactFormats: shown, readsFull: full }
 }
 
 /**

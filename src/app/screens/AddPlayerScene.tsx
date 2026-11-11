@@ -18,7 +18,11 @@ import {
   SafeAreaView
 } from 'react-native-safe-area-context'
 
-import type { RosterCandidate, TeamStationClient } from '../../common/api'
+import {
+  ROSTER_CANDIDATE_MAX,
+  type RosterCandidate,
+  type TeamStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { playerAddToldWords } from '../../common/notifications'
 import {
@@ -32,6 +36,7 @@ import { CandidateCard } from '../components/CandidateCard'
 import { PlayerForm } from '../components/PlayerForm'
 import { PlayerSearchField } from '../components/PlayerSearchField'
 import { useRosterCandidates } from '../hooks/useRosterCandidates'
+import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
 // eslint-disable-next-line @typescript-eslint/no-deprecated -- Web implementation uses CSS env() and avoids measuring a sliding portal. Native uses safe-area-context.
@@ -176,7 +181,7 @@ export function AddPlayerScene({
     )
   else empty = line(`No players match “${list.query}”.`)
   const footer =
-    list.rows.length === 0 ? null : list.loadingMore ? (
+    list.rows.length === 0 ? null : list.updating ? (
       <ActivityIndicator
         testID="Candidates loading more"
         color={theme.activeColor}
@@ -195,6 +200,8 @@ export function AddPlayerScene({
           }}
         />
       </View>
+    ) : list.capped ? (
+      line(sprintf(lstrings.candidates_capped, ROSTER_CANDIDATE_MAX))
     ) : null
 
   return (
@@ -278,10 +285,6 @@ export function AddPlayerScene({
                       )}
                       recycleItems
                       estimatedItemSize={72}
-                      onEndReachedThreshold={0.5}
-                      onEndReached={() => {
-                        if (list.error == null) list.loadMore()
-                      }}
                       // On the web this is a DOM list, which has no keyboard
                       // to keep.
                       {...(Platform.OS === 'web'

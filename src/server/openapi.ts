@@ -2822,7 +2822,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'section',
             'staffRoles',
             'inheritedFrom',
-            'walkUpSong'
+            'walkUpSong',
+            'affiliations'
           ],
           description:
             'One person on a team\u2019s roster. Somebody listed without a ' +
@@ -2972,6 +2973,17 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'For a family member, the names this list gives the players on ' +
                 'it they are a parent or guardian of. Absent for everybody ' +
                 'else.'
+            },
+            affiliations: {
+              type: 'string',
+              description:
+                'The line under the name: `Guardian of <players>`, ' +
+                '`Guardians: <names>` and their teams, joined by ` \u00b7 `, ' +
+                'naming only the teams and people the caller may see, in full ' +
+                'for whoever the caller may read in full (`mayViewFullNames`). ' +
+                'On a team\u2019s roster it names no team, and only guardians ' +
+                'of, or guarded players on, that team. Empty when nothing is ' +
+                'visible.'
             }
           }
         },
@@ -7042,7 +7054,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
-            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayViewFullNames permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
+            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayViewFullNames permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and the affiliation line: the guarded players, guardians and teams the caller may see, named as the caller may read them, empty when none is visible; prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
             'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
@@ -7074,7 +7086,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Players already on the team, and with `forGame` ' +
             'anybody already in that game, are left out. Each row adds ' +
             '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
-            'in a season ending today or later), `tier` and `cursor`, and ' +
+            'in a season ending today or later), `affiliations` (the line ' +
+            'under the name, as on the account search), `tier` and `cursor` ' +
+            '(always empty: the search answers once, at most 100 rows, with ' +
+            'no further pages, and a request with `after` answers `[]`), and ' +
             'nothing else about the person; `nameFormat` when `shortName` is ' +
             'not in the built-in format, and beside a name full only for the ' +
             'asker, the public name in `compactName` (its format in ' +
@@ -7165,16 +7180,28 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
-              schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 100
+              },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default 30, maximum 50.'
+                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100.'
+            },
+            {
+              name: 'capped',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is up to 100 whatever limit says, for installed builds that send limit=30 and page on with after.'
             },
             {
               name: 'after',
               in: 'query',
               schema: { type: 'string' },
               description:
-                'With forTeam: the cursor of the last row of the previous page.'
+                'With forTeam: the search has no further pages, so a request with after answers []. Installed builds send it to scroll on.'
             },
             {
               name: 'guardedBy',
@@ -7188,7 +7215,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'By externalId, in user id order; by guardedBy, by short name. Empty when nobody matches'
+                'By externalId, in user id order; by guardedBy, by short name; by forTeam, a bare array of at most 100, nearest first. Empty when nobody matches'
             },
             400: errorResponse,
             401: errorResponse
@@ -7680,10 +7707,13 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A chat's members",
           description:
             'For members only; anybody else gets 404. Each is `{userId, ' +
-            'shortName, compactName?, avatarUrl, label, isModerator, ' +
-            'isApprover, eligible, hasIdentity, identityKey, generation}`. ' +
+            'shortName, compactName?, avatarUrl, label, affiliations, ' +
+            'isModerator, isApprover, eligible, hasIdentity, identityKey, ' +
+            'generation}`. ' +
             '`shortName` is full for somebody the caller may read in full; ' +
-            '`compactName` is then the public label, what a mention writes.',
+            '`compactName` is then the public label, what a mention writes. ' +
+            '`affiliations` is the line under the name: the guarded players, ' +
+            'guardians and teams the caller may see, empty when none is.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
           responses: {
@@ -7739,8 +7769,10 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Exactly those the DM rules let the caller name, whose name holds ' +
             '`q`, at most 50: `{userId, shortName, compactName?, ' +
-            'avatarUrl}`, `compactName` the public label beside a full ' +
-            '`shortName`. Empty for ' +
+            'avatarUrl, affiliations}`, `compactName` the public label beside a full ' +
+            '`shortName`, `affiliations` the line under the name (guarded ' +
+            'players, guardians and teams the caller may see, empty when none ' +
+            'is). Empty for ' +
             'somebody whose only tie is following a team.',
           security: [{ bearer: [] }],
           parameters: [

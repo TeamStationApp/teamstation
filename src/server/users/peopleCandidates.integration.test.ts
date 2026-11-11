@@ -9,9 +9,15 @@ import {
   groupFixture
 } from '../../test/groupFixtures'
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
+import * as access from '../access'
 import { mayEditName, mayEditNames } from '../access'
 import { onePerson } from '../admin/people'
-import { peopleCandidates, peopleQueryOf } from './peopleCandidates'
+import {
+  FULL_NAME_ASKED,
+  FULL_NAME_BATCH,
+  peopleCandidates,
+  peopleQueryOf
+} from './peopleCandidates'
 
 describe('account selection privacy and grants', function () {
   this.timeout(60000)
@@ -53,6 +59,19 @@ describe('account selection privacy and grants', function () {
       { idempotencyKey: 'account-selection-fixture', ...body },
       user
     )
+  }
+  /** Makes the searcher a plain member of team B, so they see its players. */
+  async function seeTeamB(): Promise<void> {
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        team_id: f.teamB,
+        user_id: id(101),
+        role: 'member',
+        is_player: false
+      })
+      .execute()
   }
   it('ranks only visible names, caps at five and excludes unavailable and selected accounts', async () => {
     await insertFixtureUsers(
@@ -216,6 +235,14 @@ describe('account selection privacy and grants', function () {
         is_player: true
       })
       .execute()
+    // The searcher sees neither Tim nor his team: nothing is listed.
+    expect(
+      (await search('Mookie', 101, '', true)).map(row => row.affiliations)
+    ).deep.equals([''])
+    expect(
+      (await search('Tim', 101, '', true)).map(row => row.affiliations)
+    ).deep.equals([''])
+    await seeTeamB()
     const parent = await search('Mookie', 101, '', true)
     expect(parent).length(1)
     expect(parent[0].avatarUrl).equals(null)
@@ -285,6 +312,7 @@ describe('account selection privacy and grants', function () {
         kind: 'guardian'
       })
       .execute()
+    await seeTeamB()
     for (const [format, name] of [
       ['initials', 'T R'],
       ['full', 'Tim Raines']
@@ -330,10 +358,156 @@ describe('account selection privacy and grants', function () {
         exclude: []
       })
       expect(rows).length(q === 'Smith' ? 0 : q === 'Alex' ? 5 : 1)
-      expect(queries).lessThan(60)
+      // The searcher's scopes and the five lines' affiliations are read once
+      // each, however many names matched.
+      expect(queries).lessThan(120)
       counts.push(queries)
     }
     expect(counts[0]).equals(counts[2])
+  })
+  it('asks name authority only about matches within the reader’s reach when one letter matches hundreds', async () => {
+    // Found by the short name: Zack… G. Found by the full name alone: Ichiro…
+    // Suzuki, whose short name, Ichiro… S, holds no z. Neither is on a level
+    // of the searcher's.
+    await insertFixtureUsers(f.h.db, [
+      ...Array.from({ length: 150 }, (_, n) => ({
+        id: 3000 + n,
+        display_name: `Zack${n} Greinke`,
+        first_name: `Zack${n}`,
+        last_name: 'Greinke',
+        login_enabled: true
+      })),
+      ...Array.from({ length: 150 }, (_, n) => ({
+        id: 3200 + n,
+        display_name: `Ichiro${n} Suzuki`,
+        first_name: `Ichiro${n}`,
+        last_name: 'Suzuki',
+        login_enabled: true
+      }))
+    ])
+    const asked: string[][] = []
+    // The module's exports, which the search reads its name authority from.
+    const exported: { mayViewFullNames: typeof access.mayViewFullNames } =
+      access
+    const real = access.mayViewFullNames
+    const spy: typeof real = async (db, reader, userIds, about, known) => {
+      asked.push([...userIds])
+      return await real(db, reader, userIds, about, known)
+    }
+    exported.mayViewFullNames = spy
+    try {
+      const rows = await peopleCandidates(f.h.db, actor(101), {
+        group: { kind: 'team', id: f.teamA },
+        q: 'z',
+        exclude: []
+      })
+      expect(rows).length(5)
+      expect(rows.every(row => row.displayName.startsWith('Zack'))).equals(true)
+      // Asked once, about nobody of the three hundred.
+      expect(asked.length).at.most(1)
+      const strangers = new Set(
+        Array.from({ length: 150 }, (_, n) => [
+          userIdOfGumbo(3000 + n),
+          userIdOfGumbo(3200 + n)
+        ]).flat()
+      )
+      expect(asked.flat().filter(each => strangers.has(each))).deep.equals([])
+    } finally {
+      exported.mayViewFullNames = real
+    }
+  })
+  it('asks name authority about a bounded number of a site admin’s matches when one letter matches hundreds', async () => {
+    // A site admin reaches everybody: 300 accounts hold a z in full.
+    await insertFixtureUsers(f.h.db, [
+      ...Array.from({ length: 150 }, (_, n) => ({
+        id: 3000 + n,
+        display_name: `Zack${n} Greinke`,
+        first_name: `Zack${n}`,
+        last_name: 'Greinke',
+        login_enabled: true
+      })),
+      ...Array.from({ length: 150 }, (_, n) => ({
+        id: 3200 + n,
+        display_name: `Ichiro${n} Suzuki`,
+        first_name: `Ichiro${n}`,
+        last_name: 'Suzuki',
+        login_enabled: true
+      }))
+    ])
+    const asked: string[][] = []
+    const exported: { mayViewFullNames: typeof access.mayViewFullNames } =
+      access
+    const real = access.mayViewFullNames
+    let readsNobody = false
+    const spy: typeof real = async (db, reader, userIds, about, known) => {
+      asked.push([...userIds])
+      return readsNobody
+        ? new Set<string>()
+        : await real(db, reader, userIds, about, known)
+    }
+    exported.mayViewFullNames = spy
+    const admin = async (q: string): ReturnType<typeof peopleCandidates> =>
+      await peopleCandidates(f.h.db, actor(105), {
+        group: { kind: 'team', id: f.teamA },
+        q,
+        exclude: []
+      })
+    try {
+      // The first twenty, best first, fill the five.
+      const rows = await admin('z')
+      expect(rows.map(row => row.displayName)).deep.equals(
+        [0, 1, 10, 100, 101].map(n => `Zack${n} Greinke`)
+      )
+      expect(asked.map(batch => batch.length)).deep.equals([FULL_NAME_BATCH])
+      // Read in full by nobody, each batch keeps none: the asking stops at
+      // its bound, and the short names that hold no z are not listed.
+      asked.length = 0
+      readsNobody = true
+      expect(await admin('suzuki')).deep.equals([])
+      expect(asked.flat()).length(FULL_NAME_ASKED)
+      expect(asked.every(batch => batch.length <= FULL_NAME_BATCH)).equals(true)
+    } finally {
+      exported.mayViewFullNames = real
+    }
+  })
+
+  it('finds a member read in full by his surname however many accounts site-wide sort ahead of him', async () => {
+    // Sixty Dennis… Martinez accounts on no level of the searcher's, read
+    // short and so matched by no surname, all sort ahead of Edgar Martinez,
+    // a member of the team its administrator manages.
+    await insertFixtureUsers(f.h.db, [
+      ...Array.from({ length: 60 }, (_, n) => ({
+        id: 3400 + n,
+        display_name: `Dennis${n} Martinez`,
+        first_name: `Dennis${n}`,
+        last_name: 'Martinez',
+        login_enabled: true
+      })),
+      {
+        id: 3480,
+        display_name: 'Edgar Martinez',
+        first_name: 'Edgar',
+        last_name: 'Martinez',
+        login_enabled: true
+      }
+    ])
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        team_id: f.teamA,
+        user_id: id(3480),
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    expect(await search('martinez')).deep.equals([
+      { userId: id(3480), displayName: 'Edgar Martinez' }
+    ])
+    // A short substring of the surname finds him too, past every Dennis.
+    expect(await search('tine')).deep.equals([
+      { userId: id(3480), displayName: 'Edgar Martinez' }
+    ])
   })
   it('keeps batch and individual name authority equal across merged guardian identities', async () => {
     await insertFixtureUsers(f.h.db, [

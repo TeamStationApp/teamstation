@@ -880,6 +880,80 @@ describe('roster sections', function () {
     ).deep.equals(['Alfonso Soriano'])
   })
 
+  it('lines each person up on the team’s roster with only that team’s family, and with the teams on a season’s list', async function () {
+    // Tim also guards a player of a team nobody here may see.
+    await user(230, 'Willie Mays')
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(230),
+        team_id: f.rookies,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await link(f.people.guardian, 230)
+    const lines = async (reader: number): Promise<Map<string, string>> => {
+      const response = await f.h.request(
+        'GET',
+        `/teams/${f.teamA}/roster`,
+        undefined,
+        reader
+      )
+      expect(response.status).equals(200)
+      return new Map(
+        ((await response.json()) as unknown[])
+          .map(asRosterEntry)
+          .map(row => [row.userId, row.affiliations] as const)
+      )
+    }
+    const tim = userIdOfGumbo(f.people.guardian)
+    const alfonso = userIdOfGumbo(201)
+    // The team is the page: no team is named, nor Willie, who is not on it.
+    const coach = await lines(f.people.teamCoach)
+    expect(coach.get(tim)).equals('Guardian of Alfonso Soriano')
+    expect(coach.get(alfonso)).equals('Guardians: Tim Raines')
+    expect(coach.get(userIdOfGumbo(202))).equals('')
+    // Somebody outside the team sees none of its players, so no family of
+    // one, though he sees Willie on his own team.
+    const outsider = await lines(f.people.oneTeam)
+    expect(outsider.get(alfonso)).equals('')
+    expect(outsider.get(tim)).equals('')
+    // A plain member of the team reads the public names.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(f.people.follower),
+        team_id: f.teamA,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const member = await lines(f.people.follower)
+    expect(member.get(tim)).equals('Guardian of Alfonso S')
+    expect(member.get(alfonso)).equals('Guardians: Tim R')
+    // A season's list names the teams the reader may see: the league's
+    // administrator sees both of Alfonso's, and not Willie's.
+    const season = await f.h.request(
+      'GET',
+      `/seasons/${f.seasonA}/people`,
+      undefined,
+      f.people.admin
+    )
+    expect(season.status).equals(200)
+    const people = ((await season.json()) as { people: unknown[] }).people.map(
+      asRosterEntry
+    )
+    expect(people.find(row => row.userId === tim)?.affiliations).equals(
+      'Guardian of Alfonso Soriano · Demo Comets, Demo Hawks'
+    )
+    expect(people.find(row => row.userId === alfonso)?.affiliations).equals(
+      'Guardians: Tim Raines · Demo Comets, Demo Hawks'
+    )
+  })
+
   it('keeps the public label beside a name read in full only, and none beside a teammate who shares its short form', async function () {
     for (const [id, name] of [
       [61, 'Chris Sale'],

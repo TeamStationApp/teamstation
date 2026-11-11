@@ -1,6 +1,6 @@
 import type { RosterCandidate, TeamStationClient } from '../common/api'
 
-/** A roster candidate named like an MLB player, with a cursor of its own. */
+/** A roster candidate named like an MLB player. */
 export function candidate(
   name: string,
   extra: Partial<RosterCandidate> = {}
@@ -17,8 +17,8 @@ export function candidate(
     bats: null,
     throws: null,
     teams: [],
+    affiliations: '',
     tier: 'mine',
-    cursor: `cursor-${userId}`,
     ...extra
   }
 }
@@ -31,8 +31,8 @@ export interface CandidateAsk {
   teamId: string
   gameId?: string
   q?: string
-  after?: string
   limit?: number
+  capped?: boolean
   signal?: AbortSignal
   resolve: (rows: RosterCandidate[]) => void
   reject: (error: unknown) => void

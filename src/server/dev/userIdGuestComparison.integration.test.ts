@@ -337,7 +337,9 @@ describe('historical guest comparison against migration and HTTP', function () {
           players[side].map(row => ({
             ...row,
             userId: userIdOfGumbo(Number(row.userId)),
-            gumboId: row.userId
+            gumboId: row.userId,
+            // A game's guests carry no affiliation line.
+            affiliations: ''
           }))
         )
       }

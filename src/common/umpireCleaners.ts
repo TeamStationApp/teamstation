@@ -57,7 +57,7 @@ export const asUmpirePeople = asObject({
       id: asString,
       name: asString,
       avatarUrl: asEither(asString, asLiteral(null)),
-      affiliations: asString,
+      affiliations: asOptional(asString, ''),
       certifications: asArray(
         asObject({ levelId: asString, typeId: asString, enabled: asBoolean })
       )

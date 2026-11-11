@@ -706,7 +706,8 @@ export function playerRoutes(
             false,
             undefined,
             rosterCache,
-            readerOf(actor)
+            readerOf(actor),
+            await visibleScopes(db, actor.userId, actor.isAdmin)
           )
           const entry = roster.find(row => row.userId === result.userId)
           if (entry == null) throw notFound()
@@ -764,7 +765,8 @@ export function playerRoutes(
           true,
           undefined,
           rosterCache,
-          readerOf(actor)
+          readerOf(actor),
+          await visibleScopes(db, actor.userId, actor.isAdmin)
         )
         const entry = roster.find(row => row.userId === userId)
         if (entry == null) throw notFound()
@@ -960,7 +962,8 @@ export function playerRoutes(
         true,
         actor,
         rosterCache,
-        readerOf(actor)
+        readerOf(actor),
+        await visibleScopes(db, actor.userId, actor.isAdmin)
       )
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()

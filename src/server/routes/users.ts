@@ -54,8 +54,10 @@ export interface UserMatch {
  * (`guardedPlayers`), by short name: what Home lists as "Your Players". Only
  * `me` is accepted, and never beside `externalId`.
  *
- * `forTeam=<teamId>`, with `forGame`, `q`, `limit` and `after`, asks for the
- * players a roster manager may add to that team (`rosterCandidates`).
+ * `forTeam=<teamId>`, with `forGame`, `q` and `limit`, asks for the players a
+ * roster manager may add to that team (`rosterCandidates`): one answer of at
+ * most 100, with no further pages, so `after` answers nothing. `limit` is
+ * read only beside `capped=1`, which the current client sends.
  */
 export function userRoutes(
   db: Kysely<Database>,
@@ -74,7 +76,13 @@ export function userRoutes(
         req.query.forGroupId !== undefined
       ) {
         res.json(
-          await peopleCandidates(db, actor, peopleQueryOf(req.query), space)
+          await peopleCandidates(
+            db,
+            actor,
+            peopleQueryOf(req.query),
+            space,
+            await visibleScopes(db, actor.userId, actor.isAdmin)
+          )
         )
         return
       }
@@ -115,7 +123,15 @@ export function userRoutes(
       }
       if (req.query.forTeam !== undefined) {
         const ask = candidateQueryOf(req.query)
-        res.json(await rosterCandidates(db, actor, ask, space))
+        res.json(
+          await rosterCandidates(
+            db,
+            actor,
+            ask,
+            space,
+            await visibleScopes(db, actor.userId, actor.isAdmin)
+          )
+        )
         return
       }
       const guardedBy = req.query.guardedBy

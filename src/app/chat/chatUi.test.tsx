@@ -1720,8 +1720,18 @@ describe('starting a direct message', function () {
     adultsFor: string[] | undefined
     refuse: string | undefined
     people: ChatPerson[] = [
-      { userId: userIdOfGumbo(7), shortName: 'Pat P', avatarUrl: null },
-      { userId: userIdOfGumbo(8), shortName: 'Frankie F', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        shortName: 'Pat P',
+        avatarUrl: null,
+        affiliations: ''
+      },
+      {
+        userId: userIdOfGumbo(8),
+        shortName: 'Frankie F',
+        avatarUrl: null,
+        affiliations: ''
+      }
     ]
 
     adults: IncludedAdult[] = [
@@ -1920,7 +1930,8 @@ describe('starting a direct message', function () {
     dms.people = Array.from({ length: 22 }, (_, index) => ({
       userId: userIdOfGumbo(100 + index),
       shortName: `Person ${index}`,
-      avatarUrl: null
+      avatarUrl: null,
+      affiliations: ''
     }))
     await render(
       <NewDmScreen

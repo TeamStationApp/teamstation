@@ -30,14 +30,15 @@ So the teams a season holds are `GET /teams?season=…`, not
 `/teams/search`.
 
 The same holds for people: the players a roster manager may add to a team are
-`GET /users?forTeam=…` (with `forGame`, `q`, `limit` and `after`), not
+`GET /users?forTeam=…` (with `forGame`, `q` and `limit`), not
 `/teams/:teamId/candidates`. They are every live player, and every full
 account (switched on, with an email) though it plays for no team. That search
 reaches people the asker has no tie to, so it answers only what the result
 card draws (a short name, a picture,
 hands and the teams they play for this season), lists strangers only once
-three letters of a name are typed, and pages with an opaque cursor that holds
-no name.
+three letters of a name are typed, and answers once: a bare array of at most
+100 rows, with no cursor and no further pages (see **Lists with no pages**
+below).
 
 - **Repeat a parameter for several values:** `?season=a&season=b`.
 - **Leaving a parameter out keeps the collection's existing answer.** Adding
@@ -106,6 +107,19 @@ happen, and only a null `nextBefore` ends the list. A bare date-time `before`
 still reads, and anything else is a 400. `GET /me/notifications` keeps the
 cursor it had. `GET /videos/:videoId/highlights` answers whole, because one
 game bounds it and marking dropped plays needs every play of the game.
+
+**Lists with no pages.** `GET /users?forTeam=` answers one bare array per
+search, of at most 100 rows, and takes neither `paged` nor `cursor`. `limit`
+(1 to 100) is read only beside `capped=1`, which the current client sends
+because it says when an answer is full. Without the marker the answer is the
+whole 100 whatever `limit` says: installed builds send `limit=30`, draw no
+such notice, and page on with `after`, so a shorter answer would cut their
+list without a word. `capped` other than `1` is a 400. It reads matches until 100 rows the asker is
+shown are kept, the matches run out, or it has read a fixed bound of them, so
+a search whose matches are nearly all hidden answers what it kept by then;
+typing more narrows it. A row's `cursor` is always empty, kept because
+installed builds need the field, and a request with `after` (such a build
+scrolling on) answers `[]`, so it stops there.
 
 **Phones.** A first page is stored for offline. A request with a `cursor` is
 never stored, so it reaches only the network.

@@ -4011,8 +4011,8 @@ describe('the phone outbox', function () {
         bats: null,
         throws: null,
         teams: [],
-        tier: 'mine',
-        cursor: ''
+        affiliations: '',
+        tier: 'mine'
       })
       const answer = await p.client.addExistingRosterPlayer(
         'home',

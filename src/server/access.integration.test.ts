@@ -19,6 +19,7 @@ import {
   canKeepSongs,
   canScore,
   canSeeTeam,
+  fullNameReach,
   givenRolesOnTeam,
   guardedPlayers,
   guardiansOf,
@@ -1498,6 +1499,31 @@ describe('mayViewFullNames', function () {
     expect(await sees('Dusty Baker', 'John Smoltz')).equals(false)
     // Kept by a placeholder: nobody's.
     expect(await sees('Bruce Bochy', 'Greg Maddux')).equals(false)
+  })
+
+  it('reaches, for every reader, everybody they read in full', async function () {
+    const everybody = [...ids.values()]
+    for (const reader of ids.keys()) {
+      const reads = await mayViewFullNames(
+        fixture.db,
+        idOf(reader),
+        everybody,
+        about
+      )
+      const reach = await fullNameReach(fixture.db, idOf(reader), about)
+      expect(
+        [...reads].filter(id => reach?.has(id) !== true),
+        reader
+      ).deep.equals([])
+    }
+    // Somebody on no level of the reader's is out of reach.
+    const reach = await fullNameReach(fixture.db, idOf('Dusty Baker'), about)
+    expect(reach?.has(idOf('Aaron Judge'))).equals(false)
+    expect(reach?.has(idOf('Mookie Betts'))).equals(true)
+    // A site admin reads everybody, with no reach to read.
+    expect(
+      await fullNameReach(fixture.db, idOf('Bobby Cox'), { isAdmin: true })
+    ).equals(undefined)
   })
 
   it('reuses rows the caller has, and asks about fifty in as many queries as two', async function () {

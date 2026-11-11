@@ -1128,6 +1128,7 @@
       "tabs": [],
       "settings": [
         "Retry",
+        "Showing the first %s — type more to narrow.",
         "Cancel",
         "This needs approval first. We sent the request.",
         "Add to Roster",

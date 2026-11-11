@@ -1027,13 +1027,16 @@ export function teamRoutes(
             fullNames === 'true',
             actor,
             rosterCache,
-            readerOf(actor)
+            readerOf(actor),
+            scopes
           )
         )
         return
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
-      // Staff imagery is public; other people's faces and family links are not.
+      // Staff imagery is public; other people's faces and family links are
+      // not, nor the affiliation line, which on a team's own list names only
+      // family. No scopes, so no line is read; the blanking below guards it.
       const roster = await teamRoster(
         db,
         media.space,
@@ -1041,7 +1044,8 @@ export function teamRoutes(
         false,
         actor,
         rosterCache,
-        readerOf(actor)
+        readerOf(actor),
+        undefined
       )
       res.json(
         roster.map(entry => ({
@@ -1050,7 +1054,8 @@ export function teamRoutes(
             entry.section === 'admin' || entry.section === 'staff'
               ? entry.avatarUrl
               : null,
-          guardianOf: undefined
+          guardianOf: undefined,
+          affiliations: ''
         }))
       )
     })

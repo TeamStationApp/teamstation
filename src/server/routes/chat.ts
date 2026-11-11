@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userId'
+import { visibleScopes } from '../access'
 import { blocksFor, setBlock } from '../chat/blocks'
 import {
   addDmMembers,
@@ -14,7 +15,9 @@ import {
 } from '../chat/dms'
 import { chatCaller } from '../chat/keys'
 import {
+  chatNames,
   chatPeople,
+  chatPeopleOf,
   conversationFor,
   conversationsFor,
   logOf,
@@ -170,7 +173,16 @@ export function chatRoutes(
       if (actor == null) throw unauthorized()
       const id = pathParam(req.params.conversationId)
       await mustBeMember(id, actor.userId)
-      res.json(await membersOf(db, media.space, id, clock(), readerOf(actor)))
+      res.json(
+        await membersOf(
+          db,
+          media.space,
+          id,
+          clock(),
+          readerOf(actor),
+          await visibleScopes(db, actor.userId, actor.isAdmin)
+        )
+      )
     })
   )
 
@@ -212,24 +224,32 @@ export function chatRoutes(
         typeof req.query.userId === 'string' ? req.query.userId : undefined
       const canonical =
         target == null ? undefined : (await survivors(db, [target])).get(target)
-      const people = await chatPeople(
+      // Searched and cut down by name first: lines and labels are read for
+      // the people sent alone.
+      const named = await chatNames(
         db,
-        media.space,
         target == null ? ids : ids.filter(id => id === canonical),
-        { reader: readerOf(actor) }
+        readerOf(actor)
       )
+      const kept = [...named.values()]
+        .filter(person => nameMatches(person.names, query))
+        .sort((a, b) => a.shortName.localeCompare(b.shortName))
+        .slice(0, MAX_CANDIDATES)
+      const people = await chatPeopleOf(db, media.space, kept, {
+        reader: readerOf(actor),
+        scopes: await visibleScopes(db, actor.userId, actor.isAdmin)
+      })
       res.json(
-        [...people.values()]
-          .filter(person => nameMatches(person.names, query))
-          .sort((a, b) => a.shortName.localeCompare(b.shortName))
-          .slice(0, MAX_CANDIDATES)
+        kept
+          .map(person => people.get(person.userId)!)
           .map(person => ({
             userId: person.userId,
             shortName: person.shortName,
             ...(person.compactName == null
               ? {}
               : { compactName: person.compactName }),
-            avatarUrl: person.avatarUrl
+            avatarUrl: person.avatarUrl,
+            affiliations: person.affiliations
           }))
       )
     })

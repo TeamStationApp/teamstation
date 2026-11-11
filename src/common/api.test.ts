@@ -692,9 +692,9 @@ describe('api client', function () {
       inheritedFrom: null
     }
     const roster = stubFetch(200, [
-      { ...entry, walkUpSong: song },
+      { ...entry, walkUpSong: song, affiliations: 'Guardians: Bob M' },
       { ...entry, userId: userIdOfGumbo(8), walkUpSong: null },
-      // An older server sends no song at all.
+      // An older server sends no song and no affiliation line at all.
       { ...entry, userId: userIdOfGumbo(9) }
     ])
     const read = await new TeamStationClient({
@@ -702,6 +702,11 @@ describe('api client', function () {
       fetch: roster.fetch
     }).roster('tem_1')
     expect(read.map(row => row.walkUpSong)).deep.equals([song, null, null])
+    expect(read.map(row => row.affiliations)).deep.equals([
+      'Guardians: Bob M',
+      '',
+      ''
+    ])
   })
 
   it("reads a team's default lineup and a game's lineups", async function () {
@@ -1516,8 +1521,15 @@ describe('api client', function () {
       identityKey: null,
       generation: null
     }
+    // An older server sends no affiliation line: it reads as none.
     const members = client([member])
-    expect(await members.client.chatMembers('cnv 1')).deep.equals([member])
+    expect(await members.client.chatMembers('cnv 1')).deep.equals([
+      { ...member, affiliations: '' }
+    ])
+    const lined = { ...member, affiliations: 'Guardian of Tim R · Demo Eagles' }
+    expect(await client([lined]).client.chatMembers('cnv 1')).deep.equals([
+      lined
+    ])
     expect(members.calls[0].url).equals(
       'http://x/api/v1/chat/conversations/cnv%201/members'
     )
@@ -1554,7 +1566,13 @@ describe('api client', function () {
       avatarUrl: null
     }
     const candidates = client([person])
-    expect(await candidates.client.dmCandidates('ha nk')).deep.equals([person])
+    expect(await candidates.client.dmCandidates('ha nk')).deep.equals([
+      { ...person, affiliations: '' }
+    ])
+    const lined2 = { ...person, affiliations: 'Demo Eagles' }
+    expect(await client([lined2]).client.dmCandidates('ha nk')).deep.equals([
+      lined2
+    ])
     expect(candidates.calls[0].url).equals(
       'http://x/api/v1/chat/dm-candidates?q=ha%20nk'
     )
@@ -3803,9 +3821,18 @@ describe('who is signed in, with no signal', function () {
       bats: 'right',
       throws: null,
       teams: [{ teamId: 'tem_owls', name: 'Ridgeview Owls' }],
-      tier: 'mine',
-      cursor: 'abc'
+      affiliations: 'Guardians: Bob M · Ridgeview Owls',
+      tier: 'mine'
     }
+    // An older server sends no affiliation line, which reads as none, and a
+    // cursor, which is no longer read.
+    const { affiliations: _line, ...older } = row
+    expect(
+      await new TeamStationClient({
+        baseUrl: '/api/v1',
+        fetch: stubFetch(200, [{ ...older, cursor: 'abc' }]).fetch
+      }).rosterCandidates({ teamId: 't' })
+    ).deep.equals([{ ...row, affiliations: '' }])
     const stub = stubFetch(200, [row])
     const client = new TeamStationClient({
       baseUrl: '/api/v1',
@@ -3816,12 +3843,12 @@ describe('who is signed in, with no signal', function () {
         teamId: 'tem 1',
         gameId: 'gam 1',
         q: 'mo be',
-        after: 'abc',
-        limit: 30
+        limit: 30,
+        capped: true
       })
     ).deep.equals([row])
     expect(stub.calls[0].url).equals(
-      '/api/v1/users?forTeam=tem+1&forGame=gam+1&q=mo+be&after=abc&limit=30'
+      '/api/v1/users?forTeam=tem+1&forGame=gam+1&q=mo+be&capped=1&limit=30'
     )
     await client.rosterCandidates({ teamId: 't', q: '' })
     expect(stub.calls[1].url).equals('/api/v1/users?forTeam=t')

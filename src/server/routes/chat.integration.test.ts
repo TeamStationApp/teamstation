@@ -138,6 +138,44 @@ describe('chat routes and the DM rules (U5)', function () {
     return userId
   }
 
+  // Before any test below changes the Hawks' members or their links.
+  describe('affiliation lines', function () {
+    it('lines each person up with the family and teams the reader may see', async function () {
+      const id = await chatId('Hc', 'Hawks Members')
+      const lines = async (who: string): Promise<Record<string, string>> => {
+        const answer = await call(
+          who,
+          'GET',
+          `/chat/conversations/${id}/members`
+        )
+        expect(answer.status).equals(200)
+        return Object.fromEntries(
+          (answer.body as Array<{ userId: string; affiliations: string }>).map(
+            m => [fixture.keyOf(m.userId), m.affiliations]
+          )
+        )
+      }
+      // The coach manages the Hawks' people and reads them in full.
+      const coach = await lines('Hc')
+      expect(coach.G1).equals('Guardian of Pat Player · Hawks')
+      expect(coach.Hc).equals('Hawks')
+      // A parent on the team reads the public names.
+      const parent = await lines('A')
+      expect(parent.G1).equals('Guardian of Pat P · Hawks')
+      expect(
+        (parent.P ?? '').split(' · ').map(part => part.split(', ').sort())
+      ).deep.equals([['Guardians: Gale G', 'Glen G'].sort(), ['Hawks']])
+      // The new-message picker carries the same line.
+      const picker = await call('Hc', 'GET', '/chat/dm-candidates?q=gale')
+      expect(picker.status).equals(200)
+      expect(
+        (picker.body as Array<{ affiliations: string }>).map(
+          row => row.affiliations
+        )
+      ).deep.equals(['Guardian of Pat Player · Hawks'])
+    })
+  })
+
   describe('who is in which chat (E3)', function () {
     const staff = (team: string): string[] => [
       ALL_STAFF,
@@ -600,6 +638,38 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(await memberKeys(hcP)).deep.equals(['Hc', 'P'])
     })
 
+    it('reads lines and labels only for the candidates a search keeps', async function () {
+      const executor = db.getExecutor()
+      const execute = executor.executeQuery.bind(executor)
+      let count = 0
+      executor.executeQuery = async (query, queryId) => {
+        count++
+        return await execute(query, queryId)
+      }
+      const queries = async (q: string): Promise<[number, number]> => {
+        count = 0
+        const answer = await call(
+          'A',
+          'GET',
+          `/chat/dm-candidates?q=${encodeURIComponent(q)}`
+        )
+        expect(answer.status).equals(200)
+        return [count, answer.body.length]
+      }
+      try {
+        const [all, everybody] = await queries('')
+        const [one, kept] = await queries('blair')
+        const [none, nobody] = await queries('nobody here')
+        expect([everybody, kept, nobody]).deep.equals([9, 1, 0])
+        // No more reads for everybody than for one, and none of a line or a
+        // label when the search keeps nobody.
+        expect(one).at.most(all)
+        expect(none).lessThan(one)
+      } finally {
+        executor.executeQuery = execute
+      }
+    })
+
     it('lists exactly the candidates, never Fans-only or Announcements-only co-members', async function () {
       const names = async (who: string, q = ''): Promise<string[]> => {
         const answer = await call(
@@ -1038,7 +1108,10 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(await adults('Hc', 'scorer')).deep.equals([
         'Hk Scorekeeper · Hawks'
       ])
-      expect(await adults('K', 'coach')).deep.equals(['Hc Coach · Hawks'])
+      // K reads Hank Coach as Hank C, so finds him by that and not by the
+      // surname it hides.
+      expect(await adults('K', 'hank')).deep.equals(['Hc Coach · Hawks'])
+      expect(await adults('K', 'coach')).deep.equals([])
       expect(await adults('Hc', 'coach')).deep.equals([])
       expect(await adults('Hc', 'fan')).deep.equals([])
       expect(await adults('Hc', 'ashby')).deep.equals([])
@@ -1303,8 +1376,11 @@ describe('chat routes and the DM rules (U5)', function () {
         })
         .execute()
       await fixture.drain()
-      const candidates = async (who: string): Promise<unknown[]> => {
-        const answer = await call(who, 'GET', '/chat/dm-candidates?q=ripken')
+      const candidates = async (
+        who: string,
+        q = 'ripken'
+      ): Promise<unknown[]> => {
+        const answer = await call(who, 'GET', `/chat/dm-candidates?q=${q}`)
         expect(answer.status).equals(200)
         return (answer.body as Array<Record<string, unknown>>).map(
           ({ userId, shortName, compactName }) => ({
@@ -1317,7 +1393,10 @@ describe('chat routes and the DM rules (U5)', function () {
       expect(await candidates('L')).deep.equals([
         { userId: ripken, shortName: 'Cal Ripken', compactName: 'Cal R' }
       ])
-      expect(await candidates('P')).deep.equals([
+      // A reader shown the short name finds them by what it shows, never by
+      // the surname it hides.
+      expect(await candidates('P')).deep.equals([])
+      expect(await candidates('P', 'cal%20r')).deep.equals([
         { userId: ripken, shortName: 'Cal R', compactName: undefined }
       ])
       // The members of the league's own chat read the same.

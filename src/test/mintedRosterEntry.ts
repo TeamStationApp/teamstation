@@ -41,7 +41,8 @@ export function mintedRosterEntry(
     section: 'player',
     staffRoles: [],
     inheritedFrom: null,
-    walkUpSong: null
+    walkUpSong: null,
+    affiliations: ''
   }
 }
 

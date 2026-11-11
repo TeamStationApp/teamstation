@@ -461,6 +461,12 @@ export const asChatMember = asObject({
   avatarUrl: asNullable(asString),
   /** How they stand in the chat, such as "Coach · Guardian". */
   label: asString,
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, ''),
   isModerator: asBoolean,
   isApprover: asBoolean,
   /** Has an identity and is not waiting for reset approval here. */
@@ -503,7 +509,13 @@ export const asChatPerson = asObject({
    * what the reader writes to others, such as a mention's label.
    */
   compactName: asOptional(asString),
-  avatarUrl: asNullable(asString)
+  avatarUrl: asNullable(asString),
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, '')
 })
 export type ChatPerson = Omit<
   ReturnType<typeof asChatPerson>,
@@ -1533,7 +1545,13 @@ const cleanRosterEntry = asObject({
    * Under a family member, the players on this list they are a guardian of,
    * by the names the list gives them; absent for everybody else.
    */
-  guardianOf: asOptional(asArray(asString))
+  guardianOf: asOptional(asArray(asString)),
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, '')
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
@@ -2182,8 +2200,9 @@ export interface RosterCandidate {
   bats: 'left' | 'right' | 'switch' | null
   throws: 'left' | 'right' | null
   teams: Array<{ teamId: string; name: string }>
+  /** Their affiliation line, as the reader may see it; empty for nothing. */
+  affiliations: string
   tier: 'mine' | 'season' | 'league' | 'other'
-  cursor: string
 }
 export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
   userId: asString,
@@ -2198,14 +2217,17 @@ export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
   bats: asBats,
   throws: asThrows,
   teams: asArray(asObject({ teamId: asString, name: asString })),
+  affiliations: asOptional(asString, ''),
   tier: asEither(
     asLiteral('mine'),
     asLiteral('season'),
     asLiteral('league'),
     asLiteral('other')
-  ),
-  cursor: asString
+  )
 })
+
+/** The most rows one roster search answers: there are no further pages. */
+export const ROSTER_CANDIDATE_MAX = 100
 
 /**
  * An existing player's add: their entry, with the notice their side was sent
@@ -6334,20 +6356,24 @@ export class TeamStationClient {
 
   /**
    * The players a roster manager may add to a team, or to its side of a
-   * game, nearest first, a page at a time (`GET /users?forTeam=`).
+   * game, nearest first (`GET /users?forTeam=`): one answer per search, of
+   * at most `ROSTER_CANDIDATE_MAX`, with no further pages. `capped` sends
+   * `capped=1`: the caller tells the user when the answer is full, so the
+   * server reads its `limit`. Without it the server answers the whole
+   * `ROSTER_CANDIDATE_MAX`, as installed builds that page on need.
    */
   async rosterCandidates(ask: {
     teamId: string
     gameId?: string
     q?: string
-    after?: string
     limit?: number
+    capped?: boolean
     signal?: AbortSignal
   }): Promise<RosterCandidate[]> {
     const params = new URLSearchParams({ forTeam: ask.teamId })
     if (ask.gameId != null) params.set('forGame', ask.gameId)
     if (ask.q != null && ask.q !== '') params.set('q', ask.q)
-    if (ask.after != null) params.set('after', ask.after)
+    if (ask.capped === true) params.set('capped', '1')
     if (ask.limit != null) params.set('limit', String(ask.limit))
     return await this.request(
       'GET',

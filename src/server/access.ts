@@ -1633,6 +1633,143 @@ export async function mayViewFullNames(
   return allowed
 }
 
+/**
+ * Everybody this reader might read in full (`mayViewFullNames`), and maybe
+ * more, but never fewer: what a search over every account narrows to before
+ * it asks, so that the asking is bounded by the reader's own reach and not
+ * the site's. Undefined for a site admin, who reads everybody.
+ *
+ * Read after the reader's roles in one query: the reader and the people they
+ * are a guardian or family of; and on every level any role of theirs reaches
+ * (carried down, as `roleScopes` carries it, with the external teams such a
+ * level keeps, the teams closed into those, and the seasons and leagues above
+ * them), the members,
+ * season and league members, role holders, followers and umpires, with
+ * anybody a guardian or family link joins to one of them, through every row
+ * closed into another, each by the open row.
+ *
+ * With `among`, only those of them it holds: the query returns the
+ * intersection, not the whole reach.
+ */
+export async function fullNameReach(
+  db: Kysely<Database>,
+  readerUserId: string,
+  about: { isAdmin: boolean },
+  among?: readonly string[]
+): Promise<Set<string> | undefined> {
+  if (about.isAdmin) return undefined
+  if (among?.length === 0) return new Set()
+  const narrowed =
+    among == null ? sql`` : sql`where id = any(${[...among]}::text[])`
+  const roles = await roleScopes(db, readerUserId, false)
+  const ids = (key: keyof ScopeSet): string[] => [
+    ...new Set(ROLES.flatMap(role => [...roles[role][key]]))
+  ]
+  const leagues = ids('leagueIds')
+  const seasons = ids('seasonIds')
+  const teams = ids('teamIds')
+  const levels = [...leagues, ...seasons, ...teams]
+  const { rows } = await sql<{ id: string }>`
+    with recursive
+    parents as (
+      select season_id, team_id from season_teams
+      union
+      select season_id, team_id from season_team_parents
+    ),
+    role_seasons as (
+      select unnest(${seasons}::text[]) as id
+      union
+      select id from seasons where league_id = any(${leagues}::text[])
+    ),
+    role_teams as (
+      select unnest(${teams}::text[]) as id
+      union
+      select team_id from parents
+        where season_id in (select id from role_seasons)
+      union
+      select id from teams where league_id = any(${leagues}::text[])
+      union
+      select id from teams
+        where kind = 'external' and custodian_id = any(${levels}::text[])
+    ),
+    -- With every team closed into one of them, whose people it took.
+    level_teams as (
+      select id from role_teams
+      union
+      select t.id from teams t join level_teams l on t.merged_into = l.id
+    ),
+    level_seasons as (
+      select id from role_seasons
+      union
+      select season_id from parents
+        where team_id in (select id from level_teams)
+    ),
+    level_leagues as (
+      select unnest(${leagues}::text[]) as id
+      union
+      select league_id from teams
+        where id in (select id from level_teams) and league_id is not null
+      union
+      select league_id from seasons
+        where id in (select id from level_seasons) and league_id is not null
+    ),
+    level_ids as (
+      select id from level_teams
+      union select id from level_seasons
+      union select id from level_leagues
+    ),
+    seed as (
+      select ${readerUserId}::text as id
+      union
+      select user_id from memberships
+        where team_id in (select id from level_teams)
+      union
+      select user_id from season_members
+        where season_id in (select id from level_seasons)
+      union
+      select user_id from league_members
+        where league_id in (select id from level_leagues)
+      union
+      select user_id from scope_roles
+        where scope_id in (select id from level_ids)
+      union
+      select user_id from follows where group_id in (select id from level_ids)
+      union
+      select user_id from league_umpires
+        where league_id in (select id from level_leagues)
+    ),
+    up as (
+      select id from seed
+      union
+      select u.merged_into from users u join up on u.id = up.id
+        where u.merged_into is not null
+    ),
+    rows_of as (
+      select id from up
+      union
+      select u.id from users u join rows_of r on u.merged_into = r.id
+    ),
+    linked as (
+      select id from rows_of
+      union
+      select related_user_id from user_links
+        where kind in ('guardian', 'family')
+          and user_id in (select id from rows_of)
+      union
+      select user_id from user_links
+        where kind in ('guardian', 'family')
+          and related_user_id in (select id from rows_of)
+    ),
+    reach as (
+      select id from linked
+      union
+      select u.merged_into from users u join reach r on u.id = r.id
+        where u.merged_into is not null
+    )
+    select id from reach ${narrowed}`.execute(db)
+  return new Set(rows.map(row => row.id))
+}
+
 /** The levels whose people lists hold one person, as `peopleListLevels` reads them. */
 interface ListLevels extends ScopeSet {
   /** The leagues they umpire for, whose administrators open their profile. */

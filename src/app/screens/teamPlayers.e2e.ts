@@ -277,8 +277,22 @@ describe("a team's players in the app theme", function () {
       css: label('Search players'),
       timeout: 15000
     })
+    // He reads "Corbin B" to the coach: his surname alone finds nobody, and
+    // the name he shows finds him.
     await tap('Search players')
     await browser.inputText({ text: 'burn' })
+    await browser.assertVisible({
+      text: '.*No players match.*burn.*',
+      timeout: 15000
+    })
+    expect(
+      await probe<boolean>(
+        `document.querySelector('[aria-label="Choose Corbin B"]') == null`
+      )
+    ).equals(true)
+    await tap('Clear search')
+    await tap('Search players')
+    await browser.inputText({ text: 'Corbin' })
     await browser.assertVisible({
       css: label('Choose Corbin B'),
       timeout: 15000

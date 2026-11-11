@@ -46,7 +46,18 @@ const specs = [
   'src/app/scoring/lineupQrImport.test.ts',
   'src/app/scoring/playerDraft.test.ts',
   'src/app/scoring/playerNameFormat.test.ts',
-  'src/app/sync/outbox.test.ts'
+  'src/app/sync/outbox.test.ts',
+  // M3: one affiliation line on every person list (`personAffiliations`).
+  'src/server/users/personAffiliations.integration.test.ts',
+  'src/server/routes/nonMemberView.integration.test.ts',
+  'src/server/teams/addExistingPlayer.integration.test.ts',
+  'src/server/umpires/admin.integration.test.ts',
+  'src/server/games/guestPlayers.integration.test.ts',
+  'src/server/games/poolVisibility.integration.test.ts',
+  'src/server/umpires/savePeople.integration.test.ts',
+  'src/server/openapi.test.ts',
+  'src/common/api.test.ts',
+  'src/common/umpireCleaners.test.ts'
 ]
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = [

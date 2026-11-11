@@ -274,7 +274,12 @@ describe('a player’s tabs', function () {
   it('opens an eligible player conversation from the hero Message action', async function () {
     const client = playerClient()
     client.dmCandidates = async () => [
-      { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        shortName: 'Jordan P',
+        avatarUrl: null,
+        affiliations: ''
+      }
     ]
     client.createDm = async ids => {
       expect(ids).deep.equals([userIdOfGumbo(7)])
@@ -307,7 +312,12 @@ describe('a player’s tabs', function () {
   it('draws its Message action before the age sheet is agreed to', async function () {
     const client = playerClient()
     client.dmCandidates = async () => [
-      { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        shortName: 'Jordan P',
+        avatarUrl: null,
+        affiliations: ''
+      }
     ]
     await render(
       <TestChatAge access="ask">

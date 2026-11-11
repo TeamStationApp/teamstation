@@ -8,7 +8,7 @@ import type {
   ChatMember,
   ChatPerson
 } from '../../common/api'
-import { hasRole, openAdds, roleScopes } from '../access'
+import { hasRole, openAdds, roleScopes, type VisibleScopes } from '../access'
 import type { ChatKind, Database } from '../db/database'
 import {
   compactFields,
@@ -19,6 +19,7 @@ import {
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { survivors } from '../teams/teamStaff'
+import { personAffiliations } from '../users/personAffiliations'
 import type { Reader } from '../users/readerNames'
 import { isEligible, seasonStaffIds, teamGuardianRows } from './audiences'
 import { blockedSenderIds } from './blocks'
@@ -58,18 +59,32 @@ interface ConversationRow {
   last_seq: number
 }
 
+/** One person as `chatNames` reads them: the names a list sorts and searches. */
+export interface ChatNamed {
+  userId: string
+  shortName: string
+  compactName?: string
+  /**
+   * What a search of them matches, for `nameMatches`: the label the reader is
+   * shown, and their full name and its halves only when `readsFull`.
+   */
+  names: string[]
+  avatarPath: string | null
+  /** Whether the reader reads them in full (`readerNaming`'s `readsFull`). */
+  readsFull: boolean
+}
+
 /**
- * Names and pictures for people, by id: public names, and full names for
- * those `options.reader` may read in full, with the public label beside a
- * full one (`compactName`) for anything the reader writes to others, such as
- * a mention.
+ * People's names alone, by id: public names, and full names for those
+ * `reader` may read in full, with the public label beside a full one
+ * (`compactName`). A list that searches or cuts people down reads this first,
+ * and `chatPeopleOf` only for the people it keeps.
  */
-export async function chatPeople(
+export async function chatNames(
   db: Kysely<Database>,
-  space: MediaContext['space'],
   userIds: string[],
-  options: { reader?: Reader } = {}
-): Promise<Map<string, ChatPerson & { names: string[] }>> {
+  reader?: Reader
+): Promise<Map<string, ChatNamed>> {
   const ids = [...new Set(userIds)]
   if (ids.length === 0) return new Map()
   const rows = await db
@@ -86,23 +101,94 @@ export async function chatPeople(
   const naming = await readerNaming(
     db,
     rows.map(person => ({ person })),
-    options.reader
+    reader
   )
   return new Map(
     rows.map(row => {
       const { compactName } = compactFields(naming, row)
+      const shortName = naming.names.get(row.id) ?? row.displayName
+      const readsFull = naming.readsFull.has(row.id)
       return [
         row.id,
         {
           userId: row.id,
-          shortName: naming.names.get(row.id) ?? row.displayName,
+          shortName,
           ...(compactName == null ? {} : { compactName }),
-          avatarUrl: imageUrl(space, row.avatarPath),
-          names: [row.displayName, row.firstName ?? '', row.lastName ?? '']
+          // A search matches the label the reader is shown, and the full name
+          // and its halves only for a reader who may read them.
+          names: readsFull
+            ? [
+                shortName,
+                row.displayName,
+                row.firstName ?? '',
+                row.lastName ?? ''
+              ]
+            : [shortName],
+          avatarPath: row.avatarPath,
+          readsFull
         }
       ]
     })
   )
+}
+
+/**
+ * `chatNames`'s people completed: their pictures and, for
+ * `options.scopes`, affiliation lines, by id.
+ */
+export async function chatPeopleOf(
+  db: Kysely<Database>,
+  space: MediaContext['space'],
+  named: Iterable<ChatNamed>,
+  options: {
+    reader?: Reader
+    /** What the reader may see, for the affiliation lines; none leaves them empty. */
+    scopes?: VisibleScopes
+  } = {}
+): Promise<Map<string, ChatPerson & { names: string[] }>> {
+  const people = [...named]
+  if (people.length === 0) return new Map()
+  const affiliations = await personAffiliations(
+    db,
+    people.map(person => person.userId),
+    {
+      reader: options.reader,
+      scopes: options.scopes,
+      readsFull: new Set(
+        people.flatMap(person => (person.readsFull ? [person.userId] : []))
+      )
+    }
+  )
+  return new Map(
+    people.map(({ avatarPath, readsFull: _full, ...person }) => [
+      person.userId,
+      {
+        ...person,
+        avatarUrl: imageUrl(space, avatarPath),
+        affiliations: affiliations.get(person.userId) ?? ''
+      }
+    ])
+  )
+}
+
+/**
+ * Names and pictures for people, by id: public names, and full names for
+ * those `options.reader` may read in full, with the public label beside a
+ * full one (`compactName`) for anything the reader writes to others, such as
+ * a mention.
+ */
+export async function chatPeople(
+  db: Kysely<Database>,
+  space: MediaContext['space'],
+  userIds: string[],
+  options: {
+    reader?: Reader
+    /** What the reader may see, for the affiliation lines; none leaves them empty. */
+    scopes?: VisibleScopes
+  } = {}
+): Promise<Map<string, ChatPerson & { names: string[] }>> {
+  const named = await chatNames(db, userIds, options.reader)
+  return await chatPeopleOf(db, space, named.values(), options)
 }
 
 /** Whether any of a person's names holds `query`, ignoring case. */
@@ -708,7 +794,9 @@ export async function membersOf(
   space: MediaContext['space'],
   conversationId: string,
   now: Date = new Date(),
-  reader?: Reader
+  reader?: Reader,
+  /** What the reader may see, for the affiliation lines; none leaves them empty. */
+  scopes?: VisibleScopes
 ): Promise<ChatMember[]> {
   const conversation = await db
     .selectFrom('chat_conversations')
@@ -724,7 +812,7 @@ export async function membersOf(
       .execute()
   ).map(row => row.user_id)
   if (members.length === 0) return []
-  const people = await chatPeople(db, space, members, { reader })
+  const people = await chatPeople(db, space, members, { reader, scopes })
   const moderators = await moderatorsOf(db, conversation, members)
   const labels = await labelsOf(db, conversation, members, now)
   const identities = await db
@@ -770,6 +858,7 @@ export async function membersOf(
           : { compactName: person.compactName }),
         avatarUrl: person?.avatarUrl ?? null,
         label: labels.get(userId) ?? 'Member',
+        affiliations: person?.affiliations ?? '',
         isModerator,
         isApprover: approvalsModerated ? isModerator : true,
         eligible: identity != null && !waiting.has(userId),

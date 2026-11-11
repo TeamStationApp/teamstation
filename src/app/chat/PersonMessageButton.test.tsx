@@ -20,7 +20,8 @@ let root: Root | undefined
 const person: ChatPerson = {
   userId: 'usr_recipient',
   shortName: 'Mike T',
-  avatarUrl: null
+  avatarUrl: null,
+  affiliations: ''
 }
 const conversation = asChatConversation(
   chat({ id: 'cnv_direct', title: 'Mike T' })
