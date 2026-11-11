@@ -381,8 +381,8 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       throw badRequest(
         'Scoring mutation requires an explicit currentPlay state'
       )
-    if (mutation != null && mutation.at > Date.now() + 5000)
-      throw badRequest('Scoring action clock is more than five seconds ahead')
+    // The observed base decides acceptance. A device's uncalibrated offline
+    // clock is part of its stable retry identity, not an arbitration clock.
     const priorMutation =
       game.scoring_mutation == null
         ? undefined
