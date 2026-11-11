@@ -3285,5 +3285,23 @@
       "label": "web",
       "needs": "hevc"
     }
+  ],
+  "src/app/stream/focus.e2e.ts": [
+    {
+      "label": "ios",
+      "needs": "ios-phone",
+      "env": {
+        "FOCUS_PLATFORM": "ios",
+        "FOCUS_APP": "app.teamstation.app"
+      }
+    },
+    {
+      "label": "android",
+      "needs": "android-phone",
+      "env": {
+        "FOCUS_PLATFORM": "android",
+        "FOCUS_APP": "app.teamstation.app"
+      }
+    }
   ]
 }
