@@ -12,6 +12,13 @@ import puppeteer, { type Browser, type Page } from 'puppeteer'
 import NodeSocket from 'ws'
 
 import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
+import {
+  dropRunner,
+  installSceneProbe,
+  placeFielder,
+  puppeteerDriver,
+  setTrajectory
+} from '../../../e2e/rigs/fieldPointer'
 import { dictationModelOf } from '../../common/api'
 import { idOfTag } from '../../common/scoring/playerTags'
 import { signInTestAccount } from '../../test/passwordFixtures'
@@ -239,6 +246,7 @@ async function open(
   clip?: string
 ): Promise<Page> {
   const page = await browser.newPage()
+  await installSceneProbe(page)
   page.setDefaultTimeout(30000)
   page.on('pageerror', error => {
     console.error('Browser error:', error)
@@ -479,7 +487,7 @@ async function settled(
  */
 async function watchField(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const field = document.querySelector('[role="application"]')!
+    const field = document.querySelector('[aria-label="Baseball field"]')!
     const seen: string[] = []
     ;(window as any).__field = seen
     const read = (): void => {
@@ -731,9 +739,7 @@ describe('dictation, end to end', function () {
       try {
         const page = await open(browser, scorer, gameId, path)
         await switchOn(page)
-        // The field takes focus when it is tapped; Space there would grab a
-        // player, but with the mic on and the screen at rest it talks.
-        await page.focus('[role="application"]')
+        // With the mic on and the screen at rest, Space talks.
         await page.keyboard.down('Space')
         await play(page)
         await new Promise(resolve => setTimeout(resolve, 600))
@@ -1736,9 +1742,10 @@ describe('dictation, end to end', function () {
       const setup = await launch()
       try {
         const page = await open(setup, scorer, tapped)
+        const field = puppeteerDriver(page)
         const hitTo = async (
           outcome: string,
-          slot: number,
+          position: string,
           angle: number
         ): Promise<void> => {
           await tap(page, 'Swing in Play')
@@ -1748,52 +1755,34 @@ describe('dictation, end to end', function () {
           await page.waitForSelector(
             '[aria-label^="Tap or drag a player to where the ball was fielded"]'
           )
-          await page.focus('[role="application"]')
-          for (let i = 0; i <= slot; i++) await page.keyboard.press(']')
-          await frame(page)
-          await page.keyboard.press('Space')
-          await page.keyboard.press('ArrowUp')
-          await page.keyboard.press('Enter')
-          await page.waitForSelector(
-            '[aria-label^="Drag up and down for ball trajectory."]'
-          )
-          for (let value = 45; value > angle; value--)
-            await page.keyboard.press('ArrowDown')
-          await frame(page)
-          await page.keyboard.press('Enter')
+          await placeFielder(field, position)
+          await setTrajectory(field, angle)
         }
         await tap(page, 'Ball')
         await tap(page, 'Called Strike')
-        await hitTo('Single', 7, 15)
+        await hitTo('Single', 'CF', 15)
         await finishAtBat(page)
         await tap(page, 'Called Strike')
         await tap(page, 'Swing and Miss')
         await tap(page, 'Swing and Miss')
         await finishAtBat(page)
-        await hitTo('Ground Out', 4, -10)
+        await hitTo('Ground Out', 'SS', -10)
         await page.waitForSelector(
           '[aria-label^="Tap or drag the next defender"]'
         )
-        await page.focus('[role="application"]')
+        // The shortstop holds the ball: his throw to first.
         await frame(page)
         await frame(page)
-        for (let i = 0; i < 3; i++) await page.keyboard.press(']')
-        await frame(page)
-        await page.keyboard.press('Space')
-        await page.keyboard.press('ArrowUp')
-        await page.keyboard.press('Enter')
+        await placeFielder(field, '1B')
         await page.locator('[aria-label="Finish defensive play"]').click()
         await page.waitForSelector('[aria-label="Time to edit play"]', {
           timeout: 30000
         })
         await page.waitForSelector('canvas[data-field-ready="true"]')
-        await page.focus('[role="application"]')
-        await page.keyboard.press('Space')
-        for (let i = 0; i < 8; i++) await page.keyboard.press('ArrowUp')
-        await page.keyboard.press('s')
-        await page.keyboard.press('Enter')
+        // The runner from first takes second while the play can be edited.
+        await dropRunner(page, 1, 'Safe')
         await finishAtBat(page)
-        await hitTo('Ball Caught', 6, 40)
+        await hitTo('Ball Caught', 'LF', 40)
         await finishAtBat(page)
         await waitSaved(page)
       } finally {

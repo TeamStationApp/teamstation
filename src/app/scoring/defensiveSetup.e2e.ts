@@ -7,6 +7,11 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import {
+  maestroDriver,
+  setTrajectory,
+  tapFielder
+} from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, asRosterEntry } from '../../common/api'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
@@ -239,18 +244,6 @@ class Page {
       click: async () => {
         await this.driver.tapOn({ css, timeout: 10000 })
       }
-    }
-  }
-
-  async focus(selector: string): Promise<void> {
-    await this.driver.evalBrowserScript({
-      script: `document.querySelector(${JSON.stringify(selector)}).focus();return true`
-    })
-  }
-
-  readonly keyboard = {
-    press: async (key: string): Promise<void> => {
-      await this.driver.pressKey({ key: key.toUpperCase() })
     }
   }
 
@@ -879,14 +872,11 @@ describe('current defensive scoring setup browser', function () {
     try {
       await click(page, 'Swing in Play')
       await click(page, 'Single')
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Space')
-      await page.keyboard.press('Enter')
+      // In a play, a tapped defender takes the ball where he stands.
+      const field = maestroDriver(page.driver)
+      await tapFielder(field, 'SS')
       expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
-      await page.waitForSelector(
-        '[aria-label^="Drag up and down for ball trajectory."]'
-      )
-      await page.keyboard.press('Enter')
+      await setTrajectory(field)
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
