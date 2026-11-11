@@ -445,7 +445,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         scoringUpdates: await namedScoringUpdates(
           trx,
           game.scoring_mutation,
-          options.listFullNamesFor
+          options.answer === 'edits' ? undefined : options.listFullNamesFor
         ),
         superseded: !equal
       }
@@ -996,7 +996,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
             scoringUpdates: await namedScoringUpdates(
               trx,
               { updates: scoringUpdates },
-              options.listFullNamesFor
+              options.answer === 'edits' ? undefined : options.listFullNamesFor
             )
           }),
       ...(acceptedMutation == null
