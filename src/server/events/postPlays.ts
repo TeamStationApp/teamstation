@@ -27,6 +27,7 @@ import {
 import { radarTargets, withRadarSpeeds } from '../../common/scoring/radarSpeeds'
 import {
   asScoringMutation,
+  MAX_SCORING_TIME,
   sameScoringMutation,
   scoringFingerprintInput,
   type ScoringMutation
@@ -548,7 +549,10 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       mutation ??
       (authorsScoring
         ? {
-            at: Math.max(Date.now(), (priorMutation?.at ?? -1) + 1),
+            at: Math.min(
+              MAX_SCORING_TIME,
+              Math.max(Date.now(), (priorMutation?.at ?? -1) + 1)
+            ),
             id: `legacy-${fingerprint.slice(0, 24)}`,
             revision: 0,
             frontier:
