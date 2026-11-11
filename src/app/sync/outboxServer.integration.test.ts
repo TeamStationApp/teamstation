@@ -333,6 +333,77 @@ describe('the outbox against the server', function () {
       }
     })
 
+  it('recovers an older full-history acknowledgment after SQLite restart without rescoring', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Owls',
+      away: 'Gulls'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const ownDir = mkdtempSync(join(dir, 'history-ack-'))
+    const a = phoneOn(f, ownDir)
+    const session = await ScoringSession.open(
+      {
+        load: async id => await a.client.gameEvents(id),
+        save: async (id, change) => await a.client.saveGameEvents(id, change)
+      },
+      gameId,
+      { gamePk: gameId, ...context },
+      { setTimer: () => null, clearTimer: () => undefined }
+    )
+    expect(
+      session.apply({ type: 'result', eventType: 'home_run' }).problems
+    ).deep.equals([])
+    expect(
+      session.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await session.flush()
+    a.transport.held = true
+    expect(session.apply({ type: 'pitch', call: 'B' }).problems).deep.equals([])
+    await session.flush()
+    session.close()
+    await a.client.sessionRefused()
+    const file = nodeSqliteExecutor(
+      join(ownDir, cacheFileName(userIdOfGumbo(101)))
+    )
+    let row: { path: string; body: string; idempotency_key: string }
+    try {
+      row = file.db
+        .prepare('SELECT path, body, idempotency_key FROM outbox')
+        .get() as unknown as typeof row
+    } finally {
+      await file.close()
+    }
+    const body = JSON.parse(row.body)
+    expect(body.scoringHistory).length(1)
+    // The previous build sent the stored full body and lost its successful reply.
+    const landed = await f.h.request('POST', row.path, body, 101, {
+      headers: { 'idempotency-key': row.idempotency_key }
+    })
+    expect(landed.status).equals(200)
+    const restarted = phoneOn(f, ownDir)
+    try {
+      restarted.client.wakeOutbox(true)
+      await restarted.client.drainOutbox()
+      expect((await restarted.client.outboxSummary()).count).equals(0)
+      expect(restarted.transport.posts.map(post => post.status)).deep.equals([
+        409, 200
+      ])
+      expect(restarted.transport.posts.map(post => post.key)).deep.equals([
+        row.idempotency_key,
+        row.idempotency_key
+      ])
+      const stored = await restarted.client.gameEvents(gameId)
+      expect(stored.plays).length(1)
+      expect(stored.currentPlay?.count?.balls).equals(1)
+    } finally {
+      await restarted.client.sessionRefused()
+    }
+  })
+
   it('never composes a known losing queued ancestor into a new canonical action', async () => {
     const context = await addScorableTeams(f.h.db, {
       home: 'Owls',

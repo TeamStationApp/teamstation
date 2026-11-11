@@ -7486,8 +7486,43 @@ export class TeamStationClient {
     return await observeApi(
       method,
       path,
-      async () =>
-        await this.requestUnobserved(method, path, cleaner, body, options),
+      async () => {
+        // Keep recovery ancestry in the durable request, but upload only the
+        // delta normally. A definitive refusal may need the original history
+        // to distinguish scoring-derived lineup changes from a coach's edits.
+        // Retrying that original body also recovers a pre-upgrade request whose
+        // full body already owns its key after a lost acknowledgment.
+        if (
+          method === 'POST' &&
+          /^\/games\/[^/]+\/events(?:\?|$)/.test(path) &&
+          Array.isArray((body as SaveChange | undefined)?.scoringHistory)
+        ) {
+          const { scoringHistory: _history, ...delta } = body as SaveChange
+          try {
+            return await this.requestUnobserved(
+              method,
+              path,
+              cleaner,
+              delta,
+              options
+            )
+          } catch (error) {
+            if (
+              !(error instanceof HttpError) ||
+              (error.code !== 'conflict' &&
+                error.code !== 'idempotencyKeyReused')
+            )
+              throw error
+          }
+        }
+        return await this.requestUnobserved(
+          method,
+          path,
+          cleaner,
+          body,
+          options
+        )
+      },
       this.captureAnalytics
     )
   }
