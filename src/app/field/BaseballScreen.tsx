@@ -12,6 +12,10 @@ import {
   type SetupToast
 } from '../scoring/InstructionToast'
 import {
+  RemoteScoringUpdates,
+  type RemoteScoringUpdatesProps
+} from '../scoring/RemoteScoringUpdates'
+import {
   CONTROL_COLORS,
   CONTROL_DECK_HEIGHT,
   CONTROL_GAP,
@@ -32,6 +36,7 @@ import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
+import type { ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import {
   compactToastBounds,
@@ -58,6 +63,7 @@ export const PITCH_CONTROLS = [
   { kind: 'play', label: 'Ball in Play' }
 ] as const
 export interface BaseballScreenProps {
+  remoteUpdates?: Pick<RemoteScoringUpdatesProps, 'game' | 'userId'>
   suspended?: boolean
   setupToast?: SetupToast
   field: FieldCanvasProps
@@ -282,6 +288,8 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   useEffect(() => {
     if (props.historyLabel == null) closeHistory()
   }, [props.historyLabel, closeHistory])
+  const [catcher, setCatcher] = useState<ScreenRect | null>(null)
+  const [undoSize, setUndoSize] = useState({ width: 96, y: 0 })
   const surface = useFieldSurface()
   const theme = useTheme()
   const band = props.topBand ?? 0
@@ -333,6 +341,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
             {...bandedCanvas}
             {...SCORING_CAMERA}
             bottomExtension={112}
+            onCatcherBounds={setCatcher}
             onScoreboardBounds={onScoreboardBounds}
           />
         )}
@@ -542,6 +551,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                         : `Undo ${props.historyLabel}`
                     }
                     ref={undoButton}
+                    onLayout={event => {
+                      const width = event.nativeEvent.layout.width
+                      undoButton.current?.measureInWindow((_x, y) => {
+                        setUndoSize({ width, y })
+                      })
+                    }}
                     disabled={props.historyLabel == null}
                     delayLongPress={500}
                     onPressIn={handleUndoPressIn}
@@ -725,6 +740,21 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           </View>
         </View>
       </View>
+      {props.remoteUpdates != null && (
+        <RemoteScoringUpdates
+          key={`${props.remoteUpdates.game.gameId}:${props.remoteUpdates.userId}`}
+          {...props.remoteUpdates}
+          catcher={catcher == null ? null : { ...catcher, y: catcher.y + band }}
+          width={viewportWidth}
+          height={viewportHeight}
+          undoWidth={undoSize.width}
+          undoTop={
+            undoSize.y > 0
+              ? undoSize.y
+              : viewportHeight - CONTROL_DECK_HEIGHT - 8
+          }
+        />
+      )}
     </View>
   )
 }
