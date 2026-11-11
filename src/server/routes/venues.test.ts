@@ -9,6 +9,7 @@ import {
   MORE_PARKS
 } from '../../test/googlePlacesStub'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { afterCommitsSettled } from '../db/atomic'
 import { googlePlaces } from '../location/googlePlaces'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 import { distanceKm } from '../venues/venues'
@@ -379,10 +380,13 @@ describe('venue routes', function () {
   it('deletes the photo a new venue or field photo replaces', async () => {
     const venue = await claim()
     const id = venue.id!
-    const held = (prefix: string | null): boolean[] =>
-      [640, 1280].map(size =>
+    const held = async (prefix: string | null): Promise<boolean[]> => {
+      // A replaced picture is let go behind the answer.
+      await afterCommitsSettled()
+      return [640, 1280].map(size =>
         f.h.objects.has(`/${f.h.space.bucket}/${prefix}-${size}.png`)
       )
+    }
     const venuePhoto = async (): Promise<string | null> =>
       (
         await f.h.db
@@ -395,13 +399,13 @@ describe('venue routes', function () {
       await f.h.request('PUT', `/venues/${id}`, { photo: accountTestPicture })
     )
     const first = await venuePhoto()
-    expect(held(first)).deep.equals([true, true])
+    expect(await held(first)).deep.equals([true, true])
     await json<VenueDetail>(
       await f.h.request('PUT', `/venues/${id}`, { photo: accountTestPicture })
     )
     expect(await venuePhoto()).not.equals(first)
-    expect(held(first)).deep.equals([false, false])
-    expect(held(await venuePhoto())).deep.equals([true, true])
+    expect(await held(first)).deep.equals([false, false])
+    expect(await held(await venuePhoto())).deep.equals([true, true])
 
     const field = (
       await json<VenueDetail>(
@@ -428,8 +432,8 @@ describe('venue routes', function () {
       })
     )
     expect(await fieldPhoto()).not.equals(shot)
-    expect(held(shot)).deep.equals([false, false])
-    expect(held(await fieldPhoto())).deep.equals([true, true])
+    expect(await held(shot)).deep.equals([false, false])
+    expect(await held(await fieldPhoto())).deep.equals([true, true])
   })
 
   it('edits a venue and its fields for an owner, softly deletes a field, and stores photos wide', async () => {

@@ -9,11 +9,40 @@ type AfterCommit = (db: Kysely<Database>) => Promise<void>
 /** The transactions `atomic` opened, and what each runs once committed. */
 const committed = new WeakMap<Kysely<Database>, AfterCommit[]>()
 
+/** Work after a commit still running. */
+const running = new Set<Promise<void>>()
+
+/**
+ * Starts `task` against `db` without waiting for it: what a commit lets go
+ * of is never the request's to wait on. A failure is logged.
+ */
+function start(db: Kysely<Database>, task: AfterCommit): void {
+  const run = (async () => {
+    await task(db)
+  })()
+    .catch((error: unknown) => {
+      console.error(`after commit: ${String(error)}`)
+    })
+    .finally(() => {
+      running.delete(run)
+    })
+  running.add(run)
+}
+
+/**
+ * Settles once all the work after a commit started so far has finished.
+ * Tests wait on it; a request never does.
+ */
+export async function afterCommitsSettled(): Promise<void> {
+  while (running.size > 0) await Promise.all([...running])
+}
+
 /**
  * Compose services within one transaction instead of silently committing an
  * inner step. When this opened the transaction, its last statement announces
  * whatever screen scope changes the writes in it noted, and once it has
- * committed it runs what `afterCommit` queued in it, against `db`.
+ * committed it starts what `afterCommit` queued in it, against `db`, and
+ * returns without waiting for it.
  */
 export async function atomic<T>(
   db: Kysely<Database>,
@@ -28,23 +57,24 @@ export async function atomic<T>(
     await announceNoted(trx)
     return result
   })
-  for (const task of queued) await task(db)
+  for (const task of queued) start(db, task)
   return result
 }
 
 /**
- * Runs `task` once what `db` has written is committed: now, outside a
- * transaction, or after the transaction `atomic` opened commits. A rolled
- * back transaction runs nothing. A transaction opened some other way throws,
- * because nothing would ever run the task. `task` is given a connection
- * outside the transaction, and handles its own failures.
+ * Runs `task` once what `db` has written is committed: started now, outside
+ * a transaction, or once the transaction `atomic` opened commits; either way
+ * the caller does not wait for it to finish (`afterCommitsSettled` does). A
+ * rolled back transaction runs nothing. A transaction opened some other way
+ * throws, because nothing would ever run the task. `task` is given a
+ * connection outside the transaction; a failure it lets out is logged.
  */
 export async function afterCommit(
   db: Kysely<Database>,
   task: AfterCommit
 ): Promise<void> {
   if (!db.isTransaction) {
-    await task(db)
+    start(db, task)
     return
   }
   const queued = committed.get(db)

@@ -21,6 +21,7 @@ import {
 import { createEmailCode } from '../auth/emailCodes'
 import { hashPassword, readPasswordRecord } from '../auth/passwords'
 import { hashToken, makeToken } from '../auth/tokens'
+import { afterCommitsSettled } from '../db/atomic'
 
 const ROOT = '/me/account'
 describe('account settings HTTP API', function () {
@@ -255,10 +256,13 @@ describe('account settings HTTP API', function () {
           .where('id', '=', userIdOfGumbo(101))
           .executeTakeFirstOrThrow()
       ).avatar_path
-    const held = (prefix: string | null): boolean[] =>
-      [96, 192].map(size =>
+    const held = async (prefix: string | null): Promise<boolean[]> => {
+      // A replaced picture is let go behind the answer.
+      await afterCommitsSettled()
+      return [96, 192].map(size =>
         h.objects.has(`/${h.space.bucket}/${prefix}-${size}.png`)
       )
+    }
     h.objects.clear()
     await h.db
       .updateTable('users')
@@ -282,11 +286,11 @@ describe('account settings HTTP API', function () {
     await upload()
     const second = await avatar()
     expect(second).not.equals(first)
-    expect(held(first)).deep.equals([false, false])
-    expect(held(second)).deep.equals([true, true])
+    expect(await held(first)).deep.equals([false, false])
+    expect(await held(second)).deep.equals([true, true])
     expect((await h.request('DELETE', ROOT + '/photo')).status).equals(200)
     expect(await avatar()).equals(null)
-    expect(held(second)).deep.equals([false, false])
+    expect(await held(second)).deep.equals([false, false])
     expect(h.objects.size).equals(0)
     // The cases after this one sign in with a photo.
     await upload()

@@ -16,6 +16,7 @@ import {
   type GuardianFixture,
   guardianFixture
 } from '../../test/guardianFixture'
+import { afterCommitsSettled } from '../db/atomic'
 
 describe('group and inbox client contracts over real HTTP', function () {
   this.timeout(60000)
@@ -80,9 +81,12 @@ describe('group and inbox client contracts over real HTTP', function () {
       })
       expect(catalog.name).equals(`Demo Renamed ${kind}`)
       expect(catalog.imageUrl).includes('/images/catalog/')
-      // The uploaded picture it replaced is gone; the catalog's objects stay.
+      // The uploaded picture it replaced is gone (let go behind the answer);
+      // the catalog's objects stay.
+      await afterCommitsSettled()
       expect(f.h.objects.size).equals(before - 2)
       await client.updateGroup(ref, { picture: { image: accountTestPicture } })
+      await afterCommitsSettled()
       expect(f.h.objects.size).equals(before)
       if (kind !== 'season') {
         const changed = { ...demoLocality, city: 'Own Different City' }
@@ -108,6 +112,7 @@ describe('group and inbox client contracts over real HTTP', function () {
           )
         ).status
       ).equals(200)
+      await afterCommitsSettled()
       expect(f.h.objects.size).equals(before - 2)
     }
     const saved = await client.createGroup({

@@ -18,6 +18,7 @@ import {
   accountHarness,
   accountTestPicture
 } from '../../test/accountHarness'
+import { afterCommitsSettled } from '../db/atomic'
 import { asPictureBody, storePlayerAvatar } from '../teams/storeTeamPictures'
 import { sha256Of } from './images'
 import { imageUrl } from './imageUrls'
@@ -130,6 +131,7 @@ describe('shared sports picture catalog', function () {
       userIdOfGumbo(101),
       'baseball-cap'
     )
+    await afterCommitsSettled()
     expect(keys.map(key => h.objects.has(key))).deep.equals([false, false])
   })
   it('refuses missing renditions and allows retry after publication', async () => {

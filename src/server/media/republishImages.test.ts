@@ -5,7 +5,7 @@ import { after, afterEach, before, describe, it } from 'mocha'
 import { pictureCatalog } from '../../common/pictureCatalog'
 import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
-import { atomic } from '../db/atomic'
+import { afterCommitsSettled, atomic } from '../db/atomic'
 import { imageKey, isPublicImagePrefix } from './images'
 import { imageUrl } from './imageUrls'
 import {
@@ -646,6 +646,39 @@ describe('republishing owned pictures', function () {
       expect(held(PUBLIC)).deep.equals([true, true])
       await replace(false)
       expect(await teamLogo()).equals(null)
+      await afterCommitsSettled()
+      expect(held(PUBLIC)).deep.equals([false, false])
+    })
+
+    it('answers before a slow release finishes, and still releases once committed', async () => {
+      hold(PUBLIC)
+      await h.db
+        .updateTable('teams')
+        .set({ logo_path: PUBLIC })
+        .where('id', '=', 'tem_account')
+        .execute()
+      let finish: () => void = () => undefined
+      const slow = new Promise<void>(resolve => {
+        finish = resolve
+      })
+      beforeDelete = async () => {
+        await slow
+      }
+      let answered = false
+      await atomic(h.db, async trx => {
+        await trx
+          .updateTable('teams')
+          .set({ logo_path: null })
+          .where('id', '=', 'tem_account')
+          .execute()
+        await releaseReplacedPicture(trx, h.space, PUBLIC)
+      })
+      answered = true
+      // The write answered while the Space still holds the delete.
+      expect(answered).equals(true)
+      expect(held(PUBLIC)).deep.equals([true, true])
+      finish()
+      await afterCommitsSettled()
       expect(held(PUBLIC)).deep.equals([false, false])
     })
 
@@ -663,6 +696,7 @@ describe('republishing owned pictures', function () {
           h.space,
           PUBLIC
         )
+        await afterCommitsSettled()
       } finally {
         console.error = realError
       }
@@ -673,6 +707,7 @@ describe('republishing owned pictures', function () {
       hold(PUBLIC)
       await releaseReplacedPicture(h.db, h.space, null)
       await releaseReplacedPicture(h.db, h.space, PUBLIC)
+      await afterCommitsSettled()
       expect(held(PUBLIC)).deep.equals([false, false])
       let refused: unknown
       await h.db

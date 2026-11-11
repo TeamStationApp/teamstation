@@ -24,6 +24,7 @@ import {
   insertFixtureUsers
 } from '../../test/insertFixtureUsers'
 import { hashToken } from '../auth/tokens'
+import { afterCommitsSettled } from '../db/atomic'
 import type { Database } from '../db/database'
 import { makeDatabase } from '../db/database'
 import { jsonBody } from '../jsonBody'
@@ -2503,8 +2504,13 @@ describe('a team’s people by external id', function () {
 
     it('deletes the picture a new logo or headshot replaces, and keeps one another row names', async function () {
       const { teamId, userId } = await teamWithPlayer('Replaced')
-      const held = (prefix: string | null): boolean[] =>
-        [96, 192].map(size => objects.has(`/${BUCKET}/${prefix}-${size}.png`))
+      const held = async (prefix: string | null): Promise<boolean[]> => {
+        // A replaced picture is let go behind the answer.
+        await afterCommitsSettled()
+        return [96, 192].map(size =>
+          objects.has(`/${BUCKET}/${prefix}-${size}.png`)
+        )
+      }
       const logoPath = async (): Promise<string | null> =>
         (
           await database()
@@ -2527,8 +2533,8 @@ describe('a team’s people by external id', function () {
       await logo(teamId, body(blue, 'upload'))
       const second = await logoPath()
       expect(second).not.equals(first)
-      expect(held(first)).deep.equals([false, false])
-      expect(held(second)).deep.equals([true, true])
+      expect(await held(first)).deep.equals([false, false])
+      expect(await held(second)).deep.equals([true, true])
 
       await avatar(teamId, userId, body(red, 'upload'))
       const face = await avatarPath()
@@ -2541,7 +2547,7 @@ describe('a team’s people by external id', function () {
         .execute()
       await avatar(teamId, userId, body(blue, 'upload'))
       expect(await avatarPath()).not.equals(face)
-      expect(held(face)).deep.equals([true, true])
+      expect(await held(face)).deep.equals([true, true])
     })
 
     it('answers a team or player deleted mid-upload as not written, and releases what it uploaded', async function () {
@@ -2621,6 +2627,7 @@ describe('a team’s people by external id', function () {
         expect(await storing).deep.equals({ stored: false, kept: 'upload' })
         const uploaded = puts.slice(before)
         expect(uploaded).length(2)
+        await afterCommitsSettled()
         for (const path of uploaded)
           expect(objects.has(path), path).equals(false)
       }
