@@ -59,7 +59,7 @@ function sources(dir) {
 const READ_ONLY_EXPORTS = {
   // The cache inspects a stored play and compares accepted identities; it
   // never constructs a stored scoring record or applies scoring actions.
-  gumbo: ['storedRecordOf'],
+  gumbo: ['storedRecordOf', 'FINAL_INDEX'],
   scoringMutation: ['sameScoringMutation'],
   lineup: ['ordinal', 'begun', 'pitchThrown'],
   readerNames: ['withoutReaderNames'],
