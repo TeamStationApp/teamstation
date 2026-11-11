@@ -707,6 +707,88 @@ describe('the scoring screen on the game socket', function () {
       else Object.defineProperty(navigator, 'mediaDevices', devices)
     }
   })
+  it('preserves a dictated question while following, then resumes after dismissal', async () => {
+    const originalSocket = globalThis.WebSocket
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const sockets: FakeDictationSocket[] = []
+    globalThis.WebSocket = class extends FakeDictationSocket {
+      constructor(url: string) {
+        super(url)
+        sockets.push(this)
+      }
+    } as unknown as typeof WebSocket
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => await new Promise(() => {}) }
+    })
+    try {
+      const { changes, other, session } = await scoring({ dictation: true })
+      const peer = await other()
+      for (let i = 0; i < 2; i++) {
+        peer.apply({ type: 'result', eventType: 'hit_by_pitch' })
+        peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      }
+      await peer.flush()
+      await changes.plays()
+      const press = async (type: string): Promise<void> => {
+        await act(async () => {
+          document
+            .querySelector('[aria-label="Dictation"]')!
+            .dispatchEvent(new window.MouseEvent(type, { bubbles: true }))
+        })
+      }
+      await press('pointerdown')
+      await press('pointerup')
+      await settle()
+      await act(async () => {
+        sockets.at(-1)!.open()
+      })
+      await press('pointerdown')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+      })
+      const start = sockets.at(-1)!.frames.at(-1)!
+      expect(start.kind).equals('start')
+      await press('pointerup')
+      const before = session().actions
+      await act(async () => {
+        sockets.at(-1)!.reply({
+          kind: 'actions',
+          id: start.id,
+          transcript: 'Ground ball, fielders choice',
+          actions: [
+            {
+              type: 'ballInPlay',
+              contact: 'swing',
+              trajectory: 'ground_ball',
+              fielder: setupOf(peer.state).sides.home.defense.SS
+            },
+            { type: 'result', eventType: 'fielders_choice' }
+          ],
+          roster: [],
+          dropped: []
+        })
+      })
+      await settle()
+      expect(session().actions).deep.equals(before)
+      expect(shown(lstrings.dictation_dismiss_question)).equals(true)
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      expect(shown(lstrings.dictation_dismiss_question)).equals(true)
+      expect(session().actions).deep.equals(before)
+      await click(lstrings.dictation_dismiss_question)
+      await settle()
+      expect(shown(lstrings.dictation_dismiss_question)).equals(false)
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+      expect(session().actions).deep.equals(peer.actions)
+    } finally {
+      globalThis.WebSocket = originalSocket
+      if (devices == null)
+        delete (navigator as { mediaDevices?: unknown }).mediaDevices
+      else Object.defineProperty(navigator, 'mediaDevices', devices)
+    }
+  })
   it('keeps following after adopting a peer’s unfinished single', async function () {
     const { changes, other, session } = await scoring()
     const peer = await other()
