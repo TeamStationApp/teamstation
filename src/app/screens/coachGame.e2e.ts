@@ -593,14 +593,15 @@ describe('Coach Game', function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     const pills = await coach.pills(fixture.gameId)
-    expect(pills.slice(0, 2)).deep.equals(['Box score', 'Videos'])
+    // The fixture's game is scheduled and unscored: Info leads its sections.
+    expect(pills.slice(0, 2)).deep.equals(['Info', 'Box score'])
     expect(await coach.page.$('[aria-label="Coach"]')).not.equals(null)
     await coach.shot('game-pills-after.png')
     for (const who of ['assistant', 'member'] as const) {
       await coach.as(fixture, who)
       const theirs = await coach.pills(fixture.gameId)
       expect(await coach.page.$('[aria-label="Coach"]'), who).equals(null)
-      expect(theirs.slice(0, 2), who).deep.equals(['Box score', 'Videos'])
+      expect(theirs.slice(0, 2), who).deep.equals(['Info', 'Box score'])
     }
     // The scorekeeper scores, and coaches nothing.
     await coach.as(fixture, 'scorekeeper')
@@ -617,7 +618,10 @@ describe('Coach Game', function () {
       `/games/${fixture.gameId}/coach/${fixture.teams.home}`
     )
     // No app header or navigation: its own header row.
-    expect(await coach.page.$('[aria-label="Schedule"]')).equals(null)
+    // On the scene on top: the game's screen stays mounted beneath it.
+    expect(
+      await coach.page.$('[data-scene-role="top"] [aria-label="Schedule"]')
+    ).equals(null)
     const back = await coach.box('[aria-label="Back"]')
     expect(back.x).lessThan(40)
     const team = await coach.page.$eval(
@@ -779,7 +783,9 @@ describe('Coach Game', function () {
     expect(at('Hosts')).lessThan(at('The game has not started'))
     expect(at('The game has not started')).lessThan(at('Batting — Hosts'))
     inOrder(text.slice(at('Batting — Hosts')), HOSTS)
-    expect(text).includes('Ohtani00000000–')
+    // Every batter's row, and the totals, all noughts and no average yet.
+    // The names stand in a column of their own, beside the figures.
+    expect(text.split('00000000–').length - 1).equals(HOSTS.length + 1)
     // Nobody has pitched, and the visitors' order is not the game's yet.
     expect(text).not.includes('Pitching')
     expect(text).not.includes('Batting — Visitors')
