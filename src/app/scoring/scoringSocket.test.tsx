@@ -604,6 +604,34 @@ describe('the scoring screen on the game socket', function () {
     expect(JSON.stringify(await store.load('g1'))).equals(before)
   })
 
+  it('holds an out-at-home selection against peer updates while choosing the thrower', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'result', eventType: 'triple' })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    await peer.flush()
+    await changes.plays()
+    expect(
+      document.querySelector('[aria-label^="Home plate decision"]')
+    ).not.equals(null)
+    await click('Out')
+    const before = session().actions
+    const choosing = document.body.textContent
+    peer.apply({
+      type: 'runnerMovement',
+      runner: peer.state.homeQueue[0],
+      to: 'home'
+    })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(before)
+    expect(document.body.textContent).equals(choosing)
+  })
+
   it('keeps following after refused dictation on a peer’s unfinished play', async () => {
     const originalSocket = globalThis.WebSocket
     const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
@@ -940,6 +968,25 @@ describe('the scoring screen on the game socket', function () {
     expect(posts).has.length(1)
     expect(posts[0].scoringMutation?.at).within(before, Date.now())
     expect(posts[0].plays).has.length(1)
+  })
+
+  it('keeps a saved-history Undo of a peer play open for local correction', async () => {
+    const { changes, other, session } = await scoring()
+    const peer = await other()
+    peer.apply({ type: 'ballInPlay', contact: 'swing' })
+    peer.apply({ type: 'result', eventType: 'single' })
+    peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await peer.flush()
+    await changes.plays()
+    await click('Undo Last play')
+    await session().flush()
+    const undone = session().actions
+    expect(shown('Finish at-bat')).equals(true)
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await changes.plays()
+    expect(session().actions).deep.equals(undone)
+    expect(shown('Finish at-bat')).equals(true)
   })
 
   it('passes the original Undo tap identity into saved history', async () => {

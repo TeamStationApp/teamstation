@@ -1074,7 +1074,18 @@ function ScoringPanel(props: {
         (input.observing &&
           input.authorship != null &&
           (next === model ||
-            (!drafting && sameActions(model.scoring.log, next.scoring.log)))) ||
+            (!drafting &&
+              model.savedUndos === next.savedUndos &&
+              model.scoring.phase === next.scoring.phase &&
+              JSON.stringify([
+                model.scoring.runnerAction,
+                model.scoring.pendingPlay
+              ]) ===
+                JSON.stringify([
+                  next.scoring.runnerAction,
+                  next.scoring.pendingPlay
+                ]) &&
+              sameActions(model.scoring.log, next.scoring.log)))) ||
         // Pointer-up delivers its drop and gesture release in one batch.
         // Passive callbacks must not erase a restoration before its effect.
         (input.authorship == null && model.resumeObservation != null)
