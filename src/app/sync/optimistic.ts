@@ -1,7 +1,7 @@
 import { formatName, shortName, shortNames } from '../../common/names'
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
-import { storedRecordOf } from '../../common/scoring/gumbo'
+import { FINAL_INDEX, storedRecordOf } from '../../common/scoring/gumbo'
 import {
   sameScoringMutation,
   type ScoringMutation
@@ -305,12 +305,13 @@ export function appliedEvents(
   if (mutation != null)
     for (const index of rows.keys())
       if (
-        index > mutation.frontier ||
-        (index === mutation.frontier &&
-          !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
-            action =>
-              !(action.type === 'gameFlow' && action.kind === 'closePlay')
-          ))
+        index !== FINAL_INDEX &&
+        (index > mutation.frontier ||
+          (index === mutation.frontier &&
+            !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
+              action =>
+                !(action.type === 'gameFlow' && action.kind === 'closePlay')
+            )))
       )
         rows.delete(index)
   for (const play of arrayOf(body.plays)) {
