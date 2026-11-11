@@ -2234,6 +2234,7 @@ describe('scoring browser', function () {
       expect(Math.abs(divider.left)).lessThan(1)
       expect(Math.abs(divider.right)).lessThan(1)
       const apply = '[aria-label="Apply Override"]'
+      await new Promise(resolve => setTimeout(resolve, 350))
       await page.waitForFunction(() =>
         document
           .getAnimations()
@@ -2244,6 +2245,10 @@ describe('scoring browser', function () {
         n.scrollTop = n.scrollHeight
       })
       await page.waitForFunction(() => {
+        const content = document.querySelector(
+          '[data-testid="Scoring sheet content"]'
+        )!
+        content.scrollTop = content.scrollHeight
         const row = document
           .querySelector('[aria-label="Third base"]')!
           .getBoundingClientRect()
@@ -2288,6 +2293,7 @@ describe('scoring browser', function () {
       ]) {
         await tapSettled(page, 'Open scoring menu')
         await tapSettled(page, label)
+        await new Promise(resolve => setTimeout(resolve, 350))
         await page.waitForFunction(() =>
           document
             .getAnimations()
@@ -2313,6 +2319,17 @@ describe('scoring browser', function () {
         expect(geometry.border, label).equals('0px')
         expect(geometry.left, label).equals('1px')
         expect(geometry.right, label).equals('1px')
+        if (label === 'End Half Inning' || label === 'Swap Home and Away') {
+          const gap = await page.$eval(
+            '[data-testid="Scoring confirmation"]',
+            n => {
+              const description = n.firstElementChild!.getBoundingClientRect()
+              const action = n.lastElementChild!.getBoundingClientRect()
+              return action.top - description.bottom
+            }
+          )
+          expect(gap, `${label} confirmation spacing`).at.least(12)
+        }
         const out = process.env.TS_SCORING_ARTIFACT_DIR
         if (out != null)
           await page.screenshot({

@@ -3578,7 +3578,7 @@ function ScoringPanel(props: {
               />
             ))}
           {sheet === 'swap' && (
-            <>
+            <View testID="Scoring confirmation" style={{ gap: 12 }}>
               <Text
                 style={{
                   color: theme.scoringSurface.text,
@@ -3612,7 +3612,7 @@ function ScoringPanel(props: {
                   confirmSwap().catch(() => undefined)
                 }}
               />
-            </>
+            </View>
           )}
           {sheet === 'game' && (
             <>
@@ -3636,7 +3636,7 @@ function ScoringPanel(props: {
             </>
           )}
           {sheet === 'half' && (
-            <>
+            <View testID="Scoring confirmation" style={{ gap: 12 }}>
               <Text
                 style={{
                   color: theme.scoringSurface.text,
@@ -3653,7 +3653,7 @@ function ScoringPanel(props: {
                   closeSheet()
                 }}
               />
-            </>
+            </View>
           )}
         </ScoringSheet>
       )}
