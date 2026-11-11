@@ -35,13 +35,25 @@ import { type LegacyRun, runLegacy } from './runLegacy'
  * The device variables for a run that needs `needs`, or undefined when this
  * sweep has no such device. A simulator run gets the simulator as its iOS device.
  */
-function deviceFor(needs: string | undefined): NodeJS.ProcessEnv | undefined {
+function deviceFor(
+  needs: string | undefined,
+  stack: { speech: boolean }
+): NodeJS.ProcessEnv | undefined {
   const env = process.env
   switch (needs) {
     case undefined:
     case 'web':
     case 'none':
       return {}
+    // The stack's API holds a speech key: dictation is offered.
+    case 'speech':
+      return stack.speech ? {} : undefined
+    // A browser here plays HEVC: Chrome on a Mac does, by VideoToolbox; on a
+    // machine with no GPU (a server) it does not. E2E_HEVC=1 says it does.
+    case 'hevc':
+      return process.platform === 'darwin' || env.E2E_HEVC === '1'
+        ? {}
+        : undefined
     case 'ios-phone':
       return env.E2E_IOS_UDID == null
         ? undefined
@@ -238,11 +250,13 @@ async function main(): Promise<void> {
       const started = Date.now()
       let line: string
       try {
+        // What every run of the file shares: the player games, once made.
+        let shared: Record<string, string> = {}
         const run = async (
           path: string,
           invocation: Invocation
         ): Promise<LegacyRun> => {
-          const device = deviceFor(invocation.needs)
+          const device = deviceFor(invocation.needs, stack)
           if (device == null) {
             return {
               file: path,
@@ -299,7 +313,6 @@ async function main(): Promise<void> {
           // and listeners start again on the new one.
           await stack.restartApi({ speech: stack.speech })
         }
-        const shared = needsPlayerFixture(source) ? playerFixtureEnv(cwd) : {}
         const recipe = RECIPES[file]
         const invocations: Invocation[] =
           BLOCKED[file] != null
@@ -313,6 +326,14 @@ async function main(): Promise<void> {
                   run: async (path, invocation) =>
                     (await run(path, invocation)).exit
                 })
+        // The player games take minutes to make: only for a run that can go.
+        const runnable = invocations.some(
+          invocation =>
+            invocation.blocked == null &&
+            deviceFor(invocation.needs, stack) != null
+        )
+        if (runnable && needsPlayerFixture(source))
+          shared = playerFixtureEnv(cwd)
         const runs: LegacyRun[] = []
         for (const invocation of invocations) {
           runs.push(await run(file, invocation))

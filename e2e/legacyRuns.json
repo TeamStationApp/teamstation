@@ -3219,5 +3219,71 @@
       "label": "safari",
       "needs": "ios-sim"
     }
+  ],
+  "src/app/screens/coachPlan.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "speech"
+    }
+  ],
+  "src/app/scoring/lineupDictation.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "speech"
+    }
+  ],
+  "src/app/scoring/dictationPipeline.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "speech"
+    }
+  ],
+  "src/app/player/playerLayouts.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "src/app/player/playbackControls.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "src/app/player/liveMultiAngle.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "scripts/e2e/playerLayouts/capture.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "src/app/player/liveBuffer.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "src/app/player/liveStallDiagnostics.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "src/app/player/liveOutage.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
+  ],
+  "src/app/settingsCleanup2.e2e.ts": [
+    {
+      "label": "web",
+      "needs": "hevc"
+    }
   ]
 }

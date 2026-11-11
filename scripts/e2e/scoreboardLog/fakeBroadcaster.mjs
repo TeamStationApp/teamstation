@@ -5,7 +5,7 @@
 //     --url rtmp://127.0.0.1:1946/live/<key> [--stamped] [--duration 180] \
 //     [--outage <at>:<seconds>]... [--stall <at>:<seconds>]... \
 //     [--jump <at>:<seconds>]... [--lead <seconds>] [--size 1280x720] \
-//     [--fps 30] [--ffmpeg /opt/homebrew/bin/ffmpeg]
+//     [--fps 30] [--ffmpeg $TS_FFMPEG, else /opt/homebrew/bin/ffmpeg]
 //
 // 1. Plans the start, T0, `--lead` seconds ahead (by default long enough to
 //    encode), and says so: `{"event":"planned","t0":…}`.
@@ -59,7 +59,11 @@ const { values } = parseArgs({
     lead: { type: 'string' },
     size: { type: 'string', default: '1280x720' },
     fps: { type: 'string', default: '30' },
-    ffmpeg: { type: 'string', default: '/opt/homebrew/bin/ffmpeg' }
+    // The pinned FFmpeg where the run names one (TS_FFMPEG), Homebrew's otherwise.
+    ffmpeg: {
+      type: 'string',
+      default: process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+    }
   }
 })
 if (values.url == null)

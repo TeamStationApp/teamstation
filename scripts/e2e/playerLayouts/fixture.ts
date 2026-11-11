@@ -46,6 +46,7 @@ import { dirname, join } from 'node:path'
 import { parseArgs } from 'node:util'
 
 import pg from 'pg'
+import { Agent, setGlobalDispatcher } from 'undici'
 import WebSocket from 'ws'
 
 import {
@@ -79,6 +80,9 @@ const { values } = parseArgs({
   }
 })
 const API = values.api
+// A fresh connection for every request: a pooled one the API closed for
+// idling, while sample-video encoded, was taken up again just as it closed.
+setGlobalDispatcher(new Agent({ pipelining: 0 }))
 const OUT = values.out
 for (const url of [API, serverConfig.databaseUrl])
   if (!['127.0.0.1', 'localhost'].includes(new URL(url).hostname))
