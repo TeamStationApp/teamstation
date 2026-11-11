@@ -223,6 +223,21 @@ async function storePicture(
   return { stored: true, url }
 }
 
+/**
+ * A write that recorded nothing: the row is gone, or an upload guarded it.
+ * The objects `stored` just uploaded under their random prefix are named by
+ * no row, so they are released once the transaction ends.
+ */
+async function unwritten(
+  trx: Kysely<Database>,
+  store: PictureStore,
+  stored: StoredImage | undefined
+): Promise<false> {
+  if (stored != null)
+    await releaseReplacedPicture(trx, store.space, stored.pathPrefix)
+  return false
+}
+
 /** A team's logo, which is its administrators' to upload over. */
 export async function storeTeamLogo(
   db: Kysely<Database>,
@@ -252,7 +267,10 @@ export async function storeTeamLogo(
           .select('logo_path')
           .where('id', '=', teamId)
           .forUpdate()
-          .executeTakeFirstOrThrow()
+          .executeTakeFirst()
+        // Gone while the picture was being stored: nothing to write, and
+        // nothing will ever name the objects just uploaded.
+        if (before == null) return await unwritten(trx, store, stored)
         let update = trx
           .updateTable('teams')
           .set({
@@ -273,7 +291,8 @@ export async function storeTeamLogo(
           )
         }
         const written = await update.executeTakeFirst()
-        if (Number(written.numUpdatedRows) === 0) return false
+        if (Number(written.numUpdatedRows) === 0)
+          return await unwritten(trx, store, stored)
         noteScopeChange(trx, { teamId })
         if (stored != null)
           await releaseReplacedPicture(trx, store.space, before.logo_path)
@@ -317,7 +336,10 @@ export async function storePlayerAvatar(
           .select('avatar_path')
           .where('id', '=', userId)
           .forUpdate()
-          .executeTakeFirstOrThrow()
+          .executeTakeFirst()
+        // Gone while the picture was being stored: nothing to write, and
+        // nothing will ever name the objects just uploaded.
+        if (before == null) return await unwritten(trx, store, stored)
         let update = trx
           .updateTable('users')
           .set({
@@ -341,7 +363,8 @@ export async function storePlayerAvatar(
           )
         }
         const written = await update.executeTakeFirst()
-        if (Number(written.numUpdatedRows) === 0) return false
+        if (Number(written.numUpdatedRows) === 0)
+          return await unwritten(trx, store, stored)
         if (stored != null)
           await releaseReplacedPicture(trx, store.space, before.avatar_path)
         return true

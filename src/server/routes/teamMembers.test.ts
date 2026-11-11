@@ -32,6 +32,7 @@ import { withAudit } from '../middleware/withAudit'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { attachEmail } from '../teams/addAdults'
+import { storePlayerAvatar, storeTeamLogo } from '../teams/storeTeamPictures'
 import { insertUser } from '../users/insertUser'
 import { authRoutes } from './auth'
 import { manageRoutes } from './manage'
@@ -2541,6 +2542,88 @@ describe('a team’s people by external id', function () {
       await avatar(teamId, userId, body(blue, 'upload'))
       expect(await avatarPath()).not.equals(face)
       expect(held(face)).deep.equals([true, true])
+    })
+
+    it('answers a team or player deleted mid-upload as not written, and releases what it uploaded', async function () {
+      const store = {
+        ffmpegPath: FFMPEG,
+        space: {
+          endpoint: `http://127.0.0.1:${(space?.address() as AddressInfo).port}`,
+          region: 'sfo3',
+          bucket: BUCKET,
+          accessKeyId: 'AKIAEXAMPLE000000000',
+          secretAccessKey: 'secret',
+          pathStyle: true
+        }
+      }
+      const teamId = makeId('team')
+      await database()
+        .insertInto('teams')
+        .values({ id: teamId, name: 'Gone' })
+        .execute()
+      const userId = await insertUser(database(), {
+        display_name: 'Gone Player'
+      })
+      const cases = [
+        {
+          store: async () =>
+            await storeTeamLogo(database(), store, teamId, {
+              contentType: 'image/png',
+              bytes: Buffer.from(red, 'base64'),
+              source: 'upload'
+            }),
+          remove: async () => {
+            await database()
+              .deleteFrom('teams')
+              .where('id', '=', teamId)
+              .execute()
+          }
+        },
+        {
+          store: async () =>
+            await storePlayerAvatar(
+              database(),
+              store,
+              userId,
+              {
+                contentType: 'image/png',
+                bytes: Buffer.from(blue, 'base64'),
+                source: 'upload'
+              },
+              true
+            ),
+          remove: async () => {
+            await database()
+              .deleteFrom('users')
+              .where('id', '=', userId)
+              .execute()
+          }
+        }
+      ]
+      for (const { store: send, remove } of cases) {
+        let release = (): void => {}
+        let arrived = (): void => {}
+        const waiting = new Promise<void>(resolve => {
+          arrived = resolve
+        })
+        holdNext = {
+          arrived,
+          release: new Promise<void>(resolve => {
+            release = resolve
+          })
+        }
+        const before = puts.length
+        const storing = send()
+        // The picture is being uploaded when its row goes away.
+        await waiting
+        await remove()
+        release()
+        expect(await storing).deep.equals({ stored: false, kept: 'upload' })
+        const uploaded = puts.slice(before)
+        expect(uploaded).length(2)
+        for (const path of uploaded)
+          expect(objects.has(path), path).equals(false)
+      }
     })
 
     it('uploads nothing for the picture it already holds', async function () {
