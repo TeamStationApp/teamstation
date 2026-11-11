@@ -39,6 +39,7 @@ import { ThemeProvider } from '../theme/ThemeContext'
 import { startingSetup, teamsOf } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
 import type { GameChanges } from './rosterLive'
+import { ScoringFollow } from './scoringFollow'
 import { sameActions, ScoringScreen } from './ScoringScreen'
 import { memoryStore, type ScoringSource } from './scoringSource'
 
@@ -701,6 +702,93 @@ describe('the scoring screen on the game socket', function () {
       expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
       expect(session().actions).deep.equals(peer.actions)
     } finally {
+      globalThis.WebSocket = originalSocket
+      if (devices == null)
+        delete (navigator as { mediaDevices?: unknown }).mediaDevices
+      else Object.defineProperty(navigator, 'mediaDevices', devices)
+    }
+  })
+  it('keeps local ownership after Undo during an accepted dictation reel', async () => {
+    // Observe the actual ownership transition, independently of whether a
+    // later peer read is safe once the scorer returns to a between-pitch state.
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const adopt = ScoringFollow.prototype.adopt
+    let adoptions = 0
+    ScoringFollow.prototype.adopt = function (generation) {
+      adoptions++
+      return adopt.call(this, generation)
+    }
+    const originalSocket = globalThis.WebSocket
+    const devices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices')
+    const sockets: FakeDictationSocket[] = []
+    globalThis.WebSocket = class extends FakeDictationSocket {
+      constructor(url: string) {
+        super(url)
+        sockets.push(this)
+      }
+    } as unknown as typeof WebSocket
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => await new Promise(() => {}) }
+    })
+    try {
+      const { changes, other, session } = await scoring({ dictation: true })
+      const peer = await other()
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      const press = async (type: string): Promise<void> => {
+        await act(async () => {
+          document
+            .querySelector('[aria-label="Dictation"]')!
+            .dispatchEvent(new window.MouseEvent(type, { bubbles: true }))
+        })
+      }
+      await press('pointerdown')
+      await press('pointerup')
+      await settle()
+      await act(async () => {
+        sockets.at(-1)!.open()
+      })
+      await press('pointerdown')
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 350))
+      })
+      const start = sockets.at(-1)!.frames.at(-1)!
+      expect(start.kind).equals('start')
+      await press('pointerup')
+      const before = [...session().actions]
+      await act(async () => {
+        sockets.at(-1)!.reply({
+          kind: 'actions',
+          id: start.id,
+          transcript: 'Single',
+          actions: [
+            { type: 'ballInPlay', contact: 'swing' },
+            { type: 'result', eventType: 'single' }
+          ],
+          roster: [],
+          dropped: []
+        })
+      })
+      await settle()
+      await session().flush()
+      expect(session().actions).not.deep.equals(before)
+      // The mounted field has not delivered its animation completion.
+      expect(field().players.some(player => player.motion != null)).equals(true)
+      adoptions = 0
+      await act(async () => {
+        document
+          .querySelector('[aria-label^="Undo "]')!
+          .dispatchEvent(new window.MouseEvent('click', { bubbles: true }))
+      })
+      await settle()
+      await session().flush()
+      expect(session().actions).deep.equals(before)
+      expect(adoptions).equals(0)
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+    } finally {
+      ScoringFollow.prototype.adopt = adopt
       globalThis.WebSocket = originalSocket
       if (devices == null)
         delete (navigator as { mediaDevices?: unknown }).mediaDevices
