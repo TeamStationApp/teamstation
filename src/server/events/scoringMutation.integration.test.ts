@@ -26,7 +26,8 @@ import {
 } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { withNames } from '../../common/scoring/storedNames'
-import { storedScoringUpdates } from '../../common/scoring/updates'
+import { userIdOfGumbo } from '../../common/userId'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   addGame,
   addScorableTeams,
@@ -39,6 +40,7 @@ import { drain } from '../statsBuilder/builder'
 import { atBatOf } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
 import { gamePlaysDigest, postGamePlays, readPlays } from './postPlays'
+import { namedScoringUpdates } from './scoringUpdates'
 import { storedLineupsDigest } from './teamLineups'
 
 describe('scoring mutation ordering', function () {
@@ -834,7 +836,7 @@ describe('scoring mutation ordering', function () {
         currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
       })
       return {
-        scoringUpdates: storedScoringUpdates(game.scoring_mutation),
+        scoringUpdates: await namedScoringUpdates(db, game.scoring_mutation),
         plays: resolveNames
           ? plays.map(play =>
               withNames(play, id => context.setup.players[id]?.fullName)
@@ -2219,6 +2221,52 @@ describe('scoring mutation ordering', function () {
     )
   })
 
+  it('resolves renamed and merged update authors without persisting names', async () => {
+    const { open, load, gameId, hooks } = await sessions()
+    await insertFixtureUsers(db, [
+      {
+        id: 900001,
+        display_name: 'Mike Trout',
+        first_name: 'Mike',
+        last_name: 'Trout'
+      },
+      {
+        id: 900002,
+        display_name: 'Mookie Betts',
+        first_name: 'Mookie',
+        last_name: 'Betts'
+      }
+    ])
+    hooks.scoringUserId = userIdOfGumbo(900001)
+    const scorer = await open()
+    apply(scorer, { type: 'pitch', call: 'B' })
+    await scorer.flush()
+    expect((await load()).scoringUpdates![0].name).equals('Mike T')
+    await db
+      .updateTable('users')
+      .set({
+        first_name: 'Aaron',
+        last_name: 'Judge',
+        display_name: 'Aaron Judge'
+      })
+      .where('id', '=', hooks.scoringUserId)
+      .execute()
+    expect((await load()).scoringUpdates![0].name).equals('Aaron J')
+    await db
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(900002) })
+      .where('id', '=', hooks.scoringUserId)
+      .execute()
+    expect((await load()).scoringUpdates![0].name).equals('Mookie B')
+    const raw = await db
+      .selectFrom('games')
+      .select('scoring_mutation')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(JSON.stringify(raw.scoring_mutation)).not.matches(
+      /Mike|Trout|Aaron|Judge|Mookie|Betts|"name"/
+    )
+  })
   it('keeps accepted authors and Undo descriptions across retries, stale conflicts and reload', async () => {
     const { open, load, gameId, hooks, requests } = await sessions()
     const actors = await db.selectFrom('users').select('id').limit(2).execute()

@@ -6,12 +6,16 @@ import { storedRecordOf } from './gumbo'
 import { scoringFingerprintInput } from './scoringMutation'
 
 /** Recent accepted changes, independent of the surviving scoring timeline. */
-export const asScoringUpdate = asObject({
+const storedUpdateFields = {
   id: asString,
   sequence: asNumber,
   userId: asString,
-  name: asString,
   lines: asArray(asString)
+}
+const asStoredScoringUpdates = asArray(asObject(storedUpdateFields))
+export const asScoringUpdate = asObject({
+  ...storedUpdateFields,
+  name: asString
 })
 export type ScoringUpdate = ReturnType<typeof asScoringUpdate>
 export const asScoringUpdates = asArray(asScoringUpdate)
@@ -121,8 +125,10 @@ export function scoringUpdateLines(
 }
 
 /** Metadata is server-owned; never read this from an incoming scoring body. */
-export function storedScoringUpdates(mutation: unknown): ScoringUpdate[] {
+export function storedScoringUpdates(
+  mutation: unknown
+): Array<Omit<ScoringUpdate, 'name'>> {
   if (mutation == null || typeof mutation !== 'object') return []
   const updates = (mutation as { updates?: unknown }).updates
-  return updates == null ? [] : asScoringUpdates(updates)
+  return updates == null ? [] : asStoredScoringUpdates(updates)
 }
