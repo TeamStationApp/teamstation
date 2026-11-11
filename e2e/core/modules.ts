@@ -38,7 +38,7 @@ const RULES: Array<{ module: ModuleName; tokens: string[] }> = [
   { module: 'umpires', tokens: ['umpire'] },
   {
     module: 'schedule',
-    tokens: ['autoscheduler', 'scheduler', 'rsvp', 'season']
+    tokens: ['autoscheduler', 'scheduler', 'rsvp', 'season', 'league']
   },
   {
     module: 'scoring',
