@@ -94,6 +94,11 @@ export function playerFixtureEnv(cwd: string): Record<string, string> {
       ],
       { cwd, encoding: 'utf8', timeout: 30 * 60 * 1000 }
     )
+    // Kept whole beside the stack's logs: a result line holds only its end.
+    writeFileSync(
+      join(dir('_stack'), 'playerLayouts-fixture.log'),
+      `${made.stdout}\n${made.stderr}`
+    )
     if (made.status !== 0) {
       throw new Error(
         `playerLayouts fixture failed: ${(made.stderr !== '' ? made.stderr : made.stdout).slice(-2000)}`
