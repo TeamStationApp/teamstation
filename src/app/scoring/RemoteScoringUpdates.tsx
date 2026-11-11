@@ -3,7 +3,7 @@ import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { ScoringSession } from '../../common/scoring/session'
 import type { ScoringUpdate } from '../../common/scoring/updates'
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import type { ScreenRect } from '../field/catcherBounds'
 import { useTheme } from '../theme/ThemeContext'
 import { scoringPreferences } from './scoringPreferences'
@@ -133,7 +133,7 @@ export function RemoteScoringUpdates(
           <View
             style={{ transform: [{ rotate: collapsed ? '90deg' : '-90deg' }] }}
           >
-            <Icon
+            <ButtonIcon
               name="chevron_right"
               size={1.5}
               color={theme.scoringInstructionText}
@@ -154,7 +154,11 @@ export function RemoteScoringUpdates(
             justifyContent: 'center'
           }}
         >
-          <Icon name="close" size={1.5} color={theme.scoringInstructionText} />
+          <ButtonIcon
+            name="close"
+            size={1.5}
+            color={theme.scoringInstructionText}
+          />
         </Pressable>
       </View>
       {!collapsed && (

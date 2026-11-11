@@ -44,7 +44,7 @@ import {
   type Side
 } from '../../common/scoring/state'
 import { Button } from '../components/Button'
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { type SuccessNotice, SuccessToast } from '../components/SuccessToast'
 import { lstrings, sprintf } from '../locales/strings'
 import type { Route } from '../navigation/routes'
@@ -1022,7 +1022,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
           onPress={exit}
           style={{ marginLeft: -8 }}
         >
-          <Icon name="chevron_left" size={2.5} color={theme.primaryTextColor} />
+          <ButtonIcon
+            name="chevron_left"
+            size={2.5}
+            color={theme.primaryTextColor}
+          />
         </Pressable>
         <Text
           accessibilityRole="header"

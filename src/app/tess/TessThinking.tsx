@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { Icon } from '../components/Icon'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -48,13 +49,17 @@ export function TessThinking({
         {live ? (
           <ActivityIndicator size="small" color={theme.secondaryTextColor} />
         ) : (
-          <Icon name="auto_awesome" size={1} color={theme.secondaryTextColor} />
+          <ButtonIcon
+            name="auto_awesome"
+            size={1}
+            color={theme.secondaryTextColor}
+          />
         )}
         <Text numberOfLines={1} style={styles.title}>
           {title}
         </Text>
         <View style={open && styles.turned}>
-          <Icon
+          <ButtonIcon
             name="chevron_right"
             size={1}
             color={theme.secondaryTextColor}

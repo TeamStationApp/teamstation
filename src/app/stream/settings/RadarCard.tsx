@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Pressable, StyleSheet, Switch, Text, View } from 'react-native'
 
-import { Icon } from '../../components/Icon'
+import { ButtonIcon } from '../../components/ButtonIcon'
 import { lstrings } from '../../locales/strings'
 import {
   type PhoneStream,
@@ -194,7 +194,7 @@ export function RadarCard(props: RadarCardProps): React.ReactElement {
         onPress={pair}
       >
         <Text style={styles.pair}>{lstrings.stream_settings_pair_device}</Text>
-        <Icon name="chevron_right" size={1.1} color={SETTINGS.blue} />
+        <ButtonIcon name="chevron_right" size={1.1} color={SETTINGS.blue} />
       </Pressable>
     </SettingsCard>
   )

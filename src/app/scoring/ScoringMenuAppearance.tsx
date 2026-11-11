@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { scoringSurface } from '../theme/scoringSurface'
 import { useTheme } from '../theme/ThemeContext'
@@ -86,18 +87,20 @@ export function ScoringMenuLabel({
       }}
     >
       {chevron === 'left' && (
-        <Text
-          selectable={false}
-          style={{
-            color: active
-              ? theme.scoringSurface.chevronActive
-              : theme.scoringSurface.mutedText,
-            fontSize: 17,
-            lineHeight: 18
-          }}
-        >
-          ‹
-        </Text>
+        <ButtonIcon name="chevron_left">
+          <Text
+            selectable={false}
+            style={{
+              color: active
+                ? theme.scoringSurface.chevronActive
+                : theme.scoringSurface.mutedText,
+              fontSize: 17,
+              lineHeight: 18
+            }}
+          >
+            ‹
+          </Text>
+        </ButtonIcon>
       )}
       <Text
         testID="scoring-menu-label"
@@ -171,14 +174,16 @@ export function ScoringMenuLabel({
             }}
           />
         ) : decoration != null && 'icon' in decoration ? (
-          <ScoringMenuIcon
-            kind={decoration.icon}
-            color={
-              active
-                ? theme.scoringSurface.badges.green.text
-                : theme.scoringSurface.mutedText
-            }
-          />
+          <ButtonIcon>
+            <ScoringMenuIcon
+              kind={decoration.icon}
+              color={
+                active
+                  ? theme.scoringSurface.badges.green.text
+                  : theme.scoringSurface.mutedText
+              }
+            />
+          </ButtonIcon>
         ) : decoration != null && 'badge' in decoration && colors != null ? (
           <View
             style={{
@@ -205,17 +210,19 @@ export function ScoringMenuLabel({
           </View>
         ) : null}
         {chevron === 'right' && (
-          <Text
-            selectable={false}
-            style={{
-              color: active
-                ? theme.scoringSurface.chevronActive
-                : theme.scoringSurface.mutedText,
-              fontSize: 17
-            }}
-          >
-            ›
-          </Text>
+          <ButtonIcon name="chevron_right">
+            <Text
+              selectable={false}
+              style={{
+                color: active
+                  ? theme.scoringSurface.chevronActive
+                  : theme.scoringSurface.mutedText,
+                fontSize: 17
+              }}
+            >
+              ›
+            </Text>
+          </ButtonIcon>
         )}
       </View>
     </View>
