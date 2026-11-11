@@ -9,9 +9,14 @@
  */
 import type { Page } from 'puppeteer'
 
-import { BASES } from '../../src/app/field/fieldModel'
+import { BASES, createPlayers } from '../../src/app/field/fieldModel'
 
 type Point = [number, number]
+
+/** Where each position stands before a play, from the field's own model. */
+const HOME_SPOTS = new Map(
+  createPlayers().map(player => [player.id, player.position])
+)
 
 /** What the field needs of a browser: a probe, a tap and a drag. */
 export interface FieldDriver {
@@ -118,9 +123,6 @@ const THREE_STATE = `
   }
 `
 
-/** The pitcher's mound, where the field model stands him. */
-const MOUND = { x: 0, z: -18.44 }
-
 /** Waits until no player on the field is moving and no play is being shown. */
 export async function atRest(field: FieldDriver): Promise<void> {
   await until(
@@ -135,8 +137,9 @@ export async function atRest(field: FieldDriver): Promise<void> {
  * The centre of the nameplate of whoever plays `position` (P … RF, or R1–R3
  * for a runner at rest), once it stays put: the
  * view moves after an outcome is chosen, and a press at a moving plate
- * misses it. The pitcher wears no plate (the scoreboard names him), so he is
- * found in the scene, on a page with the scene probe.
+ * misses it. The pitcher wears no plate (the scoreboard names him), nor does
+ * a nameless stand-in: they are found in the scene, on a page with the scene
+ * probe.
  */
 export async function playerAt(
   field: FieldDriver,
@@ -145,10 +148,14 @@ export async function playerAt(
   const selector = JSON.stringify(
     `[data-nameplate][data-position="${position}"]`
   )
+  // Without a plate (the pitcher, or a nameless stand-in at an empty
+  // position), the fielder nearest the position's usual spot in the scene.
+  const spot = HOME_SPOTS.get(position)
+  const plate = `(() => { const n = document.querySelector(${selector}); if (n == null || getComputedStyle(n).visibility !== 'visible') return null; const r = n.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
   const read =
-    position === 'P'
-      ? `(() => { ${THREE_STATE}; if (three == null) throw new Error('The pitcher has no nameplate: install the scene probe'); let best; three.scene.traverse(o => { if (!o.name.startsWith('player-defense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${MOUND.x}) ** 2 + (at.z - ${MOUND.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, 1, best.at.z) })()`
-      : `(() => { const n = document.querySelector(${selector}); if (n == null || getComputedStyle(n).visibility !== 'visible') return null; const r = n.getBoundingClientRect(); return [r.x + r.width / 2, r.y + r.height / 2] })()`
+    spot == null || position.startsWith('R')
+      ? plate
+      : `(${plate} || (() => { ${THREE_STATE}; if (three == null) return null; let best; three.scene.traverse(o => { if (!o.name.startsWith('player-') || o.name.startsWith('player-offense-')) return; const at = o.getWorldPosition(three.camera.position.clone()); const d = (at.x - ${spot.x}) ** 2 + (at.z - ${spot.z}) ** 2; if (best == null || d < best.d) best = { d, at } }); return best == null ? null : project(best.at.x, 1, best.at.z) })())`
   // A press while players still run to their places is lost to the motion.
   await atRest(field)
   try {
@@ -242,7 +249,7 @@ export async function installSceneProbe(page: Page): Promise<void> {
 }
 
 /** Where ground point (x, z), `y` up, draws on the page, through the live camera. */
-async function groundPoint(
+export async function groundPoint(
   page: Page,
   x: number,
   z: number,
@@ -308,4 +315,142 @@ export async function dropRunner(
   await page.mouse.up()
   // The screen asks why he moved once he has run there.
   await atRest(puppeteerDriver(page))
+}
+
+/**
+ * The players the field offers to be pressed, in its own order: what a
+ * scorer may pick at this step (`interaction.selectableIds`).
+ */
+export async function offeredIds(field: FieldDriver): Promise<string[]> {
+  return await field.evaluate<string[]>(`(() => {
+    const host = document.querySelector('[aria-label="Baseball field"]')
+    const key = Object.keys(host).find(name => name.startsWith('__reactFiber$'))
+    for (let fiber = host[key]; fiber != null; fiber = fiber.return) {
+      const props = fiber.memoizedProps
+      if (props != null && props.interaction != null) return props.interaction.selectableIds
+    }
+    return []
+  })()`)
+}
+
+/**
+ * Where the player with field id `id` draws: his nameplate, or, for the
+ * pitcher and runners, who wear none, his figure through the scene probe.
+ */
+export async function pointOf(field: FieldDriver, id: string): Promise<Point> {
+  const at = await field.evaluate<Point | null>(`(() => {
+    const plate = document.querySelector(${JSON.stringify(`[data-nameplate="${id}"]`)})
+    if (plate != null && getComputedStyle(plate).visibility === 'visible') {
+      const r = plate.getBoundingClientRect()
+      return [r.x + r.width / 2, r.y + r.height / 2]
+    }
+    ${THREE_STATE}
+    if (three == null) return null
+    const figure = three.scene.getObjectByName(${JSON.stringify(`player-${id}`)})
+    if (figure == null) return null
+    const world = figure.getWorldPosition(three.camera.position.clone())
+    return project(world.x, 1, world.z)
+  })()`)
+  if (at == null) throw new Error(`Player ${id} is not on the field`)
+  return at
+}
+
+/**
+ * Drags the `index`-th player the field offers `up` pixels up the screen
+ * and `right` across: where he took the ball, or the relay's next defender.
+ */
+export async function placeOffered(
+  field: FieldDriver,
+  index = 0,
+  up = 12,
+  right = 0
+): Promise<void> {
+  await atRest(field)
+  const id = (await offeredIds(field))[index]
+  if (id == null) throw new Error(`The field offers no player ${index}`)
+  const from = await pointOf(field, id)
+  await field.drag(from, [from[0] + right, from[1] - up])
+}
+
+/** Taps the `index`-th player the field offers, where he stands. */
+export async function tapOffered(field: FieldDriver, index = 0): Promise<void> {
+  await atRest(field)
+  const id = (await offeredIds(field))[index]
+  if (id == null) throw new Error(`The field offers no player ${index}`)
+  await field.tap(await pointOf(field, id))
+}
+
+/**
+ * Drags the last runner the field offers towards the next base, or holds
+ * him on his own, and drops him on Safe or Out. The page needs the scene
+ * probe.
+ */
+export async function dropOfferedRunner(
+  page: Page,
+  decision: 'Safe' | 'Out',
+  advance = false
+): Promise<void> {
+  const field = puppeteerDriver(page)
+  await atRest(field)
+  const id = (await offeredIds(field)).at(-1)
+  if (id?.startsWith('offense-') !== true)
+    throw new Error('The field offers no runner')
+  const base = await page.evaluate(`(() => {
+    ${THREE_STATE}
+    const figure = three.scene.getObjectByName(${JSON.stringify(`player-${id}`)})
+    const at = figure.getWorldPosition(three.camera.position.clone())
+    const bases = ${JSON.stringify(BASES)}
+    let best = 0
+    bases.forEach((b, i) => { if ((b.x - at.x) ** 2 + (b.z - at.z) ** 2 < (bases[best].x - at.x) ** 2 + (bases[best].z - at.z) ** 2) best = i })
+    return best
+  })()`)
+  await dropRunner(page, Number(base), decision, advance ? 'next' : 'stay')
+}
+
+/**
+ * Drags where the ball was hit, for a home run, from the middle of the field
+ * to (`x`, `y`): fractions of the field's width and height from its top
+ * left. A press let go without moving places nothing.
+ */
+export async function aimLanding(
+  field: FieldDriver,
+  x: number,
+  y: number
+): Promise<void> {
+  await until(
+    field,
+    `document.querySelector('[aria-label^="Drag where the ball was hit"]') != null`,
+    'the landing prompt'
+  )
+  const rect = await field.evaluate<[number, number, number, number]>(
+    `(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return [r.x, r.y, r.width, r.height] })()`
+  )
+  await field.drag(
+    [rect[0] + rect[2] / 2, rect[1] + rect[3] / 2],
+    [rect[0] + rect[2] * x, rect[1] + rect[3] * y]
+  )
+}
+
+/**
+ * Drags where the ball was hit, for a home run, onto ground point (`x`, `z`)
+ * through the live camera. The page needs the scene probe.
+ */
+export async function aimLandingAt(
+  page: Page,
+  x: number,
+  z: number
+): Promise<void> {
+  const field = puppeteerDriver(page)
+  await until(
+    field,
+    `document.querySelector('[aria-label^="Drag where the ball was hit"]') != null`,
+    'the landing prompt'
+  )
+  const rect = await field.evaluate<[number, number, number, number]>(
+    `(() => { const r = document.querySelector('canvas').getBoundingClientRect(); return [r.x, r.y, r.width, r.height] })()`
+  )
+  await field.drag(
+    [rect[0] + rect[2] / 2, rect[1] + rect[3] / 2],
+    await groundPoint(page, x, z)
+  )
 }
