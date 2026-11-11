@@ -17,7 +17,7 @@ import type { ChatLink } from '../chat/ChatLinks'
 import { Button, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
-import { documentKeyOf } from '../sync/documentKeys'
+import { StoredFirst } from '../sync/storedFirst'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GameListOpenOptions } from './gameListOptions'
 import { GroupGameSchedule } from './GroupGameSchedule'
@@ -148,24 +148,27 @@ function GroupContent({
     // What the phone stored for this page paints at once while nothing is
     // shown: with no signal the read answers the same, but only once its
     // deadline has passed.
-    const key = documentKeyOf(groupPath({ kind, id }))
-    let answered = false
-    if (key != null)
-      client.cached(key, asGroupDetail).then(
-        stored => {
-          if (stored == null || answered || !current()) return
-          setDetail(shown => shown ?? stored)
+    const stored = new StoredFirst()
+    stored
+      .paint(
+        client,
+        groupPath({ kind, id }),
+        asGroupDetail,
+        value => {
+          setDetail(shown => shown ?? value)
         },
-        () => undefined
+        current
       )
+      .catch(() => undefined)
     try {
       const found = await client.group({ kind, id })
-      answered = true
+      stored.answered()
       if (!current()) return
       setDetail(found)
       setError('')
     } catch (error) {
-      answered = true
+      // The server said why: that is shown, not the stored copy.
+      stored.answered()
       if (!current()) return
       setDetail(undefined)
       setError(

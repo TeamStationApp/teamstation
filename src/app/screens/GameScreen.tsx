@@ -119,7 +119,7 @@ import type { GameRecording } from '../stream/gameRecording'
 import { playById } from '../stream/playById'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
-import { gameKey } from '../sync/documentKeys'
+import { StoredFirst } from '../sync/storedFirst'
 import { usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
@@ -499,15 +499,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     },
     [gameId]
   )
-  /** Reads of the game that have answered, the stored paint's to beat. */
-  const gameAnswers = useRef(0)
+  /**
+   * The game's stored paint, which every answer of the game beats: a read's,
+   * and a read the cameras or a video's play make of it.
+   */
+  const storedGame = useRef(new StoredFirst())
   const refreshGame = useCallback(async (): Promise<void> => {
     if (live.current && currentGameId.current === gameId)
       setLocalTimezone(viewerTimezone())
     const request = ++gameRequest.current
     try {
       const found = await client.game(gameId)
-      gameAnswers.current++
+      storedGame.current.answered()
       showGame(found, request)
     } catch (error) {
       if (
@@ -525,10 +528,14 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * until then. Only a read that has answered since keeps it off.
    */
   const paintGame = useCallback(async (): Promise<void> => {
-    const answers = gameAnswers.current
-    const stored = await client.cached(gameKey(gameId), asGameDetail)
-    if (stored != null && answers === gameAnswers.current)
-      showGame(stored, gameRequest.current)
+    await storedGame.current.paint(
+      client,
+      `/games/${encodeURIComponent(gameId)}`,
+      asGameDetail,
+      stored => {
+        showGame(stored, gameRequest.current)
+      }
+    )
   }, [client, gameId, showGame])
   /**
    * `refreshGame` once the event's scope allows: after its acknowledgement
@@ -937,6 +944,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       .game(forGame)
       .then(found => {
         if (gameIdRef.current !== forGame) return
+        storedGame.current.answered()
         setGame(current =>
           current == null || sameVideos(current.videos, found.videos)
             ? current
@@ -2048,6 +2056,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       reread: async () => {
         const found = await client.game(forGame)
         if (gameIdRef.current !== forGame) return undefined
+        storedGame.current.answered()
         setGame(current =>
           current == null || sameVideos(current.videos, found.videos)
             ? current

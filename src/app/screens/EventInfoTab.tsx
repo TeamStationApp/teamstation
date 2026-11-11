@@ -29,7 +29,7 @@ import {
   openEventDirections,
   openPointDirections
 } from '../platform/eventDirections'
-import { documentKeyOf } from '../sync/documentKeys'
+import { StoredFirst } from '../sync/storedFirst'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { GameUmpires } from '../umpires/GameUmpires'
 import { attendanceSections, attendanceSubtitle } from './eventAttendance'
@@ -98,20 +98,23 @@ export function EventInfoTab({
     // deadline has passed. An answer already shown for it is not painted
     // over.
     const path = eventInfoPath(eventId, selectedTeam)
-    const key = documentKeyOf(path)
-    let answered = false
-    if (key != null && shownRead.current !== path)
-      client.cached(key, asEventInfo).then(
-        stored => {
-          if (stored == null || answered || !current()) return
-          shownRead.current = path
-          setInfo(stored)
-        },
-        () => undefined
-      )
+    const stored = new StoredFirst()
+    if (shownRead.current !== path)
+      stored
+        .paint(
+          client,
+          path,
+          asEventInfo,
+          value => {
+            shownRead.current = path
+            setInfo(value)
+          },
+          current
+        )
+        .catch(() => undefined)
     try {
       const found = await client.eventInfo(eventId, selectedTeam)
-      answered = true
+      stored.answered()
       if (current()) {
         shownRead.current = path
         setInfo(found)

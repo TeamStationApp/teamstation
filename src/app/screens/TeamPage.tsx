@@ -11,7 +11,7 @@ import { asGroupDetail, type GroupDetail } from '../../common/publicGroups'
 import { Button, Screen } from '../components'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
 import { useLatestRequest } from '../hooks/useLatestRequest'
-import { documentKeyOf } from '../sync/documentKeys'
+import { StoredFirst } from '../sync/storedFirst'
 import { useTheme } from '../theme/ThemeContext'
 import { TeamScreen, type TeamScreenProps } from './TeamScreen'
 
@@ -63,30 +63,31 @@ export function TeamPage({
     // What the phone stored for the team paints at once while nothing is
     // shown, and the team's own screen reads its lists under it: with no
     // signal the read answers the same, but only once its deadline passed.
-    const key = documentKeyOf(groupPath({ kind: 'team', id }))
-    let answered = false
+    const stored = new StoredFirst()
     let painted = false
-    if (key != null)
-      client.cached(key, asGroupDetail).then(
-        stored => {
-          if (stored == null || answered || !current()) return
-          if (shown.current != null) return
+    stored
+      .paint(
+        client,
+        groupPath({ kind: 'team', id }),
+        asGroupDetail,
+        value => {
           painted = true
-          setResult({ id, client, detail: stored, error: '' })
-          loaded.current?.({ id: stored.group.id, name: stored.group.name })
+          setResult({ id, client, detail: value, error: '' })
+          loaded.current?.({ id: value.group.id, name: value.group.name })
         },
-        () => undefined
+        () => current() && shown.current == null
       )
+      .catch(() => undefined)
     try {
       const found = await client.group({ kind: 'team', id })
-      answered = true
+      stored.answered()
       if (!current()) return
       setResult({ id, client, detail: found, error: '' })
       // The screen the stored team opened is already reading its lists.
       if (!painted) setRefreshRevision(value => value + 1)
       loaded.current?.({ id: found.group.id, name: found.group.name })
     } catch (error) {
-      answered = true
+      stored.answered()
       if (!current()) return
       setResult({
         id,
