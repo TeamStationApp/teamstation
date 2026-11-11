@@ -593,26 +593,31 @@ describe('a scoring session', function () {
     expect(store.current!.playEvents).has.length(2)
     expect(session.pending).equals(0)
   })
-  it('keeps an ambiguous scoring request unchanged when a tag acknowledgment arrives', async () => {
-    const { session, store } = await open()
-    session.apply(ball)
-    await session.flush()
-    const target = session.eventTargets[0]
-    session.apply(strike)
-    store.fail = new HttpError('offline', 'Reply unavailable')
-    await session.flush()
-    const attempted = store.posts.at(-1)
-    expect(session.setEventTag(target.id, 'great pitch')).equals(true)
-    store.fail = null
-    await session.flush()
-    expect(store.posts).length(3)
-    expect(store.posts.at(-1)).deep.equals(attempted)
-    expect(session.actions).deep.equals([ball, strike])
-    expect(session.eventTargets[0].tag).equals('great pitch')
-    expect(session.pending).equals(0)
-    expect(session.readOnly).equals(false)
-    session.close()
-  })
+  for (const failure of [
+    new HttpError('offline', 'Reply unavailable'),
+    new TypeError('Invalid successful reply'),
+    new HttpError('unavailable', 'Reply unavailable')
+  ])
+    it(`keeps an ambiguous scoring request unchanged when a tag acknowledgment arrives (${failure.name}: ${failure.message})`, async () => {
+      const { session, store } = await open()
+      session.apply(ball)
+      await session.flush()
+      const target = session.eventTargets[0]
+      session.apply(strike)
+      store.fail = failure
+      await session.flush()
+      const attempted = store.posts.at(-1)
+      expect(session.setEventTag(target.id, 'great pitch')).equals(true)
+      store.fail = null
+      await session.flush()
+      expect(store.posts).length(3)
+      expect(store.posts.at(-1)).deep.equals(attempted)
+      expect(session.actions).deep.equals([ball, strike])
+      expect(session.eventTargets[0].tag).equals('great pitch')
+      expect(session.pending).equals(0)
+      expect(session.readOnly).equals(false)
+      session.close()
+    })
 
   it('resolves an ambiguous save before an Undo back to its acknowledged picture', async () => {
     const { session, store } = await open()

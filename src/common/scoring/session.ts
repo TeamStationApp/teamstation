@@ -2594,9 +2594,17 @@ export class ScoringSession {
       } catch (error) {
         const code = error instanceof HttpError ? error.code : null
         if (
-          !['offline', 'rateLimited', 'internal', 'unauthorized'].includes(
-            code ?? ''
-          )
+          [
+            'badRequest',
+            'forbidden',
+            'notFound',
+            'conflict',
+            'gone',
+            'tooLarge',
+            'unsupportedMedia',
+            'membersOnly',
+            'invalidLocation'
+          ].includes(code ?? '')
         )
           this.attemptedSave = undefined
         // The plays this session holds were reset: its changes belong to
@@ -2718,9 +2726,11 @@ export class ScoringSession {
     // Signed out, the scorer signs in again and the waiting changes go then.
     // Lineups that keep changing under each read are tried again later.
     if (
+      code == null ||
       code === 'offline' ||
       code === 'rateLimited' ||
       code === 'internal' ||
+      code === 'unavailable' ||
       code === 'unauthorized' ||
       stale(error)
     ) {
