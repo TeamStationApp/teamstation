@@ -36,6 +36,8 @@ export const STACK_METRO_PORT = 8081
 const FFMPEG_FULL = '/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg'
 export const STACK_API = `http://127.0.0.1:${STACK_API_PORT}/api/v1`
 export const STACK_ORIGIN = `http://127.0.0.1:${STACK_PROXY_PORT}`
+/** The media origins the stack's web builds allow: any loopback port. */
+export const STACK_MEDIA_ORIGINS = 'http://127.0.0.1:* http://localhost:*'
 
 export interface LegacyStack {
   /** Variables every legacy script sees while the stack is up. */
@@ -47,6 +49,11 @@ export interface LegacyStack {
   reseed: () => void
   /** Restarts the API, with `speech` left out of its config when `speech` is false. */
   restartApi: (options?: { speech?: boolean }) => Promise<void>
+  /**
+   * Starts the stack's own API again when a script stopped it and left a
+   * server of its own on the API port (scoreboardServer's restart).
+   */
+  ensureApi: () => Promise<void>
   stop: () => Promise<void>
 }
 
@@ -86,6 +93,63 @@ async function waitFor(url: string, timeoutMs: number): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 500))
   }
   throw new Error(`${url} did not answer: ${last}`)
+}
+
+/**
+ * Refuses ports something already answers on. A server left from an earlier
+ * run would otherwise answer the stack's own readiness checks, and serve the
+ * scripts in its place.
+ */
+export async function refuseTakenPorts(ports: number[]): Promise<void> {
+  const taken: number[] = []
+  for (const port of ports) {
+    const answers = await new Promise<boolean>(resolve => {
+      const socket = connect(port, '127.0.0.1', () => {
+        socket.destroy()
+        resolve(true)
+      })
+      socket.on('error', () => {
+        resolve(false)
+      })
+    })
+    if (answers) taken.push(port)
+  }
+  if (taken.length > 0)
+    throw new Error(
+      `the stack's ports are taken: ${taken.join(', ')}; stop what holds them`
+    )
+}
+
+/** Stops, by PID, whatever listens on `port`, and waits for the port to free. */
+async function stopListeners(port: number): Promise<void> {
+  const found = spawnSync(
+    '/usr/sbin/lsof',
+    ['-t', `-iTCP:${port}`, '-sTCP:LISTEN'],
+    { encoding: 'utf8' }
+  )
+  const pids = found.stdout.split('\n').filter(line => /^\d+$/.test(line))
+  for (const pid of pids) {
+    try {
+      process.kill(Number(pid), 'SIGTERM')
+    } catch {}
+  }
+  const until = Date.now() + 20_000
+  while (Date.now() < until) {
+    const left = await new Promise<boolean>(resolve => {
+      const socket = connect(port, '127.0.0.1', () => {
+        socket.destroy()
+        resolve(true)
+      })
+      socket.on('error', () => {
+        resolve(false)
+      })
+    })
+    if (!left) return
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  throw new Error(
+    `port ${port} is still held after stopping ${pids.join(', ')}`
+  )
 }
 
 async function stopChild(child: ChildProcess | undefined): Promise<void> {
@@ -181,6 +245,12 @@ export async function startLegacyStack(
   cwd: string,
   artifacts: string
 ): Promise<LegacyStack> {
+  await refuseTakenPorts([
+    STACK_API_PORT,
+    STACK_WEB_PORT,
+    STACK_PROXY_PORT,
+    STACK_SPACE_PORT
+  ])
   const scratch = join(tmpdir(), 'teamstation-e2eSuite-stack')
   rmSync(scratch, { recursive: true, force: true })
   mkdirSync(scratch, { recursive: true, mode: 0o700 })
@@ -227,6 +297,8 @@ export async function startLegacyStack(
       uploadsDir: join(scratch, 'uploads'),
       space,
       serveMediaLocally: true,
+      // Chat history recovery and fresh keys: the chat scripts exercise both.
+      chatHistoryRecoveryEnabled: true,
       // Fixtures burn a clock into sample video, which needs drawtext.
       ...(existsSync(FFMPEG_FULL) ? { ffmpegPath: FFMPEG_FULL } : {}),
       redis: { url: STACK_SERVERS.redisUrl, prefix: '', caFile: '' },
@@ -277,10 +349,11 @@ export async function startLegacyStack(
     }
 
     const { startFakeSpace } = await import('../../src/server/dev/fakeSpace')
+    const spaceStore = join(scratch, 'store')
     store = (
       await startFakeSpace({
         space,
-        dir: join(scratch, 'store'),
+        dir: spaceStore,
         host: '127.0.0.1',
         port: STACK_SPACE_PORT
       })
@@ -355,7 +428,7 @@ export async function startLegacyStack(
         TS_SERVE_PORT: String(STACK_WEB_PORT),
         TS_WEB_OUT_DIR: webOut,
         TS_API_BASE_URL: '/api/v1',
-        TS_MEDIA_ORIGINS: 'http://127.0.0.1:* http://localhost:*'
+        TS_MEDIA_ORIGINS: STACK_MEDIA_ORIGINS
       }
     })
     children.push(web)
@@ -408,6 +481,10 @@ export async function startLegacyStack(
       TS_DATABASE: STACK_DATABASE_URL,
       TS_E2E_SERVER_LOG: apiLog,
       TS_E2E_WEB: STACK_ORIGIN,
+      // The stand-in Space's files, for scripts that read stored objects.
+      TS_FAKE_SPACE_DIR: spaceStore,
+      // What the web builds were made with, for scripts that check their policy.
+      TS_MEDIA_ORIGINS: STACK_MEDIA_ORIGINS,
       TS_STACK_LAN_ORIGIN: lanOrigin,
       TS_STREAM_API: STACK_API,
       TS_STREAM_SERVER_LOG: apiLog,
@@ -434,6 +511,13 @@ export async function startLegacyStack(
         await stopChild(ingest)
         await stopChild(api)
         writePrivate(configFile, config(options?.speech ?? true))
+        await startApi()
+      },
+      ensureApi: async () => {
+        if (api != null && api.exitCode == null && api.signalCode == null)
+          return
+        await stopChild(ingest)
+        await stopListeners(STACK_API_PORT)
         await startApi()
       },
       stop: async () => {

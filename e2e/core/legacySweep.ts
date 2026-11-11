@@ -25,6 +25,7 @@ import {
 } from './legacyRecipes'
 import {
   type LegacyStack,
+  STACK_MEDIA_ORIGINS,
   stackArtifacts,
   startLegacyStack
 } from './legacyStack'
@@ -221,7 +222,7 @@ async function main(): Promise<void> {
     env: {
       ...process.env,
       TS_API_BASE_URL: '/api/v1',
-      TS_MEDIA_ORIGINS: 'http://127.0.0.1:* http://localhost:*'
+      TS_MEDIA_ORIGINS: STACK_MEDIA_ORIGINS
     }
   })
   if (built.status !== 0) throw new Error(`web build failed: ${built.stderr}`)
@@ -313,6 +314,7 @@ async function main(): Promise<void> {
         for (const invocation of invocations) {
           runs.push(await run(file, invocation))
         }
+        await stack.ensureApi()
         const failed = runs.filter(r => r.status === 'failed')
         const pending = runs.filter(r => r.status === 'pending')
         const blocked = runs.filter(r => r.status === 'blocked')
