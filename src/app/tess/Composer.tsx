@@ -20,7 +20,7 @@ import {
 
 import { TESS_MAX_ATTACHMENTS } from '../../common/api'
 import { isFinePointer } from '../chat/chatWebInteractions'
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -480,7 +480,11 @@ export function Composer({
                   )
                 }}
               >
-                <Icon name="close" size={1} color={theme.secondaryTextColor} />
+                <ButtonIcon
+                  name="close"
+                  size={1}
+                  color={theme.secondaryTextColor}
+                />
               </Pressable>
             </AttachmentChip>
           ))}
@@ -507,7 +511,7 @@ export function Composer({
           hitSlop={PLUS_SLOP}
           style={({ pressed }) => [styles.plus, pressed && styles.pressed]}
         >
-          <Icon name="add" size={1.5} color={theme.secondaryTextColor} />
+          <ButtonIcon name="add" size={1.5} color={theme.secondaryTextColor} />
         </Pressable>
         <View style={styles.fieldBox}>
           <TextInput
@@ -569,7 +573,7 @@ export function Composer({
               pressed && styles.pressed
             ]}
           >
-            <Icon name="stop" size={1.25} color={theme.buttonTextColor} />
+            <ButtonIcon name="stop" size={1.25} color={theme.buttonTextColor} />
           </Pressable>
         ) : (
           <Pressable
@@ -585,7 +589,7 @@ export function Composer({
               pressed && styles.pressed
             ]}
           >
-            <Icon name="send" size={1.25} color={theme.buttonTextColor} />
+            <ButtonIcon name="send" size={1.25} color={theme.buttonTextColor} />
           </Pressable>
         )}
         {mic}

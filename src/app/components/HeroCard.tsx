@@ -2,9 +2,9 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 import { Card } from './Card'
 import { Emblem } from './Emblem'
-import { Icon } from './Icon'
 import { initialsOf } from './initials'
 import { TeamEmblem } from './TeamEmblem'
 
@@ -53,7 +53,7 @@ export function HeroCard({
         >
           {emblem}
           <View style={styles.pencil}>
-            <Icon name="edit" size={1} />
+            <ButtonIcon name="edit" size={1} />
           </View>
         </Pressable>
       )}

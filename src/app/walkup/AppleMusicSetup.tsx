@@ -10,6 +10,7 @@ import {
   View
 } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
 import { Icon } from '../components/Icon'
 import { lstrings } from '../locales/strings'
@@ -100,7 +101,11 @@ export function AppleMusicSetup(
             style={styles.closeTouch}
           >
             <GlassView dark radius={tsDark.rem(1.375)} style={styles.close}>
-              <Icon name="close" size={1.25} color={tsDark.primaryTextColor} />
+              <ButtonIcon
+                name="close"
+                size={1.25}
+                color={tsDark.primaryTextColor}
+              />
             </GlassView>
           </Pressable>
         </View>
@@ -181,7 +186,7 @@ export function AppleMusicSetup(
                 }}
                 style={styles.back}
               >
-                <Icon
+                <ButtonIcon
                   name="chevron_left"
                   size={1.25}
                   color={tsDark.primaryTextColor}
@@ -243,7 +248,7 @@ function DarkButton(props: {
     >
       <Text style={styles.buttonLabel}>{label}</Text>
       {trailing != null && (
-        <Icon name={trailing} size={1.1} color={tsDark.buttonTextColor} />
+        <ButtonIcon name={trailing} size={1.1} color={tsDark.buttonTextColor} />
       )}
     </Pressable>
   )
