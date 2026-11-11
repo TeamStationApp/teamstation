@@ -368,9 +368,17 @@ describe('override settings pinch-hit readiness', function () {
 describe('override settings runner corrections', function () {
   it('stages adding, moving and clearing a runner without changing the live game', async function () {
     const state = stateOf()
-    const name = state.session.gameData.players[2].fullName
+    const player = state.session.gameData.players[2]
+    player.jersey = '0'
+    const name = `${player.fullName} #0`
+    const unnumbered = state.session.gameData.players[3]
+    unnumbered.jersey = ''
     await mount(state)
     await tap('First base')
+    expect(node(`Choose First base ${name}`).textContent).equals(name)
+    expect(node(`Choose First base ${unnumbered.fullName}`).textContent).equals(
+      unnumbered.fullName
+    )
     await tap(`Choose First base ${name}`)
     await tap('Second base')
     await tap(`Choose Second base ${name}`)

@@ -262,7 +262,7 @@ async function main(): Promise<void> {
     await capture('inline-runners')
     await tap('Second base')
     await capture('runner-correction')
-    await tap('Choose Second base Mike Trout')
+    await tap('Choose Second base Mike Trout #2')
     await tap('Apply Override')
     const corrected = await saved(state => baseIds(state)[1] === 201)
     assert.equal(

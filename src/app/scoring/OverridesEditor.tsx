@@ -257,8 +257,12 @@ export function OverridesEditor({
             >
               <ListCard>
                 {[null, ...team.players].map(id => {
+                  const player =
+                    id == null ? null : session.gameData.players[id]
                   const label =
-                    id == null ? 'Empty' : session.gameData.players[id].fullName
+                    player == null
+                      ? 'Empty'
+                      : `${player.fullName}${player.jersey === '' ? '' : ` #${player.jersey}`}`
                   const disabled =
                     id != null &&
                     (id === draft.batter || id === draft.pinchHitter)

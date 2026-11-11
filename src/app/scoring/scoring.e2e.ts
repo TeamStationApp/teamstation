@@ -2261,7 +2261,7 @@ describe('scoring browser', function () {
       expect(Math.abs(after - before)).lessThan(1)
       expect(after).lessThan(667)
       await tapSettled(page, 'Third base')
-      await tapSettled(page, 'Choose Third base Player 2')
+      await tapSettled(page, 'Choose Third base Player 2 #2')
       expect(
         await page.$eval('[aria-label="Third base"]', n => n.textContent)
       ).includes('Player 2')
