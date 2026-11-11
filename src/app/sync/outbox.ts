@@ -7,12 +7,13 @@ import {
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { swappedDocuments } from '../../common/scoring/swapDocuments'
 import { userIdOfGumbo } from '../../common/userId'
-import type {
-  CacheTransaction,
-  DocumentStore,
-  OutboxRow,
-  OutboxState,
-  StoredDocument
+import {
+  type CacheTransaction,
+  type DocumentStore,
+  type OutboxRow,
+  type OutboxState,
+  serverBodyOf,
+  type StoredDocument
 } from './cacheStore'
 import {
   candidatesKey,
@@ -1792,8 +1793,8 @@ export class Outbox {
     const { effect, ...rest } = sent
     if (effect !== 'reset') return rest
     const serverOf = async (key: string): Promise<Json> => {
-      const held = await tx.read(key)
-      return held?.serverBody == null ? {} : parsed(held.serverBody)
+      const held = serverBodyOf(await tx.read(key))
+      return held == null ? {} : parsed(held)
     }
     const events = await serverOf(eventsKey(call.gameId))
     const game = await serverOf(gameKey(call.gameId))

@@ -194,6 +194,8 @@ describe('the phone outbox', function () {
     clock: { now: number }
     rows: () => Array<Record<string, unknown>>
     document: (key: string) => Record<string, unknown> | undefined
+    /** Runs SQL on the file, as an earlier build would have left it. */
+    sql: (statement: string) => void
     summaries: OutboxSummary[]
   } {
     const sent: Sent[] = []
@@ -261,6 +263,9 @@ describe('the phone outbox', function () {
       rows: () => db().prepare('SELECT * FROM outbox ORDER BY seq').all(),
       document: key =>
         db().prepare('SELECT * FROM documents WHERE key = ?').get(key),
+      sql: statement => {
+        db().exec(statement)
+      },
       summaries
     }
   }
@@ -4033,6 +4038,59 @@ describe('the phone outbox', function () {
         generation: 1
       })
       expect(sentSwap.key).equals(undefined)
+    })
+
+    it('sends a reset with the digest and generation of documents an earlier build stored, with no server copy column', async function () {
+      const g = gameServer()
+      const p = phone(g.handler)
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      // Stored before the server_body column: the upgrade left it NULL.
+      p.sql('UPDATE documents SET server_body = NULL')
+      expect(p.document(eventsKey('g1'))!.server_body).equals(null)
+      g.online.value = false
+      await p.client.queueSwap('g1', 'reset')
+      g.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      expect(sentSwap.body).deep.equals({
+        homeTeamId: 'tem_home',
+        awayTeamId: 'tem_away',
+        playsDigest: 'plays-1',
+        generation: 1
+      })
+      expect(p.rows()).deep.equals([])
+    })
+
+    it('sends a reset the file cannot queue with the digest and generation an earlier build stored', async function () {
+      const g = gameServer()
+      let broken = false
+      const p = phone(g.handler, store => ({
+        ...store,
+        atomically: async work => {
+          if (broken) throw new Error('database is locked')
+          return await store.atomically(work)
+        }
+      }))
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      p.sql('UPDATE documents SET server_body = NULL')
+      broken = true
+      await p.client.queueSwap('g1', 'reset')
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      expect(sentSwap.body).deep.include({
+        playsDigest: 'plays-1',
+        generation: 1
+      })
     })
 
     it('prepares a body it sends without the file as the queue would', function () {

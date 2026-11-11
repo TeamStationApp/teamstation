@@ -28,6 +28,7 @@ import {
   type DocumentStore,
   type SchedulePage,
   schedulePageOf,
+  serverBodyOf,
   type ServerDocument,
   type StoredDocument
 } from './cacheStore'
@@ -334,7 +335,7 @@ export class CachingClient extends TeamStationClient {
     gameId: string
   ): Promise<{ playsDigest?: string; generation?: number }> {
     const serverOf = async (key: string): Promise<Record<string, unknown>> => {
-      const held = (await this.read(key))?.serverBody
+      const held = serverBodyOf(await this.read(key))
       try {
         const raw: unknown = held == null ? undefined : JSON.parse(held)
         return raw != null && typeof raw === 'object'
