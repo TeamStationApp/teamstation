@@ -1,7 +1,7 @@
 import React from 'react'
 import { Pressable, TextInput, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useScoringSheetTheme } from './scoringSheetTheme'
 
 /**
@@ -45,7 +45,7 @@ export function ScoringPlayerSearchField({
         opacity: disabled ? 0.5 : 1
       }}
     >
-      <Icon name="search" size={1.25} color={surface.secondaryText} />
+      <ButtonIcon name="search" size={1.25} color={surface.secondaryText} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
@@ -82,7 +82,7 @@ export function ScoringPlayerSearchField({
             justifyContent: 'center'
           }}
         >
-          <Icon name="close" size={1.125} color={surface.secondaryText} />
+          <ButtonIcon name="close" size={1.125} color={surface.secondaryText} />
         </Pressable>
       )}
     </View>

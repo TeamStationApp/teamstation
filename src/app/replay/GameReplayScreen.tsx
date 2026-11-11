@@ -7,7 +7,6 @@ import React, {
   useState
 } from 'react'
 import {
-  Platform,
   Pressable,
   StatusBar,
   Text,
@@ -32,7 +31,7 @@ import {
   type ReplayTimeline
 } from '../../common/replay/replayTimeline'
 import type { SessionContext } from '../../common/scoring/session'
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { SCORING_CAMERA } from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
 import { FieldCanvas } from '../field/FieldCanvas'
@@ -157,27 +156,6 @@ export function fieldTop(
   const underSpeaker = speaker && board.x < SPEAKER_RESERVE
   const underExit = board.x + board.width > width - EXIT_RESERVE
   return underSpeaker || underExit ? safeTop + CONTROLS_ROW : 0
-}
-
-/**
- * How far the play, pause, rewind and announcer glyphs sit below their
- * box's middle: a phone's icon font draws them high, the web's centred.
- */
-export function replayIconDrop(os: string): number {
-  return os === 'ios' || os === 'android' ? 2 : 0
-}
-
-/** A glyph moved down by the platform's drop, to meet its button's centre. */
-function Dropped(props: { children: React.ReactNode }): React.ReactElement {
-  const drop = replayIconDrop(Platform.OS)
-  return (
-    <View
-      testID="replay-icon"
-      style={drop === 0 ? undefined : { transform: [{ translateY: drop }] }}
-    >
-      {props.children}
-    </View>
-  )
 }
 
 /** The field's framing for a window: the box score's share below it. */
@@ -616,15 +594,13 @@ function ReplayView(props: {
               : CONTROL_COLORS.micOn.border
           }}
         >
-          <Dropped>
-            <Icon
-              name={muted ? 'volume_off' : 'volume_up'}
-              size={1.5}
-              color={
-                muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
-              }
-            />
-          </Dropped>
+          <ButtonIcon
+            name={muted ? 'volume_off' : 'volume_up'}
+            size={1.5}
+            color={
+              muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
+            }
+          />
         </Pressable>
       )}
       <View
@@ -653,13 +629,11 @@ function ReplayView(props: {
       }}
       style={[FLOATING_BUTTON, { right: FLOATING_MARGIN }]}
     >
-      <Dropped>
-        <Icon
-          name={state.paused ? 'play_arrow' : 'pause'}
-          size={1.75}
-          color={surface.activeText}
-        />
-      </Dropped>
+      <ButtonIcon
+        name={state.paused ? 'play_arrow' : 'pause'}
+        size={1.75}
+        color={surface.activeText}
+      />
     </Pressable>
   )
   const rewindButton =
@@ -680,9 +654,11 @@ function ReplayView(props: {
         }}
         style={[FLOATING_BUTTON, { left: FLOATING_MARGIN }]}
       >
-        <Dropped>
-          <Icon name="skip_previous" size={1.75} color={surface.activeText} />
-        </Dropped>
+        <ButtonIcon
+          name="skip_previous"
+          size={1.75}
+          color={surface.activeText}
+        />
       </Pressable>
     )
   const playCard = (

@@ -3,6 +3,7 @@ import { Image, Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { AvailablePicture } from '../../common/pictureCatalog'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 
 export interface PhotoGridProps {
   entries: AvailablePicture[]
@@ -28,7 +29,9 @@ export function PhotoGrid({
           style={styles.cell}
         >
           <View style={styles.upload}>
-            <Text style={styles.plus}>+</Text>
+            <ButtonIcon name="add">
+              <Text style={styles.plus}>+</Text>
+            </ButtonIcon>
             <Text style={styles.label}>Add Photo</Text>
           </View>
         </Pressable>
@@ -57,7 +60,11 @@ export function PhotoGrid({
                   style={styles.image}
                   resizeMode="contain"
                 />
-                {selectedId === entry.id && <Text style={styles.check}>✓</Text>}
+                {selectedId === entry.id && (
+                  <ButtonIcon name="check">
+                    <Text style={styles.check}>✓</Text>
+                  </ButtonIcon>
+                )}
               </View>
             </Pressable>
           ))}

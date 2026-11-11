@@ -2,7 +2,7 @@ import React from 'react'
 import { Pressable, TextInput, View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
-import { Icon } from './Icon'
+import { ButtonIcon } from './ButtonIcon'
 
 /**
  * The floating bottom search field in the app theme (`docs/ui-rules.md`,
@@ -44,7 +44,7 @@ export function PlayerSearchField({
         opacity: disabled ? 0.5 : 1
       }}
     >
-      <Icon name="search" size={1.25} color={theme.secondaryTextColor} />
+      <ButtonIcon name="search" size={1.25} color={theme.secondaryTextColor} />
       <TextInput
         accessibilityLabel={placeholder}
         placeholder={placeholder}
@@ -78,7 +78,11 @@ export function PlayerSearchField({
             justifyContent: 'center'
           }}
         >
-          <Icon name="close" size={1.125} color={theme.secondaryTextColor} />
+          <ButtonIcon
+            name="close"
+            size={1.125}
+            color={theme.secondaryTextColor}
+          />
         </Pressable>
       )}
     </View>
