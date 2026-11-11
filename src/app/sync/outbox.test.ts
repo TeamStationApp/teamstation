@@ -50,6 +50,7 @@ import {
   type OutboxNotice,
   type OutboxSummary,
   PENDING_APPROVAL_MESSAGE,
+  preparedWithoutStore,
   queuedCallOf,
   STAND_IN_MESSAGE
 } from './outbox'
@@ -3950,6 +3951,76 @@ describe('the phone outbox', function () {
       expect(JSON.parse(String(p.document(gameKey('g1'))!.body))).deep.include({
         homeTeamId: 'tem_away'
       })
+    })
+
+    it('sends a reset the file cannot queue with its digest and generation, and never its effect', async function () {
+      const g = gameServer()
+      let broken = false
+      const p = phone(g.handler, store => ({
+        ...store,
+        atomically: async work => {
+          if (broken) throw new Error('database is locked')
+          return await store.atomically(work)
+        }
+      }))
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      g.online.value = true
+      broken = true
+      const { answer } = await p.client.queueSwap('g1', 'reset')
+      expect(answer).deep.include({ homeTeamId: 'tem_away', generation: 2 })
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      expect(sentSwap.body).deep.equals({
+        homeTeamId: 'tem_home',
+        awayTeamId: 'tem_away',
+        playsDigest: 'plays-1',
+        generation: 1
+      })
+      expect(sentSwap.key).equals(undefined)
+    })
+
+    it('prepares a body it sends without the file as the queue would', function () {
+      expect(
+        preparedWithoutStore(
+          {
+            kind: 'swapSides',
+            gameId: 'g1',
+            path: '/games/g1/swap-sides',
+            body: {}
+          },
+          { homeTeamId: 'h', awayTeamId: 'a', effect: 'swap' }
+        )
+      ).deep.equals({ homeTeamId: 'h', awayTeamId: 'a' })
+      const sides = { homeTeamId: 'h', awayTeamId: 'a' }
+      expect(
+        preparedWithoutStore(
+          {
+            kind: 'swapSides',
+            gameId: 'g1',
+            path: '/games/g1/swap-sides',
+            body: {}
+          },
+          sides
+        )
+      ).equals(sides)
+      const events = queuedCallOf('POST', '/games/g1/events', { mode: 'live' })!
+      expect(
+        preparedWithoutStore(events, { plays: [], lineupsBase: 'local-1' })
+      ).deep.equals({ plays: [] })
+      const kept = { plays: [], lineupsBase: 'D0' }
+      expect(preparedWithoutStore(events, kept)).equals(kept)
+      const lineups = queuedCallOf('POST', '/games/g1/lineups', {})!
+      expect(lineups.kind).equals('lineups')
+      expect(
+        preparedWithoutStore(lineups, { away: {}, base: 'local-2' })
+      ).deep.equals({ away: {}, base: '' })
+      expect(preparedWithoutStore(lineups, 'raw')).equals('raw')
+      const rename = queuedCallOf('PUT', '/games/g1/guest-players/7', {})!
+      const named = { name: 'x' }
+      expect(preparedWithoutStore(rename, named)).equals(named)
     })
 
     it('holds the game on a refused swap: a dead row, the held game’s notice', async function () {

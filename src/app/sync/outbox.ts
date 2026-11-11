@@ -296,6 +296,33 @@ function sentBody(call: QueuedCall, body: unknown): unknown {
   return methodOf(call) === 'DELETE' ? undefined : body
 }
 
+/**
+ * `body` as `Outbox.prepared` would send it, for a send that cannot read the
+ * file: never the `effect` a swap's scorer confirmed, which is the phone's
+ * own (a reset goes with the plays digest and generation `queueSwap` put
+ * in it), and never a digest the phone made. Without the file there are no
+ * server ids to put in place of the phone's.
+ */
+export function preparedWithoutStore(call: QueuedCall, body: unknown): unknown {
+  if (call.kind === 'swapSides') {
+    if (!isJson(body) || !('effect' in body)) return body
+    const { effect: _effect, ...rest } = body
+    return rest
+  }
+  const field = baseField(call)
+  if (field == null || (call.kind !== 'lineups' && call.kind !== 'events'))
+    return body
+  if (!isJson(body)) return body
+  const { [field]: base, ...rest } = body
+  if (!isLocal(base)) return body
+  return field === 'base' ? { ...rest, base: '' } : rest
+}
+
+/** The body a send that cannot read the file sends. */
+function sentWithoutStore(call: QueuedCall): unknown {
+  return sentBody(call, preparedWithoutStore(call, call.body))
+}
+
 export function chainOf(call: QueuedCall): string {
   if (call.kind === 'roster') return `team:${call.teamId}`
   if (call.kind === 'existingPlayer')
@@ -1072,7 +1099,7 @@ export class Outbox {
       return await this.options.send(
         method,
         call.path,
-        sentBody(call, call.body),
+        sentWithoutStore(call),
         undefined
       )
     const chain = chainOf(call)
@@ -1146,7 +1173,7 @@ export class Outbox {
       return await this.options.send(
         method,
         call.path,
-        sentBody(call, call.body),
+        sentWithoutStore(call),
         undefined
       )
     }
@@ -1154,7 +1181,7 @@ export class Outbox {
       return await this.options.send(
         method,
         call.path,
-        sentBody(call, call.body),
+        sentWithoutStore(call),
         undefined
       )
     if (reserved === 'behindDirect') {

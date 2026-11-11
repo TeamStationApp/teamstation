@@ -36,6 +36,7 @@ import {
   candidatesTeamOf,
   candidatesWordsOf,
   documentKeyOf,
+  eventsKey,
   fallbackKeyOf,
   gameKey,
   HOME_LISTS
@@ -305,13 +306,49 @@ export class CachingClient extends TeamStationClient {
         'unavailable',
         'This game is not on the phone yet. Try again in a moment.'
       )
+    // A reset names the plays it confirmed losing: the digest and
+    // generation of the server's last answer. The queue puts the ones the
+    // writes ahead of it answered in their place when it sends; these go
+    // when it cannot read the file then.
+    const confirmed = effect === 'reset' ? await this.serverPlaysOf(gameId) : {}
     return await this.request(
       'POST',
       `/games/${encodeURIComponent(gameId)}/swap-sides`,
       asQueuedSwap,
-      { homeTeamId: sides.homeTeamId, awayTeamId: sides.awayTeamId, effect },
+      {
+        homeTeamId: sides.homeTeamId,
+        awayTeamId: sides.awayTeamId,
+        ...confirmed,
+        effect
+      },
       { queue: 'swap' }
     )
+  }
+
+  /** The plays digest and generation of the game's last server answer. */
+  private async serverPlaysOf(
+    gameId: string
+  ): Promise<{ playsDigest?: string; generation?: number }> {
+    const serverOf = async (key: string): Promise<Record<string, unknown>> => {
+      const held = (await this.read(key))?.serverBody
+      try {
+        const raw: unknown = held == null ? undefined : JSON.parse(held)
+        return raw != null && typeof raw === 'object'
+          ? (raw as Record<string, unknown>)
+          : {}
+      } catch {
+        return {}
+      }
+    }
+    const events = await serverOf(eventsKey(gameId))
+    const generation =
+      events.generation ?? (await serverOf(gameKey(gameId))).generation
+    return {
+      ...(typeof events.playsDigest === 'string'
+        ? { playsDigest: events.playsDigest }
+        : {}),
+      ...(typeof generation === 'number' ? { generation } : {})
+    }
   }
 
   /**
