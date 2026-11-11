@@ -44,7 +44,7 @@ import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
 import { FeedHolder, type MediaContext } from './media/mediaContext'
-import { republishOwnedImages } from './media/republishImages'
+import { republishOwnedImages, settlesWithin } from './media/republishImages'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
@@ -1045,31 +1045,42 @@ if (cluster.isPrimary && eventControlProblem != null) {
 }
 
 /**
- * Moves the pictures stored before names were random to public ones. Once, by
- * the process that starts the rest, before it forks or listens: no two
- * processes copy one picture, and no request reads a row mid-move. A failure
- * is logged and the server starts anyway, serving those pictures signed.
+ * Moves the pictures stored before names were random to public ones, by the
+ * process that starts the rest, so no two processes copy one picture. It
+ * waits at most `REPUBLISH_WAIT_MS` before it forks or listens, and the rest
+ * goes on in this process after the server is up: each prefix's rows move in
+ * one transaction and the old objects outlive the move by a day, so a request
+ * that reads a row mid-move still draws its picture. A failure is logged and
+ * the server serves those pictures signed.
  */
+const REPUBLISH_WAIT_MS = 10_000
+
 async function republishBeforeStart(): Promise<void> {
   if (!spaceConfigured(serverConfig.space)) return
   const db = makeDatabase(requestDatabaseUrl(serverConfig), {
     role: 'primary'
   })
-  try {
-    const { moved, skipped, failed } = await republishOwnedImages(
-      db,
-      serverConfig.space,
-      message => {
-        console.error(`pictures: ${message}`)
+  const work = republishOwnedImages(db, serverConfig.space, message => {
+    console.error(`pictures: ${message}`)
+  })
+    .then(
+      ({ moved, skipped, failed }) => {
+        if (moved > 0 || failed > 0)
+          console.log(
+            `pictures: ${moved} made public, ${failed} failed, ${skipped} left alone`
+          )
+      },
+      (error: unknown) => {
+        console.error('pictures: republishing failed', error)
       }
     )
-    if (moved > 0 || failed > 0)
-      console.log(
-        `pictures: ${moved} made public, ${failed} failed, ${skipped} left alone`
-      )
-  } finally {
-    await db.destroy()
-  }
+    .finally(async () => {
+      await db.destroy()
+    })
+  if (!(await settlesWithin(work, REPUBLISH_WAIT_MS)))
+    console.log(
+      `pictures: still republishing after ${REPUBLISH_WAIT_MS / 1000} s; starting, and the rest goes on`
+    )
 }
 
 function start(): void {

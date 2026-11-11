@@ -1,4 +1,5 @@
 import { expect } from 'chai'
+import { sql } from 'kysely'
 import { after, afterEach, before, describe, it } from 'mocha'
 
 import { pictureCatalog } from '../../common/pictureCatalog'
@@ -8,9 +9,13 @@ import { atomic } from '../db/atomic'
 import { imageKey, isPublicImagePrefix } from './images'
 import { imageUrl } from './imageUrls'
 import {
+  MISSING_PREFIX,
+  RETIRED_GRACE_MS,
+  RETIRED_PREFIX,
   releasePictures,
   releaseReplacedPicture,
-  republishOwnedImages
+  republishOwnedImages,
+  settlesWithin
 } from './republishImages'
 import type { SpaceSettings } from './spacesHls'
 
@@ -54,6 +59,10 @@ describe('republishing owned pictures', function () {
     await h.db.updateTable('teams').set({ logo_path: null }).execute()
     await h.db.updateTable('users').set({ avatar_path: null }).execute()
     await h.db.deleteFrom('seasons').execute()
+    await h.db
+      .deleteFrom('system_settings')
+      .where('key', 'like', 'pictures.%')
+      .execute()
   })
 
   const object = (key: string): string => `/${h.space.bucket}/${key}`
@@ -77,8 +86,19 @@ describe('republishing owned pictures', function () {
         .where('id', '=', userIdOfGumbo(id))
         .executeTakeFirstOrThrow()
     ).avatar_path
+  const remembered = async (under: string): Promise<string[]> =>
+    (
+      await h.db
+        .selectFrom('system_settings')
+        .select('key')
+        .where('key', 'like', `${under}%`)
+        .orderBy('key')
+        .execute()
+    ).map(({ key }) => key.slice(under.length))
+  /** A start a day and a second after now, when a retired prefix is due. */
+  const later = (): number => Date.now() + RETIRED_GRACE_MS + 1000
 
-  it('copies an owned old picture to a public key, points the row at it, and deletes the old', async () => {
+  it('copies an owned old picture to a public key, points the row at it, and deletes the old a day later', async () => {
     hold(OLD)
     await h.db
       .updateTable('teams')
@@ -96,10 +116,157 @@ describe('republishing owned pictures', function () {
       expect(h.objects.get(key)?.toString(), key).equals(`${size}`)
       expect(acls.get(key), key).equals('public-read')
       expect(sent).includes(`PUT ${key}`)
-      expect(sent).includes(`DELETE ${object(imageKey(OLD, size))}`)
-      expect(h.objects.has(object(imageKey(OLD, size)))).equals(false)
     }
     expect(new URL(imageUrl(h.space, next) ?? '').search).equals('')
+    // A process still on the previous build may sign the old prefix: its
+    // objects outlive the move, retired, and a start within the day keeps
+    // them.
+    expect(sent.filter(each => each.startsWith('DELETE'))).deep.equals([])
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([OLD])
+    sent = []
+    expect(await republishOwnedImages(h.db, h.space)).deep.equals({
+      moved: 0,
+      skipped: 1,
+      failed: 0
+    })
+    expect(sent).deep.equals([])
+    for (const size of [96, 192] as const)
+      expect(h.objects.has(object(imageKey(OLD, size)))).equals(true)
+
+    // A start a day later deletes them and forgets the prefix.
+    await republishOwnedImages(h.db, h.space, undefined, { now: later })
+    for (const size of [96, 192] as const) {
+      expect(sent).includes(`DELETE ${object(imageKey(OLD, size))}`)
+      expect(h.objects.has(object(imageKey(OLD, size)))).equals(false)
+      expect(h.objects.has(object(imageKey(next, size)))).equals(true)
+    }
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([])
+  })
+
+  it('keeps a retired prefix a row names again, and forgets it', async () => {
+    hold(OLD)
+    await h.db
+      .updateTable('teams')
+      .set({ logo_path: OLD })
+      .where('id', '=', 'tem_account')
+      .execute()
+    await republishOwnedImages(h.db, h.space)
+    await h.db
+      .updateTable('users')
+      .set({ avatar_path: OLD })
+      .where('id', '=', userIdOfGumbo(101))
+      .execute()
+    sent = []
+    await republishOwnedImages(h.db, h.space, undefined, {
+      now: later,
+      movesAtOnce: 1
+    })
+    // The user's row was moved again, under a new retirement; nothing of
+    // the old prefix was deleted while a row named it.
+    expect(sent.filter(each => each.startsWith('DELETE'))).deep.equals([])
+    expect(isPublicImagePrefix((await avatar(101)) ?? '')).equals(true)
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([OLD])
+  })
+
+  it('moves every row that names a prefix in one transaction, or none', async () => {
+    hold(OLD)
+    await h.db
+      .updateTable('teams')
+      .set({ logo_path: OLD })
+      .where('id', '=', 'tem_account')
+      .execute()
+    await h.db
+      .updateTable('users')
+      .set({ avatar_path: OLD })
+      .where('id', '=', userIdOfGumbo(101))
+      .execute()
+    // The teams update, which runs after the users one, is refused.
+    await sql`
+      create function refuse_logo() returns trigger language plpgsql as
+      $$ begin raise exception 'refused logo'; end $$;
+      create trigger refuse_logo before update of logo_path on teams
+      for each row execute function refuse_logo();
+    `.execute(h.db)
+    const said: string[] = []
+    try {
+      expect(
+        await republishOwnedImages(h.db, h.space, message => {
+          said.push(message)
+        })
+      ).deep.equals({ moved: 0, skipped: 0, failed: 1 })
+    } finally {
+      await sql`
+        drop trigger refuse_logo on teams; drop function refuse_logo();
+      `.execute(h.db)
+    }
+    expect(await avatar(101)).equals(OLD)
+    expect(await teamLogo()).equals(OLD)
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([])
+    expect(said.join('\n')).contains('refused logo')
+  })
+
+  it('copies at most the pool size of prefixes at once, and moves them all', async () => {
+    const olds = [0, 1, 2, 3, 4].map(
+      n => `images/league/sea_pool${n}/abcd123${n}`
+    )
+    for (const [n, prefix] of olds.entries()) {
+      hold(prefix)
+      await h.db
+        .insertInto('seasons')
+        .values({
+          id: `sea_pool${n}`,
+          name: `Pool Season ${n}`,
+          year: 2027,
+          starts_on: '2027-03-01',
+          ends_on: '2027-05-31',
+          logo_path: prefix
+        })
+        .execute()
+    }
+    const recording = globalThis.fetch
+    let inFlight = 0
+    let most = 0
+    globalThis.fetch = async (input, init) => {
+      if (init?.method !== 'PUT') return await recording(input, init)
+      inFlight += 1
+      most = Math.max(most, inFlight)
+      try {
+        await new Promise(resolve => setTimeout(resolve, 20))
+        return await recording(input, init)
+      } finally {
+        inFlight -= 1
+      }
+    }
+    try {
+      expect(
+        await republishOwnedImages(h.db, h.space, undefined, { movesAtOnce: 2 })
+      ).deep.equals({ moved: 5, skipped: 0, failed: 0 })
+    } finally {
+      globalThis.fetch = recording
+    }
+    expect(most).equals(2)
+    const logos = await h.db
+      .selectFrom('seasons')
+      .select('logo_path')
+      .where('id', 'like', 'sea_pool%')
+      .execute()
+    expect(logos).length(5)
+    for (const { logo_path: logo } of logos)
+      expect(isPublicImagePrefix(logo ?? '')).equals(true)
+  })
+
+  it('says whether work settles within a time, and lets it go on', async () => {
+    expect(await settlesWithin(Promise.resolve(), 1000)).equals(true)
+    expect(await settlesWithin(Promise.reject(new Error('x')), 1000)).equals(
+      true
+    )
+    let finish = (): void => {}
+    const slow = new Promise<void>(resolve => {
+      finish = resolve
+    })
+    expect(await settlesWithin(slow, 10)).equals(false)
+    finish()
+    await slow
   })
 
   it('moves an old prefix two rows share once, and points both at it', async () => {
@@ -214,7 +381,7 @@ describe('republishing owned pictures', function () {
     expect(await teamLogo()).equals(already)
   })
 
-  it('leaves the row on its old prefix when the copy fails, and says so', async () => {
+  it('leaves the row on its old prefix when an object is missing, and does not try it again', async () => {
     // Only the 96 rendition exists, so the 192 copy is refused.
     h.objects.set(object(imageKey(OLD, 96)), Buffer.from('96'))
     await h.db
@@ -232,15 +399,58 @@ describe('republishing owned pictures', function () {
     expect(await teamLogo()).equals(OLD)
     expect(h.objects.has(object(imageKey(OLD, 96)))).equals(true)
     expect(said.join('\n')).contains(OLD)
+    expect(await remembered(MISSING_PREFIX)).deep.equals([OLD])
+
+    sent = []
+    expect(await republishOwnedImages(h.db, h.space)).deep.equals({
+      moved: 0,
+      skipped: 1,
+      failed: 0
+    })
+    expect(sent).deep.equals([])
   })
 
-  it('keeps the move when an old object cannot be deleted, and says so', async () => {
+  it('tries a copy the Space failed for a while again at the next start', async () => {
     hold(OLD)
     await h.db
       .updateTable('teams')
       .set({ logo_path: OLD })
       .where('id', '=', 'tem_account')
       .execute()
+    const recording = globalThis.fetch
+    globalThis.fetch = async (input, init) =>
+      init?.method === 'PUT'
+        ? new Response('Unavailable', { status: 503 })
+        : await recording(input, init)
+    try {
+      expect(await republishOwnedImages(h.db, h.space)).deep.equals({
+        moved: 0,
+        skipped: 0,
+        failed: 1
+      })
+    } finally {
+      globalThis.fetch = recording
+    }
+    expect(await remembered(MISSING_PREFIX)).deep.equals([])
+    expect(await republishOwnedImages(h.db, h.space)).deep.equals({
+      moved: 1,
+      skipped: 0,
+      failed: 0
+    })
+  })
+
+  it('keeps a retired prefix whose delete fails, says so, and deletes it at the next start', async () => {
+    hold(OLD)
+    await h.db
+      .updateTable('teams')
+      .set({ logo_path: OLD })
+      .where('id', '=', 'tem_account')
+      .execute()
+    expect(await republishOwnedImages(h.db, h.space)).deep.equals({
+      moved: 1,
+      skipped: 0,
+      failed: 0
+    })
     const recording = globalThis.fetch
     globalThis.fetch = async (input, init) =>
       init?.method === 'DELETE'
@@ -250,17 +460,24 @@ describe('republishing owned pictures', function () {
         : await recording(input, init)
     const said: string[] = []
     try {
-      expect(
-        await republishOwnedImages(h.db, h.space, message => {
+      await republishOwnedImages(
+        h.db,
+        h.space,
+        message => {
           said.push(message)
-        })
-      ).deep.equals({ moved: 1, skipped: 0, failed: 0 })
+        },
+        { now: later }
+      )
     } finally {
       globalThis.fetch = recording
     }
     expect(isPublicImagePrefix((await teamLogo()) ?? '')).equals(true)
     expect(said).length(2)
     expect(said[0]).contains(imageKey(OLD, 96))
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([OLD])
+    await republishOwnedImages(h.db, h.space, undefined, { now: later })
+    expect(h.objects.has(object(imageKey(OLD, 96)))).equals(false)
+    expect(await remembered(RETIRED_PREFIX)).deep.equals([])
   })
 
   it('does nothing without a Space', async () => {

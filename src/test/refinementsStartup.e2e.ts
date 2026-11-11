@@ -365,7 +365,8 @@ async function startupSmoke(): Promise<void> {
     )
     assert.equal(hosts.search, '')
     assert.equal((await fetch(hosts)).status, 200)
-    // The startup republish moved the visitors' old prefix before health.
+    // The startup republish moved the visitors' old prefix before health:
+    // one prefix takes far less than the wait the start allows it.
     const moved = (
       await db
         .selectFrom('teams')
@@ -386,13 +387,21 @@ async function startupSmoke(): Promise<void> {
         ),
         `the ${size} copy was written`
       )
+      // The old object outlives the move by a day, for a process still on
+      // the previous build.
       assert(
-        objectRequests.includes(
+        !objectRequests.includes(
           `DELETE /${space.bucket}/${imageKey(OLD_LOGO, size)}`
         ),
-        `the old ${size} object was deleted`
+        `the old ${size} object is kept for now`
       )
     }
+    const retired = await db
+      .selectFrom('system_settings')
+      .select('key')
+      .where('key', '=', `pictures.retiredPrefix.${OLD_LOGO}`)
+      .executeTakeFirst()
+    assert(retired != null, 'the old prefix is retired')
     const statsResponse = await fetch(
       `${origin}/api/v1/seasons/sea_startup/stats`,
       { headers: { authorization: `Bearer ${token}` } }
