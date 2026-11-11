@@ -769,7 +769,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
   })
 
   for (const reopen of [false, true])
-    for (const rename of [false, true])
+    for (const rename of [false, true, 'refused'])
       it(`releases an unfinished thrower decision when its queued input loses (reopen=${reopen}, rename=${rename})`, async () => {
         const { client, net, rows } = await preparedPhone()
         await open(client)
@@ -802,6 +802,7 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         }
         net.offline = false
         net.superseded = true
+        net.refuseRenames = rename === 'refused'
         client.wakeOutbox(true)
         await act(async () => {
           await client.drainOutbox()

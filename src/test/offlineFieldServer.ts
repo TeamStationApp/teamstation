@@ -29,6 +29,7 @@ export function fieldServer(stored: {
   /** Another device changed the lineups later: lineup saves are refused. */
   newer: boolean
   superseded: boolean
+  refuseRenames: boolean
   /** While set, a play's save waits on it before it is answered. */
   holdPlays?: Promise<void>
   /** While set, every request waits on it before it is answered. */
@@ -113,6 +114,7 @@ export function fieldServer(stored: {
     stale: false,
     newer: false,
     superseded: false,
+    refuseRenames: false,
     holdPlays: undefined as Promise<void> | undefined,
     hold: undefined as Promise<void> | undefined,
     posts: [] as Post[],
@@ -129,6 +131,8 @@ export function fieldServer(stored: {
         init?.method === 'PUT' &&
         path.startsWith('/games/g1/guest-players/')
       ) {
+        if (state.refuseRenames)
+          return json(400, { code: 'badRequest', message: 'Rename refused' })
         const names = JSON.parse(init.body as string) as Record<string, string>
         return json(200, { ...scoringRoster(1)[0], nameDetails: names })
       }

@@ -1782,16 +1782,8 @@ export class Outbox {
     // Renames also hold the events document. Keep the rejected input beside
     // every later writer so the final reconciliation can release its editor,
     // even if the app restarts between the scoring response and the rename.
-    const scoringKey =
-      'gameId' in call && call.gameId != null
-        ? eventsKey(call.gameId)
-        : undefined
-    if (rejectedScoring != null && scoringKey != null)
-      for (const other of later)
-        if (documentsOf(callOfRow(other)).some(doc => doc.key === scoringKey))
-          await tx.update(other.id, {
-            rejectedScoring: JSON.stringify(rejectedScoring)
-          })
+    if ('gameId' in call && call.gameId != null)
+      await this.carryRejection(tx, call.gameId, rejectedScoring, later)
     if (call.kind === 'roster') {
       await this.landedPlayer(tx, call, row, answer, later)
       return
@@ -1915,6 +1907,21 @@ export class Outbox {
         ...(rejectedScoring == null ? {} : { rejectedScoring })
       })
     }
+  }
+
+  private async carryRejection(
+    tx: CacheTransaction,
+    gameId: string,
+    rejectedScoring: ScoringMutation | undefined,
+    later: OutboxRow[]
+  ): Promise<void> {
+    if (rejectedScoring == null) return
+    const key = eventsKey(gameId)
+    for (const other of later)
+      if (documentsOf(callOfRow(other)).some(doc => doc.key === key))
+        await tx.update(other.id, {
+          rejectedScoring: JSON.stringify(rejectedScoring)
+        })
   }
 
   /**
@@ -2650,10 +2657,31 @@ export class Outbox {
     store: DocumentStore,
     row: OutboxRow
   ): Promise<boolean> {
-    const reads = await store.atomically(
-      async tx => await this.drop(tx, new Set([row.id]))
-    )
-    await this.reread(reads)
+    const landing = await store.atomically(async tx => {
+      const reads = await this.drop(tx, new Set([row.id]))
+      const notices: OutboxNotice[] = []
+      if (row.gameId != null) {
+        const rejectedScoring =
+          row.rejectedScoring == null
+            ? undefined
+            : (JSON.parse(row.rejectedScoring) as ScoringMutation)
+        await this.carryRejection(
+          tx,
+          row.gameId,
+          rejectedScoring,
+          (await tx.outbox()).filter(other => other.chain === row.chain)
+        )
+        if (reads.includes(`/games/${encodeURIComponent(row.gameId)}/events`))
+          notices.push({
+            gameId: row.gameId,
+            message: '',
+            reconcileScoring: true,
+            ...(rejectedScoring == null ? {} : { rejectedScoring })
+          })
+      }
+      return { reads, notices }
+    })
+    await this.told(landing)
     return true
   }
 
