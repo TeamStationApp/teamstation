@@ -34,6 +34,13 @@ export interface Device {
   screenshot: () => Promise<Uint8Array>
   hierarchy: () => Promise<unknown>
   evalBrowserScript: (params: Record<string, unknown>) => Promise<unknown>
+  vars: () => Promise<Record<string, string>>
+  tapOnPoint: (params: { x: number; y: number }) => Promise<unknown>
+  dragAndDrop: (params: {
+    from: { point: string }
+    to: { point: string }
+    duration?: number
+  }) => Promise<unknown>
   setNetworkConditions: (params: Record<string, unknown>) => Promise<unknown>
   startRecording: (params: Record<string, unknown>) => Promise<unknown>
   stopRecording: (params?: Record<string, unknown>) => Promise<unknown>

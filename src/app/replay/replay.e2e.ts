@@ -5,6 +5,11 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import {
+  maestroDriver,
+  placeFielder,
+  setTrajectory
+} from '../../../e2e/rigs/fieldPointer'
+import {
   artifactsDir,
   attachWeb,
   connect,
@@ -1228,26 +1233,14 @@ async function untilControl(
   }
 }
 
-/** A key on the scorer's field, as the keyboard sends it. */
-async function fieldKey(m: Device, key: string): Promise<void> {
-  await evalJson<boolean>(
-    m,
-    `const field = document.querySelector('[role="application"]');
-     field.focus();
-     field.dispatchEvent(new KeyboardEvent('keydown', { key: ${JSON.stringify(key)}, bubbles: true }));
-     return true`
-  )
-  await wait(300)
-}
-
-/** The scorer records a hit, placed and angled from the keyboard. */
+/** The scorer records a hit up the middle, at the angle the screen offers. */
 async function hit(m: Device, outcome: 'Single' | 'Double'): Promise<void> {
   await tapButton(m, 'Swing in Play')
   await tapButton(m, outcome)
   await untilControl(m, 'Tap or drag a player to where the ball was fielded')
-  for (const key of [' ', 'ArrowUp', 'Enter']) await fieldKey(m, key)
-  await untilControl(m, 'Drag up and down for ball trajectory.')
-  await fieldKey(m, 'Enter')
+  const field = maestroDriver(m)
+  await placeFielder(field, 'CF')
+  await setTrajectory(field)
 }
 
 async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
@@ -2614,11 +2607,9 @@ async function liveInPlay(
       scorer,
       'Tap or drag a player to where the ball was fielded'
     )
-    await fieldKey(scorer, ' ')
-    for (let i = 0; i < 20; i++) await fieldKey(scorer, 'ArrowLeft')
-    await fieldKey(scorer, 'Enter')
-    await untilControl(scorer, 'Drag up and down for ball trajectory.')
-    await fieldKey(scorer, 'Enter')
+    const field = maestroDriver(scorer)
+    await placeFielder(field, 'LF')
+    await setTrajectory(field)
     const accepted = Date.now()
     note('the scorer places the ball in left field and accepts its trajectory')
     const shown = await cardUntil(
