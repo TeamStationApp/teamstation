@@ -26,6 +26,7 @@ import {
 } from '../../../common/gamePlan'
 import { type PlanSameDay, planWarnings } from '../../../common/planWarnings'
 import type { PlayingTimeRules } from '../../../common/playingTimeRules'
+import { ButtonIcon } from '../../components/ButtonIcon'
 import { useConfirmedAction } from '../../components/useConfirmedAction'
 import { lstrings, sprintf } from '../../locales/strings'
 import { HelpSheet } from '../HelpSheet'
@@ -977,16 +978,18 @@ function PlanSheet({
                           justifyContent: 'center'
                         }}
                       >
-                        <Text
-                          selectable={false}
-                          style={{
-                            color: surface.accent,
-                            fontFamily: theme.semiBoldTextFont,
-                            fontSize: 20
-                          }}
-                        >
-                          +
-                        </Text>
+                        <ButtonIcon name="add">
+                          <Text
+                            selectable={false}
+                            style={{
+                              color: surface.accent,
+                              fontFamily: theme.semiBoldTextFont,
+                              fontSize: 20
+                            }}
+                          >
+                            +
+                          </Text>
+                        </ButtonIcon>
                       </Pressable>
                     )}
                   </View>
