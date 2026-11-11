@@ -2637,6 +2637,7 @@ export class ScoringSession {
         answer?.lineupsDigest !== undefined &&
         answer.lineupsDigest !== attempt.request.lineupsBase
       const scoringMoved =
+        attempt.request.scoringMutation != null &&
         answer?.scoringMutation != null &&
         !sameScoringMutation(
           answer.scoringMutation,
