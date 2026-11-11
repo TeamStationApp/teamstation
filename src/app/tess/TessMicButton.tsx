@@ -1,7 +1,7 @@
 import React, { useRef } from 'react'
 import { ActivityIndicator, Platform, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { TessMicrophone } from './useTessMicrophone'
@@ -133,7 +133,7 @@ export function TessMicButton({
       {state === 'transcribing' ? (
         <ActivityIndicator size="small" color={theme.secondaryTextColor} />
       ) : (
-        <Icon
+        <ButtonIcon
           name="mic"
           size={1.5}
           color={recording ? theme.buttonTextColor : theme.primaryTextColor}

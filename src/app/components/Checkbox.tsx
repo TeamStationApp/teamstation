@@ -8,6 +8,7 @@ import {
 } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 
 export interface CheckboxModifiers {
   shiftKey?: boolean
@@ -60,7 +61,11 @@ export function Checkbox({
     >
       <View style={s.hitArea}>
         <View testID="checkbox-square" style={[s.box, checked && s.checked]}>
-          {checked && <Text style={s.mark}>✓</Text>}
+          {checked && (
+            <ButtonIcon name="check">
+              <Text style={s.mark}>✓</Text>
+            </ButtonIcon>
+          )}
         </View>
       </View>
       {!hideLabel && <Text style={s.label}>{label}</Text>}
