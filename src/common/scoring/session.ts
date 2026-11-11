@@ -2636,8 +2636,14 @@ export class ScoringSession {
         attempt.sends > 1 &&
         answer?.lineupsDigest !== undefined &&
         answer.lineupsDigest !== attempt.request.lineupsBase
+      const scoringMoved =
+        answer?.scoringMutation != null &&
+        !sameScoringMutation(
+          answer.scoringMutation,
+          attempt.request.scoringMutation
+        )
       if (
-        (answer?.superseded === true || retryLineupsMoved) &&
+        (answer?.superseded === true || retryLineupsMoved || scoringMoved) &&
         this.context != null
       ) {
         try {
