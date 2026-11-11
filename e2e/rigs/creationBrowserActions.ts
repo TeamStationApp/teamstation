@@ -72,7 +72,9 @@ export async function press(
       )
       throw error
     })
-  await page.evaluate(
+  // Found and clicked in one turn of the page: a list that re-renders as a
+  // search settles can replace the node between a find and a later click.
+  await page.waitForFunction(
     (label, role) => {
       const matches = [
         ...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)
@@ -80,7 +82,8 @@ export async function press(
         node =>
           (node.hasAttribute('aria-label')
             ? node.getAttribute('aria-label')
-            : node.textContent) === label
+            : node.textContent) === label &&
+          node.getAttribute('aria-disabled') !== 'true'
       )
       // The top scene's own control, when the app's navigation outside the
       // scenes carries one of the same name.
@@ -88,9 +91,11 @@ export async function press(
         node => node.closest('[data-scene-role="top"]') != null
       )
       const button = (onTop.length > 0 ? onTop : matches).at(-1)
-      if (button == null) throw new Error('Missing requested action')
+      if (button == null) return false
       button.click()
+      return true
     },
+    { timeout: 10000 },
     label,
     role
   )

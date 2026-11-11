@@ -158,10 +158,17 @@ async function main(): Promise<void> {
       `/teams/${f.teamB}`,
       `/seasons/${f.seasonB}`
     ]) {
-      const body = (await (
-        await f.h.request('GET', route, undefined, null)
-      ).json()) as { games: Array<{ id: string }> }
-      expect(body.games.map(game => game.id)).includes(published.game_id!)
+      // A published game reaches each public listing as its notice is applied.
+      let ids: string[] = []
+      for (const until = Date.now() + 15000; Date.now() < until;) {
+        const body = (await (
+          await f.h.request('GET', route, undefined, null)
+        ).json()) as { games: Array<{ id: string }> }
+        ids = body.games.map(game => game.id)
+        if (ids.includes(published.game_id!)) break
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      expect(ids, route).includes(published.game_id!)
     }
     expect(
       await f.h.db
@@ -376,11 +383,13 @@ async function main(): Promise<void> {
     releaseRead()
     await text(team, 'Pending')
     const replacementId = new URL(team.url()).pathname.split('/').at(-1)!
-    for (const [kind, id] of [
-      ['team', f.teamA],
-      ['season', f.seasonA]
+    // The team's settings list its proposals; the season's whole schedule
+    // shows the pending game.
+    for (const path of [
+      `/groups/team/${f.teamA}/settings`,
+      `/groups/season/${f.seasonA}?tab=schedule&when=all`
     ]) {
-      await team.goto(f.h.origin + `/groups/${kind}/${id}`, {
+      await team.goto(f.h.origin + path, {
         waitUntil: 'domcontentloaded'
       })
       await text(team, 'Demo Resend Field')
@@ -402,13 +411,21 @@ async function main(): Promise<void> {
       .set({ status: 'final', home_score: 5, away_score: 4 })
       .where('id', '=', published.game_id!)
       .execute()
-    await team.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    // A team withdraws in the game's settings; its schedule then shows the
+    // game cancelled by that withdrawal.
+    await team.goto(f.h.origin + `/games/${published.game_id}/settings`, {
       waitUntil: 'domcontentloaded'
     })
-    await press(team, 'Withdraw Demo Hawks from game')
+    await press(team, 'Withdraw Demo Hawks')
     await press(team, 'Confirm withdrawal')
-    await text(team, 'Canceled — Demo Hawks withdrew')
-    await frameText(team, 'Canceled — Demo Hawks withdrew')
+    await team.waitForFunction(() => !location.pathname.endsWith('/settings'), {
+      timeout: 20000
+    })
+    await team.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
+      waitUntil: 'domcontentloaded'
+    })
+    await text(team, 'Withdrawal — Demo Hawks withdrew')
+    await frameText(team, 'Withdrawal — Demo Hawks withdrew')
     await shot(team, 'game-withdrawal-after.png')
     const cancelled = await f.h.db
       .selectFrom('games')
@@ -420,10 +437,11 @@ async function main(): Promise<void> {
     expect(cancelled.home_score).equals(5)
     expect(cancelled.away_score).equals(4)
     await host.bringToFront()
-    await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
-      waitUntil: 'networkidle0'
-    })
-    await text(host, 'Canceled — Demo Hawks withdrew')
+    await host.goto(
+      f.h.origin + `/groups/season/${f.seasonB}?tab=schedule&when=all`,
+      { waitUntil: 'networkidle0' }
+    )
+    await text(host, 'Withdrawal — Demo Hawks withdrew')
     lines.push(
       'E17 PASS: a team admin unilaterally withdraws even a final game, immediately retaining the same host/team schedule entry with named attribution and historical scores'
     )
