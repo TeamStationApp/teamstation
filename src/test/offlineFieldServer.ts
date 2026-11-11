@@ -125,6 +125,13 @@ export function fieldServer(stored: {
         init?.method === 'POST' ? target.split('?') : [target]
       const json = (status: number, body: unknown): Response =>
         new Response(JSON.stringify(body), { status })
+      if (
+        init?.method === 'PUT' &&
+        path.startsWith('/games/g1/guest-players/')
+      ) {
+        const names = JSON.parse(init.body as string) as Record<string, string>
+        return json(200, { ...scoringRoster(1)[0], nameDetails: names })
+      }
       if (init?.method === 'POST') {
         const body = JSON.parse(init.body as string) as Record<string, unknown>
         state.posts.push({ path, query, body })

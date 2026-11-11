@@ -1112,6 +1112,66 @@ describe('the phone outbox', function () {
     expect(notices.some(notice => notice.reconcileScoring === true)).equals(
       true
     )
+    expect(
+      notices.find(notice => notice.reconcileScoring)?.rejectedScoring
+    ).deep.equals({ at: 1, id: 'losing', revision: 0, frontier: 2 })
+  })
+
+  it('persists rejected scoring through a restart and multiple queued renames', async () => {
+    let online = true
+    let renameOnline = false
+    const p = phone(
+      server({ '/games/g1/events': namedEvents() }, sent => {
+        if (!online || (sent.method === 'PUT' && !renameOnline))
+          return 'offline'
+        if (sent.method === 'PUT') return { body: serverEntry(901, 'George') }
+        return { body: { ...(namedEvents() as object), superseded: true } }
+      })
+    )
+    const notices: OutboxNotice[] = []
+    p.client.subscribeOutboxNotices(notice => notices.push(notice))
+    await p.client.gameEvents('g1')
+    online = false
+    const rejected = { at: 1, id: 'losing', revision: 0, frontier: 2 }
+    await p.client.saveGameEvents('g1', {
+      plays: [play(1, 902)],
+      remove: [],
+      currentPlay: null,
+      scoringMutation: rejected
+    })
+    for (const lastName of ['Ruth', 'Ruth Jr'])
+      await p.client.renameGuestPlayer(
+        'g1',
+        userIdOfGumbo(901),
+        { firstName: 'George', lastName },
+        901
+      )
+    online = true
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    expect(p.rows()).has.length(2)
+    for (const row of p.rows())
+      expect(JSON.parse(String(row.rejected_scoring))).deep.equals(rejected)
+    expect(notices.filter(notice => notice.reconcileScoring)).has.length(0)
+    await p.client.sessionRefused()
+    p.client.openFor('usr_1')
+    renameOnline = true
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    expect(p.rows()).has.length(0)
+    expect(notices.filter(notice => notice.reconcileScoring)).deep.equals([
+      {
+        gameId: 'g1',
+        message: '',
+        reconcileScoring: true,
+        rejectedScoring: rejected
+      }
+    ])
+    expect(
+      p.sent
+        .filter(sent => sent.method === 'PUT')
+        .every(sent => !JSON.stringify(sent.body).includes('losing'))
+    ).equals(true)
   })
 
   it('removes old response-only status when applying an optimistic score', function () {

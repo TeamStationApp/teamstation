@@ -74,6 +74,8 @@ export interface OutboxRow {
   names: string | null
   /** Device-only lineup replay baseline and context, persisted across restart. */
   lineupRecovery?: string | null
+  /** Rejected scoring identity to deliver after later events writers drain. */
+  rejectedScoring?: string | null
   /**
    * Queued by a screen that does not wait for the server
    * (`Outbox.submitBackground`): the kinds only such a screen queues
@@ -157,6 +159,7 @@ export interface CacheTransaction {
         | 'foldVersion'
         | 'log'
         | 'lineupRecovery'
+        | 'rejectedScoring'
         | 'idempotencyKey'
       >
     >
@@ -230,7 +233,8 @@ const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'background', 'integer NOT NULL DEFAULT 0'],
   ['outbox', 'fold_version', 'integer'],
   ['outbox', 'log', 'text'],
-  ['outbox', 'lineup_recovery', 'text']
+  ['outbox', 'lineup_recovery', 'text'],
+  ['outbox', 'rejected_scoring', 'text']
 ]
 
 function outboxRowOf(row: SqlRow): OutboxRow {
@@ -254,13 +258,16 @@ function outboxRowOf(row: SqlRow): OutboxRow {
     foldVersion: row.fold_version == null ? null : Number(row.fold_version),
     log: typeof row.log === 'string' ? row.log : null,
     lineupRecovery:
-      typeof row.lineup_recovery === 'string' ? row.lineup_recovery : null
+      typeof row.lineup_recovery === 'string' ? row.lineup_recovery : null,
+    rejectedScoring:
+      typeof row.rejected_scoring === 'string' ? row.rejected_scoring : null
   }
 }
 
 const OUTBOX_COLUMNS: Record<string, string> = {
   body: 'body',
   lineupRecovery: 'lineup_recovery',
+  rejectedScoring: 'rejected_scoring',
   idempotencyKey: 'idempotency_key',
   state: 'state',
   attempts: 'attempts',
@@ -318,8 +325,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
       await tx.execute(
         `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path,
            body, depends_on, state, attempts, lease_until, game_id, message,
-           names, background, fold_version, log, lineup_recovery)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           names, background, fold_version, log, lineup_recovery, rejected_scoring)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           queued.id,
           queued.idempotencyKey,
@@ -338,7 +345,8 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
           queued.background ? 1 : 0,
           queued.foldVersion,
           queued.log,
-          queued.lineupRecovery ?? null
+          queued.lineupRecovery ?? null,
+          queued.rejectedScoring ?? null
         ]
       )
       return queued

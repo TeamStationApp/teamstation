@@ -1769,12 +1769,36 @@ export class Outbox {
     else await tx.remove(row.id)
     const chain = chainOf(call)
     const later = (await tx.outbox()).filter(other => other.chain === chain)
+    const response = (answer ?? {}) as Json
+    const rejectedScoring: ScoringMutation | undefined =
+      (call.kind === 'events'
+        ? response.superseded === true
+          ? (sent as SaveChange).scoringMutation
+          : call.lineupRecovery?.rejectedScoring
+        : undefined) ??
+      (row?.rejectedScoring == null
+        ? undefined
+        : (JSON.parse(row.rejectedScoring) as ScoringMutation))
+    // Renames also hold the events document. Keep the rejected input beside
+    // every later writer so the final reconciliation can release its editor,
+    // even if the app restarts between the scoring response and the rename.
+    const scoringKey = call.gameId == null ? undefined : eventsKey(call.gameId)
+    if (rejectedScoring != null && scoringKey != null)
+      for (const other of later)
+        if (
+          documentsOf(callOfRow(other)).some(
+            doc => doc.key === scoringKey
+          )
+        )
+          await tx.update(other.id, {
+            rejectedScoring: JSON.stringify(rejectedScoring)
+          })
     if (call.kind === 'roster') {
       await this.landedPlayer(tx, call, row, answer, later)
       return
     }
     if (call.kind === 'guestRename') {
-      await this.landedRename(tx, call, landing)
+      await this.landedRename(tx, call, landing, rejectedScoring)
       return
     }
     if (call.kind === 'unroster') {
@@ -1785,7 +1809,6 @@ export class Outbox {
       await this.landedGuest(tx, call, row, answer, later, landing)
       return
     }
-    const response = (answer ?? {}) as Json
     const digestOf = (raw: Json): unknown =>
       call.kind === 'lineups' ? raw.digest : raw.lineupsDigest
     const digest = digestOf(response)
@@ -1849,16 +1872,7 @@ export class Outbox {
         gameId: call.gameId,
         message: '',
         reconcileScoring: true,
-        ...((response.superseded === true
-          ? (sent as SaveChange).scoringMutation
-          : call.lineupRecovery?.rejectedScoring) == null
-          ? {}
-          : {
-              rejectedScoring:
-                response.superseded === true
-                  ? (sent as SaveChange).scoringMutation
-                  : call.lineupRecovery?.rejectedScoring
-            })
+        ...(rejectedScoring == null ? {} : { rejectedScoring })
       })
     // The game's other document carries the same lineups digest: as its
     // server digest, and in its body too unless a queued write holds it,
@@ -1885,7 +1899,8 @@ export class Outbox {
   private async landedRename(
     tx: CacheTransaction,
     call: Extract<QueuedCall, { kind: 'guestRename' }>,
-    landing: Landing
+    landing: Landing,
+    rejectedScoring?: ScoringMutation
   ): Promise<void> {
     const key = eventsKey(call.gameId)
     const writing = (await tx.outbox()).some(other =>
@@ -1897,7 +1912,8 @@ export class Outbox {
       landing.notices.push({
         gameId: call.gameId,
         message: '',
-        reconcileScoring: true
+        reconcileScoring: true,
+        ...(rejectedScoring == null ? {} : { rejectedScoring })
       })
     }
   }
