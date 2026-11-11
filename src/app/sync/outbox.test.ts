@@ -3716,6 +3716,59 @@ describe('the phone outbox', function () {
       ])
     })
 
+    it('lands a save whose first send committed after the deadline, when its retry overlapped it', async function () {
+      // As the server's Idempotency-Key does: a request with a key already
+      // committed is answered as it was, and one whose key is still being
+      // written waits for it. There is no in-progress refusal.
+      const committed = new Map<string, Answer>()
+      const writing = new Map<string, Promise<void>>()
+      let digest = 'D0'
+      const p = phone(
+        async sent => {
+          if (sent.method === 'GET') return { body: lineupsDoc(digest) }
+          const key = sent.key!
+          const running = writing.get(key)
+          if (running != null) await running
+          const held = committed.get(key)
+          if (held != null) return held
+          let done!: () => void
+          writing.set(
+            key,
+            new Promise<void>(resolve => {
+              done = resolve
+            })
+          )
+          // Committing well past the phone's deadline.
+          await new Promise(resolve => setTimeout(resolve, 80))
+          digest = 'D1'
+          committed.set(key, { body: lineupsDoc('D1') })
+          done()
+          return committed.get(key)!
+        },
+        undefined,
+        20
+      )
+      await p.client.gameLineups('g1')
+      await p.client.saveLineups('g1', lineupSave('D0'))
+      await p.client.drainOutbox()
+      expect(p.client.offline).equals(true)
+      // Sent again while the first is still being written: it waits too,
+      // past the deadline, and is no signal again, never a refusal.
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows().map(row => row.state)).deep.equals(['pending'])
+      await new Promise(resolve => setTimeout(resolve, 100))
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      expect(p.rows()).deep.equals([])
+      const posts = p.posts()
+      expect(posts.length).greaterThanOrEqual(3)
+      expect(new Set(posts.map(call => call.key)).size).equals(1)
+      const doc = p.document(lineupsKey('g1'))!
+      expect([doc.pending, doc.server_digest]).deep.equals([0, 'D1'])
+      expect((await p.client.outboxSummary()).count).equals(0)
+    })
+
     it('queues a swap only when asked, and sends Game Settings’ to the server', async function () {
       expect(queuedCallOf('POST', '/games/g1/swap-sides', {})).equals(undefined)
       expect(
