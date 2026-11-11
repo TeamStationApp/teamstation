@@ -47,8 +47,8 @@ import { setupOf } from '../../common/scoring/state'
 import type { Unrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
 import { Button } from '../components/Button'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useSharedFit } from '../components/fittedText'
-import { Icon } from '../components/Icon'
 import { forgetFound } from '../hooks/useRosterCandidates'
 import { lstrings, plural, sprintf } from '../locales/strings'
 import type { Insets } from '../platform/insets'
@@ -1875,7 +1875,11 @@ function RosterMicGlyph({ size }: { size: number }): React.ReactElement {
         justifyContent: 'center'
       }}
     >
-      <Icon name="mic_off" size={1.5} color={CONTROL_COLORS.micOff.text} />
+      <ButtonIcon
+        name="mic_off"
+        size={1.5}
+        color={CONTROL_COLORS.micOff.text}
+      />
     </View>
   )
 }

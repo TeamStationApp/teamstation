@@ -9,7 +9,7 @@ import {
 } from 'react-native'
 
 import { AddPersonGlyph } from '../components/AddPersonGlyph'
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { LineupQrGlyph } from './LineupQrGlyph'
 import { ScoringPlayerCard } from './ScoringPlayerCard'
@@ -98,16 +98,18 @@ export function EditRosterList({
         : lstrings.lineupQr_shareRow
   const lineupGlyph = lineupOffer === 'scan' ? 'scan' : 'qr'
   const chevron = (
-    <Text
-      style={{
-        ...text,
-        fontSize: 22,
-        paddingRight: 4,
-        color: theme.scoringSurface.chevronActive
-      }}
-    >
-      ›
-    </Text>
+    <ButtonIcon name="chevron_right">
+      <Text
+        style={{
+          ...text,
+          fontSize: 22,
+          paddingRight: 4,
+          color: theme.scoringSurface.chevronActive
+        }}
+      >
+        ›
+      </Text>
+    </ButtonIcon>
   )
   const initialOffset = useRef({ x: 0, y: initialScrollOffset ?? 0 })
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -165,11 +167,13 @@ export function EditRosterList({
               {/* The QR squares fill the middle two thirds of the box, so one
                   as wide as the badge's inside leaves 9pt around them. The
                   scan brackets use that same box. */}
-              <LineupQrGlyph
-                kind={lineupGlyph}
-                color={badge.text}
-                size={JERSEY_BADGE_SIZE - 2}
-              />
+              <ButtonIcon>
+                <LineupQrGlyph
+                  kind={lineupGlyph}
+                  color={badge.text}
+                  size={JERSEY_BADGE_SIZE - 2}
+                />
+              </ButtonIcon>
             </View>
             <View style={{ flex: 1, minWidth: 0 }}>
               <ShimmerText
@@ -185,16 +189,7 @@ export function EditRosterList({
                 }}
               />
             </View>
-            <Text
-              style={{
-                ...text,
-                fontSize: 22,
-                paddingRight: 4,
-                color: theme.scoringSurface.chevronActive
-              }}
-            >
-              ›
-            </Text>
+            {chevron}
           </ScoringPlayerCard>
         )}
         {rows.length === 0 && loading !== true && (
@@ -266,11 +261,13 @@ export function EditRosterList({
               <View testID="Create Player badge" style={badgeStyle}>
                 {/* The badge is translucent; the ring and plus take the
                     card's own colour so they read against the head. */}
-                <AddPersonGlyph
-                  color={badge.text}
-                  background={theme.scoringSurface.idle}
-                  size={JERSEY_BADGE_SIZE - 14}
-                />
+                <ButtonIcon>
+                  <AddPersonGlyph
+                    color={badge.text}
+                    background={theme.scoringSurface.idle}
+                    size={JERSEY_BADGE_SIZE - 14}
+                  />
+                </ButtonIcon>
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={title}>Create Player</Text>
@@ -285,7 +282,7 @@ export function EditRosterList({
               }}
             >
               <View testID="Add Existing Player badge" style={badgeStyle}>
-                <Icon name="search" size={1.75} color={badge.text} />
+                <ButtonIcon name="search" size={1.75} color={badge.text} />
               </View>
               <View style={{ flex: 1, minWidth: 0 }}>
                 <Text style={title}>Add Existing Player</Text>

@@ -11,6 +11,7 @@ import {
 } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
@@ -31,16 +32,18 @@ export function PencilBox(): React.ReactElement {
         justifyContent: 'center'
       }}
     >
-      <Text
-        allowFontScaling={false}
-        style={{
-          color: surface.badges.amber.text,
-          fontSize: 16,
-          lineHeight: 19
-        }}
-      >
-        ✎
-      </Text>
+      <ButtonIcon name="edit">
+        <Text
+          allowFontScaling={false}
+          style={{
+            color: surface.badges.amber.text,
+            fontSize: 16,
+            lineHeight: 19
+          }}
+        >
+          ✎
+        </Text>
+      </ButtonIcon>
     </View>
   )
 }

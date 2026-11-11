@@ -1,6 +1,7 @@
 import React from 'react'
 import { Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { ControlIcon } from './ScoringControlArt'
@@ -57,7 +58,9 @@ export function ControlFace({
             marginBottom: 2
           }}
         >
-          <ControlIcon kind="contact" size={11} />
+          <ButtonIcon>
+            <ControlIcon kind="contact" size={11} />
+          </ButtonIcon>
           <Text
             selectable={false}
             style={{
@@ -72,7 +75,9 @@ export function ControlFace({
           </Text>
         </View>
       ) : (
-        <ControlIcon kind={kind} size={kind === 'foul' ? 16 : 14} />
+        <ButtonIcon>
+          <ControlIcon kind={kind} size={kind === 'foul' ? 16 : 14} />
+        </ButtonIcon>
       )}
       <Text
         testID="scoring-control-label"

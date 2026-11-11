@@ -1,7 +1,8 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { Icon, type IconName } from '../../components/Icon'
+import { ButtonIcon } from '../../components/ButtonIcon'
+import type { IconName } from '../../components/Icon'
 import { lstrings } from '../../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../../theme/ThemeContext'
 import { type PlacedIcon, placeIcons } from '../pressGrid'
@@ -134,7 +135,7 @@ export function BarButton(props: {
       onPress={props.onPress}
     >
       {props.icon != null ? (
-        <Icon name={props.icon} size={1.25} color="#ffffff" />
+        <ButtonIcon name={props.icon} size={1.25} color="#ffffff" />
       ) : (
         <Text style={styles.buttonText}>{props.label}</Text>
       )}
@@ -168,7 +169,7 @@ export function JumpToPresent(props: {
       }}
     >
       <View pointerEvents="none" style={{ transform: [{ rotate: '180deg' }] }}>
-        <Icon name="skip_previous" size={1.25} color="#ffffff" />
+        <ButtonIcon name="skip_previous" size={1.25} color="#ffffff" />
       </View>
     </Pressable>
   )
@@ -222,7 +223,9 @@ export function ExitButton(props: {
           if (visible) onPress()
         }}
       >
-        <Text style={styles.buttonText}>✕</Text>
+        <ButtonIcon name="close">
+          <Text style={styles.buttonText}>✕</Text>
+        </ButtonIcon>
       </Pressable>
     </View>
   )

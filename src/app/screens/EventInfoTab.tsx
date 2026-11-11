@@ -11,9 +11,9 @@ import {
 import type { UmpireGameBlock } from '../../common/umpireSchedule'
 import {
   Button,
+  ButtonIcon,
   Card,
   Emblem,
-  Icon,
   initialsOf,
   ListRow,
   SectionHeader
@@ -324,7 +324,7 @@ export function EventInfoTab({
                 </View>
               </View>
               <View style={styles.chevron} pointerEvents="none">
-                <Icon
+                <ButtonIcon
                   name="chevron_right"
                   size={1.5}
                   color={theme.primaryTextColor}
