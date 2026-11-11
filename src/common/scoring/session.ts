@@ -2622,7 +2622,7 @@ export class ScoringSession {
           }
           continue
         }
-        this.failed(error)
+        this.failed(error, true)
         return
       }
       // An equal-identity retry may answer with a coach's newer lineup
@@ -2711,7 +2711,7 @@ export class ScoringSession {
     }
   }
 
-  private failed(error: unknown): void {
+  private failed(error: unknown, retryUnknown = false): void {
     const code = error instanceof HttpError ? error.code : null
     const message = error instanceof Error ? error.message : String(error)
     // This build is older than the server reads: what is not saved stays,
@@ -2726,7 +2726,7 @@ export class ScoringSession {
     // Signed out, the scorer signs in again and the waiting changes go then.
     // Lineups that keep changing under each read are tried again later.
     if (
-      code == null ||
+      (code == null && retryUnknown && (this.attemptedSave?.sends ?? 0) < 3) ||
       code === 'offline' ||
       code === 'rateLimited' ||
       code === 'internal' ||
