@@ -186,16 +186,20 @@ async function seed(): Promise<void> {
 /** Which process holds each of the server's established sockets. */
 function socketsByWorker(): Record<string, number> {
   const port = new URL(HOST).port
+  // By port alone: a server listening on both stacks has its loopback
+  // connections listed as [::ffff:127.0.0.1] on Linux.
   const out = execFileSync(
     '/usr/sbin/lsof',
-    ['-nP', `-iTCP@127.0.0.1:${port}`, '-sTCP:ESTABLISHED'],
+    ['-nP', `-iTCP:${port}`, '-sTCP:ESTABLISHED'],
     { encoding: 'utf8' }
+  )
+  const served = new RegExp(
+    `^(127\\.0\\.0\\.1|\\[::ffff:127\\.0\\.0\\.1\\]):${port}->`
   )
   const counts: Record<string, number> = {}
   for (const line of out.split('\n').slice(1)) {
-    const [command, pid, , , , , , , name] = line.split(/\s+/)
-    if (command !== 'node' || !(name ?? '').startsWith(`127.0.0.1:${port}->`))
-      continue
+    const [command, pid, ...rest] = line.split(/\s+/)
+    if (command !== 'node' || !rest.some(field => served.test(field))) continue
     counts[pid] = (counts[pid] ?? 0) + 1
   }
   return counts
@@ -543,9 +547,10 @@ async function e4(): Promise<void> {
     { status: detail.status, scoreboard: detail.body.scoreboard }
   )
   const health = await getJson('/health')
-  const list = await getJson('/games', runner)
+  // An ordinary list read: the API keeps answering without the scoreboard.
+  const list = await getJson('/teams', runner)
   observe(
-    'GET /health and GET /games answer 200',
+    'GET /health and GET /teams answer 200',
     health.status === 200 && list.status === 200,
     [health.status, list.status]
   )

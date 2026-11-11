@@ -329,7 +329,11 @@ async function badModule(): Promise<void> {
     let diagnosticRefused = false
     const run = await freshBrowser(async page => {
       page.on('response', response => {
-        if (response.url() !== `${API}/logs`) return
+        // On the API's host, or on the app's own origin under /api/.
+        if (
+          new URL(response.url()).pathname !== `${new URL(API).pathname}/logs`
+        )
+          return
         const request = response.request()
         const body = JSON.parse(request.postData() ?? '{}') as {
           source?: string
