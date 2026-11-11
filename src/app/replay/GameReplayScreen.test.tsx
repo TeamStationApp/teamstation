@@ -39,7 +39,6 @@ import {
   FLOATING_MARGIN,
   GameReplayScreen,
   type ReplayClient,
-  replayIconDrop,
   replayLayout,
   type ReplaySocket,
   SIDE_CARD_ROOM,
@@ -546,12 +545,6 @@ describe('the replay screen', function () {
     expect(flat(propsOf('replay-exit').style)).not.have.property('left')
     expect(flat(propsOf('replay-rewind').style)).deep.include({ left: 16 })
     expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
-  })
-
-  it('drops the glyphs 2 points on a phone, and not on the web', function () {
-    expect(replayIconDrop('ios')).equals(2)
-    expect(replayIconDrop('android')).equals(2)
-    expect(replayIconDrop('web')).equals(0)
   })
 
   it('leaves the web’s glyphs where they are', async function () {

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { ActivityIndicator, Image, Pressable, Text, View } from 'react-native'
 
 import type { AttachmentRef } from '../../common/chatContent'
-import { Icon } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { MessagePressGesture } from './chatInteractionModel'
@@ -234,7 +234,11 @@ function VideoAttachment(props: AttachmentViewProps): React.ReactElement {
       {wanted && !failed ? (
         <ActivityIndicator color={theme.secondaryTextColor} />
       ) : (
-        <Icon name="play_circle" size={2.5} color={theme.secondaryTextColor} />
+        <ButtonIcon
+          name="play_circle"
+          size={2.5}
+          color={theme.secondaryTextColor}
+        />
       )}
       <Text style={styles.name} numberOfLines={1}>
         {attachment.fileName}
@@ -284,7 +288,7 @@ function FileAttachment(
       {busy ? (
         <ActivityIndicator color={theme.secondaryTextColor} />
       ) : (
-        <Icon name="description" color={theme.secondaryTextColor} />
+        <ButtonIcon name="description" color={theme.secondaryTextColor} />
       )}
       <View style={styles.fileText}>
         <Text style={styles.name} numberOfLines={1}>

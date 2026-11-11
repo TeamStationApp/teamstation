@@ -12,6 +12,7 @@ import {
   TextField,
   TextWidthButton
 } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { PersonSearchRow } from '../components/PersonSearchRow'
 import { UndoTicker } from '../scoring/UndoTicker'
@@ -359,7 +360,9 @@ export function LeagueUmpiresScreen({
                                 testID="umpire-certification-circle"
                               >
                                 {enabled && (
-                                  <Text style={{ color: '#FFFFFF' }}>✓</Text>
+                                  <ButtonIcon name="check">
+                                    <Text style={{ color: '#FFFFFF' }}>✓</Text>
+                                  </ButtonIcon>
                                 )}
                               </View>
                             </Pressable>

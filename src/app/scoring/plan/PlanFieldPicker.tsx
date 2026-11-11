@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef } from 'react'
 import { type GestureResponderEvent, Pressable, Text, View } from 'react-native'
 
 import type { PlanCell } from '../../../common/gamePlan'
-import { Icon } from '../../components/Icon'
+import { ButtonIcon } from '../../components/ButtonIcon'
 import { lstrings } from '../../locales/strings'
 import { DEFENSE_LOCATIONS } from '../DefensiveField'
 import { DefensiveFieldArt } from '../DefensiveFieldArt'
@@ -354,7 +354,7 @@ export function PlanFieldPicker({
             justifyContent: 'center'
           }}
         >
-          <Icon name="close" size={1.25} color={surface.secondaryText} />
+          <ButtonIcon name="close" size={1.25} color={surface.secondaryText} />
         </Pressable>
       </View>
       <View
