@@ -159,17 +159,31 @@ async function stopListeners(port: number): Promise<void> {
   )
 }
 
+/** Children started in a process group of their own. */
+const detached = new WeakSet<ChildProcess>()
+
 async function stopChild(child: ChildProcess | undefined): Promise<void> {
   if (child == null || child.exitCode != null) return
+  // A child started in a group of its own is stopped with all of its group.
+  const signal = (name: NodeJS.Signals): void => {
+    if (child.pid != null && detached.has(child))
+      try {
+        process.kill(-child.pid, name)
+        return
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+      }
+    child.kill(name)
+  }
   await new Promise<void>(resolve => {
     const timer = setTimeout(() => {
-      child.kill('SIGKILL')
+      signal('SIGKILL')
     }, 10_000)
     child.once('close', () => {
       clearTimeout(timer)
       resolve()
     })
-    child.kill('SIGTERM')
+    signal('SIGTERM')
   })
 }
 
@@ -431,8 +445,11 @@ export async function startLegacyStack(
 
     const webOut = join(scratch, 'web')
     const webOutput = openSync(webLog, 'a')
+    // In a process group of its own: the server is esbuild's own process,
+    // which outlives build.mjs on Linux, so the whole group is stopped.
     const web = spawn(process.execPath, ['src/build.mjs', '--serve'], {
       cwd,
+      detached: true,
       stdio: ['ignore', webOutput, webOutput],
       env: {
         ...process.env,
@@ -442,6 +459,7 @@ export async function startLegacyStack(
         TS_MEDIA_ORIGINS: STACK_MEDIA_ORIGINS
       }
     })
+    detached.add(web)
     children.push(web)
     await waitFor(`http://127.0.0.1:${STACK_WEB_PORT}/`, 300_000)
 

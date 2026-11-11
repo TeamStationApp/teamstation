@@ -128,7 +128,7 @@ async function device(person: string, n = 1): Promise<Page> {
   await page.setViewport({ width: 1280, height: 900 })
   open.set(key, { browser, page })
   // On the app, so the page's own calls to the API carry its session.
-  await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
+  await goto(page, `${WEB}/`, { waitUntil: 'networkidle2' })
   return page
 }
 
@@ -166,7 +166,7 @@ async function finishNewAccount(page: Page): Promise<void> {
   }
   // Onboarding remounts the invitation screen after the one-use invitation
   // has been consumed. The durable outcome is membership on the home screen.
-  await page.goto(WEB, { waitUntil: 'networkidle2' })
+  await goto(page, WEB, { waitUntil: 'networkidle2' })
 }
 
 async function press(page: Page, label: string): Promise<void> {
@@ -223,11 +223,28 @@ async function typeInto(
   throw new Error(`The ${label} field would not take "${text}"`)
 }
 
+/**
+ * Opens `url` on `page`, once more if the app replaced its frame while it
+ * loaded: it reloads itself when a device's chat keys change under it.
+ */
+async function goto(
+  page: Page,
+  url: string,
+  options?: Parameters<Page['goto']>[1]
+): Promise<void> {
+  try {
+    await page.goto(url, options)
+  } catch (error) {
+    if (!String(error).includes('detached')) throw error
+    await page.goto(url, options)
+  }
+}
+
 /** Signs a device in with its person's password, if it is not already. */
 async function signIn(page: Page, seed: Seed, person: string): Promise<void> {
   const who = seed.people[person]
   if (who == null) throw new Error(`No ${person} in the seed`)
-  await page.goto(`${WEB}/`, { waitUntil: 'networkidle2' })
+  await goto(page, `${WEB}/`, { waitUntil: 'networkidle2' })
   if ((await page.$('input[aria-label="E-mail address"]')) == null) return
   await typeInto(page, 'E-mail address', who.email)
   await pressText(page, 'Use a password instead')
@@ -525,7 +542,7 @@ async function waitForChatList(page: Page): Promise<void> {
 
 /** Opens the Chat tab, which sets the device up for chat, and waits. */
 async function openChatTab(page: Page): Promise<void> {
-  await page.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+  await goto(page, `${WEB}/chat`, { waitUntil: 'networkidle2' })
   await waitForChatList(page)
 }
 
@@ -774,7 +791,7 @@ describe('chat scenarios in the browser', function () {
       const hawks = seed.ids.Hawks
       const coach = await device('Hc')
       await signIn(coach, seed, 'Hc')
-      await coach.goto(`${WEB}/players/${pat.userId}?onTeam=${hawks}`, {
+      await goto(coach, `${WEB}/players/${pat.userId}?onTeam=${hawks}`, {
         waitUntil: 'networkidle2'
       })
       await press(coach, 'Player settings')
@@ -801,7 +818,7 @@ describe('chat scenarios in the browser', function () {
       expect(auntCode).not.equals('')
 
       const aunt = await device('Aunt')
-      await aunt.goto(`${WEB}/i/${auntCode}`, { waitUntil: 'networkidle2' })
+      await goto(aunt, `${WEB}/i/${auntCode}`, { waitUntil: 'networkidle2' })
       await waitForText(aunt, 'You are invited to watch Hawks')
       await typeInto(aunt, 'Your name', 'Ava Aunt')
       await typeInto(aunt, 'E-mail address', auntAddress)
@@ -825,7 +842,7 @@ describe('chat scenarios in the browser', function () {
       const uncleCode = /\/i\/([^/\s]+)$/.exec(uncleLink)?.[1] ?? ''
       const parentD = await device('D')
       await signIn(parentD, seed, 'D')
-      await parentD.goto(`${WEB}/i/${uncleCode}`, {
+      await goto(parentD, `${WEB}/i/${uncleCode}`, {
         waitUntil: 'networkidle2'
       })
       await pressText(parentD, 'Accept the invitation')
@@ -919,7 +936,7 @@ describe('chat scenarios in the browser', function () {
   it('E5: a second device is linked by matching six digits', async function () {
     const first = await device('B', 1)
     await signIn(first, seed, 'B')
-    await first.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
+    await goto(first, `${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
     await waitForText(first, 'YOUR DEVICES')
     await waitForText(first, '(this device)')
     const enrolled = await apiGet(first, '/chat/me/keys')
@@ -929,7 +946,7 @@ describe('chat scenarios in the browser', function () {
 
     const second = await device('B', 2)
     await signIn(second, seed, 'B')
-    await second.goto(`${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
+    await goto(second, `${WEB}/chat/devices`, { waitUntil: 'networkidle2' })
     await waitForText(second, 'Link this device')
     const shown = await codeOn(second, 'Six-digit code ')
     await shot(second, 'e5-2-b2-code')
@@ -994,7 +1011,7 @@ describe('chat scenarios in the browser', function () {
 
     const admin = await signedIn('Ha')
     await signIn(admin, seed, 'Ha')
-    await admin.goto(`${WEB}/teams/${seed.ids.Hawks}/manage`, {
+    await goto(admin, `${WEB}/teams/${seed.ids.Hawks}/manage`, {
       waitUntil: 'networkidle2'
     })
     const codes = async (): Promise<string[]> =>
@@ -1028,7 +1045,7 @@ describe('chat scenarios in the browser', function () {
       }
     })
     const address = 'j@chat.example.com'
-    await newcomer.goto(`${WEB}/i/${code}`, { waitUntil: 'networkidle2' })
+    await goto(newcomer, `${WEB}/i/${code}`, { waitUntil: 'networkidle2' })
     await waitForText(newcomer, 'You are invited to watch Hawks')
     await typeInto(newcomer, 'Your name', 'Jules Jay')
     await typeInto(newcomer, 'E-mail address', address)
@@ -1063,7 +1080,7 @@ describe('chat scenarios in the browser', function () {
     // Straight to the chat, as a link to it opens: J's device enrols on the
     // way in, and Hc's open page grants it the history.
     const members = await chatIdOf(coach, 'Hawks Members')
-    await newcomer.goto(`${WEB}/chat/${members}`, { waitUntil: 'load' })
+    await goto(newcomer, `${WEB}/chat/${members}`, { waitUntil: 'load' })
     await waitForText(newcomer, 'Welcome to Hawks Members')
     const seen = await newcomer.evaluate(
       () => (window as unknown as { seen: Record<string, number> }).seen
@@ -1234,12 +1251,12 @@ describe('chat scenarios in the browser', function () {
 
     const fresh = await device('D2', 2)
     await signIn(fresh, seed, 'D2')
-    await fresh.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+    await goto(fresh, `${WEB}/chat`, { waitUntil: 'networkidle2' })
     await waitForText(fresh, 'Link this device')
     await pressText(fresh, 'I can’t reach my other devices')
     await pressText(fresh, 'Reset chat on this device')
     await waitForChatList(fresh)
-    await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
+    await goto(fresh, `${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
     await waitForText(fresh, 'Locked message')
     await send(fresh, 'D2: new device can send before history recovery')
     await waitForText(fresh, 'Locked message')
@@ -1292,7 +1309,7 @@ describe('chat scenarios in the browser', function () {
       ])
       await shot(parent, 'e9-1-d-history')
 
-      await coach.goto(`${WEB}/chat/${dm}/members`, {
+      await goto(coach, `${WEB}/chat/${dm}/members`, {
         waitUntil: 'networkidle2'
       })
       await pressText(coach, 'Leave this conversation')
@@ -1305,12 +1322,12 @@ describe('chat scenarios in the browser', function () {
 
       const fresh = await device('D', 2)
       await signIn(fresh, seed, 'D')
-      await fresh.goto(`${WEB}/chat`, { waitUntil: 'networkidle2' })
+      await goto(fresh, `${WEB}/chat`, { waitUntil: 'networkidle2' })
       await waitForText(fresh, 'Link this device')
       await pressText(fresh, 'I can’t reach my other devices')
       await pressText(fresh, 'Reset chat on this device')
       await waitForChatList(fresh)
-      await fresh.goto(`${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
+      await goto(fresh, `${WEB}/chat/${dm}`, { waitUntil: 'networkidle2' })
       await send(fresh, 'still here')
       await waitForText(fresh, 'still here')
       await waitForText(fresh, 'Locked message')
@@ -1743,7 +1760,8 @@ describe('chat scenarios in the browser', function () {
     await shot(guardian, 'e14-6-g2-p')
 
     const coach = await signedIn('Hc')
-    await coach.goto(
+    await goto(
+      coach,
       `${WEB}/players/${seed.people.P.userId}?onTeam=${seed.ids.Hawks}&tab=settings`,
       { waitUntil: 'networkidle2' }
     )
@@ -1769,7 +1787,7 @@ describe('chat scenarios in the browser', function () {
         : undefined
     })
 
-    await coach.goto(`${WEB}/chat/${second}/members`, {
+    await goto(coach, `${WEB}/chat/${second}/members`, {
       waitUntil: 'networkidle2'
     })
     await pressText(coach, 'Leave this conversation')
@@ -1782,7 +1800,7 @@ describe('chat scenarios in the browser', function () {
         ? true
         : undefined
     })
-    await keeper.goto(`${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
+    await goto(keeper, `${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
     await waitForText(keeper, 'This chat is closed')
     await shot(keeper, 'e14-8-k-closed')
 
@@ -1842,7 +1860,7 @@ describe('chat scenarios in the browser', function () {
       await db.end()
     }
 
-    await parentB.goto(`${WEB}/admin/chat/reports`, {
+    await goto(parentB, `${WEB}/admin/chat/reports`, {
       waitUntil: 'networkidle2'
     })
     await waitForText(parentB, 'There is nothing here.')
@@ -1850,7 +1868,7 @@ describe('chat scenarios in the browser', function () {
     await shot(parentB, 'e15-3-b-not-found')
 
     const admin = await signedIn('Z')
-    await admin.goto(`${WEB}/admin/chat/reports`, {
+    await goto(admin, `${WEB}/admin/chat/reports`, {
       waitUntil: 'networkidle2'
     })
     await waitForText(admin, 'second from C')
