@@ -329,6 +329,11 @@ describe('stored images', function () {
     >()
     const parts = new Map<string, Map<number, Buffer>>()
     const aborted: string[] = []
+    const deleted: string[] = []
+    /** Refuses every PUT whose path ends with this, for one test. */
+    let refuseSuffix: string | undefined
+    /** Answers every DELETE with a 500, for one test. */
+    let refuseDeletes = false
     let nextUploadId = 1
 
     before(async function () {
@@ -363,6 +368,18 @@ describe('stored images', function () {
           res.end('<CompleteMultipartUploadResult/>')
           return
         }
+        if (method === 'DELETE' && refuseDeletes) {
+          res.statusCode = 500
+          res.end('<Error><Code>InternalError</Code></Error>')
+          return
+        }
+        if (method === 'DELETE') {
+          deleted.push(path)
+          written.delete(path)
+          res.statusCode = 204
+          res.end()
+          return
+        }
         if (method !== 'PUT') {
           res.statusCode = 405
           res.end()
@@ -377,7 +394,10 @@ describe('stored images', function () {
           acl: req.headers['x-amz-acl'] as string | undefined,
           cacheControl: req.headers['cache-control']
         })
-        if (path.includes('refused')) {
+        if (
+          path.includes('refused') ||
+          (refuseSuffix != null && path.endsWith(refuseSuffix))
+        ) {
           // A Space refuses a bad signature at once, without reading the body,
           // and hangs up. The sender sees a broken pipe; the answer is this.
           res.statusCode = 403
@@ -602,6 +622,53 @@ describe('stored images', function () {
           cacheControl: undefined
         })
       }
+    })
+
+    it('deletes the sizes already up when the Space refuses a later one', async function () {
+      const source = await makeSource(dir, 200, 200)
+      const before = new Set(written.keys())
+      deleted.length = 0
+      refuseSuffix = `-${IMAGE_SIZES[1]}.png`
+      let message = ''
+      try {
+        await storeImage({ ffmpegPath: FFMPEG, space, kind: 'user', source })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      } finally {
+        refuseSuffix = undefined
+      }
+      expect(message).contains('403')
+      expect(deleted, 'the first size is released').to.have.length(1)
+      expect(deleted[0]).matches(
+        new RegExp(
+          `^/example-media-bkt/images/user/[0-9a-f]{32}-${IMAGE_SIZES[0]}\\.png$`
+        )
+      )
+      expect([...written.keys()].filter(key => !before.has(key))).deep.equals(
+        []
+      )
+    })
+
+    it('throws the upload failure, not the clean-up one, when the delete is refused too', async function () {
+      const source = await makeSource(dir, 200, 200)
+      const logged: string[] = []
+      const consoleError = console.error
+      console.error = (...args: unknown[]) => logged.push(args.join(' '))
+      refuseSuffix = `-${IMAGE_SIZES[1]}.png`
+      refuseDeletes = true
+      let message = ''
+      try {
+        await storeImage({ ffmpegPath: FFMPEG, space, kind: 'user', source })
+      } catch (error) {
+        message = error instanceof Error ? error.message : String(error)
+      } finally {
+        refuseSuffix = undefined
+        refuseDeletes = false
+        console.error = consoleError
+      }
+      expect(message).contains('Upload of').and.contains('403')
+      expect(logged).to.have.length(1)
+      expect(logged[0]).contains('pictures: releasing').and.contains('500')
     })
 
     it('keeps a still and a chat attachment private, signing host alone', async function () {

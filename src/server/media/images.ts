@@ -790,7 +790,8 @@ export interface StoredImage {
 
 /**
  * Normalise, hash, and upload as public objects — unless the hash says we
- * already have it.
+ * already have it. When a size fails to upload, the sizes already put under
+ * the new prefix are deleted before the failure is thrown.
  *
  * `knownSha256` is the value already on the row. When it matches, nothing is
  * uploaded and nothing is written: an import that runs nightly should cost
@@ -809,16 +810,41 @@ export async function storeImage(options: {
   if (knownSha256 != null && knownSha256 === image.sha256) return undefined
 
   const pathPrefix = imagePathPrefix(kind)
+  const uploaded: string[] = []
   let bytesUploaded = 0
-  for (const [size, bytes] of image.bySize) {
-    await putObject({
-      space,
-      key: imageKey(pathPrefix, size),
-      body: bytes,
-      contentType: 'image/png',
-      acl: 'public-read'
-    })
-    bytesUploaded += bytes.length
+  try {
+    for (const [size, bytes] of image.bySize) {
+      const key = imageKey(pathPrefix, size)
+      await putObject({
+        space,
+        key,
+        body: bytes,
+        contentType: 'image/png',
+        acl: 'public-read'
+      })
+      uploaded.push(key)
+      bytesUploaded += bytes.length
+    }
+  } catch (error) {
+    // No row will ever name this prefix, so nothing else would remove the
+    // sizes already up: public copies of the picture that deleting the photo
+    // or the account would never reach.
+    await releaseUploaded(space, uploaded)
+    throw error
   }
   return { pathPrefix, sha256: image.sha256, bytesUploaded }
+}
+
+/** Deletes each key, saying (not throwing) what it could not remove. */
+async function releaseUploaded(
+  space: SpaceSettings,
+  keys: readonly string[]
+): Promise<void> {
+  for (const key of keys) {
+    try {
+      await deleteObject({ space, key })
+    } catch (error) {
+      console.error(`pictures: releasing ${key}: ${String(error)}`)
+    }
+  }
 }
