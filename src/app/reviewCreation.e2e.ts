@@ -219,10 +219,9 @@ async function main(): Promise<void> {
     await league.reload({ waitUntil: 'domcontentloaded' })
     await fill(league, 'Team name', 'Demo Context Team')
     await press(league, 'Continue')
-    await text(league, 'Choose the city')
-    expect(await league.evaluate(() => document.body.textContent)).not.includes(
-      'Selected: Demo Harbor'
-    )
+    // A league's team starts in the league's city, which can be changed.
+    await text(league, 'Choose this team’s city and state.')
+    await text(league, 'Demo Harbor, Demo Coast')
     expect(
       await league.evaluate(() => {
         const button = [
@@ -230,8 +229,7 @@ async function main(): Promise<void> {
         ].find(node => node.textContent === 'Continue')
         return button == null ? null : button.getAttribute('aria-disabled')
       })
-    ).equals('true')
-    await press(league, 'Choose Demo Harbor, Demo Coast, US')
+    ).not.equals('true')
     await press(league, 'Continue')
     await press(league, 'Use initials')
     await press(league, 'Create Team')
@@ -627,11 +625,11 @@ async function main(): Promise<void> {
         }))
       )
       .execute()
-    await league.goto(f.h.origin + `/groups/team/${f.teamA}`, {
+    // A manager adds a game from the team's Schedule tab.
+    await league.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
       waitUntil: 'domcontentloaded'
     })
-    await press(league, 'Manage')
-    await press(league, 'Create Game')
+    await press(league, 'Add Game')
     // A team page's game is a scrimmage or exhibition in no season, however
     // many seasons its administrator keeps; seasons schedule their own games.
     await text(league, 'always creates a scrimmage/exhibition game')
@@ -682,8 +680,13 @@ async function main(): Promise<void> {
     ).equals(200)
     await otherLeague.reload({ waitUntil: 'domcontentloaded' })
     await text(otherLeague, 'Demo Eagles invited to game vs. Demo Hawks')
+    // The notification itself; the navigation beside it lists teams by their
+    // current names.
     expect(
-      await otherLeague.evaluate(() => document.body.textContent)
+      await otherLeague.evaluate(() => {
+        const top = document.querySelector('[data-scene-role="top"]')
+        return top === null ? '' : top.textContent
+      })
     ).not.includes('Demo Renamed Eagles')
     await press(otherLeague, 'Accept invitation')
     await text(otherLeague, 'Accepted')
@@ -764,8 +767,10 @@ async function main(): Promise<void> {
           .executeTakeFirstOrThrow()
       ).status
     ).equals('accepted')
-    // The inbox says what was given, with nothing to accept.
+    // The inbox says what was given, with nothing to accept: a grant is
+    // recorded accepted, so it is in History.
     await openNotifications(imported)
+    await press(imported, 'History')
     await text(imported, 'Babe Ruth added you as Coach of Demo Hawks')
     expect(
       await imported.evaluate(() => document.body.textContent)
@@ -802,6 +807,7 @@ async function main(): Promise<void> {
       await rolesAt(f.h.db, 'team', f.teamA, userIdOfGumbo(106))
     ).deep.equals(['coach', 'songkeeper'])
     await openNotifications(imported)
+    await press(imported, 'History')
     await text(imported, 'added you as Songkeeper of Demo Hawks')
     await press(imported, 'Back')
     await press(imported, 'Walk-up', 'tab')
