@@ -3,8 +3,9 @@ import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
+import { ButtonIcon } from './ButtonIcon'
 import { Emblem } from './Emblem'
-import { Icon, type IconName } from './Icon'
+import type { IconName } from './Icon'
 import { TeamEmblem } from './TeamEmblem'
 
 export interface ListRowProps {
@@ -127,7 +128,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
       {end}
       {onPress != null && (
-        <Icon
+        <ButtonIcon
           name="chevron_right"
           color={
             props.muted === true

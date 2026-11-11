@@ -41,6 +41,7 @@ import {
   usePinnedTabs,
   webStyle
 } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { CalendarPicker, TimePicker } from '../components/EventScheduleFields'
@@ -469,7 +470,9 @@ export function SchedulePreviewScreen({
               confirmReject(game)
             }}
           >
-            <Text style={styles.rejectGlyph}>✕</Text>
+            <ButtonIcon name="close">
+              <Text style={styles.rejectGlyph}>✕</Text>
+            </ButtonIcon>
           </Pressable>
         )}
       </View>

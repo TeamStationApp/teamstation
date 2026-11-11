@@ -1,7 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -45,7 +45,11 @@ export function WayBubble({
       {segments.map((segment, index) => (
         <View key={index} style={styles.step}>
           <Text style={styles.label}>{segment}</Text>
-          <Icon name="chevron_right" size={1} color={theme.pillTextColor} />
+          <ButtonIcon
+            name="chevron_right"
+            size={1}
+            color={theme.pillTextColor}
+          />
         </View>
       ))}
     </Pressable>

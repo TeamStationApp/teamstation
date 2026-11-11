@@ -3,7 +3,8 @@ import { ActivityIndicator, Pressable, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { VenueSummary } from '../../common/venues'
-import { Badge, Button, Card, Icon, Screen, TextField } from '../components'
+import { Badge, Button, Card, Screen, TextField } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useSceneReveals } from '../components/sceneShown'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { currentPosition, type Position } from '../platform/currentPosition'
@@ -180,7 +181,7 @@ export function VenueCard({
         style={styles.cardBody}
       >
         <View style={styles.tile}>
-          <Icon name="stadium" size={1.5} />
+          <ButtonIcon name="stadium" size={1.5} />
         </View>
         <View style={styles.cardText}>
           <Text style={styles.name} numberOfLines={1}>
@@ -202,7 +203,7 @@ export function VenueCard({
             )}
           </View>
         </View>
-        <Icon name="chevron_right" size={1.25} />
+        <ButtonIcon name="chevron_right" size={1.25} />
       </Pressable>
     </Card>
   )

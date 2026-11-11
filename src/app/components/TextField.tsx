@@ -2,7 +2,8 @@ import React, { useState } from 'react'
 import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Icon, type IconName } from './Icon'
+import { ButtonIcon } from './ButtonIcon'
+import type { IconName } from './Icon'
 
 export interface TextFieldProps {
   label: string
@@ -91,7 +92,7 @@ export function TextField(props: TextFieldProps): React.ReactElement {
       <View style={styles.inputRow}>
         {props.leadingIcon != null && (
           <View style={styles.leading} pointerEvents="none">
-            <Icon name={props.leadingIcon} size={1.25} />
+            <ButtonIcon name={props.leadingIcon} size={1.25} />
           </View>
         )}
         <TextInput
@@ -158,7 +159,11 @@ export function TextField(props: TextFieldProps): React.ReactElement {
             }}
             style={({ pressed }) => [styles.clear, pressed && styles.pressed]}
           >
-            <Icon name="close" size={0.875} color={theme.clearIconColor} />
+            <ButtonIcon
+              name="close"
+              size={0.875}
+              color={theme.clearIconColor}
+            />
           </Pressable>
         )}
       </View>

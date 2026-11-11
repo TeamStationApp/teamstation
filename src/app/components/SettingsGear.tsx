@@ -2,7 +2,7 @@ import React from 'react'
 import { Pressable, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Icon } from './Icon'
+import { ButtonIcon } from './ButtonIcon'
 
 /** A top-right settings disc with a full 48-point touch target. */
 export function SettingsGear({
@@ -22,7 +22,7 @@ export function SettingsGear({
       style={({ pressed }) => [styles.target, pressed && styles.pressed]}
     >
       <View style={styles.disc}>
-        <Icon name="settings" size={1.25} color={theme.plateIconColor} />
+        <ButtonIcon name="settings" size={1.25} color={theme.plateIconColor} />
       </View>
     </Pressable>
   )

@@ -1,7 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { Icon } from '../components'
+import { ButtonIcon } from '../components'
 import { GlassView } from '../components/GlassView'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
@@ -50,7 +50,7 @@ export function ChatAttentionControl(props: {
           }}
         >
           <View style={{ transform: [{ rotate: '90deg' }] }}>
-            <Icon name="chevron_right" color={theme.primaryTextColor} />
+            <ButtonIcon name="chevron_right" color={theme.primaryTextColor} />
           </View>
         </Pressable>
       </GlassView>

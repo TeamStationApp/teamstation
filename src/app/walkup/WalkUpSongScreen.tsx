@@ -22,6 +22,7 @@ import {
   Screen,
   TextField
 } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useBackOverride } from '../components/headerSlot'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -325,10 +326,12 @@ export function WalkUpSongScreen(
                 if (next != null) player.play(next)
               }}
             >
-              <TransportMark
-                playing={clipPlaying}
-                color={theme.primaryTextColor}
-              />
+              <ButtonIcon>
+                <TransportMark
+                  playing={clipPlaying}
+                  color={theme.primaryTextColor}
+                />
+              </ButtonIcon>
             </Pressable>
           </View>
           <Timeline
