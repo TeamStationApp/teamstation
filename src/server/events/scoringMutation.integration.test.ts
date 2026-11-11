@@ -1180,14 +1180,52 @@ describe('scoring mutation ordering', function () {
     }
     expect(rejected).equals(true)
   })
-  it('refuses future clocks and malformed deletion frontiers without changing the game', async () => {
+  it('accepts a fast offline clock only against the current scoring base', async () => {
+    const { open, gameId, requests, load } = await sessions()
+    const a = await open()
+    a.apply({ type: 'pitch', call: 'B' })
+    await a.flush()
+    const original = requests[0]
+    const base = (await load()).scoringMutation
+    const scoringMutation = {
+      ...original.scoringMutation!,
+      id: 'fast-offline-clock',
+      at: Date.now() + 60000
+    }
+    const answer = await postGamePlays(
+      db,
+      gameId,
+      asPostEventsBody({
+        ...original,
+        mode: 'live',
+        source: { system: 'teamstation' },
+        scoringMutation,
+        scoringBase: base
+      })
+    )
+    expect(answer.superseded).not.equals(true)
+    expect((await load()).scoringMutation).includes(scoringMutation)
+    const stale = await postGamePlays(
+      db,
+      gameId,
+      asPostEventsBody({
+        ...original,
+        mode: 'live',
+        source: { system: 'teamstation' },
+        scoringMutation: { ...scoringMutation, id: 'stale-fast-clock' },
+        scoringBase: base
+      })
+    )
+    expect(stale.superseded).equals(true)
+    expect((await load()).scoringMutation).includes(scoringMutation)
+  })
+  it('refuses malformed deletion frontiers without changing the game', async () => {
     const { open, gameId, requests, load } = await sessions()
     const a = await open()
     a.apply({ type: 'pitch', call: 'B' })
     await a.flush()
     const original = requests[0]
     for (const mutation of [
-      { ...original.scoringMutation!, at: Date.now() + 60000 },
       { ...original.scoringMutation!, at: Date.now(), frontier: 10 }
     ]) {
       let rejected = false
