@@ -567,7 +567,13 @@ async function overrideBases(
   await tapSettled(page, 'Overrides')
   for (const [base, player] of bases) {
     await tapSettled(page, base)
-    await tapSettled(page, `Choose ${base} ${player}`)
+    const label = `Choose ${base} ${player}`
+    // Empty and unnumbered players have no suffix; numbered players end in #N.
+    await page
+      .locator(
+        `[aria-label="${label}"]:not([aria-disabled="true"]), [aria-label^="${label} #"]:not([aria-disabled="true"])`
+      )
+      .click()
   }
   await tapSettled(page, 'Apply Override')
 }
@@ -3578,7 +3584,7 @@ describe('scoring browser', function () {
         await click(page, 'Overrides')
         const name = ['', 'First base', 'Second base', 'Third base'][base]
         await click(page, name)
-        await click(page, `Choose ${name} Player 6`)
+        await click(page, `Choose ${name} Player 6 #6`)
         await click(page, 'Apply Override')
         await click(page, 'Ball')
         await waitReady(page)
