@@ -99,7 +99,9 @@ const BY_ID: Array<[RegExp, (id: string) => string]> = [
 
 /**
  * GETs that are never stored, by path without the query: a session, a
- * clock, a stream or its address, and chat's own sync state.
+ * clock, a stream or its address, a one-shot answer, and chat's own sync
+ * state. Every other path with a query is stored, and the store keeps only
+ * the newest of one path's (`QUERY_DOCUMENTS_KEPT` in `cacheStore.ts`).
  */
 const NETWORK_ONLY: RegExp[] = [
   // A stored session answer would sign the phone in as whoever was stored.
@@ -111,7 +113,15 @@ const NETWORK_ONLY: RegExp[] = [
   // The address expires, and the stream does not play offline.
   /^\/videos\/[^/]+\/(playback|wall-timeline)$/,
   /^\/games\/[^/]+\/scoreboard-timeline$/,
-  /^\/games\/[^/]+\/(live-streams|stream-access)(\/|$)/
+  /^\/games\/[^/]+\/(live-streams|stream-access)(\/|$)/,
+  // One-shot reads: an approval or an invite code is answered once, for
+  // the moment it is asked, and a stored answer would offer a decision or a
+  // code that is spent or expired.
+  /^\/oauth(\/|$)/,
+  /^\/join\/[^/]+(\/|$)/,
+  // A place search carries its billing session, and a place's details end
+  // it: neither means anything later.
+  /^\/locations(\/|$)/
 ]
 
 /**

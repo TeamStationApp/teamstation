@@ -1621,7 +1621,14 @@ describe('document keys', function () {
       '/chat/devices',
       '/chat/me/keys',
       '/chat/conversations/c1/log?after=4',
-      '/chat/conversations/c1/epochs?after=1'
+      '/chat/conversations/c1/epochs?after=1',
+      // One-shot answers, and a place search's billing session.
+      '/oauth/approvals/h1',
+      '/oauth/approve/u1/details',
+      '/join/CODE1',
+      '/join/CODE1/email-code',
+      '/locations?query=fen&session=s1',
+      '/locations/p1?session=s1'
     ]) {
       expect(networkOnly(path), path).equals(true)
       expect(documentKeyOf(path), path).equals(undefined)

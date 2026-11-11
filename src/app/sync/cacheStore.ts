@@ -293,8 +293,42 @@ const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'message', 'text'],
   ['outbox', 'names', 'text'],
   ['outbox', 'background', 'integer NOT NULL DEFAULT 0'],
-  ['documents', 'server_body', 'text']
+  ['documents', 'server_body', 'text'],
+  ['documents', 'stored_at', 'integer']
 ]
+
+/**
+ * How many documents kept under a path with a query (`/locations?query=a`,
+ * `/me/notifications?before=…`) one path keeps: the most recently stored.
+ * Each search word and cursor is its own key, so without a bound the file
+ * grows with every keystroke. A short key (`events.<id>`), a path with no
+ * query, and a pending document are never evicted.
+ */
+export const QUERY_DOCUMENTS_KEPT = 20
+
+/** The path a query-keyed document's key names, or none for any other key. */
+function queriedPathOf(key: string): string | undefined {
+  if (!key.startsWith('/')) return undefined
+  const at = key.indexOf('?')
+  return at < 0 ? undefined : key.slice(0, at)
+}
+
+/** Drops all but the `QUERY_DOCUMENTS_KEPT` newest documents of `key`'s path. */
+async function evictQueried(tx: SqlTransaction, key: string): Promise<void> {
+  const path = queriedPathOf(key)
+  if (path == null) return
+  // `substr` rather than LIKE: a path may hold `%` or `_`.
+  const prefix = `${path}?`
+  await tx.execute(
+    `DELETE FROM documents WHERE key IN (
+       SELECT key FROM documents
+       WHERE pending = 0 AND substr(key, 1, ?) = ?
+       ORDER BY COALESCE(stored_at, 0) DESC, key
+       LIMIT -1 OFFSET ?
+     )`,
+    [prefix.length, prefix, QUERY_DOCUMENTS_KEPT]
+  )
+}
 
 /** The schedule list documents an older build kept, and the page each is. */
 const LEGACY_SCHEDULE: Array<[key: string, window: string, cursor: string]> = [
@@ -684,21 +718,25 @@ export async function openCacheStore(
         if (held?.pending === true) return held
         await tx.execute(
           `INSERT INTO documents
-             (key, body, revision, server_digest, pending, server_body)
-           VALUES (?, ?, ?, ?, 0, ?)
+             (key, body, revision, server_digest, pending, server_body,
+              stored_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)
            ON CONFLICT (key) DO UPDATE SET
              body = excluded.body,
              revision = excluded.revision,
              server_digest = excluded.server_digest,
-             server_body = excluded.server_body`,
+             server_body = excluded.server_body,
+             stored_at = excluded.stored_at`,
           [
             key,
             document.body,
             document.revision,
             document.serverDigest,
-            document.body
+            document.body,
+            now()
           ]
         )
+        await evictQueried(tx, key)
         return { ...document, pending: false, serverBody: document.body }
       }),
     storeServer: async (key, document) =>
@@ -706,23 +744,27 @@ export async function openCacheStore(
         // A pending body is the phone's; only the server's columns change.
         await tx.execute(
           `INSERT INTO documents
-             (key, body, revision, server_digest, pending, server_body)
-           VALUES (?, ?, ?, ?, 0, ?)
+             (key, body, revision, server_digest, pending, server_body,
+              stored_at)
+           VALUES (?, ?, ?, ?, 0, ?, ?)
            ON CONFLICT (key) DO UPDATE SET
              body = CASE WHEN documents.pending = 0
                THEN excluded.body ELSE documents.body END,
              revision = CASE WHEN documents.pending = 0
                THEN excluded.revision ELSE documents.revision END,
              server_digest = excluded.server_digest,
-             server_body = excluded.server_body`,
+             server_body = excluded.server_body,
+             stored_at = excluded.stored_at`,
           [
             key,
             document.body,
             document.revision,
             document.serverDigest,
-            document.body
+            document.body,
+            now()
           ]
         )
+        await evictQueried(tx, key)
         return (await readIn(tx, key))!
       }),
     atomically: async work =>

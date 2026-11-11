@@ -6,7 +6,11 @@ import { expect } from 'chai'
 
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { openDocumentCache } from './cache'
-import { cacheFileName, openCacheStore } from './cacheStore'
+import {
+  cacheFileName,
+  openCacheStore,
+  QUERY_DOCUMENTS_KEPT
+} from './cacheStore'
 
 describe('the phone document cache', function () {
   let dir: string
@@ -45,6 +49,44 @@ describe('the phone document cache', function () {
       pending: false,
       serverBody: '[2]'
     })
+    await store.close()
+  })
+
+  it('keeps only the newest documents of one path with a query, never a pending one or a short key', async function () {
+    let clock = 1000
+    const executor = nodeSqliteExecutor(join(dir, 'bounded.sqlite'))
+    const store = await openCacheStore(executor, { now: () => clock })
+    const doc = { body: '[]', revision: '0', serverDigest: null }
+    await store.store('/users?q=pending', doc)
+    executor.db.exec(
+      "UPDATE documents SET pending = 1 WHERE key = '/users?q=pending'"
+    )
+    await store.store('home.teams', doc)
+    await store.store('/teams/t1', doc)
+    // A different path's queries are counted on their own.
+    await store.store('/users_x?q=other', doc)
+    const words = Array.from(
+      { length: QUERY_DOCUMENTS_KEPT + 5 },
+      (_, n) => `/users?q=${'a'.repeat(n + 1)}`
+    )
+    for (const key of words) {
+      clock += 1
+      await store.store(key, doc)
+    }
+    // Stored again: the oldest word is now the newest.
+    clock += 1
+    await store.storeServer(words[0], doc)
+    const kept = executor.db
+      .prepare("SELECT key FROM documents WHERE key LIKE '/users?%'")
+      .all()
+      .map(row => String(row.key))
+      .sort()
+    expect(kept).deep.equals(
+      [words[0], ...words.slice(6), '/users?q=pending'].sort()
+    )
+    expect(kept).length(QUERY_DOCUMENTS_KEPT + 1)
+    for (const key of ['home.teams', '/teams/t1', '/users_x?q=other'])
+      expect(await store.read(key), key).not.equals(undefined)
     await store.close()
   })
 
