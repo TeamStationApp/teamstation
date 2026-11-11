@@ -131,7 +131,8 @@ describe('ExistingPlayerSheet', function () {
       document.querySelector('[data-testid="Candidates loading"]')
     ).not.equals(null)
     const betts = candidate('Mookie Betts', {
-      teams: [{ teamId: 'tem_dodgers', name: 'Ridgeview Dodgers' }]
+      teams: [{ teamId: 'tem_dodgers', name: 'Ridgeview Dodgers' }],
+      affiliations: 'Ridgeview Dodgers'
     })
     await answer(fake, [betts, candidate('Mike Trout')])
     expect(node('Choose Mookie B')).not.equals(null)
@@ -306,7 +307,7 @@ describe('ScoringCandidateCard', function () {
     document.body.innerHTML = ''
   })
 
-  it('draws the picture when there is one, a pill per team, and none without teams', async () => {
+  it('draws the picture when there is one, the affiliation line in place of team pills, and no line when it is empty', async () => {
     await render(
       <>
         <ScoringCandidateCard
@@ -315,7 +316,9 @@ describe('ScoringCandidateCard', function () {
             teams: [
               { teamId: 'tem_a', name: 'Ridgeview Dodgers' },
               { teamId: 'tem_b', name: 'Lakeside Herons' }
-            ]
+            ],
+            affiliations:
+              'Guardians: Ken G · Ridgeview Dodgers · Lakeside Herons'
           })}
           onPress={() => undefined}
         />
@@ -328,10 +331,18 @@ describe('ScoringCandidateCard', function () {
     )
     const [betts, trout] = [node('Choose Mookie B')!, node('Choose Mike T')!]
     expect(betts.querySelector('img')).not.equals(null)
-    expect(betts.textContent).includes('Ridgeview Dodgers')
-    expect(betts.textContent).includes('Lakeside Herons')
+    // One line, the server's, in the sheet's secondary colour: no pills.
+    const line = betts.querySelector<HTMLElement>(
+      '[data-testid="Candidate affiliations"]'
+    )!
+    expect(line.textContent).equals(
+      'Guardians: Ken G · Ridgeview Dodgers · Lakeside Herons'
+    )
+    expect(getComputedStyle(line).color).not.equals('')
     expect(betts.textContent).includes('›')
-    expect(trout.querySelector('[data-testid="Candidate teams"]')).equals(null)
+    expect(
+      trout.querySelector('[data-testid="Candidate affiliations"]')
+    ).equals(null)
     expect(trout.textContent).includes('MT')
     expect(trout.getAttribute('aria-disabled')).equals('true')
   })

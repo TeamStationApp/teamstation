@@ -68,9 +68,14 @@ const everybody: RosterEntry[] = [
     section: 'player',
     isPlayer: true,
     jersey: '7',
-    positions: ['SS', '2B']
+    positions: ['SS', '2B'],
+    affiliations: 'Guardians: Tim R'
   }),
-  entry(106, 'Tim R', { section: 'family', guardianOf: ['Alfonso S'] }),
+  entry(106, 'Tim R', {
+    section: 'family',
+    guardianOf: ['Alfonso S'],
+    affiliations: 'Guardian of Alfonso S'
+  }),
   entry(208, 'Hank M', { section: 'spectator' }),
   entry(250, 'Lou L', {
     section: 'spectator',
@@ -216,12 +221,15 @@ describe('a team’s roster in sections', function () {
     expect(row('Owen M')).includes('Assistant')
     expect(row('Nick P')).includes('Scorekeeper')
     expect(row('Ichiro')).includes('Coach')
-    expect(row('Alfonso S')).includes('SS · 2B')
     expect(row('Alfonso S')).includes('#7')
+    // A player's positions come first, and the affiliation line the server
+    // answered under them.
+    expect(row('Alfonso S')).includes('SS · 2BGuardians: Tim R')
     // A plain admin has nothing under the name: initials, name, and the pill
-    // if any. A family member has the players here they guard.
+    // if any. A family member has only the affiliation line, which names
+    // the players here they guard.
     expect(row('Babe R')).equals('BRBabe RLeague admin')
-    expect(row('Tim R')).equals('TRTim RParent/guardian of Alfonso S')
+    expect(row('Tim R')).equals('TRTim RGuardian of Alfonso S')
     // A player's row opens the player.
     await act(async () => {
       rowNode('Alfonso S').click()
@@ -392,9 +400,14 @@ describe('a season’s and a league’s People tab', function () {
     entry(201, 'Alfonso S', {
       section: 'player',
       isPlayer: true,
-      teamNames: ['Demo Hawks', 'Demo Owls']
+      positions: ['SS'],
+      teamNames: ['Demo Hawks', 'Demo Owls'],
+      affiliations: 'Guardians: Tim R · Demo Hawks · Demo Owls'
     }),
-    entry(106, 'Tim R', { section: 'family' }),
+    entry(106, 'Tim R', {
+      section: 'family',
+      affiliations: 'Guardian of Alfonso S · Demo Hawks · Demo Owls'
+    }),
     entry(250, 'Lou L', {
       section: 'spectator',
       inheritedFrom: { level: 'league', role: 'member' }
@@ -404,7 +417,14 @@ describe('a season’s and a league’s People tab', function () {
   it('lists the season’s people in sections, a player with their teams, and opens them for a manager', async function () {
     const { players, people } = await tab('season', true, levelPeople)
     expect(headings().filter(at => at >= 0)).length(4)
-    expect(row('Alfonso S')).includes('Demo Hawks · Demo Owls')
+    // The teams are the affiliation line's, under the player's positions;
+    // the line is the server's, not built from `teamNames`.
+    expect(row('Alfonso S')).includes(
+      'SSGuardians: Tim R · Demo Hawks · Demo Owls'
+    )
+    expect(row('Tim R')).includes(
+      'Guardian of Alfonso S · Demo Hawks · Demo Owls'
+    )
     expect(row('Lou L')).includes('League spectator')
     for (const name of ['Alfonso S', 'Tim R', 'Babe R'])
       await act(async () => {

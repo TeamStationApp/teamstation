@@ -1,10 +1,10 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { UndoTicker } from '../scoring/UndoTicker'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Emblem } from './Emblem'
 import { initialsOf } from './initials'
+import { PersonAffiliationLine } from './PersonAffiliationLine'
 
 /** A person identity shared by account and umpire candidate searches. */
 export function PersonSearchRow({
@@ -51,14 +51,10 @@ export function PersonSearchRow({
         <Text numberOfLines={1} style={styles.name}>
           {name}
         </Text>
-        {affiliations != null && affiliations !== '' && (
-          <UndoTicker
-            text={affiliations}
-            style={styles.affiliation}
-            enabled
-            testID={affiliationTestID}
-          />
-        )}
+        <PersonAffiliationLine
+          affiliations={affiliations}
+          testID={affiliationTestID}
+        />
       </View>
     </Pressable>
   )
@@ -78,10 +74,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600' as const,
     color: theme.primaryTextColor
-  },
-  affiliation: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.875),
-    color: theme.secondaryTextColor
   }
 }))

@@ -241,7 +241,8 @@ describe('a season’s People tab, and a team’s roster, through the group page
       section: 'player',
       staffRoles: [],
       inheritedFrom: null,
-      teamNames: ['Demo Hawks']
+      teamNames: ['Demo Hawks'],
+      affiliations: 'Demo Hawks'
     }),
     asRosterEntry({
       userId: userIdOfGumbo(106),

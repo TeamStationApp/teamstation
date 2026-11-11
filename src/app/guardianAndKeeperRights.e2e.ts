@@ -475,7 +475,10 @@ async function roster(run: Run): Promise<void> {
   // In its section's order: the team's own staff, then the season's coach.
   expect(page.indexOf('Owen Miller')).lessThan(page.indexOf('Mike Trout'))
   expect(page.indexOf('Mike Trout')).lessThan(page.indexOf('PLAYERS'))
-  expect(page.indexOf('Tim Raines')).greaterThan(page.indexOf('FAMILY MEMBERS'))
+  // His own row, after the line under the player he guards names him.
+  expect(page.lastIndexOf('Tim Raines')).greaterThan(
+    page.indexOf('FAMILY MEMBERS')
+  )
   // The team's own spectator, then the league's and the season's by name,
   // then the followers by name.
   expect(page.indexOf('Hank Majeski')).greaterThan(page.indexOf('SPECTATORS'))

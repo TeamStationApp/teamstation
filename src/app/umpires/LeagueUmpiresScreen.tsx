@@ -14,8 +14,8 @@ import {
 } from '../components'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { ChoiceSheet } from '../components/ChoiceSheet'
+import { PersonAffiliationLine } from '../components/PersonAffiliationLine'
 import { PersonSearchRow } from '../components/PersonSearchRow'
-import { UndoTicker } from '../scoring/UndoTicker'
 import { useTheme } from '../theme/ThemeContext'
 import {
   UmpireCell,
@@ -311,10 +311,8 @@ export function LeagueUmpiresScreen({
                     />
                     <Text style={[s.text, { color: '#1565C0' }]}>{p.name}</Text>
                   </View>
-                  <UndoTicker
-                    text={p.affiliations}
-                    style={s.hint}
-                    enabled
+                  <PersonAffiliationLine
+                    affiliations={p.affiliations}
                     testID={`umpire-affiliation-${p.id}`}
                   />
                 </Pressable>

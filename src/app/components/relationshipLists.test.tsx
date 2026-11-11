@@ -4,8 +4,9 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
-import { TeamStationClient } from '../../common/api'
+import { asRosterEntry, TeamStationClient } from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   find,
   press,
@@ -25,6 +26,7 @@ import { tsDark } from '../theme/tsDark'
 import { ActionList, ActionRow } from './ActionRow'
 import { Button } from './Button'
 import { DangerText } from './DangerText'
+import { PeopleList, peopleSubtitle, PersonRow } from './PeopleList'
 import { useConfirmedAction } from './useConfirmedAction'
 
 let root: Root | undefined
@@ -385,5 +387,129 @@ describe('relationship list presentation and confirmation', () => {
     expect(text()).includes('Retry removal')
     await press('Cancel')
     expect(find('Remove')).equals(undefined)
+  })
+})
+
+describe('people list rows and their affiliation lines', () => {
+  afterEach(async () => {
+    await act(async () => root?.unmount())
+    root = undefined
+    document.body.replaceChildren()
+  })
+  const person = (
+    gumbo: number,
+    shortName: string,
+    over: Record<string, unknown>
+  ): ReturnType<typeof asRosterEntry> =>
+    asRosterEntry({
+      userId: userIdOfGumbo(gumbo),
+      gumboId: gumbo,
+      shortName,
+      jersey: null,
+      positions: [],
+      isPlayer: false,
+      role: 'member',
+      section: 'spectator',
+      staffRoles: [],
+      inheritedFrom: null,
+      ...over
+    })
+  const people = [
+    person(1, 'Cal Ripken', {
+      section: 'admin',
+      staffRoles: ['coach', 'scorekeeper'],
+      affiliations: 'Demo Hawks'
+    }),
+    person(2, 'Josh S', {
+      section: 'player',
+      isPlayer: true,
+      positions: ['SS', '2B'],
+      teamNames: ['Demo Hawks'],
+      affiliations: 'Guardians: Ken G · Demo Hawks'
+    }),
+    person(3, 'Josh S', {
+      section: 'player',
+      isPlayer: true,
+      teamNames: ['Demo Owls'],
+      affiliations: 'Guardians: Tony G · Demo Owls'
+    }),
+    person(4, 'Ken G', {
+      section: 'family',
+      guardianOf: ['Josh S'],
+      affiliations: 'Guardian of Josh S · Demo Hawks'
+    }),
+    person(5, 'Barry L', { section: 'spectator' })
+  ]
+  const rowOf = (gumbo: number): HTMLElement => {
+    const { shortName, affiliations } = people.find(p => p.gumboId === gumbo)!
+    const row = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => {
+      const label = node.getAttribute('aria-label') ?? ''
+      return label.startsWith(shortName) && label.includes(affiliations)
+    })
+    expect(row, String(gumbo)).not.equals(undefined)
+    return row!
+  }
+
+  it('draws the line under the name, after role words and positions, and tells twins apart by it', async () => {
+    await render(<PeopleList people={people} onOpen={() => () => {}} />)
+    // The admin's roles stay on their own line, before the affiliation line.
+    expect(rowOf(1).textContent).equals(
+      'CRCal RipkenCoach · ScorekeeperDemo Hawkschevron_right'
+    )
+    // A player's positions stay before the line; the line holds the teams,
+    // which no longer come from `teamNames`.
+    expect(rowOf(2).textContent).equals(
+      'JSJosh SSS · 2BGuardians: Ken G · Demo Hawkschevron_right'
+    )
+    // Twins read the same name and are told apart by their lines.
+    expect(rowOf(3).textContent).equals(
+      'JSJosh SGuardians: Tony G · Demo Owlschevron_right'
+    )
+    // A family member has only the line, not `Parent/guardian of …`.
+    expect(rowOf(4).textContent).equals(
+      'KGKen GGuardian of Josh S · Demo Hawkschevron_right'
+    )
+    expect(text()).not.contains('Parent/guardian')
+    // The accessible label reads the name, the roles and the line.
+    expect(rowOf(1).getAttribute('aria-label')).equals(
+      'Cal Ripken, Coach · Scorekeeper, Demo Hawks'
+    )
+    expect(rowOf(2).getAttribute('aria-label')).equals(
+      'Josh S, SS · 2B, Guardians: Ken G · Demo Hawks'
+    )
+  })
+
+  it('draws no line for an empty one, nor for a public row that has none', async () => {
+    await render(
+      <>
+        <PeopleList people={[people[4]]} onOpen={() => () => {}} />
+        <PersonRow
+          person={{
+            shortName: 'Tony G',
+            section: 'staff',
+            staffRoles: ['coach'],
+            avatarUrl: null,
+            inheritedFrom: null,
+            jersey: null,
+            positions: []
+          }}
+        />
+      </>
+    )
+    expect(text()).contains('BLBarry L').and.contains('TGTony GCoach')
+    expect(
+      document.querySelector('[role="button"]')!.getAttribute('aria-label')
+    ).equals('Barry L')
+    expect(document.querySelectorAll('[data-testid$="-viewport"]')).length(0)
+  })
+
+  it('keeps role words and positions in the subtitle, and nothing for family', () => {
+    expect(peopleSubtitle(people[0])).equals('Coach · Scorekeeper')
+    expect(peopleSubtitle(people[1])).equals('SS · 2B')
+    expect(peopleSubtitle(people[2])).equals(undefined)
+    expect(peopleSubtitle({ ...people[3], positions: ['C'] })).equals(undefined)
+    expect(peopleSubtitle(people[4])).equals(undefined)
   })
 })

@@ -1826,6 +1826,46 @@ describe('starting a direct message', function () {
     await until('nobody', () => text().includes('Nobody matches.'))
   })
 
+  it('draws each candidate’s affiliation line under the name, and finds a full name by its surname', async function () {
+    const dms = new FakeDms()
+    dms.people = [
+      {
+        userId: userIdOfGumbo(30),
+        shortName: 'Cal Ripken',
+        compactName: 'Cal R',
+        avatarUrl: null,
+        affiliations: 'Demo Hawks'
+      },
+      {
+        userId: userIdOfGumbo(31),
+        shortName: 'Barry L',
+        avatarUrl: null,
+        affiliations: ''
+      }
+    ]
+    await render(
+      <NewDmScreen
+        client={dms}
+        engine={new FakeEngine()}
+        onCreated={() => {}}
+        pauseMs={0}
+      />
+    )
+    await until('the candidates', () => text().includes('Cal Ripken'))
+    const row = (name: string): HTMLElement =>
+      [...document.querySelectorAll<HTMLElement>('[role="button"]')].find(
+        node => node.getAttribute('aria-label') === `Pick ${name}`
+      )!
+    expect(row('Cal Ripken').textContent).equals('CRCal RipkenDemo Hawks')
+    expect(row('Barry L').textContent).equals('BLBarry L')
+    // The server matches the full name the row carries; the screen asks it
+    // with the surname typed and lists what it answers.
+    await typeInto('Name', 'Ripken')
+    await until('the search', () => !text().includes('Barry L'))
+    expect(dms.calls).includes('candidates Ripken')
+    expect(row('Cal Ripken').textContent).equals('CRCal RipkenDemo Hawks')
+  })
+
   it('debounces searches and never publishes an older response or error', async function () {
     const dms = new FakeDms()
     dms.people = [{ ...dms.people[0], shortName: 'Lou Gehrig' }]
@@ -1992,7 +2032,7 @@ describe('starting a direct message', function () {
 describe('members, approvals and safety numbers', function () {
   this.timeout(10000)
 
-  it('lists members with labels, approves a reset identity, and shows a safety number', async function () {
+  it('lists members with their affiliation lines, approves a reset identity, and shows a safety number', async function () {
     const engine = new FakeEngine()
     engine.views.set(
       'cnv_1',
@@ -2001,6 +2041,7 @@ describe('members, approvals and safety numbers', function () {
           member(userIdOfGumbo(1), 'Blair B'),
           member(userIdOfGumbo(2), 'Hank C', {
             label: 'Coach · Guardian',
+            affiliations: 'Guardian of Mike T · Demo Hawks',
             isModerator: true
           }),
           member(userIdOfGumbo(9), 'Drew D', { safetyNumberChanged: true })
@@ -2056,7 +2097,9 @@ describe('members, approvals and safety numbers', function () {
     )
     await until('the approval', () => text().includes('reset their chat keys'))
     const words = text()
-    expect(words).contains('Coach · Guardian')
+    // The affiliation line takes the label's place; the badge stays.
+    expect(words).contains('Guardian of Mike T · Demo Hawks')
+    expect(words).not.contains('Coach · Guardian')
     expect(words).contains('Moderator')
     expect(words).contains('Drew D’s safety words changed')
     expect(words).contains('Blair B (You)')
@@ -2109,7 +2152,9 @@ describe('members, approvals and safety numbers', function () {
       )
     ).equals(true)
     await press('Done')
-    await until('the members again', () => text().includes('Coach · Guardian'))
+    await until('the members again', () =>
+      text().includes('Guardian of Mike T · Demo Hawks')
+    )
   })
 
   it('says when an approval fails, and lets a DM member leave', async function () {

@@ -302,7 +302,9 @@ describe('adding an existing player from Set Team Rosters', function () {
       `      search requests while "Jos" was typed: ${JSON.stringify(asks.map(url => new URL(url).search))}`
     )
     expect(asks.filter(url => url.includes('q=Jos'))).has.length(1)
-    expect(await pageText()).includes('Coastal Gulls')
+    // His card's line names no team the coach may not see: Coastal Gulls
+    // are in another league.
+    expect(await pageText()).not.includes('Coastal Gulls')
     await shot('web-search-jos')
     await tap('Clear search')
     await browser.assertVisible({

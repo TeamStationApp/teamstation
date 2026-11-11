@@ -62,7 +62,19 @@ const specs = [
 // `.tsx` specs run from one bundle, with the web's `react-native`.
 const screens = [
   // M2
-  'src/app/screens/PlayerScreen.test.tsx'
+  'src/app/screens/PlayerScreen.test.tsx',
+  // M4: the affiliation line under every person a list names.
+  'src/app/components/PersonAffiliationLine.test.tsx',
+  'src/app/components/PersonSearchRow.test.tsx',
+  'src/app/components/relationshipLists.test.tsx',
+  'src/app/screens/teamRoster.test.tsx',
+  'src/app/screens/SeasonPage.test.tsx',
+  'src/app/screens/AddPlayerScene.test.tsx',
+  'src/app/scoring/ExistingPlayerSheet.test.tsx',
+  'src/app/chat/chatUi.test.tsx',
+  'src/app/chat/chat2Info.test.tsx',
+  'src/app/umpires/management.test.tsx',
+  'src/app/hooks/useRosterCandidates.test.tsx'
 ]
 
 const database = spawnSync('node', ['src/migrate/requirePostgres18.js'], {

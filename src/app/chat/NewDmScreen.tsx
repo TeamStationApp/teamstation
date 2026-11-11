@@ -16,6 +16,7 @@ import { asUserId } from '../../common/userId'
 import { Button, Card, initialsOf, Screen, TextField } from '../components'
 import { Emblem } from '../components/Emblem'
 import { Icon } from '../components/Icon'
+import { PersonAffiliationLine } from '../components/PersonAffiliationLine'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { DM_MAX_MEMBERS } from './chatModel'
@@ -223,9 +224,10 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
                   fallback={initialsOf(person.shortName)}
                   shape="circle"
                 />
-                <Text style={[shared.name, { flex: 1 }]}>
-                  {person.shortName}
-                </Text>
+                <View style={shared.rowText}>
+                  <Text style={shared.name}>{person.shortName}</Text>
+                  <PersonAffiliationLine affiliations={person.affiliations} />
+                </View>
                 {isPicked(person) && (
                   <Icon name="star" color={theme.activeColor} />
                 )}

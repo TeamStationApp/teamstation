@@ -573,6 +573,39 @@ describe('management.test.tsx', () => {
       .and.not.contains('Network unavailable')
     expect(target('Revoke Uma R').textContent).equals('Revoke')
   })
+  it('draws each umpire’s and each candidate’s affiliation line through the shared line, and none for an empty one', async () => {
+    const f = fixture()
+    f.people.push({
+      id: 'four',
+      name: 'Wade B',
+      avatarUrl: null,
+      affiliations: '',
+      certifications: []
+    })
+    await mount(<LeagueUmpiresScreen client={f.client} league="demo" />)
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    const line = (id: string): HTMLElement | null =>
+      document.querySelector<HTMLElement>(`[data-testid="${id}"]`)
+    expect(line('umpire-affiliation-one')!.textContent).equals(
+      'Demo Hawks · Guardian of Demo Player'
+    )
+    expect(line('umpire-affiliation-two')!.textContent).equals('Demo Hawks')
+    expect(line('umpire-affiliation-one-viewport')).not.equals(null)
+    expect(line('umpire-affiliation-four')).equals(null)
+    expect(line('umpire-affiliation-four-viewport')).equals(null)
+    // The table cell's line matches the search row's.
+    await fill('Search affiliated people', 'Alex')
+    const candidate = line('candidate-affiliation-three')!
+    expect(candidate.textContent).equals('Demo Hawks')
+    expect(getComputedStyle(candidate).fontSize).equals(
+      getComputedStyle(line('umpire-affiliation-two')!).fontSize
+    )
+    expect(getComputedStyle(candidate).color).equals(
+      getComputedStyle(line('umpire-affiliation-two')!).color
+    )
+  })
   it('gates management actions and persists both settings', async () => {
     const f = fixture()
     let settings = { management: false, credits: false }

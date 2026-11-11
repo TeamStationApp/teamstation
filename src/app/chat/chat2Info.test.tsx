@@ -166,15 +166,25 @@ async function pressMember(userId: string): Promise<void> {
 }
 
 describe('conversation information', function () {
-  it('exposes distinct short-name roles and canonical row identities before opening the exact peer safety words', async function () {
+  it('tells same-named members apart by their affiliation lines and canonical row identities before opening the exact peer safety words', async function () {
     const engine = new InfoEngine()
     const coach = userIdOfValue((1n << 127n) + 29n)
     engine.current = view({
       members: [
-        member(userIdOfGumbo(1), 'Aaron J', { label: 'Member' }),
-        member(userIdOfGumbo(2), 'Aaron J', { label: 'Member' }),
-        member(coach, 'Aaron J', { label: 'Coach', isModerator: true }),
-        member(userIdOfGumbo(4), 'Mookie Betts', { label: '' })
+        member(userIdOfGumbo(1), 'Aaron J', {
+          label: 'Member',
+          affiliations: 'Demo Hawks'
+        }),
+        member(userIdOfGumbo(2), 'Aaron J', {
+          label: 'Member',
+          affiliations: 'Guardians: Ken G · Demo Owls'
+        }),
+        member(coach, 'Aaron J', {
+          label: 'Coach',
+          affiliations: 'Guardian of Mike T',
+          isModerator: true
+        }),
+        member(userIdOfGumbo(4), 'Mookie Betts', { label: 'Member' })
       ]
     })
     const called: string[] = []
@@ -192,19 +202,25 @@ describe('conversation information', function () {
     ).has.length(0)
     const row = (id: string): HTMLElement =>
       node.querySelector<HTMLElement>(`[data-testid="chat-info-member-${id}"]`)!
+    // The affiliation line, not the chat label, reads under each name.
     expect(row(userIdOfGumbo(1)).getAttribute('aria-label')).equals(
-      'Aaron J (You), Member'
+      'Aaron J (You), Demo Hawks'
     )
     expect(row(userIdOfGumbo(1)).getAttribute('aria-disabled')).equals('true')
     expect(row(userIdOfGumbo(2)).getAttribute('aria-label')).equals(
-      'Safety words with Aaron J, Member'
+      'Safety words with Aaron J, Guardians: Ken G · Demo Owls'
     )
     expect(row(coach).getAttribute('aria-label')).equals(
-      'Safety words with Aaron J, Coach, Moderator'
+      'Safety words with Aaron J, Guardian of Mike T, Moderator'
     )
+    expect(row(coach).textContent)
+      .contains('Guardian of Mike T')
+      .and.contains('Moderator')
+      .and.not.contains('Coach')
     expect(row(userIdOfGumbo(4)).getAttribute('aria-label')).equals(
       'Safety words with Mookie Betts'
     )
+    expect(row(userIdOfGumbo(4)).textContent).not.contains('Member')
     await pressMember(userIdOfGumbo(1))
     expect(called).deep.equals([])
     await pressMember(coach)

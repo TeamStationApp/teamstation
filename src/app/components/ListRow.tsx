@@ -191,6 +191,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   text: {
     flex: 1,
+    minWidth: 0,
     gap: theme.rem(0.125)
   },
   title: {

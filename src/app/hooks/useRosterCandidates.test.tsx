@@ -308,5 +308,32 @@ describe('useRosterCandidates', function () {
       expect(candidateMatches(mookie, 'ookie')).equals(false)
       expect(candidateMatches(mookie, 'moo x')).equals(false)
     })
+
+    it('finds a row by the surname of the full name it carries', async () => {
+      // Read in full, the row's name is the full one; its parts stay public.
+      const full = candidate('Josh Smith', {
+        shortName: 'Josh Smith',
+        compactName: 'Josh S',
+        affiliations: 'Guardians: Ken G · Demo Hawks'
+      })
+      const short = candidate('Josh Staumont')
+      expect(full.shortParts).deep.equals({ first: 'Josh', last: 'S' })
+      expect(candidateMatches(full, 'smith')).equals(true)
+      expect(candidateMatches(full, 'josh smi')).equals(true)
+      // A public row carries no surname to match.
+      expect(candidateMatches(short, 'staumont')).equals(false)
+      expect(candidateMatches(short, 'josh s')).equals(true)
+      // The kept rows are listed by that match while the server is asked.
+      const fake = new FakeCandidateClient()
+      fake.kept.tem_falcons = [full, short]
+      timers = heldTimers(500)
+      root = createRoot(document.createElement('div'))
+      await show(fake, 'Smith', undefined, true)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(state.rows.map(row => row.shortName)).deep.equals(['Josh Smith'])
+      expect(state.rows[0].affiliations).equals('Guardians: Ken G · Demo Hawks')
+    })
   })
 })

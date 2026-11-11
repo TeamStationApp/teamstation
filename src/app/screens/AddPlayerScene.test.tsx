@@ -48,7 +48,8 @@ const burnes = candidate('Corbin Burnes', {
   bats: 'right',
   throws: 'right',
   tier: 'season',
-  teams: [{ teamId: 'tem_bears', name: 'Valley Bears' }]
+  teams: [{ teamId: 'tem_bears', name: 'Valley Bears' }],
+  affiliations: 'Valley Bears'
 })
 const entry = { userId: 'usr_burnes' } as unknown as RosterEntry
 
@@ -135,7 +136,13 @@ describe('team settings Add Player', function () {
       fake.last().resolve([burnes, candidate('Max Fried')])
     })
     expect(node('Choose Corbin B')).not.equals(null)
-    expect(text()).includes('Valley Bears')
+    // The card draws the server's affiliation line in place of team pills,
+    // and none for a candidate whose line is empty.
+    const lines = [
+      ...document.querySelectorAll('[data-testid="Candidate affiliations"]')
+    ]
+    expect(lines.map(line => line.textContent)).deep.equals(['Valley Bears'])
+    expect(node('Choose Corbin B')!.contains(lines[0])).equals(true)
     await click('Cancel')
     expect(cancelled).has.length(1)
     expect(sent).has.length(0)
