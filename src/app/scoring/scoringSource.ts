@@ -11,7 +11,8 @@ import {
   KEEPS_AT_BAT_SINCE,
   keepsAtBat,
   OVERRIDE_SLOTS_SINCE,
-  type ScoringAction
+  type ScoringAction,
+  usesOverrideSlots
 } from '../../common/scoring/actions'
 import {
   type EventStore,
@@ -111,23 +112,7 @@ function foldsDiffer(stored: StoredGame, version: number): boolean {
       Array.isArray(record?.actions) &&
       record.actions.some(action => {
         if (version < KEEPS_AT_BAT_SINCE && keepsAtBat(action)) return true
-        if (
-          version >= OVERRIDE_SLOTS_SINCE ||
-          action == null ||
-          typeof action !== 'object'
-        )
-          return false
-        return (
-          (action.type === 'gameFlow' &&
-            action.kind === 'override' &&
-            (action.clearPitcher === true ||
-              action.batterIndex != null ||
-              action.pitcher == null)) ||
-          (action.type === 'lineup' &&
-            action.kind === 'roster' &&
-            action.setup != null &&
-            action.replaces != null)
-        )
+        return version < OVERRIDE_SLOTS_SINCE && usesOverrideSlots(action)
       })
     )
   })

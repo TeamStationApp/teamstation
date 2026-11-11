@@ -1202,6 +1202,16 @@ describe('the game socket (U14)', function () {
 
     it('delivers play edits and game for a post, and lineups only when they change', async function () {
       const listener = await listen(VIEWER)
+      const legacy = await Promise.all([listen(VIEWER), listen(VIEWER)])
+      for (let i = 0; i < legacy.length; i++) {
+        legacy[i].send({
+          type: 'subscribe',
+          gameId: scored,
+          id: 'old',
+          protocol: i + 3
+        })
+        await legacy[i].next(frame => frame.type === 'subscribed')
+      }
       const quiet = await listen(OTHER)
       await subscribed(listener, scored)
       await subscribed(quiet, scored)
@@ -1233,6 +1243,15 @@ describe('the game socket (U14)', function () {
       from = listener.frames.length
       await apply(strike)
       expect(await settled(listener, from)).deep.equals(['game', 'playEdits'])
+      for (const old of legacy) {
+        const frame = old.frames.findLast(
+          frame => frame.type === 'change' && frame.kind === 'playEdits'
+        )
+        if (frame?.type !== 'change' || frame.kind !== 'playEdits')
+          throw new Error('Expected play edits')
+        expect(frame.data.edits).deep.equals([])
+        expect(frame.data.currentPlay).not.equals(undefined)
+      }
       const edits = playsFrame()
       expect(edits).to.have.keys(
         'generation',
@@ -1307,6 +1326,23 @@ describe('the game socket (U14)', function () {
       from = listener.frames.length
       await apply(ball)
       expect(await settled(listener, from)).deep.equals(['game', 'playEdits'])
+
+      // Only a frame containing newer override semantics forces old readers to HTTP.
+      from = listener.frames.length
+      const oldFrom = legacy.map(old => old.frames.length)
+      await apply({ type: 'gameFlow', kind: 'override', outs: 1 })
+      await settled(listener, from)
+      expect(playsFrame()?.currentPlay).not.equals(undefined)
+      for (let i = 0; i < legacy.length; i++) {
+        const frame = legacy[i].frames
+          .slice(oldFrom[i])
+          .find(frame => frame.type === 'change' && frame.kind === 'playEdits')
+        if (frame?.type !== 'change' || frame.kind !== 'playEdits')
+          throw new Error('Expected play edits')
+        expect(frame.data.edits).equals(null)
+        expect(frame.data.currentPlay).equals(undefined)
+        legacy[i].ws.terminate()
+      }
 
       expect(kindsHeard(quiet, 0)).deep.equals([])
       listener.ws.terminate()

@@ -1273,6 +1273,10 @@ function ScoringPanel(props: {
   const [sheet, setSheet] = useState<
     'exit' | 'settings' | 'overrides' | 'half' | 'rosters' | 'swap' | 'game'
   >()
+  useEffect(() => {
+    if ((model.appliedOverrides ?? 0) > 0)
+      setSheet(current => (current === 'overrides' ? undefined : current))
+  }, [model.appliedOverrides])
   const { height: windowHeight } = useWindowDimensions()
   const [swapping, setSwapping] = useState(false)
   const [swapProblem, setSwapProblem] = useState<string>()
@@ -3385,7 +3389,18 @@ function ScoringPanel(props: {
           </ScrollView>
         </>
       )}
-      {sheet != null && (
+      {sheet === 'overrides' && (
+        <OverridesEditor
+          visible={props.active}
+          onClose={closeSheet}
+          state={readableState}
+          applyAttempt={model.attemptedOverrides}
+          onApply={draft => {
+            dispatch({ type: 'OVERRIDE', draft })
+          }}
+        />
+      )}
+      {sheet != null && sheet !== 'overrides' && (
         <ScoringSheet
           visible={props.active || sheet === 'exit'}
           headerless={sheet === 'rosters'}
@@ -3399,7 +3414,6 @@ function ScoringPanel(props: {
             {
               exit: 'Exit Current Game',
               settings: 'Settings',
-              overrides: 'Overrides',
               half: 'End Half Inning',
               rosters: 'Set Team Rosters',
               swap: 'Swap Home and Away',
@@ -3563,15 +3577,6 @@ function ScoringPanel(props: {
                 }}
               />
             ))}
-          {sheet === 'overrides' && (
-            <OverridesEditor
-              state={readableState}
-              onApply={draft => {
-                dispatch({ type: 'OVERRIDE', draft })
-                closeSheet()
-              }}
-            />
-          )}
           {sheet === 'swap' && (
             <>
               <Text

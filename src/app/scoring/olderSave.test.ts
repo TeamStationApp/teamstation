@@ -284,7 +284,7 @@ describe('a save of plays an older build queued', function () {
     })
     if ('error' in prepared) throw new Error(prepared.error)
     expect(copied(prepared.actions[0])).not.property('pitcher')
-    expect(prepared.actions[0]).not.property('clearPitcher')
+    expect(prepared.actions[0]).property('clearPitcher', true)
     applied(scorer, prepared.actions)
     expect(scorer.state.liveData.linescore.currentInning).equals(3)
     expect(scorer.state.liveData.linescore.teams.away.runs).equals(2)

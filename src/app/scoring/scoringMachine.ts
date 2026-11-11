@@ -522,7 +522,9 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
-  let next = reduce(state, event)
+  return drainDictation(reduce(state, event))
+}
+function drainDictation(next: ScoringState): ScoringState {
   // A sentence that came back while the last one was shown applies once the
   // screen is at rest again.
   while (
@@ -962,6 +964,10 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
  */
 export interface ScoringScreenModel {
   scoring: ScoringState
+  /** Successful overrides only: a refused attempt must leave its sheet open. */
+  appliedOverrides?: number
+  /** Settled attempts release the editor lock even when the draft was refused. */
+  attemptedOverrides?: number
   /** Undo taps waiting to take back play saved before the screen opened. */
   savedUndos: number
   /** How many such taps have been taken back so far. */
@@ -999,8 +1005,21 @@ export function scoringScreenReducer(
     scoring.readOnly !== true
   )
     return { ...model, savedUndos: model.savedUndos + 1 }
-  const next = scoringReducer(scoring, event)
-  return next === scoring ? model : { ...model, scoring: next }
+  const reduced = reduce(scoring, event)
+  const next = drainDictation(reduced)
+  return next === scoring && event.type !== 'OVERRIDE'
+    ? model
+    : {
+        ...model,
+        scoring: next,
+        ...(event.type === 'OVERRIDE'
+          ? {
+              attemptedOverrides: (model.attemptedOverrides ?? 0) + 1,
+              appliedOverrides:
+                (model.appliedOverrides ?? 0) + (reduced !== scoring ? 1 : 0)
+            }
+          : {})
+      }
 }
 
 /**

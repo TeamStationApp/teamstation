@@ -49,8 +49,8 @@ export const GAME_SOCKET_PROTOCOL = 5
 
 /**
  * The oldest protocol a game or scope subscribe may name on any server: an
- * app below it misreads a scope's frames. Watching a game needs no more, so
- * an app, a watcher or an API client too old to save plays still follows.
+ * app below it misreads a scope's frames. Rendered score views need no more;
+ * replay source with newer actions is gated separately at its HTTP resource.
  */
 export const MINIMUM_GAME_SOCKET_PROTOCOL = 3
 
@@ -59,6 +59,9 @@ export const MINIMUM_GAME_SOCKET_PROTOCOL = 3
  * below it cannot replay explicit pitcher resets or selected batting slots.
  */
 export const MINIMUM_SAVE_PROTOCOL = 5
+
+/** Replay clients fold stored actions; rendered score-only views do not. */
+export const MINIMUM_OVERRIDE_REPLAY_PROTOCOL = 5
 
 /**
  * The minimum a server holds subscribes to: its config's, never below

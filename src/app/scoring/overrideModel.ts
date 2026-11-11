@@ -34,11 +34,13 @@ export function overrideHalf(
   const team = state.liveData.boxscore.teams[top ? 'away' : 'home']
   const bases = top === original.top ? original.bases : [null, null, null]
   const due = team.battingOrder[team.battingIndex]
+  const restored = top === original.top ? overrideDraftOf(state) : undefined
+  const batter = restored != null ? restored.batter : due
   return {
     ...draft,
     top,
-    batter: bases.includes(due) ? null : (due ?? null),
-    batterIndex: team.battingIndex,
+    batter: bases.includes(batter) ? null : (batter ?? null),
+    batterIndex: restored != null ? restored.batterIndex : team.battingIndex,
     pitcher: top === original.top ? original.pitcher : null,
     bases,
     pinchHitter: undefined
@@ -62,19 +64,16 @@ export function overrideActions(
       ...values,
       // A selected new turn must survive later roster repair. An unchanged
       // first occurrence needs no fold-5 slot metadata for a numeric edit.
+      // Recovering a stale live index is not a new selection.
       ...(batterIndex != null &&
       (batterIndex !== order.indexOf(draft.batter ?? -1) ||
-        batterIndex !== team.battingIndex ||
+        batterIndex !== overrideDraftOf(state).batterIndex ||
         draft.batter !== state.liveData.linescore.offense.batter?.id)
         ? { batterIndex }
         : {}),
       batter: draft.batter ?? undefined,
       pitcher: draft.pitcher ?? undefined,
-      ...(draft.pitcher == null &&
-      (draft.top !== state.liveData.linescore.isTopInning ||
-        state.liveData.linescore.defense.P != null)
-        ? { clearPitcher: true }
-        : {})
+      ...(draft.pitcher == null ? { clearPitcher: true } : {})
     }
   ]
   // A missing draft batter must not fall back to the live game's batter.

@@ -53,6 +53,7 @@ async function main(): Promise<void> {
   }
   const tap = async (text: string): Promise<void> => {
     console.log('Tap', text)
+    await m.waitForAnimationToEnd({ timeout: 3000 })
     const hierarchy = await m.hierarchy()
     const nodes = flat(
       flat(hierarchy).find(node => node.type === 'WebView') ?? hierarchy
@@ -245,11 +246,23 @@ async function main(): Promise<void> {
     })
     await m.assertVisible({ text: 'Open scoring menu', timeout: 45000 })
     await menu()
-    await tap('Correct runners')
+    // Swipe through the blank middle of the rows: Safari reports text under
+    // the floating footer as visible, so scrollUntilVisible alone can stop early.
+    await m.swipe({ start: '50%,65%', end: '50%,35%', duration: 200 })
+    await m.waitForAnimationToEnd({ timeout: 3000 })
+    const scrolled = flat(await m.hierarchy())
+    const lastRow = scrolled
+      .filter(node => node.text === 'Third base')
+      .at(-1)?.bounds
+    const apply = scrolled
+      .filter(node => node.text === 'Apply Override')
+      .at(-1)?.bounds
+    assert(lastRow != null && apply != null)
+    assert(lastRow.y + lastRow.height < apply.y, 'Third base must clear Apply')
+    await capture('inline-runners')
     await tap('Second base')
     await capture('runner-correction')
     await tap('Choose Second base Mike Trout')
-    await tap('Done correcting runners')
     await tap('Apply Override')
     const corrected = await saved(state => baseIds(state)[1] === 201)
     assert.equal(

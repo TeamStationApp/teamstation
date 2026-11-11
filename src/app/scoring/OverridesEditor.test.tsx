@@ -1,6 +1,6 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
-import React, { act } from 'react'
+import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
 import { responderDrag } from '../../test/responderDrag'
@@ -27,12 +27,24 @@ async function mount(state = stateOf()): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
   root = createRoot(host)
-  await act(async () => {
-    root!.render(
+  function Editor(): React.ReactElement {
+    const [attempt, setAttempt] = useState(0)
+    return (
       <ThemeProvider>
-        <OverridesEditor state={state} onApply={draft => applied.push(draft)} />
+        <OverridesEditor
+          onClose={() => undefined}
+          state={state}
+          applyAttempt={attempt}
+          onApply={draft => {
+            applied.push(draft)
+            setAttempt(value => value + 1)
+          }}
+        />
       </ThemeProvider>
     )
+  }
+  await act(async () => {
+    root!.render(<Editor />)
   })
 }
 function node(label: string): HTMLElement {
@@ -67,6 +79,20 @@ async function wheel(value: string): Promise<void> {
 }
 
 describe('override settings editor', function () {
+  it('moves the score wheel window to a valid typed score', async function () {
+    const state = stateOf()
+    state.session.liveData.linescore.teams.away.runs = 200
+    await mount(state)
+    await tap('Owls score')
+    await enter('5')
+    const wheel = node('Owls score: 5')
+    expect(
+      [...wheel.querySelectorAll<HTMLElement>('div')].map(n => n.scrollTop)
+    ).includes(5 * 44)
+    await tap('Done')
+    await tap('Apply Override')
+    expect(applied[0].awayScore).equals(5)
+  })
   it('browses score ranges without changing the selected score', async function () {
     const state = stateOf()
     state.session.liveData.linescore.teams.away.runs = 7
@@ -118,14 +144,25 @@ describe('override settings editor', function () {
   it('shows one row per field, bounded count choices and numeric dialogs with cancellation', async function () {
     await mount()
     expect(document.querySelector('[aria-label="Pitcher"]')).equals(null)
-    expect(document.querySelector('[aria-label="First base"]')).equals(null)
+    for (const label of ['First base', 'Second base', 'Third base'])
+      expect(node(label).textContent).includes('Empty')
+    expect(document.querySelector('[aria-label="Correct runners"]')).equals(
+      null
+    )
+    expect(
+      node('Apply Override').closest('[data-testid="Scoring sheet footer"]')
+    ).not.equals(null)
     for (const [label, max] of [
       ['Balls', 3],
       ['Strikes', 2],
       ['Outs', 2]
     ] as const) {
-      expect(node(label).querySelectorAll('[role="tab"]')).length(max + 1)
+      expect(node(label).getAttribute('role')).equals('radiogroup')
+      expect(node(label).querySelectorAll('[role="radio"]')).length(max + 1)
       await tap(`${label} ${max}`)
+      expect(node(`${label} ${max}`).getAttribute('aria-checked')).equals(
+        'true'
+      )
     }
     await tap('Inning')
     await wheel('50')
@@ -183,13 +220,13 @@ describe('override settings editor', function () {
       [30, 11],
       [210, 12]
     ])
-    expect(node('Balls 3').getAttribute('aria-selected')).equals('true')
+    expect(node('Balls 3').getAttribute('aria-checked')).equals('true')
     await responderDrag(node('Balls 3'), [
       [210, 10],
       [190, 11],
       [0, 12]
     ])
-    expect(node('Balls 0').getAttribute('aria-selected')).equals('true')
+    expect(node('Balls 0').getAttribute('aria-checked')).equals('true')
     await responderDrag(node('Balls 0'), [
       [10, 10],
       [12, 50],
@@ -254,6 +291,10 @@ describe('override settings editor', function () {
     )
     await tap('Cancel')
     expect(node('Apply Override').getAttribute('aria-disabled')).equals('true')
+    expect(
+      document.querySelector('[data-testid="Scoring sheet footer"]')
+        ?.textContent
+    ).includes('Choose a batter from the batting team lineup.')
   })
 })
 
@@ -294,19 +335,15 @@ describe('override settings runner corrections', function () {
     const state = stateOf()
     const name = state.session.gameData.players[2].fullName
     await mount(state)
-    await tap('Correct runners')
     await tap('First base')
     await tap(`Choose First base ${name}`)
     await tap('Second base')
     await tap(`Choose Second base ${name}`)
-    await tap('Done correcting runners')
     await tap('Apply Override')
     expect(applied[0].bases).deep.equals([null, 2, null])
     expect(state.session.liveData.linescore.offense.second).equals(null)
-    await tap('Correct runners')
     await tap('Second base')
     await tap('Choose Second base Empty')
-    await tap('Done correcting runners')
     await tap('Apply Override')
     expect(applied[1].bases).deep.equals([null, null, null])
   })

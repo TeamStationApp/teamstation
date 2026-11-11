@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { shortName } from '../../common/names'
@@ -13,6 +13,7 @@ import { OverrideCountSlider } from './OverrideCountSlider'
 import { overrideDraftOf, overrideHalf } from './overrideModel'
 import { overrideProblem } from './scoringMachine'
 import { ScoringButton, ScoringError, ScoringSheet } from './ScoringSheet'
+import { useScoringSheetTheme } from './scoringSheetTheme'
 import { ScoringTextInput } from './ScoringTextInput'
 import type { OverrideDraft, ScoringState } from './scoringTypes'
 
@@ -20,15 +21,29 @@ type NumberField = 'inning' | 'awayScore' | 'homeScore'
 
 export function OverridesEditor({
   state,
-  onApply
+  onApply,
+  onClose,
+  visible = true,
+  applyAttempt = 0
 }: {
   state: ScoringState
+  onClose: () => void
+  visible?: boolean
+  applyAttempt?: number
   onApply: (draft: OverrideDraft) => void
 }): React.ReactElement {
-  const theme = useTheme()
+  const applying = useRef(false)
+  const [pending, setPending] = useState(false)
+  useEffect(() => {
+    applying.current = false
+    setPending(false)
+  }, [applyAttempt])
+  const theme = useScoringSheetTheme()
   const controlsTheme = useMemo(
     () => ({
       ...theme,
+      // Divider ends follow the rows' 12-point text inset on both sides.
+      cardContentInsetRem: 12 / theme.rem(1),
       sliderTrackBackground:
         theme.scoringSheet === true
           ? theme.scoringSurface.input
@@ -42,7 +57,6 @@ export function OverridesEditor({
   )
   const [picker, setPicker] = useState<NumberField | null>(null)
   const [batters, setBatters] = useState(false)
-  const [runners, setRunners] = useState(false)
   const [runnerBase, setRunnerBase] = useState<number | null>(null)
   const session = state.session
   const team = session.liveData.boxscore.teams[draft.top ? 'away' : 'home']
@@ -119,229 +133,215 @@ export function OverridesEditor({
     )
   }
   return (
-    <ScopedThemeProvider theme={controlsTheme}>
-      <View style={{ gap: 12 }}>
-        <SegmentedPill
-          accessibilityLabel="Half inning"
-          options={[
-            { id: 'top', label: 'Top' },
-            { id: 'bottom', label: 'Bottom' }
-          ]}
-          selected={draft.top ? 'top' : 'bottom'}
-          onSelect={half => {
-            setDraft(overrideHalf(session, draft, half === 'top'))
-          }}
-        />
-        <ListCard>
-          {(['inning', 'awayScore', 'homeScore'] as const).map(key => (
+    <ScoringSheet
+      title="Overrides"
+      visible={visible}
+      onClose={onClose}
+      footer={
+        <View style={{ gap: 12 }}>
+          <ScoringError message={error} />
+          <ScoringButton
+            label="Apply Override"
+            disabled={error != null || pending}
+            onPress={() => {
+              if (applying.current) return
+              applying.current = true
+              setPending(true)
+              onApply(draft)
+            }}
+          />
+        </View>
+      }
+    >
+      <ScopedThemeProvider theme={controlsTheme}>
+        <View style={{ gap: 12 }}>
+          <SegmentedPill
+            accessibilityLabel="Half inning"
+            options={[
+              { id: 'top', label: 'Top' },
+              { id: 'bottom', label: 'Bottom' }
+            ]}
+            selected={draft.top ? 'top' : 'bottom'}
+            onSelect={half => {
+              setDraft(overrideHalf(session, draft, half === 'top'))
+            }}
+          />
+          <ListCard>
+            {(['inning', 'awayScore', 'homeScore'] as const).map(key => (
+              <Pressable
+                key={key}
+                accessibilityRole="button"
+                accessibilityLabel={
+                  key === 'inning' ? 'Inning' : `${labels[key]} score`
+                }
+                onPress={() => {
+                  setPicker(key)
+                }}
+                style={rowStyle}
+              >
+                <Text style={labelStyle}>{labels[key]}</Text>
+                <Text style={valueStyle}>{draft[key]}</Text>
+              </Pressable>
+            ))}
+            {(['balls', 'strikes', 'outs'] as const).map(key => {
+              const label = key[0].toUpperCase() + key.slice(1)
+              return (
+                <View key={key} style={rowStyle}>
+                  <Text style={labelStyle}>{label}</Text>
+                  <OverrideCountSlider
+                    label={label}
+                    max={key === 'balls' ? 3 : 2}
+                    value={draft[key]}
+                    onChange={value => {
+                      setDraft({ ...draft, [key]: value })
+                    }}
+                  />
+                </View>
+              )
+            })}
             <Pressable
-              key={key}
               accessibilityRole="button"
-              accessibilityLabel={
-                key === 'inning' ? 'Inning' : `${labels[key]} score`
-              }
+              accessibilityLabel="Batter"
               onPress={() => {
-                setPicker(key)
+                setBatters(true)
               }}
               style={rowStyle}
             >
-              <Text style={labelStyle}>{labels[key]}</Text>
-              <Text style={valueStyle}>{draft[key]}</Text>
+              <Text style={labelStyle}>Batter</Text>
+              <Text style={[valueStyle, { flexShrink: 1, textAlign: 'right' }]}>
+                {name}
+              </Text>
             </Pressable>
-          ))}
-          {(['balls', 'strikes', 'outs'] as const).map(key => {
-            const label = key[0].toUpperCase() + key.slice(1)
-            return (
-              <View key={key} style={rowStyle}>
+            {['First base', 'Second base', 'Third base'].map((label, index) => (
+              <Pressable
+                key={label}
+                accessibilityRole="button"
+                accessibilityLabel={label}
+                onPress={() => {
+                  setRunnerBase(index)
+                }}
+                style={rowStyle}
+              >
                 <Text style={labelStyle}>{label}</Text>
-                <OverrideCountSlider
-                  label={label}
-                  max={key === 'balls' ? 3 : 2}
-                  value={draft[key]}
-                  onChange={value => {
-                    setDraft({ ...draft, [key]: value })
-                  }}
-                />
-              </View>
-            )
-          })}
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Batter"
-            onPress={() => {
-              setBatters(true)
-            }}
-            style={rowStyle}
-          >
-            <Text style={labelStyle}>Batter</Text>
-            <Text style={[valueStyle, { flexShrink: 1, textAlign: 'right' }]}>
-              {name}
-            </Text>
-          </Pressable>
-        </ListCard>
-        <ScoringButton
-          label="Correct runners"
-          row
-          onPress={() => {
-            setRunners(true)
-          }}
-        />
-        <ScoringError message={error} />
-        <ScoringButton
-          label="Apply Override"
-          disabled={error != null}
-          onPress={() => {
-            onApply(draft)
-          }}
-        />
-        {picker != null && (
-          <OverrideNumberPicker
-            label={picker === 'inning' ? 'Inning' : `${labels[picker]} score`}
-            value={draft[picker]}
-            inning={picker === 'inning'}
-            onClose={() => {
-              setPicker(null)
-            }}
-            onDone={value => {
-              setDraft({ ...draft, [picker]: value })
-              setPicker(null)
-            }}
-          />
-        )}
-        {runners && (
-          <ScoringSheet
-            fullScreen
-            title="Correct runners"
-            onClose={() => {
-              setRunners(false)
-            }}
-          >
-            <Text style={textStyle}>
-              Choose a base to add, move, or remove a runner. Changes are saved
-              with Apply Override.
-            </Text>
-            <ListCard>
-              {['First base', 'Second base', 'Third base'].map(
-                (label, index) => (
-                  <Pressable
-                    key={label}
-                    accessibilityRole="button"
-                    accessibilityLabel={label}
-                    onPress={() => {
-                      setRunnerBase(index)
-                    }}
-                    style={rowStyle}
-                  >
-                    <Text style={labelStyle}>{label}</Text>
-                    <Text style={valueStyle}>
-                      {draft.bases[index] == null
-                        ? 'Empty'
-                        : session.gameData.players[draft.bases[index]].fullName}
-                    </Text>
-                  </Pressable>
-                )
-              )}
-            </ListCard>
-            <ScoringButton
-              label="Done correcting runners"
-              onPress={() => {
-                setRunners(false)
+                <Text
+                  style={[valueStyle, { flexShrink: 1, textAlign: 'right' }]}
+                >
+                  {draft.bases[index] == null
+                    ? 'Empty'
+                    : session.gameData.players[draft.bases[index]].fullName}
+                </Text>
+              </Pressable>
+            ))}
+          </ListCard>
+          {picker != null && (
+            <OverrideNumberPicker
+              label={picker === 'inning' ? 'Inning' : `${labels[picker]} score`}
+              value={draft[picker]}
+              inning={picker === 'inning'}
+              onClose={() => {
+                setPicker(null)
+              }}
+              onDone={value => {
+                setDraft({ ...draft, [picker]: value })
+                setPicker(null)
               }}
             />
-          </ScoringSheet>
-        )}
-        {runnerBase != null && (
-          <ScoringSheet
-            fullScreen
-            title={['First base', 'Second base', 'Third base'][runnerBase]}
-            onClose={() => {
-              setRunnerBase(null)
-            }}
-          >
-            <ListCard>
-              {[null, ...team.players].map(id => {
-                const label =
-                  id == null ? 'Empty' : session.gameData.players[id].fullName
-                const disabled =
-                  id != null &&
-                  (id === draft.batter || id === draft.pinchHitter)
-                return (
-                  <Pressable
-                    key={id ?? 'empty'}
-                    accessibilityRole="button"
-                    accessibilityLabel={`Choose ${['First base', 'Second base', 'Third base'][runnerBase]} ${label}`}
-                    accessibilityState={{
-                      disabled,
-                      selected: draft.bases[runnerBase] === id
-                    }}
-                    disabled={disabled}
-                    onPress={() => {
-                      setDraft({
-                        ...draft,
-                        bases: draft.bases.map((old, index) =>
-                          index === runnerBase
-                            ? id
-                            : id != null && old === id
-                              ? null
-                              : old
-                        )
-                      })
-                      setRunnerBase(null)
-                    }}
-                    style={[rowStyle, { opacity: disabled ? 0.45 : 1 }]}
-                  >
-                    <Text style={textStyle}>{label}</Text>
-                  </Pressable>
-                )
-              })}
-            </ListCard>
-          </ScoringSheet>
-        )}
-        {batters && (
-          <ScoringSheet
-            fullScreen
-            title="Batter"
-            onClose={() => {
-              setBatters(false)
-            }}
-          >
-            <Text style={{ ...textStyle, fontFamily: theme.semiBoldTextFont }}>
-              Skip to Batter
-            </Text>
-            <ListCard>
-              {team.battingOrder.map((id, index) => playerRow(id, index))}
-            </ListCard>
-            {team.battingOrder.length === 0 && (
-              <Text style={textStyle}>
-                Set the batting team's lineup first.
-              </Text>
-            )}
-            <Text
-              style={{
-                ...textStyle,
-                marginTop: 16,
-                fontFamily: theme.semiBoldTextFont
+          )}
+          {runnerBase != null && (
+            <ScoringSheet
+              fullScreen
+              title={['First base', 'Second base', 'Third base'][runnerBase]}
+              onClose={() => {
+                setRunnerBase(null)
               }}
             >
-              Pinch Hit
-            </Text>
-            {draft.batter == null && (
-              <Text style={textStyle}>
-                Choose a lineup batter before selecting a pinch hitter.
+              <ListCard>
+                {[null, ...team.players].map(id => {
+                  const label =
+                    id == null ? 'Empty' : session.gameData.players[id].fullName
+                  const disabled =
+                    id != null &&
+                    (id === draft.batter || id === draft.pinchHitter)
+                  return (
+                    <Pressable
+                      key={id ?? 'empty'}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Choose ${['First base', 'Second base', 'Third base'][runnerBase]} ${label}`}
+                      accessibilityState={{
+                        disabled,
+                        selected: draft.bases[runnerBase] === id
+                      }}
+                      disabled={disabled}
+                      onPress={() => {
+                        setDraft({
+                          ...draft,
+                          bases: draft.bases.map((old, index) =>
+                            index === runnerBase
+                              ? id
+                              : id != null && old === id
+                                ? null
+                                : old
+                          )
+                        })
+                        setRunnerBase(null)
+                      }}
+                      style={[rowStyle, { opacity: disabled ? 0.45 : 1 }]}
+                    >
+                      <Text style={textStyle}>{label}</Text>
+                    </Pressable>
+                  )
+                })}
+              </ListCard>
+            </ScoringSheet>
+          )}
+          {batters && (
+            <ScoringSheet
+              fullScreen
+              title="Batter"
+              onClose={() => {
+                setBatters(false)
+              }}
+            >
+              <Text
+                style={{ ...textStyle, fontFamily: theme.semiBoldTextFont }}
+              >
+                Skip to Batter
               </Text>
-            )}
-            <ListCard>
-              {team.players
-                .filter(id => !team.battingOrder.includes(id))
-                .map((id, index) => playerRow(id, index, true))}
-            </ListCard>
-            {team.players.every(id => team.battingOrder.includes(id)) && (
-              <Text style={textStyle}>No players on the bench.</Text>
-            )}
-          </ScoringSheet>
-        )}
-      </View>
-    </ScopedThemeProvider>
+              <ListCard>
+                {team.battingOrder.map((id, index) => playerRow(id, index))}
+              </ListCard>
+              {team.battingOrder.length === 0 && (
+                <Text style={textStyle}>
+                  Set the batting team's lineup first.
+                </Text>
+              )}
+              <Text
+                style={{
+                  ...textStyle,
+                  marginTop: 16,
+                  fontFamily: theme.semiBoldTextFont
+                }}
+              >
+                Pinch Hit
+              </Text>
+              {draft.batter == null && (
+                <Text style={textStyle}>
+                  Choose a lineup batter before selecting a pinch hitter.
+                </Text>
+              )}
+              <ListCard>
+                {team.players
+                  .filter(id => !team.battingOrder.includes(id))
+                  .map((id, index) => playerRow(id, index, true))}
+              </ListCard>
+              {team.players.every(id => team.battingOrder.includes(id)) && (
+                <Text style={textStyle}>No players on the bench.</Text>
+              )}
+            </ScoringSheet>
+          )}
+        </View>
+      </ScopedThemeProvider>
+    </ScoringSheet>
   )
 }
 
@@ -421,7 +421,17 @@ function OverrideNumberPicker({
               accessibilityLabel="Enter score"
               keyboardType="number-pad"
               value={text}
-              onChangeText={setText}
+              onChangeText={text => {
+                setText(text)
+                const typed = Number(text)
+                if (
+                  /^\d+$/.test(text.trim()) &&
+                  Number.isSafeInteger(typed) &&
+                  typed >= 0 &&
+                  (typed < start || typed > end)
+                )
+                  setStart(Math.max(0, typed - 50))
+              }}
             />
             <ScoringButton
               label="Go to score"

@@ -56,7 +56,10 @@ export const ALLOWED_PERSON_ROUTES: readonly string[] = [
   // City search: a machine gets the built-in catalogue, not Google's
   // suggestions, which are paid for per person.
   'GET /locations',
-  'GET /locations/{id}'
+  'GET /locations/{id}',
+  // Replay reads exempt machines from the installed app's protocol floor.
+  'GET /games/{gameId}/events',
+  'GET /games/{gameId}/box-score'
 ]
 
 /**

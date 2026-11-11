@@ -15,7 +15,7 @@ import {
 import { asGameState, setupOf } from '../../common/scoring/state'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
-import { overrideActions, overrideHalf } from './overrideModel'
+import { overrideActions, overrideDraftOf, overrideHalf } from './overrideModel'
 import {
   initialScoringState,
   overrideProblem,
@@ -25,6 +25,36 @@ import {
 const initial = (): ReturnType<typeof initialScoringState> =>
   initialScoringState(scoringSession(gameFixture))
 describe('override settings model', function () {
+  it('restores the live batter and occurrence after toggling back with a stale index', function () {
+    const state = initial()
+    state.session.liveData.boxscore.teams.away.battingIndex = 3
+    const original = overrideDraftOf(state.session)
+    const bottom = overrideHalf(state.session, original, false)
+    const restored = overrideHalf(state.session, bottom, true)
+    expect(restored).includes({
+      batter: original.batter,
+      batterIndex: original.batterIndex
+    })
+    const prepared = overrideActions(state.session, restored)
+    if ('error' in prepared) throw new Error(prepared.error)
+    expect(prepared.actions[0]).not.property('batterIndex')
+  })
+  it('repairs a stale batting index without treating a numeric edit as a selected turn', function () {
+    for (const pitched of [false, true]) {
+      let state = initial()
+      if (pitched)
+        state = scoringReducer(state, { type: 'PITCH', kind: 'ball' })
+      state.session.liveData.boxscore.teams.away.battingIndex = 3
+      const draft = { ...overrideDraftOf(state.session), awayScore: 1 }
+      expect(draft.batterIndex).equals(0)
+      const next = scoringReducer(state, { type: 'OVERRIDE', draft })
+      expect(next.log.at(-1)).not.property('batterIndex')
+      expect(next.session.overrideLineupSetup).equals(undefined)
+      expect(next.session.overridePlayStarted).equals(undefined)
+      expect(next.session.liveData.boxscore.teams.away.battingIndex).equals(0)
+      expect(next.session.liveData.linescore.teams.away.runs).equals(1)
+    }
+  })
   it('records a move from a later duplicate turn to the first occurrence', function () {
     let state = initial()
     state.session.liveData.boxscore.teams.away.battingOrder = [1, 2, 1, 3]

@@ -5423,9 +5423,20 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         get: {
           summary: "A game's plays",
-          description: 'The stored plays in `atBatIndex` order.',
+          description:
+            'The stored plays in `atBatIndex` order. Override-slot or pitcher-less override actions require x-teamstation-protocol 5 or newer; older or missing app versions receive 503 with reason updateRequired. API keys and machine actors are exempt.',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'x-teamstation-protocol',
+              in: 'header',
+              required: false,
+              schema: { type: 'integer' },
+              description:
+                'Version 5 or newer for games with override-slot or pitcher-less override actions.'
+            }
+          ],
           responses: {
             200: {
               description:
@@ -5505,7 +5516,8 @@ export function openApiDocument(version: string): OpenApiDocument {
               }
             },
             401: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            503: errorResponse
           }
         }
       },
@@ -6359,10 +6371,21 @@ export function openApiDocument(version: string): OpenApiDocument {
             'actionIndex so replay can distinguish actions at the same time. ' +
             'Historical bounds select only steps already in effect; a window ' +
             'includes its predecessor. Source documents remain whole for replay. ' +
+            'Replay source with override-slot or pitcher-less corrections requires ' +
+            'x-teamstation-protocol 5 or newer; older or missing versions receive ' +
+            '503 with reason updateRequired. API keys and machine actors are exempt. Rendered board and line views remain compatible. ' +
             'No query preserves the totals response used by installed clients.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
+            {
+              name: 'x-teamstation-protocol',
+              in: 'header',
+              required: false,
+              description:
+                'Replay source containing override-slot actions requires version 5 or newer.',
+              schema: { type: 'integer' }
+            },
             {
               name: 'view',
               in: 'query',
@@ -6418,7 +6441,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             400: errorResponse,
             403: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            503: errorResponse
           }
         }
       },

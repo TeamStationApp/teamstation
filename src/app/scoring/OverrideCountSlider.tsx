@@ -52,7 +52,7 @@ export function OverrideCountSlider({
   )
   return (
     <View
-      accessibilityRole="tablist"
+      accessibilityRole="radiogroup"
       accessibilityLabel={label}
       {...pan.panHandlers}
       style={{ width: (max + 1) * 44, height: 44, justifyContent: 'center' }}
@@ -86,10 +86,10 @@ export function OverrideCountSlider({
         {Array.from({ length: max + 1 }, (_, count) => (
           <Pressable
             key={count}
-            accessibilityRole="tab"
+            accessibilityRole="radio"
             accessibilityLabel={`${label} ${count}`}
-            accessibilityState={{ selected: count === value }}
-            aria-selected={count === value}
+            accessibilityState={{ checked: count === value }}
+            aria-checked={count === value}
             onPress={() => {
               onChange(count)
             }}

@@ -565,12 +565,10 @@ async function overrideBases(
   if (bases.length === 0) return
   await tapSettled(page, 'Open scoring menu')
   await tapSettled(page, 'Overrides')
-  await tapSettled(page, 'Correct runners')
   for (const [base, player] of bases) {
     await tapSettled(page, base)
     await tapSettled(page, `Choose ${base} ${player}`)
   }
-  await tapSettled(page, 'Done correcting runners')
   await tapSettled(page, 'Apply Override')
 }
 
@@ -2215,6 +2213,60 @@ describe('scoring browser', function () {
       expect(
         await page.$('[aria-label="Create Placeholder Player"]')
       ).not.equals(null)
+      expect(unexpected).deep.equals([])
+    } finally {
+      await page.close()
+    }
+  })
+  it('keeps inline override runners reachable above the pinned Apply action on a small phone', async function () {
+    const { page, unexpected } = await open('/games/g1/score')
+    try {
+      await page.setViewport({ width: 375, height: 667, deviceScaleFactor: 1 })
+      await tapSettled(page, 'Open scoring menu')
+      await tapSettled(page, 'Overrides')
+      expect(await page.$('[aria-label="Correct runners"]')).equals(null)
+      const divider = await page.$eval('[aria-label="Inning"]', row => {
+        const label = row.firstElementChild!.getBoundingClientRect()
+        const value = row.lastElementChild!.getBoundingClientRect()
+        const line = row.nextElementSibling!.getBoundingClientRect()
+        return { left: line.left - label.left, right: line.right - value.right }
+      })
+      expect(Math.abs(divider.left)).lessThan(1)
+      expect(Math.abs(divider.right)).lessThan(1)
+      const apply = '[aria-label="Apply Override"]'
+      await page.waitForFunction(() =>
+        document
+          .getAnimations()
+          .every(animation => animation.playState !== 'running')
+      )
+      const before = await page.$eval(apply, n => n.getBoundingClientRect().top)
+      await page.$eval('[data-testid="Scoring sheet content"]', n => {
+        n.scrollTop = n.scrollHeight
+      })
+      await page.waitForFunction(() => {
+        const row = document
+          .querySelector('[aria-label="Third base"]')!
+          .getBoundingClientRect()
+        const footer = document
+          .querySelector('[data-testid="Scoring sheet footer"]')!
+          .getBoundingClientRect()
+        return row.bottom <= footer.top && row.top > 0
+      })
+      const after = await page.$eval(apply, n => n.getBoundingClientRect().top)
+      expect(Math.abs(after - before)).lessThan(1)
+      expect(after).lessThan(667)
+      await tapSettled(page, 'Third base')
+      await tapSettled(page, 'Choose Third base Player 2')
+      expect(
+        await page.$eval('[aria-label="Third base"]', n => n.textContent)
+      ).includes('Player 2')
+      const out = process.env.TS_SCORING_ARTIFACT_DIR
+      if (out != null) {
+        await mkdir(out, { recursive: true })
+        await page.screenshot({ path: join(out, 'inline-runners-after.png') })
+      }
+      await tapSettled(page, 'Apply Override')
+      await page.waitForSelector('[aria-label="Undo Override game state"]')
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()

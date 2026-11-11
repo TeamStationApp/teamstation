@@ -2552,16 +2552,6 @@ export function applyAction(
   }
   const played = state.liveData.plays.allPlays.length
   const copy = inPlace ? state : copyState(state)
-  if (
-    action.type !== 'lineup' &&
-    !(
-      action.type === 'gameFlow' &&
-      ['override', 'placeRunner'].includes(action.kind)
-    )
-  ) {
-    delete copy.overrideLineupSetup
-    delete copy.overridePlayStarted
-  }
   const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy), replay }
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
@@ -2613,6 +2603,17 @@ export function applyAction(
       code: 'illegal',
       message: error instanceof Error ? error.message : String(error)
     })
+  }
+  // Only successful scoring leaves correction setup; refusals preserve it.
+  if (
+    action.type !== 'lineup' &&
+    !(
+      action.type === 'gameFlow' &&
+      ['override', 'placeRunner'].includes(action.kind)
+    )
+  ) {
+    delete ctx.state.overrideLineupSetup
+    delete ctx.state.overridePlayStarted
   }
   ctx.state.meta.sequence++
   const plays = ctx.state.liveData.plays.allPlays

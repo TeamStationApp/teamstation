@@ -579,6 +579,27 @@ export function keepsAtBat(action: unknown): boolean {
 }
 
 /**
+ * Corrections requiring fold 5. A missing pitcher is ambiguous without folding
+ * prior plays: older folds refused it when the resolved mound was empty.
+ * Reads and queued writes conservatively use the same compatibility boundary.
+ */
+export function usesOverrideSlots(action: unknown): boolean {
+  if (action == null || typeof action !== 'object') return false
+  const value = action as Record<string, unknown>
+  return (
+    (value.type === 'gameFlow' &&
+      value.kind === 'override' &&
+      (value.clearPitcher === true ||
+        value.batterIndex != null ||
+        value.pitcher == null)) ||
+    (value.type === 'lineup' &&
+      value.kind === 'roster' &&
+      value.setup != null &&
+      value.replaces != null)
+  )
+}
+
+/**
  * A cleaned action a scorer said, as the game takes it from the screen: an
  * end of the half keeps the at-bat in progress (`keepAtBat`), as the End half
  * button's does. Dictation's server interpreter and `dictatedAction` both

@@ -6,10 +6,16 @@ import {
   badRequest,
   membersOnly,
   notFound,
-  unauthorized
+  unauthorized,
+  updateRequired
 } from '../../common/errors'
 import type { PlayerRsvpCounts } from '../../common/eventInfo'
+import {
+  MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
+  PROTOCOL_HEADER
+} from '../../common/gameSocket'
 import { scoreboardOpen } from '../../common/scoreboard'
+import { usesOverrideSlots } from '../../common/scoring/actions'
 import { inningsPitched } from '../../common/statExtras'
 import { asUserId } from '../../common/userId'
 import {
@@ -30,6 +36,7 @@ import {
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
+import { isMachine } from '../auth/sessions'
 import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
@@ -1139,7 +1146,7 @@ export function teamRoutes(
       // The board and line are the public timelines, whoever reads them;
       // playback names its reader's players as the box score does.
       if (historical !== null) {
-        res.json(
+        const answer =
           req.query.view === 'board'
             ? await playbackBoard(db, gameId, historical)
             : req.query.view === 'line'
@@ -1147,7 +1154,25 @@ export function teamRoutes(
               : await gameStatistics(db, gameId, historical, {
                   reader: readerOf(actor)
                 })
+        // An old replay can poll after its socket is refused. Gate the action
+        // documents themselves while retaining server-rendered line/board views.
+        if (
+          actor.apiKey == null &&
+          !isMachine(actor) &&
+          'source' in answer &&
+          [...answer.source.plays, answer.source.currentPlay].some(play => {
+            const actions = (
+              play?.teamStation as { actions?: unknown } | undefined
+            )?.actions
+            return Array.isArray(actions) && actions.some(usesOverrideSlots)
+          }) &&
+          !(
+            Number(req.header(PROTOCOL_HEADER)) >=
+            MINIMUM_OVERRIDE_REPLAY_PROTOCOL
+          )
         )
+          throw updateRequired('Update TeamStation to replay this game.')
+        res.json(answer)
         return
       }
 
