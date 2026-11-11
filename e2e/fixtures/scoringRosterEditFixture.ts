@@ -11,6 +11,7 @@ import { POSITIONS } from '../../src/app/scoring/scoringTypes'
 import { makeId } from '../../src/common/ids'
 import type { Role } from '../../src/common/roles'
 import type { StoredGame } from '../../src/common/scoring/session'
+import { withNames } from '../../src/common/scoring/storedNames'
 import { userIdOfGumbo } from '../../src/common/userId'
 import { migrations } from '../../src/migrate/migrations'
 import { migrateUp } from '../../src/migrate/runner'
@@ -379,6 +380,9 @@ export async function rosterEditFixture(
             const change = JSON.parse(text) as Partial<StoredGame> & {
               remove?: number[]
             }
+            trace.push(
+              `POST ${u.pathname} plays ${(change.plays ?? []).length}, current ${change.currentPlay === undefined ? 'kept' : 'set'}`
+            )
             const plays = new Map(
               stored.plays.map(play => [play.about.atBatIndex, play])
             )
@@ -389,13 +393,30 @@ export async function rosterEditFixture(
             if (change.currentPlay !== undefined)
               stored.currentPlay = change.currentPlay
           }
+          // Kept without names, as the server keeps them, and answered named
+          // as the public reads them: first name, last initial.
+          const names = new Map<number, string>([
+            ...(['away', 'home'] as const).flatMap(side =>
+              rows(side).map((row): [number, string] => [
+                row.gumboId,
+                `${row.firstName} ${row.lastName.charAt(0)}`
+              ])
+            ),
+            ...[...guests.away, ...guests.home].map((row): [number, string] => [
+              row.gumboId as number,
+              row.shortName as string
+            ])
+          ])
           body = {
             plays: stored.plays.map(play => ({
               id: `event${play.about.atBatIndex}`,
               gameId,
-              gumbo: play
+              gumbo: withNames(play, names)
             })),
-            currentPlay: stored.currentPlay
+            currentPlay:
+              stored.currentPlay == null
+                ? stored.currentPlay
+                : withNames(stored.currentPlay, names)
           }
         } else if (
           req.method === 'POST' &&

@@ -9,8 +9,9 @@ import puppeteer from 'puppeteer'
 
 import { rosterEditFixture } from '../../../e2e/fixtures/scoringRosterEditFixture'
 import { recordBrowserCoverage } from '../../../e2e/rigs/browserCoverage'
-import { storedRecordOf } from '../../common/scoring/gumbo'
+import { recordOf } from '../../common/scoring/gumbo'
 import type { GameSetup } from '../../common/scoring/state'
+import { withNames } from '../../common/scoring/storedNames'
 import { encodeLineupQr } from './lineupQrCodec'
 import { lineupQrOf } from './lineupQrExport'
 import { qrMatrix } from './lineupQrMatrix'
@@ -138,6 +139,19 @@ async function main(): Promise<void> {
     })
     await pause(400)
   }
+  const compactNames = new Map<number, string>()
+  // The server keeps plays without the names of players who have ids: the
+  // saved setups are read with the roster's names again.
+  const names = new Map(
+    (['away', 'home'] as const).flatMap(side =>
+      fixture
+        .players(side)
+        .map(player => [
+          player.gumboId,
+          `${player.firstName} ${player.lastName}`
+        ])
+    )
+  )
   const savedSetups = (): GameSetup[] =>
     [
       ...fixture.stored().plays,
@@ -145,7 +159,13 @@ async function main(): Promise<void> {
         ? []
         : [fixture.stored().currentPlay!])
     ]
-      .flatMap(play => storedRecordOf(play)?.actions ?? [])
+      .flatMap(
+        play =>
+          withNames(
+            recordOf(play, { away: { id: 'away' }, home: { id: 'home' } }),
+            names
+          )?.actions ?? []
+      )
       .flatMap(action =>
         action.type === 'lineup' &&
         action.kind === 'roster' &&
@@ -162,7 +182,14 @@ async function main(): Promise<void> {
           away: { id: 'away', name: 'Owls', logoUrl: null },
           home: { id: 'home', name: 'Hawks', logoUrl: null }
         },
-        players: setup.players
+        // The code names each player by his public label, which the roster
+        // the app reads gives a reader who sees full names.
+        players: Object.fromEntries(
+          Object.entries(setup.players).map(([id, player]) => [
+            id,
+            { ...player, compactName: compactNames.get(Number(id)) }
+          ])
+        )
       },
       liveData: { boxscore: { teams: setup.sides } }
     } as unknown as ScoringSessionState
@@ -188,6 +215,18 @@ async function main(): Promise<void> {
         ? { width: 900, height: 420, deviceScaleFactor: 2 }
         : { width: 390, height: 844, deviceScaleFactor: 2 }
     )
+    for (const side of ['away', 'home'] as const) {
+      const response = await fetch(
+        `${fixture.url}/api/v1/teams/${side}/roster?includeFullNames=true`
+      )
+      assert(response.ok, `The ${side} roster reads (${response.status})`)
+      for (const row of (await response.json()) as Array<{
+        gumboId: number
+        compactName?: string | null
+      }>)
+        if (row.compactName != null)
+          compactNames.set(row.gumboId, row.compactName)
+    }
     await page.goto(`${fixture.url}/games/${fixture.gameId}/score`, {
       waitUntil: 'networkidle0'
     })
@@ -270,14 +309,19 @@ async function main(): Promise<void> {
     while (savedSetups().length === before && Date.now() < until)
       await pause(200)
     const saved = savedSetups().at(-1)
-    assert(saved != null, 'Save Rosters saved the lineup')
+    assert(
+      saved != null,
+      `Save Rosters saved the lineup; the fixture last saw:\n${fixture.trace.slice(-12).join('\n')}`
+    )
     assert(
       !saved.sides.away.battingOrder.some(
         id => saved.players[id].fullName === 'Zack Wheeler'
       ),
       'The saved order leaves out the removed batter'
     )
+    // Set Team Rosters opens on the roster again.
     await openRosters()
+    await click('Lineup')
     await click('Remove Adam Duvall')
     await click('Cancel')
     await page.waitForSelector('[aria-label="Save Rosters"]', {
