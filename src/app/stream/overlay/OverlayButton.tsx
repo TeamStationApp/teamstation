@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, StyleSheet, Text } from 'react-native'
 import { Circle, Path, Svg } from 'react-native-svg'
 
+import { ButtonIcon } from '../../components/ButtonIcon'
 import { iconText } from '../../components/iconText'
 import { fonts } from '../../theme/fonts'
 import {
@@ -36,15 +37,19 @@ export function OverlayButton(props: OverlayButtonProps): React.ReactElement {
       style={[styles.disc, disabled && styles.disabled]}
     >
       {glyph === 'flip' ? (
-        <FlipGlyph />
+        <ButtonIcon>
+          <FlipGlyph />
+        </ButtonIcon>
       ) : (
-        <Text
-          accessibilityElementsHidden
-          importantForAccessibility="no"
-          style={styles.symbol}
-        >
-          {iconText(glyph)}
-        </Text>
+        <ButtonIcon name={glyph}>
+          <Text
+            accessibilityElementsHidden
+            importantForAccessibility="no"
+            style={styles.symbol}
+          >
+            {iconText(glyph)}
+          </Text>
+        </ButtonIcon>
       )}
     </Pressable>
   )

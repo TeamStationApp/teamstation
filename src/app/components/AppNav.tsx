@@ -5,8 +5,9 @@ import { useChatVisualViewport } from '../chat/useChatVisualViewport'
 import { useInsets } from '../platform/safeArea'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
-import { Icon, type IconName } from './Icon'
+import type { IconName } from './Icon'
 import { floatingNavBottom } from './navClearance'
 
 export type NavTabId = 'home' | 'videos' | 'schedule' | 'search' | 'chat'
@@ -225,7 +226,7 @@ export function AppNav(props: AppNavProps): React.ReactElement {
                 isSelected && styles.discSelected
               ]}
             >
-              <Icon
+              <ButtonIcon
                 name={tab.icon}
                 size={floating ? FLOATING_ICON_REM : undefined}
                 color={

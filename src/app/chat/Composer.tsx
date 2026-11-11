@@ -2,6 +2,7 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import { Icon } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -164,7 +165,11 @@ export function Composer(props: ComposerProps): React.ReactElement {
             onPress={props.onCancelContext}
             style={styles.chipClose}
           >
-            <Icon name="close" size={1} color={theme.secondaryTextColor} />
+            <ButtonIcon
+              name="close"
+              size={1}
+              color={theme.secondaryTextColor}
+            />
           </Pressable>
         </View>
       )}
@@ -194,7 +199,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
                   props.onRemoveAttachment(index)
                 }}
               >
-                <Icon
+                <ButtonIcon
                   name="close"
                   size={0.875}
                   color={theme.secondaryTextColor}
@@ -258,7 +263,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
             }}
             style={({ pressed }) => [styles.icon, pressed && styles.pressed]}
           >
-            <Icon
+            <ButtonIcon
               name="attach_file"
               color={
                 canAttach ? theme.primaryTextColor : theme.tertiaryTextColor
@@ -276,7 +281,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
           }}
           style={({ pressed }) => [styles.icon, pressed && styles.pressed]}
         >
-          <Icon
+          <ButtonIcon
             name="mood"
             color={enabled ? theme.primaryTextColor : theme.tertiaryTextColor}
           />
@@ -329,7 +334,7 @@ export function Composer(props: ComposerProps): React.ReactElement {
             pressed && styles.pressed
           ]}
         >
-          <Icon
+          <ButtonIcon
             name="send"
             color={canSend ? theme.buttonTextColor : theme.tertiaryTextColor}
           />

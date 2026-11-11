@@ -2,6 +2,7 @@ import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { ButtonIcon } from './ButtonIcon'
 
 /** A row that is checked or not: one of several that may each be chosen. */
 export function CheckRow({
@@ -28,7 +29,11 @@ export function CheckRow({
       style={styles.row}
     >
       <View style={[styles.box, checked && styles.boxOn]}>
-        {checked && <Text style={styles.mark}>✓</Text>}
+        {checked && (
+          <ButtonIcon name="check">
+            <Text style={styles.mark}>✓</Text>
+          </ButtonIcon>
+        )}
       </View>
       <View style={styles.text}>
         <Text style={styles.label}>{label}</Text>

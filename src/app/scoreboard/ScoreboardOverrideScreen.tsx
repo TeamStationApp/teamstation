@@ -12,6 +12,7 @@ import {
 } from 'react-native'
 
 import { applyOverrides } from '../../common/scoreboard'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useHeaderSlot } from '../components/headerSlot'
 import { lstrings, sprintf } from '../locales/strings'
 import { routePath } from '../navigation/routes'
@@ -373,7 +374,9 @@ export function ScoreboardOverrideScreen(
               dispatch({ type: 'revert', group: 'team' })
             }}
           >
-            <Text style={styles.xButtonText}>✕</Text>
+            <ButtonIcon name="close">
+              <Text style={styles.xButtonText}>✕</Text>
+            </ButtonIcon>
           </Pressable>
         </View>
         <Pressable
@@ -412,7 +415,9 @@ export function ScoreboardOverrideScreen(
               dispatch({ type: 'revert', group: 'score' })
             }}
           >
-            <Text style={styles.xButtonText}>✕</Text>
+            <ButtonIcon name="close">
+              <Text style={styles.xButtonText}>✕</Text>
+            </ButtonIcon>
           </Pressable>
         </Pressable>
       </View>
@@ -564,7 +569,9 @@ export function ScoreboardOverrideScreen(
               dispatch({ type: 'revert', group: 'inning' })
             }}
           >
-            <Text style={styles.xButtonText}>✕</Text>
+            <ButtonIcon name="close">
+              <Text style={styles.xButtonText}>✕</Text>
+            </ButtonIcon>
           </Pressable>
           {/* Mini auto inning display */}
           <View
@@ -673,7 +680,9 @@ export function ScoreboardOverrideScreen(
               dispatch({ type: 'revert', group: 'bases' })
             }}
           >
-            <Text style={styles.xButtonText}>✕</Text>
+            <ButtonIcon name="close">
+              <Text style={styles.xButtonText}>✕</Text>
+            </ButtonIcon>
           </Pressable>
           <View style={styles.diamondsContainer}>
             <View style={styles.diamondRow}>
@@ -698,7 +707,9 @@ export function ScoreboardOverrideScreen(
             dispatch({ type: 'revert', group: 'count' })
           }}
         >
-          <Text style={styles.xButtonText}>✕</Text>
+          <ButtonIcon name="close">
+            <Text style={styles.xButtonText}>✕</Text>
+          </ButtonIcon>
         </Pressable>
         {renderCountRow(
           'balls',
