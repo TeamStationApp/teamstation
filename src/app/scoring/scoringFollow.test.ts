@@ -44,6 +44,18 @@ describe('scoring follow ownership', function () {
     ).equals(false)
   })
 
+  it('keeps a plan refresh passive without invalidating a remote read', () => {
+    const follow = new ScoringFollow()
+    follow.adopt(follow.snapshot())
+    const reading = follow.snapshot()
+    expect(
+      follow.input({ type: 'PLANS', plans: { away: null, home: null } })
+    ).equals(false)
+    expect(follow.current(reading)).equals(true)
+    expect(follow.observing).equals(true)
+    expect(follow.locallyAuthored).equals(false)
+  })
+
   it('keeps observing after a canceled runner drag while invalidating a read begun before the drag', () => {
     const follow = new ScoringFollow()
     follow.adopt(follow.snapshot())

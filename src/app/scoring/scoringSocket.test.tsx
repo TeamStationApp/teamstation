@@ -620,6 +620,46 @@ describe('the scoring screen on the game socket', function () {
     expect(session().actions).deep.equals(peer.actions)
   })
 
+  for (const notice of ['plans', 'resync'] as const)
+    it(`keeps following an unfinished single after a ${notice} plan refresh`, async () => {
+      const plans = { value: scoringPlans({}) }
+      const { changes, other, session, store, planReads } = await scoring({
+        plans
+      })
+      const peer = await other()
+      peer.apply({ type: 'ballInPlay', contact: 'swing' })
+      peer.apply({ type: 'result', eventType: 'single' })
+      await peer.flush()
+      await changes.plays()
+      expect(shown('Finish at-bat')).equals(true)
+      const saved = JSON.stringify(await store.load('g1'))
+      plans.value = scoringPlans({
+        home: scoringSidePlan(10, { 2: PLAN_SWAPPED })
+      })
+      await changes.emit(
+        notice === 'resync'
+          ? { type: 'resync', gameId: 'g1' }
+          : {
+              type: 'change',
+              gameId: 'g1',
+              kind: 'plans',
+              at: '2026-10-12T12:00:00Z',
+              data: { teamId: 'home' }
+            }
+      )
+      expect(planReads()).equals(2)
+      expect(JSON.stringify(await store.load('g1'))).equals(saved)
+      peer.apply({ type: 'gameFlow', kind: 'closePlay' })
+      await peer.flush()
+      await changes.plays()
+      expect(session().actions).deep.equals(peer.actions)
+      peer.apply({ type: 'pitch', call: 'B' })
+      await peer.flush()
+      await changes.plays()
+      expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
+      expect(session().actions).deep.equals(peer.actions)
+    })
+
   it('adopts a peer Undo that restores one of its earlier saved digests', async () => {
     const { changes, other, session, store } = await scoring({ digests: true })
     await click('Ball')
