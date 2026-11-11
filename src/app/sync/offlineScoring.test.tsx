@@ -39,7 +39,6 @@ import {
   SERVER_COPY_PENDING
 } from './useOffline'
 
-
 // eslint-disable-next-line @typescript-eslint/unbound-method
 const getContext = HTMLCanvasElement.prototype.getContext
 let root: Root | undefined
