@@ -32,10 +32,7 @@ import {
   SCORING_FEATURE_HEADER,
   SCORING_FEATURES
 } from '../../common/scoring/teamRecord'
-import {
-  type ScoringUpdate,
-  storedScoringUpdates
-} from '../../common/scoring/updates'
+import type { ScoringUpdate } from '../../common/scoring/updates'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -64,6 +61,7 @@ import {
   type StoredPlay
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
+import { namedScoringUpdates } from '../events/scoringUpdates'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
 import { swapOrReset } from '../games/resetSwap'
@@ -730,7 +728,11 @@ async function storedGameRead(
     { halves: lineups, gameId, listFullNamesFor: reader }
   )
   const teams = teamsOfRow(game)
-  const scoringUpdates = storedScoringUpdates(game.scoring_mutation)
+  const scoringUpdates = await namedScoringUpdates(
+    db,
+    game.scoring_mutation,
+    reader
+  )
   const answer: StoredGameAnswer = {
     ...(scoringUpdates.length === 0 ? {} : { scoringUpdates }),
     plays: stored.map((row, index) => ({

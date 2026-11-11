@@ -80,6 +80,7 @@ import {
   upsertGameEvents
 } from './eventWrite'
 import { radarReadings, scheduleRadarRefresh } from './radarSpeeds'
+import { namedScoringUpdates } from './scoringUpdates'
 import {
   keepLineups,
   storedLineupGame,
@@ -440,7 +441,11 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         lineupsDigest: lineupsBefore,
         generation: game.play_generation,
         scoringMutation: priorMutation,
-        scoringUpdates: storedScoringUpdates(game.scoring_mutation),
+        scoringUpdates: await namedScoringUpdates(
+          trx,
+          game.scoring_mutation,
+          options.listFullNamesFor
+        ),
         superseded: !equal
       }
       if (written != null) await written(trx, answer)
@@ -863,25 +868,10 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         ]
       )
       if (lines.length > 0) {
-        const actor = await trx
-          .selectFrom('users')
-          .select(['id', 'first_name', 'last_name', 'display_name'])
-          .where('id', '=', options.scoringUserId)
-          .executeTakeFirstOrThrow()
-        const name =
-          actor.first_name == null
-            ? actor.display_name
-            : [
-                actor.first_name,
-                actor.last_name == null ? '' : `${actor.last_name.charAt(0)}.`
-              ]
-                .filter(Boolean)
-                .join(' ')
         scoringUpdates.push({
           id: randomUUID(),
           sequence: (scoringUpdates.at(-1)?.sequence ?? 0) + 1,
-          userId: actor.id,
-          name,
+          userId: options.scoringUserId,
           lines
         })
         scoringUpdates.splice(
@@ -996,7 +986,15 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     const editsOf = (named: NamedPlays): PlayEdit[] =>
       playEditsOf(taggedStored, named, removed, sides)
     const digests: PostedDigests = {
-      ...(scoringUpdates.length === 0 ? {} : { scoringUpdates }),
+      ...(scoringUpdates.length === 0
+        ? {}
+        : {
+            scoringUpdates: await namedScoringUpdates(
+              trx,
+              { updates: scoringUpdates },
+              options.listFullNamesFor
+            )
+          }),
       ...(acceptedMutation == null
         ? {}
         : { scoringMutation: acceptedMutation }),
