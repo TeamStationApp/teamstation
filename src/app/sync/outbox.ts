@@ -35,6 +35,7 @@ import {
   renamedGuestEntry,
   withServerIds
 } from './optimistic'
+import { localTagRevision } from './tagRevisions'
 
 /**
  * The phone's queue of writes the server has not answered: a roster player
@@ -1428,7 +1429,7 @@ export class Outbox {
 
   /**
    * A tag put on, or taken off, the phone's copy of the game's plays, and
-   * the answer the server gives it: a revision later than the phone's last.
+   * the answer the server gives it, with a revision of the phone's own.
    */
   private async tagged(
     tx: CacheTransaction,
@@ -1444,11 +1445,9 @@ export class Outbox {
       body: JSON.stringify(taggedEvents(parsed(held.body), call.targetId, tag)),
       pending: true
     })
-    // Longer than any revision the server gives, and each later than the
-    // last: the screen takes the newest answer of a target as it stands.
-    const revision = String(
-      this.options.now() * 1000 + (this.tagRevisions++ % 1000)
-    )
+    // The phone's own revision, each later than the last, never compared
+    // with the server's (`tagRevisions.ts`).
+    const revision = localTagRevision(this.options.now(), this.tagRevisions++)
     return { answer: { targetId: call.targetId, tag, revision } }
   }
 

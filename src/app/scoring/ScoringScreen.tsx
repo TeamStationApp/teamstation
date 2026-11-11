@@ -62,6 +62,7 @@ import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
 import { CachingClient, type QueuedSwap } from '../sync/cachingClient'
+import { supersededTag, type TagAcknowledgment } from '../sync/tagRevisions'
 import {
   SERVER_COPY_PENDING,
   useHeldGameControl,
@@ -1236,7 +1237,9 @@ function ScoringPanel(props: {
   // A scoring flush may outlive this editor or the authenticated account.
   const tagSelection = useRef(0)
   const tagMounted = useRef(true)
-  const tagAcknowledgments = useRef(new Map<string, string>())
+  const tagAcknowledgments = useRef(new Map<string, TagAcknowledgment>())
+  // The screen's count of tag saves, so an answer knows which save it is.
+  const tagSaves = useRef(0)
   const tagContext = useRef({
     game: props.game,
     source: props.source,
@@ -3950,6 +3953,7 @@ function ScoringPanel(props: {
             if (!props.game.eventTargets.some(each => each.id === target.id))
               throw new Error('This scoring event no longer exists')
             let snapshot = props.game.tagSnapshotVersion
+            const order = ++tagSaves.current
             const result = await props.source.saveTag!(
               props.game,
               target.id,
@@ -3957,18 +3961,14 @@ function ScoringPanel(props: {
               props.userId
             )
             if (!currentContext()) return
-            // Commit revisions distinguish delayed requests from delayed responses.
-            const superseded = (): boolean => {
-              const acknowledged = tagAcknowledgments.current.get(
-                result.targetId
-              )
-              return (
-                acknowledged != null &&
-                (result.revision.length < acknowledged.length ||
-                  (result.revision.length === acknowledged.length &&
-                    result.revision < acknowledged))
-              )
-            }
+            // Commit revisions distinguish delayed requests from delayed
+            // responses; a queued tag's revision is the phone's own, and
+            // between it and the server's the later save wins.
+            const superseded = (): boolean =>
+              supersededTag(tagAcknowledgments.current.get(result.targetId), {
+                revision: result.revision,
+                order
+              })
             if (superseded()) return
             let acknowledgedTag = result.tag
             // A reload or another accepted write may have adopted a newer label
@@ -3987,7 +3987,10 @@ function ScoringPanel(props: {
             }
             if (!props.game.setEventTag(result.targetId, acknowledgedTag))
               throw new Error('This scoring event no longer exists')
-            tagAcknowledgments.current.set(result.targetId, result.revision)
+            tagAcknowledgments.current.set(result.targetId, {
+              revision: result.revision,
+              order
+            })
           }}
         />
       )}
