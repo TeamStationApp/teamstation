@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   asGameDetail,
   asRosterEntry,
+  type StoredChange,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
@@ -1506,7 +1507,7 @@ describe('the scoring open, from what the phone stored', function () {
     const note = (name: string, options?: { storedFirst?: boolean }): void => {
       reads.push(`${name}${options?.storedFirst === true ? ':stored' : ''}`)
     }
-    let told: (() => void) | undefined
+    let told: ((change: StoredChange) => void) | undefined
     const client = new TeamStationClient({ baseUrl: '/api/v1' })
     client.game = async (_gameId, options) => {
       note('game', options)
@@ -1560,10 +1561,24 @@ describe('the scoring open, from what the phone stored', function () {
     expect(told).to.be.a('function')
     reads.length = 0
     await act(async () => {
-      told!()
+      told!('game')
       await new Promise(resolve => setTimeout(resolve, 20))
     })
     // Read again as a socket notice reads it: from the server.
+    expect(reads).includes('events')
+    expect(reads.filter(read => read.endsWith(':stored'))).deep.equals([])
+    // The game's own documents leave the roles and rosters as read.
+    expect(reads).not.includes('roles')
+    expect(reads).not.includes('roster')
+    reads.length = 0
+    // A roster or the roles that came back different are read again from
+    // the server, with the game.
+    await act(async () => {
+      told!('details')
+      await new Promise(resolve => setTimeout(resolve, 20))
+    })
+    expect(reads).includes('roles')
+    expect(reads.filter(read => read === 'roster')).length(2)
     expect(reads).includes('events')
     expect(reads.filter(read => read.endsWith(':stored'))).deep.equals([])
     await unmount()

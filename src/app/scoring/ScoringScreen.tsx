@@ -2389,7 +2389,11 @@ function ScoringPanel(props: {
   // server different: read in as another device's change heard on the
   // socket is.
   // So is the server's copy once it took the web's own swap, which the game
-  // opened on before it was answered.
+  // opened on before it was answered. Roles, rosters and default lineups
+  // the screen opened on are read again too, quietly behind what it shows,
+  // so the rights and players they give follow the server's.
+  const refreshDetailsRef = useRef(props.onRefreshDetails)
+  refreshDetailsRef.current = props.onRefreshDetails
   useEffect(() => {
     if (!persistent) return
     const follow = (): void => {
@@ -2397,7 +2401,10 @@ function ScoringPanel(props: {
       stale.current = true
       setStaleCheck(value => value + 1)
     }
-    const stored = props.client.onStoredChanged(gameId, follow)
+    const stored = props.client.onStoredChanged(gameId, change => {
+      if (change === 'details') refreshDetailsRef.current(true)
+      follow()
+    })
     const landed = props.webWrites.onLanded(gameId, follow)
     return () => {
       stored()

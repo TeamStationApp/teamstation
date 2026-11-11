@@ -14,6 +14,7 @@ import {
   type Page,
   type RequestOptions,
   type SeasonGame,
+  type StoredChange,
   storedGameOfEvents,
   type SwapSidesAnswer,
   TeamStationClient
@@ -205,7 +206,10 @@ export class CachingClient extends TeamStationClient {
   private prefetching: Promise<void> | undefined
   private readonly outbox: Outbox
   /** Who hears that a stored-first read came back different, by game. */
-  private readonly storedListeners = new Map<string, Set<() => void>>()
+  private readonly storedListeners = new Map<
+    string,
+    Set<(change: StoredChange) => void>
+  >()
 
   /** The signed-in person's picture files, opened and deleted with the cache. */
   readonly pictureFiles: PictureDirectories
@@ -357,7 +361,10 @@ export class CachingClient extends TeamStationClient {
    * came back from the server different from what the phone showed, until
    * unsubscribed: the screen reads the game again, as after a socket notice.
    */
-  override onStoredChanged(gameId: string, listener: () => void): () => void {
+  override onStoredChanged(
+    gameId: string,
+    listener: (change: StoredChange) => void
+  ): () => void {
     let listeners = this.storedListeners.get(gameId)
     if (listeners == null) {
       listeners = new Set()
@@ -762,7 +769,9 @@ export class CachingClient extends TeamStationClient {
       gameId == null
         ? [...this.storedListeners.values()].flatMap(set => [...set])
         : [...(this.storedListeners.get(gameId) ?? [])]
-    for (const listener of told) listener()
+    // Roles, rosters and default lineups are no one game's.
+    const change: StoredChange = gameId == null ? 'details' : 'game'
+    for (const listener of told) listener(change)
   }
 
   private async prefetchOnce(): Promise<void> {

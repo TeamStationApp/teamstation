@@ -384,8 +384,12 @@ describe('CachingClient', function () {
       release = resolve
     })
     const told: string[] = []
-    const stop = client.onStoredChanged('g1', () => told.push('g1'))
-    const other = client.onStoredChanged('g2', () => told.push('g2'))
+    const stop = client.onStoredChanged('g1', change =>
+      told.push(`g1:${change}`)
+    )
+    const other = client.onStoredChanged('g2', change =>
+      told.push(`g2:${change}`)
+    )
     // Another device gave this person another team since.
     routes['/me/roles'] = roles('tem_c')
     const shown = await client.myRoles({ storedFirst: true })
@@ -396,8 +400,9 @@ describe('CachingClient', function () {
     net.gate = undefined
     for (let i = 0; i < 20 && told.length < 2; i++)
       await new Promise(resolve => setTimeout(resolve, 2))
-    // A person's roles are no one game's: every open game hears it, once.
-    expect(told.sort()).deep.equals(['g1', 'g2'])
+    // A person's roles are no one game's: every open game hears it, once,
+    // as a change to the details it opened on.
+    expect(told.sort()).deep.equals(['g1:details', 'g2:details'])
     expect((await client.myRoles({ storedFirst: true })).teams).deep.equals({
       tem_c: ['scorekeeper']
     })
@@ -424,8 +429,8 @@ describe('CachingClient', function () {
     await client.gameEvents('g1')
     await client.tagChoices()
     const told: string[] = []
-    client.onStoredChanged('g1', () => told.push('g1'))
-    client.onStoredChanged('g2', () => told.push('g2'))
+    client.onStoredChanged('g1', change => told.push(`g1:${change}`))
+    client.onStoredChanged('g2', change => told.push(`g2:${change}`))
     routes['/games/g1/events'] = {
       body: { plays: [], currentPlay: null, playsDigest: 'P2' }
     }
@@ -437,14 +442,14 @@ describe('CachingClient', function () {
       ['a']
     )
     await new Promise(resolve => setTimeout(resolve, 20))
-    expect(told).deep.equals(['g1'])
+    expect(told).deep.equals(['g1:game'])
     // With no signal the phone keeps showing what it has, and says nothing.
     net.offline = true
     expect(
       (await client.gameEvents('g1', { storedFirst: true })).playsDigest
     ).equals('P2')
     await new Promise(resolve => setTimeout(resolve, 20))
-    expect(told).deep.equals(['g1'])
+    expect(told).deep.equals(['g1:game'])
     // The web stores nothing: its subscription never tells.
     const web = new TeamStationClient({ baseUrl: 'http://x/api/v1' })
     const stop = web.onStoredChanged('g1', () => told.push('web'))

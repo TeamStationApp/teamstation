@@ -3329,6 +3329,12 @@ export const REQUEST_DEADLINE_MS = 10_000
 /** A JSON body longer than this is an upload, which keeps no deadline. */
 export const UPLOAD_BODY_CHARS = 64 * 1024
 
+/**
+ * What a stored-first read that came back different was: one of the game's
+ * own documents, or the person's roles, a roster or a default lineup.
+ */
+export type StoredChange = 'game' | 'details'
+
 /** How a read takes `storedFirst`, for the screens that ask for it. */
 export interface ReadOptions {
   storedFirst?: boolean
@@ -7343,10 +7349,15 @@ export class TeamStationClient {
 
   /**
    * Tells `listener` when a read the scoring screen took stored-first for
-   * `gameId` came back from the server different, until unsubscribed. The
-   * web stores nothing, and never tells.
+   * `gameId` came back from the server different, until unsubscribed, and
+   * which: the game's own (`game`: the game, its plays, its lineups) or the
+   * person's roles, a team's roster or default lineup (`details`). The web
+   * stores nothing, and never tells.
    */
-  onStoredChanged(_gameId: string, _listener: () => void): () => void {
+  onStoredChanged(
+    _gameId: string,
+    _listener: (change: StoredChange) => void
+  ): () => void {
     return () => undefined
   }
 
