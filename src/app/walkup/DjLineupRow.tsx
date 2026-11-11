@@ -8,6 +8,7 @@ import Animated, {
 
 import type { DjBatter } from '../../common/api'
 import { Icon } from '../components'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { elevationFor } from '../theme/elevation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -126,7 +127,12 @@ export function DjLineupRow(props: DjLineupRowProps): React.ReactElement {
               }}
               style={[styles.play, !ready && styles.dimmed]}
             >
-              <TransportMark playing={playing} color={theme.primaryTextColor} />
+              <ButtonIcon>
+                <TransportMark
+                  playing={playing}
+                  color={theme.primaryTextColor}
+                />
+              </ButtonIcon>
             </Pressable>
           )}
         </View>

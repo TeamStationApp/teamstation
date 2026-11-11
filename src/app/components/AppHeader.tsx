@@ -7,10 +7,10 @@ import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { BuildInfoModal } from './BuildInfoModal'
+import { ButtonIcon } from './ButtonIcon'
 import { Emblem } from './Emblem'
 import { GlassView } from './GlassView'
 import { HeaderMenu, type HeaderMenuItem } from './HeaderMenu'
-import { Icon } from './Icon'
 import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -130,7 +130,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                     : undefined,
                   icon: (
                     <View>
-                      <Icon
+                      <ButtonIcon
                         name="notifications"
                         size={1.5}
                         color={theme.headerTextColor}
@@ -145,7 +145,11 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   const markRows: HeaderMenuItem[] = [
     {
       label: lstrings.about_title,
-      icon: <TsMark size={1.5} />,
+      icon: (
+        <ButtonIcon>
+          <TsMark size={1.5} />
+        </ButtonIcon>
+      ),
       onPress: openAbout
     },
     ...(props.tess == null
@@ -155,7 +159,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             label: lstrings.tess_ask,
             detail: lstrings.tess_ask_detail,
             icon: (
-              <Icon
+              <ButtonIcon
                 name="auto_awesome"
                 size={1.5}
                 color={theme.headerTextColor}
@@ -206,7 +210,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             >
               {/* `size` is in rem, like every other size in the app: 2.5 is
                 double the 1.25 default. */}
-              <Icon
+              <ButtonIcon
                 name="chevron_left"
                 size={2.5}
                 color={theme.headerTextColor}
@@ -228,7 +232,9 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                   pressed && styles.pressed
                 ]}
               >
-                <TsMark size={1.75} />
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
               </HeaderMenu>
             ) : (
               <Pressable
@@ -237,7 +243,9 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                 onPress={openAbout}
                 style={({ pressed }) => [markStyle, pressed && styles.pressed]}
               >
-                <TsMark size={1.75} />
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
               </Pressable>
             ))}
           {handoff != null ? (

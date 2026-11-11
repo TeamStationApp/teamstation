@@ -2,8 +2,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Pressable, Text, View, type ViewStyle } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
-import { Icon } from '../components/Icon'
 import { PillButton } from '../components/PillTabs'
 import { lstrings, sprintf } from '../locales/strings'
 import {
@@ -392,7 +392,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                   justifyContent: 'center'
                 }}
               >
-                <Icon
+                <ButtonIcon
                   name={props.sound.on ? 'volume_up' : 'volume_off'}
                   size={1.5}
                   color={
@@ -441,12 +441,14 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                 justifyContent: 'center'
               }}
             >
-              <Text
-                selectable={false}
-                style={{ color: theme.primaryTextColor, fontSize: 26 }}
-              >
-                ☰
-              </Text>
+              <ButtonIcon name="menu">
+                <Text
+                  selectable={false}
+                  style={{ color: theme.primaryTextColor, fontSize: 26 }}
+                >
+                  ☰
+                </Text>
+              </ButtonIcon>
             </Pressable>
           </GlassView>
         </View>
@@ -594,7 +596,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                           justifyContent: 'center'
                         }}
                       >
-                        <ControlIcon kind="undo" size={14} />
+                        <ButtonIcon>
+                          <ControlIcon kind="undo" size={14} />
+                        </ButtonIcon>
                       </View>
                       <Text
                         selectable={false}

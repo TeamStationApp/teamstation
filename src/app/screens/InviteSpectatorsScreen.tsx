@@ -5,9 +5,9 @@ import type { Invite, TeamStationClient } from '../../common/api'
 import type { GroupRef } from '../../common/groupCreation'
 import {
   Button,
+  ButtonIcon,
   Card,
   DangerText,
-  Icon,
   Screen,
   TextField
 } from '../components'
@@ -155,7 +155,7 @@ export function InviteSpectatorsScreen({
                       ]
                         .filter(value => value != null && value !== '')
                         .join(' · ')}
-                      leading={<Icon name="content_copy" size={1.25} />}
+                      leading={<ButtonIcon name="content_copy" size={1.25} />}
                       onOpen={() => {
                         copyToClipboard(invite.url)
                         setCopied(invite.id)

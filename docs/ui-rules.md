@@ -118,6 +118,15 @@ that a location has not been set.
 
 ## Buttons
 
+### Icons use shared placement
+
+Use `ButtonIcon` for artwork inside a button or tab, including icon-and-label
+buttons and custom vector glyphs. It keeps web artwork in place and centers
+native icons. The existing control owns its touch target, accessibility label
+and action. Pass custom web text as its child with the matching icon name;
+pass vector artwork as a child without a name. Keep decorative/status icons
+and input leading decorations on `Icon`. Screens do not add baseline nudges.
+
 ### Game hero actions stay compact
 
 Order hero actions Score, Record, Coach, DJ, filtering each by its capability
