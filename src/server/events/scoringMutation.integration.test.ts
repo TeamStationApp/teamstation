@@ -14,6 +14,7 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { applyPlayEdits } from '../../common/playEdits'
+import { FINAL_INDEX } from '../../common/scoring/gumbo'
 import type { ScoringMutation } from '../../common/scoring/scoringMutation'
 import {
   type SaveChange,
@@ -1535,6 +1536,50 @@ describe('scoring mutation ordering', function () {
     for (let n = 0; n < 3; n++) apply(session, { type: 'pitch', call: 'C' })
     apply(session, { type: 'gameFlow', kind: 'closePlay' })
   }
+  it('keeps an unchanged FINAL on correction and removes it only explicitly', async () => {
+    const { open, load, gameId, requests } = await sessions()
+    const scorer = await open()
+    strikeout(scorer)
+    apply(scorer, { type: 'gameFlow', kind: 'endGame' })
+    await scorer.flush()
+    const before = await load()
+    const final = before.plays.find(
+      play => play.about.atBatIndex === FINAL_INDEX
+    )
+    expect(final).not.equals(undefined)
+    const original = requests[0]
+    for (const removeFinal of [false, true]) {
+      const current = await load()
+      await postGamePlays(
+        db,
+        gameId,
+        asPostEventsBody({
+          ...original,
+          mode: 'live',
+          source: { system: 'teamstation' },
+          plays: original.plays.filter(
+            play => play.about.atBatIndex !== FINAL_INDEX
+          ),
+          remove: removeFinal ? [FINAL_INDEX] : [],
+          scoringBase: current.scoringMutation,
+          scoringMutation: {
+            ...original.scoringMutation!,
+            id: `correct-final-${removeFinal}`
+          }
+        })
+      )
+      const stored = await load()
+      expect(
+        stored.plays.find(play => play.about.atBatIndex === FINAL_INDEX)
+      ).deep.equals(removeFinal ? undefined : final)
+      const game = await db
+        .selectFrom('games')
+        .select('status')
+        .where('id', '=', gameId)
+        .executeTakeFirstOrThrow()
+      expect(game.status).equals(removeFinal ? 'inProgress' : 'final')
+    }
+  })
   for (const final of [false, true])
     it(`preserves accepted innings against one stale later pitch (final ${final})`, async () => {
       const { open, load, gameId } = await sessions()

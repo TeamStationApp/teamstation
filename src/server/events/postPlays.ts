@@ -477,15 +477,16 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
           ...priorRows
             .filter(
               row =>
-                row.atBatIndex > mutation.frontier ||
-                (row.atBatIndex === mutation.frontier &&
-                  !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
-                    action =>
-                      !(
-                        action.type === 'gameFlow' &&
-                        action.kind === 'closePlay'
-                      )
-                  ))
+                row.atBatIndex !== FINAL_INDEX &&
+                (row.atBatIndex > mutation.frontier ||
+                  (row.atBatIndex === mutation.frontier &&
+                    !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
+                      action =>
+                        !(
+                          action.type === 'gameFlow' &&
+                          action.kind === 'closePlay'
+                        )
+                    )))
             )
             .map(row => row.atBatIndex)
         ])
