@@ -604,19 +604,17 @@ async function main(): Promise<void> {
     const persisted = asEventInfo(
       await (await f.h.request('GET', `/events/${gameId}/info`)).json()
     )
-    assert.deepEqual(
-      persisted.replyUserIds,
-      [101, 103, 104, 115].map(userIdOfGumbo)
-    )
+    // RSVP is for the team's own: the reader's child outside it, 115, is
+    // neither answered for nor listed.
+    assert.deepEqual(persisted.replyUserIds, [101, 103, 104].map(userIdOfGumbo))
     // The reader, 101, reads their own name in full.
     assert.equal(
       persisted.attendees.find(row => row.userId === userIdOfGumbo(101))?.name,
       'Babe Ruth'
     )
     assert.equal(
-      persisted.attendees.find(row => row.userId === userIdOfGumbo(115))
-        ?.isTeamParticipant,
-      false
+      persisted.attendees.find(row => row.userId === userIdOfGumbo(115)),
+      undefined
     )
     for (const id of [102, 109, 110])
       assert(!persisted.attendees.some(row => row.userId === userIdOfGumbo(id)))
@@ -781,7 +779,8 @@ async function main(): Promise<void> {
       })
     }
     await cookie(105)
-    await open(`/games/${gameId}`, 'event-reply-row-usr_111111111111111111112p')
+    // On neither team yet, 105 answers for their child 103 alone.
+    await open(`/games/${gameId}`, 'event-reply-row-usr_111111111111111111112n')
     assert.equal(
       await evaluate(
         `document.querySelector('[data-testid="event-attendance-teams"]')==null`
@@ -854,7 +853,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PUT',
-          `/events/${gameId}/rsvps/116`,
+          `/events/${gameId}/rsvps/${userIdOfGumbo(116)}`,
           { response: 'yes' },
           116
         )
@@ -1403,7 +1402,9 @@ async function main(): Promise<void> {
             awayScore: 0,
             homeScore: 0,
             description: 'Ground out'
-          }
+          },
+          // A play begins a game once it has a pitch or a ball in play.
+          playEvents: [{ isPitch: true, details: { isInPlay: true } }]
         }
       ]
     })

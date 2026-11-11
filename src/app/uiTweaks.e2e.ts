@@ -550,11 +550,10 @@ async function main(): Promise<void> {
     }
     if (!before) {
       console.log('Create roster player through coach screen')
-      await open(
-        `/games/gam_settings3_scheduled/coach/${f.teamA}`,
-        'Create Player'
-      )
+      // The coach opens on the box score; Create Player is the Roster tab's.
+      await open(`/games/gam_settings3_scheduled/coach/${f.teamA}`, 'Roster')
       await s.m.tapOn({ text: 'Roster', role: 'tab' })
+      await contains(s.page, 'Create Player')
       const countBefore = await f.h.db
         .selectFrom('users')
         .select('id')
@@ -572,8 +571,11 @@ async function main(): Promise<void> {
         ['Mookie', 'Betts'],
         ['Mike', 'Trout']
       ]) {
-        if (firstName === 'Mike')
-          await s.m.tapOn({ text: 'Create Player', role: 'button' })
+        // Creating placeholders, or a player, closes the sheet: the roster's
+        // row opens it again (not the closed sheet's own Create Player).
+        await s.m.tapOn({
+          css: '[data-testid="Edit roster players"] [aria-label="Create Player"]'
+        })
         await fill(s.m, 'First Name', firstName)
         await fill(s.m, 'Last Name', lastName)
         await s.m.tapOn({ css: '[role="dialog"] [aria-label="Create Player"]' })
@@ -612,10 +614,7 @@ async function main(): Promise<void> {
         await contains(s.page, firstName)
         console.log('Created player remains after Save Rosters', firstName)
       }
-      await open(
-        `/games/gam_settings3_scheduled/coach/${f.teamA}`,
-        'Create Player'
-      )
+      await open(`/games/gam_settings3_scheduled/coach/${f.teamA}`, 'Roster')
       await s.m.tapOn({ text: 'Roster', role: 'tab' })
       await contains(s.page, 'Mookie')
       await contains(s.page, 'Mike')
