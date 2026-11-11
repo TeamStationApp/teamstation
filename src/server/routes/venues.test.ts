@@ -1,6 +1,7 @@
 import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
+import { userIdOfGumbo } from '../../common/userId'
 import type { VenueDetail, VenueSummary } from '../../common/venues'
 import { accountTestPicture } from '../../test/accountHarness'
 import {
@@ -434,6 +435,61 @@ describe('venue routes', function () {
     expect(await fieldPhoto()).not.equals(shot)
     expect(await held(shot)).deep.equals([false, false])
     expect(await held(await fieldPhoto())).deep.equals([true, true])
+  })
+
+  it('releases the photo it uploaded when the editor is refused once it is stored', async () => {
+    const venue = await claim()
+    const id = venue.id!
+    const field = (
+      await json<VenueDetail>(
+        await f.h.request('POST', `/venues/${id}/fields`, {
+          name: 'Field 1',
+          sizes: ['50/70']
+        }),
+        201
+      )
+    ).fields[0]
+    const roles = await f.h.db
+      .selectFrom('scope_roles')
+      .selectAll()
+      .where('user_id', '=', userIdOfGumbo(101))
+      .execute()
+    expect(roles).not.deep.equals([])
+    const writes = [
+      ['PUT', `/venues/${id}`, { photo: accountTestPicture }],
+      [
+        'POST',
+        `/venues/${id}/fields`,
+        { name: 'Field 2', sizes: ['50/70'], photo: accountTestPicture }
+      ],
+      ['PUT', `/venues/${id}/fields/${field.id}`, { photo: accountTestPicture }]
+    ] as const
+    for (const [method, route, body] of writes) {
+      const before = new Set(f.h.objects.keys())
+      // The league stops running the venue while its photo is uploaded:
+      // the write, checked again in its transaction, is refused.
+      f.h.controls.beforePut = async () => {
+        await f.h.db
+          .deleteFrom('scope_roles')
+          .where('user_id', '=', userIdOfGumbo(101))
+          .execute()
+      }
+      const refused = await f.h.request(method, route, body)
+      expect(refused.status, await refused.text()).equals(403)
+      expect(f.h.controls.beforePut).equals(undefined)
+      await afterCommitsSettled()
+      // Every size it uploaded is gone.
+      expect(
+        [...f.h.objects.keys()].filter(key => !before.has(key))
+      ).deep.equals([])
+      await f.h.db.insertInto('scope_roles').values(roles).execute()
+    }
+    const photos = await f.h.db
+      .selectFrom('venue_fields')
+      .select(['name', 'photo_path'])
+      .where('venue_id', '=', id)
+      .execute()
+    expect(photos).deep.equals([{ name: 'Field 1', photo_path: null }])
   })
 
   it('edits a venue and its fields for an owner, softly deletes a field, and stores photos wide', async () => {

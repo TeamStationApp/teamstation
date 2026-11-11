@@ -1,6 +1,6 @@
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, sql, type Transaction } from 'kysely'
 
-import { afterCommit } from '../db/atomic'
+import { afterCommit, afterRollback, atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   copyObject,
@@ -358,6 +358,44 @@ export async function releaseReplacedPicture(
       }
     )
   })
+}
+
+/**
+ * Runs `write` in a transaction (`atomic`, or the one `db` is in) to name
+ * `uploaded`, the prefix of a picture just uploaded under a new random
+ * name, and releases that prefix when the write does not commit: it throws,
+ * or the transaction it is part of rolls back. Nothing else would ever name
+ * those objects. A prefix that is not one `imagePathPrefix` makes (a catalog
+ * picture, or one stored before names were random) is never released here,
+ * nor one a row names once the transaction has ended (`releasePictures`).
+ */
+export async function namingUploaded<T>(
+  db: Kysely<Database>,
+  space: SpaceSettings,
+  uploaded: string | null | undefined,
+  write: (trx: Transaction<Database>) => Promise<T>
+): Promise<T> {
+  if (uploaded == null || !isPublicImagePrefix(uploaded))
+    return await atomic(db, write)
+  const release = async (ended: Kysely<Database>): Promise<void> => {
+    // The write is over whatever happens here: a failure is only waste in
+    // the Space, never the request's.
+    await releasePictures(ended, space, [uploaded]).catch((error: unknown) => {
+      console.error(`pictures: releasing ${uploaded}: ${String(error)}`)
+    })
+  }
+  let queued = false
+  try {
+    return await atomic(db, async trx => {
+      await afterRollback(trx, release)
+      queued = true
+      return await write(trx)
+    })
+  } catch (error) {
+    // The transaction never began, so no rollback runs the release.
+    if (!queued && !db.isTransaction) await release(db)
+    throw error
+  }
 }
 
 /** Whether any row names `prefix` as its picture. */

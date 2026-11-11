@@ -6,7 +6,6 @@ import {
   unavailable,
   unsupportedMedia
 } from '../../common/errors'
-import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import {
   type ImageKind,
@@ -16,7 +15,10 @@ import {
   UnreadableImage
 } from '../media/images'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
-import { releaseReplacedPicture } from '../media/republishImages'
+import {
+  namingUploaded,
+  releaseReplacedPicture
+} from '../media/republishImages'
 import { spaceConfigured, type SpaceSettings } from '../media/spacesHls'
 import { noteScopeChange } from '../socket/syncRevision'
 
@@ -261,7 +263,7 @@ export async function storeTeamLogo(
     picture,
     mayReplaceUpload: true,
     write: async (stored, guarded) =>
-      await atomic(db, async trx => {
+      await namingUploaded(db, store.space, stored?.pathPrefix, async trx => {
         const before = await trx
           .selectFrom('teams')
           .select('logo_path')
@@ -330,7 +332,7 @@ export async function storePlayerAvatar(
     picture,
     mayReplaceUpload: callerIsAdmin,
     write: async (stored, guarded) =>
-      await atomic(db, async trx => {
+      await namingUploaded(db, store.space, stored?.pathPrefix, async trx => {
         const before = await trx
           .selectFrom('users')
           .select('avatar_path')

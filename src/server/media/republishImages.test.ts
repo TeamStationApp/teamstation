@@ -5,11 +5,12 @@ import { after, afterEach, before, describe, it } from 'mocha'
 import { pictureCatalog } from '../../common/pictureCatalog'
 import { userIdOfGumbo } from '../../common/userId'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
-import { afterCommitsSettled, atomic } from '../db/atomic'
+import { afterCommitsSettled, afterRollback, atomic } from '../db/atomic'
 import { imageKey, isPublicImagePrefix } from './images'
 import { imageUrl } from './imageUrls'
 import {
   MISSING_PREFIX,
+  namingUploaded,
   releasePictures,
   releaseReplacedPicture,
   republishOwnedImages,
@@ -719,6 +720,147 @@ describe('republishing owned pictures', function () {
           refused = error
         })
       expect(String(refused)).contains('atomic')
+    })
+  })
+
+  describe('releasing an uploaded picture its write does not name', () => {
+    const UPLOADED = `images/team/${'ab'.repeat(16)}`
+    const held = (prefix: string): boolean[] =>
+      [96, 192].map(size =>
+        h.objects.has(object(imageKey(prefix, size as 96 | 192)))
+      )
+    const name = async (
+      trx: Parameters<Parameters<typeof atomic>[1]>[0],
+      prefix: string | null
+    ): Promise<void> => {
+      await trx
+        .updateTable('teams')
+        .set({ logo_path: prefix })
+        .where('id', '=', 'tem_account')
+        .execute()
+    }
+
+    it('keeps the picture once the write that names it commits', async () => {
+      hold(UPLOADED)
+      expect(
+        await namingUploaded(h.db, h.space, UPLOADED, async trx => {
+          await name(trx, UPLOADED)
+          return 'named'
+        })
+      ).equals('named')
+      await afterCommitsSettled()
+      expect(await teamLogo()).equals(UPLOADED)
+      expect(held(UPLOADED)).deep.equals([true, true])
+    })
+
+    it('releases it when the write throws once it has named it', async () => {
+      hold(UPLOADED)
+      let thrown: unknown
+      await namingUploaded(h.db, h.space, UPLOADED, async trx => {
+        await name(trx, UPLOADED)
+        throw new Error('refused')
+      }).catch((error: unknown) => {
+        thrown = error
+      })
+      expect(String(thrown)).contains('refused')
+      await afterCommitsSettled()
+      expect(await teamLogo()).equals(null)
+      expect(held(UPLOADED)).deep.equals([false, false])
+    })
+
+    it('releases it when the transaction the write is part of rolls back later', async () => {
+      hold(UPLOADED)
+      await atomic(h.db, async trx => {
+        await namingUploaded(trx, h.space, UPLOADED, async inner => {
+          await name(inner, UPLOADED)
+        })
+        // Named, but not committed: nothing goes yet.
+        await afterCommitsSettled()
+        expect(held(UPLOADED)).deep.equals([true, true])
+        throw new Error('a later statement failed')
+      }).catch(() => undefined)
+      await afterCommitsSettled()
+      expect(await teamLogo()).equals(null)
+      expect(held(UPLOADED)).deep.equals([false, false])
+    })
+
+    it('never releases a catalog picture, an old prefix, or none', async () => {
+      const catalog = pictureCatalog[0].prefix
+      hold(catalog)
+      hold(OLD)
+      for (const prefix of [catalog, OLD, null])
+        await namingUploaded(h.db, h.space, prefix, async () => {
+          throw new Error('refused')
+        }).catch(() => undefined)
+      await afterCommitsSettled()
+      expect(held(catalog)).deep.equals([true, true])
+      expect(held(OLD)).deep.equals([true, true])
+      expect(sent).deep.equals([])
+    })
+
+    it('releases it when the transaction never begins, and logs a release that fails', async () => {
+      hold(UPLOADED)
+      // Every query goes through; only the transaction cannot be opened.
+      const closed = new Proxy(h.db, {
+        get: (target, key) => {
+          if (key === 'transaction')
+            return () => ({
+              execute: async () => {
+                throw new Error('no connection for a transaction')
+              }
+            })
+          const value: unknown = Reflect.get(target, key)
+          return typeof value === 'function' ? value.bind(target) : value
+        }
+      })
+      let thrown: unknown
+      await namingUploaded(closed, h.space, UPLOADED, async () => {
+        throw new Error('never runs')
+      }).catch((error: unknown) => {
+        thrown = error
+      })
+      expect(String(thrown)).contains('no connection')
+      expect(held(UPLOADED)).deep.equals([false, false])
+
+      hold(UPLOADED)
+      const said: unknown[] = []
+      const realError = console.error
+      console.error = (...args: unknown[]) => {
+        said.push(args.join(' '))
+      }
+      try {
+        // No connection at all: neither the transaction nor the check runs.
+        const unconnected: unknown = {}
+        await namingUploaded(
+          unconnected as typeof h.db,
+          h.space,
+          UPLOADED,
+          async () => undefined
+        ).catch(() => undefined)
+      } finally {
+        console.error = realError
+      }
+      expect(String(said[0])).contains(`releasing ${UPLOADED}`)
+      expect(held(UPLOADED)).deep.equals([true, true])
+    })
+
+    it('refuses work after a rollback outside a transaction atomic opened', async () => {
+      const refusals: unknown[] = []
+      await afterRollback(h.db, async () => undefined).catch(
+        (error: unknown) => {
+          refusals.push(error)
+        }
+      )
+      await h.db
+        .transaction()
+        .execute(async trx => {
+          await afterRollback(trx, async () => undefined)
+        })
+        .catch((error: unknown) => {
+          refusals.push(error)
+        })
+      expect(refusals.map(String)).length(2)
+      for (const refused of refusals) expect(String(refused)).contains('atomic')
     })
   })
 })

@@ -9,6 +9,9 @@ type AfterCommit = (db: Kysely<Database>) => Promise<void>
 /** The transactions `atomic` opened, and what each runs once committed. */
 const committed = new WeakMap<Kysely<Database>, AfterCommit[]>()
 
+/** The transactions `atomic` opened, and what each runs if it rolls back. */
+const rolledBack = new WeakMap<Kysely<Database>, AfterCommit[]>()
+
 /** Work after a commit still running. */
 const running = new Set<Promise<void>>()
 
@@ -42,7 +45,8 @@ export async function afterCommitsSettled(): Promise<void> {
  * inner step. When this opened the transaction, its last statement announces
  * whatever screen scope changes the writes in it noted, and once it has
  * committed it starts what `afterCommit` queued in it, against `db`, and
- * returns without waiting for it.
+ * returns without waiting for it. When it does not commit, it starts what
+ * `afterRollback` queued in it instead, and throws what stopped it.
  */
 export async function atomic<T>(
   db: Kysely<Database>,
@@ -50,13 +54,21 @@ export async function atomic<T>(
 ): Promise<T> {
   if (db.isTransaction) return await write(db as Transaction<Database>)
   const queued: AfterCommit[] = []
-  const result = await db.transaction().execute(async trx => {
-    announcesWhenDone(trx)
-    committed.set(trx, queued)
-    const result = await write(trx)
-    await announceNoted(trx)
-    return result
-  })
+  const undone: AfterCommit[] = []
+  let result: T
+  try {
+    result = await db.transaction().execute(async trx => {
+      announcesWhenDone(trx)
+      committed.set(trx, queued)
+      rolledBack.set(trx, undone)
+      const result = await write(trx)
+      await announceNoted(trx)
+      return result
+    })
+  } catch (error) {
+    for (const task of undone) start(db, task)
+    throw error
+  }
   for (const task of queued) start(db, task)
   return result
 }
@@ -81,6 +93,25 @@ export async function afterCommit(
   if (queued == null)
     throw new Error(
       'Work after a commit is queued in a transaction atomic opened'
+    )
+  queued.push(task)
+}
+
+/**
+ * Runs `task` if the transaction `atomic` opened, which `db` writes in, does
+ * not commit: started once it has rolled back, against a connection outside
+ * it, and not waited for (`afterCommitsSettled` does). A committed
+ * transaction runs nothing. Outside a transaction, or in one opened some
+ * other way, it throws: nothing would ever run the task.
+ */
+export async function afterRollback(
+  db: Kysely<Database>,
+  task: AfterCommit
+): Promise<void> {
+  const queued = db.isTransaction ? rolledBack.get(db) : undefined
+  if (queued == null)
+    throw new Error(
+      'Work after a rollback is queued in a transaction atomic opened'
     )
   queued.push(task)
 }

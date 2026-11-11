@@ -3,11 +3,13 @@ import type { Kysely } from 'kysely'
 import type { AccountPicture } from '../../common/accountSettings'
 import { unavailable, unsupportedMedia } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
-import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { storeImage, UnreadableImage } from '../media/images'
 import type { MediaContext } from '../media/mediaContext'
-import { releaseReplacedPicture } from '../media/republishImages'
+import {
+  namingUploaded,
+  releaseReplacedPicture
+} from '../media/republishImages'
 import { spaceConfigured } from '../media/spacesHls'
 import { asPictureBody, storeTeamLogo } from '../teams/storeTeamPictures'
 
@@ -39,7 +41,8 @@ export async function storeGroupPhoto(
     })
     if (stored == null) throw unavailable('The picture could not be saved')
     const table = ref.kind === 'league' ? 'leagues' : 'seasons'
-    await atomic(db, async trx => {
+    // Released if the write, or the transaction it is part of, rolls back.
+    await namingUploaded(db, media.space, stored.pathPrefix, async trx => {
       const before = await trx
         .selectFrom(table)
         .select('logo_path')

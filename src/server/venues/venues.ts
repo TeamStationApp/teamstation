@@ -31,7 +31,10 @@ import type { GooglePlaces, VenuePlace } from '../location/googlePlaces'
 import { type ImageKind, storeImage, UnreadableImage } from '../media/images'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { releaseReplacedPicture } from '../media/republishImages'
+import {
+  namingUploaded,
+  releaseReplacedPicture
+} from '../media/republishImages'
 import { spaceConfigured } from '../media/spacesHls'
 import { notifyGameChange } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
@@ -616,7 +619,7 @@ export async function updateVenue(
     changes.photo == null
       ? null
       : await storePhoto(services, 'venue', changes.photo)
-  await atomic(db, async trx => {
+  await namingUploaded(db, services.media.space, photo?.path, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
     const before = await trx
@@ -736,7 +739,7 @@ export async function createField(
     changes.photo == null
       ? null
       : await storePhoto(services, 'field', changes.photo)
-  await atomic(db, async trx => {
+  await namingUploaded(db, services.media.space, photo?.path, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
     await trx
@@ -793,7 +796,7 @@ export async function updateField(
     changes.photo == null
       ? null
       : await storePhoto(services, 'field', changes.photo)
-  await atomic(db, async trx => {
+  await namingUploaded(db, services.media.space, photo?.path, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
     const before = await liveField(trx, venueId, fieldId)
