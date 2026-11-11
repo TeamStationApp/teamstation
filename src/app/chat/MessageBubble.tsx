@@ -7,6 +7,7 @@ import {
   View
 } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import { lightHaptic } from '../scoring/lightHaptic'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -531,7 +532,9 @@ export function MessageBubble(props: MessageBubbleProps): React.ReactElement {
               }}
               style={{ padding: theme.rem(0.375) }}
             >
-              <Text style={styles.meta}>•••</Text>
+              <ButtonIcon name="more">
+                <Text style={styles.meta}>•••</Text>
+              </ButtonIcon>
             </Pressable>
           )}
         </View>
