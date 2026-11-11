@@ -1938,12 +1938,13 @@ describe('the phone outbox', function () {
         BACKOFF_MS[Math.min(index, 4)] * (1 + JITTER)
       )
     expect(p.rows()[0].attempts).equals(7)
-    // A 5xx waits as no signal does; a request that works ends neither.
+    // A 5xx is the game's own trouble: its chain waits on a backoff of its
+    // own, from the first wait; a request that works ends neither.
     answer = refusal(500, 'internal', 'Something went wrong')
     p.clock.now += 20_000
     await p.client.drainOutbox()
     const wait = p.timers[p.timers.length - 1].ms
-    expect(wait).equals(15000 * (1 + 0.5 * JITTER))
+    expect(wait).equals(1000 * (1 + 0.5 * JITTER))
     await p.client.gameLineups('g1')
     await p.client.drainOutbox()
     expect(p.rows()[0].attempts).equals(8)
@@ -2037,6 +2038,53 @@ describe('the phone outbox', function () {
       '/games/g1/lineups'
     ])
     expect(p.rows()).deep.equals([])
+  })
+
+  it('keeps a failing game’s backoff its own, growing, while another game’s writes land beside it', async function () {
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': eventsDoc('g1', 'D0'),
+          '/games/g2/events': eventsDoc('g2', 'E0')
+        },
+        sent => {
+          const gameId = sent.path.split('/')[2]
+          if (gameId === 'g1') return refusal(503, 'unavailable', 'Back soon')
+          return { body: eventsDoc(gameId, `${gameId}-next`) }
+        }
+      )
+    )
+    const sentOf = (gameId: string): number =>
+      p.posts().filter(call => call.path === `/games/${gameId}/events`).length
+    const busy = async (): Promise<void> => {
+      for (let i = 0; i < 3; i++) {
+        await p.client.saveGameEvents('g2', {
+          plays: [play(i + 1)],
+          remove: []
+        })
+        await p.client.drainOutbox()
+      }
+    }
+    await p.client.gameEvents('g1')
+    await p.client.gameEvents('g2')
+    await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
+    await p.client.drainOutbox()
+    expect(sentOf('g1')).equals(1)
+    // The other game's sends land, and neither send the failing one again
+    // at once nor end its wait.
+    const before = sentOf('g2')
+    await busy()
+    expect(sentOf('g2')).equals(before + 3)
+    expect(sentOf('g1')).equals(1)
+    await timersOnly(p, BACKOFF_MS[0] * (1 + JITTER) + 1)
+    expect(sentOf('g1')).equals(2)
+    await busy()
+    expect(sentOf('g1')).equals(2)
+    // Its second wait is the second backoff, not the first again.
+    await timersOnly(p, BACKOFF_MS[0] * (1 + JITTER) + 1)
+    expect(sentOf('g1')).equals(2)
+    await timersOnly(p, BACKOFF_MS[1] * (1 + JITTER) + 1)
+    expect(sentOf('g1')).equals(3)
   })
 
   it('sends a game’s write a 5xx sent back once another send succeeds, its backoff passed, with nothing else waking the queue (Q9)', async function () {

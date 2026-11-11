@@ -725,10 +725,19 @@ export class Outbox {
   private draining: Promise<void> | undefined
   private again = false
   private active = true
-  /** How many sends in a row could not be answered. */
+  /** How many sends in a row found no signal. */
   private failures = 0
-  /** No send before this, in epoch milliseconds. */
+  /** No send before this, in epoch milliseconds: no signal stops them all. */
   private retryAt = 0
+  /**
+   * Each chain a 5xx sent back: how many in a row, and no send of it before
+   * `retryAt`. A game's trouble is its own: another chain's sends neither
+   * wait on it nor end its backoff.
+   */
+  private readonly chainWaits = new Map<
+    string,
+    { failures: number; retryAt: number }
+  >()
   /** Whether the last failure was no signal, which a working request ends. */
   private lastNetwork = false
   /** Set by a 401: nothing is sent while the token is still this one. */
@@ -858,6 +867,7 @@ export class Outbox {
     this.timerAt = 0
     this.failures = 0
     this.retryAt = 0
+    this.chainWaits.clear()
     this.lastNetwork = false
     this.paused = undefined
     this.idle = false
@@ -1229,7 +1239,10 @@ export class Outbox {
         this.wake(true)
         throw error
       }
-      this.failed(outcomeOf(error, call) as { kind: 'retry'; network: boolean })
+      this.failed(
+        outcomeOf(error, call) as { kind: 'retry'; network: boolean },
+        chain
+      )
       // Queued as sent, in the place it held, so a retry under the same key
       // is the same request and still goes first.
       try {
@@ -1238,7 +1251,7 @@ export class Outbox {
         this.direct.delete(row.id)
       }
     }
-    this.succeeded()
+    this.succeeded(chain)
     const landing: Landing = { notices: [], reads: [] }
     let behind = false
     try {
@@ -2385,20 +2398,59 @@ export class Outbox {
     }
   }
 
-  private failed(outcome: { kind: 'retry'; network: boolean }): void {
-    this.failures++
+  /**
+   * A send of `chain` that is to be tried again: with no signal every chain
+   * waits, and after a 5xx only `chain`, each on a backoff of its own.
+   */
+  private failed(
+    outcome: { kind: 'retry'; network: boolean },
+    chain: string
+  ): void {
     this.lastNetwork = outcome.network
-    const wait =
-      BACKOFF_MS[Math.min(this.failures, BACKOFF_MS.length) - 1] *
+    const backoff = (failures: number): number =>
+      BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1] *
       (1 + this.options.random() * JITTER)
-    this.retryAt = this.options.now() + wait
+    if (outcome.network) {
+      this.failures++
+      const wait = backoff(this.failures)
+      this.retryAt = this.options.now() + wait
+      this.schedule(wait)
+      return
+    }
+    const failures = (this.chainWaits.get(chain)?.failures ?? 0) + 1
+    const wait = backoff(failures)
+    this.chainWaits.set(chain, {
+      failures,
+      retryAt: this.options.now() + wait
+    })
     this.schedule(wait)
   }
 
-  private succeeded(): void {
+  /** A send of `chain` answered: the signal is back, and its backoff over. */
+  private succeeded(chain: string): void {
     this.failures = 0
     this.retryAt = 0
     this.lastNetwork = false
+    this.chainWaits.delete(chain)
+  }
+
+  /**
+   * The chains still waiting out a 5xx, with `skipped`; a wait that is over
+   * is forgotten. Gives the soonest wait left, in milliseconds from now.
+   */
+  private waitingChains(skipped: ReadonlySet<string>): {
+    chains: Set<string>
+    soonest: number | undefined
+  } {
+    const now = this.options.now()
+    const chains = new Set(skipped)
+    let soonest: number | undefined
+    for (const [chain, { retryAt }] of this.chainWaits) {
+      if (retryAt <= now) continue
+      chains.add(chain)
+      soonest = Math.min(soonest ?? Infinity, retryAt - now)
+    }
+    return { chains, soonest }
   }
 
   /**
@@ -2537,26 +2589,27 @@ export class Outbox {
         this.paused = undefined
       }
       const wait = this.retryAt - this.options.now()
-      if (wait > 0 && skipped.size === 0) {
+      if (wait > 0) {
         if (this.timer == null) this.schedule(wait)
         return
       }
       const store = await this.options.store()
       if (store == null) return
+      const waiting = this.waitingChains(skipped)
       const picked = await store.atomically(
-        async tx => await this.pick(tx, skipped)
+        async tx => await this.pick(tx, waiting.chains)
       )
       if (picked.changed) this.notify()
       const { row, call } = picked
       if (row == null || call == null) {
         if (picked.leaseEnds != null)
           this.schedule(Math.max(0, picked.leaseEnds - this.options.now()))
-        else if (skipped.size === 0) this.idle = true
-        // A chain a 5xx skipped this pass goes again on its backoff, or at
-        // once when a send since has succeeded: nothing else may come to
-        // wake it while the app stays open.
-        if (skipped.size > 0)
-          this.schedule(Math.max(0, this.retryAt - this.options.now()))
+        else if (waiting.chains.size === 0) this.idle = true
+        // A chain a 5xx sent back goes again on its own backoff: nothing
+        // else may come to wake it while the app stays open, and another
+        // chain's sends never end it early.
+        const left = this.waitingChains(new Set()).soonest
+        if (left != null) this.schedule(left)
         return
       }
       // The session changed while the row was read: it is not the new
@@ -2618,7 +2671,7 @@ export class Outbox {
   ): Promise<boolean> {
     switch (outcome.kind) {
       case 'ok':
-        this.succeeded()
+        this.succeeded(row.chain)
         {
           const landing: Landing = { notices: [], reads: [] }
           await store.atomically(async tx => {
@@ -2643,7 +2696,7 @@ export class Outbox {
             leaseUntil: null
           })
         })
-        this.failed(outcome)
+        this.failed(outcome, row.chain)
         return false
       case 'auth':
         await store.atomically(async tx => {
