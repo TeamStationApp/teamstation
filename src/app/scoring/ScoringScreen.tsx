@@ -2945,6 +2945,15 @@ function ScoringPanel(props: {
       : players
   return (
     <BaseballScreen
+      remoteUpdates={
+        props.persistent
+          ? {
+              game: props.game,
+              userId: props.userId,
+              obscured: overlaid || menu
+            }
+          : undefined
+      }
       suspended={!props.active}
       topBand={topBand}
       setupToast={
