@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { useTheme } from '../theme/ThemeContext'
 
 export function RosterRemoveButton({
@@ -48,18 +49,20 @@ export function RosterRemoveButton({
             elevation: pressed ? 1 : 3
           }}
         >
-          <Text
-            selectable={false}
-            style={{
-              color: theme.scoringDecisionText,
-              fontSize: 20,
-              lineHeight: 22,
-              fontFamily: theme.semiBoldTextFont,
-              textAlign: 'center'
-            }}
-          >
-            ×
-          </Text>
+          <ButtonIcon name="close">
+            <Text
+              selectable={false}
+              style={{
+                color: theme.scoringDecisionText,
+                fontSize: 20,
+                lineHeight: 22,
+                fontFamily: theme.semiBoldTextFont,
+                textAlign: 'center'
+              }}
+            >
+              ×
+            </Text>
+          </ButtonIcon>
         </View>
       )}
     </Pressable>

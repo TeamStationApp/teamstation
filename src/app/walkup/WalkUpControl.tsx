@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings, sprintf } from '../locales/strings'
 import {
   CONTROL_COLORS,
@@ -57,7 +58,9 @@ export function WalkUpControl(props: WalkUpControlProps): React.ReactElement {
           pointerEvents="none"
           style={{ alignItems: 'center', justifyContent: 'center', gap: 1 }}
         >
-          <ControlIcon kind="music" size={14} />
+          <ButtonIcon>
+            <ControlIcon kind="music" size={14} />
+          </ButtonIcon>
           <Text
             selectable={false}
             style={{

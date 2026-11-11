@@ -3,7 +3,7 @@ import { type LayoutChangeEvent, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
-import { Icon } from './Icon'
+import { ButtonIcon } from './ButtonIcon'
 import { thumbBox } from './thumbBox'
 import { useBreakpoint } from './useBreakpoint'
 import { VideoPoster } from './VideoPoster'
@@ -92,7 +92,10 @@ export function GameRow(props: GameRowProps): React.ReactElement {
               difference between reading the opponent's name and reading half of it.
             */}
             {onPress != null && !narrow && (
-              <Icon name="chevron_right" color={theme.secondaryTextColor} />
+              <ButtonIcon
+                name="chevron_right"
+                color={theme.secondaryTextColor}
+              />
             )}
           </View>
           <Text style={styles.team} numberOfLines={1}>

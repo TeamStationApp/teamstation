@@ -8,6 +8,7 @@ import {
   View
 } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import type { ArcMode, BallArcState } from './ballArcModel'
 import {
   clonePlayers,
@@ -261,7 +262,9 @@ export function StandaloneField({
                 pressed && { backgroundColor: '#59694c' }
               ]}
             >
-              <PitchIcon kind={item.kind} />
+              <ButtonIcon>
+                <PitchIcon kind={item.kind} />
+              </ButtonIcon>
               <Text style={styles.pitchText}>{item.label}</Text>
             </Pressable>
           ))}

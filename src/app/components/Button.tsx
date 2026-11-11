@@ -10,7 +10,8 @@ import {
 
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Icon, type IconName } from './Icon'
+import { ButtonIcon } from './ButtonIcon'
+import type { IconName } from './Icon'
 
 export type ButtonKind = 'primary' | 'secondary' | 'text'
 
@@ -116,7 +117,7 @@ export function Button(props: ButtonProps): React.ReactElement {
       {(!busy || busyLabel != null) && (
         <>
           {icon != null && (
-            <Icon
+            <ButtonIcon
               name={icon}
               size={1.125}
               color={

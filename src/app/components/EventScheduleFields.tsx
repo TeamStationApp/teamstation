@@ -13,8 +13,8 @@ import type { CitySuggestion } from '../../common/locality'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { ButtonIcon } from './ButtonIcon'
 import { CancelAction } from './CancelAction'
-import { Icon } from './Icon'
 import { PickerDialog } from './PickerDialog'
 import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'
@@ -58,7 +58,7 @@ export function EventScheduleFields({
         style={styles.fieldButton}
       >
         <Text style={styles.value}>{text}</Text>
-        <Icon name="chevron_right" />
+        <ButtonIcon name="chevron_right" />
       </Pressable>
     </View>
   )
