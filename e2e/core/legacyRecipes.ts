@@ -127,6 +127,47 @@ export function chatReset(cwd: string, artifacts: string): void {
   forgetSeeds()
 }
 
+/**
+ * chat.e2e's E11 media, made once: a photo, and a clip of more than thirty
+ * seconds, about 20 MB, that Chrome plays (H.264). Answers their directory.
+ */
+export function chatMedia(ffmpeg = process.env.TS_FFMPEG ?? 'ffmpeg'): string {
+  const media = dir('fixtures')
+  const made = (name: string, args: string[]): void => {
+    if (existsSync(join(media, name))) return
+    const run = spawnSync(
+      ffmpeg,
+      ['-loglevel', 'error', '-y', ...args, join(media, name)],
+      { encoding: 'utf8' }
+    )
+    if (run.status !== 0)
+      throw new Error(`making ${name} failed: ${run.stderr.slice(-1000)}`)
+  }
+  made('photo.jpg', [
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc2=size=1280x720',
+    '-frames:v',
+    '1'
+  ])
+  made('clip.mp4', [
+    '-f',
+    'lavfi',
+    '-i',
+    'testsrc2=size=1280x720:rate=30:duration=40',
+    '-c:v',
+    'libx264',
+    '-pix_fmt',
+    'yuv420p',
+    '-b:v',
+    '4M',
+    '-movflags',
+    '+faststart'
+  ])
+  return media
+}
+
 function scoreboardLog(extra: string[] = []): Recipe {
   return async context => {
     const state = await scoreboardSeed(context)
@@ -245,6 +286,11 @@ export function tableRecipe(
 }
 
 export const RECIPES: Record<string, Recipe> = {
+  'src/app/chat/chat.e2e.ts': async context => [
+    ...(tableRecipe(context.cwd, 'src/app/chat/chat.e2e.ts') ?? [{}]).map(
+      run => ({ ...run, env: { ...run.env, TS_CHAT_FIXTURES: chatMedia() } })
+    )
+  ],
   'src/test/scoreboardServer.e2e.ts': async () => {
     const state = join(dir('scoreboardServer.e2e'), 'state.json')
     return ['seed', 'e1', 'e2', 'e3', 'e4', 'e5'].map(step => ({
