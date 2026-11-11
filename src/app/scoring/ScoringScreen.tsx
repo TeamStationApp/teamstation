@@ -1436,13 +1436,6 @@ function ScoringPanel(props: {
   useEffect(() => {
     scoringAudio.prepare()
   }, [])
-  const keyboard = useRef<((key: string) => boolean) | null>(null)
-  const registerKeyboard = useCallback(
-    (handler: ((key: string) => boolean) | null) => {
-      keyboard.current = handler
-    },
-    []
-  )
   const [gestureActive, setGestureActive] = useState(false)
   // A touch drag. Scoring-screen state stays put until the finger is up,
   // because a redraw from pointer-down drops the rest of that touch. Handlers
@@ -1530,8 +1523,7 @@ function ScoringPanel(props: {
     'Open scoring menu'
   )
   const [hint, setHint] = useState(false)
-  // Read-only takes no input at all, from the pointer, the keyboard or a
-  // screen reader.
+  // Read-only takes no input at all, from the pointer or a screen reader.
   const session = state.session
   const currentSetup = useRef(session)
   currentSetup.current = session
@@ -3154,12 +3146,10 @@ function ScoringPanel(props: {
             angle: value,
             generation,
             // The scorer's own angle: one a drag turned, or one accepted off
-            // where the control started, as a tap after the keyboard's
-            // arrows or their Enter leaves it.
+            // where the control started.
             dragged: dragged === true || value !== startingAngle(state)
           })
         },
-        registerKeyboard,
         onFieldPlacement: event => {
           if (tiebreaker.active) return
           // A player, or the stand-in at an empty position's plate.
@@ -3541,13 +3531,6 @@ function ScoringPanel(props: {
             retreatIds.includes(view.id) &&
             advanceIds?.includes(view.id) !== true)
         }
-        onChoose={decision => {
-          keyboard.current?.(decision === 'safe' ? 's' : 'o')
-          keyboard.current?.('Enter')
-        }}
-        onCancel={() => {
-          keyboard.current?.('Escape')
-        }}
       />
       {state.moreDraft != null && state.runnerDraft == null && (
         <View
@@ -4134,21 +4117,11 @@ function ScoringPanel(props: {
 /** The drop targets, redrawn from the drag's relay on their own. */
 function RelayedRunnerDragTargets({
   relay,
-  hides,
-  onChoose,
-  onCancel
+  hides
 }: {
   relay: Relay<RunnerDragView | null>
   hides: (view: RunnerDragView) => boolean
-  onChoose: (decision: 'safe' | 'out') => void
-  onCancel: () => void
 }): React.ReactElement {
   const view = useRelay(relay)
-  return (
-    <RunnerDragTargets
-      view={view == null || hides(view) ? null : view}
-      onChoose={onChoose}
-      onCancel={onCancel}
-    />
-  )
+  return <RunnerDragTargets view={view == null || hides(view) ? null : view} />
 }
