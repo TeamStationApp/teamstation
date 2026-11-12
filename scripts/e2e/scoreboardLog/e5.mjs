@@ -283,12 +283,37 @@ async function finish(camera, pool) {
 }
 
 /**
- * A playlist's total `EXTINF`, in seconds: `master.m3u8` is the live one
- * until the recording replaces it, `video.m3u8` the recording's.
+ * A live playlist's total `EXTINF`, in seconds, from the ingest's disk:
+ * `master.m3u8` is the live one until the recording replaces it.
  */
 function playlistSeconds(videoId, name) {
   const path = join(mediaRoot, 'work', 'videos', videoId, name)
   return parseMediaPlaylist(readFileSync(path, 'utf8')).segments.reduce(
+    (sum, segment) => sum + segment.durationSec,
+    0
+  )
+}
+
+/**
+ * A recording's total `EXTINF`, in seconds, read as a player reads it: from
+ * the address `/playback` hands out. A packed-up recording goes to the Space,
+ * under its secret path, and need not stay on this machine's disk.
+ */
+async function recordingSeconds(videoId) {
+  const playback = curl(`${values.api}/videos/${videoId}/playback`)
+  if (playback.json?.url == null)
+    throw new Error(`${videoId} has no playback address`)
+  let url = new URL(playback.json.url)
+  let text = await (await fetch(url)).text()
+  // A master playlist names its one variant on the line after its stream.
+  if (text.includes('#EXT-X-STREAM-INF')) {
+    const variant = text
+      .split('\n')
+      .find(line => line !== '' && !line.startsWith('#'))
+    url = new URL(variant, url)
+    text = await (await fetch(url)).text()
+  }
+  return parseMediaPlaylist(text).segments.reduce(
     (sum, segment) => sum + segment.durationSec,
     0
   )
@@ -456,7 +481,7 @@ try {
   // remux counts it whole: so the recording may run a frame longer per
   // writer, and the points after a reconnect sit that much early in it.
   const writers = 2
-  const recordingSec = playlistSeconds(plain.videoId, 'video.m3u8')
+  const recordingSec = await recordingSeconds(plain.videoId)
   check(
     Math.abs(recordingSec - liveSec) * 1000 <= writers * (FRAME_MS + 10),
     `the recording is the live segments end to end, to a frame a writer: ${recordingSec.toFixed(3)} s and ${liveSec.toFixed(3)} s`

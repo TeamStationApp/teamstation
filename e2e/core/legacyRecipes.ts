@@ -469,7 +469,17 @@ export const RECIPES: Record<string, Recipe> = {
     }))
   },
   'scripts/e2e/scoreboardLog/e2.mjs': scoreboardLog(),
-  'scripts/e2e/scoreboardLog/e3.mjs': scoreboardLog(),
+  // It reads back the scoring and log changes e2 makes on the same game: e2
+  // runs first, whichever droplet or order the sweep gave them.
+  'scripts/e2e/scoreboardLog/e3.mjs': async context => {
+    const runs = await scoreboardLog()(context)
+    if (runs.some(run => run.blocked != null)) return runs
+    const file = 'scripts/e2e/scoreboardLog/e2.mjs'
+    for (const run of await RECIPES[file](context))
+      if ((await context.run(file, { ...run, label: 'for-e3' })) !== 0)
+        return [{ blocked: 'e2 did not leave the game its changes' }]
+    return runs
+  },
   'scripts/e2e/scoreboardLog/e4.mjs': scoreboardLog(['--offset', '1234']),
   'scripts/e2e/scoreboardLog/e5.mjs': scoreboardLog(),
   'src/app/autoScheduler.e2e.ts': async () => [{ args: [] }],
@@ -554,15 +564,14 @@ export const RECIPES: Record<string, Recipe> = {
   'src/app/replay/replay.e2e.ts': async context => {
     seedReplay(context.cwd)
     const runs: Invocation[] = []
-    for (const scenario of REPLAY_TWICE) {
-      for (const phase of ['before', 'after']) {
-        runs.push({
-          label: `${scenario}-${phase}`,
-          args: [],
-          env: { REPLAY_SCENARIO: scenario, REPLAY_PHASE: phase }
-        })
-      }
-    }
+    // `before` was the proof on the build without these controls, which
+    // expects them absent: on this build only `after` is a test.
+    for (const scenario of REPLAY_TWICE)
+      runs.push({
+        label: scenario,
+        args: [],
+        env: { REPLAY_SCENARIO: scenario, REPLAY_PHASE: 'after' }
+      })
     for (const scenario of REPLAY_ONCE) {
       const announcer =
         scenario.endsWith('nnouncer') && scenario !== 'noAnnouncer'

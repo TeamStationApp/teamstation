@@ -562,7 +562,18 @@ export async function startLegacyStack(
         for (const child of children) await stopChild(child)
         await stopChild(ingest)
         await stopChild(api)
-        store?.close()
+        // The Space as well: a player's keep-alive connection to it would
+        // hold the sweep open after its last script.
+        if (store != null) {
+          const space = store
+          const gone = new Promise<void>(resolve =>
+            space.close(() => {
+              resolve()
+            })
+          )
+          space.closeAllConnections()
+          await gone
+        }
         restore()
         rmSync(scratch, { recursive: true, force: true })
       }

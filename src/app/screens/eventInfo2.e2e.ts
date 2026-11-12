@@ -1448,6 +1448,8 @@ async function main(): Promise<void> {
       'First scoring activity, explicit Info/Videos/Box Score and browser Back passed'
     )
     const endingId = 'gam_default_three_hour_end'
+    // The default end falls 25 s out: the page must mount on Info before it,
+    // which a loaded machine took more than 7 s to do.
     await f.h.db
       .insertInto('games')
       .values({
@@ -1455,7 +1457,7 @@ async function main(): Promise<void> {
         home_team_id: f.teamA,
         away_team_id: f.teamB,
         season_id: null,
-        start_at: new Date(Date.now() - 10800000 + 7000),
+        start_at: new Date(Date.now() - 10800000 + 25000),
         end_at: null
       })
       .execute()
@@ -1463,7 +1465,7 @@ async function main(): Promise<void> {
     assert.equal(await selected(), 'Info')
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
-      timeout: 15000
+      timeout: 40000
     })
     assert.equal(
       await evaluate(

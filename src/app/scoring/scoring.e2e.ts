@@ -28,6 +28,7 @@ import {
 } from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, type RosterEntry } from '../../common/api'
 import { defaultScoreboardSettings } from '../../common/nodeSettings'
+import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -155,6 +156,79 @@ async function open(
       (a, b) => a.gumbo.about.atBatIndex - b.gumbo.about.atBatIndex
     )
     if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
+  }
+  /** Each team's players, as its roster answers them: the accounts plays are named from. */
+  const teamRoster = (
+    away: boolean
+  ): Array<
+    Pick<RosterEntry, 'userId' | 'gumboId' | 'shortName'> &
+      Record<string, unknown>
+  > =>
+    away
+      ? [
+          {
+            userId: userIdOfGumbo(101),
+            gumboId: 101,
+            shortName: 'Jordan K.',
+            jersey: '00',
+            positions: ['P'],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null,
+            bats,
+            throws: 'right'
+          }
+        ].concat(
+          Array.from({ length: 8 }, (_, i) => ({
+            userId: userIdOfGumbo(102 + i),
+            gumboId: 102 + i,
+            shortName: `Player ${i + 2}`,
+            jersey: String(i + 2),
+            positions: [createPlayers()[i + 1].id],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null,
+            bats: 'right' as const,
+            throws: 'right'
+          }))
+        )
+      : Array.from({ length: 9 }, (_, i) => ({
+          userId: userIdOfGumbo(201 + i),
+          gumboId: 201 + i,
+          shortName: `Player ${i + 1}`,
+          jersey: String(i + 1),
+          positions: [createPlayers()[i].id],
+          isPlayer: true,
+          role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null,
+          bats: 'right',
+          throws: 'right'
+        }))
+  /**
+   * The game as the API reads it back: saves are kept in their stored form,
+   * naming nobody, and a read names every player from his account.
+   */
+  const named = (): typeof held => {
+    const names = new Map<number, string>()
+    for (const entry of [
+      ...teamRoster(true),
+      ...teamRoster(false),
+      ...Object.values(createdRoster).flat()
+    ])
+      if (entry.gumboId != null) names.set(entry.gumboId, entry.shortName)
+    return {
+      plays: held.plays.map(row => ({
+        ...row,
+        gumbo: withNames(row.gumbo, names)
+      })),
+      currentPlay: withNames(held.currentPlay, names)
+    }
   }
   const unexpected: string[] = []
   page.on('pageerror', error => {
@@ -319,7 +393,7 @@ async function open(
         await request.respond({
           status: 200,
           contentType: 'application/json',
-          body: JSON.stringify(held)
+          body: JSON.stringify(named())
         })
       }
       answer().catch(() => undefined)
@@ -397,54 +471,8 @@ async function open(
         failedRosters.add(url.pathname)
         status = 503
       }
-      body = url.pathname.includes('/away/')
-        ? [
-            {
-              userId: userIdOfGumbo(101),
-              gumboId: 101,
-              shortName: 'Jordan K.',
-              jersey: '00',
-              positions: ['P'],
-              isPlayer: true,
-              role: 'member',
-              section: 'player',
-              staffRoles: [],
-              inheritedFrom: null,
-              bats,
-              throws: 'right'
-            }
-          ].concat(
-            Array.from({ length: 8 }, (_, i) => ({
-              userId: userIdOfGumbo(102 + i),
-              gumboId: 102 + i,
-              shortName: `Player ${i + 2}`,
-              jersey: String(i + 2),
-              positions: [createPlayers()[i + 1].id],
-              isPlayer: true,
-              role: 'member',
-              section: 'player',
-              staffRoles: [],
-              inheritedFrom: null,
-              bats: 'right' as const,
-              throws: 'right'
-            }))
-          )
-        : Array.from({ length: 9 }, (_, i) => ({
-            userId: userIdOfGumbo(201 + i),
-            gumboId: 201 + i,
-            shortName: `Player ${i + 1}`,
-            jersey: String(i + 1),
-            positions: [createPlayers()[i].id],
-            isPlayer: true,
-            role: 'member',
-            section: 'player',
-            staffRoles: [],
-            inheritedFrom: null,
-            bats: 'right',
-            throws: 'right'
-          }))
       body = [
-        ...(body as RosterEntry[]),
+        ...teamRoster(url.pathname.includes('/away/')),
         ...(createdRoster[url.pathname.split('/')[4]] ?? [])
       ]
     } else if (url.pathname.endsWith('/live-streams'))
@@ -3352,8 +3380,9 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label*="Batter Mike T"]')
       await click(page, 'Undo Set team roster')
       await page.waitForSelector('[aria-label^="Next batter is on base."]')
-      // The hit, whatever the history calls it here.
-      await page.locator('[aria-label^="Undo "]').click()
+      // The hit is still on this screen's history, though the roster was
+      // read again from the server.
+      await click(page, 'Undo 45° Fly Ball')
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
