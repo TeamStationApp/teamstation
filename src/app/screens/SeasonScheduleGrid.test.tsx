@@ -110,16 +110,11 @@ describe('the season schedule grid', () => {
     expect(hasLabel('Demo Regular Size: T-ball')).equals(true)
     expect(hasLabel('Demo Fall Size: 46/60')).equals(true)
     // No exhibition teams: the exhibition games aren't counted.
-    expect(hasLabel('Demo Regular Total games: 15')).equals(true)
+    expect(hasLabel('Demo Regular Total games: 15')).equals(false)
     expect(hasLabel('Demo Regular Doubleheaders: Allowed')).equals(true)
-    expect(hasLabel('Demo Regular Blackouts: 3 days')).equals(true)
-    expect(hasLabel('Demo Regular Windows: 2 periods')).equals(true)
-    expect(hasLabel('Demo Fall Blackouts: 1 day')).equals(true)
-    expect(hasLabel('Demo Fall Windows: None')).equals(true)
     await tapLabel('Demo Fall Size: 46/60')
-    await tapLabel('Demo Regular Total games: 15')
     await tapLabel('Demo Fall Teams: 7 teams and 2 exhibition teams')
-    await tapLabel('Open Demo Fall')
+    await tapLabel('Demo Fall: Change constraints')
     // The number columns open in place, never through onEdit.
     for (const label of [
       'Demo Fall Time between games in minutes: 15',

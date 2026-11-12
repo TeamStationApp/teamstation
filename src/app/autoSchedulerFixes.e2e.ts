@@ -311,8 +311,8 @@ async function f1(run: Run): Promise<void> {
   await b.page.waitForFunction(() => location.pathname.endsWith('/scheduler'), {
     timeout: 15000
   })
-  await contains(b.page, 'SCHEDULE SETTINGS')
-  await scrollToText(b, 'SCHEDULE SETTINGS')
+  await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
+  await scrollToText(b, 'SELECT SEASONS TO AUTO SCHEDULE.')
   // Each tap selects the whole number; typing replaces it; Tab saves and
   // opens the next cell.
   await tapLabel(b, 'Demo Regular Game length in minutes: 90')
@@ -362,7 +362,7 @@ async function f1(run: Run): Promise<void> {
   // After a reload: bare numbers under the new headers, Teams beside Size,
   // and no dialog anywhere.
   await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
-  await contains(b.page, 'SCHEDULE SETTINGS')
+  await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
   await labelled(b, 'Demo Regular Game length in minutes: 100')
   const grid = await b.page.evaluate((seasonId: string) => {
     const table = document.querySelector<HTMLElement>(
@@ -447,7 +447,7 @@ async function f1(run: Run): Promise<void> {
   expect(grid.dialog).equals(false)
   // The grid takes two frames, like the before shot: from its start
   // (Season, Teams, Size), then sideways to the four number columns.
-  await scrollToText(b, 'SCHEDULE SETTINGS')
+  await scrollToText(b, 'SELECT SEASONS TO AUTO SCHEDULE.')
   const start = join(run.support, 'season-grid-after-grid.png')
   const numbers = join(run.support, 'season-grid-after-numbers.png')
   await run.capture(start)
@@ -507,7 +507,7 @@ async function f1(run: Run): Promise<void> {
     }
   })
   trace(`size ${JSON.stringify(size)}`)
-  await scrollToText(b, 'SCHEDULE SETTINGS')
+  await scrollToText(b, 'SELECT SEASONS TO AUTO SCHEDULE.')
   await run.capture(join(run.support, 'season-grid-after-mp.png'))
   expect(size.lines).equals(1)
   expect(size.cell).equals(size.teams)
@@ -700,10 +700,10 @@ async function f2(run: Run): Promise<void> {
     await run.capture('season-zone-after.png')
     // In the Auto-Scheduler, playoffs joins the run and saves a number.
     await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
-    await contains(b.page, 'SCHEDULE SETTINGS')
+    await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
     await clickLabel(b, 'Demo Playoffs')
     await labelled(b, 'Demo Playoffs Regular-season games: 0')
-    await scrollToText(b, 'SCHEDULE SETTINGS')
+    await scrollToText(b, 'SELECT SEASONS TO AUTO SCHEDULE.')
     await gridTo(b, 'Demo Playoffs Regular-season games: 0')
     await tapLabel(b, 'Demo Playoffs Regular-season games: 0')
     await selected(b, 'Demo Playoffs Regular-season games', '0')
@@ -745,7 +745,7 @@ async function f2b(run: Run): Promise<void> {
   await inZone(b, VIEWER, async () => {
     expect(await curlZone(run, lines, fx.f.seasonA)).equals('UTC')
     await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
-    await contains(b.page, 'SCHEDULE SETTINGS')
+    await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
     await tapText(b, 'Build schedule')
     await contains(b.page, 'These seasons already have 2 upcoming games')
     await clickLabel(b, 'Work around them')
@@ -838,14 +838,11 @@ async function f3(run: Run): Promise<void> {
   await run.visit(setupOf(fx.f.seasonA))
   await contains(b.page, 'From Mar 1')
   await contains(b.page, 'From Jun 1')
-  await clickLabel(
-    b,
-    'Change the end of the windows from Monday, March 1, 2027'
-  )
+  await clickLabel(b, 'Change the end of Windows from Monday, March 1, 2027')
   await labelled(b, 'Choose 2027-05-31')
   await tapLabel(b, 'Choose 2027-05-20')
   await tapText(b, 'Use date')
-  await contains(b.page, 'End date saved.')
+  await contains(b.page, 'Time windows saved.')
   await run.visit(setupOf(fx.f.seasonA))
   await contains(b.page, 'Mar 1 – May 20')
   await contains(b.page, 'From Jun 1')
@@ -853,7 +850,7 @@ async function f3(run: Run): Promise<void> {
   // Each period now has its Starts and Ends card, so the section is taller
   // than the before shot's: the section's title goes under the header to
   // keep both periods' headings clear of the floating nav bar.
-  await scrollToText(b, 'GAME WINDOWS', 22)
+  await scrollToText(b, 'TIME WINDOWS', 22)
   const frame = await b.page.evaluate(() => {
     const box = (text: string): DOMRect =>
       [...document.querySelectorAll('div, span')]
@@ -916,8 +913,8 @@ async function f3(run: Run): Promise<void> {
   // The playoffs, with no windows, copy seasonA's: the seasons start
   // together, and the June period starts after the playoffs end.
   await run.visit(setupOf(fx.f.playoffs))
-  await contains(b.page, 'No game windows yet.')
-  await scrollToText(b, 'GAME WINDOWS')
+  await contains(b.page, 'No time windows. No games can be scheduled.')
+  await scrollToText(b, 'TIME WINDOWS')
   await tapText(b, 'Copy from another season')
   await contains(b.page, 'Copy game windows from')
   await labelled(b, 'Demo Regular')
@@ -1133,7 +1130,7 @@ async function f5(run: Run): Promise<void> {
   const { fx, b, state } = run
   const venuePath = `/venues/${state.venueId!}`
   await run.visit(venuePath)
-  await contains(b.page, 'Default hours')
+  await contains(b.page, 'Time Windows')
   // The row: its plus tile (the web draws the icon from its name), its title
   // and its chevron; and no header Add beside it.
   await b.page.waitForFunction(
@@ -1193,8 +1190,11 @@ async function f5(run: Run): Promise<void> {
     ['Tee Field', ['T-ball']]
   ])
   // Monday, opened from Closed, fills 9:00 AM to 5:00 PM.
-  await centerOn(b, '[aria-label="Default hours: Monday, Closed"]')
-  await tapLabel(b, 'Default hours: Monday, Closed')
+  await centerOn(
+    b,
+    '[aria-label="Default hours from Existing hours: Monday, Closed"]'
+  )
+  await tapLabel(b, 'Default hours from Existing hours: Monday, Closed')
   await contains(b.page, 'Done')
   await tapText(b, 'Open')
   await labelled(b, 'Opens 9:00 AM')
@@ -1202,13 +1202,13 @@ async function f5(run: Run): Promise<void> {
   await run.capture('hours-default-after.png')
   await tapText(b, 'Done')
   await contains(b.page, 'Hours saved.')
-  const hours = await api<{ defaultHours: unknown[] }>(
+  const hours = await api<{ defaultWindows: Array<{ hours: unknown[] }> }>(
     fx,
     ADMIN,
     'GET',
     venuePath
   )
-  expect(hours.defaultHours).deep.equals([
+  expect(hours.defaultWindows[0].hours).deep.equals([
     { weekday: 1, start: '09:00', end: '17:00' }
   ])
   await run.pass(
@@ -1250,7 +1250,7 @@ async function runFieldRow(
 }
 
 /**
- * F6: Fields for this run adds a field of a venue nobody has claimed, the
+ * F6: Season constraints add a field of a venue nobody has claimed, the
  * run builds and publishes on it, and, unchecked, it stays listed when the
  * admin comes back.
  */
@@ -1261,12 +1261,14 @@ async function f6(run: Run): Promise<void> {
     ''
   ]
   const harbor = 'Harbor Diamond, Harbor Field'
-  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
-  await contains(b.page, 'FIELDS FOR THIS RUN')
+  await run.visit(
+    `/groups/league/${fx.f.leagueA}/scheduler/seasons/${fx.f.seasonA}`
+  )
+  await contains(b.page, 'SELECT FIELDS TO USE')
   await contains(b.page, 'Field 1, Example Park')
   expect(await runFieldRow(b, harbor)).equals(null)
   // Add field opens the picker in field mode: a venue, then its field.
-  await clickLabel(b, 'Add a field to this run')
+  await clickLabel(b, 'Add a field from the registry')
   await contains(b.page, 'Choose field')
   await fill(b.m, 'Search venues', 'Harbor')
   await clickLabel(b, 'Harbor Field, 1 Demo Way, Demo City')
@@ -1277,6 +1279,7 @@ async function f6(run: Run): Promise<void> {
     { timeout: 15000 }
   )
   await contains(b.page, 'Harbor Field · unclaimed')
+  await contains(b.page, 'Field added.')
   expect(await runFieldRow(b, harbor)).equals(
     '✓Harbor Diamond, Harbor Field50/70 · Harbor Field · unclaimed'
   )
@@ -1290,16 +1293,18 @@ async function f6(run: Run): Promise<void> {
     { timeout: 15000 },
     'Field 1, Example Park'
   )
-  const setup = await api<{ fieldIds: string[] }>(
+  const setup = await api<{ settings: { fieldIds: string[] } }>(
     fx,
     ADMIN,
     'GET',
-    `/leagues/${fx.f.leagueA}/schedule-setup`
+    `/seasons/${fx.f.seasonA}/schedule-settings`
   )
-  expect(setup.fieldIds).deep.equals([HARBOR_DIAMOND])
-  await scrollToText(b, 'FIELDS FOR THIS RUN')
+  expect(setup.settings.fieldIds).deep.equals([HARBOR_DIAMOND])
+  await scrollToText(b, 'SELECT FIELDS TO USE')
   await run.capture('run-fields-after.png')
   // Build seasonA's schedule, working around its two games on Field 1.
+  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
+  await contains(b.page, 'Build schedule')
   await tapText(b, 'Build schedule')
   await contains(b.page, 'These seasons already have 2 upcoming games')
   await clickLabel(b, 'Work around them')
@@ -1372,8 +1377,10 @@ async function f6(run: Run): Promise<void> {
   )
   // Unchecked, the added field stays listed after the admin leaves the
   // screen and comes back, with its Remove action.
-  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
-  await contains(b.page, 'FIELDS FOR THIS RUN')
+  await run.visit(
+    `/groups/league/${fx.f.leagueA}/scheduler/seasons/${fx.f.seasonA}`
+  )
+  await contains(b.page, 'SELECT FIELDS TO USE')
   await clickLabel(b, harbor)
   await b.page.waitForFunction(
     (label: string) => {
@@ -1385,8 +1392,10 @@ async function f6(run: Run): Promise<void> {
   )
   await run.visit(`/groups/league/${fx.f.leagueA}`)
   await labelled(b, AUTO_SCHEDULER)
-  await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
-  await contains(b.page, 'FIELDS FOR THIS RUN')
+  await run.visit(
+    `/groups/league/${fx.f.leagueA}/scheduler/seasons/${fx.f.seasonA}`
+  )
+  await contains(b.page, 'SELECT FIELDS TO USE')
   await contains(b.page, 'Harbor Field · unclaimed')
   expect(await runFieldRow(b, harbor)).equals(
     'Harbor Diamond, Harbor Field50/70 · Harbor Field · unclaimed'
@@ -1398,12 +1407,21 @@ async function f6(run: Run): Promise<void> {
     'GET',
     `/leagues/${fx.f.leagueA}/schedule-setup`
   )
-  expect(kept.fieldIds).deep.equals([])
+  expect(
+    (
+      await api<{ settings: { fieldIds: string[] } }>(
+        fx,
+        ADMIN,
+        'GET',
+        `/seasons/${fx.f.seasonA}/schedule-settings`
+      )
+    ).settings.fieldIds
+  ).deep.equals([])
   expect(kept.addedFieldIds).deep.equals([HARBOR_DIAMOND])
-  await scrollToText(b, 'FIELDS FOR THIS RUN')
+  await scrollToText(b, 'SELECT FIELDS TO USE')
   await run.capture('run-fields-kept.png')
   await run.pass(
-    `Fields for this run's Add field opened the picker in field mode: searching "Harbor", Harbor Field, then Harbor Diamond added it at once with no size step, listed checked as "Harbor Diamond, Harbor Field" with "50/70 · Harbor Field · unclaimed"; with Field 1 unchecked the run's only field is Harbor Diamond; the build gave ${preview.options.length === 1 ? '1 option' : `${preview.options.length} options`}, Option 1's ${planned.length} games all on Harbor Diamond; publishing scheduled them, and over the API every one of seasonA's ${newGames.length} new games is on Harbor Diamond (run-fields-publish.log); unchecked, Harbor Diamond was still listed, unchecked with its Remove action, after leaving the Auto-Scheduler and coming back, and the setup keeps it in addedFieldIds`
+    `Season constraints' Add field opened the picker in field mode: searching "Harbor", Harbor Field, then Harbor Diamond added it at once with no size step, listed checked as "Harbor Diamond, Harbor Field" with "50/70 · Harbor Field · unclaimed"; with Field 1 unchecked the run's only field is Harbor Diamond; the build gave ${preview.options.length === 1 ? '1 option' : `${preview.options.length} options`}, Option 1's ${planned.length} games all on Harbor Diamond; publishing scheduled them, and over the API every one of seasonA's ${newGames.length} new games is on Harbor Diamond (run-fields-publish.log); unchecked, Harbor Diamond was still listed, unchecked with its Remove action, after leaving the Auto-Scheduler and coming back, and the setup keeps it in addedFieldIds`
   )
 }
 
