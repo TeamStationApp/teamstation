@@ -1,5 +1,6 @@
 import { Occupancy } from './feasibility'
 import { type Matchup, seasonTeams } from './matchups'
+import { seasonZones } from './seasonZones'
 import {
   dayNumber,
   firstOpenDate,
@@ -39,7 +40,7 @@ export interface SeasonContext {
   clock: LocalClock
   /**
    * The zone a game on a field is read in: the field's, or, for a field not
-   * in the run, the zone of the run's first field of the season's size.
+   * in the run, the zone of the season's first selected field of its required size.
    */
   zoneOf: (fieldId: string | null) => string
   bufferMs: number
@@ -87,20 +88,6 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
   return [...groups.values()]
 }
 
-/**
- * The zones a season's games are read in: those of the run's fields that
- * set up as its size, or, with none, of the run's first field, or UTC.
- */
-function seasonZones(input: EngineInput, season: EngineSeason): string[] {
-  const sized = input.fields.filter(field =>
-    field.sizes.includes(season.settings.fieldSize)
-  )
-  const zones = (sized.length > 0 ? sized : input.fields.slice(0, 1)).map(
-    field => field.availability.timezone
-  )
-  return zones.length > 0 ? [...new Set(zones)] : ['UTC']
-}
-
 /** Reads the input into the slots, groups and starting occupancy of the run. */
 export function buildContext(input: EngineInput): RunContext {
   const fieldZones = new Map(
@@ -109,7 +96,7 @@ export function buildContext(input: EngineInput): RunContext {
   const clock = new LocalClock()
   const seasons = input.seasons.map((season, index): SeasonContext => {
     const { slots, windows, supply } = seasonSlots(input, season, clock)
-    const zones = seasonZones(input, season)
+    const zones = seasonZones(input.fields, season.settings)
     const zoneOf = (fieldId: string | null): string =>
       (fieldId == null ? undefined : fieldZones.get(fieldId)) ?? zones[0]
     return {

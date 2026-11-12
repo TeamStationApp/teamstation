@@ -32,6 +32,7 @@ export interface CheckedSeason {
   exhibitionTeams: number
   settings: Pick<
     ScheduleSettings,
+    | 'fieldIds'
     | 'fieldSize'
     | 'gameMinutes'
     | 'regularGames'
@@ -152,7 +153,11 @@ export function schedulingChecks(
         )
       }
     }
-    const sized = usable.filter(field => field.sizes.includes(s.fieldSize))
+    const sized = usable.filter(
+      field =>
+        (s.fieldIds ?? []).includes(field.id) &&
+        field.sizes.includes(s.fieldSize)
+    )
     if (sized.length === 0)
       add(
         'noField',

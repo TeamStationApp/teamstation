@@ -10,6 +10,7 @@ import {
 } from '../../common/fieldAvailability'
 import { calendarDateText } from '../../common/groupCreation'
 import { asFieldSize, asWeeklyHours, fieldSizeLabel } from '../../common/venues'
+import { asWindowPeriods } from '../../common/windowPeriods'
 import type { Database, GamesTable } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
 import { schedulingRecipients } from '../groups/rights'
@@ -68,6 +69,7 @@ export async function fieldFacts(
       'venue_fields.starts_on',
       'venue_fields.ends_on',
       'venue_fields.hours',
+      'venue_fields.windows',
       'venue_fields.blackouts',
       'venue_fields.deleted_at'
     ])
@@ -86,6 +88,7 @@ export async function fieldFacts(
         availability: effectiveAvailability(venueDefaults(row), {
           startsOn: calendarDateText(row.starts_on),
           endsOn: calendarDateText(row.ends_on),
+          windows: row.windows == null ? null : asWindowPeriods(row.windows),
           hours: row.hours == null ? null : asWeeklyHours(row.hours),
           blackouts: Array.isArray(row.blackouts)
             ? row.blackouts.map(value => calendarDateText(value)!)

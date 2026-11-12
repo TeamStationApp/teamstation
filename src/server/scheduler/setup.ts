@@ -115,6 +115,7 @@ export async function settingsOf(
           {
             saved: true,
             settings: {
+              fieldIds: row.field_ids,
               fieldSize: asFieldSize(row.field_size),
               gameMinutes: row.game_minutes,
               bufferMinutes: row.buffer_minutes,
@@ -150,7 +151,32 @@ export async function saveSeasonScheduleSettings(
   seasonId: string,
   settings: ScheduleSettings
 ): Promise<SeasonScheduleSettings> {
+  const previous = await seasonScheduleSettings(db, seasonId)
+  const chosen = settings.fieldIds ?? previous.settings.fieldIds ?? []
+  const fields =
+    chosen.length === 0
+      ? []
+      : await db
+          .selectFrom('venue_fields')
+          .select(['id', 'sizes', 'deleted_at'])
+          .where('id', 'in', chosen)
+          .execute()
+  if (
+    fields.length !== chosen.length ||
+    fields.some(field => field.deleted_at != null)
+  )
+    throw badRequest('Choose available fields for this season')
+  const changedSize = previous.settings.fieldSize !== settings.fieldSize
+  if (
+    !changedSize &&
+    fields.some(field => !field.sizes.includes(settings.fieldSize))
+  )
+    throw badRequest('Choose fields matching the required size')
+  const fieldIds = fields
+    .filter(field => field.sizes.includes(settings.fieldSize))
+    .map(field => field.id)
   const values = {
+    field_ids: fieldIds,
     field_size: settings.fieldSize,
     game_minutes: settings.gameMinutes,
     buffer_minutes: settings.bufferMinutes,
@@ -421,7 +447,14 @@ export async function scheduleSetup(
     leagueId,
     {
       venueIds: await ownedVenueIds(db, leagueId, clock),
-      fieldIds: chosen?.field_ids ?? [],
+      fieldIds: [
+        ...new Set([
+          ...(chosen?.field_ids ?? []),
+          ...[...settings.values()].flatMap(
+            value => value.settings.fieldIds ?? []
+          )
+        ])
+      ],
       addedFieldIds: chosen?.added_field_ids ?? []
     },
     clock

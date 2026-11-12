@@ -80,6 +80,7 @@ export function season(
     exhibitionTeams: EXHIBITION_TEAMS,
     ...changes,
     settings: {
+      fieldIds: [FIELD],
       fieldSize: '50/70',
       gameMinutes: 90,
       bufferMinutes: 10,
