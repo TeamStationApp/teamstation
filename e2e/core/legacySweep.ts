@@ -12,6 +12,7 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { chatFixtureEnv } from './chatFixture'
 import { legacyCommand } from './legacyCommand'
 import {
   BLOCKED,
@@ -25,7 +26,10 @@ import {
 } from './legacyRecipes'
 import {
   type LegacyStack,
+  STACK_API,
+  STACK_DATABASE_URL,
   STACK_MEDIA_ORIGINS,
+  STACK_ORIGIN,
   stackArtifacts,
   startLegacyStack
 } from './legacyStack'
@@ -284,6 +288,34 @@ async function main(): Promise<void> {
             }
           }
           await invocation.prepare?.()
+          let made: Record<string, string> = {}
+          if (invocation.fixture != null) {
+            try {
+              made = await chatFixtureEnv(
+                cwd,
+                path
+                  .split('/')
+                  .at(-1)!
+                  .replace(/\.(ts|mjs)$/, ''),
+                invocation.fixture,
+                {
+                  databaseUrl: STACK_DATABASE_URL,
+                  apiUrl: STACK_API,
+                  webUrl: `${STACK_ORIGIN}/`,
+                  env: stack.env
+                }
+              )
+              // The producer reset the database under the running API.
+              await stack.restartApi({ speech: stack.speech })
+            } catch (error) {
+              return {
+                file: path,
+                status: 'failed',
+                exit: 1,
+                reason: error instanceof Error ? error.message : String(error)
+              }
+            }
+          }
           // `{legacy:<name>}` in a value is that script's artifact directory, for
           // a script that reads what an earlier one left (chat.e2e's profiles);
           // `{stack:apiLog}` is the stack API's log, for a sign-in code.
@@ -309,6 +341,7 @@ async function main(): Promise<void> {
                 env: {
                   TS_CHAT_API_LOG: stack.apiLog,
                   ...shared,
+                  ...made,
                   ...env
                 },
                 label: invocation.label

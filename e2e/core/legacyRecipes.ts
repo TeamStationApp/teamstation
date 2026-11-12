@@ -16,6 +16,7 @@ import { createServer as createNetServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { extname, join, normalize } from 'node:path'
 
+import type { ChatFixture } from './chatFixture'
 import {
   frontProxy,
   STACK_API,
@@ -32,6 +33,8 @@ export interface Invocation {
   env?: Record<string, string>
   /** Recorded blocked with this reason instead of being run. */
   blocked?: string
+  /** A chat recovery fixture made just before it runs; its exports join `env`. */
+  fixture?: ChatFixture
   /** Done just before it runs: a fixture it must find as it was made. */
   prepare?: () => void | Promise<void>
   /** Done once it has run, whatever happened: what `prepare` started, stopped. */

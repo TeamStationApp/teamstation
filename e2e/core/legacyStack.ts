@@ -24,7 +24,20 @@ import { stackServers } from './legacyServers'
 import { loadSettings, readSecret } from './settings'
 import { lanAddress } from './stack'
 
-export const STACK_DATABASE = 'teamstation_e2eStack'
+/**
+ * The stack's own database, dropped and made again each run:
+ * `teamstation_e2eStack`, or `TS_STACK_DATABASE` (a droplet's run names it
+ * `TeamStation_<branch>`, the only name the chat recovery producer accepts).
+ */
+export const STACK_DATABASE = stackDatabase(process.env.TS_STACK_DATABASE)
+
+/** A database name the stack may drop: letters, digits and underscores. */
+export function stackDatabase(given: string | undefined): string {
+  if (given == null || given === '') return 'teamstation_e2eStack'
+  if (!/^[A-Za-z_][A-Za-z0-9_]{0,62}$/.test(given))
+    throw new Error(`TS_STACK_DATABASE ${given} is not a plain database name`)
+  return given
+}
 /** The stack's database and store, from TS_TEST_DATABASE_URL and TS_TEST_REDIS_URL. */
 export const STACK_SERVERS = stackServers(STACK_DATABASE)
 export const STACK_DATABASE_URL = STACK_SERVERS.databaseUrl
