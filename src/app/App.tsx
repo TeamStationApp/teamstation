@@ -80,9 +80,11 @@ import {
   useHandoffSlot
 } from './components'
 import { FLOATING_HEIGHT_REM } from './components/AppNav'
+import { AppSidebar } from './components/AppSidebar'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
+import { useSidebarWidth } from './components/sidebarLayout'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
 import { ChatBench } from './dev/chatBench'
@@ -470,10 +472,9 @@ function Shell(props: AppProps): React.ReactElement {
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
   const theme = useTheme()
   const styles = getStyles(theme)
-  // One boundary, the one that already existed: below it the three
-  // destinations float over the content, above it they sit in the header and
-  // there is no sidebar at all.
+  // The existing bar layout remains below the sidebar's window threshold.
   const isWide = useBreakpoint() !== 'phone'
+  const windowSidebarWidth = useSidebarWidth()
   // Measured rather than repeated. The content's top padding and the pegged
   // player both have to clear the header, and a second copy of its height is a
   // second thing to forget.
@@ -1358,6 +1359,7 @@ function Shell(props: AppProps): React.ReactElement {
   }, [signedInAs])
   const tessSuppressed =
     immersiveField || djScreen || top?.name === 'scoreboardOverride'
+  const sidebarWidth = tessSuppressed ? 0 : windowSidebarWidth
   const tessWide = useTessWide()
   const onboarded =
     session?.user.onboarding == null ||
@@ -1405,7 +1407,7 @@ function Shell(props: AppProps): React.ReactElement {
   const tessColumn = tessShown && tessWide
   // Room for the chat list and a chat side by side, as `ChatWorkspace` lays
   // itself out: the pane, less Tess's column when it is open beside it.
-  const chatWide = usePaneAtLeast(CHAT_WIDE_WIDTH, tessColumn)
+  const chatWide = usePaneAtLeast(CHAT_WIDE_WIDTH, tessColumn, sidebarWidth)
 
   // The scene a frame is drawn as: the same while that screen writes its own
   // frame (a pill, a filter), another for any other screen.
@@ -2422,70 +2424,86 @@ function Shell(props: AppProps): React.ReactElement {
     // replacing its own address so Back does not return to the dead link; one
     // that may still work stays behind it in the history.
     return (
-      <View style={styles.app}>
-        <AppHeader
-          apiBaseUrl={apiBaseUrl}
-          isAdmin={isAdmin}
-          title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
-          showMark
-          nav={
-            isWide ? (
-              <AppNav
-                mode="header"
-                selected={tab}
-                onSelect={selectTab}
-                dots={{ chat: chatOn && hasUnread(chatList) }}
-              />
-            ) : undefined
-          }
-        />
-        {route.name === 'join' ? (
-          <JoinScreen
-            client={client}
-            code={route.code}
-            signedIn={false}
-            onSignedIn={rememberSession}
-            onOpen={openFromInvite}
+      <View style={[styles.app, sidebarWidth > 0 && styles.split]}>
+        {sidebarWidth > 0 && (
+          <AppSidebar
+            selected={tab}
+            onSelect={selectTab}
+            apiBaseUrl={apiBaseUrl}
+            isAdmin={isAdmin}
           />
-        ) : route.name === 'signInLink' ? (
-          <SignInLinkScreen
-            key={route.token}
-            client={client}
-            token={route.token}
-            server={route.server}
-            onSignedIn={signedIn}
-            onSignInAgain={linkSpent => {
-              const destination: Route = { name: 'signIn' }
-              goToRoute(destination)
-              showRoute(destination, linkSpent)
-            }}
-          />
-        ) : (
-          <>
-            {route.name === 'teamStationTv' &&
-              signInRequest.appOrigin != null && (
-                <TvBrowserHandoff server={route.server} token={route.token} />
-              )}
-            <LoginScreen
-              next={
-                route.name === 'teamStationTv'
-                  ? routePath(route)
-                  : route.name === 'signIn'
-                    ? route.next
-                    : undefined
+        )}
+        <View style={styles.pane}>
+          <PaneBesideTess open={false} sidebarWidth={sidebarWidth}>
+            <AppHeader
+              apiBaseUrl={apiBaseUrl}
+              isAdmin={isAdmin}
+              title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
+              showMark
+              sidebar={sidebarWidth > 0}
+              nav={
+                isWide && sidebarWidth === 0 ? (
+                  <AppNav
+                    mode="header"
+                    selected={tab}
+                    onSelect={selectTab}
+                    dots={{ chat: chatOn && hasUnread(chatList) }}
+                  />
+                ) : undefined
               }
-              client={client}
-              onSignedIn={signedIn}
-              onDiscover={() => {
-                goToRoute({ name: 'discover' })
-                showRoute({ name: 'discover' })
-              }}
             />
-          </>
-        )}
-        {!isWide && (
-          <AppNav mode="floating" selected={tab} onSelect={selectTab} />
-        )}
+            {route.name === 'join' ? (
+              <JoinScreen
+                client={client}
+                code={route.code}
+                signedIn={false}
+                onSignedIn={rememberSession}
+                onOpen={openFromInvite}
+              />
+            ) : route.name === 'signInLink' ? (
+              <SignInLinkScreen
+                key={route.token}
+                client={client}
+                token={route.token}
+                server={route.server}
+                onSignedIn={signedIn}
+                onSignInAgain={linkSpent => {
+                  const destination: Route = { name: 'signIn' }
+                  goToRoute(destination)
+                  showRoute(destination, linkSpent)
+                }}
+              />
+            ) : (
+              <>
+                {route.name === 'teamStationTv' &&
+                  signInRequest.appOrigin != null && (
+                    <TvBrowserHandoff
+                      server={route.server}
+                      token={route.token}
+                    />
+                  )}
+                <LoginScreen
+                  next={
+                    route.name === 'teamStationTv'
+                      ? routePath(route)
+                      : route.name === 'signIn'
+                        ? route.next
+                        : undefined
+                  }
+                  client={client}
+                  onSignedIn={signedIn}
+                  onDiscover={() => {
+                    goToRoute({ name: 'discover' })
+                    showRoute({ name: 'discover' })
+                  }}
+                />
+              </>
+            )}
+            {!isWide && sidebarWidth === 0 && (
+              <AppNav mode="floating" selected={tab} onSelect={selectTab} />
+            )}
+          </PaneBesideTess>
+        </View>
       </View>
     )
   }
@@ -3893,6 +3911,7 @@ function Shell(props: AppProps): React.ReactElement {
       // where the chevron and what scrolled up into the header say where you
       // are.
       showMark={chromeFrame == null}
+      sidebar={sidebarWidth > 0}
       handoff={
         visit != null &&
         top?.name === 'player' &&
@@ -3903,7 +3922,7 @@ function Shell(props: AppProps): React.ReactElement {
       }
       onHeight={setHeaderHeight}
       nav={
-        isWide ? (
+        isWide && sidebarWidth === 0 ? (
           <AppNav
             mode="header"
             selected={tab}
@@ -3990,7 +4009,7 @@ function Shell(props: AppProps): React.ReactElement {
   // hidden from VoiceOver and TalkBack, its floating destinations are not
   // drawn, and on the web nothing under it takes focus or a click.
   const tessPanel = tessShown && (
-    <TessFrame key="tess" wide={tessWide}>
+    <TessFrame key="tess" wide={tessWide} sidebarWidth={sidebarWidth}>
       <TessPanel
         client={client}
         onClose={closeTess}
@@ -4014,7 +4033,7 @@ function Shell(props: AppProps): React.ReactElement {
           onLayout={setBannerHeight}
         />
       </View>
-      {!isWide && !tessLayer && (
+      {!isWide && sidebarWidth === 0 && !tessLayer && (
         <AppNav
           key="nav"
           onHeight={setNavigationHeight}
@@ -4079,10 +4098,37 @@ function Shell(props: AppProps): React.ReactElement {
       <DeviceApprovalContext.Provider value={deviceApprovals}>
         <ChatOverlayHost>
           <TessOverlayProvider active={tessColumn}>
-            <View style={[styles.app, tessColumn && styles.split]}>
+            <View
+              style={[
+                styles.app,
+                (tessColumn || sidebarWidth > 0) && styles.split
+              ]}
+            >
+              {sidebarWidth > 0 && (
+                <AppSidebar
+                  key="sidebar"
+                  selected={tab}
+                  onSelect={selectTab}
+                  unread={chatOn && hasUnread(chatList)}
+                  apiBaseUrl={apiBaseUrl}
+                  buildsClient={session == null ? undefined : client}
+                  isAdmin={isAdmin}
+                  tess={
+                    tessAvailable
+                      ? {
+                          open: tessShown,
+                          onPress: () => {
+                            tessTakesFocus.current = true
+                            setTessOpen(true)
+                          }
+                        }
+                      : undefined
+                  }
+                />
+              )}
               {tessPanel}
               <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-                <PaneBesideTess open={tessColumn}>
+                <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
                   <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
                     <StackNavigator
                       top={topScene}
@@ -4108,7 +4154,9 @@ function Shell(props: AppProps): React.ReactElement {
                       headerHeight={
                         headerHeight + (bannerShown ? bannerHeight : 0)
                       }
-                      navigationHeight={isWide ? 0 : navigationHeight}
+                      navigationHeight={
+                        isWide || sidebarWidth > 0 ? 0 : navigationHeight
+                      }
                       onHandoff={setHandoff}
                       onHandoffHeight={setHandoffHeight}
                       onBackOverride={setBack}
@@ -4626,13 +4674,15 @@ function coveredBy(covered: boolean): ViewProps {
  */
 function TessFrame({
   wide,
+  sidebarWidth,
   children
 }: {
   wide: boolean
+  sidebarWidth: number
   children: React.ReactNode
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const { width, max, setWidth } = useTessWidth()
+  const { width, max, setWidth } = useTessWidth(sidebarWidth)
   return (
     <View
       testID={wide ? 'Tess column' : 'Tess layer'}
@@ -4656,16 +4706,19 @@ function TessFrame({
  */
 function PaneBesideTess({
   open,
+  sidebarWidth,
   children
 }: {
   open: boolean
+  sidebarWidth: number
   children: React.ReactNode
 }): React.ReactElement {
   const { width, height } = useWindowDimensions()
-  const column = useTessWidth().width
+  const tessWidth = useTessWidth(sidebarWidth).width
+  const column = sidebarWidth + (open ? tessWidth : 0)
   const frame = useMemo<PaneFrame | null>(
     () =>
-      open
+      column > 0
         ? {
             x: column,
             y: 0,
@@ -4673,7 +4726,7 @@ function PaneBesideTess({
             height
           }
         : null,
-    [open, column, width, height]
+    [column, width, height]
   )
   return <PaneFrameProvider frame={frame}>{children}</PaneFrameProvider>
 }

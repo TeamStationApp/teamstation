@@ -72,7 +72,7 @@ export async function fill(label: string, value: string): Promise<void> {
     return
   }
   const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-    `[aria-label="${label}"]`
+    `input[aria-label="${label}"], textarea[aria-label="${label}"]`
   )
   expect(input, label).not.equals(null)
   await act(async () => {
