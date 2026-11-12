@@ -29,18 +29,16 @@ async function main(): Promise<void> {
     await m.openBrowser({
       url: `${required('REPLAY_WEB_URL')}/games/${required('REPLAY_GAME')}?tab=boxScore`
     })
-    await m.assertVisible({ text: 'Luis Gi', timeout: 20000 })
-    // Each pitcher's last row on the page is their pitching line, which
-    // follows the batting table. Bring the visitors' pitching table into view
-    // and read its order.
+    await m.assertVisible({ text: 'Gerrit C', timeout: 20000 })
+    // Each pitcher's pitching line is the row with an IP cell, labelled
+    // "<name>, IP, <innings>". Luis Gil and Luis Garcia both read `Luis G`
+    // (develop 2971c5fd7: no letters are added to tell two names apart), and
+    // only Gil pitches. Bring the visitors' pitching table into view and read
+    // its order.
     const order = await m.evalBrowserScript({
       script: `
-        const rows = [...document.querySelectorAll('*')].filter(
-          node => node.childElementCount === 0 &&
-            ['Gerrit C', 'Luis Gi'].includes(node.textContent.trim())
-        );
-        const last = name => rows.filter(node => node.textContent.trim() === name).at(-1);
-        const cole = last('Gerrit C'), gil = last('Luis Gi');
+        const line = name => document.querySelector('[aria-label^="' + name + ', IP,"]');
+        const cole = line('Gerrit C'), gil = line('Luis G');
         if (!cole || !gil) throw new Error('No pitching rows');
         (cole.compareDocumentPosition(gil) & Node.DOCUMENT_POSITION_FOLLOWING ? cole : gil)
           .scrollIntoView({ block: 'center' });

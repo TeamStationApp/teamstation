@@ -10,6 +10,7 @@ import {
   gridState,
   open,
   pause,
+  print,
   shot,
   signedIn,
   type WebSession,
@@ -406,19 +407,36 @@ describe('player layouts in a browser', function () {
         `(() => ${GRID_VIDEOS}.map(v => ({ t: v.currentTime, paused: v.paused, ready: v.readyState >= 2 })))()`
       )) as Array<{ t: number; paused: boolean; ready: boolean }>
     const inlineReady = async (): Promise<void> => {
-      await page.waitForFunction(
-        `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 1 && ${GRID_VIDEOS}.length === 0 })()`,
-        { timeout: 60_000 }
-      )
+      try {
+        await page.waitForFunction(
+          `(() => { const v = document.querySelector('#root video'); return v != null && v.readyState >= 1 && ${GRID_VIDEOS}.length === 0 })()`,
+          { timeout: 60_000 }
+        )
+      } catch (error) {
+        print(
+          'the inline video never became ready',
+          await page.evaluate(
+            `(() => ({ url: location.href, inline: [...document.querySelectorAll('#root video')].map(v => ({ src: v.currentSrc, readyState: v.readyState, error: v.error && v.error.code })), tiles: ${GRID_VIDEOS}.length }))()`
+          )
+        )
+        throw error
+      }
     }
     /** Taps the picture, and answers the one tile's first reading. */
     const openPlayer = async (): Promise<{ t: number }> => {
-      const hidden = await page.$eval(
-        '[data-testid="gameVideoOpen"]',
-        node => node.getAttribute('tabindex') === '-1'
-      )
-      if (hidden) await page.click('[data-testid="gameVideoOpen"]')
+      // A first tap only reveals hidden controls (develop 44b04fbc7); the
+      // open square stays focusable, so whether they showed is read from
+      // whether the player opened, and a second tap inside the reveal opens it.
       await page.click('[data-testid="gameVideoOpen"]')
+      const opened = await page
+        .waitForFunction(`(() => ${GRID_VIDEOS}.length > 0)()`, {
+          timeout: 1000
+        })
+        .then(
+          () => true,
+          () => false
+        )
+      if (!opened) await page.click('[data-testid="gameVideoOpen"]')
       await page.waitForFunction(
         `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 })()`,
         { timeout: 60_000 }

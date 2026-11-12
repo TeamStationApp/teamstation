@@ -855,8 +855,8 @@ describe('chat scenarios in the browser', function () {
       // Parent B, picked from the team, as an adult family member.
       await press(coach, 'Adult family member')
       await typeInto(coach, 'E-mail address or name', 'Bla')
-      await press(coach, 'Add Blair B')
-      await waitForText(coach, 'Blair B is linked.')
+      await press(coach, 'Add Blair Brooks')
+      await waitForText(coach, 'Blair Brooks is linked.')
       await waitForText(coach, 'Family · b@chat.example.com')
       await shot(coach, 'e2-5-b-family')
 
@@ -1229,7 +1229,7 @@ describe('chat scenarios in the browser', function () {
     await openChatTab(coach)
     await pressText(coach, 'New message')
     await typeInto(coach, 'Name', 'Drew')
-    await press(coach, 'Pick Drew D')
+    await press(coach, 'Pick Drew Dalton')
     await pressText(coach, 'Start conversation')
     await until('the DM', () =>
       /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
@@ -1265,7 +1265,7 @@ describe('chat scenarios in the browser', function () {
     await shot(fresh, 'e8-2-d2-locked')
 
     const back = await signedIn('Ec')
-    await openChat(back, 'Drew D')
+    await openChat(back, 'Drew Dalton')
     await waitForText(back, 'D2: new device can send before history recovery')
     await waitForText(back, 'safety words changed')
     await waitForText(back, 'reset their chat keys')
@@ -1274,7 +1274,7 @@ describe('chat scenarios in the browser', function () {
     await waitForText(back, 'OLD SAFETY WORDS')
     await waitForText(back, 'NEW SAFETY WORDS')
     await shot(back, 'e8-4-ec-approval')
-    await press(back, 'Approve Drew D')
+    await press(back, 'Approve Drew Dalton')
     await until('the approval to go', async () =>
       (await bodyText(back)).includes('OLD SAFETY WORDS') ? undefined : true
     )
@@ -1294,7 +1294,7 @@ describe('chat scenarios in the browser', function () {
       await openChatTab(coach)
       await pressText(coach, 'New message')
       await typeInto(coach, 'Name', 'Dana')
-      await press(coach, 'Pick Dana D')
+      await press(coach, 'Pick Dana Dunn')
       await pressText(coach, 'Start conversation')
       await until('the DM', () =>
         /\/chat\/cnv_[^/]+$/.test(coach.url()) ? true : undefined
@@ -1712,99 +1712,104 @@ describe('chat scenarios in the browser', function () {
       )
     }
     await toggle(true)
-    await shot(league, 'e14-2-l-switch-on')
-    await until('K’s first DM to close', async () => {
-      const list = (await apiGet(keeper, '/chat/conversations')).body as Array<{
-        id: string
-        closed: boolean
-      }>
-      return list.find(chat => chat.id === first)?.closed === true
-        ? true
-        : undefined
-    })
-
-    await newDm(keeper, 'Pat', 'Pat Player')
-    await waitForText(keeper, 'Include another adult')
-    for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
-      await waitForText(keeper, name)
-    }
-    expect(await bodyText(keeper)).not.contains('Kim K')
-    await shot(keeper, 'e14-3-k-suggestions')
-    await typeInto(keeper, 'Search for an adult', 'Eddie')
-    await waitForText(keeper, 'Nobody matches that name.')
-    await shot(keeper, 'e14-4-k-no-ec')
-    await typeInto(keeper, 'Search for an adult', 'Hank')
-    await press(keeper, 'Include Hank C')
-    await pressText(keeper, 'Start with them')
-    await until('the DM with Hc', () =>
-      /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
-    )
-    const second = await dmWith(keeper, [
-      seed.people.K.userId,
-      seed.people.P.userId,
-      seed.people.Hc.userId
-    ])
-    await shot(keeper, 'e14-5-k-p-hc')
-
-    const guardian = await signedIn('G2')
-    await signIn(guardian, seed, 'G2')
-    // Pat's guardian reads Pat in full.
-    await newDm(guardian, 'Pat', 'Pat Player')
-    await until('G2’s DM', () =>
-      /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
-    )
-    const g2dm = await dmWith(guardian, [
-      seed.people.G2.userId,
-      seed.people.P.userId
-    ])
-    await shot(guardian, 'e14-6-g2-p')
-
-    const coach = await signedIn('Hc')
-    await goto(
-      coach,
-      `${WEB}/players/${seed.people.P.userId}?onTeam=${seed.ids.Hawks}&tab=settings`,
-      { waitUntil: 'networkidle2' }
-    )
-    await press(coach, 'Player settings')
-    await press(coach, 'Change guardians and family')
-    for (const name of ['Glen Guardian', 'Ava Aunt']) {
-      await press(coach, `Remove ${name}`)
-      await until(`${name} unlinked`, async () => {
-        const text = await bodyText(coach)
-        return text.includes(name) ? undefined : true
+    // Off again however the scenario ends: E19 needs QPLL an ordinary league.
+    try {
+      await shot(league, 'e14-2-l-switch-on')
+      await until('K’s first DM to close', async () => {
+        const list = (await apiGet(keeper, '/chat/conversations'))
+          .body as Array<{
+          id: string
+          closed: boolean
+        }>
+        return list.find(chat => chat.id === first)?.closed === true
+          ? true
+          : undefined
       })
+
+      await newDm(keeper, 'Pat', 'Pat Player')
+      await waitForText(keeper, 'Include another adult')
+      for (const name of ['Glen G', 'Ava A', 'Blair B', 'Harper H', 'Hank C']) {
+        await waitForText(keeper, name)
+      }
+      expect(await bodyText(keeper)).not.contains('Kim K')
+      await shot(keeper, 'e14-3-k-suggestions')
+      await typeInto(keeper, 'Search for an adult', 'Eddie')
+      await waitForText(keeper, 'Nobody matches that name.')
+      await shot(keeper, 'e14-4-k-no-ec')
+      await typeInto(keeper, 'Search for an adult', 'Hank')
+      await press(keeper, 'Include Hank C')
+      await pressText(keeper, 'Start with them')
+      await until('the DM with Hc', () =>
+        /\/chat\/cnv_[^/]+$/.test(keeper.url()) ? true : undefined
+      )
+      const second = await dmWith(keeper, [
+        seed.people.K.userId,
+        seed.people.P.userId,
+        seed.people.Hc.userId
+      ])
+      await shot(keeper, 'e14-5-k-p-hc')
+
+      const guardian = await signedIn('G2')
+      await signIn(guardian, seed, 'G2')
+      // Pat's guardian reads Pat in full.
+      await newDm(guardian, 'Pat', 'Pat Player')
+      await until('G2’s DM', () =>
+        /\/chat\/cnv_[^/]+$/.test(guardian.url()) ? true : undefined
+      )
+      const g2dm = await dmWith(guardian, [
+        seed.people.G2.userId,
+        seed.people.P.userId
+      ])
+      await shot(guardian, 'e14-6-g2-p')
+
+      const coach = await signedIn('Hc')
+      await goto(
+        coach,
+        `${WEB}/players/${seed.people.P.userId}?onTeam=${seed.ids.Hawks}&tab=settings`,
+        { waitUntil: 'networkidle2' }
+      )
+      await press(coach, 'Player settings')
+      await press(coach, 'Change guardians and family')
+      for (const name of ['Glen Guardian', 'Ava Aunt']) {
+        await press(coach, `Remove ${name}`)
+        await until(`${name} unlinked`, async () => {
+          const text = await bodyText(coach)
+          return text.includes(name) ? undefined : true
+        })
+      }
+      await pressText(coach, 'Done')
+      await shot(coach, 'e14-7-hc-unlinked')
+      await until('G2’s DM to close', async () => {
+        const list = (await apiGet(guardian, '/chat/conversations'))
+          .body as Array<{
+          id: string
+          closed: boolean
+        }>
+        return list.find(chat => chat.id === g2dm)?.closed === true
+          ? true
+          : undefined
+      })
+
+      await goto(coach, `${WEB}/chat/${second}/members`, {
+        waitUntil: 'networkidle2'
+      })
+      await pressText(coach, 'Leave this conversation')
+      await until('K’s DM to close', async () => {
+        const list = (await apiGet(keeper, '/chat/conversations'))
+          .body as Array<{
+          id: string
+          closed: boolean
+        }>
+        return list.find(chat => chat.id === second)?.closed === true
+          ? true
+          : undefined
+      })
+      await goto(keeper, `${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
+      await waitForText(keeper, 'This chat is closed')
+      await shot(keeper, 'e14-8-k-closed')
+    } finally {
+      await toggle(false)
     }
-    await pressText(coach, 'Done')
-    await shot(coach, 'e14-7-hc-unlinked')
-    await until('G2’s DM to close', async () => {
-      const list = (await apiGet(guardian, '/chat/conversations'))
-        .body as Array<{
-        id: string
-        closed: boolean
-      }>
-      return list.find(chat => chat.id === g2dm)?.closed === true
-        ? true
-        : undefined
-    })
-
-    await goto(coach, `${WEB}/chat/${second}/members`, {
-      waitUntil: 'networkidle2'
-    })
-    await pressText(coach, 'Leave this conversation')
-    await until('K’s DM to close', async () => {
-      const list = (await apiGet(keeper, '/chat/conversations')).body as Array<{
-        id: string
-        closed: boolean
-      }>
-      return list.find(chat => chat.id === second)?.closed === true
-        ? true
-        : undefined
-    })
-    await goto(keeper, `${WEB}/chat/${second}`, { waitUntil: 'networkidle2' })
-    await waitForText(keeper, 'This chat is closed')
-    await shot(keeper, 'e14-8-k-closed')
-
-    await toggle(false)
     await shot(league, 'e14-9-l-switch-off')
   })
   /**
@@ -1990,7 +1995,7 @@ describe('chat scenarios in the browser', function () {
     await openChatTab(coach)
     await pressText(coach, 'New message')
     await typeInto(coach, 'Name', 'Frank')
-    await press(coach, 'Pick Frankie F')
+    await press(coach, 'Pick Frankie Fan')
     await shot(coach, 'e18-1-hc-picks-f')
     await pressText(coach, 'Start conversation')
     await until('the DM', () =>

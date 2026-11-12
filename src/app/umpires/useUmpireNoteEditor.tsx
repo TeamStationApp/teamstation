@@ -43,6 +43,26 @@ interface Edit extends NoteCell {
 }
 
 /** One editor per grid; a blur and the following click share the same save. */
+/**
+ * Selects a web input's whole text now, and once more after the focus if
+ * nothing has been typed and the selection fell back to a caret, as Safari
+ * may leave it.
+ */
+function selectOnWeb(into: unknown): void {
+  const node = into as HTMLInputElement | null
+  if (node == null || typeof node.select !== 'function') return
+  node.select()
+  const text = node.value
+  setTimeout(() => {
+    if (
+      document.activeElement === node &&
+      node.value === text &&
+      node.selectionStart === node.selectionEnd
+    )
+      node.select()
+  }, 0)
+}
+
 export function useUmpireNoteEditor({
   client,
   scope,
@@ -216,14 +236,20 @@ export function useUmpireNoteEditor({
             ]}
             value={edit.value}
             autoFocus
-            selectTextOnFocus
+            // On the web the whole note is selected as it takes focus, in
+            // `onFocus`: react-native-web's own select runs a timer later, so
+            // keys typed before it were selected and typed over.
+            selectTextOnFocus={Platform.OS !== 'web'}
             maxLength={2000}
             editable={!saving}
             autoCapitalize="sentences"
             autoCorrect={false}
             submitBehavior="submit"
             returnKeyType="next"
-            onFocus={() => {
+            onFocus={event => {
+              // The event's own input: on mount it focuses before its ref
+              // is set.
+              if (Platform.OS === 'web') selectOnWeb(event.target)
               if (input.current != null) focused(input.current)
             }}
             onChangeText={value => {

@@ -1442,9 +1442,16 @@ describe('scoring into the server', function () {
     })
     expect(pitching).not.have.property('battingOrder')
     expect(pitching).not.have.property('replacedPlayer')
+    // The starter is a fixture player with no account (`Host 01`). The
+    // board draws him as its reader may read him, in full or short; the feed
+    // names him as it does on his own first pitch, and so must the change.
+    expect(play.playEvents[0].player.id).equals(fixture.home[0])
+    const starterLabel = play.playEvents[0].player.fullName
+    expect(starterLabel, 'the starter on the first pitch').match(/^Host /)
+    expect(starter, "the board's starter").match(/^Host /)
     expect(pitching.details).deep.include({
       event: 'Pitching Substitution',
-      description: `Pitching Change: ${publicLabel(reliefPlayer)} replaces ${starter}.`
+      description: `Pitching Change: ${publicLabel(reliefPlayer)} replaces ${starterLabel}.`
     })
     expect(pinch).deep.include({
       isSubstitution: true,
@@ -1452,11 +1459,15 @@ describe('scoring into the server', function () {
       battingOrder: '101'
     })
     expect(pinch.position).deep.include({ code: '11', abbreviation: 'PH' })
-    expect(pinch.replacedPlayer).deep.include({ fullName: dueBatter })
+    // The batter he replaces is a fixture player too (`Visitor 01`), named as
+    // the feed names him, whatever form the board drew him in.
     expect(pinch.replacedPlayer!.id).equals(fixture.away[0])
+    const replaced = pinch.replacedPlayer!.fullName
+    expect(replaced, 'the replaced batter').match(/^Visitor /)
+    expect(dueBatter, "the board's batter").match(/^Visitor /)
     expect(pinch.details).deep.include({
       event: 'Offensive Substitution',
-      description: `Offensive Substitution: Pinch-hitter ${publicLabel(pinchPlayer)} replaces ${dueBatter}.`
+      description: `Offensive Substitution: Pinch-hitter ${publicLabel(pinchPlayer)} replaces ${replaced}.`
     })
     // The reliever was created with a right arm, so the hand is known.
     expect(play.matchup).deep.include({

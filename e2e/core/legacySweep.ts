@@ -30,6 +30,7 @@ import {
   startLegacyStack
 } from './legacyStack'
 import { type LegacyRun, runLegacy } from './runLegacy'
+import { disabledFor } from './streaming'
 
 /**
  * The device variables for a run that needs `needs`, or undefined when this
@@ -245,6 +246,13 @@ async function main(): Promise<void> {
   for (const name of DAEMONS.slice(1)) restartDaemon(bin, name)
   try {
     for (const file of files) {
+      const off = disabledFor(file)
+      if (off != null) {
+        const line = `disabled\t-\t${file}\t${off}\t0s`
+        appendFileSync(results, `${line}\n`)
+        process.stdout.write(`${line}\n`)
+        continue
+      }
       // A script may shut the shared web daemon down when it finishes.
       restartDaemon(bin, 'e2eSuite')
       for (const name of DAEMONS.slice(1)) ensureDaemon(bin, name)
