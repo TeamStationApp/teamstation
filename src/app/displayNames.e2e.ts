@@ -5,6 +5,15 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import type { Page } from 'puppeteer'
 
+import {
+  absent,
+  browserSession,
+  capture,
+  contains,
+  fill,
+  maestro,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import type { MountExtra } from '../test/accountHarness'
@@ -18,15 +27,6 @@ import {
   seedDisplayNames
 } from '../test/displayNamesFixture'
 import { groupFixture } from '../test/groupFixtures'
-import {
-  absent,
-  browserSession,
-  capture,
-  contains,
-  fill,
-  maestro,
-  tap
-} from '../test/refinementsMaestro.e2e'
 import { leagueTint, personTint, teamTint } from './components/teamTile'
 
 /**

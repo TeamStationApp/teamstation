@@ -3,7 +3,7 @@
  * scenario per invocation, or arguments taken from an earlier script.
  */
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -44,6 +44,11 @@ export interface RecipeContext {
   run: (file: string, invocation: Invocation) => Promise<number>
   /** Restarts the API, without `speech` when `speech` is false. */
   restartApi: (options: { speech: boolean }) => Promise<void>
+  /**
+   * Seeds a chat script's fixture into `artifacts` on a fresh database, as
+   * the sweep does before each chat script, and restarts the API on it.
+   */
+  chatSeed: (artifacts: string) => Promise<void>
   speech: boolean
 }
 
@@ -92,10 +97,16 @@ export function needsPlayerFixture(source: string): boolean {
   )
 }
 
-/** The player-layouts games on the stack, made once per database. */
-export function playerFixtureEnv(cwd: string): Record<string, string> {
+/**
+ * The player-layouts games on the stack, made once per database. Run beside
+ * the sweep, not in its stead: the stack's Space and front answer from this
+ * process, and the fixture's live angles upload to that Space while it runs.
+ */
+export async function playerFixtureEnv(
+  cwd: string
+): Promise<Record<string, string>> {
   if (!playerFixtureMade) {
-    const made = spawnSync(
+    const child = spawn(
       process.execPath,
       [
         '-r',
@@ -104,16 +115,27 @@ export function playerFixtureEnv(cwd: string): Record<string, string> {
         '--out',
         PLAYER_FIXTURE
       ],
-      { cwd, encoding: 'utf8', timeout: 30 * 60 * 1000 }
+      { cwd, stdio: ['ignore', 'pipe', 'pipe'] }
     )
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (bytes: Buffer) => (stdout += String(bytes)))
+    child.stderr.on('data', (bytes: Buffer) => (stderr += String(bytes)))
+    const timer = setTimeout(() => child.kill('SIGTERM'), 30 * 60 * 1000)
+    const status = await new Promise<number | null>(resolve => {
+      child.on('close', code => {
+        resolve(code)
+      })
+    })
+    clearTimeout(timer)
     // Kept whole beside the stack's logs: a result line holds only its end.
     writeFileSync(
       join(dir('_stack'), 'playerLayouts-fixture.log'),
-      `${made.stdout}\n${made.stderr}`
+      `${stdout}\n${stderr}`
     )
-    if (made.status !== 0) {
+    if (status !== 0) {
       throw new Error(
-        `playerLayouts fixture failed: ${(made.stderr !== '' ? made.stderr : made.stdout).slice(-2000)}`
+        `playerLayouts fixture failed: ${(stderr !== '' ? stderr : stdout).slice(-2000)}`
       )
     }
     playerFixtureMade = true
@@ -493,9 +515,11 @@ export const RECIPES: Record<string, Recipe> = {
   'src/app/chat/chatHistory.e2e.ts': async context => {
     const file = 'src/app/chat/chat.e2e.ts'
     const profiles = join(dir('chat.e2e'), 'profiles')
-    if (!existsSync(profiles))
+    if (!existsSync(profiles)) {
+      await context.chatSeed(dir('chat.e2e'))
       for (const run of await RECIPES[file](context))
         await context.run(file, run)
+    }
     if (!existsSync(profiles))
       return [{ blocked: 'chat.e2e left no browser profiles to read' }]
     return tableRecipe(context.cwd, 'src/app/chat/chatHistory.e2e.ts') ?? [{}]
