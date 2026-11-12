@@ -398,8 +398,14 @@ async function main(): Promise<void> {
 }
 
 if (require.main === module) {
-  main().catch((error: unknown) => {
-    console.error(error)
-    process.exit(1)
-  })
+  // Every script has its line once main returns: whatever a script or the
+  // stack left open (a socket, a daemon's connection) no longer holds the
+  // sweep, which once sat for hours after its last script.
+  main().then(
+    () => process.exit(0),
+    (error: unknown) => {
+      console.error(error)
+      process.exit(1)
+    }
+  )
 }

@@ -3903,34 +3903,48 @@ describe('scoring browser', function () {
         const target = await readGuide(page)
         const samplesPromise = page.evaluate(
           async () =>
-            await new Promise<Array<{ z: number; gap: number; fz: number }>>(
-              resolve => {
-                const scene = (window as unknown as SceneProbeWindow).qaScene!
-                const out: Array<{ z: number; gap: number; fz: number }> = []
-                let seen = false
-                const run = (): void => {
-                  const ball = scene.getObjectByName('animated-baseball')
-                  const fielder = scene.getObjectByName('player-defense-201')
-                  if (ball != null && ball.visible && fielder != null) {
-                    seen = true
-                    out.push({
-                      z: ball.position.z,
-                      fz: fielder.position.z,
-                      gap: Math.hypot(
-                        ball.position.x - fielder.position.x,
-                        ball.position.z - fielder.position.z
-                      )
-                    })
-                  }
-                  if (seen && ball == null) resolve(out)
-                  else requestAnimationFrame(run)
+            await new Promise<
+              Array<{ z: number; gap: number; fz: number; t: number }>
+            >(resolve => {
+              const scene = (window as unknown as SceneProbeWindow).qaScene!
+              const out: Array<{
+                z: number
+                gap: number
+                fz: number
+                t: number
+              }> = []
+              let seen = false
+              const run = (): void => {
+                const ball = scene.getObjectByName('animated-baseball')
+                const fielder = scene.getObjectByName('player-defense-201')
+                if (ball != null && ball.visible && fielder != null) {
+                  seen = true
+                  out.push({
+                    t: performance.now(),
+                    z: ball.position.z,
+                    fz: fielder.position.z,
+                    gap: Math.hypot(
+                      ball.position.x - fielder.position.x,
+                      ball.position.z - fielder.position.z
+                    )
+                  })
                 }
-                run()
+                if (seen && ball == null) resolve(out)
+                else requestAnimationFrame(run)
               }
-            )
+              run()
+            })
         )
         await setTrajectory(field)
         const samples = await samplesPromise
+        // How often the page drew: these checks read one sample a frame.
+        const gaps = samples
+          .slice(1)
+          .map((one, i) => one.t - samples[i].t)
+          .sort((a, b) => a - b)
+        console.log(
+          `    ${samples.length} frames of flight, median ${gaps[gaps.length >> 1]?.toFixed(0) ?? '-'} ms apart, longest ${gaps.at(-1)?.toFixed(0) ?? '-'} ms`
+        )
         const moving = samples
           .filter(p => p.z < -3 && p.z > target.z / 2)
           .at(-1)
