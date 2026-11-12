@@ -1646,15 +1646,6 @@ export function useMultiCam(
       // view has just moved is quiet because of us.
       const started = everStarted.current.has(video.id)
       const ours = isOurSilence(now, seekedAt.current.get(video.id))
-      const stalled =
-        started &&
-        !ours &&
-        hasStalled({
-          paused: tileElement.paused,
-          progressed,
-          unchangedForMs: WATCHDOG_MS
-        })
-      stuckNow.set(video.id, stalled)
       // Worked out here rather than inside the state updater below, which
       // React may run later or twice: the rest of this tick reads it.
       const finished = isFinished({
@@ -1663,6 +1654,19 @@ export function useMultiCam(
         mediaSec: video.status === 'live' ? null : mediaLengthOf(tileElement)
       })
       finishedNow.set(video.id, finished)
+      // A recording standing on its last frame has nothing left to draw. A
+      // phone's player at its end still says it is playing, and read as a
+      // stall that put "Camera catching up" under "Every angle has ended".
+      const stalled =
+        started &&
+        !ours &&
+        !finished &&
+        hasStalled({
+          paused: tileElement.paused,
+          progressed,
+          unchangedForMs: WATCHDOG_MS
+        })
+      stuckNow.set(video.id, stalled)
       setTiles(current => {
         const held = current[video.id] ?? freshTile()
         // Drawing again clears the record; stalling starts it; and a silence
@@ -2629,9 +2633,10 @@ export function useMultiCam(
       })),
     wallNow: (): number | null => gameNowRef.current('') ?? atWallRef.current,
     tileWaiting: (id: string): boolean =>
-      outIds.has(id) ||
-      (tiles[id]?.stalledSince != null &&
-        holdExpired(Date.now() - (tiles[id]?.stalledSince ?? 0))),
+      !(tiles[id]?.ended ?? false) &&
+      (outIds.has(id) ||
+        (tiles[id]?.stalledSince != null &&
+          holdExpired(Date.now() - (tiles[id]?.stalledSince ?? 0)))),
     bufferFor
   }
 }
