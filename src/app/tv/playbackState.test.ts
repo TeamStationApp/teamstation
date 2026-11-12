@@ -326,6 +326,101 @@ describe('TV playback composition and remote state', () => {
     expect(seeks[0].concat(seeks[1])).deep.equals([])
     expect(clock.available(2)).equals(false)
   })
+  it('rejoins a healthy live follower once a refreshed master mapping moves past its safe edge', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 296, 0)
+      clock.settled(i)
+    }
+    expect(clock.wall).equals(400000)
+    // The periodic refresh places the master's frames 8 s later than before
+    // (an arrival estimate replaced by the frames' own clock). The follower
+    // decodes 4 s past its safe edge, so the master's new moment is past it.
+    clock.ports[0].timeline = {
+      ...clock.ports[0].timeline,
+      anchors: [[0, 108000]]
+    }
+    for (let i = 0; i < 2; i++) seeks[i].length = 0
+    const edge = (tick: number): number => 296 + 4 * Math.floor(tick / 16)
+    let tick = 1
+    for (; tick <= 40 && seeks[1].length === 0; tick++)
+      for (const i of [0, 1])
+        clock.progress(i, 300 + tick * 0.25, edge(tick), 0)
+    expect(
+      seeks[1].length,
+      'the follower is brought to footage it can seek'
+    ).greaterThan(0)
+    // The newest moment both can seek: just inside the follower's safe edge.
+    expect(seeks[1].at(-1)).closeTo(edge(tick - 1) - 0.1, 0.001)
+    expect(seeks[0].at(-1)).closeTo(edge(tick - 1) - 8 - 0.1, 0.001)
+    expect(clock.wall).equals(100000 + (edge(tick - 1) - 0.1) * 1000)
+    for (const i of [0, 1]) {
+      clock.settled(i)
+      clock.progress(i, seeks[i].at(-1)!, edge(tick) - (i === 0 ? 8 : 0), 0)
+    }
+    const start = [seeks[0].at(-1)!, seeks[1].at(-1)!]
+    for (let next = 1; next < 80; next++) {
+      const step = 4 * Math.floor(next / 16)
+      for (const i of [0, 1])
+        clock.progress(i, start[i] + next * 0.25, edge(tick) + step, 0)
+      expect(clock.available(0)).equals(true)
+      expect(clock.available(1), `available at tick ${next}`).equals(true)
+    }
+  })
+  it('rejoins a reopened live camera decoding ahead of the moment it cannot seek', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    clock.load(0, Infinity)
+    clock.progress(0, 300, 296, 0)
+    // Watch Live opened the second camera after the first: its decoder runs
+    // 3 s ahead of the shared moment, which is past its own safe edge.
+    clock.load(1, Infinity)
+    expect(clock.ports[1].pendingWall).equals(400000)
+    let tick = 0
+    for (; tick < 40 && seeks[1].length === 0; tick++) {
+      const edge = 299 + 4 * Math.floor(tick / 16)
+      clock.progress(0, 300 + tick * 0.25, edge - 3, 0)
+      clock.progress(1, 303 + tick * 0.25, edge, 0)
+    }
+    expect(
+      seeks[1].length,
+      'not left waiting for a seek it can never make'
+    ).greaterThan(0)
+    const shared = seeks[0].at(-1)!
+    expect(seeks[1].at(-1)).closeTo(shared, 0.001)
+    expect(clock.wall).equals(100000 + shared * 1000)
+    for (const i of [0, 1]) {
+      clock.settled(i)
+      clock.progress(i, shared, 300, 0)
+      expect(clock.available(i)).equals(true)
+    }
+  })
+  it('leaves a paused follower beyond its safe edge where the viewer put it', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 296, 0)
+      clock.settled(i)
+    }
+    clock.ports[0].timeline = {
+      ...clock.ports[0].timeline,
+      anchors: [[0, 108000]]
+    }
+    for (let i = 0; i < 2; i++) seeks[i].length = 0
+    clock.progress(0, 300.25, 296, 0, false)
+    clock.progress(1, 300.25, 296, 0, false)
+    clock.progress(1, 300.5, 296, 0, false)
+    expect(seeks).deep.equals([[], []])
+  })
   it('rejoins a live follower within the required half-second wall tolerance', () => {
     const clock = new PlaybackClock()
     for (let i = 0; i < 2; i++) clock.register(i, timeline(), () => undefined)
@@ -436,7 +531,7 @@ describe('TV playback composition and remote state', () => {
         anchors: [
           [0, 100000],
           [40000, 160000]
-        ] as [number, number][]
+        ] as Array<[number, number]>
       }
       for (let i = 0; i < count; i++) {
         clock.register(i, held, () => undefined)
