@@ -192,19 +192,33 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
     const read: Record<string, string[]> = {}
     for (const chat of [...chats].sort((a, b) => a.id.localeCompare(b.id))) {
       const started = Date.now()
-      await visit(page, `${WEB}/chat/${chat.id}`)
-      const lines = await settledText(page)
-      const members = ((await apiGet(
-        page,
-        `/chat/conversations/${chat.id}/members`
-      )) ?? []) as Array<{ shortName: string; userId: string }>
-      const me = (await apiGet(page, '/auth/me')) as { id?: string } | undefined
-      const others = members
-        .filter(member => String(member.userId) !== String(me?.id))
-        .map(member => member.shortName)
-        .sort()
-      for (const name of chat.kind === 'dm' ? others : others.slice(0, 1)) {
-        lines.push(await safetyNumber(page, chat.id, name))
+      // The app reloads itself when a device's chat keys change, which can
+      // land in the middle of a read: the whole chat is read again then.
+      const readChat = async (): Promise<string[]> => {
+        await visit(page, `${WEB}/chat/${chat.id}`)
+        const lines = await settledText(page)
+        const members = ((await apiGet(
+          page,
+          `/chat/conversations/${chat.id}/members`
+        )) ?? []) as Array<{ shortName: string; userId: string }>
+        const me = (await apiGet(page, '/auth/me')) as
+          { id?: string } | undefined
+        const others = members
+          .filter(member => String(member.userId) !== String(me?.id))
+          .map(member => member.shortName)
+          .sort()
+        for (const name of chat.kind === 'dm' ? others : others.slice(0, 1)) {
+          lines.push(await safetyNumber(page, chat.id, name))
+        }
+        return lines
+      }
+      let lines: string[] | undefined
+      for (let attempt = 1; lines == null; attempt++) {
+        try {
+          lines = await readChat()
+        } catch (error) {
+          if (attempt === 3 || !String(error).includes('detached')) throw error
+        }
       }
       read[`${chat.kind} ${chat.title}`] = lines
       console.log(

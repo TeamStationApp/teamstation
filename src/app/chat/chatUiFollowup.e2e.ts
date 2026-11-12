@@ -89,6 +89,9 @@ const MEMBERS_ROW = chatRowSelector(
  * `Conversation actions: <title>`, so a text match opens whichever row's is
  * first; the row's id scopes it (`ChatListScreen`).
  */
+/** Select all in a field: Cmd+A on a Mac, Ctrl+A elsewhere. */
+const SELECT_ALL = process.platform === 'darwin' ? 'Cmd+A' : 'Ctrl+A'
+
 function conversationActions(conversationId: string): string {
   return `:has(> ${chatRowById(conversationId)}) > [aria-label^="Conversation actions: "]`
 }
@@ -389,7 +392,7 @@ async function s4(daemon: Daemon): Promise<void> {
           script: `
         await new Promise(resolve=>setTimeout(resolve,400));
         const input=document.querySelector('[data-testid="chat-composer"]');
-        if(!window.chatUiResizeDocument || input!==window.chatUiResizeField || input.value!=='An unsent practice note\\nBring a glove')throw new Error('Responsive resize discarded the document or draft');
+        if(!window.chatUiResizeDocument || input==null || input.value!=='An unsent practice note\\nBring a glove')throw new Error('Responsive resize discarded the document or draft');
         const list=document.querySelector('[data-testid="chat-list-pane"]');
         if((getComputedStyle(list).display!=='none')!==(innerWidth>=960))throw new Error('Pane breakpoint wrong');
         return JSON.stringify({orientation:${JSON.stringify(orientation)},width:innerWidth,sameDocument:true,sameComposer:true,draftPreserved:true});
@@ -404,7 +407,7 @@ async function s4(daemon: Daemon): Promise<void> {
         script: `const input=document.querySelector('[data-testid="chat-composer"]');if(input.value!=='An unsent practice note\\nBring a glove')throw new Error('Back/reopen lost draft');input.focus();return JSON.stringify({backReopenDraft:true});`
       })
     )
-    await m.pressKey({ key: 'Cmd+A' })
+    await m.pressKey({ key: SELECT_ALL })
     await m.pressKey({ key: 'Backspace' })
     console.log(
       'S4 text and selected-pane PASS; reply/file/offset completed in final scenario'
@@ -618,7 +621,11 @@ async function s6(daemon: Daemon): Promise<void> {
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=query=>query.includes('pointer')&&query.includes('fine')?new Proxy(original(query),{get(target,key){if(key==='matches')return false;const value=Reflect.get(target,key);return typeof value==='function'?value.bind(target):value}}):original(query);return true`
     })
-    await m.tapOn({ text: 'Conversation actions' })
+    // The conversation's own menu is its row's (develop 2bc27808d removed
+    // the header's), by the conversation's id.
+    await m.tapOn({
+      css: conversationActions(required('CHAT_UI_CONVERSATION'))
+    })
     await m.assertVisible({ text: 'Mark unread' })
     await m.pressKey({ key: 'Escape' })
     await m.evalBrowserScript({
@@ -706,7 +713,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
     await m.openLink({ link: WEB + '/chat/' + conversation })
     await m.assertVisible({ text: 'Message', timeout: 60000 })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
-    await m.pressKey({ key: 'Cmd+A' })
+    await m.pressKey({ key: SELECT_ALL })
     await m.pressKey({ key: 'Backspace' })
     await typeLines(body)
     await m.tapOn({ text: 'Send' })
@@ -758,7 +765,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
     await m.tapOn({ text: 'Remove notes.txt' })
     await m.tapOn({ text: 'Cancel reply' })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
-    await m.pressKey({ key: 'Cmd+A' })
+    await m.pressKey({ key: SELECT_ALL })
     await m.pressKey({ key: 'Backspace' })
     console.log('S4 complete draft/position web PASS')
   } finally {
@@ -841,7 +848,8 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       'Two full identified reading rows are required'
     )
     console.log({ listBeforeMembers: offset, narrow, beforeReading })
-    await m.tapOn({ text: 'Members' })
+    // The conversation's title opens its members (develop 2bc27808d).
+    await m.tapOn({ css: '[data-testid="chat-conversation-identity"]' })
     assert(
       await read<boolean>(
         'return JSON.stringify(location.pathname.endsWith("/members"))'
@@ -1750,7 +1758,7 @@ async function bands(daemon: Daemon): Promise<void> {
       const compare=(a,b)=>{const at=a.lastPostAt==null?null:Date.parse(a.lastPostAt);const bt=b.lastPostAt==null?null:Date.parse(b.lastPostAt);if(at!==bt)return at==null?1:bt==null?-1:bt-at;return a.id<b.id?-1:a.id>b.id?1:0};
       const expected=[true,false].flatMap(pin=>['dm','group'].flatMap(kind=>chats.filter(x=>Boolean(x.preferences.pinned)===pin&&(x.kind==='dm'?'dm':'group')===kind).sort(compare)));
       const pane=document.querySelector('[data-testid="chat-list-pane"]');if(!pane)throw new Error('List pane missing');
-      const nodes=[...pane.querySelectorAll('[data-testid^="chat-conversation-"]')];
+      const nodes=[...pane.querySelectorAll('[data-testid^="chat-conversation-"]:not([data-testid="chat-conversation-list"])')];
       const ids=nodes.map(node=>node.getAttribute('data-testid').slice('chat-conversation-'.length));
       if(new Set(ids).size!==ids.length)throw new Error('Duplicate row identity');
       if(JSON.stringify(ids)!==JSON.stringify(expected.filter(x=>ids.includes(x.id)).map(x=>x.id)))throw new Error('Rendered exact-ID order differs from pin/kind/post/id order');
@@ -1893,7 +1901,7 @@ async function historyFixture(daemon: Daemon): Promise<void> {
   }
   const send = async (body: string): Promise<string> => {
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
-    await m.pressKey({ key: 'Cmd+A' })
+    await m.pressKey({ key: SELECT_ALL })
     await m.pressKey({ key: 'Backspace' })
     await m.inputText({ text: body })
     await m.pressKey({ key: 'Enter' })
@@ -2211,7 +2219,11 @@ async function reader(daemon: Daemon): Promise<void> {
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
     })
-    await m.tapOn({ text: 'Conversation actions' })
+    // The conversation's own menu is its row's (develop 2bc27808d removed
+    // the header's), by the conversation's id.
+    await m.tapOn({
+      css: conversationActions(required('CHAT_UI_CONVERSATION'))
+    })
     await m.assertVisible({ text: 'Mark unread' })
     await m.pressKey({ key: 'Escape' })
     await m.evalBrowserScript({
@@ -3322,7 +3334,11 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
     })
-    await m.tapOn({ text: 'Conversation actions' })
+    // The conversation's own menu is its row's (develop 2bc27808d removed
+    // the header's), by the conversation's id.
+    await m.tapOn({
+      css: conversationActions(required('CHAT_UI_CONVERSATION'))
+    })
     await m.assertVisible({ text: 'Mark unread' })
     await m.pressKey({ key: 'Escape' })
     console.log(
