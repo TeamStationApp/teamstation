@@ -249,9 +249,12 @@ function SignedInCameraAnglesPanel(
 
   usePublishingReport(streams, props.onPublishing)
 
+  /** The newest read of the cameras: an older answer arriving late is dropped. */
+  const reading = useRef(0)
   const reload = useCallback(async (): Promise<void> => {
+    const mine = ++reading.current
     const next = await client.liveStreams(gameId)
-    if (live.current) setStreams(next)
+    if (live.current && reading.current === mine) setStreams(next)
   }, [client, gameId])
   const reloadQuietly = useCallback((): void => {
     reload().catch(() => undefined)

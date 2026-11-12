@@ -43,6 +43,9 @@ type Sheet =
   | { kind: 'revoke' | 'details' | 'more' | 'end'; id: string }
   | { kind: 'delete'; id: string; fromDetails: boolean }
 
+/** How long a read of the cameras may go unanswered before a poll asks again. */
+export const STALE_POLL_MS = 20_000
+
 /** Web shares the camera rows and sheets with native. Every device camera is remote. */
 export function CameraAnglesPanel({
   client,
@@ -101,13 +104,21 @@ export function CameraAnglesPanel({
   useEffect(() => {
     if (!shown || signedIn !== true) return
     mounted.current = true
-    let polling = false
+    /** When the read under way began, or null with none under way. */
+    let pollingSince: number | null = null
     const poll = (): void => {
-      if (document.hidden || polling) return
-      polling = true
+      if (document.hidden) return
+      // One read at a time, but not one that never answers: a request the
+      // server never finished held every later poll back, and the panel said
+      // a camera publishing again was idle until the page was reloaded. A
+      // newer read makes the older one's answer count for nothing.
+      const now = Date.now()
+      if (pollingSince != null && now - pollingSince < STALE_POLL_MS) return
+      pollingSince = now
+      const started = now
       refresh()
         .finally(() => {
-          polling = false
+          if (pollingSince === started) pollingSince = null
         })
         .catch(() => undefined)
     }
