@@ -21,6 +21,7 @@ import {
   angleNameToSend,
   angleSuggestions
 } from './AngleNamePrompt'
+import { STALE_POLL_MS } from './CameraAnglesPanel'
 import { CameraAnglesPanel } from './CameraAnglesPanel.native'
 import type { CameraLinks } from './cameraDeepLinks'
 import {
@@ -561,6 +562,58 @@ describe('Record Video on a phone', function () {
     expect(fake.added).deep.equals([])
   })
 
+  it('in a browser, asks again past a read the server never answered', async function () {
+    const fake = fakeClient()
+    let asks = 0
+    fake.access = async () => {
+      asks += 1
+      // The first read is never answered, as a starved server's was not.
+      if (asks === 1) return await new Promise<StreamAccess>(() => undefined)
+      return {
+        canFilm: true,
+        canRequest: false,
+        requested: false,
+        teamId: 'tem_1'
+      }
+    }
+    const realNow = Date.now
+    let now = realNow()
+    Date.now = () => now
+    const held = heldPoll()
+    try {
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <StreamFooter
+              signedIn
+              client={fake.client}
+              gameId="gam_1"
+              hasVideo
+            />
+          </ThemeProvider>
+        )
+        await delay(20)
+      })
+      expect(asks).equals(1)
+      // Five seconds on, the read is still under way: one at a time.
+      now += 5000
+      await held.poll()
+      expect(asks).equals(1)
+      expect(fake.listed).equals(0)
+      // Past the bound it is given up, and the cameras are read again.
+      now += STALE_POLL_MS
+      await held.poll()
+      expect(asks).equals(2)
+      expect(fake.listed).equals(1)
+    } finally {
+      held.restore()
+      Date.now = realNow
+    }
+  })
+
   it('offers the camera panel in a browser and on a phone', async function () {
     const fake = fakeClient()
     const host = document.createElement('div')
@@ -726,6 +779,41 @@ describe('the cameras on a game, on a phone', function () {
       fake.others = []
       await poll.poll()
       expect(fake.listed).equals(before + 1)
+      expect(byTestId('angle-row-liv_1')).equals(null)
+    } finally {
+      poll.restore()
+    }
+  })
+
+  it('keeps the newest read of the cameras when an older one answers late', async function () {
+    const poll = heldPoll()
+    try {
+      const fake = fakeClient()
+      fake.mine = [stream({ id: 'liv_1', label: 'Home Plate' })]
+      await mount(fake)
+      expect(byTestId('angle-row-liv_1')).not.equals(null)
+      // The next read is slow and says the camera is still there; the one
+      // after it, quicker, that it has gone.
+      const read = fake.client.liveStreams.bind(fake.client)
+      let answerLate = (): void => undefined
+      let reads = 0
+      fake.client.liveStreams = async (gameId: string) => {
+        reads += 1
+        const answer = await read(gameId)
+        if (reads === 1)
+          await new Promise<void>(resolve => {
+            answerLate = resolve
+          })
+        return answer
+      }
+      await poll.poll()
+      fake.mine = []
+      await poll.poll()
+      expect(byTestId('angle-row-liv_1')).equals(null)
+      await act(async () => {
+        answerLate()
+        await delay(20)
+      })
       expect(byTestId('angle-row-liv_1')).equals(null)
     } finally {
       poll.restore()
