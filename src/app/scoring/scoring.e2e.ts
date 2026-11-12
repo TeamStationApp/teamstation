@@ -519,6 +519,11 @@ async function startScoring(page: Page): Promise<void> {
   await page.waitForFunction(() => location.pathname.endsWith('/score'))
 }
 async function openPlaceholderSheet(page: Page): Promise<void> {
+  // Players are made on the roster tab; the other tabs stay drawn, hidden.
+  const shown = async (label: string): Promise<boolean> =>
+    (await (await page.$(`[aria-label="${label}"]`))?.isVisible()) === true
+  if (!(await shown('First Name')) && !(await shown('Create Player')))
+    await click(page, 'Roster')
   if ((await page.$('[aria-label="First Name"]')) == null)
     await click(page, 'Create Player')
   await click(page, 'Create Placeholder Player')
@@ -1368,7 +1373,12 @@ describe('scoring browser', function () {
       await click(page, 'Finish at-bat')
       await page.waitForSelector('[aria-label*="Batter Player 2"]')
       expect(await page.$('[aria-label="Time to edit play"]')).equals(null)
-      await click(page, 'Undo 45° Fly Ball')
+      // The hit, at whatever angle the screen started it at.
+      const hitUndo = await page.$eval('[aria-label^="Undo "]', n =>
+        String(n.getAttribute('aria-label'))
+      )
+      expect(hitUndo).matches(/^Undo -?\d+° /)
+      await click(page, hitUndo)
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()
@@ -2617,6 +2627,7 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       await page.evaluate(async () => {
         await document.fonts.ready
       })
@@ -2684,7 +2695,14 @@ describe('scoring browser', function () {
         )
       // Wait for the slide-up sheet to settle before measuring drag coordinates.
       await page.locator('[aria-label="Reorder Jordan K."]').hover()
-      const a = await position('[aria-label="Reorder Jordan K."]')
+      // Picked up by its grip; the row's start holds its red X.
+      const a = await page.$eval(
+        '[aria-label="Reorder Jordan K."] [data-roster-grip]',
+        n => {
+          const r = n.getBoundingClientRect()
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
+        }
+      )
       await page.mouse.move(a.x, a.y)
       await page.mouse.down()
       await new Promise(resolve => setTimeout(resolve, 750))
@@ -2786,6 +2804,7 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       const center = async (
         selector: string
       ): Promise<{ x: number; y: number }> =>
@@ -2815,7 +2834,7 @@ describe('scoring browser', function () {
           nodes =>
             nodes.map(n => n.getAttribute('data-roster-player')).slice(-2)
         )
-      ).deep.equals(['3', '2'])
+      ).deep.equals(['103', '102'])
       expect(await page.$$('[aria-label^="Move Player"]')).length(0)
       await swipe('[aria-label="Away Team"]', '[aria-label="Home Team"]')
       await page.waitForSelector(
@@ -2830,7 +2849,7 @@ describe('scoring browser', function () {
         await page.$eval('[data-roster-target="defense-P"]', n => n.textContent)
       ).includes('Unassigned')
       await swipe(
-        '[data-roster-target="roster"] [data-roster-player="10"]',
+        '[data-roster-target="roster"] [data-roster-player="201"]',
         '[data-roster-target="defense-C"]'
       )
       await page.waitForFunction(() =>
@@ -2839,7 +2858,7 @@ describe('scoring browser', function () {
           .textContent!.includes('Player 1')
       )
       expect(
-        await page.$('[data-roster-target="roster"] [data-roster-player="11"]')
+        await page.$('[data-roster-target="roster"] [data-roster-player="202"]')
       ).not.equals(null)
       await swipe('[aria-label="Home Team"]', '[aria-label="Away Team"]')
       await swipe('[aria-label="Defense"]', '[aria-label="Lineup"]')
@@ -2880,11 +2899,12 @@ describe('scoring browser', function () {
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       expect(
         await page.$eval('[data-roster-target="lineup-0"]', n =>
           n.getAttribute('data-roster-player')
         )
-      ).equals('1')
+      ).equals('101')
       expect(unexpected).deep.equals([])
     } finally {
       await page.close()
@@ -2895,6 +2915,7 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       await click(page, 'Remove Player 2')
       await click(page, 'Remove Player 3')
       await click(page, 'Add Player 3 to Lineup')
@@ -2908,8 +2929,8 @@ describe('scoring browser', function () {
           nodes => nodes.map(n => n.getAttribute('data-roster-player'))
         )
       const before = await order()
-      expect(before.slice(0, 3)).deep.equals(['4', '5', '1'])
-      expect(before.slice(-2)).deep.equals(['3', '2'])
+      expect(before.slice(0, 3)).deep.equals(['104', '105', '101'])
+      expect(before.slice(-2)).deep.equals(['103', '102'])
       await page.keyboard.press('Space')
       await page.keyboard.press('ArrowDown')
       await page.keyboard.press('Escape')
@@ -2919,6 +2940,7 @@ describe('scoring browser', function () {
       await page.waitForSelector('[aria-label="Undo Set team roster"]')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       expect(await order()).deep.equals(before)
       await page.waitForSelector('[role="dialog"]')
       await page.focus('[aria-label="Reorder Jordan K."]')
@@ -2942,6 +2964,7 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       await click(page, 'Remove Player 2')
       await addPlaceholders(page, 16)
       await page.waitForSelector('[role="dialog"]')
@@ -2954,7 +2977,7 @@ describe('scoring browser', function () {
       for (const [list, selector] of [
         [
           'Roster players',
-          '[data-roster-target="roster"] [data-roster-player="2"]'
+          '[data-roster-target="roster"] [data-roster-player="102"]'
         ],
         ['Batting lineup', '[data-roster-target="lineup-1"]']
       ]) {
@@ -2992,7 +3015,7 @@ describe('scoring browser', function () {
       )
       await new Promise(resolve => setTimeout(resolve, 300))
       const from = await page.$eval(
-        '[data-roster-target="roster"] [data-roster-player="2"]',
+        '[data-roster-target="roster"] [data-roster-player="102"]',
         n => {
           const r = n.getBoundingClientRect()
           return { x: r.x + 20, y: r.y + 20 }
@@ -3280,6 +3303,7 @@ describe('scoring browser', function () {
     try {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       for (let i = 2; i <= 9; i++) await click(page, `Remove Player ${i}`)
       await click(page, 'Save Rosters')
       await click(page, 'Accept Lineup')
@@ -3289,17 +3313,20 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Roster')
       await click(page, 'Create Player')
       await page.locator('[aria-label="First Name"]').fill('Mike')
       await page.locator('[aria-label="Last Name"]').fill('Trout')
       await click(page, 'Create Player')
+      await click(page, 'Lineup')
       await click(page, 'Add Mike T to Lineup')
       await click(page, 'Next batter Mike T')
       await click(page, 'Save Rosters')
       await page.waitForSelector('[aria-label*="Batter Mike T"]')
       await click(page, 'Undo Set team roster')
       await page.waitForSelector('[aria-label^="Next batter is on base."]')
-      await click(page, 'Undo 45° Fly Ball')
+      // The hit, whatever the history calls it here.
+      await page.locator('[aria-label^="Undo "]').click()
       await page.waitForSelector(
         '[aria-label^="Drag up and down for ball trajectory."]'
       )
@@ -6123,6 +6150,7 @@ describe('scoring browser', function () {
       })
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       for (const name of ['Jordan K.', 'Player 2', 'Player 3'])
         await click(page, `Remove ${name}`)
       await new Promise(resolve => setTimeout(resolve, 350))
@@ -6177,8 +6205,8 @@ describe('scoring browser', function () {
         }
       )
       await new Promise(resolve => setTimeout(resolve, 1200))
-      const source = '[data-roster-target="roster"] [data-roster-player="2"]'
-      const third = '[data-roster-target="roster"] [data-roster-player="3"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="102"]'
+      const third = '[data-roster-target="roster"] [data-roster-player="103"]'
       const a = await rect(source)
       const following = await rect(third)
       expect(following.y - a.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
@@ -6199,7 +6227,7 @@ describe('scoring browser', function () {
       // The lifted card's place closes to one gap between its neighbours.
       await new Promise(resolve => setTimeout(resolve, 250))
       const above = await rect(
-        '[data-roster-target="roster"] [data-roster-player="1"]'
+        '[data-roster-target="roster"] [data-roster-player="101"]'
       )
       expect((await rect(third)).y - above.bottom).closeTo(ROSTER_CARD_GAP, 0.5)
       await page.touchscreen.touchMove(destination.x + 17, destination.y + 10)
