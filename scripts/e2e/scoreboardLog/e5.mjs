@@ -345,7 +345,16 @@ try {
     results: [beforeOutage, afterOutage]
   } = await broadcast(
     stamped.url,
-    ['--stamped', '--duration', String(duration), '--outage', values.outage],
+    // With sound, as a phone publishes: each part's recording starts at
+    // once, so media 0 is T0 and an outage is its own length.
+    [
+      '--stamped',
+      '--sound',
+      '--duration',
+      String(duration),
+      '--outage',
+      values.outage
+    ],
     [
       {
         atSec: outageAt * 0.75,
@@ -423,7 +432,13 @@ try {
     results: [plainLive]
   } = await broadcast(
     plain.url,
-    ['--duration', String(plainDuration), '--outage', plainOutage.join(':')],
+    [
+      '--sound',
+      '--duration',
+      String(plainDuration),
+      '--outage',
+      plainOutage.join(':')
+    ],
     [
       {
         atSec: plainDuration + 3,

@@ -3679,6 +3679,9 @@ describe('scoring browser', function () {
         const to = BASES[(base + 1) % 4]
         await page.mouse.move(...project(from.x, 6, from.z))
         await page.mouse.down()
+        // A still grab shows Safe and Out; a small move alone does not, so
+        // no redraw drops the touch (3026a901c).
+        await new Promise(resolve => setTimeout(resolve, 400))
         const locations: number[] = []
         for (const progress of [0.25, 0.75, 0.25, 0]) {
           await page.mouse.move(
