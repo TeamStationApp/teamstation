@@ -2156,6 +2156,50 @@ describe('useMultiCam buffering', function () {
     expect(tiles.A.paused).equals(false)
   })
 
+  it('joins a follower whose speed does not close its gap', async function () {
+    this.timeout(15_000)
+    const { tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [100, 200])
+      fill(tiles.B, [40, 140])
+    })
+    // B plays half a second behind A whatever speed it is given, as a
+    // phone's player that ignores a small change of rate does.
+    let seconds = 0
+    const playOn = async (): Promise<void> => {
+      seconds += 1
+      tiles.A.currentTime = 120 + seconds
+      if (!tiles.B.paused) tiles.B.currentTime = 60 + seconds - 0.5
+      await ticks(1)
+    }
+    await playOn()
+    expect(tiles.B.playbackRate, 'nudged first').greaterThan(1)
+    let joined = false
+    for (let look = 0; look < 8 && !joined; look++) {
+      await playOn()
+      joined = tiles.B.paused
+    }
+    expect(joined, 'sent ahead to join').equals(true)
+    expect(tiles.B.playbackRate).equals(1)
+    expect(tiles.B.currentTime).closeTo(60 + seconds + JOIN_LEAD_SEC, 1.1)
+  })
+
+  it('leaves a follower its speed is bringing back in step', async function () {
+    this.timeout(15_000)
+    const { tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [100, 200])
+      fill(tiles.B, [40, 140])
+    })
+    let behind = 0.5
+    for (let second = 1; second <= 9; second++) {
+      tiles.A.currentTime = 120 + second
+      tiles.B.currentTime = 60 + second - behind
+      await ticks(1)
+      // Its speed is honoured: a tenth of a second closed each second.
+      behind = Math.max(0, behind - 0.1 * (tiles.B.playbackRate > 1 ? 1 : 0))
+      expect(tiles.B.paused).equals(false)
+    }
+  })
+
   it('does not pull the others back to a master that has stopped drawing', async function () {
     this.timeout(5000)
     const { tiles } = await grid({}, {}, tiles => {
