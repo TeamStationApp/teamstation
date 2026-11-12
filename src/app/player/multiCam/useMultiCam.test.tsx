@@ -697,20 +697,29 @@ describe('useMultiCam', function () {
     expect(mc().ended).equals(true)
   })
 
-  it('never takes the moment from a tile that has reloaded at its own start', async function () {
+  it('never takes the moment from tiles that have reloaded at their own start', async function () {
     this.timeout(10_000)
-    const { mc, tiles } = await grid({}, {}, tiles => {
-      fill(tiles.A, [100, 160])
-      fill(tiles.B, [40, 100])
-    })
+    // Two angles from the take's start: their first frames are one moment.
+    const { mc, tiles } = await grid(
+      { videos: [video('A', 0), video('B', 0)] },
+      {},
+      tiles => {
+        fill(tiles.A, [100, 160])
+        fill(tiles.B, [100, 160])
+      }
+    )
     await ticks(1)
     const before = mc().atWallMs ?? 0
     expect(before).closeTo(T0 + 120_000, 1500)
-    // The heard tile's player is handed its stream again after an outage:
-    // it opens playing, at its own first frame, holding little.
+    // Both players are handed their streams again after an outage: each
+    // opens playing at its own first frame, holding little, and the two agree
+    // with each other on that wrong place.
     tiles.A.currentTime = 0
     tiles.A.paused = false
     fill(tiles.A, [0, 0.2])
+    tiles.B.currentTime = 0
+    tiles.B.paused = false
+    fill(tiles.B, [0, 0.2])
     // The grid stops for it, where the game is, not where it reopened.
     await act(async () => {
       await new Promise(resolve => setTimeout(resolve, 400))
@@ -721,7 +730,7 @@ describe('useMultiCam', function () {
       mc().skip(10)
     })
     expect(mc().atWallMs ?? 0).closeTo(before + 10_000, 2000)
-    expect(tiles.B.currentTime).closeTo(70, 2)
+    expect(tiles.B.currentTime).closeTo(130, 2)
   })
 
   it('sends a follower whose seek landed in a hole on to the footage after it', async function () {
@@ -2625,12 +2634,16 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       mc().goTo(T0 + 220_000)
     })
     expect(mc().atWallMs).equals(T0 + 220_000)
-    // Pictures decoded past the bar's end: a move forward stays where they are.
-    for (const tile of Object.values(tiles)) tile.currentTime = 265
+    // Pictures decoded past the newest footage both angles have, 250 s: a
+    // move forward stays where they are.
+    await act(async () => {
+      mc().goTo(T0 + 240_000)
+    })
+    for (const tile of Object.values(tiles)) tile.currentTime = 255
     await act(async () => {
       mc().goTo(T0 + 280_000)
     })
-    expect(mc().atWallMs).equals(T0 + 265_000)
+    expect(mc().atWallMs).equals(T0 + 255_000)
   })
 
   it('keeps the bar’s end and the live point while every tile seeks out of what it holds', async function () {
