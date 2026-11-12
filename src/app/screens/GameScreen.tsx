@@ -462,6 +462,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
 
   const [game, setGame] = useState<GameDetail | undefined>(undefined)
   const [clockNow, setClockNow] = useState(Date.now)
+  const [heroRowWidth, setHeroRowWidth] = useState<number>()
   const [localTimezone, setLocalTimezone] = useState(viewerTimezone)
   const live = useRef(true)
   const currentGameId = useRef(gameId)
@@ -1927,9 +1928,28 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   }
 
   const actionShellHeight = theme.rem(1.5)
+  // The actions keep the four slots the full set takes, so a button is the
+  // same size whatever its person may do. Where four in a row cannot hold the
+  // longest label and its half-height padding, as at 320 points, the four go
+  // two to a row: the web cannot shrink a label to fit.
+  const twoRows =
+    heroRowWidth != null &&
+    heroRowWidth - 2 * theme.rem(theme.cardContentInsetRem) <
+      4 * theme.rem(4.5) + 3 * theme.rem(theme.spaceSmRem)
+  // Two to a row: half the row, less half the gap between.
+  const slot = twoRows ? { flexBasis: '40%' as const } : null
   const actionButtons =
     heroActions.length === 0 ? undefined : (
-      <View testID="game-hero-actions" style={styles.heroActions}>
+      <View
+        testID="game-hero-actions"
+        style={[
+          styles.heroActions,
+          twoRows ? { flexWrap: 'wrap', rowGap: theme.rem(0.25) } : null
+        ]}
+        onLayout={event => {
+          setHeroRowWidth(event.nativeEvent.layout.width)
+        }}
+      >
         {heroActions.map(action => (
           <Pressable
             key={action.id}
@@ -1939,7 +1959,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             accessibilityState={{
               disabled: action.id === 'record' && recording.busy === true
             }}
-            style={styles.heroAction}
+            style={[styles.heroAction, slot]}
             onPress={() => {
               if (action.id === 'score') {
                 const player = playerRef.current
@@ -1996,7 +2016,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
           </Pressable>
         ))}
         {Array.from({ length: 4 - heroActions.length }, (_, index) => (
-          <View key={`space-${index}`} style={styles.heroAction} />
+          <View key={`space-${index}`} style={[styles.heroAction, slot]} />
         ))}
       </View>
     )

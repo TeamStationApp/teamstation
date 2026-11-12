@@ -496,7 +496,11 @@ export const RECIPES: Record<string, Recipe> = {
     return runs
   },
   'scripts/e2e/scoreboardLog/e4.mjs': scoreboardLog(['--offset', '1234']),
-  'scripts/e2e/scoreboardLog/e5.mjs': scoreboardLog(),
+  // It plays the recordings of the fake broadcaster's HEVC in Chrome.
+  'scripts/e2e/scoreboardLog/e5.mjs': async context =>
+    (await scoreboardLog()(context)).map(run =>
+      run.blocked == null ? { ...run, needs: 'hevc' } : run
+    ),
   'src/app/autoScheduler.e2e.ts': async () => [{ args: [] }],
   // The scoreboard seed's open game, and its scorer's token in a private file
   // (never the synced artifacts).
