@@ -11,10 +11,18 @@ import {
   readFileSync,
   writeFileSync
 } from 'node:fs'
+import type { Server } from 'node:http'
+import { createServer as createNetServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { STACK_API, STACK_DATABASE, STACK_ORIGIN } from './legacyStack'
+import {
+  frontProxy,
+  STACK_API,
+  STACK_DATABASE,
+  STACK_ORIGIN,
+  STACK_WEB_PORT
+} from './legacyStack'
 
 export interface Invocation {
   label?: string
@@ -25,7 +33,9 @@ export interface Invocation {
   /** Recorded blocked with this reason instead of being run. */
   blocked?: string
   /** Done just before it runs: a fixture it must find as it was made. */
-  prepare?: () => void
+  prepare?: () => void | Promise<void>
+  /** Done once it has run, whatever happened: what `prepare` started, stopped. */
+  done?: () => Promise<void>
 }
 
 export interface RecipeContext {
@@ -262,6 +272,21 @@ const REPLAY_ONCE = [
   'rewindAnnouncer',
   'scorers'
 ]
+
+/** A port nothing on this machine is listening on just now. */
+async function freePort(): Promise<number> {
+  const probe = createNetServer()
+  await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve))
+  const address = probe.address()
+  await new Promise<void>(resolve =>
+    probe.close(() => {
+      resolve()
+    })
+  )
+  if (address == null || typeof address === 'string')
+    throw new Error('no free port')
+  return address.port
+}
 
 /**
  * The scenarios that use the announcer: its speaker is offered only by a
@@ -577,6 +602,49 @@ export const RECIPES: Record<string, Recipe> = {
         ...run.env,
         PLAYER_NAMES_FIXTURE: fixture,
         PLAYER_NAMES_API_LOG: '{stack:apiLog}'
+      }
+    }))
+  },
+  // Its page talks to its own viewer node, not the stack's API: a front of
+  // its own, on a port of its own, sends `/api/` there and the rest to the
+  // stack's web app; its fake Space is on a loopback port the build lets in.
+  'src/app/player/liveOrigin.e2e.ts': async context => {
+    const [viewerPort, webPort, spacePort] = [
+      await freePort(),
+      await freePort(),
+      await freePort()
+    ]
+    let front: Server | undefined
+    const runs = tableRecipe(
+      context.cwd,
+      'src/app/player/liveOrigin.e2e.ts'
+    ) ?? [{}]
+    return runs.map(run => ({
+      ...run,
+      env: {
+        ...run.env,
+        TS_SCORING_TEST_URL: `http://127.0.0.1:${webPort}`,
+        TS_ORIGIN_VIEWER_PORT: String(viewerPort),
+        TS_ORIGIN_SPACE_PORT: String(spacePort)
+      },
+      // Started here, in the sweep, and stopped once the run is done.
+      prepare: async () => {
+        const started = frontProxy(viewerPort, STACK_WEB_PORT)
+        await new Promise<void>(resolve => {
+          started.listen(webPort, '127.0.0.1', resolve)
+        })
+        front = started
+      },
+      done: async () => {
+        const running = front
+        front = undefined
+        if (running == null) return
+        running.closeAllConnections()
+        await new Promise<void>(resolve => {
+          running.close(() => {
+            resolve()
+          })
+        })
       }
     }))
   },

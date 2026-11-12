@@ -277,7 +277,7 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(outcome))
 }
 
-if ((process.argv[1] ?? '').endsWith('/scoreboardPublish.e2e.ts')) {
+if ((process.argv[1] ?? '').endsWith('/scoreboardPublish.ts')) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : error)
     process.exit(1)
