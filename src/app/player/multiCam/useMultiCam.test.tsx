@@ -2634,8 +2634,8 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
       mc().goTo(T0 + 220_000)
     })
     expect(mc().atWallMs).equals(T0 + 220_000)
-    // Pictures decoded past the newest footage both angles have, 250 s: a
-    // move forward stays where they are.
+    // Pictures decoded past B's newest footage, 250 s: B no longer holds the
+    // grid back, and a move forward goes on to A's 260 s, never back.
     await act(async () => {
       mc().goTo(T0 + 240_000)
     })
@@ -2643,7 +2643,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     await act(async () => {
       mc().goTo(T0 + 280_000)
     })
-    expect(mc().atWallMs).equals(T0 + 255_000)
+    expect(mc().atWallMs).equals(T0 + 260_000)
   })
 
   it('keeps the bar’s end and the live point while every tile seeks out of what it holds', async function () {
