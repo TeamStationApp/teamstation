@@ -2804,31 +2804,22 @@ export function useMultiCam(
  */
 const MOMENT_SLACK_MS = 30_000
 
-/** How close two tiles' pictures must be to vouch for each other. */
-const AGREE_MS = 3000
-
 /**
  * The playing tiles' pictures, in the order given, that can be believed as
- * where the game is: near the clock, or with another tile showing the same
- * moment, or any before there is a clock.
+ * where the game is: near the clock, or any before there is a clock.
  *
  * A player handed its stream again after an outage opens playing at its own
  * first frame. Taken as the game, it sent every tile back to where the
  * recording began, or hours behind a live game, while the viewer had not
- * touched a thing.
+ * touched a thing. Every tile reloaded at once agrees with every other on that
+ * wrong place, so agreement alone is no evidence.
  */
 function trusted<T extends { id: string; there: number }>(
   readings: T[],
   clock: number | null
 ): T[] {
   return readings.filter(
-    one =>
-      clock == null ||
-      Math.abs(one.there - clock) < MOMENT_SLACK_MS ||
-      readings.some(
-        other =>
-          other.id !== one.id && Math.abs(other.there - one.there) < AGREE_MS
-      )
+    one => clock == null || Math.abs(one.there - clock) < MOMENT_SLACK_MS
   )
 }
 
