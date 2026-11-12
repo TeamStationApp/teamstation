@@ -395,7 +395,18 @@ describe('TeamStation pipeline Masonfile', () => {
       params: {
         seat: {
           type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
+          choices: [
+            'production',
+            '1',
+            '2',
+            '3',
+            '4',
+            '5',
+            '6',
+            '7',
+            '8',
+            'streamtest'
+          ],
           default: 'production'
         }
       }
@@ -760,8 +771,18 @@ describe('TeamStation pipeline Masonfile', () => {
         TS_APP_ORIGIN: 'https://develop.teamstation.app'
       }
     )
+    assert.deepEqual(
+      seatEnvironment({
+        run: { branch: 'paul/example', params: { seat: 'streamtest' } }
+      }),
+      {
+        TS_API_BASE_URL: 'https://streamtest.teamstation.app/api/v1',
+        TS_APP_ORIGIN: 'https://develop.teamstation.app'
+      }
+    )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
     assert.throws(() => seated({ seat: 3 }), /Unknown seat 3/)
+    assert.throws(() => seated({ seat: 'streamtest2' }), /Unknown seat/)
   })
 
   it('publishes the develop app for the develop branch and for a seat', () => {

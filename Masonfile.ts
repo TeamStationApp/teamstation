@@ -15,7 +15,9 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // Google Play. One platform failing leaves the other running.
 //
 // The `seat` parameter picks the server the app talks to. A development seat
-// N points the app at https://developN.teamstation.app. Left at `production`,
+// N points the app at https://developN.teamstation.app, and `streamtest` at
+// https://streamtest.teamstation.app, the throwaway server a streaming test
+// run stands up and tears down. Left at `production`,
 // a master build keeps the app's own server, and every other branch points
 // at https://develop.teamstation.app. Only a master build of production goes
 // to TestFlight.
@@ -51,6 +53,21 @@ export const DISTRIBUTOR_DEVELOP_NAME = 'Distributor Develop'
 export const FIELD_TEAM = 'V4AK4X7A2V'
 export const FIELD_VERSION = '1.0'
 const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
+/** The throwaway server a streaming test run stands up for its builds to use. */
+const STREAMTEST_ORIGIN = 'https://streamtest.teamstation.app'
+/** Every server a build can be pointed at, in the order Mason offers them. */
+export const SEAT_CHOICES = [
+  'production',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+  '7',
+  '8',
+  'streamtest'
+]
 const CAMERAMAN_APK_DIR =
   'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
@@ -177,7 +194,7 @@ export function setup(m: Setup): void {
       params: {
         seat: {
           type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
+          choices: SEAT_CHOICES,
           default: 'production'
         }
       }
@@ -195,7 +212,7 @@ export function setup(m: Setup): void {
       params: {
         seat: {
           type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
+          choices: SEAT_CHOICES,
           default: 'production'
         }
       }
@@ -419,7 +436,8 @@ function buildStages(w: WorkflowBuilder, app: string): void {
  * `TS_API_BASE_URL` into the bundle (`src/app/native/config.ts`). A master
  * build explicitly names production. Any
  * other branch, left on production, points at the standing develop server.
- * A development seat keeps its API and shares the develop app-link host.
+ * A development seat, or the streamtest server, keeps its API and shares the
+ * develop app-link host.
  */
 export function seatEnvironment(
   ctx: Pick<Stage, 'run'>
@@ -437,6 +455,11 @@ export function seatEnvironment(
       TS_APP_ORIGIN: DEVELOP_ORIGIN
     }
   }
+  if (seat === 'streamtest')
+    return {
+      TS_API_BASE_URL: `${STREAMTEST_ORIGIN}/api/v1`,
+      TS_APP_ORIGIN: DEVELOP_ORIGIN
+    }
   if (typeof seat !== 'string' || !/^[1-8]$/.test(seat)) {
     throw new Error(`Unknown seat ${String(seat)}`)
   }
