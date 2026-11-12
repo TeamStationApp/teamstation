@@ -32,6 +32,7 @@ import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { initialHitTarget } from '../field/trajectoryGuide'
+import { scoringSurface } from '../theme/scoringSurface'
 import { ROSTER_CARD_GAP } from './rosterLayout'
 
 const game = asGameDetail({
@@ -50,8 +51,8 @@ const game = asGameDetail({
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
-  // The reader keeps score for the home side.
-  assignedRoles: { away: [], home: ['scorekeeper'] },
+  // The reader keeps score for both teams.
+  assignedRoles: { away: ['scorekeeper'], home: ['scorekeeper'] },
   videos: []
 })
 interface ProbeFiber {
@@ -231,7 +232,12 @@ async function open(
       }
     // What the app also asks of every server: who holds which team role, the
     // teams' saved default lineups (none here), and the server's health.
-    else if (url.pathname === '/api/v1/me/roles') body = { teams: {} }
+    // The reader keeps score for both teams.
+    else if (url.pathname === '/api/v1/me/roles')
+      body = {
+        teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
+        guardianOf: []
+      }
     else if (request.method() === 'GET' && url.pathname === '/api/v1/me/home')
       body = { teams: [], seasons: [], leagues: [] }
     else if (
@@ -604,6 +610,13 @@ async function projectBase(
     rect.x + ((point.x + 1) * rect.width) / 2,
     rect.y + ((1 - point.y) * rect.height) / 2
   ]
+}
+/** A theme colour, `#rrggbb` or `#rrggbbaa`, as computed style reads it. */
+function cssColor(hex: string): string {
+  const [r, g, b, a] = [1, 3, 5, 7].map(i => parseInt(hex.slice(i, i + 2), 16))
+  return Number.isNaN(a)
+    ? `rgb(${r}, ${g}, ${b})`
+    : `rgba(${r}, ${g}, ${b}, ${Math.round((a / 255) * 100) / 100})`
 }
 /** Taps a sheet's control once the sheet has stopped sliding. */
 async function tapSettled(page: Page, label: string): Promise<void> {
@@ -1714,10 +1727,11 @@ describe('scoring browser', function () {
         await page.setViewport(viewport)
         await page.waitForFunction(
           () => {
+            // A card is 14% of the field's viewport, at most 46 points.
             const field = document
-              .querySelector('[data-testid="Defensive field"]')!
+              .querySelector('[data-testid="Defensive field viewport"]')!
               .getBoundingClientRect()
-            const expected = Math.max(12, Math.min(36, field.height * 0.18))
+            const expected = Math.min(46, field.height * 0.14)
             return Array.from(
               document.querySelectorAll('[data-roster-target^="defense-"]')
             ).every(
@@ -1807,16 +1821,18 @@ describe('scoring browser', function () {
             fill: s.backgroundColor
           }
         })
+      // A filled position in the scoring surface's accent, an empty one in
+      // its red badge.
       expect(await style()).deep.equals({
         border: 'solid',
-        color: 'rgb(64, 151, 84)',
-        fill: 'rgb(213, 236, 217)'
+        color: cssColor(scoringSurface.accent),
+        fill: cssColor(scoringSurface.active)
       })
       await click(page, 'Clear P')
       expect(await style()).deep.equals({
         border: 'dashed',
-        color: 'rgb(183, 156, 156)',
-        fill: 'rgb(234, 223, 223)'
+        color: cssColor(scoringSurface.badges.red.border),
+        fill: cssColor(scoringSurface.badges.red.background)
       })
       for (const viewport of [
         { width: 844, height: 390 },
@@ -1826,10 +1842,11 @@ describe('scoring browser', function () {
         await page.setViewport(viewport)
         await page.waitForFunction(
           () => {
+            // A card is 14% of the field's viewport, at most 46 points.
             const field = document
-              .querySelector('[data-testid="Defensive field"]')!
+              .querySelector('[data-testid="Defensive field viewport"]')!
               .getBoundingClientRect()
-            const expected = Math.max(12, Math.min(36, field.height * 0.18))
+            const expected = Math.min(46, field.height * 0.14)
             return Array.from(
               document.querySelectorAll('[data-roster-target^="defense-"]')
             ).every(
@@ -1856,15 +1873,12 @@ describe('scoring browser', function () {
         ).equals(true)
       }
       await click(page, 'Clear 2B')
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      // The pitcher, back on the visitors' bench.
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const target = '[data-roster-target="defense-SS"]'
       const firstBase = await page.$eval(
         '[data-roster-target="defense-1B"]',
         node => node.textContent
-      )
-      // The card's name, without its grip's three bars.
-      const name = await page.$eval(source, node =>
-        node.textContent!.replace('≡', '').trim()
       )
       await new Promise(resolve => setTimeout(resolve, 300))
       const point = async (
@@ -1908,12 +1922,14 @@ describe('scoring browser', function () {
       )
       await page.mouse.up()
       await new Promise(resolve => setTimeout(resolve, 300))
+      // The pitcher now plays short.
       await page.waitForFunction(
-        (selector, name) =>
-          document.querySelector(selector)!.textContent!.includes(name),
+        selector =>
+          document
+            .querySelector(selector)!
+            .getAttribute('data-roster-player') === '101',
         {},
-        target,
-        name
+        target
       )
       expect(
         await page.$eval(
@@ -1926,7 +1942,7 @@ describe('scoring browser', function () {
           '[data-testid="Defense SS card"]',
           node => getComputedStyle(node).backgroundColor
         )
-      ).equals('rgb(213, 236, 217)')
+      ).equals(cssColor(scoringSurface.active))
       expect(
         await page.$eval(
           '[data-roster-target="defense-1B"]',
@@ -1961,13 +1977,18 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Defense')
-      expect(await page.$eval(target, node => node.textContent)).includes(name)
+      // Saved and opened again, the pitcher still plays short.
+      expect(
+        await page.$eval(target, node =>
+          node.getAttribute('data-roster-player')
+        )
+      ).equals('101')
       expect(
         await page.$eval(
           '[data-testid="Defense SS card"]',
           node => getComputedStyle(node).backgroundColor
         )
-      ).equals('rgb(213, 236, 217)')
+      ).equals(cssColor(scoringSurface.active))
     } finally {
       await page.close()
     }
@@ -2012,7 +2033,7 @@ describe('scoring browser', function () {
           const r = node.getBoundingClientRect()
           return { x: r.x + r.width / 2, y: r.y + r.height / 2, width: r.width }
         })
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const from = await point(source)
       await page.mouse.move(from.x, from.y)
       await page.mouse.down()
@@ -2096,6 +2117,8 @@ describe('scoring browser', function () {
       ])
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      // Set Team Rosters opens on the roster; the order is on the lineup.
+      await click(page, 'Lineup')
       await page.waitForFunction(() =>
         document
           .getAnimations()
@@ -2217,7 +2240,7 @@ describe('scoring browser', function () {
       await click(page, 'Defense')
       expect(await page.$$('[data-roster-target^="defense-"]')).length(9)
       await click(page, 'Clear P')
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const target = '[data-roster-target="defense-P"]'
       const point = async (
         selector: string
@@ -2242,6 +2265,8 @@ describe('scoring browser', function () {
       await click(page, 'Set Team Rosters')
       await click(page, 'Defense')
       await page.waitForSelector('[aria-label="Clear P"]')
+      // Players are made on the roster.
+      await click(page, 'Roster')
       await click(page, 'Create Player')
       await page.waitForFunction(
         () =>
@@ -2984,7 +3009,7 @@ describe('scoring browser', function () {
       await click(page, 'Set Team Rosters')
       await click(page, 'Defense')
       await click(page, 'Clear P')
-      const source = '[data-roster-target="roster"] [data-roster-player="1"]'
+      const source = '[data-roster-target="roster"] [data-roster-player="101"]'
       const target = '[data-roster-target="defense-P"]'
       const from = await page.$eval(source, node => {
         const rect = node.getBoundingClientRect()
