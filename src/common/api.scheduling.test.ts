@@ -6,6 +6,7 @@ import type { GameToReschedule, SchedulePreview } from './schedulePreviews'
 import type { ScheduleSettings, ScheduleSetup } from './seasonScheduling'
 
 const SETTINGS: ScheduleSettings = {
+  fieldIds: [],
   fieldSize: '50/70',
   gameMinutes: 90,
   bufferMinutes: 10,

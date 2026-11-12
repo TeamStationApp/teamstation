@@ -13,6 +13,14 @@ import {
 import { asLiteral } from './asLiteral'
 import { addDays } from './calendarDates'
 import { asCalendarDate, isRecord } from './groupCreation'
+import { asWeeklyHours, type WeekdayHours } from './weeklyHours'
+import { asWindowPeriods, type WindowPeriod } from './windowPeriods'
+export {
+  asWeeklyHours,
+  wallMinutes,
+  wallTimeOf,
+  type WeekdayHours
+} from './weeklyHours'
 
 /**
  * The field sizes, fixed and smallest first: T-ball, machine pitch on a
@@ -43,68 +51,6 @@ export function fieldSizeLabel(size: FieldSize): string {
 
 /** The longest a size switch may take, in minutes. */
 export const MAX_SIZE_SWITCH_MINUTES = 240
-
-export interface WeekdayHours {
-  /** 0 is Sunday. */
-  weekday: number
-  /** "HH:MM", on a 5-minute step. */
-  start: string
-  /** "HH:MM", after `start`; "24:00" is midnight at the day's end. */
-  end: string
-}
-
-/** Minutes after midnight of a wall time, "24:00" being 1440. */
-export function wallMinutes(time: string): number {
-  return Number(time.slice(0, 2)) * 60 + Number(time.slice(3))
-}
-
-/** The wall time `minutes` after midnight, on a 5-minute step. */
-export function wallTimeOf(minutes: number): string {
-  return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`
-}
-
-function asWallTime(allowMidnightEnd: boolean) {
-  return (raw: unknown): string => {
-    if (typeof raw !== 'string' || !/^\d{2}:\d{2}$/.test(raw))
-      throw new TypeError('Choose a time')
-    const minutes = wallMinutes(raw)
-    const hour = Number(raw.slice(0, 2))
-    const minute = Number(raw.slice(3))
-    if (
-      minute > 59 ||
-      (allowMidnightEnd ? minutes > 1440 : hour > 23) ||
-      minute % 5 !== 0
-    )
-      throw new TypeError('Choose a time on a 5-minute step')
-    return raw
-  }
-}
-
-/** A week of opening hours: at most one range per weekday, in weekday order. */
-export function asWeeklyHours(raw: unknown): WeekdayHours[] {
-  if (!Array.isArray(raw)) throw new TypeError('Choose the weekly hours')
-  const seen = new Set<number>()
-  const hours = raw.map((entry: unknown): WeekdayHours => {
-    if (!isRecord(entry)) throw new TypeError('Choose the weekly hours')
-    const weekday = entry.weekday
-    if (
-      typeof weekday !== 'number' ||
-      !Number.isInteger(weekday) ||
-      weekday < 0 ||
-      weekday > 6
-    )
-      throw new TypeError('Choose a day of the week')
-    if (seen.has(weekday))
-      throw new TypeError('Give each day of the week one range of hours')
-    seen.add(weekday)
-    const start = asWallTime(false)(entry.start)
-    const end = asWallTime(true)(entry.end)
-    if (wallMinutes(end) <= wallMinutes(start))
-      throw new TypeError('The closing time must be after the opening time')
-    return { weekday, start, end }
-  })
-  return hours.sort((a, b) => a.weekday - b.weekday)
-}
 
 /** The most days the blackouts of a season, venue or field can cover. */
 export const MAX_BLACKOUT_DAYS = 366
@@ -183,6 +129,7 @@ export interface VenueChanges {
   name?: string
   sizeSwitchMinutes?: number
   defaultHours?: WeekdayHours[]
+  defaultWindows?: WindowPeriod[]
   defaultBlackouts?: string[]
   photo?: PhotoUpload
 }
@@ -203,6 +150,10 @@ export function asVenueChanges(raw: unknown): VenueChanges {
       )
     changes.sizeSwitchMinutes = minutes
   }
+  if (raw.defaultHours !== undefined && raw.defaultWindows !== undefined)
+    throw new TypeError('Choose hours or time windows, not both')
+  if (raw.defaultWindows !== undefined)
+    changes.defaultWindows = asWindowPeriods(raw.defaultWindows)
   if (raw.defaultHours !== undefined)
     changes.defaultHours = asWeeklyHours(raw.defaultHours)
   if (raw.defaultBlackouts !== undefined)
@@ -232,6 +183,7 @@ export interface FieldChanges {
   pin?: Pin | null
   dates?: { startsOn: string; endsOn: string } | null
   hours?: WeekdayHours[] | null
+  windows?: WindowPeriod[] | null
   blackouts?: string[]
   photo?: PhotoUpload
 }
@@ -258,6 +210,10 @@ export function asFieldChanges(raw: unknown, creating: boolean): FieldChanges {
       changes.dates = { startsOn, endsOn }
     }
   }
+  if (raw.hours !== undefined && raw.windows !== undefined)
+    throw new TypeError('Choose hours or time windows, not both')
+  if (raw.windows !== undefined)
+    changes.windows = raw.windows === null ? null : asWindowPeriods(raw.windows)
   if (raw.hours !== undefined)
     changes.hours = raw.hours === null ? null : asWeeklyHours(raw.hours)
   if (raw.blackouts !== undefined)
@@ -301,6 +257,7 @@ export const asVenueField = asObject({
   endsOn: asNullable(asString),
   /** Null takes the venue's default hours. */
   hours: asNullable(asArray(asWeekdayHours)),
+  windows: asOptional(asNullable(asWindowPeriods)),
   blackouts: asArray(asString),
   photoUrl: asNullable(asString),
   photoLargeUrl: asNullable(asString)
@@ -355,6 +312,7 @@ export const asVenueDetail = asObject({
   timezone: asNullable(asString),
   sizeSwitchMinutes: asNumber,
   defaultHours: asArray(asWeekdayHours),
+  defaultWindows: asOptional(asWindowPeriods),
   defaultBlackouts: asArray(asString),
   photoUrl: asNullable(asString),
   photoLargeUrl: asNullable(asString),

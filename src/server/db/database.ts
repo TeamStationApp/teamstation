@@ -1127,6 +1127,7 @@ export interface VenuesTable {
   timezone: string
   size_switch_minutes: Generated<number>
   /** A weekly-hours list (`src/common/venues.ts`). */
+  default_windows: ColumnType<unknown, string | undefined, string>
   default_hours: ColumnType<unknown, string | undefined, string>
   default_blackouts: CalendarDates
   photo_path: string | null
@@ -1147,6 +1148,7 @@ export interface VenueFieldsTable {
   starts_on: ColumnType<unknown, string | null | undefined, string | null>
   ends_on: ColumnType<unknown, string | null | undefined, string | null>
   /** Null takes the venue's default hours. */
+  windows: ColumnType<unknown, string | null | undefined, string | null>
   hours: ColumnType<unknown, string | null | undefined, string | null>
   blackouts: CalendarDates
   photo_path: string | null
@@ -1201,6 +1203,7 @@ export interface SeasonTeamFlagsTable {
 
 /** A season's scheduling settings for the Auto-Scheduler. */
 export interface SeasonScheduleSettingsTable {
+  field_ids: Generated<string[]>
   season_id: string
   field_size: string
   game_minutes: number
