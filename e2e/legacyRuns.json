@@ -50,7 +50,7 @@
         "S1"
       ],
       "needs": "web",
-      "blocked": "CHAT_UI_* fixture env comes from scripts/chat-history-recovery-fixtures.ts, which asserts 'CHAT_RECOVERY_OWNER_FILE must name the private disposable server settings'"
+      "fixture": {"runner": "web", "scenario": "S1"}
     },
     {
       "label": "S2",
@@ -58,7 +58,7 @@
         "S2"
       ],
       "needs": "web",
-      "blocked": "same private owner file"
+      "fixture": {"runner": "web", "scenario": "S2"}
     },
     {
       "label": "S4",
@@ -66,7 +66,7 @@
         "S4"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S4"}
     },
     {
       "label": "S4full",
@@ -74,7 +74,7 @@
         "S4full"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S4full"}
     },
     {
       "label": "S5",
@@ -82,7 +82,7 @@
         "S5"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S5"}
     },
     {
       "label": "S6",
@@ -90,7 +90,7 @@
         "S6"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S6"}
     },
     {
       "label": "S9",
@@ -98,7 +98,7 @@
         "S9"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S9"}
     },
     {
       "label": "S10",
@@ -106,7 +106,7 @@
         "S10"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S10"}
     },
     {
       "label": "bands",
@@ -114,7 +114,7 @@
         "bands"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S1"}
     },
     {
       "label": "pendingSend",
@@ -130,7 +130,7 @@
         "reviewNavigation"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "reviewNavigation"}
     },
     {
       "label": "review2Browser",
@@ -146,7 +146,7 @@
         "composeFull"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "composeFull"}
     },
     {
       "label": "picker",
@@ -154,7 +154,7 @@
         "picker"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "picker"}
     },
     {
       "label": "reader",
@@ -162,7 +162,7 @@
         "reader"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "reader"}
     },
     {
       "label": "boundedMedia",
@@ -170,7 +170,7 @@
         "boundedMedia"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "boundedMedia"}
     },
     {
       "label": "currentHistoryReply",
@@ -178,7 +178,8 @@
         "currentHistoryReply"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "currentHistoryReply"},
+      "env": {"CHAT_UI_CURRENT_HISTORY_REPLY_RESULT": "{legacy:chatUiFollowup}/current-history-reply.json"}
     },
     {
       "label": "lockedCurrentReply",
@@ -250,7 +251,7 @@
         "coarseTouch"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S1"}
     },
     {
       "label": "purgePrepare",
@@ -274,7 +275,7 @@
         "historyFixture"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "S1"}
     },
     {
       "label": "videoFixture",
@@ -282,7 +283,7 @@
         "videoFixture"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "boundedMedia"}
     },
     {
       "label": "adultReplyFixture",
@@ -1429,7 +1430,7 @@
         "E1"
       ],
       "needs": "web",
-      "blocked": "CHAT_RECOVERY_FIXTURE needs the private CHAT_RECOVERY_OWNER_FILE"
+      "fixture": {"runner": "web", "scenario": "E1"}
     },
     {
       "label": "E2",
@@ -1437,7 +1438,7 @@
         "E2"
       ],
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E2"}
     },
     {
       "label": "E3",
@@ -1448,7 +1449,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E3"}
     },
     {
       "label": "E4",
@@ -1459,7 +1460,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E4"}
     },
     {
       "label": "E5",
@@ -1470,7 +1471,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E5"}
     },
     {
       "label": "E6",
@@ -1481,7 +1482,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E6"}
     },
     {
       "label": "E7",
@@ -1526,7 +1527,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E11"}
     },
     {
       "label": "E12",
@@ -1548,7 +1549,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "blocked": "same"
+      "fixture": {"runner": "web", "scenario": "E13"}
     },
     {
       "label": "E8",
