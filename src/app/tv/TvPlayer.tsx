@@ -32,7 +32,10 @@ import type {
   VideoSummary
 } from '../../common/api'
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
-import { pitchingTotals } from '../../common/replay/replayBoxScore'
+import {
+  battingTotals,
+  pitchingTotals
+} from '../../common/replay/replayBoxScore'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
@@ -1481,6 +1484,14 @@ export function TvPlayer({
                           ]}
                         />
                       ))}
+                      {box[side].batting.length > 0 && (
+                        <TvBattingTotal rows={box[side].batting} />
+                      )}
+                      <View
+                        testID="tv-batting-pitching-spacer"
+                        style={styles.statsSpacer}
+                        accessible={false}
+                      />
                       <StatRow
                         name="Pitching"
                         values={replayPitchingLabels}
@@ -1533,6 +1544,20 @@ export function TvPlayer({
         </View>
       )}
     </PlaybackBoundary>
+  )
+}
+
+function TvBattingTotal({
+  rows
+}: {
+  rows: Parameters<typeof battingTotals>[0]
+}): React.ReactElement {
+  const total = battingTotals(rows)
+  return (
+    <StatRow
+      name="Totals"
+      values={[total.ab, total.r, total.h, total.rbi, total.bb, total.k]}
+    />
   )
 }
 
@@ -1787,6 +1812,7 @@ const Scrubber = React.forwardRef<
 
 const styles = StyleSheet.create({
   statRow: { flexDirection: 'row', paddingVertical: 2, alignItems: 'center' },
+  statsSpacer: { height: 44 },
   statName: { width: 300, paddingRight: 20 },
   statCell: { flex: 1, minWidth: 48, textAlign: 'center' },
   statText: {
