@@ -6,6 +6,7 @@ import { after, before, describe, it } from 'mocha'
 import puppeteer, {
   type Browser,
   type BrowserContext,
+  type HTTPRequest,
   type Page
 } from 'puppeteer'
 
@@ -170,6 +171,7 @@ async function openAs(
   context?: BrowserContext
 ): Promise<Page> {
   const page = await (context ?? browser).newPage()
+  trackWrites(page)
   await installSceneProbe(page)
   await coverage?.track(page)
   page.setDefaultTimeout(15000)
@@ -240,17 +242,39 @@ async function waitReady(page: Page): Promise<void> {
  * session after it paints, so a quiet network comes first: until then the
  * status line can read saved for a play not yet sent.
  */
+/** Each page's writes to the API not yet answered. */
+const writing = new WeakMap<Page, Set<unknown>>()
+function trackWrites(page: Page): void {
+  const open = new Set<unknown>()
+  writing.set(page, open)
+  const done = (request: HTTPRequest): void => {
+    open.delete(request)
+  }
+  page.on('request', request => {
+    if (request.method() !== 'GET' && request.url().includes('/api/'))
+      open.add(request)
+  })
+  page.on('requestfinished', done)
+  page.on('requestfailed', done)
+}
 /**
- * Every save has been answered: the screen shows no save status for half a
- * second. Network idle is no measure, since a worker keeps a request open.
+ * Every save has been answered: no write to the API has been outstanding for
+ * half a second. Network idle is no measure, since a worker keeps a request
+ * open, and the screen shows no status for a save that goes through.
  */
 async function waitSaved(page: Page): Promise<void> {
+  const open = writing.get(page)
+  if (open == null) throw new Error('waitSaved needs a page from openAs')
   const end = Date.now() + 30000
   for (let quiet = 0; quiet < 5;) {
     if (Date.now() > end) throw new Error('Saves outstanding after 30 s')
     await new Promise(resolve => setTimeout(resolve, 100))
-    quiet = (await page.$('[aria-label="Save status"]')) == null ? quiet + 1 : 0
+    quiet = open.size === 0 ? quiet + 1 : 0
   }
+  await page.waitForFunction(
+    () => document.querySelector('[aria-label="Save status"]') == null,
+    { timeout: 30000 }
+  )
 }
 async function summary(page: Page): Promise<string> {
   return await page.evaluate(() => {
