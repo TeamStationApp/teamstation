@@ -2181,8 +2181,7 @@
       "args": [
         "E27"
       ],
-      "needs": "web",
-      "blocked": "'if (live && keyFile == null) throw new Error(Supply TS_GOOGLE_PLACES_KEY_FILE)': a private Google Places key"
+      "needs": "web"
     }
   ],
   "src/app/googleProviderConsistency.e2e.ts": [
@@ -2195,8 +2194,7 @@
       "args": [
         "--live"
       ],
-      "needs": "web",
-      "blocked": "assert(serverConfig.googlePlaces != null, 'Configure the server Places key in ignored local config')"
+      "needs": "web"
     }
   ],
   "src/server/umpires/leaderboardPages.e2e.ts": [

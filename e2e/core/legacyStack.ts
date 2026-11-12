@@ -392,16 +392,28 @@ export async function startLegacyStack(
     const dictationConfig = join(scratch, 'dictation.json')
     const anthropicFile = join(scratch, 'anthropic.json')
     const localSettings = join(scratch, 'local.json')
-    if (anthropic !== '') {
+    // The keys the scripts read themselves, in the files they read them from.
+    const keys = Object.fromEntries(
+      Object.entries({ anthropic, speech, googlePlaces: placesKey() }).filter(
+        ([, value]) => value !== ''
+      )
+    )
+    if (Object.keys(keys).length > 0) {
       writePrivate(dictationConfig, {
-        dictation: { anthropic: { apiKey: anthropic } }
+        dictation: {
+          apiKey: speech,
+          ...(anthropic === '' ? {} : { anthropic: { apiKey: anthropic } })
+        }
       })
-      writePrivate(anthropicFile, { anthropic })
+      writePrivate(anthropicFile, keys)
       writePrivate(localSettings, {
         ...loadSettings(),
         secretsFile: anthropicFile
       })
     }
+    const placesFile = join(scratch, 'googlePlaces.json')
+    if (keys.googlePlaces != null)
+      writePrivate(placesFile, { 'Places API': keys.googlePlaces })
 
     const { startFakeSpace } = await import('../../src/server/dev/fakeSpace')
     const spaceStore = join(scratch, 'store')
@@ -559,7 +571,8 @@ export async function startLegacyStack(
       env.TS_FFMPEG = FFMPEG_FULL
       env.PATH = `${dirname(FFMPEG_FULL)}:${process.env.PATH ?? ''}`
     }
-    if (anthropic !== '') {
+    if (keys.googlePlaces != null) env.TS_GOOGLE_PLACES_KEY_FILE = placesFile
+    if (Object.keys(keys).length > 0) {
       env.TS_DICTATION_CONFIG = dictationConfig
       env.TS_TESS_CONFIG = dictationConfig
       env.E2E_LOCAL_SETTINGS = localSettings
