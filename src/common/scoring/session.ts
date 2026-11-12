@@ -55,7 +55,6 @@ import {
   type Side
 } from './state'
 import { namesIn, withoutNames } from './storedNames'
-import type { ScoringUpdate } from './updates'
 
 /** The identities and positions to which an authored play gives credit. */
 function attributionOf(play: GamePlay): string {
@@ -137,7 +136,6 @@ export function upcoming(session: GameState): {
 }
 
 export interface StoredGame {
-  scoringUpdates?: ScoringUpdate[]
   /** Who authored each stored action, and who removed which (`authorship`). */
   scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
@@ -553,7 +551,6 @@ function reusedActions(
 
 export class ScoringSession {
   /** Server-accepted descriptions, never synthesized by optimistic writes. */
-  scoringUpdates: readonly ScoringUpdate[] = []
   private acceptedPicture: AcceptedPicture | undefined
   private mutationPending = false
   private knownMutation: ScoringMutation | undefined
@@ -895,7 +892,6 @@ export class ScoringSession {
           },
       options
     )
-    session.scoringUpdates = loaded.scoringUpdates ?? []
     session.knownMutation = loaded.scoringMutation
     session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
@@ -1652,8 +1648,6 @@ export class ScoringSession {
       // An acknowledgment or competing reload can land during the read.
       if (snapshot === this.tagSnapshot) break
     }
-    const updatesMoved =
-      this.scoringUpdates.at(-1)?.id !== fresh.scoringUpdates.at(-1)?.id
     // Plays unchanged, but who is credited with them, or a removal, moved.
     const authorshipMoved = !sameAccepted(
       this.acceptedPicture,
@@ -1664,7 +1658,6 @@ export class ScoringSession {
         this.acceptedPicture,
         fresh.acceptedPicture
       )
-    this.scoringUpdates = fresh.scoringUpdates
     this.knownMutation = fresh.knownMutation
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
@@ -1679,7 +1672,7 @@ export class ScoringSession {
       JSON.stringify(fresh.game) === JSON.stringify(this.game) &&
       JSON.stringify(fresh.eventTargets) === JSON.stringify(this.eventTargets)
     ) {
-      if (swapMoved || updatesMoved || authorshipMoved) this.notify()
+      if (swapMoved || authorshipMoved) this.notify()
       return false
     }
     this.adopt(fresh)
@@ -1689,7 +1682,6 @@ export class ScoringSession {
 
   /** Takes up everything `fresh`, a new read of the same game, holds. */
   private adopt(fresh: ScoringSession): void {
-    this.scoringUpdates = fresh.scoringUpdates
     this.acceptedPicture = reusedActions(
       this.acceptedPicture,
       fresh.acceptedPicture
@@ -2761,8 +2753,6 @@ export class ScoringSession {
       this.unconfirmedScoring = []
       if (this.authoredMutation === attempt.mutation)
         this.mutationPending = false
-      if (answer?.scoringUpdates != null)
-        this.scoringUpdates = answer.scoringUpdates
       if (answer?.scoringMutation != null)
         this.knownMutation = answer.scoringMutation
       if (answer?.lineupsDigest !== undefined) {

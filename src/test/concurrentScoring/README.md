@@ -81,14 +81,27 @@ reported recovery upper bound, so it is not an exact render timestamp.
 
 ## Remote scoring descriptions
 
-`--scenario updates --surface chromium` exercises the attributed update panel
+`--scenario updates --surface chromium` exercises the remote scoring panel
 with two authenticated scorers, accepted Undo, decorated pitch replacement,
-collapse/dismiss/reopen, a scrollable stream and scoring after switching devices.
+collapse/dismiss/reopen, a scrollable log and scoring after switching devices.
 Set `TS_CONCURRENT_VIEWPORT_HEIGHT=620` for the short mobile-web viewport; omit it
-for the normal phone height. Each attempt still requires a fresh fixture.
+for the normal phone height. It writes `authorship-answer.json`: the stored-game
+read's top-level keys and its `scoringAuthorship`.
 
-The server retains the most recent 100 accepted scoring updates, each with at
-most 100 description lines. This is an informational recent stream, not a full
-audit archive or an input to conflict arbitration. Clients establish their
-baseline when opening a game, suppress their own user's updates and duplicate
-IDs, and retain each accepted update's authenticated author through reconnects.
+`--scenario pending-stretch --surface chromium` holds scorer B's save while B
+records a ball (the screen takes no further pitch until it is answered) and A
+records a called strike, then releases it: B's post is
+superseded and rebased. B's panel must show only A's strike, named; A's panel
+must show only what B then scores, credited to B.
+
+The server words nothing. With every write of a game's plays it keeps
+`games.scoring_authorship`: the user whose accepted request added each stored
+action (nobody for a write no scorer made), and the latest 100 removals of
+stored actions by a scorer, as structured actions. Reads and save answers carry
+it as `scoringAuthorship`, with merged accounts as their survivors and each
+author's short name. Each client builds the log itself, in its own language,
+from the plays it syncs: a row is one scorer's consecutive actions within a
+batter's run, credited to that scorer, or a removal. It shows only other
+scorers' actions and removals new since the panel opened, and only from the
+history the server has confirmed, never this device's unsaved scoring. Each
+attempt still requires a fresh fixture.

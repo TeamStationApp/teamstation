@@ -108,7 +108,6 @@ describe('live-pitch', function () {
       'edits',
       'currentPlay',
       'scoringAuthorship',
-      'scoringUpdates',
       'scoringMutation',
       'lineupsDigest',
       'playsDigest',
