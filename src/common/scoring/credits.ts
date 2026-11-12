@@ -251,8 +251,10 @@ export function statLines(plays: readonly GamePlay[]): {
   batting: Record<number, BattingLine>
   pitching: Record<number, PitchingLine>
 } {
-  const batting: Record<number, BattingLine> = {}
-  const pitching: Record<number, PitchingLine> = {}
+  // Keyed by ids read from stored plays: without a prototype, no id can reach
+  // Object.prototype.
+  const batting: Record<number, BattingLine> = Object.create(null)
+  const pitching: Record<number, PitchingLine> = Object.create(null)
   const bat = (id: number): BattingLine => (batting[id] ??= blankBatting())
   const pitch = (id: number): PitchingLine => (pitching[id] ??= blankPitching())
   for (const play of plays) {
