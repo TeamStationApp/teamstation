@@ -82,6 +82,11 @@ import { localTagRevision } from './tagRevisions'
  * tag are always queued: the scoring screen opens the swapped copy, and
  * closes the tag editor, before the server has answered.
  *
+ * When another device's swap or reset of a game is accepted first, the
+ * game's chain is given up (`giveUp`): nothing more of it is sent, what of
+ * it is on its way is answered as the server judges it, and the rest is
+ * dropped and counted, and the game read again.
+ *
  * The drain runs when woken: the app coming to the front, the network
  * coming back, any request that succeeded. It never runs in the background.
  */
@@ -632,6 +637,36 @@ function isRetryable(error: unknown, call: QueuedCall): boolean {
 const isHeld = (state: OutboxState): boolean =>
   state === 'parked' || state === 'dead'
 
+/** A direct send let go, its request still out: whether the server took it. */
+interface ReleasedSend {
+  chain: string
+  kept: Promise<boolean>
+}
+
+/**
+ * The rows giving up `chain` drops: all of its own, and a held create one of
+ * them waits for that no row of another chain left behind waits for too.
+ */
+function droppedWith(rows: OutboxRow[], chain: string): Set<string> {
+  const own = rows.filter(row => row.chain === chain)
+  const byId = new Map(rows.map(row => [row.id, row]))
+  const dropped = new Set(own.map(row => row.id))
+  for (const row of own)
+    for (const id of row.dependsOn) {
+      const create = byId.get(id)
+      if (create == null || !isHeld(create.state)) continue
+      const sharedWith = rows.some(
+        other =>
+          !dropped.has(other.id) &&
+          other.chain !== chain &&
+          other.chain !== create.chain &&
+          other.dependsOn.includes(id)
+      )
+      if (!sharedWith) dropped.add(id)
+    }
+  return dropped
+}
+
 type Json = Record<string, unknown>
 
 const parsed = (text: string): Json => {
@@ -877,6 +912,23 @@ export class Outbox {
   /** Each chain's direct send in flight, settled once it is answered. */
   private readonly directSends = new Map<string, Promise<void>>()
   /**
+   * The row the drain picked and has not yet settled, from the transaction
+   * that put it in flight: `done` settles once the drain is through with it.
+   */
+  private drainSend?: { chain: string; done: Promise<void>; end: () => void }
+  /**
+   * Chains being given up (`giveUp`): the drain sends none of their rows,
+   * while what of them is already on its way is answered.
+   */
+  private readonly givingUp = new Set<string>()
+  /**
+   * Direct sends let go (`handoff.release`) and queued as sent while their
+   * request is still out, by the key they were sent with, which their row
+   * keeps: whether the server took it, once it answers. Kept until the drain
+   * settles the row or `giveUp` reads it.
+   */
+  private readonly released = new Map<string, ReleasedSend>()
+  /**
    * Direct sends in flight that a swap or a tag queued behind them wrote onto
    * the phone's documents first (`writeAhead`), by row id: the phone's
    * answer to each, as a queued write's would be.
@@ -1018,26 +1070,74 @@ export class Outbox {
       const rows = await tx.outbox()
       const own = rows.filter(row => row.chain === chain)
       if (own.some(row => row.state === 'inflight')) return undefined
-      const byId = new Map(rows.map(row => [row.id, row]))
-      const dropped = new Set(own.map(row => row.id))
-      for (const row of own)
-        for (const id of row.dependsOn) {
-          const create = byId.get(id)
-          if (create == null || !isHeld(create.state)) continue
-          const sharedWith = rows.some(
-            other =>
-              !dropped.has(other.id) &&
-              other.chain !== chain &&
-              other.chain !== create.chain &&
-              other.dependsOn.includes(id)
-          )
-          if (!sharedWith) dropped.add(id)
-        }
-      return await this.drop(tx, dropped)
+      return await this.drop(tx, droppedWith(rows, chain))
     })
     if (reads == null) return false
     this.notify()
     return await this.reread(reads)
+  }
+
+  /**
+   * Gives up every row of `chain`, as `discard` does, once what of it is on
+   * its way has been answered: for a game another device swapped or reset,
+   * whose queued writes name its old sides or the plays the reset deleted.
+   * From the call on, the drain sends nothing more of the chain; a direct
+   * send of it in flight, and a send of the drain's, are waited for and
+   * land as they would, the server judging them, and then every row left
+   * (one queued after a send that got no answer in time too) is dropped,
+   * and a game's documents are read again from the server. Answers how many
+   * of the chain's rows were given up.
+   */
+  async giveUp(chain: string): Promise<number> {
+    // Taken before anything is awaited: no drain picks the chain from here.
+    this.givingUp.add(chain)
+    try {
+      for (;;) {
+        await this.directSends.get(chain)
+        if (this.drainSend?.chain === chain) await this.drainSend.done
+        // A send let go is still out: it is answered before its row goes,
+        // and a row the server took is not counted as given up.
+        const out = [...this.released].filter(
+          ([, send]) => send.chain === chain
+        )
+        const kept = new Set<string>()
+        for (const [key, send] of out) if (await send.kept) kept.add(key)
+        const store = await this.options.store()
+        if (store == null) return 0
+        const given = await store.atomically(async tx => {
+          const rows = await tx.outbox()
+          const own = rows.filter(row => row.chain === chain)
+          // A send that began meanwhile is answered first. An inflight row
+          // that is neither is a lease left by an app that stopped.
+          if (
+            this.directSends.has(chain) ||
+            this.drainSend?.chain === chain ||
+            own.some(row => this.direct.has(row.id))
+          )
+            return undefined
+          for (const [key] of out) this.released.delete(key)
+          if (own.length === 0) return { count: 0, reads: [] }
+          return {
+            count: own.filter(row => !kept.has(row.idempotencyKey)).length,
+            reads: await this.drop(tx, droppedWith(rows, chain))
+          }
+        })
+        if (given == null) continue
+        if (given.count > 0) this.notify()
+        // The game's documents are read again whatever was given up: the
+        // phone's copy is of the sides, or the plays, from before.
+        const gameId = chain.startsWith('game:') ? chain.slice(5) : undefined
+        await this.reread([
+          ...new Set([
+            ...given.reads,
+            ...(gameId == null ? [] : gameDocuments(gameId).map(d => d.path))
+          ])
+        ])
+        return given.count
+      }
+    } finally {
+      this.givingUp.delete(chain)
+    }
   }
 
   /**
@@ -1377,13 +1477,9 @@ export class Outbox {
     const chain = chainOf(call)
     let answer: unknown
     let released = false
+    let sent: Promise<unknown> | undefined
     try {
-      const sent = this.options.send(
-        method,
-        call.path,
-        sentBody(call, body),
-        key
-      )
+      sent = this.options.send(method, call.path, sentBody(call, body), key)
       answer = await (release == null
         ? sent
         : Promise.race([
@@ -1420,7 +1516,16 @@ export class Outbox {
         this.wake(true)
         throw error
       }
-      // Let go by the session, it is no sign of the network.
+      // Let go by the session, it is no sign of the network; its request is
+      // still out, and whether the server took it is kept for `giveUp`.
+      if (released && sent != null)
+        this.released.set(key, {
+          chain,
+          kept: sent.then(
+            taken => (taken as Json | null)?.superseded !== true,
+            () => false
+          )
+        })
       if (update) this.outdated.add(chain)
       else if (!released)
         this.failed(
@@ -3003,6 +3108,7 @@ export class Outbox {
       if (
         isHeld(head.state) ||
         this.outdated.has(head.chain) ||
+        this.givingUp.has(head.chain) ||
         skipped.has(head.chain)
       )
         continue
@@ -3044,7 +3150,21 @@ export class Outbox {
       leaseUntil: now + LEASE_MS,
       ...(text === row.body ? {} : { body: text })
     })
+    // In the transaction that puts it in flight: a chain being given up
+    // waits for it from here.
+    let end!: () => void
+    const done = new Promise<void>(resolve => {
+      end = resolve
+    })
+    this.drainSend = { chain: row.chain, done, end }
     return { row, call, body: JSON.parse(text) as unknown, changed }
+  }
+
+  /** The drain is through with the row it picked. */
+  private endDrainSend(): void {
+    const send = this.drainSend
+    this.drainSend = undefined
+    send?.end()
   }
 
   /** Parks `row` and every later row of its chain. */
@@ -3064,6 +3184,15 @@ export class Outbox {
   }
 
   private async drainOnce(): Promise<void> {
+    try {
+      await this.drainRows()
+    } finally {
+      // However the drain ends, it is through with the row it picked.
+      this.endDrainSend()
+    }
+  }
+
+  private async drainRows(): Promise<void> {
     // What this drain made of each game's older saves, read once for all of
     // a game's rows.
     const verdicts = new Map<string, OlderVerdict>()
@@ -3072,6 +3201,8 @@ export class Outbox {
     // stops them all.
     const skipped = new Set<string>()
     for (;;) {
+      // Through with the row the last pass picked, however it went.
+      this.endDrainSend()
       if (!this.active) return
       if (this.paused != null) {
         if (this.options.token() === this.paused.token) return
@@ -3139,6 +3270,8 @@ export class Outbox {
         outcome = outcomeOf(error, call)
       }
       const go = await this.settle(store, row, call, picked.body, outcome)
+      // Answered under its key, the row's own send says what the server did.
+      if (outcome.kind !== 'retry') this.released.delete(row.idempotencyKey)
       this.notify()
       if (!go) {
         if (outcome.kind !== 'retry' || outcome.network) return

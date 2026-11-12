@@ -356,6 +356,17 @@ export class CachingClient extends TeamStationClient {
   }
 
   /**
+   * Gives up every write the phone holds for a game another device swapped
+   * or reset, once those of them already on their way are answered: the
+   * queue sends no more of them from the call on, a send in flight lands as
+   * the server judges it, and every one left is dropped and its documents
+   * read again. Answers how many were given up.
+   */
+  async giveUpGame(gameId: string): Promise<number> {
+    return await this.outbox.giveUp(`game:${gameId}`)
+  }
+
+  /**
    * Queues a swap of the game's home and away behind every write already
    * queued for it, and answers it at once from the phone's copy of the game
    * (`swappedDocuments`): the stored game, lineups and plays are written

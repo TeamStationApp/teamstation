@@ -5722,6 +5722,152 @@ describe('the phone outbox', function () {
           }
         ).plays
 
+      describe("when another device's swap or reset is accepted first (#260)", function () {
+        const STALE = refusal(
+          409,
+          'conflict',
+          'Somebody else changed the lineups since this game was read',
+          { stale: true }
+        )
+        /** A second save, queued behind the post still out. */
+        async function queueBehind(p: ReturnType<typeof phone>): Promise<void> {
+          await p.client.saveGameEvents('g1', {
+            plays: [play(2)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          expect(states(p)).deep.equals([
+            ['/games/g1/events', 'inflight'],
+            ['/games/g1/events', 'pending']
+          ])
+        }
+
+        it('waits for the post in flight, sends nothing queued behind it, and gives up and counts the queued save once the post is refused as stale', async function () {
+          const { p, saving, letGo } = await heldPost()
+          await queueBehind(p)
+          const given = p.client.giveUpGame('g1')
+          // Woken while it is given up, the queue sends nothing of the game.
+          await p.client.drainOutbox()
+          expect(writes(p)).deep.equals(['POST /games/g1/events'])
+          letGo(STALE)
+          expect(await given).equals(1)
+          // The session takes the refusal of its own post.
+          expect(await saving).to.have.property('error')
+          expect(p.rows()).deep.equals([])
+          p.client.wakeOutbox(true)
+          await p.client.drainOutbox()
+          expect(writes(p)).deep.equals(['POST /games/g1/events'])
+        })
+
+        it('waits for the post in flight, and gives up the queued save behind it once the post lands before the swap', async function () {
+          const { p, saving, letGo } = await heldPost()
+          await queueBehind(p)
+          const given = p.client.giveUpGame('g1')
+          letGo()
+          expect(await given).equals(1)
+          expect(await saving).to.have.property('answer')
+          expect(p.rows()).deep.equals([])
+          await p.client.drainOutbox()
+          expect(writes(p)).deep.equals(['POST /games/g1/events'])
+        })
+
+        it('waits for a post the session let go while its request is still out, and counts it only when the server did not take it', async function () {
+          for (const taken of [true, false]) {
+            const { g, p, saving, letGo, release } = await heldPost()
+            // The link stalls: the post's request is out, and nothing else
+            // gets through.
+            g.online.value = false
+            // The session moved on: the post is the queue's, sent as it was.
+            release()
+            expect(await saving).to.have.property('answer')
+            expect(states(p)).deep.equals([['/games/g1/events', 'pending']])
+            await p.client.saveGameEvents('g1', {
+              plays: [play(2)],
+              remove: [],
+              lineupsBase: 'D0',
+              generation: 1
+            })
+            let settled = false
+            const given = p.client.giveUpGame('g1').then(count => {
+              settled = true
+              return count
+            })
+            await p.client.drainOutbox()
+            await new Promise(resolve => setTimeout(resolve, 20))
+            // Nothing is dropped while its request is out.
+            expect(settled, `taken ${String(taken)}`).equals(false)
+            expect(p.rows()).length(2)
+            const writesBefore = writes(p).length
+            letGo(taken ? { body: { plays: [] } } : STALE)
+            expect(await given, `taken ${String(taken)}`).equals(taken ? 1 : 2)
+            expect(p.rows()).deep.equals([])
+            g.online.value = true
+            p.client.wakeOutbox(true)
+            await p.client.drainOutbox()
+            expect(writes(p).filter(w => w.endsWith('/events'))).length(
+              writesBefore
+            )
+          }
+        })
+
+        it("waits for the drain's send of the game, and drops what is queued behind it", async function () {
+          const g = gameServer()
+          let letGo!: () => void
+          const gate = new Promise<void>(resolve => {
+            letGo = resolve
+          })
+          let sends = 0
+          const p = phone(async sent => {
+            if (
+              sent.path === '/games/g1/events' &&
+              sent.method === 'POST' &&
+              g.online.value
+            ) {
+              sends++
+              if (sends === 1) {
+                await gate
+                return STALE
+              }
+            }
+            return await g.handler(sent)
+          })
+          await p.client.game('g1')
+          await p.client.gameLineups('g1')
+          await p.client.gameEvents('g1')
+          // No signal: both saves queue on the phone.
+          for (const index of [1, 2])
+            await p.client.saveGameEvents('g1', {
+              plays: [play(index)],
+              remove: [],
+              lineupsBase: 'D0',
+              generation: 1
+            })
+          expect(p.rows()).length(2)
+          g.online.value = true
+          p.client.wakeOutbox(true)
+          const draining = p.client.drainOutbox()
+          const sent = (): number => sends
+          for (let i = 0; i < 2000 && sent() === 0; i++)
+            await new Promise(resolve => setTimeout(resolve, 1))
+          expect(states(p)[0]).deep.equals(['/games/g1/events', 'inflight'])
+          const given = p.client.giveUpGame('g1')
+          letGo()
+          await draining
+          // The first was parked by its refusal, and goes with the second.
+          expect(await given).equals(2)
+          expect(p.rows()).deep.equals([])
+          p.client.wakeOutbox(true)
+          await p.client.drainOutbox()
+          expect(sends).equals(1)
+        })
+
+        it('answers none given up for a game with nothing queued', async function () {
+          const p = phone(() => 'offline')
+          expect(await p.client.giveUpGame('g1')).equals(0)
+        })
+      })
+
       it("says the post is the phone's before the server answers, queues a tag behind it at once with the post written first, and lands the answer under the tag", async function () {
         const { g, p, taken, saving, letGo } = await heldPost()
         expect(taken(), 'taken while the server holds it').equals(true)

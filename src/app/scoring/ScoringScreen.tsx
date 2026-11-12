@@ -678,10 +678,20 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     },
     [props.client, props.gameId, props.userId, source, retry]
   )
-  // Home and away swapped under the open game: it is opened again at once,
-  // as a retry opens it, on its new sides with their rosters, and the scorer
-  // is told.
+  // Home and away swapped under the open game: it is opened again, as a
+  // retry opens it, on its new sides with their rosters, and the scorer is
+  // told. Another device's swap or reset waits for a save on its way to
+  // come back first; a swap of this screen's own opens at once.
   const reopenedFrom = useRef<GameSession>(undefined)
+  // A wait for a save on its way, stopped when the screen moves on.
+  const waitingForSave = useRef<(() => void) | undefined>(undefined)
+  useEffect(
+    () => () => {
+      waitingForSave.current?.()
+      waitingForSave.current = undefined
+    },
+    [opened]
+  )
   // The game on screen is the one last opened: not one kept on screen while
   // it opens again, which nothing reads, saves or reopens any more.
   const reopened = opened != null && openedAttempt === retry
@@ -734,28 +744,44 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
       // Its changes name the old sides, or plays a reset deleted: it saves
       // nothing more. A swap of this screen's own went behind its changes,
       // on the phone's queue or the web's, and the phone's queue sends the
-      // writes ahead of a swap before it. Another device's swap loses what
-      // a stale save's rebase dropped and what was not saved, and on a
-      // phone the writes its queue still holds for the game: they name the
-      // old sides, with no swap of this phone's ahead of them, so they are
-      // given up, as Use Server's Copy does, and counted. The web's own swap
-      // owns its session from the tap: it closes it once its changes land.
+      // writes ahead of a swap before it. The web's own swap owns its
+      // session from the tap: it closes it once its changes land.
       if (!own || props.client instanceof CachingClient) session.close()
       setClosedSession(session)
       if (!own) {
+        // Another device's swap or reset was accepted first (#260). A save
+        // on its way is waited for: one that landed before it went with it,
+        // and one refused as stale is lost, with what its rebase dropped
+        // and what was not saved. On a phone the queue stops sending the
+        // game at once, and once what of it is on its way is answered, the
+        // writes it still holds for the game are given up, as Use Server's
+        // Copy does, and counted: they name the old sides, or plays the
+        // reset deleted, with no swap of this phone's ahead of them.
         const client = props.client
-        const unsaved = session.lostToSwap + session.pending
-        const queued =
+        const given =
           client instanceof CachingClient
-            ? discardStale(client, props.gameId)
+            ? client.giveUpGame(props.gameId).catch(() => 0)
             : Promise.resolve(0)
-        queued
-          .catch(() => 0)
-          .then(given => {
-            setSwapNotice(replacedNotice(change, unsaved + given))
-            setRetry(value => value + 1)
-          })
-          .catch(() => undefined)
+        const reopen = (): void => {
+          const unsaved = session.lostToSwap + session.pending
+          given
+            .then(count => {
+              setSwapNotice(replacedNotice(change, unsaved + count))
+              setRetry(value => value + 1)
+            })
+            .catch(() => undefined)
+        }
+        if (!session.saving) {
+          reopen()
+          return false
+        }
+        const stop = session.subscribe(() => {
+          if (session.saving) return
+          stop()
+          waitingForSave.current = undefined
+          reopen()
+        })
+        waitingForSave.current = stop
         return false
       }
       setSwapNotice(replacedNotice(change, 0))
@@ -4513,22 +4539,6 @@ function ScoringPanel(props: {
       )}
     </BaseballScreen>
   )
-}
-
-/**
- * Gives up the writes a phone's queue holds for `gameId` when another
- * device swapped its sides, and answers how many there were: they were built
- * on the old sides. None when nothing is queued.
- */
-async function discardStale(
-  client: CachingClient,
-  gameId: string
-): Promise<number> {
-  const queue = await client.outboxSummary()
-  const rows = queue.chains[`game:${gameId}`] ?? 0
-  if (rows === 0 && queue.games[gameId] == null) return 0
-  await client.discardGame(gameId)
-  return Math.max(rows, 1)
 }
 
 /**

@@ -1667,6 +1667,132 @@ describe('scoring an upcoming game on the phone with no signal (S6)', function (
         return Date.now() - tapped
       }
 
+      describe("when another device's swap or reset is accepted first (#260)", function () {
+        /** A socket the test tells of the game as the server leaves it. */
+        function testSocket(): {
+          socket: GameChanges
+          tell: (data: Record<string, unknown>) => Promise<void>
+        } {
+          const listeners: Array<(event: GameSocketEvent) => void> = []
+          return {
+            socket: {
+              subscribe: (_gameId, listener) => {
+                listeners.push(listener)
+                return () => undefined
+              }
+            },
+            tell: async data => {
+              const event: GameSocketEvent = {
+                type: 'change',
+                gameId: 'g1',
+                kind: 'game',
+                at: new Date().toISOString(),
+                data: {
+                  status: 'inProgress',
+                  awayScore: 0,
+                  homeScore: 0,
+                  ...data
+                }
+              }
+              await act(async () => {
+                for (const listener of listeners) listener(event)
+              })
+            }
+          }
+        }
+        /** Another device's swap (or reset and swap), as the server takes it. */
+        async function otherDeviceSwaps(
+          net: ReturnType<typeof fieldServer>,
+          reset: boolean
+        ): Promise<void> {
+          const plays = reset
+            ? ((await (
+                await net.fetch('http://x/api/v1/games/g1/events')
+              ).json()) as { playsDigest: string })
+            : undefined
+          const answer = await net.fetch(
+            'http://x/api/v1/games/g1/swap-sides',
+            {
+              method: 'POST',
+              body: JSON.stringify({
+                homeTeamId: 'home',
+                awayTeamId: 'away',
+                ...(plays == null ? {} : { playsDigest: plays.playsDigest })
+              })
+            }
+          )
+          expect(answer.status).equals(200)
+        }
+        const eventPosts = (net: ReturnType<typeof fieldServer>): number =>
+          net.writes.filter(write => write === 'POST /games/g1/events').length
+
+        /** The events posts that reached the server, each with its scoring mutation. */
+        const mutations = (net: ReturnType<typeof fieldServer>): unknown[] =>
+          net.posts
+            .filter(post => post.path === '/games/g1/events')
+            .map(post => (post.body.scoringMutation as { id?: unknown })?.id)
+
+        for (const reset of [false, true])
+          it(`with a pitch out and another made behind it, waits for the pitch, sends nothing more, gives what is left up, and says so (${reset ? 'reset' : 'swap'})`, async function () {
+            const { client, net, rows } = await preparedPhone()
+            net.staleOnSwap = true
+            const { socket, tell } = testSocket()
+            await open(client, socket)
+            const letGo = await pitchOut(client, net, rows)
+            // A second pitch while the first is out.
+            await click('Ball')
+            await settle(50)
+            expect(text()).includes('3 balls')
+            expect(eventPosts(net)).equals(1)
+            const [out] = mutations(net)
+
+            await otherDeviceSwaps(net, reset)
+            await tell({
+              homeTeamId: 'away',
+              awayTeamId: 'home',
+              generation: reset ? 1 : 0
+            })
+            await settle(100)
+            // The pitch out is answered first: the game is not opened again,
+            // and nothing is given up, before.
+            expect(states(rows)).deep.equals([['/games/g1/events', 'inflight']])
+            expect(text()).not.includes('swapped')
+            expect(homeOf()).equals('Owls 0 · Hawks 0')
+            await act(async () => {
+              client.wakeOutbox(true)
+              await client.drainOutbox()
+            })
+            expect(eventPosts(net), 'nothing sent behind the pitch').equals(1)
+
+            // The server refuses the pitch: it was built on the old sides,
+            // or on the plays the reset deleted.
+            letGo()
+            await settle(200)
+            expect(rows()).deep.equals([])
+            // Both pitches were of the at-bat on screen: one change.
+            expect(text()).includes(
+              reset
+                ? 'Home and away were swapped and the game was reset, so 1 change not yet saved before the reset was not kept.'
+                : 'Home and away were swapped, so changes not yet saved before the swap were not kept.'
+            )
+            expect(homeOf()).equals('Hawks 0 · Owls 0')
+            await act(async () => {
+              client.wakeOutbox(true)
+              await client.drainOutbox()
+            })
+            await settle(50)
+            // Only the pitch that was out went to the server (and, refused,
+            // once more with its full history, as develop retries a
+            // definitive refusal once); none was taken under the swapped
+            // sides.
+            expect(new Set(mutations(net))).deep.equals(new Set([out]))
+            const kept = (await (
+              await net.fetch('http://x/api/v1/games/g1/events')
+            ).json()) as { currentPlay: { count?: { balls: number } } | null }
+            expect(kept.currentPlay?.count?.balls ?? 0).equals(reset ? 0 : 1)
+          })
+      })
+
       it('closes Confirm Swap at once and shows the exchanged sides, the swap queued behind the pitch, and sends them in that order once answered', async function () {
         const { client, net, rows } = await preparedPhone()
         await open(client)

@@ -44,6 +44,12 @@ export function fieldServer(stored: {
   refuseTags: boolean
   /** While set, a post of plays is refused for good, once `holdPlays` lets it go. */
   refusePlays: boolean
+  /**
+   * While set, a post of plays answered once a swap or a reset has landed,
+   * built on the lineups or the plays generation before it, is refused as
+   * stale, as the server's lineups and generation checks refuse it.
+   */
+  staleOnSwap: boolean
 } {
   const plays = new Map(stored.plays.map(play => [play.about.atBatIndex, play]))
   let currentPlay = stored.currentPlay
@@ -161,6 +167,7 @@ export function fieldServer(stored: {
     writes: [] as string[],
     refuseTags: false,
     refusePlays: false,
+    staleOnSwap: false,
     fetch: (async (url: unknown, init?: RequestInit) => {
       if (state.hold != null) {
         await state.hold
@@ -279,6 +286,24 @@ export function fieldServer(stored: {
           })
         if (path === '/games/g1/events') {
           await state.holdPlays
+          // Built on the plays a reset deleted, as the server tells it.
+          if (state.staleOnSwap && body.generation !== generation)
+            return json(409, {
+              code: 'conflict',
+              message: 'This game was reset since it was read',
+              details: { stale: true, generation }
+            })
+          if (
+            state.staleOnSwap &&
+            swapped &&
+            body.lineupsBase !== 'lineups-swapped'
+          )
+            return json(409, {
+              code: 'conflict',
+              message:
+                'Somebody else changed the lineups since this game was read',
+              details: { stale: true }
+            })
           if (state.refusePlays)
             return json(409, {
               code: 'conflict',
