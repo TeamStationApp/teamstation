@@ -5,8 +5,13 @@ import {
   managerCauseOfOption,
   requiredCause
 } from './capacity'
-import { buildContext, type SeasonContext } from './context'
-import { requiredLines, runMatchups, settleTargets, unmetLines } from './counts'
+import { buildContextSteps, type SeasonContext } from './context'
+import {
+  requiredLines,
+  runMatchups,
+  settleTargetsSteps,
+  unmetLines
+} from './counts'
 import {
   chooseOptions,
   fairnessRows,
@@ -15,8 +20,9 @@ import {
   SEEDS,
   WEIGHTINGS
 } from './options'
-import { place, type Placement } from './placement'
+import { type Placement, placeSteps } from './placement'
 import { nthSeed } from './random'
+import { finishSteps, finishStepsAsync } from './steps'
 import type { EngineInput, EngineResult, ScheduleOption } from './types'
 
 /** A score as stored: rounded, so the JSON reads cleanly and compares stably. */
@@ -36,11 +42,22 @@ function storedScore(score: readonly number[]): number[] {
  * instead, with no lowering, and reports any it couldn't place.
  */
 export function buildOptions(input: EngineInput): EngineResult {
-  const context = buildContext(input)
+  return finishSteps(buildOptionsSteps(input))
+}
+
+/** The same deterministic search, yielding during context and placement work. */
+export async function buildOptionsAsync(
+  input: EngineInput
+): Promise<EngineResult> {
+  return await finishStepsAsync(buildOptionsSteps(input))
+}
+
+function* buildOptionsSteps(input: EngineInput): Generator<void, EngineResult> {
+  const context = yield* buildContextSteps(input)
   const blocking = blockingCause(context)
   if (blocking != null) return { options: [], blocking }
 
-  const settled = settleTargets(context, input.seed)
+  const settled = yield* settleTargetsSteps(context, input.seed)
   const candidates: Placement[] = []
   for (let k = 0; k < SEEDS; k++) {
     const seed = nthSeed(input.seed, k)
@@ -48,13 +65,13 @@ export function buildOptions(input: EngineInput): EngineResult {
       k === 0
         ? settled.placement.matchups
         : runMatchups(context, settled.targets, seed)
-    WEIGHTINGS.forEach((order, w) => {
+    for (const [w, order] of WEIGHTINGS.entries()) {
       candidates.push(
         k === 0 && w === 0
           ? settled.placement
-          : place(context, matchups, nthSeed(seed, w), order)
+          : yield* placeSteps(context, matchups, nthSeed(seed, w), order)
       )
-    })
+    }
   }
 
   const causes = new Map<string, string>()

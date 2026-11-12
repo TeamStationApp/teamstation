@@ -7,12 +7,19 @@ import {
   type GamePoint,
   LocalClock,
   MINUTE,
-  seasonSlots,
+  seasonSlotsSteps,
   type SeasonWindow,
   type Slot,
   type Supply
 } from './slots'
-import type { EngineField, EngineInput, EngineSeason, FixedGame } from './types'
+import { finishSteps } from './steps'
+import type {
+  EngineField,
+  EngineInput,
+  EngineSeason,
+  FixedGame,
+  PlannedGame
+} from './types'
 
 /**
  * A season's slots of one field on one date in one part of the day. Every
@@ -89,17 +96,56 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
 }
 
 /** Reads the input into the slots, groups and starting occupancy of the run. */
-export function buildContext(input: EngineInput): RunContext {
+export function buildContext(
+  input: EngineInput,
+  submitted?: readonly PlannedGame[]
+): RunContext {
+  return finishSteps(buildContextSteps(input, submitted))
+}
+
+export function* buildContextSteps(
+  input: EngineInput,
+  submitted?: readonly PlannedGame[]
+): Generator<void, RunContext> {
+  if (submitted != null) {
+    // Bound calendar work before touching availability, even for an empty result.
+    // Normal runs are a few fields over a few months; split larger runs by season.
+    let fieldDays = 0
+    for (const season of input.seasons) {
+      const days = Math.max(
+        0,
+        dayNumber(season.settings.endsOn) -
+          dayNumber(season.settings.startsOn) +
+          1
+      )
+      const fields = input.fields.filter(
+        field =>
+          (season.settings.fieldIds ?? []).includes(field.id) &&
+          field.sizes.includes(season.settings.fieldSize)
+      ).length
+      fieldDays += days * fields
+      if (!Number.isFinite(fieldDays) || fieldDays > 10000)
+        throw new TypeError(
+          'This scheduling run spans too many field days; select fewer seasons or shorter date ranges'
+        )
+    }
+  }
   const fieldZones = new Map(
     input.fields.map(field => [field.id, field.availability.timezone])
   )
   const clock = new LocalClock()
-  const seasons = input.seasons.map((season, index): SeasonContext => {
-    const { slots, windows, supply } = seasonSlots(input, season, clock)
+  const seasons: SeasonContext[] = []
+  for (const [index, season] of input.seasons.entries()) {
+    const { slots, windows, supply } = yield* seasonSlotsSteps(
+      input,
+      season,
+      clock,
+      submitted
+    )
     const zones = seasonZones(input.fields, season.settings)
     const zoneOf = (fieldId: string | null): string =>
       (fieldId == null ? undefined : fieldZones.get(fieldId)) ?? zones[0]
-    return {
+    seasons.push({
       index,
       season,
       teams: seasonTeams(season),
@@ -137,8 +183,8 @@ export function buildContext(input: EngineInput): RunContext {
         })),
       fieldFree: new Uint8Array(slots.length),
       teamFree: new Map()
-    }
-  })
+    })
+  }
   const context: RunContext = {
     input,
     seasons,
@@ -150,11 +196,13 @@ export function buildContext(input: EngineInput): RunContext {
         seasons.some(season => season.season.id === matchup.seasonId)
       ) ?? null
   }
+  if (submitted != null) return context
   const occupancy = new Occupancy(context)
   for (const season of seasons) {
-    season.slots.forEach((slot, i) => {
+    for (const [i, slot] of season.slots.entries()) {
+      if (i % 128 === 0) yield
       season.fieldFree[i] = occupancy.fieldFits(season, slot) ? 1 : 0
-    })
+    }
     // A required matchup may name a team outside the season's lists.
     const teams = new Set(season.teams)
     for (const matchup of context.required ?? [])
@@ -164,9 +212,10 @@ export function buildContext(input: EngineInput): RunContext {
       }
     for (const team of teams) {
       const free = new Uint8Array(season.slots.length)
-      season.slots.forEach((slot, i) => {
+      for (const [i, slot] of season.slots.entries()) {
+        if (i % 128 === 0) yield
         free[i] = occupancy.teamAvailability(season, team, slot)
-      })
+      }
       season.teamFree.set(team, free)
     }
   }

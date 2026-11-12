@@ -2,9 +2,11 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import type {
-  Publication,
-  SchedulePreview
+import { buildOptions } from '../../common/autoScheduler'
+import {
+  asPreparedPreview,
+  type Publication,
+  type SchedulePreview
 } from '../../common/schedulePreviews'
 import { userIdOfGumbo } from '../../common/userId'
 import {
@@ -51,6 +53,69 @@ describe('publishing a schedule preview', function () {
   })
   afterEach(async () => {
     await w?.close()
+  })
+
+  it('rejects a submitted key that collides with a booking created after preparation', async () => {
+    const { f, teams } = w.fx
+    const response = await f.h.request(
+      'POST',
+      `/leagues/${f.leagueA}/schedule-previews`,
+      { mode: 'full', existing: 'workAround' },
+      101
+    )
+    expect(response.status).equals(201)
+    const prepared = asPreparedPreview(await response.json())
+    const result = buildOptions(prepared.input)
+    const game = result.options[0].games[0]
+    game.key = 'live_after_prepare'
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: game.key,
+        season_id: f.seasonB,
+        home_team_id: teams.Owls,
+        away_team_id: 'tem_account',
+        field_id: game.fieldId,
+        field_size: game.size,
+        status: 'scheduled',
+        start_at: new Date(game.startAt),
+        end_at: new Date(game.endAt)
+      })
+      .execute()
+    const completed = await f.h.request(
+      'PUT',
+      `/schedule-previews/${prepared.id}/result`,
+      result,
+      101
+    )
+    expect(completed.status, await completed.clone().text()).equals(200)
+    const rejected = await publish(prepared.id)
+    expect(rejected.status).equals(409)
+    expect(JSON.stringify(rejected.body)).includes('identifier now matches')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('games')
+          .select('status')
+          .where('id', '=', game.key)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('scheduled')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('schedule_previews')
+          .select('status')
+          .where('id', '=', prepared.id)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('open')
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'cancelled' })
+      .where('id', '=', game.key)
+      .execute()
+    expect((await publish(prepared.id)).status).equals(200)
   })
 
   for (const moving of [false, true]) {
@@ -564,13 +629,16 @@ describe('publishing a schedule preview', function () {
     await f.h.db
       .updateTable('venue_fields')
       .set({
-        hours: JSON.stringify(
-          Array.from({ length: 7 }, (_, weekday) => ({
-            weekday,
-            start: '00:00',
-            end: '23:55'
-          }))
-        )
+        windows: JSON.stringify([
+          {
+            from: '0001-01-01',
+            hours: Array.from({ length: 7 }, (_, weekday) => ({
+              weekday,
+              start: '00:00',
+              end: '23:55'
+            }))
+          }
+        ])
       })
       .where('id', '=', fieldId)
       .execute()
@@ -596,6 +664,7 @@ describe('publishing a schedule preview', function () {
       (
         await w.call(102, 'PUT', `/seasons/${f.seasonB}/schedule-settings`, {
           ...SEASON_A_SETTINGS,
+          fieldIds: [fieldId],
           regularGames: 1,
           exhibitionGames: 0
         })

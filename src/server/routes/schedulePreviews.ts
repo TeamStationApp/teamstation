@@ -9,8 +9,9 @@ import {
 } from '../../common/schedulePreviews'
 import type { Actor } from '../auth/sessions'
 import {
-  buildPreview,
+  completePreview,
   editPreview,
+  preparePreview,
   previewFor,
   previewView
 } from '../autoScheduler/previews'
@@ -59,7 +60,27 @@ export function schedulePreviewRoutes(
       const request = clean(asPreviewRequest, req.body)
       res
         .status(201)
-        .json(await buildPreview(db, actor(req), leagueId, request, clock))
+        .json(await preparePreview(db, actor(req), leagueId, request, clock))
+    })
+  )
+  router.put(
+    '/schedule-previews/:previewId/result',
+    requireActor,
+    withAsync(async (req, res) => {
+      try {
+        res.json(
+          await completePreview(
+            db,
+            actor(req),
+            param(req.params.previewId),
+            req.body,
+            clock
+          )
+        )
+      } catch (error) {
+        if (error instanceof TypeError) throw badRequest(error.message)
+        throw error
+      }
     })
   )
   router.get(

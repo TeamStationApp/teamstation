@@ -13,9 +13,8 @@ import * as setup from '../scheduler/setup'
 import * as staff from '../teams/teamStaff'
 import * as facts from '../venues/fieldWarnings'
 import * as calendar from '../venues/occupancy'
-import * as worker from './buildOffThread'
 import * as notices from './cancel'
-import { buildPreview, editPreview } from './previews'
+import { editPreview, preparePreview } from './previews'
 import * as proposals from './propose'
 import { publishPreview } from './publish'
 import * as rescheduling from './reschedule'
@@ -187,6 +186,37 @@ describe('manager-aware preview decisions without a database', () => {
       }
     )
   })
+  it('refuses a candidate key that now collides with a live external booking', async () => {
+    mock.method(rights, 'requireGroupAdmin', async () => undefined)
+    mock.method(snapshotModule, 'headCoachesOf', async () => managers)
+    mock.method(calendar, 'occupancy', async () => [
+      { ...outside, key: game.key }
+    ])
+    await withQueryReplies(
+      [
+        ['pg_advisory_xact_lock', []],
+        ['from "schedule_previews"', [row]],
+        ['pg_advisory_xact_lock', []],
+        ['from "games"', []],
+        ['from "group_requests"', []],
+        ['from "teams"', []],
+        ['from "season_schedule_settings"', []]
+      ],
+      async db => {
+        await assert.rejects(
+          publishPreview(db, actor, row.id, 0, clock),
+          (err: unknown) => {
+            assert(err instanceof HttpError)
+            expect(err.status).equals(409)
+            expect(JSON.stringify(err.details)).includes(
+              'identifier now matches'
+            )
+            return true
+          }
+        )
+      }
+    )
+  })
   it('rejects or accepts a manual addition according to the manager’s current calendar', async () => {
     mock.method(rights, 'requireGroupAdmin', async () => undefined)
     mock.method(snapshotModule, 'headCoachesOf', async () => managers)
@@ -233,20 +263,13 @@ describe('manager-aware preview decisions without a database', () => {
       'snapshot',
       async () => old.input
     )
-    mock.method(worker, 'buildOffThread', async () => ({
-      options: [{ games: [] }],
-      blocking: null
-    }))
     await withQueryReplies(
       [
         ['from "schedule_previews"', [old]],
-        ['from "schedule_previews"', [old]],
-        ['insert into "schedule_previews"', []],
-        ['update "schedule_previews"', []],
-        ['from "schedule_previews"', [old]]
+        ['insert into "schedule_previews"', []]
       ],
       async db => {
-        await buildPreview(
+        await preparePreview(
           db,
           actor,
           row.league_id,

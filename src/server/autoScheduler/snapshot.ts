@@ -3,6 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import type {
   EngineBooking,
   EngineInput,
+  EngineResult,
   FixedGame,
   PlannedGame
 } from '../../common/autoScheduler/types'
@@ -29,6 +30,12 @@ export interface RescheduleRef {
 
 /** What a preview stores beside the engine's input. */
 export interface Snapshot {
+  preparation?: {
+    keep?: PlannedGame[]
+    earlier?: { id: string; edits: unknown }
+    result?: EngineResult
+  }
+
   avoidHeadCoachConflicts?: boolean
   engine: EngineInput
   existing: ExistingGames

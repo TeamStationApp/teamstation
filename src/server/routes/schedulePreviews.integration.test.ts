@@ -414,6 +414,16 @@ describe('schedule preview routes', function () {
 
   it('builds and publishes on a field of a venue nobody has claimed', async () => {
     const harbor = await seedHarborField(w.fx)
+    const settings = await w.fx.f.h.db
+      .selectFrom('season_schedule_settings')
+      .selectAll()
+      .where('season_id', '=', w.fx.f.seasonA)
+      .executeTakeFirstOrThrow()
+    await w.fx.f.h.db
+      .updateTable('season_schedule_settings')
+      .set({ field_ids: [harbor] })
+      .where('season_id', '=', settings.season_id)
+      .execute()
     const chosen = await w.call<{
       fieldIds: string[]
       fields: Array<{ id: string; ours: boolean; ownerNames: string[] }>

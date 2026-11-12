@@ -109,6 +109,7 @@ export const API_KEY_FAMILIES: Record<ApiKeyArea, readonly string[]> = {
     'POST /games/{gameId}/withdrawals',
     'POST /leagues/{leagueId}/schedule-previews',
     'PUT /schedule-previews/{previewId}',
+    'PUT /schedule-previews/{previewId}/result',
     'POST /schedule-previews/{previewId}/publications',
     'PUT /seasons/{seasonId}/schedule-settings',
     'PUT /leagues/{leagueId}/schedule-setup'

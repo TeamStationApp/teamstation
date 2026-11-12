@@ -1,4 +1,5 @@
 import { userIdOfGumbo } from '../common/userId'
+import { deviceSchedulerResponse } from './deviceSchedulerClient'
 import { EXAMPLE_PARK } from './googlePlacesStub'
 import { demoLocality, type GroupFixture, groupFixture } from './groupFixtures'
 
@@ -64,6 +65,10 @@ export async function autoSchedulerFixture(
       : { googleMapsApiKey: options.googleMapsApiKey },
     { googleMapsApiKey: options.googleMapsApiKey }
   )
+  // The fixture simulates the device on the server's event loop. A covered
+  // scheduling search can outlast HTTP's idle timer before the result PUT;
+  // keep that connection alive while synchronous device work holds the loop.
+  f.h.server.keepAliveTimeout = 0
   try {
     return await seedTeamsAndGames(f)
   } catch (error) {
@@ -175,7 +180,13 @@ export async function api<T = unknown>(
   path: string,
   body?: unknown
 ): Promise<T> {
-  const response = await fx.f.h.request(method, path, body, user)
+  const response = await deviceSchedulerResponse(
+    async (method, path, body) =>
+      await fx.f.h.request(method, path, body, user),
+    method,
+    path,
+    body
+  )
   const text = await response.text()
   if (!response.ok)
     throw new Error(`${method} ${path} as ${user}: ${response.status} ${text}`)
@@ -283,7 +294,13 @@ export async function seedHarborField(
       sizes: ['50/70'],
       starts_on: '2026-10-01',
       ends_on: '2027-09-30',
-      hours: JSON.stringify([{ weekday: 6, start: '08:00', end: '18:00' }])
+      hours: JSON.stringify([{ weekday: 6, start: '08:00', end: '18:00' }]),
+      windows: JSON.stringify([
+        {
+          from: '0001-01-01',
+          hours: [{ weekday: 6, start: '08:00', end: '18:00' }]
+        }
+      ])
     })
     .execute()
   return HARBOR_DIAMOND

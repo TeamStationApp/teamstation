@@ -6,11 +6,17 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asUnknown
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
-import type { PlannedGame, ScheduleOption } from './autoScheduler/types'
+import type {
+  EngineInput,
+  EngineResult,
+  PlannedGame,
+  ScheduleOption
+} from './autoScheduler/types'
 import { isRecord } from './groupCreation'
 import { asFieldSize, type FieldSize } from './venues'
 
@@ -201,7 +207,7 @@ export const asSchedulePreview = asObject({
   leagueId: asString,
   mode: asLiteral('full', 'partial'),
   existing: asEither(asNull, asLiteral('replace', 'workAround')),
-  status: asLiteral('open', 'published', 'discarded'),
+  status: asLiteral('building', 'open', 'published', 'discarded'),
   createdAt: asString,
   options: asArray(asWireOption),
   blocking: asEither(asNull, asString),
@@ -344,4 +350,41 @@ export function rescheduleReasonLabel(reason: RescheduleReason): string {
           : reason === 'teamWithdrew'
             ? 'A team withdrew'
             : 'Rejected'
+}
+
+/** Authorized input prepared by the server for this device. */
+export const asPreparedPreview = asObject({
+  id: asString,
+  input: (raw: unknown): EngineInput => asUnknown(raw) as EngineInput
+})
+export type PreparedPreview = ReturnType<typeof asPreparedPreview>
+
+/** Bound untrusted result arrays before interpreting individual games. */
+export function asPreviewResult(raw: unknown): EngineResult {
+  if (!isRecord(raw) || !Array.isArray(raw.options) || raw.options.length > 3)
+    throw new TypeError('Submit at most three schedule options')
+  if (
+    raw.options.some(
+      option =>
+        !isRecord(option) ||
+        !Array.isArray(option.games) ||
+        option.games.length > 20000
+    )
+  )
+    throw new TypeError('Submit a bounded list of scheduled games')
+  const options = raw.options.map(option => ({
+    games: asArray(asWirePlannedGame)(
+      (option as Record<string, unknown>).games
+    ),
+    fairness: [],
+    reasons: [],
+    unmet: [],
+    score: []
+  }))
+  const blocking = raw.blocking === null ? null : asString(raw.blocking)
+  if (blocking !== null && (blocking.length > 1000 || options.length !== 0))
+    throw new TypeError('A blocked schedule cannot contain options')
+  if (options.length === 0 && (blocking == null || blocking === ''))
+    throw new TypeError('Explain why the schedule has no options')
+  return { options, blocking }
 }
