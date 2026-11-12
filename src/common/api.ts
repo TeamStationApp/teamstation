@@ -5786,11 +5786,16 @@ export class TeamStationClient {
    * it knows whether the video is on its own disk, still in PeerTube's tree or
    * finished in the Space, and it checks membership while it is looking.
    */
-  async playback(videoId: string): Promise<Playback> {
+  async playback(
+    videoId: string,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<Playback> {
     return await this.request(
       'GET',
       `/videos/${encodeURIComponent(videoId)}/playback`,
-      asPlayback
+      asPlayback,
+      undefined,
+      options
     )
   }
 

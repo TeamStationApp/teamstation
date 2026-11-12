@@ -1422,6 +1422,37 @@ describe('useMultiCam on live angles', function () {
     }
   })
 
+  it('gives up on an ask for a live angle’s address that is never answered, and asks again', async function () {
+    this.timeout(5000)
+    const asked: string[] = []
+    const client = new TeamStationClient({ baseUrl: '/api/v1' })
+    client.playback = async (id: string, options = {}) => {
+      asked.push(id)
+      // B's first ask is lost to a dead connection: never answered.
+      if (id === 'B' && asked.filter(one => one === 'B').length === 1)
+        return await new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () => {
+            reject(new Error('aborted'))
+          })
+        })
+      return {
+        videoId: id,
+        storage: 'spaces',
+        url: `https://media/${id}.m3u8`,
+        expiresAt: null,
+        durationSec: null,
+        unavailable: false
+      }
+    }
+    const { mc } = await grid(
+      { ...live, client },
+      { liveRetryDelay: quickRetry, addressTimeoutMs: 50 }
+    )
+    await until(() => mc().urls.B != null)
+    expect(mc().urls.B).equals('https://media/B.m3u8')
+    expect(asked.filter(one => one === 'B')).length(2)
+  })
+
   it('asks again for a live angle that has no address yet, until it has one', async function () {
     this.timeout(5000)
     // B's stream is publishing, but its first segment is not written yet: the
