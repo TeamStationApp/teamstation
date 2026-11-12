@@ -17,6 +17,7 @@ import { verifyMediaPath } from '../server/media/mediaTokens'
 import { mediaRoutes } from '../server/routes/media'
 import { groupFixture } from '../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../test/settingsCleanup3Fixture'
+import { makeMedia } from '../test/tessFixture'
 
 async function main(): Promise<void> {
   const out = resolve(process.env.TS_ARTIFACTS_DIR ?? 'artifacts/uiTweaks')
@@ -185,9 +186,15 @@ async function main(): Promise<void> {
         kind: 'program',
         status: 'ready',
         storage: 'local',
-        duration_sec: 90
+        duration_sec: 90,
+        width: 640,
+        height: 360,
+        codecs: 'h264'
       })
       .execute()
+    // Its files, where the harness's media root has them: a video row with
+    // none is answered as unavailable, and draws no player.
+    await makeMedia('/tmp', ['vid_ui_tweaks'])
     if (!before)
       for (const id of [null, 103]) {
         console.log(
