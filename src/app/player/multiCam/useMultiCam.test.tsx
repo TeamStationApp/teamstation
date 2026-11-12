@@ -693,6 +693,30 @@ describe('useMultiCam', function () {
     expect(mc().ended).equals(true)
   })
 
+  it('sends a follower whose seek landed in a hole on to the footage after it', async function () {
+    this.timeout(10_000)
+    // B's place at this moment, 346.68 s, is in that hole.
+    const { tiles } = await grid({ atMs: T0 + 406_680 }, {}, tiles => {
+      fill(tiles.A, [380, 460])
+      fill(tiles.B, [300, 346.2], [347.58, 400])
+    })
+    // B was sent into the second missing between two of its segments, and
+    // its paused player waits there for footage that will never be written.
+    tiles.B.pause()
+    tiles.B.readyState = 1
+    tiles.B.currentTime = 346.68
+    Object.assign(tiles.B, { seeking: true })
+    await ticks(1)
+    expect(tiles.B.currentTime, 'a look to see it is stuck').equals(346.68)
+    await ticks(2)
+    expect(tiles.B.currentTime).equals(347.58)
+    // Once for each hole: a seek that still will not land is not sent back
+    // and forth.
+    tiles.B.currentTime = 346.68
+    await ticks(2)
+    expect(tiles.B.currentTime).equals(346.68)
+  })
+
   it('says nothing of catching up over a recording standing on its last frame', async function () {
     this.timeout(15000)
     // A phone's player at the end of a recording a little longer than its
