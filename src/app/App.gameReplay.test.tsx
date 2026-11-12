@@ -102,14 +102,23 @@ describe('the app’s game replay', function () {
       Object.defineProperty(proto, name, descriptor)
   })
 
-  it('opens from its address, and Exit lands on the game', async function () {
+  it('opens from its address with its controls, and the X lands on the game', async function () {
     window.history.replaceState(null, '', `/games/${REPLAY_GAME_ID}/replay`)
     await act(async () => {
       root.render(<App />)
     })
     await settle()
     expect(replayShown()).equals(true)
-    await press('Exit')
+    for (const id of ['replay-speaker', 'replay-exit', 'replay-rewind'])
+      expect(document.querySelector(`[data-testid="${id}"]`), id).not.equals(
+        null
+      )
+    expect(
+      document
+        .querySelector('[data-testid="replay-speaker"]')
+        ?.getAttribute('aria-label')
+    ).equals('Unmute game sounds')
+    await press('Close replay')
     await settle()
     expect(replayShown()).equals(false)
     expect(window.location.pathname).equals(`/games/${REPLAY_GAME_ID}`)

@@ -27,9 +27,9 @@ import {
  *   REPLAY_API, REPLAY_SERVER_LOG, REPLAY_WEB_URL, REPLAY_ARTIFACTS, MAESTRO_D
  *   node -r sucrase/register src/app/replay/replayDevice.e2e.ts
  *
- * The replay: open the final game's replay, turn the announcer on, pause
+ * The replay: open the final game's replay, turn the sound on, pause
  * and play, watch to the first home run, scroll the box score to the
- * pitchers, Exit. replay-<phone>-webcam.mp4 has the camera and its sound.
+ * pitchers, the X. replay-<phone>-webcam.mp4 has the camera and its sound.
  *
  * The live view: open the game in progress while a web scorer throws three
  * pitches; each shows on the phone. live-<phone>-webcam.mp4.
@@ -68,7 +68,7 @@ async function replay(m: Device, name: string): Promise<void> {
   const camera = filming(video, REPLAY_SECONDS)
   const started = Date.now()
   await m.tapOn({ id: 'replay-speaker' })
-  await m.assertVisible({ text: 'Turn announcer off', timeout: 5000 })
+  await m.assertVisible({ text: 'Mute game sounds', timeout: 5000 })
   await shot(m, `replay-${name}-open`)
   await wait(25000)
   await m.tapOn({ id: 'replay-pause' })
@@ -98,8 +98,8 @@ async function replay(m: Device, name: string): Promise<void> {
   )
   await shot(m, `replay-${name}-box-pitchers`)
   await camera.done
-  await m.tapOn({ text: 'Exit' })
-  assert.ok(await visible(m, 'Box score', 10000), 'Exit did not show the game')
+  await m.tapOn({ id: 'replay-exit' })
+  assert.ok(await visible(m, 'Box score', 10000), 'the X did not show the game')
   console.log(`replay on ${name}: camera at ${video}`)
 }
 
@@ -154,7 +154,7 @@ async function live(
       `$ REPLAY_PARTS=live node -r sucrase/register src/app/replay/replayDevice.e2e.ts   # ${name}\n${lags.join('\n')}\n`
     )
     await camera.done
-    await m.tapOn({ text: 'Exit' })
+    await m.tapOn({ id: 'replay-exit' })
     console.log(`live on ${name}: camera at ${video}`)
   } finally {
     await scorer.detach()

@@ -29,7 +29,9 @@ import {
 } from '../../test/replayGameFixture'
 import type { ScreenRect } from '../field/catcherBounds'
 import type { FieldCanvas } from '../field/FieldCanvas'
+import { scoringAudio } from '../scoring/scoringAudio'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
 import {
   CONTROLS_ROW,
   DECK_SHARE,
@@ -46,6 +48,12 @@ import {
 } from './GameReplayScreen'
 
 type FieldProps = Parameters<typeof FieldCanvas>[0]
+/** A `#RRGGBB` colour as the browser writes it in a style. */
+const rgb = (hex: string): string =>
+  `rgb(${[1, 3, 5].map(at => Number.parseInt(hex.slice(at, at + 2), 16)).join(', ')})`
+const MUTE = 'Mute game sounds'
+const UNMUTE = 'Unmute game sounds'
+const CLOSE = 'Close replay'
 interface Fiber {
   type?: { name?: string } | string | null
   memoizedProps?: unknown
@@ -60,6 +68,8 @@ const announcer = {
   pitchSec: undefined as number | undefined,
   audio: 'ok' as 'ok' | 'fails',
   asked: [] as string[],
+  /** How often the phone's ready check was asked for: never, in a browser. */
+  readied: 0,
   /** The steps whose sentences the page played, in order. */
   played: [] as string[]
 }
@@ -91,6 +101,7 @@ function fakeClient(
       return Object.assign(new Blob(['mp3']), { stepKey: step.key })
     },
     narrationReady: async () => {
+      announcer.readied++
       throw new Error('a browser downloads the sentence')
     },
     narrationSource: (gameId, step) => ({
@@ -307,6 +318,11 @@ async function showCatcher(): Promise<void> {
   })
 }
 
+/** What the replay asked of the field cues, in order. */
+const cues: string[] = []
+const setCues = scoringAudio.setEnabled
+const unlockCues = scoringAudio.unlock
+
 describe('the replay screen', function () {
   this.timeout(30000)
 
@@ -315,7 +331,16 @@ describe('the replay screen', function () {
     announcer.health = true
     announcer.audio = 'ok'
     announcer.asked = []
+    announcer.readied = 0
     announcer.played = []
+    cues.length = 0
+    scoringAudio.setEnabled = value => {
+      cues.push(value ? 'on' : 'off')
+      setCues(value)
+    }
+    scoringAudio.unlock = () => {
+      cues.push('unlock')
+    }
     // jsdom plays no media and makes no object URLs: a sentence "plays" for
     // a moment and ends, and its URL names its step.
     const values: unknown[] = [
@@ -342,6 +367,8 @@ describe('the replay screen', function () {
   })
 
   afterEach(async function () {
+    scoringAudio.setEnabled = setCues
+    scoringAudio.unlock = unlockCues
     for (const [target, name] of swaps()) {
       const descriptor = saved.get(name)
       if (descriptor == null) Reflect.deleteProperty(target, name)
@@ -368,12 +395,13 @@ describe('the replay screen', function () {
     })
   })
 
-  it('opens a finished game on the field, with Exit, the speaker muted, pause, and the box score', async function () {
+  it('opens a finished game on the field, with the X, the sound off, pause, and the box score', async function () {
     resize(402, 874)
     const shown = await show(gameOf(), finalGame())
     const text = document.body.textContent ?? ''
-    expect(text).includes('Exit')
-    expect(byLabel('Turn announcer on')).not.equals(undefined)
+    expect(byLabel(CLOSE)).not.equals(undefined)
+    expect(text).not.includes('Exit')
+    expect(byLabel(UNMUTE)).not.equals(undefined)
     expect(byLabel('Pause replay')).not.equals(undefined)
     expect(text).includes('Harbor Hawks batting')
     expect(text).includes('Valley Pines pitching')
@@ -382,7 +410,7 @@ describe('the replay screen', function () {
     await showCatcher()
     expect(card()).includes('Play ball!')
     expect(field().view).equals('home')
-    await press('Exit')
+    await press(CLOSE)
     expect(shown.exits).equals(1)
   })
 
@@ -526,26 +554,50 @@ describe('the replay screen', function () {
     expect(scoreboard?.pitcher.firstName).equals('Tyler G')
   })
 
-  it('puts the speaker upper left and Exit upper right, and the rewind and pause in the bottom corners', async function () {
-    resize(402, 874)
-    announcer.health = true
-    await show(gameOf(), finalGame())
-    expect(flat(propsOf('replay-speaker').style)).deep.include({
-      position: 'absolute',
-      top: 0,
-      left: 16
+  /** The element with `testID` in the page. */
+  const node = (testID: string): HTMLElement => {
+    const found = document.querySelector<HTMLElement>(
+      `[data-testid="${testID}"]`
+    )
+    expect(found, testID).not.equals(null)
+    return found!
+  }
+
+  for (const narration of [true, false])
+    it(`puts the volume button upper left ${narration ? 'with' : 'without'} an announcer, and the X upper right`, async function () {
+      resize(402, 874)
+      announcer.health = narration
+      const shown = await show(gameOf(), finalGame())
+      const speaker = node('replay-speaker')
+      expect(speaker.getAttribute('aria-label')).equals(UNMUTE)
+      expect(speaker.style.backgroundColor).equals('rgb(255, 255, 255)')
+      expect(speaker.parentElement?.style).deep.include({
+        position: 'absolute',
+        top: '0px',
+        left: '0px'
+      })
+      const exit = node('replay-exit')
+      expect(exit.getAttribute('aria-label')).equals(CLOSE)
+      expect(exit.textContent).equals('close')
+      // Dark on the glass, as the scoring screen's ☰: the app theme's text.
+      const glyph = [...exit.querySelectorAll<HTMLElement>('*')].find(
+        item => item.childElementCount === 0 && item.textContent === 'close'
+      )
+      expect(glyph?.style.color).equals(rgb(tsBallpark.primaryTextColor))
+      expect(exit.parentElement?.style).deep.include({
+        position: 'absolute',
+        top: '0px',
+        right: '0px',
+        width: '48px',
+        height: '48px'
+      })
+      expect(exit.parentElement?.style.left).equals('')
+      expect(document.body.textContent).not.includes('Exit')
+      await press(CLOSE)
+      expect(shown.exits).equals(1)
+      expect(flat(propsOf('replay-rewind').style)).deep.include({ left: 16 })
+      expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
     })
-    expect(flat(propsOf('replay-speaker').style)).not.have.property('right')
-    expect(flat(propsOf('replay-exit').style)).deep.include({
-      position: 'absolute',
-      top: 0,
-      right: 16,
-      minWidth: 76
-    })
-    expect(flat(propsOf('replay-exit').style)).not.have.property('left')
-    expect(flat(propsOf('replay-rewind').style)).deep.include({ left: 16 })
-    expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
-  })
 
   it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {
     expect(SPEAKER_RESERVE).equals(68)
@@ -612,13 +664,20 @@ describe('the replay screen', function () {
     ).greaterThanOrEqual(CONTROLS_ROW)
   })
 
-  it('turns the announcer on and off', async function () {
+  it('turns the cues and the announcer on, and off again, with the volume button', async function () {
     resize(402, 874)
     await show(gameOf(), finalGame())
-    await press('Turn announcer on')
-    expect(byLabel('Turn announcer off')).not.equals(undefined)
-    await press('Turn announcer off')
-    expect(byLabel('Turn announcer on')).not.equals(undefined)
+    // The replay opens with the field cues off.
+    expect(cues).deep.equals(['off'])
+    await press(UNMUTE)
+    expect(byLabel(MUTE)).not.equals(undefined)
+    expect(cues.slice(1)).deep.equals(['unlock', 'on'])
+    // The announcer is unlocked on the tap, and fetches ahead.
+    await wait(50)
+    expect(announcer.asked).not.deep.equals([])
+    await press(MUTE)
+    expect(byLabel(UNMUTE)).not.equals(undefined)
+    expect(cues.at(-1)).equals('off')
   })
 
   it('puts the box score in a column beside the field on a wide window', async function () {
@@ -822,7 +881,7 @@ describe('the replay screen', function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       await firstPitch()
       const freed: string[] = []
       Object.defineProperty(URL, 'revokeObjectURL', {
@@ -859,19 +918,23 @@ describe('the replay screen', function () {
   })
 
   describe('the announcer', function () {
-    it('is offered only by a server that has one', async function () {
-      resize(402, 874)
-      announcer.health = false
-      await show(gameOf(), finalGame())
-      expect(byLabel('Turn announcer on')).equals(undefined)
-      expect(byLabel('Exit')).not.equals(undefined)
-      await act(async () => {
-        root?.unmount()
+    for (const health of [false, 'fails'] as const)
+      it(`is never asked for a sentence by a server that ${health === false ? 'has none' : 'cannot say'}, while the cues play`, async function () {
+        resize(402, 874)
+        announcer.health = health
+        await show(gameOf(), finalGame())
+        await showCatcher()
+        await press(UNMUTE)
+        expect(byLabel(MUTE)).not.equals(undefined)
+        expect(cues.slice(1)).deep.equals(['unlock', 'on'])
+        await firstPitch()
+        now += 6000
+        await wait(250)
+        expect(announcer.asked).deep.equals([])
+        expect(announcer.readied).equals(0)
+        expect(announcer.played).deep.equals([])
+        expect(cues.at(-1)).equals('on')
       })
-      announcer.health = 'fails'
-      await show(gameOf(), finalGame())
-      expect(byLabel('Turn announcer on')).equals(undefined)
-    })
 
     it('reads nothing while muted, and each step once the speaker is on', async function () {
       resize(402, 874)
@@ -880,24 +943,24 @@ describe('the replay screen', function () {
       now = 100
       await wait(250)
       expect(announcer.asked).deep.equals([])
-      await press('Turn announcer on')
-      expect(byLabel('Turn announcer off')).not.equals(undefined)
+      await press(UNMUTE)
+      expect(byLabel(MUTE)).not.equals(undefined)
       // The two steps ahead are fetched at once, and the next as each plays.
       await wait(50)
       expect(announcer.asked).deep.equals(['0-0', '0-1'])
       now = 2200
       await wait(300)
       expect(announcer.asked).deep.equals(['0-0', '0-1', '0-2'])
-      await press('Turn announcer off')
-      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      await press(MUTE)
+      expect(byLabel(UNMUTE)).not.equals(undefined)
     })
 
-    it('turns itself off and says so after three sentences fail', async function () {
+    it('says it is unavailable after three sentences fail, leaving the sound on', async function () {
       resize(402, 874)
       announcer.audio = 'fails'
       await show(gameOf(), finalGame())
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       await firstPitch()
       // Each sentence fails as its step is shown; the third turns it off.
       expect(card()).not.includes('Announcer unavailable')
@@ -911,10 +974,21 @@ describe('the replay screen', function () {
       }
       expect(announcer.asked.length).greaterThanOrEqual(3)
       expect(card()).includes('Announcer unavailable')
-      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      // The button stays on, and so do the field cues.
+      expect(byLabel(MUTE)).not.equals(undefined)
+      expect(cues.at(-1)).equals('on')
+      // Nothing more is asked of it while it is unavailable.
+      const asked = announcer.asked.length
+      now += 10000
+      await wait(250)
+      expect(announcer.asked.length).equals(asked)
+      // Off and on again tries the announcer again.
       announcer.audio = 'ok'
-      await press('Turn announcer on')
+      await press(MUTE)
+      await press(UNMUTE)
       expect(card()).not.includes('Announcer unavailable')
+      await wait(100)
+      expect(announcer.asked.length).greaterThan(asked)
     })
 
     it('reads the final call when the replay reaches it', async function () {
@@ -922,7 +996,7 @@ describe('the replay screen', function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       for (let i = 0; i < 1200 && !announcer.played.includes('9999-1'); i++) {
         now += 20000
         await wait(120)
@@ -944,12 +1018,12 @@ describe('the replay screen', function () {
     it('opens muted every time', async function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
-      await press('Turn announcer on')
+      await press(UNMUTE)
       await act(async () => {
         root?.unmount()
       })
       await show(gameOf(), finalGame())
-      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      expect(byLabel(UNMUTE)).not.equals(undefined)
     })
   })
 
@@ -1273,7 +1347,7 @@ describe('the replay screen', function () {
       resize(402, 874)
       const socket = new FakeSocket()
       const game = await following(socket)
-      await press('Turn announcer on')
+      await press(UNMUTE)
       // Away while the scorer finished the game; the game change was missed.
       await game.setStored(actions.length)
       await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
@@ -1313,7 +1387,7 @@ describe('the replay screen', function () {
         { pollMs: 60 }
       )
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       for (let i = 0; i < 5; i++) {
         now += 5000
         await wait(60)

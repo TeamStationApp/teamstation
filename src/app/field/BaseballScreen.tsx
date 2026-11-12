@@ -47,6 +47,7 @@ import {
 } from './fieldSafeArea'
 import type { BaseProjection, FieldCanvasProps } from './fieldTypes'
 import { useFieldSurface } from './useFieldSurface'
+import { VolumeButton } from './VolumeButton'
 
 /** The scoring screen's camera, which the replay frames its field with too. */
 export const SCORING_CAMERA = {
@@ -377,44 +378,14 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
             {props.summary}
           </Text>
           {props.sound != null && (
-            <GlassView
-              radius={24}
-              interactive
-              androidBlur
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 24,
-                overflow: 'hidden',
-                marginRight: 8
-              }}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  props.sound.on ? 'Mute game sounds' : 'Unmute game sounds'
-                }
-                onPress={() => {
+            <View style={{ marginRight: 8 }}>
+              <VolumeButton
+                on={props.sound.on}
+                onToggle={() => {
                   props.sound?.onToggle()
                 }}
-                style={{
-                  width: 48,
-                  height: 48,
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                <ButtonIcon
-                  name={props.sound.on ? 'volume_up' : 'volume_off'}
-                  size={1.5}
-                  color={
-                    props.sound.on
-                      ? CONTROL_COLORS.micOn.text
-                      : CONTROL_COLORS.micOff.text
-                  }
-                />
-              </Pressable>
-            </GlassView>
+              />
+            </View>
           )}
           {(props.dictationLog != null || props.sound != null) && (
             <View

@@ -830,6 +830,10 @@ describe('muting the game', function () {
     })
     await scoring()
     expect(enabled.at(-1)).equals(true)
+    // The volume button: white, with a black glyph.
+    const button = document.querySelector<HTMLElement>(`[aria-label="${MUTE}"]`)
+    expect(button?.style.backgroundColor).equals('rgb(255, 255, 255)')
+    expect(button?.textContent).equals('volume_up')
     await click(MUTE)
     await settle()
     expect(enabled.at(-1)).equals(false)

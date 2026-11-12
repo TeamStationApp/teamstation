@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -33,7 +33,7 @@ import { stepHalfEnds } from './replayGaps'
  *   REPLAY_SCENARIO=replay [REPLAY_PITCH_MS=5000]
  *     The final game's replay from its pill: the controls, the pitch pacing
  *     (each pitch held for the node's pitch delay, REPLAY_PITCH_MS),
- *     the first home run, pause and play, the box score's pitchers, Exit,
+ *     the first home run, pause and play, the box score's pitchers, the X,
  *     the imported game with nothing to replay, and the wide layout.
  *
  *   REPLAY_SCENARIO=announcer   (the server's `speech` set)
@@ -60,7 +60,10 @@ import { stepHalfEnds } from './replayGaps'
  *     and then the final call are read. Writes final-announcer.log.
  *
  *   REPLAY_SCENARIO=noAnnouncer   (the server's `speech` removed)
- *     The replay offers no speaker.
+ *     The replay still offers its volume button, for the field's sounds, and
+ *     turning it on asks the server for no sentence: the page requests no
+ *     narration, nor does the server's log (REPLAY_API_LOG, when given) show
+ *     one.
  *
  *   REPLAY_SCENARIO=controls REPLAY_PHASE=before|after
  *     The replay paused at its first pitch at 402 x 874 and 1024 x 1366:
@@ -302,7 +305,7 @@ async function replay(m: Device): Promise<void> {
   assert.ok((await pillLabels(m)).includes('Replay'), 'no Replay pill')
   await m.tapOn({ text: 'Replay' })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
-  await m.assertVisible({ text: 'Exit' })
+  await m.assertVisible({ id: 'replay-exit' })
   await m.assertVisible({ id: 'replay-speaker' })
   await m.assertVisible({ id: 'replay-pause' })
   const video = join(await artifactsDir(), 'replay-first-inning-web.mp4')
@@ -448,7 +451,7 @@ async function replay(m: Device): Promise<void> {
   await shot(m, 'replay-box-pitchers')
   await m.tapOn({ id: 'replay-pause' })
 
-  await m.tapOn({ text: 'Exit' })
+  await m.tapOn({ id: 'replay-exit' })
   await m.assertVisible({ text: 'Box score', timeout: 10000 })
   const path = await evalJson<string>(m, 'return location.pathname')
   assert.equal(path, `/games/${FINAL}`)
@@ -554,7 +557,7 @@ async function announcer(m: Device): Promise<void> {
   await evalJson<boolean>(m, MEDIA_LOG)
   const started = Date.now()
   await m.tapOn({ id: 'replay-speaker' })
-  await m.assertVisible({ text: 'Turn announcer off' })
+  await m.assertVisible({ text: 'Mute game sounds' })
 
   // Pause in the middle of the third sentence, then play.
   const deadline = Date.now() + 60000
@@ -586,7 +589,7 @@ async function announcer(m: Device): Promise<void> {
   )
   await m.tapOn({ id: 'replay-speaker' })
   const mutedAt = Date.now()
-  await m.assertVisible({ text: 'Turn announcer on' })
+  await m.assertVisible({ text: 'Unmute game sounds' })
   await wait(6000)
   const events = await mediaEvents(m)
   const afterMute = events.filter(event => event.t > mutedAt + 300)
@@ -1133,15 +1136,36 @@ async function finalAnnouncer(m: Device): Promise<void> {
   assert.deepEqual(overlaps(media), [])
 }
 
-/** With no speech on the server, the replay has no speaker to offer. */
+/**
+ * With no speech on the server, the replay still offers its volume button,
+ * and turning it on asks for no sentence.
+ */
 async function noAnnouncer(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
+  const log = process.env.REPLAY_API_LOG
+  const logged = async (): Promise<number> =>
+    log == null ? 0 : (await readFile(log, 'utf8')).length
   await m.openBrowser({
     url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
   })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
-  await m.assertVisible({ text: 'Exit' })
-  await m.assertNotVisible({ id: 'replay-speaker', timeout: 3000 })
+  await evalJson<boolean>(m, RESOURCE_LOG)
+  await m.assertVisible({ id: 'replay-exit' })
+  await m.assertVisible({ id: 'replay-speaker' })
+  const before = await logged()
+  await m.tapOn({ id: 'replay-speaker' })
+  await m.assertVisible({ text: 'Mute game sounds' })
+  // Long enough for the next steps' sentences to have been fetched ahead.
+  await wait(8000)
+  const requests = await evalJson<NarrationRequest[]>(m, NARRATION_REQUESTS)
+  assert.deepEqual(requests, [], 'the page asked for a sentence')
+  if (log != null) {
+    const after = (await readFile(log, 'utf8')).slice(before)
+    assert.ok(
+      !after.includes('/narrations'),
+      'the server was asked for a sentence'
+    )
+  }
   await shot(m, 'replay-no-announcer')
 }
 
@@ -1760,7 +1784,7 @@ async function rewindAnnouncer(m: Device): Promise<void> {
   await evalJson<boolean>(m, RESOURCE_LOG)
   const started = Date.now()
   await m.tapOn({ id: 'replay-speaker' })
-  await m.assertVisible({ text: 'Turn announcer off' })
+  await m.assertVisible({ text: 'Mute game sounds' })
   // Through the 1st, read aloud, to two sentences into the top of the 2nd.
   const ended = await cardUntil(
     m,

@@ -216,9 +216,10 @@ export const enUs = {
   plan_delete: 'Delete',
   game_replay: 'Replay',
   game_live: 'Live',
-  replay_exit: 'Exit',
-  replay_announcer_on: 'Turn announcer on',
-  replay_announcer_off: 'Turn announcer off',
+  /** The volume button's label, on the scoring screen and the replay. */
+  sound_mute: 'Mute game sounds',
+  sound_unmute: 'Unmute game sounds',
+  replay_close: 'Close replay',
   replay_pause: 'Pause replay',
   replay_play: 'Play replay',
   replay_paused: 'Paused',

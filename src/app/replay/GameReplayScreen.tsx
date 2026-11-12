@@ -32,20 +32,20 @@ import {
 } from '../../common/replay/replayTimeline'
 import type { SessionContext } from '../../common/scoring/session'
 import { ButtonIcon } from '../components/ButtonIcon'
+import { GlassView } from '../components/GlassView'
 import { SCORING_CAMERA } from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
 import { FieldCanvas } from '../field/FieldCanvas'
 import type { FieldPlayer } from '../field/fieldModel'
 import { useFieldSurface } from '../field/useFieldSurface'
+import { VolumeButton } from '../field/VolumeButton'
 import { lstrings } from '../locales/strings'
 import { scoringAudio } from '../scoring/scoringAudio'
-import { CONTROL_COLORS } from '../scoring/scoringControlStyle'
 import { scoringFieldPlayers } from '../scoring/scoringMotion'
 import { scoreboardFor } from '../scoring/scoringSelectors'
-import { ScoringButton } from '../scoring/ScoringSheet'
-import { useScoringSheetTheme } from '../scoring/scoringSheetTheme'
+import { scoringSheetTheme } from '../scoring/scoringSheetTheme'
 import { scoringSurface as surface } from '../theme/scoringSurface'
-import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { useNarrationPlayer } from './narrationPlayer'
 import type { NarrationClient } from './narrationPlayerTypes'
 import { NarrationQueue, type NarrationStep, PREFETCH } from './narrationQueue'
@@ -172,8 +172,9 @@ export function replayLayout(
 
 /**
  * A game replayed in 3D, full screen and dark: the field, the play card
- * below the catcher, the box score below that, Exit and the speaker at the
- * top left, rewind at the bottom left and pause at the bottom right.
+ * below the catcher, the box score below that, the volume button at the top
+ * left and the X at the top right, rewind at the bottom left and pause at the
+ * bottom right.
  */
 /**
  * The lines a reader may open, by their scoring id: the box score's own answer,
@@ -191,7 +192,10 @@ export function openablePlayers(box: BoxScore): Map<number, string> {
 export function GameReplayScreen(
   props: GameReplayScreenProps
 ): React.ReactElement {
-  const theme = useScoringSheetTheme()
+  // The app's own theme, which the scoring screen draws in, and the replay's
+  // dark sheet over it.
+  const appTheme = useTheme()
+  const theme = scoringSheetTheme(appTheme)
   const { client, gameId } = props
   // The shell hands a fresh callback on every render; the game is read once.
   const notReplayable = useRef(props.onNotReplayable)
@@ -255,6 +259,7 @@ export function GameReplayScreen(
           onExit={props.onExit}
           onOpenPlayer={props.onOpenPlayer}
           clock={props.clock ?? Date.now}
+          glyphColor={appTheme.primaryTextColor}
         />
       )}
     </ScopedThemeProvider>
@@ -276,6 +281,8 @@ function ReplayView(props: {
   onExit: () => void
   onOpenPlayer?: (userId: string, name: string) => void
   clock: () => number
+  /** The X's glyph: the scoring screen's ☰ colour, dark on the glass. */
+  glyphColor: string
 }): React.ReactElement {
   const [openable, setOpenable] = useState<ReadonlyMap<number, string>>()
   const { client: boxClient, onOpenPlayer } = props
@@ -328,9 +335,8 @@ function ReplayView(props: {
         speaking: speaking => {
           dispatch({ type: 'SPEAKING', speaking })
         },
+        // The announcer alone gives up: the cues play on.
         unavailable: () => {
-          scoringAudio.setEnabled(false)
-          setMuted(true)
           setUnavailable(true)
         }
       }),
@@ -342,9 +348,12 @@ function ReplayView(props: {
     },
     [narration]
   )
+  // The announcer follows the volume button, but only where the server has
+  // one, and not once it has failed until the button is turned on again.
+  const announcerMuted = muted || !props.narration || unavailable
   useEffect(() => {
-    narration.setMuted(muted)
-  }, [narration, muted])
+    narration.setMuted(announcerMuted)
+  }, [narration, announcerMuted])
   useEffect(() => {
     narration.setPaused(state.paused)
   }, [narration, state.paused])
@@ -425,7 +434,7 @@ function ReplayView(props: {
     narration.upcoming(upcoming)
     // The ids say everything the steps do.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [narration, upcomingIds, muted])
+  }, [narration, upcomingIds, announcerMuted])
   const toggleSound = (): void => {
     if (muted) {
       scoringAudio.unlock()
@@ -565,56 +574,45 @@ function ReplayView(props: {
       }}
     />
   )
-  // The speaker alone upper left, Exit upper right.
+  // The volume button upper left, the X upper right.
   const topControls = (
     <>
-      {props.narration && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            muted ? lstrings.replay_announcer_on : lstrings.replay_announcer_off
-          }
+      <View style={{ position: 'absolute', top: 0, left: 0 }}>
+        <VolumeButton
           testID="replay-speaker"
-          onPress={toggleSound}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 16,
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            borderWidth: 1,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: muted
-              ? CONTROL_COLORS.micOff.bottom
-              : CONTROL_COLORS.micOn.bottom,
-            borderColor: muted
-              ? CONTROL_COLORS.micOff.border
-              : CONTROL_COLORS.micOn.border
-          }}
-        >
-          <ButtonIcon
-            name={muted ? 'volume_off' : 'volume_up'}
-            size={1.5}
-            color={
-              muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
-            }
-          />
-        </Pressable>
-      )}
-      <View
-        testID="replay-exit"
-        pointerEvents="box-none"
-        style={{ position: 'absolute', top: 0, right: 16, minWidth: 76 }}
-      >
-        <ScoringButton
-          label={lstrings.replay_exit}
-          color={surface.dangerFill}
-          shape="pill"
-          onPress={props.onExit}
+          on={!muted}
+          onToggle={toggleSound}
         />
       </View>
+      <GlassView
+        radius={24}
+        interactive
+        androidBlur
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          width: 48,
+          height: 48,
+          borderRadius: 24,
+          overflow: 'hidden'
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={lstrings.replay_close}
+          testID="replay-exit"
+          onPress={props.onExit}
+          style={{
+            width: 48,
+            height: 48,
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <ButtonIcon name="close" size={1.5} color={props.glyphColor} />
+        </Pressable>
+      </GlassView>
     </>
   )
   const pauseButton = state.final ? null : (

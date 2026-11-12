@@ -69,9 +69,13 @@ describe('the offline line’s band at the top', function () {
     })
     root = undefined
   })
-  const screen = (band?: number): React.ReactElement => (
+  const screen = (
+    band?: number,
+    extra: Partial<React.ComponentProps<typeof BaseballScreen>> = {}
+  ): React.ReactElement => (
     <ThemeProvider>
       <BaseballScreen
+        {...extra}
         field={{
           players: [],
           selected: '',
@@ -287,6 +291,32 @@ describe('the offline line’s band at the top', function () {
     })
     expect(seen.map(p => p.bases[0].y)).deep.equals([400, 428, 400])
     expect(reports!.bounds?.y).equals(62)
+  })
+
+  it('starts the header row with the volume button and ends it with ☰', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        screen(0, {
+          sound: { on: false, onToggle: () => undefined },
+          dictationLog: <div data-testid="the-log" />
+        })
+      )
+    })
+    const menu = host.querySelector('[aria-label="Open scoring menu"]')
+    const row = menu?.parentElement?.parentElement
+    // The row's first child is the screen reader's summary, drawn nowhere.
+    const drawn = [...(row?.children ?? [])].slice(1)
+    expect(drawn).length(3)
+    const volume = drawn[0].querySelector<HTMLElement>(
+      '[aria-label="Unmute game sounds"]'
+    )
+    expect(volume?.style.backgroundColor).equals('rgb(255, 255, 255)')
+    expect(volume?.textContent).equals('volume_off')
+    expect(drawn[1].querySelector('[data-testid="the-log"]')).not.equals(null)
+    expect(drawn[2].contains(menu)).equals(true)
   })
 
   it('starts the field under the band only while there is one', async function () {
