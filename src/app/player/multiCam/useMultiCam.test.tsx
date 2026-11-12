@@ -180,6 +180,8 @@ async function grid(
   changes: Array<{ order?: string[] }>
   /** Renders the grid again with these props changed. */
   rerender: (next: Partial<MultiCamProps>) => Promise<void>
+  /** How many times the grid has rendered. */
+  renders: () => number
 }> {
   const client = new TeamStationClient({ baseUrl: '/api/v1' })
   client.playback = async (id: string) => ({
@@ -204,7 +206,9 @@ async function grid(
     onClose: () => undefined,
     ...patch
   }
+  let rendered = 0
   function Probe(): null {
+    rendered += 1
     latest = useMultiCam(props, {
       width: WIDTH,
       height: HEIGHT,
@@ -244,7 +248,7 @@ async function grid(
       )
     })
   }
-  return { mc, tiles, changes, rerender }
+  return { mc, tiles, changes, rerender, renders: () => rendered }
 }
 
 /** Four angles, A to D, all from the take's beginning. */
@@ -1089,6 +1093,34 @@ describe('useMultiCam', function () {
     expect(tiles.A.currentTime).equals(120)
     // Neither answers for a finger it is not following.
     expect(mc().pressEnd(3, 0, 0)).equals(null)
+  })
+
+  it('holds a crawl to its clock ten times a second, not every frame, and lets go at once', async function () {
+    this.timeout(5000)
+    const { mc, tiles } = await grid()
+    const held: number[] = []
+    onExplicitSeek(tiles.A, seconds => held.push(seconds))
+    await act(async () => {
+      mc().pressStart(1, WIDTH * 0.9, HEIGHT * 0.5, 0)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 600))
+    })
+    expect(mc().slow).equals(SLOW_RATE)
+    const from = held.length
+    const at = mc().atWallMs!
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 1000))
+    })
+    // About ten looks, never the sixty frames the clock steps through.
+    expect(held.length - from).within(5, 15)
+    // The clock still moves at a quarter of the pictures' pace.
+    expect(mc().atWallMs! - at).closeTo(250, 60)
+    await act(async () => {
+      expect(mc().pressEnd(1, WIDTH * 0.9, HEIGHT * 0.5)).equals('held')
+    })
+    expect(mc().slow).equals(0)
+    expect(tiles.A.playbackRate).equals(1)
   })
 
   it('ignores a second finger while the first holds a crawl', async function () {

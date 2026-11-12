@@ -196,6 +196,9 @@ export interface MultiCamOptions {
  */
 export const DRY_CHECK_MS = 250
 
+/** How often a crawl draws the grid and holds its tiles to the clock. */
+export const CRAWL_REFRESH_MS = 100
+
 /** Tenths of a second from `since` to `now`, for the readout. */
 function secondsSince(now: number, since: number | undefined): number {
   return Math.round((now - (since ?? now)) / 100) / 10
@@ -2149,19 +2152,27 @@ export function useMultiCam(
     // hands one to its callback on every platform, so no clock is needed here
     // (`performance` is a browser global a phone does not type).
     let last = 0
+    let shown = 0
     const step = (now: number): void => {
       const seconds = last === 0 ? 0 : (now - last) / 1000
       last = now
       const next = (atWallRef.current ?? 0) + seconds * SLOW_RATE * 1000
       atWallRef.current = next
+      slowFrame.current = requestAnimationFrame(step)
+      // The clock steps every frame; the grid is drawn and held to it ten
+      // times a second. The tiles crawl at their own rate in between. Drawn
+      // every frame, a phone's whole grid rendered sixty times a second, and
+      // the finger's lift waited behind those renders for a minute while the
+      // crawl ran on.
+      if (shown !== 0 && now - shown < CRAWL_REFRESH_MS) return
+      shown = now
       setAtWallMs(next)
-      // Every frame, not once at the start. A tile handed a new source
-      // mid-crawl loads at full speed, and one whose sound was switched on by
-      // the angle it was heard from changing would play out loud: set once,
-      // either lurched ahead of the others until the next seek.
+      // Not once at the start. A tile handed a new source mid-crawl loads at
+      // full speed, and one whose sound was switched on by the angle it was
+      // heard from changing would play out loud: set once, either lurched
+      // ahead of the others until the next seek.
       setRateAll(SLOW_RATE, () => true)
       alignTo(next, undefined, true)
-      slowFrame.current = requestAnimationFrame(step)
     }
     slowFrame.current = requestAnimationFrame(step)
     return true
@@ -2178,7 +2189,10 @@ export function useMultiCam(
       1,
       id => id !== heardId || soundOffRef.current || soundBlockedRef.current
     )
-    if (atWallRef.current != null) alignTo(atWallRef.current)
+    if (atWallRef.current != null) {
+      setAtWallMs(atWallRef.current)
+      alignTo(atWallRef.current)
+    }
   }, [alignTo, heardId, setRateAll])
 
   // A key held while the tab changes never delivers its `keyup`.
