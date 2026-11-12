@@ -1,4 +1,5 @@
 import { inWallGap, wallAt, type WallTimeline } from '../../common/wallTimeline'
+import { playerTrace } from '../player/playerTrace'
 import { commonStart, targetTime } from './playbackTimeline'
 
 interface ClockPort {
@@ -28,6 +29,13 @@ const EDGE_STEPS = 5
  * one of phase, one of a late playlist reload, and one of hold-back.
  */
 const EDGE_SPREAD_SEGMENTS = 3
+/** How far a playing camera may drift from the moment before it is sought. */
+const DRIFT_SEC = 0.75
+/**
+ * How near the moment every camera is put when a wall mapping changes: the
+ * cameras' alignment is re-placed on purpose then, so to the tighter step.
+ */
+const REALIGN_SEC = 0.25
 
 /**
  * A camera's segment length: the median of its latest edge steps, so one
@@ -276,10 +284,11 @@ export class PlaybackClock {
     if (!this.available(index)) {
       // A healthy live camera playing on behind a master that moved past its
       // safe seek edge (a refreshed mapping, or the master held it while its
-      // own feed restarted) can never be sought to the master's moment, and
-      // at 1× never reaches it. Rejoin both in the newest footage they can
-      // all seek. A camera that is not advancing (its feed stopped) does not
-      // pull the others back; `rejoinSeekable` refuses one missing footage.
+      // own feed restarted), or decoding ahead of a moment it cannot seek,
+      // never reaches that moment at 1×. Rejoin both in the newest footage
+      // they can all seek. A camera that is not advancing (its feed stopped)
+      // does not pull the others back; `rejoinSeekable` refuses one missing
+      // footage.
       if (
         playing &&
         advanced &&
@@ -315,7 +324,7 @@ export class PlaybackClock {
           // its clamped target would pull it back every tick.
           if (
             target?.available === true &&
-            Math.abs(target.seconds - other.position) > 0.75
+            Math.abs(target.seconds - other.position) > DRIFT_SEC
           )
             this.seekPort(other, this.wall)
         }
@@ -355,7 +364,20 @@ export class PlaybackClock {
       )
     )
     const segment = Math.max(...together.map(segmentOf))
-    if (newest - own > EDGE_SPREAD_SEGMENTS * segment * 1000) return false
+    const trace = (joined: boolean): void => {
+      playerTrace('tv.clock.rejoin', {
+        index: this.ports.indexOf(joining),
+        joined,
+        wall: this.wall,
+        ownEdge: own,
+        newestEdge: newest,
+        segmentSec: segment
+      })
+    }
+    if (newest - own > EDGE_SPREAD_SEGMENTS * segment * 1000) {
+      trace(false)
+      return false
+    }
     // Just inside each edge on the wall clock: in media time, stepping back
     // could cross an anchor into footage from before a gap.
     const shared = Math.min(this.wall, ...[...edges.values()].map(e => e - 100))
@@ -367,16 +389,19 @@ export class PlaybackClock {
           !this.inSeekableRange(port, target.seconds)
         )
       })
-    )
+    ) {
+      trace(false)
       return false
+    }
+    trace(true)
     this.seek(shared)
     return true
   }
 
   /**
    * A live camera whose footage at the shared moment lies past its safe seek
-   * edge and ahead of the frame it decodes: a seek there is refused, and
-   * playing on never closes the distance.
+   * edge, and whose decoder is not at that moment: a seek there is refused,
+   * and playing on at 1× never closes the distance, ahead or behind.
    */
   private beyondSafeEdge(port: ClockPort): boolean {
     if (
@@ -390,8 +415,47 @@ export class PlaybackClock {
     return (
       target?.available === true &&
       target.seconds >= port.seekableEnd &&
-      target.seconds > port.position + 0.75
+      Math.abs(target.seconds - port.position) > DRIFT_SEC
     )
+  }
+
+  /**
+   * A camera's wall mapping is replaced (a periodic refresh, a discontinuity
+   * the server has placed). When that moves where its current frame falls,
+   * every playable camera, the master too, is put on the selected moment at
+   * once, within `REALIGN_SEC`: the moment is kept, so a viewer's historical
+   * position stays where it is, and no camera is left at a fixed offset
+   * under a drift allowance. A camera with no footage at the moment (a gap,
+   * a recording not yet begun) is not sought and stays covered; one whose
+   * moment lies past its safe edge rejoins on its next frame.
+   */
+  remap(index: number, timeline: WallTimeline): void {
+    const port = this.ports[index]
+    if (port === undefined) return
+    const before = wallAt(port.timeline.anchors, port.position * 1000)
+    port.timeline = timeline
+    const after = wallAt(timeline.anchors, port.position * 1000)
+    if (this.wall === null || !port.loaded || before === after) return
+    const wall = this.wall
+    playerTrace('tv.clock.remap', {
+      index,
+      master: this.master,
+      shiftMs: before === null || after === null ? null : after - before,
+      wall
+    })
+    for (const other of this.ports) {
+      if (other === undefined || !other.loaded || other.failed) continue
+      const target = targetTime(other.timeline, wall, other.duration)
+      if (
+        target?.available === true &&
+        Math.abs(target.seconds - other.position) > REALIGN_SEC
+      )
+        this.seekPort(other, wall)
+    }
+    if (!this.available(this.master)) {
+      const next = this.ports.findIndex((_, i) => this.available(i))
+      if (next >= 0) this.master = next
+    }
   }
 
   /** A failed master must never hand the clock back to an exhausted camera. */
@@ -432,8 +496,14 @@ export class PlaybackClock {
       target === null ||
       (target.available &&
         (this.inSeekableRange(port, target.seconds) ||
-          (target.seconds >= Math.min(port.seekableStart, port.position) &&
-            target.seconds <= port.position + 0.75)))
+          // A follower shows the moment only at the frame it decodes, not
+          // well ahead of it. The master's frame is what moves the moment.
+          (target.seconds >=
+            Math.max(
+              Math.min(port.seekableStart, port.position),
+              index === this.master ? -Infinity : port.position - DRIFT_SEC
+            ) &&
+            target.seconds <= port.position + DRIFT_SEC)))
     )
   }
 }

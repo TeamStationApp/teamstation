@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { defaultScoreboardSettings } from '../../common/nodeSettings'
+import { wallAt } from '../../common/wallTimeline'
 import { PlaybackClock } from './playbackClock'
 import { PlaybackRecovery } from './playbackRecovery'
 import {
@@ -419,6 +420,146 @@ describe('TV playback composition and remote state', () => {
     clock.progress(0, 300.25, 296, 0, false)
     clock.progress(1, 300.25, 296, 0, false)
     clock.progress(1, 300.5, 296, 0, false)
+    expect(seeks).deep.equals([[], []])
+  })
+  it('never shows a live follower decoding ahead of a moment past its safe edge as in step', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    // The follower's safe edge trails its decoder by 8 s.
+    for (const i of [0, 1]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, i === 0 ? 296 : 292, 0)
+      clock.settled(i)
+    }
+    // A refresh places the follower's frames 5 s later on the wall: its
+    // decoder is 5 s ahead of the shared moment, which it cannot seek.
+    clock.ports[1].timeline = {
+      ...clock.ports[1].timeline,
+      anchors: [[0, 105000]]
+    }
+    for (let i = 0; i < 2; i++) seeks[i].length = 0
+    const skew = (): number =>
+      Math.abs(
+        wallAt(
+          clock.ports[1].timeline.anchors,
+          clock.ports[1].position * 1000
+        )! - clock.wall!
+      )
+    for (let tick = 1; tick <= 40; tick++) {
+      const edge = 4 * Math.floor(tick / 16)
+      if (seeks[0].length === 0) {
+        clock.progress(0, 300 + tick * 0.25, 296 + edge, 0)
+        clock.progress(1, 300 + tick * 0.25, 292 + edge, 0)
+      }
+      if (clock.available(1))
+        expect(skew(), `shown in step at tick ${tick}`).lessThanOrEqual(250)
+    }
+    expect(seeks[1].length, 'brought into step').greaterThan(0)
+    const shared = clock.wall!
+    expect(shared).lessThanOrEqual(100000 + 296000)
+    for (const i of [0, 1]) {
+      clock.settled(i)
+      clock.progress(i, seeks[i].at(-1)!, 304, 0)
+    }
+    expect(clock.available(1)).equals(true)
+    expect(skew()).lessThanOrEqual(250)
+  })
+  it('realigns every playable camera within 250 ms of the moment when a follower mapping changes', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1, 2]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 330, 0)
+      clock.settled(i)
+    }
+    for (let i = 0; i < 3; i++) seeks[i].length = 0
+    // Under the 0.75 s drift allowance, but over the 250 ms step.
+    clock.remap(1, { ...clock.ports[1].timeline, anchors: [[0, 99500]] })
+    expect(seeks).deep.equals([[], [300.5], []])
+    expect(clock.wall).equals(400000)
+    // A large correction is realigned at once, without waiting for a tick.
+    clock.settled(1)
+    clock.progress(1, 300.5, 330, 0)
+    clock.remap(2, { ...clock.ports[2].timeline, anchors: [[0, 131500]] })
+    expect(seeks[2]).deep.equals([268.5])
+  })
+  it('keeps a paused historical moment when the master mapping changes', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 600, 0)
+      clock.settled(i)
+    }
+    // Rewound three minutes, then paused.
+    clock.seek(100000 + 120000)
+    for (const i of [0, 1]) {
+      clock.settled(i)
+      clock.progress(i, 120, 600, 0, false)
+    }
+    for (let i = 0; i < 2; i++) seeks[i].length = 0
+    clock.remap(0, { ...clock.ports[0].timeline, anchors: [[0, 101000]] })
+    // The master's frames now fall 1 s later: it moves back to the selected
+    // moment, the follower is already there, and nothing is pulled to live.
+    expect(seeks).deep.equals([[119], []])
+    expect(clock.wall).equals(220000)
+    clock.settled(0)
+    clock.progress(0, 119, 600, 0, false)
+    expect(clock.wall).equals(220000)
+    expect(clock.available(0)).equals(true)
+    expect(clock.available(1)).equals(true)
+  })
+  it('leaves a follower whose new mapping has no footage at the moment covered, and others in place', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], [], []]
+    for (let i = 0; i < 3; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1, 2]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 330, 0)
+      clock.settled(i)
+    }
+    for (let i = 0; i < 3; i++) seeks[i].length = 0
+    // The refresh reveals an outage: footage from media 290 s resumes at
+    // wall 460 s, so the moment (wall 400 s) is missing from this camera.
+    clock.remap(2, {
+      ...clock.ports[2].timeline,
+      anchors: [
+        [0, 100000],
+        [290000, 460000]
+      ]
+    })
+    expect(seeks).deep.equals([[], [], []])
+    expect(clock.available(2)).equals(false)
+    expect(clock.available(1)).equals(true)
+  })
+  it('does not seek when a refresh only adds footage after the moment', () => {
+    const clock = new PlaybackClock()
+    const seeks: number[][] = [[], []]
+    for (let i = 0; i < 2; i++)
+      clock.register(i, timeline(), seconds => seeks[i].push(seconds))
+    for (const i of [0, 1]) {
+      clock.load(i, Infinity)
+      clock.progress(i, 300, 330, 0)
+      clock.settled(i)
+    }
+    // 0.4 s apart: within the drift allowance, left alone.
+    clock.progress(1, 300.4, 330, 0)
+    for (let i = 0; i < 2; i++) seeks[i].length = 0
+    for (const i of [0, 1])
+      clock.remap(i, {
+        ...clock.ports[i].timeline,
+        anchors: [
+          [0, 100000],
+          [310000, 420000]
+        ]
+      })
     expect(seeks).deep.equals([[], []])
   })
   it('rejoins a live follower within the required half-second wall tolerance', () => {
