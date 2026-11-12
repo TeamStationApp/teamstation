@@ -526,9 +526,8 @@ describe('the streaming screen', function () {
     expect(h.patches).deep.equals([])
   })
 
-  it('says so when the camera cannot be opened', async function () {
-    const answers = { zoomScale: SCALE }
-    const refused = fakePhoneStreamModule(answers)
+  async function mountRefused(): Promise<FakePhoneStreamModule> {
+    const refused = fakePhoneStreamModule({ zoomScale: SCALE })
     refused.failures.open = { code: 'permission' }
     const host = document.createElement('div')
     document.body.appendChild(host)
@@ -550,14 +549,47 @@ describe('the streaming screen', function () {
       )
       await delay(20)
     })
-    expect(byTestId('stream-problem')?.textContent).contains(
-      'camera and the microphone'
-    )
-    // A token-less client sends an empty one.
+    return refused
+  }
+
+  it('keeps the permission guidance at Record until the camera opens, then records', async function () {
+    const refused = await mountRefused()
+    const guidance =
+      'TeamStation needs the camera and the microphone to record. Allow them in Settings.'
+    expect(byTestId('stream-problem')?.textContent).equals(guidance)
+    // Record asks for the camera again rather than for a take the engine
+    // cannot start: a refusal keeps the guidance, never `notReady`.
     await press('broadcast-button')
+    expect(calls(refused, 'open')).has.length(2)
+    expect(calls(refused, 'startRecording')).has.length(0)
+    expect(byTestId('stream-problem')?.textContent).equals(guidance)
+    await press('broadcast-button')
+    expect(byTestId('stream-problem')?.textContent).equals(guidance)
+    // Allowed in Settings, Record opens the camera and starts the take.
+    delete refused.failures.open
+    await press('broadcast-button')
+    expect(calls(refused, 'open')).has.length(4)
+    expect(byTestId('stream-problem')).equals(null)
+    // A token-less client sends an empty one.
     expect(
       (calls(refused, 'startRecording')[0][4] as { token: string }).token
     ).equals('')
+    expect(calls(refused, 'zoomScale').length).greaterThan(0)
+  })
+
+  it('lets a long problem wrap inside its banner rather than clipping it', async function () {
+    await mountRefused()
+    const text = byTestId('stream-problem')!
+    const box = byTestId('stream-problem-box')!
+    expect(box.contains(text)).equals(true)
+    // The bounded box lays the text out at its width; a bounded, absolutely
+    // placed text measured itself as one line and was cut off.
+    const textStyle = window.getComputedStyle(text)
+    const boxStyle = window.getComputedStyle(box)
+    expect(textStyle.position).not.equals('absolute')
+    expect(textStyle.maxWidth).oneOf(['', 'none'])
+    expect(boxStyle.position).equals('absolute')
+    expect(boxStyle.maxWidth).match(/px$/)
   })
 
   it('reads the rail again while the camera is still finding its lenses', async function () {
