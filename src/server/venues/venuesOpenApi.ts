@@ -35,6 +35,21 @@ export function venuePaths(errorResponse: unknown): Record<string, unknown> {
       }
     }
   }
+  const windows = {
+    type: 'array',
+    maxItems: 20,
+    description:
+      'Dated weekly hours, ordered by start. An omitted end lasts until the next start; gaps are closed.',
+    items: {
+      type: 'object',
+      required: ['from', 'hours'],
+      properties: {
+        from: { type: 'string', format: 'date' },
+        until: { type: 'string', format: 'date' },
+        hours: weeklyHours
+      }
+    }
+  }
   const dates = {
     type: 'array',
     items: { type: 'string', format: 'date' },
@@ -72,6 +87,11 @@ export function venuePaths(errorResponse: unknown): Record<string, unknown> {
       },
       startsOn: { type: ['string', 'null'], format: 'date' },
       endsOn: { type: ['string', 'null'], format: 'date' },
+      windows: {
+        ...windows,
+        type: ['array', 'null'],
+        description: 'Null inherits venue windows; an empty list is closed.'
+      },
       hours: {
         ...weeklyHours,
         type: ['array', 'null'],
@@ -164,6 +184,7 @@ export function venuePaths(errorResponse: unknown): Record<string, unknown> {
             name: { type: 'string', maxLength: 200 },
             sizeSwitchMinutes: { type: 'integer', minimum: 0, maximum: 240 },
             defaultHours: weeklyHours,
+            defaultWindows: windows,
             defaultBlackouts: dates,
             photo
           }

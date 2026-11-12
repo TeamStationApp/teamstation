@@ -38,8 +38,14 @@ const context = (others: Holding[]): RuleContext => ({
     ]
   ]),
   seasons: new Map([
-    ['sea_a', { bufferMinutes: 30, doubleheaders: 'allowed' }],
-    ['sea_b', { bufferMinutes: 0, doubleheaders: 'allowed' }]
+    [
+      'sea_a',
+      { fieldIds: ['fld_one'], bufferMinutes: 30, doubleheaders: 'allowed' }
+    ],
+    [
+      'sea_b',
+      { fieldIds: ['fld_one'], bufferMinutes: 0, doubleheaders: 'allowed' }
+    ]
   ]),
   others
 })
@@ -93,12 +99,14 @@ describe('the scheduler’s hard rules', () => {
     ).equals(null)
     const rules = context([])
     rules.seasons.set('sea_a', {
+      fieldIds: ['fld_one'],
       bufferMinutes: 0,
       doubleheaders: 'allowed',
       maxGamesOnWeekend: 0
     })
     expect(ruleProblem(checked, rules)).includes('maximum of 0')
     rules.seasons.set('sea_a', {
+      fieldIds: ['fld_one'],
       bufferMinutes: 0,
       doubleheaders: 'allowed',
       maxGamesOnWeekend: 2
@@ -191,7 +199,10 @@ describe('the scheduler’s hard rules', () => {
           ]
         ]),
         seasons: new Map([
-          ['sea_a', { bufferMinutes: 0, doubleheaders: 'never' }]
+          [
+            'sea_a',
+            { fieldIds: ['fld_one'], bufferMinutes: 0, doubleheaders: 'never' }
+          ]
         ])
       }
     }
@@ -252,7 +263,9 @@ describe('the scheduler’s hard rules', () => {
     // The engine counts them on different days, so the New York slot fits.
     const engine = buildContext(
       input({
-        seasons: [engineSeason(settings)],
+        seasons: [
+          engineSeason({ ...settings, fieldIds: fields.map(field => field.id) })
+        ],
         fields,
         fixed: [lateInLa]
       })
@@ -282,7 +295,14 @@ describe('the scheduler’s hard rules', () => {
         ])
       ),
       seasons: new Map([
-        [first.season.id, { bufferMinutes: 0, doubleheaders: 'never' }]
+        [
+          first.season.id,
+          {
+            fieldIds: fields.map(field => field.id),
+            bufferMinutes: 0,
+            doubleheaders: 'never'
+          }
+        ]
       ]),
       others: [
         {

@@ -92,8 +92,10 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
  * set up as its size, or, with none, of the run's first field, or UTC.
  */
 function seasonZones(input: EngineInput, season: EngineSeason): string[] {
-  const sized = input.fields.filter(field =>
-    field.sizes.includes(season.settings.fieldSize)
+  const sized = input.fields.filter(
+    field =>
+      (season.settings.fieldIds ?? []).includes(field.id) &&
+      field.sizes.includes(season.settings.fieldSize)
   )
   const zones = (sized.length > 0 ? sized : input.fields.slice(0, 1)).map(
     field => field.availability.timezone

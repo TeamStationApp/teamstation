@@ -12,12 +12,8 @@ import { asLiteral } from './asLiteral'
 import { daysBetween } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import { asCalendarDate, isRecord } from './groupCreation'
-import {
-  asBlackouts,
-  asFieldSize,
-  asWeeklyHours,
-  type FieldSize
-} from './venues'
+import { asBlackouts, asFieldSize, type FieldSize } from './venues'
+import { asWindowPeriods } from './windowPeriods'
 
 /** Whether a team may play twice in a day. */
 export const DOUBLEHEADERS = ['never', 'ifNecessary', 'allowed'] as const
@@ -41,10 +37,11 @@ export const MINUTE_STEP = 5
 export const GAME_MINUTES = { min: 30, max: 600 } as const
 export const BUFFER_MINUTES = { min: 0, max: 240 } as const
 export const MAX_GAMES = 200
-export const MAX_WINDOW_PERIODS = 20
+export { MAX_WINDOW_PERIODS, asWindowPeriods } from './windowPeriods'
 
 /** What a season's schedule is built from. */
 export interface ScheduleSettings {
+  fieldIds?: string[]
   fieldSize: FieldSize
   gameMinutes: number
   /** The time kept free on a field between one game and the next. */
@@ -98,39 +95,6 @@ function asGameCount(what: string): Cleaner<number> {
       throw new TypeError(`Choose ${what} from 0 to ${MAX_GAMES}`)
     return raw
   }
-}
-
-/**
- * A season's window periods: dated, one per date, oldest first, each ending,
- * if it has an end date, on or after its start and before the next begins.
- */
-export function asWindowPeriods(raw: unknown): WindowPeriod[] {
-  if (!Array.isArray(raw)) throw new TypeError('Choose the game windows')
-  if (raw.length > MAX_WINDOW_PERIODS)
-    throw new TypeError(
-      `Choose at most ${MAX_WINDOW_PERIODS} periods of game windows`
-    )
-  const periods = raw.map((entry: unknown): WindowPeriod => {
-    if (!isRecord(entry)) throw new TypeError('Choose the game windows')
-    const from = asCalendarDate(entry.from)
-    const hours = asWeeklyHours(entry.hours)
-    if (entry.until == null) return { from, hours }
-    const until = asCalendarDate(entry.until)
-    if (until < from)
-      throw new TypeError(
-        'End each period of game windows on or after the day it starts'
-      )
-    return { from, until, hours }
-  })
-  periods.sort((a, b) => a.from.localeCompare(b.from))
-  for (let i = 1; i < periods.length; i++) {
-    if (periods[i].from === periods[i - 1].from)
-      throw new TypeError('Start each period of game windows on its own date')
-    const until = periods[i - 1].until
-    if (until != null && until >= periods[i].from)
-      throw new TypeError('Periods of game windows can’t overlap')
-  }
-  return periods
 }
 
 /**
@@ -193,6 +157,9 @@ export function asScheduleSettings(raw: unknown): ScheduleSettings {
   if (endsOn < startsOn)
     throw new TypeError('The last day must be on or after the first')
   return {
+    ...(raw.fieldIds === undefined
+      ? {}
+      : { fieldIds: asIdList('fields', MAX_SETUP_FIELDS)(raw.fieldIds) }),
     fieldSize: asFieldSizeOf(raw.fieldSize),
     gameMinutes: asSteppedMinutes(
       'a game length',
@@ -248,6 +215,7 @@ export function defaultScheduleSettings(season: {
   year: number
 }): ScheduleSettings {
   return {
+    fieldIds: [],
     fieldSize: '60/90',
     gameMinutes: 120,
     bufferMinutes: 15,
@@ -279,6 +247,7 @@ function asWirePeriod(raw: unknown): WindowPeriod {
 }
 
 const asWireSettings: Cleaner<ScheduleSettings> = asObject({
+  fieldIds: asOptional(asArray(asString), []),
   fieldSize: asFieldSize,
   gameMinutes: asNumber,
   bufferMinutes: asNumber,

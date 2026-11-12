@@ -378,13 +378,10 @@ export async function seedSchedulingSetup(
       `/seasons/${fx.f.seasonA}/memberships/${fx.teams[name]}`,
       { exhibition: true }
     )
-  await api(
-    fx,
-    101,
-    'PUT',
-    `/seasons/${fx.f.seasonA}/schedule-settings`,
-    SEASON_A_SETTINGS
-  )
+  await api(fx, 101, 'PUT', `/seasons/${fx.f.seasonA}/schedule-settings`, {
+    ...SEASON_A_SETTINGS,
+    fieldIds: [fieldId]
+  })
   await api(fx, 101, 'PUT', `/leagues/${fx.f.leagueA}/schedule-setup`, {
     seasonIds: [fx.f.seasonA],
     fieldIds: [fieldId]

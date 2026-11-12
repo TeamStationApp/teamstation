@@ -160,8 +160,10 @@ export function seasonSlots(
   const gameMs = settings.gameMinutes * MINUTE
   const stride = gameMs + settings.bufferMinutes * MINUTE
   const blackouts = new Set(settings.blackouts)
-  const fields = input.fields.filter(field =>
-    field.sizes.includes(settings.fieldSize)
+  const fields = input.fields.filter(
+    field =>
+      (settings.fieldIds ?? []).includes(field.id) &&
+      field.sizes.includes(settings.fieldSize)
   )
 
   const slots: Slot[] = []
@@ -174,7 +176,7 @@ export function seasonSlots(
   fields.forEach(field => {
     const scarcity = input.seasons.filter(
       other =>
-        other.id !== season.id && field.sizes.includes(other.settings.fieldSize)
+        other.id !== season.id && (other.settings.fieldIds ?? []).includes(field.id) && field.sizes.includes(other.settings.fieldSize)
     ).length
     const { timezone } = field.availability
     for (

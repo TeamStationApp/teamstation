@@ -33,6 +33,7 @@ export interface RuleContext {
   seasons: Map<
     string,
     {
+      fieldIds?: string[]
       bufferMinutes: number
       doubleheaders: Doubleheaders
       maxGamesOnWeekdays?: number
@@ -91,6 +92,8 @@ export function ruleProblem(
   )
     return `${where} is not open for all of this game.`
   const season = context.seasons.get(game.seasonId)
+  if (!(season?.fieldIds ?? []).includes(game.fieldId))
+    return 'Choose one of this season’s selected fields.'
   const bufferMs = (season?.bufferMinutes ?? 0) * 60 * 1000
   // Each game's day is read in its own field's zone, as the engine reads it.
   // A game on a field outside the run takes the zone of the run's first

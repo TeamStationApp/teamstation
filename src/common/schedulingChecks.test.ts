@@ -29,6 +29,7 @@ function season(
     exhibitionTeams: 2,
     ...more,
     settings: {
+      fieldIds: ['fld_one'],
       fieldSize: '50/70',
       gameMinutes: 90,
       regularGames: 4,
