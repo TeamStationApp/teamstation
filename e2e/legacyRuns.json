@@ -3316,5 +3316,17 @@
         "FOCUS_APP": "app.teamstation.app"
       }
     }
+  ],
+  "src/app/uiTweaks.e2e.ts": [
+    {
+      "label": "ui",
+      "env": {"TS_UI_SCOPE": "ui"},
+      "needs": "web"
+    },
+    {
+      "label": "playback",
+      "env": {"TS_UI_SCOPE": "playback"},
+      "needs": "hevc"
+    }
   ]
 }
