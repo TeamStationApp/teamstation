@@ -196,6 +196,13 @@ export interface MultiCamOptions {
  */
 export const DRY_CHECK_MS = 250
 
+/**
+ * How long a tile left out of the grid may go without filling where the game
+ * is before its address is asked for again; doubled after each ask, to eight
+ * times this.
+ */
+export const LEFT_OUT_RETRY_MS = 30_000
+
 /** How often a crawl draws the grid and holds its tiles to the clock. */
 export const CRAWL_REFRESH_MS = 100
 
@@ -616,6 +623,13 @@ export function useMultiCam(
    * Each is kept where the game is and joins in once it holds enough there.
    */
   const leftOut = useRef(new Set<string>())
+  /**
+   * When each left-out tile was left out, or last asked for afresh, and how
+   * many times it has been.
+   */
+  const leftOutSince = useRef(
+    new Map<string, { since: number; asks: number }>()
+  )
   /** The same, for drawing. */
   const [outIds, setOutIds] = useState<ReadonlySet<string>>(new Set())
   const showLeftOut = (): void => {
@@ -1843,8 +1857,33 @@ export function useMultiCam(
         video != null &&
         instant != null &&
         isReady(bufferAt(video, elements.current.get(id), instant))
-      if (video != null && !ready) continue
+      if (video != null && !ready) {
+        // One that has not filled in all this time is asked for afresh, at
+        // longer and longer intervals. The grid keeps it paused, so its
+        // player's own recovery reads it as held and never reloads it, and
+        // a phone's player whose live stream went stale while its camera
+        // was cut stood there, "catching up", until the viewer rejoined.
+        const out = leftOutSince.current.get(id) ?? { since: now, asks: 0 }
+        leftOutSince.current.set(id, out)
+        // Not one parked short of its own footage, which no new address
+        // brings any sooner.
+        if (tiles[id]?.parked != null) {
+          leftOutSince.current.set(id, { since: now, asks: out.asks })
+        } else if (
+          urls[id] != null &&
+          now - out.since >= LEFT_OUT_RETRY_MS * 2 ** Math.min(out.asks, 3)
+        ) {
+          playerTrace('grid.leftOut.ask', {
+            tile: chosen.indexOf(video),
+            asks: out.asks
+          })
+          leftOutSince.current.set(id, { since: now, asks: out.asks + 1 })
+          askAgain(id)
+        }
+        continue
+      }
       leftOut.current.delete(id)
+      leftOutSince.current.delete(id)
       rejoined = true
     }
     if (rejoined) showLeftOut()
