@@ -1761,6 +1761,25 @@ export function useMultiCam(
         liveSince.current = now
       }
       const opening = liveOpeningMs(at, now - (liveSince.current ?? now))
+      // What a live grid that has not opened is waiting for, a tile a look:
+      // whether it has a picture, and where its newest footage is said to be.
+      if (opening == null)
+        chosen.forEach((video, tile) => {
+          if (video.status !== 'live') return
+          const element = elements.current.get(video.id)
+          const newest = element == null ? null : newestWallOf(video)
+          const source = mappingOfRef.current(video.id)?.source ?? null
+          playerTrace('grid.opening.wait', {
+            tile,
+            // Null while its address is still being asked for.
+            address:
+              urls[video.id] === undefined ? null : urls[video.id] !== null,
+            readyState: element?.readyState ?? null,
+            newestAgoMs: newest == null ? null : now - newest,
+            mapped: source != null,
+            byTimeline: source === 'timeline'
+          })
+        })
       if (opening != null) {
         atWallRef.current = opening
         setAtWallMs(opening)
