@@ -373,7 +373,6 @@ describe("Tess in the app's shell", () => {
       await openTess()
       await press('Account, Babe Ruth')
       await settle(30)
-      await press('Account')
       await settle(60)
       expect(currentRoute().name).equals('account')
       const index = window.history.state?.tsRouteIndex as number

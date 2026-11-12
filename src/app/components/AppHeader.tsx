@@ -293,7 +293,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
               <Text style={styles.tessLabel}>{lstrings.tess_ask}</Text>
             </Pressable>
           )}
-          {account != null && (
+          {account != null && props.sidebar !== true && (
             <HeaderMenu
               label={
                 pending

@@ -3890,6 +3890,27 @@ function Shell(props: AppProps): React.ReactElement {
   const chromeFrame = immersiveTop
     ? (chromeTop.current?.frame ?? stack[chromeDepth - 1])
     : stack[chromeDepth - 1]
+  const notifications =
+    session == null
+      ? undefined
+      : {
+          pending: hasPending,
+          onPress: () => {
+            if (top?.name !== 'notifications') push({ name: 'notifications' })
+          }
+        }
+  const account =
+    session == null
+      ? undefined
+      : {
+          userId: session.user.id,
+          name: session.user.displayName,
+          avatarUrl: session.user.avatarUrl,
+          onPress: () => {
+            if (top?.name !== 'account') push({ name: 'account' })
+          }
+        }
+
   const header = (
     <AppHeader
       apiBaseUrl={apiBaseUrl}
@@ -3949,29 +3970,8 @@ function Shell(props: AppProps): React.ReactElement {
             }
           : undefined
       }
-      notifications={
-        session == null
-          ? undefined
-          : {
-              pending: hasPending,
-              onPress: () => {
-                if (top?.name !== 'notifications')
-                  push({ name: 'notifications' })
-              }
-            }
-      }
-      account={
-        session == null
-          ? undefined
-          : {
-              userId: session.user.id,
-              name: session.user.displayName,
-              avatarUrl: session.user.avatarUrl,
-              onPress: () => {
-                if (top?.name !== 'account') push({ name: 'account' })
-              }
-            }
-      }
+      notifications={notifications}
+      account={account}
     />
   )
 
@@ -4102,6 +4102,8 @@ function Shell(props: AppProps): React.ReactElement {
                       sidebar={
                         sidebarWidth > 0 ? (
                           <AppSidebar
+                            account={account}
+                            notifications={notifications}
                             selected={tab}
                             onSelect={selectTab}
                             unread={chatOn && hasUnread(chatList)}

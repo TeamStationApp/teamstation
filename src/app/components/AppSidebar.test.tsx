@@ -15,6 +15,7 @@ import {
 } from '../../test/tessTestKit'
 import { ScopedThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
+import { tsDark } from '../theme/tsDark'
 import { AppHeader } from './AppHeader'
 import { AppSidebar } from './AppSidebar'
 import { useSidebarWidth } from './sidebarLayout'
@@ -98,6 +99,81 @@ describe('wide navigation sidebar', () => {
     expect(byTestId('header-menu-panel')).equals(null)
     await rerender(<AppHeader showMark sidebar />)
     expect(document.querySelector('[aria-label="Ask Tess"]')).equals(null)
+  })
+
+  it('pins Notifications above the full account row and preserves pending state', async () => {
+    let accounts = 0
+    let notifications = 0
+    const account = {
+      userId: 'u1',
+      name: 'Babe Ruth',
+      avatarUrl: null,
+      onPress: () => accounts++
+    }
+    const props = {
+      selected: 'home' as const,
+      onSelect: () => undefined,
+      account,
+      notifications: { pending: true, onPress: () => notifications++ }
+    }
+    await render(<AppSidebar {...props} />)
+    const footer = byTestId('sidebar-account-footer')!
+    expect(
+      [...footer.querySelectorAll('[role="button"]')].map(n =>
+        n.getAttribute('aria-label')
+      )
+    ).deep.equals(['Notifications waiting', 'Account, Babe Ruth'])
+    expect(byTestId('notification-pending-dot')).not.equals(null)
+    await click(byLabel('Notifications waiting'))
+    await click(byLabel('Account, Babe Ruth').lastElementChild as HTMLElement)
+    await click(byLabel('Account, Babe Ruth'))
+    expect(accounts).equals(2)
+    expect(notifications).equals(1)
+    await rerender(
+      <AppSidebar
+        {...props}
+        notifications={{ ...props.notifications, pending: false }}
+      />
+    )
+    expect(byTestId('notification-pending-dot')).equals(null)
+    expect(byLabel('Notifications').getAttribute('aria-label')).equals(
+      'Notifications'
+    )
+    expect(
+      document.querySelector('[aria-label="Notifications waiting"]')
+    ).equals(null)
+    for (const theme of [tsBallpark, tsDark]) {
+      await rerender(
+        <ScopedThemeProvider theme={theme}>
+          <AppSidebar {...props} />
+        </ScopedThemeProvider>
+      )
+      const tint = byLabel('Home').firstElementChild as HTMLElement
+      expect(window.getComputedStyle(tint).opacity).equals('0.15')
+      expect(window.getComputedStyle(tint).backgroundColor).not.equals(
+        'transparent'
+      )
+    }
+  })
+
+  it('moves the account menu out of the header when the sidebar appears', async () => {
+    const props = {
+      showMark: true,
+      account: { userId: 'u1', name: 'Babe Ruth', onPress: () => undefined },
+      notifications: { pending: true, onPress: () => undefined },
+      tess: { onPress: () => undefined }
+    }
+    await render(<AppHeader {...props} />)
+    await click(byLabel('Account, Babe Ruth, notifications waiting'))
+    await settle()
+    expect(byTestId('header-menu-panel')).not.equals(null)
+    await rerender(<AppHeader {...props} sidebar />)
+    expect(byTestId('header-menu-panel')).equals(null)
+    expect(document.querySelector('[aria-label^="Account, "]')).equals(null)
+    expect(byTestId('notification-pending-dot')).equals(null)
+    expect(byLabel('Ask Tess')).not.equals(null)
+    await rerender(<AppHeader {...props} />)
+    expect(document.querySelector('[aria-label^="Account, "]')).not.equals(null)
   })
 
   it('closes a narrow mark menu on becoming wide and leaves the wide mark noninteractive', async () => {

@@ -87,7 +87,10 @@ header, ordered Home, Videos, Schedule, Search, Messages, About TeamStation.
 Ask Tess appears at the right of the primary header when available. Tess opens
 in her own full-height panel on the right, outside that header, with a resize
 divider on her left edge. At narrow widths Tess fills the screen until closed.
-The top-left mark has no action; the account menu keeps its existing actions.
+The top-left mark has no action. Notifications and its pending indicator sit above
+a bottom-pinned account row in the sidebar. The account row shows the avatar and
+display name; its whole area opens Account directly. The header account menu
+remains available when the sidebar is absent.
 
 ## Cards and collections
 

@@ -102,14 +102,41 @@ async function main(): Promise<void> {
         top: node.getBoundingClientRect().top
       }))
       assert.equal(result.width, 256)
-      assert.deepEqual(result.rows, [
+      assert.deepEqual(result.rows.slice(0, -1), [
         'Home',
         'Videos',
         'Schedule',
         'Search',
         'Messages',
-        'About TeamStation'
+        'About TeamStation',
+        'Notifications'
       ])
+      assert.equal(result.rows.at(-1)?.startsWith('Account, '), true)
+      const footer = await page.$eval(
+        '[data-testid="sidebar-account-footer"]',
+        node => {
+          const account = node.querySelector('[aria-label^="Account, "]')!
+          const notification = node.querySelector(
+            '[aria-label="Notifications"]'
+          )!
+          const a = account.getBoundingClientRect()
+          const n = notification.getBoundingClientRect()
+          return {
+            bottom: a.bottom,
+            left: a.left,
+            width: a.width,
+            notificationBottom: n.bottom,
+            top: a.top
+          }
+        }
+      )
+      assert(footer.bottom > 870 && footer.bottom <= 900)
+      assert(footer.left < 20 && footer.width > 220)
+      assert(footer.notificationBottom <= footer.top)
+      assert.equal(
+        await page.$$eval('[aria-label^="Account, "]', nodes => nodes.length),
+        1
+      )
       const headerMark = await page.$eval(
         '[data-testid="sidebar-header-mark"]',
         node => {
@@ -134,6 +161,21 @@ async function main(): Promise<void> {
         `${width}: ordered sidebar, no bar/menu, Ask Tess at right; rows beneath header`
       )
     }
+    await resize(1440, 420)
+    const shortFooter = await page.$eval(
+      '[data-testid="sidebar-account-footer"]',
+      node => {
+        const box = node.getBoundingClientRect()
+        return { top: box.top, bottom: box.bottom }
+      }
+    )
+    assert(shortFooter.top > 48 && shortFooter.bottom <= 420)
+    await tap(`${sidebar} [aria-label^="Account, "]`)
+    await pathIs('/account')
+    await shot('short-sidebar')
+    await tap(`${sidebar} [aria-label="Home"]`)
+    await pathIs('/')
+    await resize(1440)
     await tap(`${sidebar} [aria-label="About TeamStation"]`)
     await tap('[aria-label="Close build information"]')
     for (const [label, path] of [
@@ -254,10 +296,61 @@ async function main(): Promise<void> {
     await waitGone(column)
     note('Tess and page fit at the boundary; resizing retained draft and route')
     await resize(1440)
+    await tap(`${sidebar} [aria-label="Notifications"]`)
+    await pathIs('/notifications')
+    await tap(`${sidebar} [aria-label="Notifications"]`)
+    await pathIs('/notifications')
     await tap('[aria-label^="Account, "]')
-    await tap('[aria-label="Account"]')
     await pathIs('/account')
-    note('Account menu still opens Account')
+    await tap('[aria-label^="Account, "]')
+    await pathIs('/account')
+    await shot('account-footer')
+    await resize(390, 844)
+    await tap('[aria-label^="Account, "]')
+    await page.waitForSelector('[data-testid="header-menu-panel"]')
+    await tap('[aria-label="Account"]')
+    await waitGone('[data-testid="header-menu-panel"]')
+    await resize(1440)
+    note(
+      'Pinned Notifications and full account row open directly; narrow header keeps its account menu'
+    )
+    let pending = true
+    await page.setRequestInterception(true)
+    page.on('request', request => {
+      if (
+        new URL(request.url()).pathname === '/api/v1/me/notifications/summary'
+      ) {
+        request
+          .respond({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({ hasPending: pending })
+          })
+          .catch(() => undefined)
+      } else request.continue().catch(() => undefined)
+    })
+    const cdp = await page.createCDPSession()
+    for (const hasPending of [true, false]) {
+      pending = hasPending
+      await m.openBrowser({ url: origin + '/' })
+      const label = pending ? 'Notifications waiting' : 'Notifications'
+      await page.waitForSelector(`${sidebar} [aria-label="${label}"]`)
+      const { nodes } = await cdp.send('Accessibility.getFullAXTree')
+      assert(
+        nodes.some(
+          node => node.role?.value === 'button' && node.name?.value === label
+        )
+      )
+      assert.equal(
+        (await page.$(`${sidebar} [data-testid="notification-pending-dot"]`)) !=
+          null,
+        pending
+      )
+    }
+    await cdp.detach()
+    note(
+      'The accessibility tree announces waiting notifications only when pending'
+    )
     await browser.setCookie({
       name: 'ts_session',
       value: '',
