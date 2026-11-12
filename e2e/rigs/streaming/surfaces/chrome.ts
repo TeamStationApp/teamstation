@@ -1,5 +1,7 @@
 import type { MaestroDevice } from '../../../core/maestro'
 import type { ProbeTile } from '../soakRecords'
+import { playerBlock } from './hierarchy'
+import type { Rect } from './regions'
 import {
   DEFAULT_SKIPS,
   LABELS,
@@ -7,6 +9,7 @@ import {
   type Sleep,
   type SoakSurfaceDriver,
   type SurfaceProbe,
+  tapIfShown,
   TILE_NOTICE
 } from './surface'
 
@@ -30,6 +33,8 @@ export interface VideoRead {
   seeking: boolean | null
   frames: number | null
   notice: string | null
+  /** The tile's box on the page, in CSS pixels. */
+  rect?: Rect
 }
 
 export interface PageRead {
@@ -41,6 +46,7 @@ export interface PageRead {
   } | null
   visible: boolean
   signIn: boolean
+  viewport?: { width: number; height: number }
 }
 
 /** Runs in the page. Tiles are named "<angle> angle"; a tile's video is inside it or under it. */
@@ -63,7 +69,8 @@ export const READ_SCRIPT = `(() => {
       readyState: v ? v.readyState : null,
       seeking: v ? v.seeking : null,
       frames: q ? q.totalVideoFrames : null,
-      notice: text || (state && state !== 'playing' ? state : null)
+      notice: text || (state && state !== 'playing' ? state : null),
+      rect: { x: t.left, y: t.top, width: t.width, height: t.height }
     }
   })
   const bar = document.querySelector('[aria-label="${LABELS.bar}"]')
@@ -73,7 +80,8 @@ export const READ_SCRIPT = `(() => {
     bar: bar ? { now: Number(bar.getAttribute('aria-valuenow')), max: Number(bar.getAttribute('aria-valuemax')),
       rect: { x: r.left, y: r.top, width: r.width, height: r.height } } : null,
     visible: document.visibilityState === 'visible',
-    signIn: !!document.querySelector('input[type="password"]')
+    signIn: !!document.querySelector('input[type="password"]'),
+    viewport: { width: window.innerWidth, height: window.innerHeight }
   })
 })()`
 
@@ -83,8 +91,24 @@ export function parsePageRead(raw: unknown): PageRead {
     tiles: read.tiles ?? [],
     bar: read.bar ?? null,
     visible: read.visible,
-    signIn: read.signIn
+    signIn: read.signIn,
+    ...(read.viewport == null ? {} : { viewport: read.viewport })
   }
+}
+
+/** The full-screen player's block of videos on the page, or null when it is not up. */
+export function pageBlock(read: PageRead): Rect | null {
+  if (read.viewport == null) return null
+  return playerBlock({
+    screen: { x: 0, y: 0, ...read.viewport },
+    tiles: read.tiles.flatMap(tile =>
+      tile.rect == null
+        ? []
+        : [{ angle: tile.angle, bounds: tile.rect, notice: null }]
+    ),
+    bar: null,
+    texts: []
+  })
 }
 
 /** Advancing: played on by more than a quarter of the gap, with frames decoded, not paused. */
@@ -132,6 +156,7 @@ export interface ChromeOptions {
 export class ChromeSurface implements SoakSurfaceDriver {
   readonly name = 'chrome'
   private readonly sleep: Sleep
+  private notes: string[] = []
 
   constructor(private readonly options: ChromeOptions) {
     this.sleep = options.sleep ?? realSleep
@@ -145,13 +170,68 @@ export class ChromeSurface implements SoakSurfaceDriver {
     return parsePageRead(await this.options.page.evaluate(READ_SCRIPT))
   }
 
+  takeNotes(): string[] {
+    const notes = this.notes
+    this.notes = []
+    return notes
+  }
+
+  /** The player's block of videos, rejoining first when the player is not up. */
+  private async player(): Promise<Rect> {
+    let block = pageBlock(await this.read())
+    if (block == null) {
+      this.notes.push('rejoined: the full-screen player was not up')
+      await this.join()
+      block = pageBlock(await this.read())
+    }
+    if (block == null) {
+      throw new Error('chrome: the full-screen player is not up')
+    }
+    return block
+  }
+
+  /** A point in the press grid over the block of videos (`src/app/player/pressGrid.ts`). */
+  private gridPoint(
+    block: Rect,
+    column: number,
+    row: number
+  ): { x: number; y: number } {
+    return {
+      x: Math.round(block.x + (block.width * (column + 0.5)) / 4),
+      y: Math.round(block.y + (block.height * (row + 0.5)) / 4)
+    }
+  }
+
+  /**
+   * Taps a control the player hides while the picture plays: it takes no
+   * pointer until the controls are up, which a press on the grid's top-centre
+   * squares brings about without doing anything else, and the next press
+   * hides again.
+   */
+  private async control(label: string): Promise<void> {
+    const block = await this.player()
+    // The controls may be up already, and a press on the grid then hides
+    // them: the control is tried first, and the grid pressed only when it
+    // takes no pointer.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.device.tapOn({ text: label })
+        return
+      } catch (error) {
+        if (
+          attempt === 2 ||
+          !(error as Error).message.includes('not actionable')
+        )
+          throw error
+      }
+      await this.device.tapOnPoint(this.gridPoint(block, 1, 0))
+      await this.sleep(300)
+    }
+  }
+
   private async openAngles(): Promise<void> {
     await this.device.tapOn({ text: LABELS.openAngles, timeout: 30000 })
-    await this.device.tapOn({
-      text: LABELS.watch,
-      optional: true,
-      timeout: 5000
-    })
+    await tapIfShown(this.device, { text: LABELS.watch }, 5000)
   }
 
   async join(): Promise<void> {
@@ -164,6 +244,7 @@ export class ChromeSurface implements SoakSurfaceDriver {
   }
 
   async scrub(fraction: number): Promise<void> {
+    await this.player()
     const { bar } = await this.read()
     if (bar == null) throw new Error('chrome: no bar on the page')
     const { rect } = bar
@@ -187,14 +268,18 @@ export class ChromeSurface implements SoakSurfaceDriver {
     }
   }
 
+  /** Ten-second steps: clicks on the grid's back and forward squares, as on a phone. */
   async skip(steps: number[] = DEFAULT_SKIPS): Promise<void> {
+    const block = await this.player()
     for (const step of steps) {
-      await this.device.tapOn({ text: step < 0 ? LABELS.back : LABELS.forward })
+      await this.device.tapOnPoint(this.gridPoint(block, step < 0 ? 0 : 3, 1))
+      await this.sleep(400)
     }
   }
 
   /** The slow key held: ArrowUp down, the hold, ArrowUp up, as the keyboard sends it. */
   async slowMotion(holdMs: number): Promise<void> {
+    await this.player()
     const key = (type: string): string =>
       `window.dispatchEvent(new KeyboardEvent('${type}', { key: 'ArrowUp', bubbles: true }))`
     await this.device.evalBrowserScript({ script: key('keydown') })
@@ -203,19 +288,22 @@ export class ChromeSurface implements SoakSurfaceDriver {
   }
 
   async jumpToPresent(): Promise<void> {
-    await this.device.tapOn({ text: LABELS.jump })
+    await this.control(LABELS.jump)
   }
 
   async exitAndReenter(waitMs = 10000): Promise<void> {
-    await this.device.tapOn({ text: LABELS.close })
+    await this.control(LABELS.close)
     await this.sleep(waitMs)
     await this.openAngles()
   }
 
-  /** A reload of the page, signed in as before, then back into the multi-angle view. */
+  /**
+   * The page loaded afresh, signed in as before, then back into the
+   * multi-angle view. A load of the game's address rather than a reload, which
+   * has left the old page's taps hanging until they timed out.
+   */
   async relaunch(): Promise<void> {
-    await this.device.evalBrowserScript({ script: 'location.reload()' })
-    await this.openAngles()
+    await this.join()
   }
 
   async probe(): Promise<SurfaceProbe> {

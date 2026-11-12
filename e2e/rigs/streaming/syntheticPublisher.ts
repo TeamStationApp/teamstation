@@ -28,6 +28,10 @@ import {
  * `cut(seconds)` drops the connection and ffmpeg, as a camera that lost its link, and
  * brings them back after `seconds` with timestamps that carry on from where the stream
  * would have been. `{ discontinuity: true }` brings it back with timestamps from zero.
+ *
+ * When the ingest drops the connection itself, the publisher says so once, stops
+ * ffmpeg and tries once to come back. An ingest that refuses (the camera was ended
+ * on the server) leaves it down, and every later cut fails at once saying why.
  */
 
 export interface ChildLike {
@@ -179,6 +183,9 @@ export class SyntheticPublisher {
   private target: RtmpTarget | null = null
   private secrets: string[] = []
   private readonly fps: number
+  /** Why the source is down for good, once the ingest has refused it. */
+  private ended: string | null = null
+  private reopening: Promise<void> | null = null
   /** Every argument list ffmpeg was started with, for the record (no URL in any). */
   readonly launches: string[][] = []
 
@@ -193,6 +200,11 @@ export class SyntheticPublisher {
     return this.leg != null
   }
 
+  /** Why the ingest will not take the source any more, or null while it will. */
+  get down(): string | null {
+    return this.ended
+  }
+
   async start(): Promise<void> {
     if (this.leg != null)
       throw new Error('the synthetic publisher is already running')
@@ -201,6 +213,7 @@ export class SyntheticPublisher {
     this.secrets = [url, this.target.key, this.target.tcUrl]
     this.startMs = this.deps.now()
     this.nextIndex = 0
+    this.ended = null
     await this.open(0)
   }
 
@@ -225,6 +238,10 @@ export class SyntheticPublisher {
     const child = this.deps.spawn(this.options.ffmpeg, args)
     const flv = new FlvReader()
     child.stdout?.on('data', data => {
+      if (rtmp.closed) {
+        this.lost(rtmp)
+        return
+      }
       try {
         for (const tag of flv.push(data)) rtmp.sendTag(tag)
       } catch (error) {
@@ -267,6 +284,54 @@ export class SyntheticPublisher {
     this.nextIndex = Math.floor(
       ((this.deps.now() - this.startMs) * this.fps) / 1000
     )
+  }
+
+  /**
+   * The ingest closed this leg's connection, not a cut: said once, ffmpeg
+   * stopped, and one try to come back, which a refusal answers for good.
+   */
+  private lost(rtmp: RtmpPublisher): void {
+    if (this.leg?.rtmp !== rtmp || this.reopening != null) return
+    this.deps.log(
+      'synthetic publisher: the ingest closed the connection; reconnecting once'
+    )
+    this.reopening = (async () => {
+      await this.close(false)
+      await this.deps.sleep(5000)
+      try {
+        await this.reopen(() => (this.deps.now() - this.startMs) / 1000)
+        this.deps.log('synthetic publisher: back on the ingest')
+      } catch (error) {
+        this.ended = (error as Error).message
+        this.deps.log(
+          `synthetic publisher: down for the rest of the run: ${this.ended}`
+        )
+      }
+    })().finally(() => {
+      this.reopening = null
+    })
+  }
+
+  /**
+   * Opens again after a cut or a drop. A connection that times out or is
+   * reset is the network between this Mac and the stack, which has come back
+   * in seconds, so it is tried three times ten seconds apart; a refusal is the
+   * ingest's answer and is not asked again.
+   */
+  private async reopen(offset: () => number): Promise<void> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await this.open(offset())
+        return
+      } catch (error) {
+        const message = (error as Error).message
+        if (attempt === 3 || message.includes('refused')) throw error
+        this.deps.log(
+          `synthetic publisher: could not reconnect (${message}); trying again`
+        )
+        await this.deps.sleep(10_000)
+      }
+    }
   }
 
   /** Writes every frame (and its sound) the wall clock has reached. */
@@ -317,19 +382,33 @@ export class SyntheticPublisher {
     seconds: number,
     options: { discontinuity?: boolean } = {}
   ): Promise<void> {
+    await this.reopening
+    if (this.ended != null) {
+      throw new Error(
+        `the synthetic camera is down: the ingest refused it (${this.ended})`
+      )
+    }
     if (this.leg == null)
       throw new Error('the synthetic publisher is not running')
     await this.close(false)
     await this.deps.sleep(seconds * 1000)
-    const offset =
-      options.discontinuity === true
-        ? 0
-        : (this.deps.now() - this.startMs) / 1000
-    await this.open(offset)
+    try {
+      await this.reopen(() =>
+        options.discontinuity === true
+          ? 0
+          : (this.deps.now() - this.startMs) / 1000
+      )
+    } catch (error) {
+      if ((error as Error).message.includes('refused')) {
+        this.ended = (error as Error).message
+      }
+      throw error
+    }
   }
 
   /** Ends the stream as a camera that stopped: ffmpeg flushes, then the connection closes. */
   async stop(): Promise<void> {
+    await this.reopening
     await this.close(true)
   }
 }

@@ -104,7 +104,8 @@ function isArtifactKey(key: string): boolean {
     key.endsWith('_ARTIFACTS') ||
     key.endsWith('_ARTIFACT_DIR') ||
     key.endsWith('_OUT') ||
-    key === 'TS_ARTIFACTS_DIR'
+    key === 'TS_ARTIFACTS_DIR' ||
+    key === 'ARTIFACT_DIR'
   )
 }
 

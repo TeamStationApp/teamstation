@@ -98,6 +98,56 @@ export function readScreen(root: HierarchyNode | undefined): ScreenRead {
   }
 }
 
+/**
+ * The block of videos the full-screen player lays its press grid on, read from
+ * the tiles as the app works it out (`videoBlock` in
+ * `src/app/player/multiCam/playerLayout.ts`): from the topmost tile's top to
+ * the bottommost's bottom, as wide as the widest row of tiles that share a top.
+ */
+export function videoBlockOf(tiles: TileNode[]): Rect | null {
+  const shown = tiles
+    .map(tile => tile.bounds)
+    .filter(b => b.width > 0 && b.height > 0)
+  if (shown.length === 0) return null
+  const rows = new Map<number, { left: number; right: number }>()
+  for (const b of shown) {
+    const key = Math.round(b.y)
+    const row = rows.get(key)
+    rows.set(key, {
+      left: Math.min(row?.left ?? Infinity, b.x),
+      right: Math.max(row?.right ?? -Infinity, b.x + b.width)
+    })
+  }
+  let widest = { left: 0, right: 0 }
+  for (const row of rows.values())
+    if (row.right - row.left > widest.right - widest.left) widest = row
+  const top = Math.min(...shown.map(b => b.y))
+  const bottom = Math.max(...shown.map(b => b.y + b.height))
+  return {
+    x: widest.left,
+    y: top,
+    width: widest.right - widest.left,
+    height: bottom - top
+  }
+}
+
+/**
+ * How much of the screen the block of videos must cover for the full-screen
+ * player to be up: the game page's card is far smaller, and its camera list
+ * has no angle tiles at all.
+ */
+export const PLAYER_COVERAGE = 0.3
+
+/** The full-screen player's block of videos, or null when the player is not up. */
+export function playerBlock(read: ScreenRead): Rect | null {
+  const block = videoBlockOf(read.tiles)
+  if (block == null || read.screen == null) return null
+  const area = read.screen.width * read.screen.height
+  return area > 0 && (block.width * block.height) / area >= PLAYER_COVERAGE
+    ? block
+    : null
+}
+
 /** The element with this label, or this label and a value after a comma. */
 export function findBounds(
   root: HierarchyNode | undefined,

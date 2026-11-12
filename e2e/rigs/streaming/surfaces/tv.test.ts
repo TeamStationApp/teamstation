@@ -117,8 +117,33 @@ describe('the TV surface', function () {
       foreground: null,
       reason: 'tv: empty dump'
     })
+    // No picture: the dump's tiles, notices and bar, with movement unknown.
     const broken = tv({ captures: [new Uint8Array([1, 2, 3])] })
-    expect((await broken.surface.probe()).reason).match(/^tv: /)
+    const blind = await broken.surface.probe()
+    expect(blind.reason).match(/^tv: no picture: /)
+    expect(blind.tiles).deep.equals([
+      { angle: 'PhoneA', advancing: null, notice: null },
+      { angle: 'PhoneB', advancing: null, notice: null },
+      { angle: 'Synthetic', advancing: null, notice: 'Camera catching up…' }
+    ])
+    expect(blind.bar).equals(0.25)
+    expect(blind.foreground).equals(true)
+    const gone = new TvSurface({
+      remote: async () => {
+        throw new Error('helper failed')
+      },
+      capture: async () => png(1, 1),
+      bundleId: 'app.example.tv',
+      appName: 'TeamStation TV',
+      joinSteps: [],
+      sleep: noSleep
+    })
+    expect(await gone.probe()).deep.equals({
+      tiles: null,
+      bar: null,
+      foreground: null,
+      reason: 'tv: helper failed'
+    })
   })
 
   it('cuts by moving the focus to the angle in the camera panel and selecting it', async function () {

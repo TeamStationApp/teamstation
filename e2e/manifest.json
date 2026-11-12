@@ -2913,6 +2913,88 @@
       "manual": false,
       "spec": "schedule/rsvp/eligibility",
       "file": "e2e/tests/schedule/rsvp/eligibility.e2e.ts"
+    },
+    {
+      "id": "streaming/soak/two-hour#six-surfaces",
+      "title": "A two-hour game streams to six watching surfaces through scrubs, cuts, outages and relaunches without a stall or memory growth",
+      "kind": "e2e",
+      "covers": [
+        "src/app/player/**",
+        "src/app/stream/**",
+        "src/server/live/**",
+        "src/server/ingest/**",
+        "appletv/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "publisherA",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "publisherB",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone",
+                "safari"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "tv",
+              "needs": [
+                "apple-tv",
+                "ndi-output"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 135,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/soak/two-hour",
+      "file": "e2e/tests/streaming/soak/two-hour.e2e.ts"
     }
   ]
 }

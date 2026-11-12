@@ -17,8 +17,10 @@ import { attachedBlocker, sweepArgs } from './legacySweep'
 import { BlockedError, HarnessError } from './result'
 import {
   attachedLegacyStack,
+  clearCodeLimits,
   mirrorCommands,
   mirrorsIn,
+  nodeDatabaseUrl,
   requireStreamingHandle,
   seedStreamingFixture,
   SSH_OPTIONS,
@@ -83,9 +85,12 @@ describe('the streaming scripts against an attached stack', function () {
     expect(env.TS_STREAM_API).equals('https://streamtest.example.test/api/v1')
     expect(env.TS_E2E_HOST).equals('https://streamtest.example.test')
     expect(env.TS_STREAM_WEB).equals(HANDLE.origin)
-    expect(env.TS_E2E_DATABASE_URL).equals(HANDLE.databaseUrl)
+    expect(env.TS_E2E_DATABASE_URL).equals(
+      `${HANDLE.databaseUrl}&uselibpqcompat=true`
+    )
     expect(env.TS_STREAM_SERVER_LOG).equals('/m/api.log')
     expect(env.TS_STREAM_HLS_ROOT).equals('/m/hls')
+    expect(env.TS_STREAM_APP_ID).equals('app.teamstation.develop')
     expect(env).not.has.property('TS_STREAM_RTMP')
     expect(
       streamingStackEnv({ ...HANDLE, rtmp: 'rtmp://x.test/live' }, mirrors)
@@ -103,7 +108,7 @@ describe('the streaming scripts against an attached stack', function () {
     expect(tail[1].slice(-5)).deep.equals([
       'tail',
       '-n',
-      '+1',
+      '0',
       '-F',
       HANDLE.serverLog
     ])
@@ -197,7 +202,7 @@ describe('seeding the streaming world on an attached stack', function () {
     )
     expect(fixture.ids.config).deep.equals({
       testSettings: true,
-      databaseUrl: HANDLE.databaseUrl
+      databaseUrl: `${HANDLE.databaseUrl}&uselibpqcompat=true`
     })
     expect(existsSync(join(scratch, 'serverConfig.json'))).equals(false)
   })
@@ -215,6 +220,52 @@ describe('seeding the streaming world on an attached stack', function () {
     expect(existsSync(join(scratch, 'serverConfig.json'))).equals(false)
     const bare = await failure(mkdtempSync(join(tmpdir(), 'e2e-seed-')))
     expect((bare as Error).message).includes('no sucrase')
+  })
+})
+
+describe('the code limits on an attached stack', function () {
+  it('clears them over a connection of its own, and always lets go', async function () {
+    const seen: string[] = []
+    const fake = (fails: boolean) => (url: string) => ({
+      connect: async () => {
+        seen.push(url)
+      },
+      query: async (sql: string) => {
+        seen.push(sql)
+        if (fails) throw new Error('down')
+      },
+      end: async () => {
+        seen.push('end')
+      }
+    })
+    await clearCodeLimits(HANDLE, fake(false))
+    expect(seen).deep.equals([
+      `${HANDLE.databaseUrl}&uselibpqcompat=true`,
+      "delete from rate_events where scope like 'emailCode.%'",
+      "update auth_sessions set revoked_at = now() where revoked_at is null and device_name is distinct from 'Apple TV'",
+      'end'
+    ])
+    seen.length = 0
+    expect(
+      await clearCodeLimits(HANDLE, fake(true)).catch(
+        (e: unknown) => (e as Error).message
+      )
+    ).equals('down')
+    expect(seen.at(-1)).equals('end')
+  })
+})
+
+describe("node's view of the stack database", function () {
+  it('gives sslmode=require its libpq meaning, once, and leaves other URLs alone', function () {
+    const url = 'postgres://u:p@h/d?sslmode=require'
+    expect(nodeDatabaseUrl(url)).equals(`${url}&uselibpqcompat=true`)
+    expect(nodeDatabaseUrl(`${url}&uselibpqcompat=true`)).equals(
+      `${url}&uselibpqcompat=true`
+    )
+    expect(nodeDatabaseUrl('postgres://u:p@h/d?sslmode=verify-full')).equals(
+      'postgres://u:p@h/d?sslmode=verify-full'
+    )
+    expect(nodeDatabaseUrl('postgres://h/d')).equals('postgres://h/d')
   })
 })
 
@@ -242,6 +293,9 @@ describe('the legacy sweep against an attached stack', function () {
     expect(attachedBlocker('x.e2e.ts', 'TS_PLAYER_FIXTURE=<file>')).includes(
       'its player games'
     )
+    expect(
+      attachedBlocker('x.e2e.ts', "dev('seed', ADMIN.email, ADMIN.password)")
+    ).includes("its seed, which reads the worktree's server config")
   })
 
   it('names its daemons for the run, or keeps the suite names', function () {

@@ -295,8 +295,10 @@ describe('the synthetic publisher', function () {
     await publisher.stop()
     expect(child.ended).equals(true)
     expect(rig.servers[0].socket.destroyed).equals(true)
+    // What ffmpeg still flushes after a stop goes nowhere, and says nothing.
     child.out(flv.subarray(13))
-    expect(rig.logs.at(-1)).match(/^synthetic publisher: .*closed/)
+    expect(rig.logs).deep.equals(['ffmpeg: warning about [redacted]'])
+    expect(rig.servers).length(1)
   })
 
   it('cuts for the asked seconds and comes back on the same timeline', async function () {
@@ -366,6 +368,129 @@ describe('the synthetic publisher', function () {
     )
     expect(message).match(/BadName/)
     expect(refusing.spawned).length(0)
+  })
+
+  const ticks = async (): Promise<void> => {
+    for (let i = 0; i < 20; i++)
+      await new Promise(resolve => setImmediate(resolve))
+  }
+  const FINISHED = "This game's stream has already finished."
+
+  it('says once when the ingest drops it, and reconnects once', async function () {
+    const rig = harness()
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: 'ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    rig.servers[0].emit('close')
+    rig.children[0].out(Buffer.from('FLV'))
+    rig.children[0].out(Buffer.from('FLV'))
+    await ticks()
+    expect(
+      rig.logs.filter(line => line.includes('closed the connection'))
+    ).length(1)
+    expect(rig.logs).includes('synthetic publisher: back on the ingest')
+    expect(rig.servers).length(2)
+    expect(rig.children[0].killed).deep.equals(['SIGKILL'])
+    expect(publisher.running).equals(true)
+    expect(publisher.down).equals(null)
+    await publisher.stop()
+  })
+
+  it('stays down when the ingest refuses it, and every later cut says why', async function () {
+    let made = 0
+    const rig = harness({
+      server: () =>
+        made++ === 0
+          ? new FakeRtmpServer()
+          : new FakeRtmpServer({
+              publishCode: 'NetStream.Publish.BadName',
+              publishDescription: FINISHED
+            })
+    })
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: 'ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    rig.servers[0].emit('close')
+    rig.children[0].out(Buffer.from('FLV'))
+    await ticks()
+    expect(publisher.down).equals(
+      `the RTMP server refused to publish: NetStream.Publish.BadName: ${FINISHED}`
+    )
+    expect(rig.logs.at(-1)).match(/down for the rest of the run: .*finished/)
+    expect(
+      await publisher.cut(5).then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).match(/^the synthetic camera is down: the ingest refused it/)
+    expect(rig.servers).length(2)
+    await publisher.stop()
+  })
+
+  it('tries a timed-out reconnect after a cut again, ten seconds later', async function () {
+    let made = 0
+    const rig = harness({
+      server: () => {
+        const server = new FakeRtmpServer({ hold: made === 1 || made === 2 })
+        made++
+        return server
+      }
+    })
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: 'ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    const cut = publisher.cut(5)
+    // The first two reconnects never get the handshake back and time out.
+    await ticks()
+    rig.servers[1].emit('error', new Error('read ETIMEDOUT'))
+    await ticks()
+    rig.servers[2].emit('error', new Error('read ETIMEDOUT'))
+    await cut
+    expect(rig.servers).length(4)
+    expect(
+      rig.logs.filter(line => line.includes('could not reconnect'))
+    ).length(2)
+    expect(publisher.running).equals(true)
+    expect(publisher.down).equals(null)
+    await publisher.stop()
+  })
+
+  it('stays down when a cut comes back to a refusal', async function () {
+    let made = 0
+    const rig = harness({
+      server: () =>
+        made++ === 0
+          ? new FakeRtmpServer()
+          : new FakeRtmpServer({
+              publishCode: 'NetStream.Publish.BadName',
+              publishDescription: FINISHED
+            })
+    })
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: 'ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    expect(
+      await publisher.cut(5).then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).match(/finished/)
+    expect(publisher.down).match(/finished/)
+    expect(
+      await publisher.cut(5).then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).match(/^the synthetic camera is down/)
+    expect(rig.servers).length(2)
   })
 
   it('logs a broken ffmpeg pipe instead of throwing, and stops feeding an ffmpeg that has gone', async function () {

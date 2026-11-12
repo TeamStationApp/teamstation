@@ -1,3 +1,4 @@
+import type { MaestroDevice } from '../../../core/maestro'
 import type { ProbeTile } from '../soakRecords'
 
 /**
@@ -31,6 +32,11 @@ export interface SoakSurfaceDriver {
   exitAndReenter: (waitMs?: number) => Promise<void>
   relaunch: () => Promise<void>
   probe: () => Promise<SurfaceProbe>
+  /**
+   * What the driver did beyond the action itself since it was last asked, such
+   * as rejoining a player it found closed. The run puts these on the event.
+   */
+  takeNotes?: () => string[]
 }
 
 export type Sleep = (ms: number) => Promise<void>
@@ -46,8 +52,6 @@ export const LABELS = {
   openAngles: 'All angles',
   watch: 'Watch',
   close: 'Close',
-  back: 'Back ten seconds',
-  forward: 'Forward ten seconds',
   jump: 'Jump to present',
   bar: 'Position in the game',
   tapForSound: 'Tap for sound',
@@ -111,4 +115,23 @@ export async function performAction(
     default:
       throw new Error(`no surface action "${action}"`)
   }
+}
+
+/**
+ * Taps `target` when it shows within `timeout`, and says whether it did: for
+ * a prompt that only some surfaces or states show. Whether it showed is the
+ * caller's to judge, unlike a maestro optional step, which hides it.
+ */
+export async function tapIfShown(
+  device: MaestroDevice,
+  target: Record<string, unknown>,
+  timeout: number
+): Promise<boolean> {
+  try {
+    await device.assertVisible({ ...target, timeout })
+  } catch {
+    return false
+  }
+  await device.tapOn(target)
+  return true
 }

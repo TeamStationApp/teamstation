@@ -17,6 +17,8 @@ export interface RecordedEvent {
   args?: Record<string, unknown>
   /** The driver threw: the instance cannot be judged. */
   error?: string
+  /** What the driver did besides: a rejoin of a player it found closed. */
+  notes?: string[]
   /** What a surface switch saw: a page that reloaded fails the switch. */
   outcome?: { reloaded?: boolean }
 }
