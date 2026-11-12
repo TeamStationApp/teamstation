@@ -251,7 +251,7 @@
         "coarseTouch"
       ],
       "needs": "web",
-      "fixture": {"runner": "web", "scenario": "S1"}
+      "fixture": {"runner": "web", "scenario": "S6"}
     },
     {
       "label": "purgePrepare",

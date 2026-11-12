@@ -302,6 +302,10 @@ async function open(fixture: Fixture = {}): Promise<{
   page: Page
   unexpected: string[]
   peer: (actions: ScoringAction[]) => Promise<ScoringSession['state']>
+  created: (
+    side: 'away' | 'home',
+    body: { firstName: string; lastName: string; jersey: string }
+  ) => ReturnType<typeof rosterEntryFromBody>
   savedPlays: () => number
 }> {
   const unexpected: string[] = []
@@ -616,6 +620,15 @@ async function open(fixture: Fixture = {}): Promise<{
         return unexpected
       },
       peer,
+      /** A player another device created on `side`, as the API keeps him. */
+      created: (
+        side: 'away' | 'home',
+        body: { firstName: string; lastName: string; jersey: string }
+      ) => {
+        const entry = rosterEntryFromBody(body)
+        created[side].push(entry)
+        return entry
+      },
       savedPlays: () => held.plays.length
     }
   } catch (error) {
@@ -1119,17 +1132,25 @@ describe('current defensive scoring setup browser', function () {
         await page.close()
       }
     }
-    const { page, peer, unexpected } = await open({ homeRoster: 8 })
+    const { page, peer, unexpected, created } = await open({ homeRoster: 8 })
     try {
       await tapSlot(page, 'RF')
       await click(page, 'Create Player')
       await click(page, 'Create Placeholder Player')
       await click(page, 'Player count 2')
+      // The peer creates his player first: a game adds only a player who
+      // exists (develop b9f65cb37).
+      const julio = created('home', {
+        firstName: 'Julio',
+        lastName: 'Rodriguez',
+        jersey: '10'
+      })
       const added = await peer([
         {
           type: 'lineup',
           kind: 'addPlayer',
           side: 'home',
+          player: julio.gumboId!,
           name: 'Julio Rodriguez',
           jersey: '10'
         }
@@ -1199,8 +1220,14 @@ describe('current defensive scoring setup browser', function () {
         else await click(page, 'Create Player')
         await page.waitForSelector('[aria-label="Game over"]')
         await tapField(page, 'P')
-        expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
-        expect(await page.$('[aria-label="First Name"]')).equals(null)
+        expect(
+          await page.$('[aria-label="Defensive roster"]'),
+          `${opening}: the defensive roster after Game over`
+        ).equals(null)
+        expect(
+          await page.$('[aria-label="First Name"]'),
+          `${opening}: player entry after Game over`
+        ).equals(null)
         expect(
           (await peer([])).liveData.boxscore.teams.home.players
         ).has.length(10)
