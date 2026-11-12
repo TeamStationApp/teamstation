@@ -834,12 +834,26 @@ export const RECIPES: Record<string, Recipe> = {
               label: scenario,
               blocked: 'no xAI speech key in the secrets file or the vault'
             }
-          : {
-              label: scenario,
-              args: [],
-              env: { REPLAY_SCENARIO: scenario },
-              prepare
-            }
+          : scenario === 'noAnnouncer' && context.speech
+            ? // It checks the speaker is not offered: a server with no speech.
+              {
+                label: scenario,
+                args: [],
+                env: { REPLAY_SCENARIO: scenario },
+                prepare: async () => {
+                  prepare()
+                  await context.restartApi({ speech: false })
+                },
+                done: async () => {
+                  await context.restartApi({ speech: true })
+                }
+              }
+            : {
+                label: scenario,
+                args: [],
+                env: { REPLAY_SCENARIO: scenario },
+                prepare
+              }
       )
     }
     return runs

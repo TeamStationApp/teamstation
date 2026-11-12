@@ -402,11 +402,13 @@ async function replay(m: Device): Promise<void> {
   // The pitchers, in the order they pitched: once Gil has relieved Cole,
   // the visitors' pitching lists Cole first. The box score names them as the
   // card does, by first name and last initial.
+  // Gil and Garcia both read "Luis G" (develop 2971c5fd7); in the visitors'
+  // pitching lines only Gil pitches.
   const pitching = `
     const deck = document.querySelector('[data-testid="replay-box-score"]');
     const text = deck.textContent;
     const after = text.slice(text.indexOf('Harbor Hawks pitching'), text.indexOf('Valley Pines batting'));
-    return { cole: after.indexOf('Gerrit C'), gil: after.indexOf('Luis Gi'), text: after.slice(0, 200) };
+    return { cole: after.indexOf('Gerrit C'), gil: after.indexOf('Luis G'), text: after.slice(0, 200) };
   `
   const deadline = Date.now() + 120000
   let order = await evalJson<{ cole: number; gil: number; text: string }>(
