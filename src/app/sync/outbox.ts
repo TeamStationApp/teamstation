@@ -1,4 +1,8 @@
-import { liveEventsBody, parseStoredGame } from '../../common/api'
+import {
+  liveEventsBody,
+  parseStoredGame,
+  REQUEST_DEADLINE_MS
+} from '../../common/api'
 import { HttpError, isUpdateRequired } from '../../common/errors'
 import { type TagDocument, tagMetadata } from '../../common/eventTags'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
@@ -527,13 +531,15 @@ export interface OutboxOptions {
   store: () => Promise<DocumentStore | undefined>
   /**
    * Sends one request, with `Idempotency-Key` when `key` is set, and answers
-   * the server's JSON or throws its `HttpError`.
+   * the server's JSON or throws its `HttpError`. `signal` aborts it: a
+   * chain `giveUp` stopped waiting for.
    */
   send: (
     method: 'POST' | 'PUT' | 'DELETE',
     path: string,
     body: unknown,
-    key: string | undefined
+    key: string | undefined,
+    signal?: AbortSignal
   ) => Promise<unknown>
   /** The session's token now: after a 401 the drain waits for another. */
   token: () => string | undefined
@@ -636,6 +642,27 @@ function isRetryable(error: unknown, call: QueuedCall): boolean {
 
 const isHeld = (state: OutboxState): boolean =>
   state === 'parked' || state === 'dead'
+
+/**
+ * Settles once `signal` aborts: a request `giveUp` stopped waiting for at its
+ * deadline, whatever the request itself does with the signal.
+ */
+async function cutOff(signal: AbortSignal): Promise<void> {
+  await new Promise<void>(resolve => {
+    if (signal.aborted) resolve()
+    else
+      signal.addEventListener(
+        'abort',
+        () => {
+          resolve()
+        },
+        { once: true }
+      )
+  })
+}
+
+/** What a drain's send cut off at `giveUp`'s deadline answers. */
+const CUT = Symbol('cut')
 
 /** A direct send let go, its request still out: whether the server took it. */
 interface ReleasedSend {
@@ -929,6 +956,16 @@ export class Outbox {
    */
   private readonly released = new Map<string, ReleasedSend>()
   /**
+   * Each chain's requests still out, direct, released or the drain's, by
+   * chain: `giveUp` aborts them at its deadline.
+   */
+  private readonly requests = new Map<string, Set<AbortController>>()
+  /**
+   * Chains `giveUp` has stopped waiting for: a request of one that starts
+   * is aborted at once.
+   */
+  private readonly cut = new Set<string>()
+  /**
    * Direct sends in flight that a swap or a tag queued behind them wrote onto
    * the phone's documents first (`writeAhead`), by row id: the phone's
    * answer to each, as a queued write's would be.
@@ -1082,26 +1119,56 @@ export class Outbox {
    * its way has been answered: for a game another device swapped or reset,
    * whose queued writes name its old sides or the plays the reset deleted.
    * From the call on, the drain sends nothing more of the chain; a direct
-   * send of it in flight, and a send of the drain's, are waited for and
-   * land as they would, the server judging them, and then every row left
-   * (one queued after a send that got no answer in time too) is dropped,
-   * and a game's documents are read again from the server. Answers how many
-   * of the chain's rows were given up.
+   * send of it in flight, a send of the drain's, and a send let go, are
+   * waited for and land as they would, the server judging them, and then
+   * every row left (one queued after a send that got no answer in time too)
+   * is dropped, and a game's documents are read again from the server.
+   * Answers how many of the chain's rows were given up.
+   *
+   * None of it is waited for past `REQUEST_DEADLINE_MS` from the call: the
+   * scorer is not kept on a closed game by a link that stalls mid-answer, or
+   * by an upload, which has no deadline of its own. A send still out then
+   * is aborted and answered as not answered: queued as sent, as at its own
+   * deadline, and given up and counted with the rest. Its answer, when it
+   * comes anyway, is nobody's: it lands no row and no document, and tells
+   * nothing. What the server took of it, the read after shows.
    */
   async giveUp(chain: string): Promise<number> {
     // Taken before anything is awaited: no drain picks the chain from here.
     this.givingUp.add(chain)
+    let expire!: () => void
+    const deadline = new Promise<void>(resolve => {
+      expire = resolve
+    })
+    const timer = this.options.setTimer(() => {
+      this.cut.add(chain)
+      for (const request of this.requests.get(chain) ?? []) request.abort()
+      expire()
+    }, REQUEST_DEADLINE_MS)
+    const stop = (): void => {
+      this.options.clearTimer(timer)
+      this.cut.delete(chain)
+    }
+    // Answered, or cut off at the deadline: a send of the chain's is cut
+    // off by its own abort, so it settles soon after.
+    const answered = async (wait: Promise<void> | undefined): Promise<void> => {
+      if (wait != null) await Promise.race([wait, deadline])
+      await wait
+    }
     try {
       for (;;) {
-        await this.directSends.get(chain)
-        if (this.drainSend?.chain === chain) await this.drainSend.done
+        await answered(this.directSends.get(chain))
+        if (this.drainSend?.chain === chain) await answered(this.drainSend.done)
         // A send let go is still out: it is answered before its row goes,
-        // and a row the server took is not counted as given up.
+        // and a row the server took is not counted as given up. Past the
+        // deadline it was not answered.
         const out = [...this.released].filter(
           ([, send]) => send.chain === chain
         )
         const kept = new Set<string>()
-        for (const [key, send] of out) if (await send.kept) kept.add(key)
+        for (const [key, send] of out)
+          if (await Promise.race([send.kept, deadline.then(() => false)]))
+            kept.add(key)
         const store = await this.options.store()
         if (store == null) return 0
         const given = await store.atomically(async tx => {
@@ -1123,6 +1190,8 @@ export class Outbox {
           }
         })
         if (given == null) continue
+        // Given up: a send of the chain's from here is no longer cut off.
+        stop()
         if (given.count > 0) this.notify()
         // The game's documents are read again whatever was given up: the
         // phone's copy is of the sides, or the plays, from before.
@@ -1136,7 +1205,31 @@ export class Outbox {
         return given.count
       }
     } finally {
+      stop()
       this.givingUp.delete(chain)
+    }
+  }
+
+  /**
+   * A request of `chain`'s about to go out, which `giveUp` aborts at its
+   * deadline; at once, while the chain is cut off. `end` once it settles.
+   */
+  private outRequest(chain: string): {
+    signal: AbortSignal
+    end: () => void
+  } {
+    const request = new AbortController()
+    const held = this.requests.get(chain) ?? new Set<AbortController>()
+    this.requests.set(chain, held)
+    held.add(request)
+    if (this.cut.has(chain)) request.abort()
+    return {
+      signal: request.signal,
+      end: () => {
+        held.delete(request)
+        if (held.size === 0 && this.requests.get(chain) === held)
+          this.requests.delete(chain)
+      }
     }
   }
 
@@ -1462,8 +1555,9 @@ export class Outbox {
 
   /**
    * Sends a direct send whose row holds its chain, and lands what it gets.
-   * Once `release` settles its answer is not waited for: it is queued as
-   * sent, as when no answer comes in time.
+   * Once `release` settles, or `giveUp` stops waiting for the chain, its
+   * answer is not waited for: it is queued as sent, as when no answer comes
+   * in time.
    */
   private async sendReserved(
     store: DocumentStore,
@@ -1478,18 +1572,28 @@ export class Outbox {
     let answer: unknown
     let released = false
     let sent: Promise<unknown> | undefined
+    const request = this.outRequest(chain)
+    const letGo = (): never => {
+      released = true
+      throw new HttpError('offline', 'Queued on the phone.')
+    }
     try {
-      sent = this.options.send(method, call.path, sentBody(call, body), key)
-      answer = await (release == null
-        ? sent
-        : Promise.race([
-            sent,
-            release.then(() => {
-              released = true
-              throw new HttpError('offline', 'Queued on the phone.')
-            })
-          ]))
+      sent = this.options.send(
+        method,
+        call.path,
+        sentBody(call, body),
+        key,
+        request.signal
+      )
+      sent.then(request.end, request.end)
+      answer = await Promise.race([
+        sent,
+        ...(release == null ? [] : [release.then(letGo)]),
+        cutOff(request.signal).then(letGo)
+      ])
     } catch (error: unknown) {
+      // Aborted at `giveUp`'s deadline: let go, however the request ended.
+      if (request.signal.aborted) released = true
       // A swap or a tag behind it was written after it onto the phone's
       // documents: it is the queue's now, as a queued write is.
       const ahead = this.ahead.get(row.id)
@@ -3255,19 +3359,35 @@ export class Outbox {
         if (!go) return
         continue
       }
-      let outcome: Outcome
+      let outcome: Outcome | typeof CUT
+      const request = this.outRequest(row.chain)
       try {
-        outcome = {
-          kind: 'ok',
-          answer: await this.options.send(
-            methodOf(call),
-            row.path,
-            sentBody(call, picked.body),
-            row.idempotencyKey
-          )
-        }
+        const sent = this.options.send(
+          methodOf(call),
+          row.path,
+          sentBody(call, picked.body),
+          row.idempotencyKey,
+          request.signal
+        )
+        sent.then(request.end, request.end)
+        const answer = await Promise.race([
+          sent,
+          cutOff(request.signal).then(() => CUT)
+        ])
+        outcome = answer === CUT ? CUT : { kind: 'ok', answer }
       } catch (error: unknown) {
-        outcome = outcomeOf(error, call)
+        outcome = request.signal.aborted ? CUT : outcomeOf(error, call)
+      }
+      // Given up at `giveUp`'s deadline: its answer, should it come, is
+      // nobody's, and no sign of the network. The row waits as it was, for
+      // `giveUp` to drop.
+      if (outcome === CUT) {
+        await store
+          .atomically(async tx => {
+            await tx.update(row.id, { state: 'pending', leaseUntil: null })
+          })
+          .catch(() => undefined)
+        continue
       }
       const go = await this.settle(store, row, call, picked.body, outcome)
       // Answered under its key, the row's own send says what the server did.

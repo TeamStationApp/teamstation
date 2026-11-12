@@ -5,7 +5,11 @@ import type { DatabaseSync } from 'node:sqlite'
 
 import { expect } from 'chai'
 
-import { asRosterEntry, type SaveLineupsBody } from '../../common/api'
+import {
+  asRosterEntry,
+  REQUEST_DEADLINE_MS,
+  type SaveLineupsBody
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { CreateGroup } from '../../common/groupCreation'
 import type { GumboPlay } from '../../common/gumboPlay'
@@ -205,6 +209,8 @@ describe('the phone outbox', function () {
   ): {
     client: CachingClient
     sent: Sent[]
+    /** The signal each of `sent` went with, in the same order. */
+    signals: Array<AbortSignal | undefined>
     posts: () => Sent[]
     /** Each timer the queue set: when, for how long, and whether cleared. */
     timers: Array<{ run: () => void; ms: number; at: number; cleared?: true }>
@@ -216,6 +222,7 @@ describe('the phone outbox', function () {
     summaries: OutboxSummary[]
   } {
     const sent: Sent[] = []
+    const signals: Array<AbortSignal | undefined> = []
     const timers: Array<{
       run: () => void
       ms: number
@@ -236,6 +243,7 @@ describe('the phone outbox', function () {
         key: headers['idempotency-key']
       }
       sent.push(call)
+      signals.push(init.signal ?? undefined)
       const answer = await handler(call)
       if (answer === 'offline') throw new TypeError('Load failed')
       return new Response(JSON.stringify(answer.body), {
@@ -280,6 +288,7 @@ describe('the phone outbox', function () {
     return {
       client,
       sent,
+      signals,
       posts: () => sent.filter(call => call.method === 'POST'),
       timers,
       clock,
@@ -5860,6 +5869,164 @@ describe('the phone outbox', function () {
           p.client.wakeOutbox(true)
           await p.client.drainOutbox()
           expect(sends).equals(1)
+        })
+
+        /** `giveUp`'s deadline timer, still set. */
+        const deadlineOf = (
+          p: ReturnType<typeof phone>
+        ): { run: () => void } | undefined =>
+          p.timers.find(
+            timer => timer.ms === REQUEST_DEADLINE_MS && timer.cleared !== true
+          )
+        /** Lets the queue's promises and the file's writes go on. */
+        const turns = async (): Promise<void> => {
+          for (let i = 0; i < 20; i++)
+            await new Promise(resolve => setTimeout(resolve, 1))
+        }
+        /** Whether the post of plays `p` sent first went with an aborted signal. */
+        const firstPostAborted = (p: ReturnType<typeof phone>): boolean =>
+          p.signals[
+            p.sent.findIndex(
+              sent => sent.method === 'POST' && sent.path === '/games/g1/events'
+            )
+          ]?.aborted === true
+
+        it('gives up a post the session let go whose request never settles once the request deadline passes, counts it, and lets its late answer land nothing', async function () {
+          const { g, p, saving, letGo, release } = await heldPost()
+          g.online.value = false
+          release()
+          expect(await saving).to.have.property('answer')
+          await p.client.saveGameEvents('g1', {
+            plays: [play(2)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          g.online.value = true
+          let settled = false
+          const given = p.client.giveUpGame('g1').then(count => {
+            settled = true
+            return count
+          })
+          await p.client.drainOutbox()
+          await turns()
+          expect(settled).equals(false)
+          expect(p.rows()).length(2)
+          // The request deadline passes from when it was given up.
+          deadlineOf(p)!.run()
+          expect(await given).equals(2)
+          expect(firstPostAborted(p)).equals(true)
+          expect(p.rows()).deep.equals([])
+          const writesBefore = writes(p)
+          const documents = p.document(eventsKey('g1'))
+          const told = p.summaries.length
+          // The server takes it after all: its answer is nobody's.
+          letGo({ body: { plays: [] } })
+          await turns()
+          p.client.wakeOutbox(true)
+          await p.client.drainOutbox()
+          expect(p.rows()).deep.equals([])
+          expect(writes(p)).deep.equals(writesBefore)
+          expect(p.document(eventsKey('g1'))).deep.equals(documents)
+          expect(p.summaries).length(told)
+        })
+
+        it('gives up a post in flight that never settles once the request deadline passes, answers the session from the phone, and lets its late answer land nothing', async function () {
+          const { p, saving, letGo } = await heldPost()
+          await queueBehind(p)
+          const given = p.client.giveUpGame('g1')
+          await p.client.drainOutbox()
+          await turns()
+          expect(deadlineOf(p)).not.equals(undefined)
+          deadlineOf(p)!.run()
+          // Queued as sent, as at its own deadline, and given up with the
+          // save behind it: both counted.
+          expect(await given).equals(2)
+          expect(await saving).to.have.property('answer')
+          expect(firstPostAborted(p)).equals(true)
+          expect(p.rows()).deep.equals([])
+          const writesBefore = writes(p)
+          const documents = p.document(eventsKey('g1'))
+          const told = p.summaries.length
+          letGo()
+          await turns()
+          p.client.wakeOutbox(true)
+          await p.client.drainOutbox()
+          expect(p.rows()).deep.equals([])
+          expect(writes(p)).deep.equals(writesBefore)
+          expect(p.document(eventsKey('g1'))).deep.equals(documents)
+          expect(p.summaries).length(told)
+        })
+
+        it("gives up the drain's send of the game that never settles once the request deadline passes, and lets its late answer land nothing", async function () {
+          const g = gameServer()
+          let letGo!: () => void
+          const gate = new Promise<void>(resolve => {
+            letGo = resolve
+          })
+          let sends = 0
+          const p = phone(async sent => {
+            if (
+              sent.path === '/games/g1/events' &&
+              sent.method === 'POST' &&
+              g.online.value
+            ) {
+              sends++
+              if (sends === 1) {
+                await gate
+                return { body: { plays: [] } }
+              }
+            }
+            return await g.handler(sent)
+          })
+          await p.client.game('g1')
+          await p.client.gameLineups('g1')
+          await p.client.gameEvents('g1')
+          for (const index of [1, 2])
+            await p.client.saveGameEvents('g1', {
+              plays: [play(index)],
+              remove: [],
+              lineupsBase: 'D0',
+              generation: 1
+            })
+          g.online.value = true
+          p.client.wakeOutbox(true)
+          const draining = p.client.drainOutbox()
+          const sent = (): number => sends
+          for (let i = 0; i < 2000 && sent() === 0; i++)
+            await new Promise(resolve => setTimeout(resolve, 1))
+          // The drain's send, the last request out.
+          const held = p.signals[p.sent.length - 1]
+          const given = p.client.giveUpGame('g1')
+          await turns()
+          deadlineOf(p)!.run()
+          expect(await given).equals(2)
+          await draining
+          expect(held?.aborted).equals(true)
+          expect(p.rows()).deep.equals([])
+          const documents = p.document(eventsKey('g1'))
+          const told = p.summaries.length
+          letGo()
+          await turns()
+          p.client.wakeOutbox(true)
+          await p.client.drainOutbox()
+          expect(sends).equals(1)
+          expect(p.rows()).deep.equals([])
+          expect(p.document(eventsKey('g1'))).deep.equals(documents)
+          expect(p.summaries).length(told)
+        })
+
+        it('judges a send answered before the request deadline by the server, as before, and stops its deadline', async function () {
+          const { p, saving, letGo } = await heldPost()
+          await queueBehind(p)
+          const given = p.client.giveUpGame('g1')
+          await turns()
+          expect(deadlineOf(p)).not.equals(undefined)
+          letGo(STALE)
+          expect(await given).equals(1)
+          expect(await saving).to.have.property('error')
+          expect(deadlineOf(p)).equals(undefined)
+          expect(firstPostAborted(p)).equals(false)
         })
 
         it('answers none given up for a game with nothing queued', async function () {

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { REQUEST_DEADLINE_MS } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
@@ -37,11 +38,14 @@ function phoneOn(
   shut: () => void
   open: () => void
   waiting: () => number
+  /** Runs the queue's timers of `ms` it set and has not cleared. */
+  run: (ms: number) => void
 } {
   const posts: Post[] = []
   let gate: Promise<void> | undefined
   let opened: () => void = () => undefined
   let waiting = 0
+  const timers: Array<{ run: () => void; ms: number; cleared?: true }> = []
   const fetchThrough = (async (url: string, init: RequestInit) => {
     const path = url.replace(`${f.h.origin}/api/v1`, '').split('?')[0]
     if (init.method === 'POST' && path.endsWith('/events') && gate != null) {
@@ -61,7 +65,14 @@ function phoneOn(
       await openCacheStore(
         nodeSqliteExecutor(join(dir, cacheFileName(userId)))
       ),
-    outbox: { setTimer: () => 0, clearTimer: () => undefined }
+    // The queue's timers wait for the test, which runs them.
+    outbox: {
+      setTimer: (run, ms) => timers.push({ run, ms }),
+      clearTimer: handle => {
+        const timer = timers[Number(handle) - 1]
+        if (timer != null) timer.cleared = true
+      }
+    }
   })
   client.openFor(userIdOfGumbo(101))
   return {
@@ -76,7 +87,14 @@ function phoneOn(
       gate = undefined
       opened()
     },
-    waiting: () => waiting
+    waiting: () => waiting,
+    run: ms => {
+      for (const timer of timers)
+        if (timer.ms === ms && timer.cleared !== true) {
+          timer.cleared = true
+          timer.run()
+        }
+    }
   }
 }
 
@@ -95,8 +113,12 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
     await f?.h.close()
   })
 
-  for (const reset of [false, true])
-    it(`refuses the save on its way, gives up the one queued behind it, and keeps nothing of the old sides (${reset ? 'reset and swap' : 'swap'})`, async () => {
+  for (const { reset, stalled } of [
+    { reset: false, stalled: false },
+    { reset: true, stalled: false },
+    { reset: false, stalled: true }
+  ])
+    it(`${stalled ? 'gives up the save on its way once the request deadline passes with no answer, and the one queued behind it' : 'refuses the save on its way, gives up the one queued behind it'}, and keeps nothing of the old sides (${reset ? 'reset and swap' : 'swap'})`, async () => {
       const context = await addScorableTeams(f.h.db, {
         home: 'Owls',
         away: 'Gulls'
@@ -185,19 +207,34 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
       const given = a.client.giveUpGame(gameId)
       a.client.wakeOutbox(true)
       await a.client.drainOutbox()
-      a.open()
-      expect(await given).equals(1)
-      await saving
+      if (stalled) {
+        // The link never answers: from the request deadline on, the save
+        // on its way is not waited for. It is given up with the one behind
+        // it, and its request aborted.
+        a.run(REQUEST_DEADLINE_MS)
+        expect(await given).equals(2)
+        await saving
+        a.open()
+        for (let i = 0; i < 2000 && a.waiting() > 0; i++)
+          await new Promise(resolve => setTimeout(resolve, 1))
+        await new Promise(resolve => setTimeout(resolve, 50))
+      } else {
+        a.open()
+        expect(await given).equals(1)
+        await saving
+      }
       a.client.wakeOutbox(true)
       await a.client.drainOutbox()
       expect((await a.client.outboxSummary()).count).equals(0)
 
       // The save on its way reached the server after the swap: refused,
       // with its one retry of the full history. Nothing else was sent.
+      // Aborted, it never reached the server.
       const after = a.posts
         .slice(swappedAt)
         .filter(post => post.path.endsWith('/events'))
-      expect(after.length).within(1, 2)
+      if (stalled) expect(after).deep.equals([])
+      else expect(after.length).within(1, 2)
       expect(after.map(post => post.status)).satisfies((statuses: number[]) =>
         statuses.every(status => status === 409)
       )

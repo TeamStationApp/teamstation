@@ -236,11 +236,13 @@ export class CachingClient extends TeamStationClient {
       // Checked again just before each send: a sign-in that set another
       // person's token while the queue read its file sends nothing of it.
       owns: () => this.owned != null,
-      // Every send of the queue gives up as no signal at the deadline.
-      send: async (method, path, body, key) =>
+      // Every send of the queue gives up as no signal at the deadline, and
+      // is aborted once a game given up stops waiting for it.
+      send: async (method, path, body, key, signal) =>
         await super.request(method, path, asRaw, body, {
           deadline: true,
-          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } })
+          ...(key == null ? {} : { headers: { [IDEMPOTENCY_HEADER]: key } }),
+          ...(signal == null ? {} : { signal })
         }),
       token: () => this.token,
       // A re-read is the server's copy, never the phone's pending one.
