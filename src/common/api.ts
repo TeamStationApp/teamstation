@@ -125,6 +125,7 @@ import {
 } from './publicGroups'
 import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
@@ -5305,11 +5306,20 @@ export class TeamStationClient {
     leagueId: string,
     request: PreviewRequest
   ): Promise<SchedulePreview> {
-    return await this.request(
+    const prepared = await this.request(
       'POST',
       `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
-      asSchedulePreview,
+      asPreparedPreview,
       request
+    )
+    await new Promise<void>(resolve => setTimeout(resolve, 0))
+    const { buildOptions } = await import('./autoScheduler')
+    const result = buildOptions(prepared.input)
+    return await this.request(
+      'PUT',
+      `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
+      asSchedulePreview,
+      result
     )
   }
 
