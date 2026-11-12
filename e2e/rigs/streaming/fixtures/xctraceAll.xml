@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<trace-query-result>
+<node xpath='//trace-toc[1]/run[1]/data[1]/table[4]'>
+<schema name="activity-monitor-process-live">
+<col><mnemonic>start</mnemonic><name>Start</name></col>
+<col><mnemonic>process</mnemonic><name>Process</name></col>
+<col><mnemonic>memory-physical-footprint</mnemonic><name>Memory</name></col>
+</schema>
+<!-- The app, two WebContent processes; the second serves the game's tab. -->
+<row><start-time id="1">60000000000</start-time><process id="2" fmt="TeamStation Develop (900)"/><size-in-bytes id="3">150000000</size-in-bytes></row>
+<row><start-time id="4">60000000000</start-time><process id="5" fmt="com.apple.WebKit.WebContent (901)"/><size-in-bytes id="6">40000000</size-in-bytes></row>
+<row><start-time id="7">60000000000</start-time><process id="8" fmt="com.apple.WebKit.WebContent (902)"/><size-in-bytes id="9">320000000</size-in-bytes></row>
+<row><start-time id="10">120000000000</start-time><process ref="8"/><size-in-bytes id="11">330000000</size-in-bytes></row>
+<row><start-time id="12">120000000000</start-time><process ref="2"/><size-in-bytes id="13">152000000</size-in-bytes></row>
+</node>
+</trace-query-result>
