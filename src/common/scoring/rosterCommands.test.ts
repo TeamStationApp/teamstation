@@ -778,6 +778,23 @@ const at = (
 
 describe('resolving roster commands as said (U2r)', function () {
   // Both teams wear #2 to #11: the visitors' #4 is Betts, the hosts' Witt.
+  it('refuses a sentence of a lineup and a defense change before it looks for anybody, even one misheard', function () {
+    const mixed = (lineup: string): ChosenRosterCommand[] => [
+      {
+        type: 'placeInLineup',
+        side: 'away',
+        places: [{ player: { name: lineup }, slot: 1 }]
+      },
+      at({ name: 'Betts' })
+    ]
+    expect(resolve(pregame(), mixed('Soto'))).deep.equals({
+      problem: ONE_CATEGORY_AT_A_TIME
+    })
+    // "Altuve" heard as "out to": still the sentence's mix, not the name.
+    expect(resolve(pregame(), mixed('out to'))).deep.equals({
+      problem: ONE_CATEGORY_AT_A_TIME
+    })
+  })
   it('once the game has begun, finds a jersey both teams wear on the side in the field for a defensive change, and on the side at bat for a pinch hitter or runner', function () {
     const top = live()
     expect(resolved(top, [at({ jersey: '4' })])).deep.equals([
