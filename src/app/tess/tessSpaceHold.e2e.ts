@@ -115,7 +115,7 @@ async function paneScroll(page: Page, top?: number): Promise<number> {
           return (
             ['auto', 'scroll'].includes(style.overflowY) &&
             candidate.scrollHeight > candidate.clientHeight + 200 &&
-            candidate.getBoundingClientRect().x >= 400
+            candidate.closest('[data-scene]:not([aria-hidden="true"])') != null
           )
         })
         .sort((a, b) => b.clientHeight - a.clientHeight)
@@ -427,7 +427,9 @@ async function main(): Promise<void> {
     await page.evaluate(selector => {
       const tab = Array.from(
         document.querySelectorAll<HTMLElement>(selector)
-      ).find(node => node.getBoundingClientRect().x >= 400)
+      ).find(
+        node => node.closest('[data-scene]:not([aria-hidden="true"])') != null
+      )
       if (tab == null) throw new Error('No Team tab in the pane')
       tab.focus()
     }, paneTab('Team'))

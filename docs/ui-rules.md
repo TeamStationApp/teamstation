@@ -81,10 +81,13 @@ directly. A new header action is a row in one of these, not a new icon in the
 bar. In the signed-in app the mark is drawn only on tab roots, so an action that
 pushed screens need goes on the picture's menu.
 
-At that width and above, navigation occupies a 16rem left sidebar with About
-TeamStation, Home, Videos, Schedule, Search and Messages in order. Ask Tess stays
-at the bottom when available. The top-left mark has no action; the account menu
-keeps its existing actions.
+Signed-out users have no sidebar at any width. For signed-in users at that width
+and above, navigation occupies a 16rem left sidebar beneath the continuous primary
+header, ordered Home, Videos, Schedule, Search, Messages, About TeamStation.
+Ask Tess appears at the right of the primary header when available. Tess opens
+in her own full-height panel on the right, outside that header, with a resize
+divider on her left edge. At narrow widths Tess fills the screen until closed.
+The top-left mark has no action; the account menu keeps its existing actions.
 
 ## Cards and collections
 

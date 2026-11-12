@@ -12,7 +12,7 @@ import {
 } from './tessLayout'
 
 /**
- * The right edge of Tess's column on a wide window: a 3-point line with a
+ * The left edge of Tess's column on a wide window: a 3-point line with a
  * grip halfway down and a 12-point grab area over it that drags the column
  * wider or narrower, at most once a frame. Focused, ← and → move it 16 points. A screen reader
  * hears a separator called "Resize Tess" with its width.
@@ -38,7 +38,7 @@ export function TessDivider({
     stop.current?.()
     const from = { x, width }
     const widthAt = (at: number): number =>
-      clampTessWidth(from.width + at - from.x, latest.current.max)
+      clampTessWidth(from.width + from.x - at, latest.current.max)
     const throttled = frameThrottle((next: number) => {
       latest.current.onResize(next, false)
     })
@@ -90,9 +90,9 @@ export function TessDivider({
         const key = (event.nativeEvent as { key?: string }).key
         const step =
           key === 'ArrowLeft'
-            ? -TESS_WIDTH_STEP
+            ? TESS_WIDTH_STEP
             : key === 'ArrowRight'
-              ? TESS_WIDTH_STEP
+              ? -TESS_WIDTH_STEP
               : 0
         if (step === 0) return
         event.preventDefault()
@@ -110,13 +110,13 @@ export function TessDivider({
 const VERTICAL: Record<string, string> = { 'aria-orientation': 'vertical' }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  // Half the grab area each side of the line, which is the column's last
+  // Half the grab area each side of the line, which is the column's first
   // two points: it reaches five points over the pane.
   divider: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    right: -5,
+    left: -5,
     width: 12,
     zIndex: 2,
     cursor: 'col-resize',

@@ -54,14 +54,8 @@ describe('wide navigation sidebar', () => {
 
   it('renders ordered labels/icons, sends each tab to its existing destination and preserves unread selection', async () => {
     const chosen: string[] = []
-    let tess = 0
     await render(
-      <AppSidebar
-        selected="chat"
-        onSelect={id => chosen.push(id)}
-        unread
-        tess={{ onPress: () => tess++, open: false }}
-      />
+      <AppSidebar selected="chat" onSelect={id => chosen.push(id)} unread />
     )
     const sidebar = byTestId('navigation-sidebar')!
     expect(
@@ -69,13 +63,12 @@ describe('wide navigation sidebar', () => {
         n.getAttribute('aria-label')
       )
     ).deep.equals([
-      'About TeamStation',
       'Home',
       'Videos',
       'Schedule',
       'Search',
       'Messages',
-      'Ask Tess'
+      'About TeamStation'
     ])
     for (const name of ['Home', 'Videos', 'Schedule', 'Search', 'Messages'])
       await click(byLabel(name))
@@ -83,23 +76,28 @@ describe('wide navigation sidebar', () => {
     expect(byLabel('Messages').getAttribute('aria-selected')).equals('true')
     expect(byLabel('Home').getAttribute('aria-selected')).equals('false')
     expect(byTestId('chat-unread')).not.equals(null)
-    await click(byLabel('Ask Tess'))
-    expect(tess).equals(1)
     await click(byLabel('About TeamStation'))
     await click(byLabel('Close build information'))
     expect(
       document.querySelector('[aria-label="Close build information"]')
     ).equals(null)
-    await rerender(
-      <AppSidebar
-        selected="home"
-        onSelect={() => undefined}
-        tess={{ onPress: () => tess++, open: true }}
-      />
-    )
+    await rerender(<AppSidebar selected="home" onSelect={() => undefined} />)
     expect(byTestId('chat-unread')).equals(null)
     await rerender(<AppSidebar selected="home" onSelect={() => undefined} />)
     expect(sidebar.querySelector('[aria-label="Ask Tess"]')).equals(null)
+  })
+
+  it('offers Tess at the right of the wide header and omits it when unavailable', async () => {
+    let opened = 0
+    await render(
+      <AppHeader showMark sidebar tess={{ onPress: () => opened++ }} />
+    )
+    await click(byLabel('Ask Tess'))
+    expect(opened).equals(1)
+    expect(byLabel('Ask Tess').textContent).contains('Ask Tess')
+    expect(byTestId('header-menu-panel')).equals(null)
+    await rerender(<AppHeader showMark sidebar />)
+    expect(document.querySelector('[aria-label="Ask Tess"]')).equals(null)
   })
 
   it('closes a narrow mark menu on becoming wide and leaves the wide mark noninteractive', async () => {

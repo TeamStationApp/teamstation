@@ -18,10 +18,9 @@ export interface AppSidebarProps {
   apiBaseUrl?: string
   buildsClient?: TeamStationClient
   isAdmin?: boolean
-  tess?: { onPress: () => void; open: boolean }
 }
 
-/** Labelled destinations beside the page, with Tess anchored below the list. */
+/** Labelled destinations beside the page, beneath the primary app header. */
 export function AppSidebar(props: AppSidebarProps): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -55,24 +54,12 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
   return (
     <View
       testID="navigation-sidebar"
-      style={[
-        styles.sidebar,
-        { paddingTop: insets.top, paddingBottom: insets.bottom }
-      ]}
+      style={[styles.sidebar, { paddingBottom: insets.bottom }]}
     >
       <ScrollView
         style={styles.destinations}
         contentContainerStyle={styles.rows}
       >
-        {row(
-          lstrings.about_title,
-          <ButtonIcon>
-            <TsMark size={1.5} />
-          </ButtonIcon>,
-          () => {
-            setAbout(true)
-          }
-        )}
         <View accessibilityRole="tablist">
           {NAV_TABS.map(tab => (
             <React.Fragment key={tab.id}>
@@ -89,17 +76,16 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
             </React.Fragment>
           ))}
         </View>
+        {row(
+          lstrings.about_title,
+          <ButtonIcon>
+            <TsMark size={1.5} />
+          </ButtonIcon>,
+          () => {
+            setAbout(true)
+          }
+        )}
       </ScrollView>
-      {props.tess != null && (
-        <View style={styles.rows}>
-          {row(
-            lstrings.tess_ask,
-            <ButtonIcon name="auto_awesome" color={theme.navActiveColor} />,
-            props.tess.onPress,
-            props.tess.open
-          )}
-        </View>
-      )}
       {about && (
         <BuildInfoModal
           client={props.buildsClient}
@@ -116,6 +102,7 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
 
 const getStyles = cacheStyles((theme: Theme) => ({
   sidebar: {
+    flex: 1,
     width: theme.rem(SIDEBAR_WIDTH_REM),
     flexShrink: 0,
     backgroundColor: theme.backgroundColor,

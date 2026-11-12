@@ -76,7 +76,7 @@ export function useTessWide(): boolean {
   return wide
 }
 
-/** What the divider on the column's right edge is given. */
+/** What the divider on the column's left edge is given. */
 export interface TessDividerProps {
   /** The column's width now. */
   width: number

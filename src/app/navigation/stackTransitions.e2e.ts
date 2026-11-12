@@ -267,6 +267,8 @@ async function main(): Promise<void> {
       for (const s of samples)
         await note(`  t=${s.t} ${s.role} ${s.key} x=${s.x} y=${s.y}`)
       assert.ok(held, `${label}: never reached half way`)
+      if (extra != null)
+        assert.ok(!/false|missing/.test(extra), `${label}: ${extra}`)
       tests++
       return samples
     }

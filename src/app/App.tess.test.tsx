@@ -273,6 +273,19 @@ describe("Tess in the app's shell", () => {
       await settle(100)
       expect(button(markMenu)).equals(null)
       expect(byTestId('Tess chat')).equals(null)
+      expect(byTestId('navigation-sidebar')).equals(null)
+    })
+
+    it('has no sidebar on signed-out sign-in or public discovery at wide widths', async () => {
+      signedIn = false
+      await open(1440, { name: 'signIn' })
+      expect(byTestId('navigation-sidebar')).equals(null)
+      await unmount()
+      await restoreWindow?.()
+      restoreWindow = undefined
+      await open(1440, { name: 'discover' })
+      expect(byTestId('navigation-sidebar')).equals(null)
+      expect(button('Ask Tess')).equals(null)
     })
   })
 
@@ -477,8 +490,8 @@ describe("Tess in the app's shell", () => {
       expect(document.activeElement?.getAttribute('aria-label')).equals(
         'Ask Tess'
       )
-      // The sidebar keeps Tess available while her column is open.
-      expect(await offersTess()).equals(true)
+      // The open panel owns its Close action; the launcher is hidden.
+      expect(await offersTess()).equals(false)
       // Her own Close closes it again, and the pane is the window.
       await tap(button('Close Tess')!)
       expect(await offersTess()).equals(true)
@@ -510,13 +523,13 @@ describe("Tess in the app's shell", () => {
       expect(divider().getAttribute('aria-valuenow')).equals('400')
       expect(breakpoint(), 'a 624-point pane').equals('tablet')
       // As far as it goes: the pane keeps 520 points.
-      await drag(400, 1100)
+      await drag(400, -300)
       expect(column().style.width).equals('504px')
       expect(breakpoint(), 'a 520-point pane').equals('phone')
       await act(async () => {
         divider().dispatchEvent(
           new window.KeyboardEvent('keydown', {
-            key: 'ArrowLeft',
+            key: 'ArrowRight',
             bubbles: true,
             cancelable: true
           })
@@ -524,7 +537,7 @@ describe("Tess in the app's shell", () => {
       })
       await settle(60)
       expect(column().style.width).equals('488px')
-      await drag(488, 100)
+      await drag(488, 876)
       expect(column().style.width).equals('320px')
       expect(breakpoint(), 'a 704-point pane').equals('tablet')
       expect(window.localStorage.getItem('tess.columnWidth')).equals('320')
@@ -890,7 +903,7 @@ describe("Tess in the app's shell", () => {
       expect(byTestId('Tess column')).not.equals(null)
     })
 
-    it('keeps Tess in the sidebar on a pushed screen without a mark', async () => {
+    it('keeps Tess in the header on a pushed screen without a mark', async () => {
       await open(1280, { name: 'account' })
       expect(button(markMenu)).equals(null)
       expect(button('Ask Tess')).not.equals(null)

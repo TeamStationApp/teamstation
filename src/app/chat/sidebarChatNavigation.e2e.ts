@@ -100,7 +100,7 @@ async function main(): Promise<void> {
     const check = async (width: number, tess: boolean): Promise<void> => {
       await page.setViewport({ width, height: 900 })
       const sidebarWidth = width >= 1216 ? 256 : 0
-      const x = sidebarWidth + (tess ? 400 : 0)
+      const x = sidebarWidth
       await page.waitForFunction(
         (x, width, tess) => {
           const workspace = document.querySelector(
@@ -115,7 +115,7 @@ async function main(): Promise<void> {
           const box = workspace.getBoundingClientRect()
           return (
             box.x === x &&
-            box.width === width - x &&
+            box.width === width - x - (tess ? 400 : 0) &&
             (getComputedStyle(list).display === 'none') === tess &&
             messages.getBoundingClientRect().width > 0
           )
@@ -137,7 +137,7 @@ async function main(): Promise<void> {
       )
     }
     for (const width of [1215, 1216, 1440]) await check(width, false)
-    await tap(`${sidebar} [aria-label="Ask Tess"]`)
+    await tap('[role="button"][aria-label="Ask Tess"]')
     await page.waitForSelector('[data-testid="Tess column"]')
     for (const width of [1440, 1215, 1216]) await check(width, true)
     await tap('[aria-label="Close Tess"]')

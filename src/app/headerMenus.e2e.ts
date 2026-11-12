@@ -332,10 +332,11 @@ async function teamStationMenu(
   const column = '[data-testid="Tess column"]'
   await page.waitForSelector(column)
   const box = await edgesOf(page, column)
-  expect(box.left).lessThan(1)
+  expect(box.right).equals(DESKTOP.width)
+  expect(box.left).equals(DESKTOP.width - 400)
   await shot(page, 'web-tess-desktop.png')
 
-  // With her column open the mark has moved with the pane, and its menu holds
+  // With her column open the mark stays at the left, and its menu holds
   // only About, which opens beside her.
   const moved = await edgesOf(page, mark)
   await page.click(mark)
@@ -360,7 +361,7 @@ async function teamStationMenu(
 
   await pressLabel(page, 'Close Tess')
   await waitGone(page, column)
-  logged('Ask Tess opened her left column, and Close Tess closed it')
+  logged('Ask Tess opened her right column, and Close Tess closed it')
 }
 
 async function dots(

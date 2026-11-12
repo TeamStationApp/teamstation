@@ -99,29 +99,40 @@ async function main(): Promise<void> {
         rows: [...node.querySelectorAll('[role="button"], [role="tab"]')].map(
           row => row.getAttribute('aria-label')
         ),
-        bottom: node.getBoundingClientRect().bottom,
-        tessBottom: node
-          .querySelector('[aria-label="Ask Tess"]')!
-          .getBoundingClientRect().bottom
+        top: node.getBoundingClientRect().top
       }))
       assert.equal(result.width, 256)
       assert.deepEqual(result.rows, [
-        'About TeamStation',
         'Home',
         'Videos',
         'Schedule',
         'Search',
         'Messages',
-        'Ask Tess'
+        'About TeamStation'
       ])
-      assert(result.bottom - result.tessBottom <= 10)
+      const headerMark = await page.$eval(
+        '[data-testid="sidebar-header-mark"]',
+        node => {
+          const rect = node.getBoundingClientRect()
+          return { x: rect.x, bottom: rect.bottom }
+        }
+      )
+      assert(headerMark.x < 256)
+      assert(result.top >= headerMark.bottom)
+      const ask = await page.$eval(
+        '[role="button"][aria-label="Ask Tess"]',
+        node => node.getBoundingClientRect().x
+      )
+      assert(ask > width / 2)
       assert.equal(await page.$(mark), null)
       assert.equal(await page.$$eval('[role="tab"]', nodes => nodes.length), 5)
       await tap('[data-testid="sidebar-header-mark"]')
       assert.equal(await page.$('[data-testid="header-menu-panel"]'), null)
       assert.equal(await page.$('[aria-label="Close build information"]'), null)
       await shot(name)
-      note(`${width}: ordered sidebar, no bar/menu, Tess pinned at bottom`)
+      note(
+        `${width}: ordered sidebar, no bar/menu, Ask Tess at right; rows beneath header`
+      )
     }
     await tap(`${sidebar} [aria-label="About TeamStation"]`)
     await tap('[aria-label="Close build information"]')
@@ -142,7 +153,7 @@ async function main(): Promise<void> {
     await resize(1216)
     await pathIs('/videos')
     await tap(`${sidebar} [aria-label="Home"]`)
-    await tap(`${sidebar} [aria-label="Ask Tess"]`)
+    await tap('[role="button"][aria-label="Ask Tess"]')
     await page.waitForSelector('[data-testid="Tess column"]')
     const column = '[data-testid="Tess column"]'
     const frame = async (): Promise<{
@@ -153,7 +164,9 @@ async function main(): Promise<void> {
     }> =>
       await page.$eval(column, node => {
         const rect = node.getBoundingClientRect()
-        const pane = node.nextElementSibling!.getBoundingClientRect()
+        const pane = document
+          .querySelector('[data-testid="navigation-scenes"]')!
+          .getBoundingClientRect()
         return {
           x: rect.x,
           width: rect.width,
@@ -162,12 +175,35 @@ async function main(): Promise<void> {
         }
       })
     assert.deepEqual(await frame(), {
-      x: 256,
+      x: 816,
       width: 400,
-      paneX: 656,
+      paneX: 256,
       paneWidth: 560
     })
     await resize(1440)
+    const rightPanel = await page.$eval(column, node => {
+      const r = node.getBoundingClientRect()
+      const mark = document.querySelector(
+        '[data-testid="sidebar-header-mark"]'
+      )!
+      const header = mark.parentElement!.parentElement!.getBoundingClientRect()
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        right: r.right,
+        left: r.left,
+        headerLeft: header.left,
+        headerRight: header.right
+      }
+    })
+    assert.deepEqual(rightPanel, {
+      top: 0,
+      bottom: 900,
+      right: 1440,
+      left: 1040,
+      headerLeft: 0,
+      headerRight: 1040
+    })
     await shot('tess-wide')
     await tap('textarea[aria-label="Ask Tess"]')
     await m.inputText({
@@ -180,9 +216,40 @@ async function main(): Promise<void> {
       await page.$eval('textarea[aria-label="Ask Tess"]', node => node.value),
       'Keep this draft'
     )
-    await tap('[data-testid="Tess divider"]')
-    await page.keyboard.press('End')
+    await page.focus('[data-testid="Tess divider"]')
+    await page.keyboard.press('ArrowLeft')
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="Tess column"]')!
+          .getBoundingClientRect().width === 416
+    )
+    assert.equal((await frame()).width, 416)
+    await page.keyboard.press('ArrowRight')
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-testid="Tess column"]')!
+          .getBoundingClientRect().width === 400
+    )
+    assert.equal((await frame()).width, 400)
     assert((await frame()).paneWidth >= 520)
+    await resize(390, 844)
+    await page.waitForSelector('[data-testid="Tess layer"]')
+    const layer = await page.$eval('[data-testid="Tess layer"]', node => {
+      const r = node.getBoundingClientRect()
+      return { x: r.x, y: r.y, width: r.width, height: r.height }
+    })
+    assert.deepEqual(layer, { x: 0, y: 0, width: 390, height: 844 })
+    await shot('tess-phone')
+    await resize(1024)
+    await page.waitForSelector('[data-testid="Tess layer"]')
+    await resize(1025)
+    await page.waitForSelector(column)
+    assert.equal(
+      await page.$eval('textarea[aria-label="Ask Tess"]', node => node.value),
+      'Keep this draft'
+    )
     await tap('[aria-label="Close Tess"]')
     await waitGone(column)
     note('Tess and page fit at the boundary; resizing retained draft and route')
@@ -199,13 +266,17 @@ async function main(): Promise<void> {
       path: '/'
     })
     await m.openBrowser({ url: origin + '/sign-in' })
-    await page.waitForSelector(sidebar)
-    await waitGone(`${sidebar} [aria-label="Ask Tess"]`)
+    await page.waitForSelector('[aria-label="E-mail address"]')
+    await waitGone(sidebar)
+    await waitGone('[role="button"][aria-label="Ask Tess"]')
     await shot('signed-out')
-    await tap(`${sidebar} [aria-label="About TeamStation"]`)
+    await tap('[aria-label="About TeamStation"]')
     await tap('[aria-label="Close build information"]')
+    await m.openBrowser({ url: origin + '/discover' })
+    await page.waitForSelector('[data-testid="navigation-scenes"]')
+    await waitGone(sidebar)
     note(
-      'Signed-out sidebar retains About and destination actions; no unavailable Tess'
+      'Signed-out sign-in and public discovery have no sidebar or Tess action'
     )
     if (process.env.TS_DIRECT_BROWSER_COVERAGE != null)
       await recordBrowserCoverage(

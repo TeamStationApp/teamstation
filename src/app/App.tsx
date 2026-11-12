@@ -1359,7 +1359,8 @@ function Shell(props: AppProps): React.ReactElement {
   }, [signedInAs])
   const tessSuppressed =
     immersiveField || djScreen || top?.name === 'scoreboardOverride'
-  const sidebarWidth = tessSuppressed ? 0 : windowSidebarWidth
+  const sidebarWidth =
+    signedInAs == null || tessSuppressed ? 0 : windowSidebarWidth
   const tessWide = useTessWide()
   const onboarded =
     session?.user.onboarding == null ||
@@ -2424,85 +2425,79 @@ function Shell(props: AppProps): React.ReactElement {
     // replacing its own address so Back does not return to the dead link; one
     // that may still work stays behind it in the history.
     return (
-      <View style={[styles.app, sidebarWidth > 0 && styles.split]}>
-        {sidebarWidth > 0 && (
-          <AppSidebar
-            selected={tab}
-            onSelect={selectTab}
-            apiBaseUrl={apiBaseUrl}
-            isAdmin={isAdmin}
-          />
-        )}
-        <View style={styles.pane}>
-          <PaneBesideTess open={false} sidebarWidth={sidebarWidth}>
-            <AppHeader
-              apiBaseUrl={apiBaseUrl}
-              isAdmin={isAdmin}
-              title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
-              showMark
-              sidebar={sidebarWidth > 0}
-              nav={
-                isWide && sidebarWidth === 0 ? (
-                  <AppNav
-                    mode="header"
-                    selected={tab}
-                    onSelect={selectTab}
-                    dots={{ chat: chatOn && hasUnread(chatList) }}
-                  />
-                ) : undefined
-              }
-            />
-            {route.name === 'join' ? (
-              <JoinScreen
-                client={client}
-                code={route.code}
-                signedIn={false}
-                onSignedIn={rememberSession}
-                onOpen={openFromInvite}
+      <View style={styles.app}>
+        <AppHeader
+          apiBaseUrl={apiBaseUrl}
+          isAdmin={isAdmin}
+          title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
+          showMark
+          sidebar={sidebarWidth > 0}
+          nav={
+            isWide && sidebarWidth === 0 ? (
+              <AppNav
+                mode="header"
+                selected={tab}
+                onSelect={selectTab}
+                dots={{ chat: chatOn && hasUnread(chatList) }}
               />
-            ) : route.name === 'signInLink' ? (
-              <SignInLinkScreen
-                key={route.token}
-                client={client}
-                token={route.token}
-                server={route.server}
-                onSignedIn={signedIn}
-                onSignInAgain={linkSpent => {
-                  const destination: Route = { name: 'signIn' }
-                  goToRoute(destination)
-                  showRoute(destination, linkSpent)
-                }}
-              />
-            ) : (
-              <>
-                {route.name === 'teamStationTv' &&
-                  signInRequest.appOrigin != null && (
-                    <TvBrowserHandoff
-                      server={route.server}
-                      token={route.token}
-                    />
-                  )}
-                <LoginScreen
-                  next={
-                    route.name === 'teamStationTv'
-                      ? routePath(route)
-                      : route.name === 'signIn'
-                        ? route.next
-                        : undefined
-                  }
+            ) : undefined
+          }
+        />
+        <View style={[styles.pane, styles.split]}>
+          <View style={styles.pane}>
+            <PaneBesideTess open={false} sidebarWidth={sidebarWidth}>
+              {route.name === 'join' ? (
+                <JoinScreen
                   client={client}
+                  code={route.code}
+                  signedIn={false}
+                  onSignedIn={rememberSession}
+                  onOpen={openFromInvite}
+                />
+              ) : route.name === 'signInLink' ? (
+                <SignInLinkScreen
+                  key={route.token}
+                  client={client}
+                  token={route.token}
+                  server={route.server}
                   onSignedIn={signedIn}
-                  onDiscover={() => {
-                    goToRoute({ name: 'discover' })
-                    showRoute({ name: 'discover' })
+                  onSignInAgain={linkSpent => {
+                    const destination: Route = { name: 'signIn' }
+                    goToRoute(destination)
+                    showRoute(destination, linkSpent)
                   }}
                 />
-              </>
-            )}
-            {!isWide && sidebarWidth === 0 && (
-              <AppNav mode="floating" selected={tab} onSelect={selectTab} />
-            )}
-          </PaneBesideTess>
+              ) : (
+                <>
+                  {route.name === 'teamStationTv' &&
+                    signInRequest.appOrigin != null && (
+                      <TvBrowserHandoff
+                        server={route.server}
+                        token={route.token}
+                      />
+                    )}
+                  <LoginScreen
+                    next={
+                      route.name === 'teamStationTv'
+                        ? routePath(route)
+                        : route.name === 'signIn'
+                          ? route.next
+                          : undefined
+                    }
+                    client={client}
+                    onSignedIn={signedIn}
+                    onDiscover={() => {
+                      goToRoute({ name: 'discover' })
+                      showRoute({ name: 'discover' })
+                    }}
+                  />
+                </>
+              )}
+              {!isWide && sidebarWidth === 0 && (
+                <AppNav mode="floating" selected={tab} onSelect={selectTab} />
+              )}
+            </PaneBesideTess>
+          </View>
         </View>
       </View>
     )
@@ -3998,7 +3993,7 @@ function Shell(props: AppProps): React.ReactElement {
   // nothing below them notices either — the `<video>` element least of all.
   //
   // Tess's chat is keyed for the same reason: opening it on a wide window
-  // turns the root into a row, the column first, and the pane — the video
+  // turns the root into a row, the column last, and the pane — the video
   // playing in it — carries on. On a narrow one the same element is a layer
   // over the whole app, drawn above it by its z-index, and the pane stays
   // mounted underneath. Only its style changes across the boundary, so the
@@ -4098,39 +4093,24 @@ function Shell(props: AppProps): React.ReactElement {
       <DeviceApprovalContext.Provider value={deviceApprovals}>
         <ChatOverlayHost>
           <TessOverlayProvider active={tessColumn}>
-            <View
-              style={[
-                styles.app,
-                (tessColumn || sidebarWidth > 0) && styles.split
-              ]}
-            >
-              {sidebarWidth > 0 && (
-                <AppSidebar
-                  key="sidebar"
-                  selected={tab}
-                  onSelect={selectTab}
-                  unread={chatOn && hasUnread(chatList)}
-                  apiBaseUrl={apiBaseUrl}
-                  buildsClient={session == null ? undefined : client}
-                  isAdmin={isAdmin}
-                  tess={
-                    tessAvailable
-                      ? {
-                          open: tessShown,
-                          onPress: () => {
-                            tessTakesFocus.current = true
-                            setTessOpen(true)
-                          }
-                        }
-                      : undefined
-                  }
-                />
-              )}
-              {tessPanel}
+            <View style={[styles.app, tessColumn && styles.split]}>
               <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
                 <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
                   <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
                     <StackNavigator
+                      sidebarWidth={sidebarWidth}
+                      sidebar={
+                        sidebarWidth > 0 ? (
+                          <AppSidebar
+                            selected={tab}
+                            onSelect={selectTab}
+                            unread={chatOn && hasUnread(chatList)}
+                            apiBaseUrl={apiBaseUrl}
+                            buildsClient={session == null ? undefined : client}
+                            isAdmin={isAdmin}
+                          />
+                        ) : undefined
+                      }
                       top={topScene}
                       retained={retainedScene}
                       // The field preview is one scene, with nothing beneath.
@@ -4162,9 +4142,15 @@ function Shell(props: AppProps): React.ReactElement {
                       onBackOverride={setBack}
                     />
                   </ScreenScopeProvider>
-                  <TessOverlayHost />
+                  <View
+                    pointerEvents="box-none"
+                    style={[styles.paneOverlay, { left: sidebarWidth }]}
+                  >
+                    <TessOverlayHost />
+                  </View>
                 </PaneBesideTess>
               </View>
+              {tessPanel}
               <SuccessToast notice={successNotice} />
               {chatOn && <DeviceApprovalPrompt />}
               <ChatAgeHost
@@ -4666,8 +4652,8 @@ function coveredBy(covered: boolean): ViewProps {
 }
 
 /**
- * Tess's chat: a column on the left of a wide window, as wide as it was
- * dragged, with the divider on its right edge; on a narrow one, a layer over
+ * Tess's chat: a column on the right of a wide window, as wide as it was
+ * dragged, with the divider on its left edge; on a narrow one, a layer over
  * the whole app. The same element either way, so a resize across the two
  * never remounts the chat. Only this and the pane's frame read the column's
  * width, so a drag redraws them and what reads the frame, and not the Shell.
@@ -4698,8 +4684,8 @@ function TessFrame({
 
 /**
  * The pane's place beside Tess's open column, for the screens that size
- * themselves to it: the column's width in from the left, the window's
- * height; none while the column is closed, and the pane is the window again.
+ * themselves to it: navigation sets the left edge, Tess reserves space on
+ * the right, and the height stays the window's height.
  * Only this reads the window's exact size, so a window being resized or the
  * divider dragged redraws it and what reads the frame, and not the Shell:
  * its children are the Shell's, unchanged by its own redraws.
@@ -4720,13 +4706,13 @@ function PaneBesideTess({
     () =>
       column > 0
         ? {
-            x: column,
+            x: sidebarWidth,
             y: 0,
             width: Math.max(0, width - column),
             height
           }
         : null,
-    [column, width, height]
+    [column, sidebarWidth, width, height]
   )
   return <PaneFrameProvider frame={frame}>{children}</PaneFrameProvider>
 }
@@ -4837,7 +4823,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   root: {
     flex: 1
   },
-  // Tess's column on the left of a wide window, and the pane beside it.
+  // Tess's column on the right of a wide window, and the pane beside it.
   split: {
     flexDirection: 'row'
   },
@@ -4856,8 +4842,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     zIndex: 50,
     elevation: 50
   },
+  paneOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0 },
   pane: {
-    flex: 1
+    flex: 1,
+    zIndex: 0
   },
   // Over the content rather than above it, which is the whole point of glass:
   // there has to be something behind it to blur.

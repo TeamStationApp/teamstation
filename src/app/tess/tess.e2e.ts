@@ -84,11 +84,14 @@ async function rectOf(page: Page, selector: string): Promise<Rect | null> {
   }, selector)
 }
 
-/** The right pane: the element after Tess's column, or the whole root. */
+/** The content pane excludes the navigation and right-side Tess. */
 async function paneRect(page: Page): Promise<Rect | null> {
   return await page.evaluate(() => {
     const column = document.querySelector('[data-testid="Tess column"]')
-    const pane = column == null ? null : column.nextElementSibling
+    const pane =
+      column == null
+        ? null
+        : document.querySelector('[data-testid="navigation-scenes"]')
     if (pane == null) return null
     const box = pane.getBoundingClientRect()
     return { x: box.x, y: box.y, width: box.width, height: box.height }
@@ -263,8 +266,8 @@ async function main(): Promise<void> {
       column: await rectOf(page, column),
       pane: await paneRect(page)
     }
-    expect(split.column).deep.include({ x: 256, width: 400 })
-    expect(split.pane).deep.include({ x: 656, width: 880 })
+    expect(split.column).deep.include({ x: 1136, width: 400 })
+    expect(split.pane).deep.include({ x: 256, width: 880 })
     await contains(page, 'Your Home')
     await contains(page, 'Ask Tess')
     await shot('wide-split.png')
@@ -399,7 +402,7 @@ async function main(): Promise<void> {
     const angleBox = (await overlay.jsonValue()) as Rect
     const paneNow = await paneRect(page)
     expect(angleBox).deep.equals(paneNow)
-    expect(await rectOf(page, column)).deep.include({ x: 256, width: 400 })
+    expect(await rectOf(page, column)).deep.include({ x: 1136, width: 400 })
     await pause(1500)
     await shot('wide-angle-link.png')
     console.log('W6 angle overlay equals pane', JSON.stringify(angleBox))
@@ -470,7 +473,7 @@ async function main(): Promise<void> {
     )
     await gone(page, '[data-testid="Tess overlay"]')
     await contains(page, 'Team Settings')
-    expect(await rectOf(page, column)).deep.include({ x: 256, width: 400 })
+    expect(await rectOf(page, column)).deep.include({ x: 1136, width: 400 })
     console.log('W7b the bubble closed the chart; the pane shows team settings')
 
     // W7c: with the multi-angle view filling the pane, the chart still opens
@@ -683,7 +686,7 @@ async function main(): Promise<void> {
     expect(await rectOf(page, '[data-testid="Tess overlay"]')).deep.equals(
       await paneRect(page)
     )
-    expect(await rectOf(page, column)).deep.include({ x: 256, width: 400 })
+    expect(await rectOf(page, column)).deep.include({ x: 1136, width: 400 })
     const expandedPage = await page.$eval(
       '[data-testid="Tess overlay"] iframe',
       node => node.getAttribute('srcdoc') || ''
@@ -1086,7 +1089,7 @@ async function main(): Promise<void> {
           active != null &&
           active.getAttribute('role') === 'tab' &&
           active.getAttribute('aria-label') === 'Team' &&
-          active.getBoundingClientRect().x >= 400
+          active.closest('[data-scene]:not([aria-hidden="true"])') != null
         )
       })
     }
@@ -1823,19 +1826,19 @@ async function main(): Promise<void> {
     }
     const drag = await startVideo(s, out, 'divider-drag.mp4')
     await pause(500)
-    await dragBy(120)
-    expect(await rectOf(page, column)).deep.include({ x: 256, width: 520 })
-    expect(await paneRect(page)).deep.include({ x: 776, width: 760 })
+    await dragBy(-120)
+    expect(await rectOf(page, column)).deep.include({ x: 1016, width: 520 })
+    expect(await paneRect(page)).deep.include({ x: 256, width: 760 })
     await breakpointIs('tablet')
-    await dragBy(600)
+    await dragBy(-600)
     expect(await rectOf(page, column)).deep.include({ width: 720 })
-    expect(await paneRect(page)).deep.include({ x: 976, width: 560 })
+    expect(await paneRect(page)).deep.include({ x: 256, width: 560 })
     await breakpointIs('phone')
-    await dragBy(-1000)
+    await dragBy(1000)
     expect(await rectOf(page, column)).deep.include({ width: 320 })
-    expect(await paneRect(page)).deep.include({ x: 576, width: 960 })
+    expect(await paneRect(page)).deep.include({ x: 256, width: 960 })
     await breakpointIs('tablet')
-    await dragBy(200)
+    await dragBy(-200)
     await pause(500)
     await drag.stop()
     await open('/')
@@ -1850,15 +1853,15 @@ async function main(): Promise<void> {
       { timeout: 10000 },
       column
     )
-    expect(await paneRect(page)).deep.include({ x: 776, width: 760 })
+    expect(await paneRect(page)).deep.include({ x: 256, width: 760 })
     console.log(
       'L2 520/760, 720/560 (phone), 320/960 (tablet); the reload kept 520'
     )
 
     // L3: the keyboard moves it 16 points a press.
     await page.focus(divider)
-    await page.keyboard.press('ArrowRight')
-    await page.keyboard.press('ArrowRight')
+    await page.keyboard.press('ArrowLeft')
+    await page.keyboard.press('ArrowLeft')
     await page.waitForFunction(
       selector => {
         const node = document.querySelector(selector)
@@ -1870,7 +1873,7 @@ async function main(): Promise<void> {
     expect(
       await page.$eval(divider, node => node.getAttribute('aria-valuenow'))
     ).equals('552')
-    console.log('L3 → twice: 520 to 552')
+    console.log('L3 ← twice: 520 to 552')
     // Back to the default, for what follows and the next run.
     await page.evaluate(() => {
       localStorage.removeItem('tess.columnWidth')
