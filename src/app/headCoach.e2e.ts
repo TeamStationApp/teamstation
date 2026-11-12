@@ -4,7 +4,6 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
-import puppeteer from 'puppeteer'
 
 import type { SchedulePreview } from '../common/schedulePreviews'
 import { userIdOfGumbo } from '../common/userId'
@@ -17,6 +16,14 @@ import {
   seedThrough
 } from '../test/autoSchedulerFixture'
 import { googlePlacesStub } from '../test/googlePlacesStub'
+import {
+  browserSession,
+  capture,
+  contains,
+  fill,
+  maestro,
+  tap
+} from '../test/refinementsMaestro.e2e'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 async function main(): Promise<void> {
@@ -33,15 +40,24 @@ async function main(): Promise<void> {
     cleanup.push(async () => {
       await f.h.close()
     })
-    const browser = await puppeteer.launch({ headless: true })
+    const daemon = await maestro('deviceAutoSchedulerHeadCoach')
+    const session = await browserSession(daemon, 'headCoach-web', 640, 980, dir)
+    const { browser, page, m } = session
     cleanup.push(async () => {
-      await browser.close()
+      await browser.disconnect()
+      await daemon.shutdown()
     })
     const { fieldId } = await seedThrough(fx, 'E7')
+    const fieldIds = [fieldId!, await seedHarborField(fx)]
     await api(fx, 101, 'PUT', `/leagues/${f.leagueA}/schedule-setup`, {
       seasonIds: [f.seasonA],
-      fieldIds: [fieldId!, await seedHarborField(fx)]
+      fieldIds
     })
+    await f.h.db
+      .updateTable('season_schedule_settings')
+      .set({ field_ids: fieldIds })
+      .where('season_id', '=', f.seasonA)
+      .execute()
     const first = userIdOfGumbo(104)
     const second = userIdOfGumbo(106)
     for (const userId of [first, second]) {
@@ -59,26 +75,21 @@ async function main(): Promise<void> {
       .insertInto('game_rsvps')
       .values({ event_id: G1, user_id: first, response: 'yes' })
       .execute()
-    const page = await browser.newPage()
     const coverage = process.env.TS_MANAGER_BROWSER_COVERAGE
-    if (coverage != null)
-      await page.coverage.startJSCoverage({
-        resetOnNavigation: false,
-        includeRawScriptCoverage: true
-      })
     const press = async (selector: string): Promise<void> => {
-      await page.waitForSelector(selector, { visible: true })
-      await page.locator(selector).click()
+      const named = /name="([^"]+)"/.exec(selector)
+      if (named != null) await tap(m, named[1])
+      else await m.tapOn({ css: selector, timeout: 15000 })
     }
-    await page.setViewport({ width: 640, height: 980 })
-    await browser.setCookie({
-      name: 'ts_session',
-      value: f.h.tokens.get(101)!,
-      domain: new URL(f.h.origin).hostname,
-      path: '/'
-    })
+    await m.openBrowser({ url: f.h.origin + '/sign-in' })
+    await fill(m, 'E-mail address', 'alex@example.com')
+    await tap(m, 'Send me a sign-in code')
+    await contains(page, 'six-digit code is on its way')
+    await fill(m, 'Sign-in code', f.h.mail.get('alex@example.com')!)
+    await tap(m, 'Sign in')
+    await contains(page, 'Your Home')
     const visit = async (path: string): Promise<void> => {
-      await page.goto(f.h.origin + path, { waitUntil: 'networkidle0' })
+      await m.openBrowser({ url: f.h.origin + path })
     }
     const shot = async (name: string, word: string): Promise<void> => {
       await page.waitForFunction(
@@ -111,7 +122,7 @@ async function main(): Promise<void> {
             )
         )
       })
-      await page.screenshot({ path: join(dir, name + '.png') })
+      await capture(m, dir, 'head-coach-' + name + '.png')
     }
     const profile = (id: string): string => `/teams/${f.teamA}/people/${id}`
     const toggle = '[data-testid="role-team-headCoach-switch"]'
@@ -140,23 +151,26 @@ async function main(): Promise<void> {
     await shot('player-after', label)
     await visit(`/teams/${f.teamA}?tab=team`)
     await shot('team-after', label)
-    const publicContext = await browser.createBrowserContext()
-    const publicPage = await publicContext.newPage()
-    if (coverage != null)
-      await publicPage.coverage.startJSCoverage({
-        resetOnNavigation: false,
-        includeRawScriptCoverage: true
-      })
-    await publicPage.setViewport({ width: 640, height: 980 })
-    await publicPage.goto(f.h.origin + `/teams/${f.teamA}?tab=team`, {
-      waitUntil: 'networkidle0'
+    const publicSession = await browserSession(
+      daemon,
+      'headCoach-public-web',
+      640,
+      980,
+      dir
+    )
+    const publicPage = publicSession.page
+    cleanup.push(async () => {
+      await publicSession.browser.disconnect()
+    })
+    await publicSession.m.openBrowser({
+      url: f.h.origin + `/teams/${f.teamA}?tab=team`
     })
     await publicPage.waitForFunction(
       (name: string) => document.body.innerText.includes(name),
       {},
       label
     )
-    await publicPage.screenshot({ path: join(dir, 'people-after.png') })
+    await capture(publicSession.m, dir, 'people-after.png')
     await visit(`/games/${G1}?tab=info`)
     const teamChoice =
       '[data-testid="event-attendance-teams"] [aria-label="Demo Hawks"]'
@@ -186,7 +200,8 @@ async function main(): Promise<void> {
     )
     await press(constraint)
     await page.waitForNetworkIdle()
-    await page.reload({ waitUntil: 'networkidle0' })
+    await m.openBrowser({ url: page.url() })
+    await page.waitForSelector(constraint)
     expect(await checked()).equals(false)
     await page.setViewport({ width: 1100, height: 1100 })
     const setupPath = `/groups/league/${f.leagueA}/scheduler`
@@ -317,7 +332,6 @@ ${response.status} ${await response.text()}`)
     }
     if (coverage != null)
       await recordBrowserCoverage([page, publicPage], f.h.origin, coverage)
-    await publicContext.close()
     await writeFile(join(dir, 'roles.log'), log.join('\n') + '\n')
   } finally {
     await Promise.all(

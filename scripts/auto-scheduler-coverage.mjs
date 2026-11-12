@@ -91,6 +91,10 @@ const tsSuites = [
   'src/server/autoScheduler/reschedule.integration.test.ts',
   'src/server/autoScheduler/rules.test.ts',
   'src/server/autoScheduler/managerPreview.unit.test.ts',
+  'src/server/autoScheduler/deviceValidation.unit.test.ts',
+  'src/server/autoScheduler/devicePreview.unit.test.ts',
+  'src/server/scheduler/deviceSettings.unit.test.ts',
+  'src/server/routes/devicePreviews.unit.test.ts',
   'src/common/deviceScheduling.test.ts',
   'src/server/routes/deviceScheduling.integration.test.ts',
   'src/server/routes/devicePreviews.integration.test.ts',
@@ -127,6 +131,8 @@ const appSuites = [
   'src/app/components/PinMap.test.tsx',
   'src/app/components/MapFrame.test.tsx',
   'src/app/components/WeeklyHoursEditor.test.tsx',
+  'src/app/components/TimeWindowsEditor.test.tsx',
+  'src/app/components/SpreadsheetNumber.test.tsx',
   'src/app/platform/currentPosition.native.test.tsx',
   // M4: the game form's Field row and the Info tab's warnings.
   'src/app/screens/GameFormScreen.fieldPicker.test.tsx',
@@ -162,6 +168,7 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/server/scheduler/managerSetup.unit.test.ts',
     'src/server/autoScheduler/managerDecisions.test.ts',
     'src/server/autoScheduler/managerPreview.unit.test.ts',
+    'src/server/autoScheduler/deviceValidation.unit.test.ts',
     'src/server/routes/headCoach.unit.test.ts',
     'src/server/teams/headCoachViews.unit.test.ts',
     'src/server/teams/onPeopleList.unit.test.ts',
@@ -218,15 +225,14 @@ if (base == null)
 const manager = process.env.TS_MANAGER_COACH_COVERAGE === '1'
 const reuseUnitRuns = manager && process.argv.includes('--reuse-unit')
 const report = resolve(manager ? 'coverage/manager' : 'coverage/autoScheduler')
-const source = manager ? coverageSource() : null
+const source = coverageSource()
 function verifySource() {
   if (
-    manager &&
-    (source !== coverageSource() ||
-      (process.env.TS_MANAGER_SOURCE != null &&
-        process.env.TS_MANAGER_SOURCE !== source))
+    source !== coverageSource() ||
+    (process.env.TS_MANAGER_SOURCE != null &&
+      process.env.TS_MANAGER_SOURCE !== source)
   )
-    throw new Error('Source changed during manager coverage collection')
+    throw new Error('Source changed during coverage collection')
 }
 function readUnitCounters() {
   const proof = JSON.parse(
@@ -435,6 +441,18 @@ if (reuseUnitRuns) {
   map = unit
 }
 const browserCoverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
+if (
+  !unitOnly &&
+  !manager &&
+  (browserCoverage == null ||
+    !existsSync(browserCoverage) ||
+    serverCoverage == null ||
+    !existsSync(serverCoverage) ||
+    readdirSync(serverCoverage).length === 0)
+)
+  throw new Error(
+    'Combined coverage requires recorded browser and server counters'
+  )
 if (!unitOnly && browserCoverage != null)
   map.merge(JSON.parse(readFileSync(browserCoverage, 'utf8')))
 writeFileSync(
@@ -521,6 +539,7 @@ if (failures.length > 0) {
   console.error(`\n${summary}\nBelow ${minimum}%: ${failures.join('; ')}`)
   process.exit(1)
 }
+verifySource()
 console.log(`\n${summary}`)
 
 if (manager) {

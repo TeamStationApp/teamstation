@@ -8,7 +8,7 @@ import {
   effectiveAvailability,
   fieldWindows
 } from './fieldAvailability'
-import { asFieldChanges, asVenueChanges } from './venues'
+import { asFieldChanges, asVenueChanges, asVenueField } from './venues'
 import { asWindowPeriods, weeklyWindow } from './windowPeriods'
 
 const morning = [{ weekday: 6, start: '08:00', end: '12:00' }]
@@ -28,6 +28,26 @@ const inherited = {
 }
 
 describe('dated scheduling availability', () => {
+  it('preserves explicit inherited windows through API decoding even when legacy hours remain', () => {
+    const base = {
+      id: 'fld_demo',
+      name: 'Demo Field',
+      sizes: ['50/70'],
+      pin: null,
+      startsOn: null,
+      endsOn: null,
+      hours: evening,
+      blackouts: [],
+      photoUrl: null,
+      photoLargeUrl: null
+    }
+    const decoded = asVenueField({ ...base, windows: null })
+    expect(decoded.windows).equals(null)
+    expect(effectiveAvailability(venue, decoded).windows).deep.equals(
+      weeklyWindow(morning)
+    )
+    expect(asVenueField(base).windows).equals(undefined)
+  })
   it('inherits windows, honors explicit closure and combines blackouts', () => {
     expect(
       fieldWindows(effectiveAvailability(venue, inherited), '2027-03-06')

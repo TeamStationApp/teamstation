@@ -546,7 +546,7 @@ describe('the venue screen', () => {
     await fill('Minutes', '30')
     await tapText('Save')
     await settle()
-    await press('Default hours: Tuesday, Closed')
+    await press('Default hours from Existing hours: Tuesday, Closed')
     await tapText('Open')
     // A day turned open starts at 9:00 AM to 5:00 PM.
     expect(hasLabel('Opens 9:00 AM')).equals(true)
@@ -570,9 +570,14 @@ describe('the venue screen', () => {
       [
         'ven_demo',
         {
-          defaultHours: [
-            { weekday: 2, start: '09:00', end: '17:00' },
-            { weekday: 6, start: '08:00', end: '18:00' }
+          defaultWindows: [
+            {
+              from: '0001-01-01',
+              hours: [
+                { weekday: 2, start: '09:00', end: '17:00' },
+                { weekday: 6, start: '08:00', end: '18:00' }
+              ]
+            }
           ]
         }
       ],

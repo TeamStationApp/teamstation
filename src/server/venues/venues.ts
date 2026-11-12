@@ -677,6 +677,7 @@ export async function updateVenue(
     if (
       fieldsChanged != null &&
       (changes.sizeSwitchMinutes != null ||
+        changes.defaultWindows !== undefined ||
         changes.defaultHours != null ||
         changes.defaultBlackouts != null)
     )
