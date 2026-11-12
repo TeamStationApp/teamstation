@@ -56,6 +56,9 @@ let mixed = false
 let anchorless = false
 let playbackOf: ((id: string) => Promise<void> | undefined) | undefined
 let timelineOf: ((id: string) => Promise<WallTimeline | undefined>) | undefined
+/** The game's single-camera videos, when a test names them itself. */
+let videosOf:
+  (() => Array<{ id: string; status: string; startAt?: string }>) | undefined
 let closed = false
 const client = {
   game: async () => {
@@ -65,12 +68,18 @@ const client = {
       awayTeamId: replayContext().teams.away.id,
       homeTeamId: replayContext().teams.home.id,
       videos: [
-        ...Array.from({ length: count }, (_, i) => ({
-          id: String(i),
-          title: `Angle ${i}`,
+        ...(videosOf?.().map(video => ({
+          title: `Angle ${video.id}`,
           numCameras: 1,
-          status: live ? 'live' : 'ready'
-        })),
+          startAt: null,
+          ...video
+        })) ??
+          Array.from({ length: count }, (_, i) => ({
+            id: String(i),
+            title: `Angle ${i}`,
+            numCameras: 1,
+            status: live ? 'live' : 'ready'
+          }))),
         { id: 'mosaic', title: 'Mosaic', numCameras: 4, status: 'ready' },
         {
           id: 'processing',
@@ -276,6 +285,7 @@ afterEach(async () => {
   mixed = false
   anchorless = false
   timelineOf = undefined
+  videosOf = undefined
   playbackOf = undefined
   fail = false
   pending = false
@@ -614,6 +624,158 @@ describe('TV game playback entry', () => {
     } finally {
       globalThis.setInterval = originalInterval
     }
+  })
+  describe('with more cameras than players', () => {
+    const sources = (): string[] =>
+      [...document.querySelectorAll('video')].map(video =>
+        (video.getAttribute('src') ?? '').replace(/^.*\//, '')
+      )
+    const toggles = (): HTMLElement[] => [
+      ...document.querySelectorAll<HTMLElement>('[data-testid^="tv-toggle-"]')
+    ]
+    // A camera off screen is dimmed in the panel.
+    const checked = (): string[] =>
+      toggles()
+        .filter(
+          toggle =>
+            toggle.querySelector('[data-testid^="tv-camera-dim-"]') === null
+        )
+        .map(toggle => toggle.getAttribute('aria-label') ?? '')
+    const loadAll = async (): Promise<void> => {
+      await act(async () => {
+        for (const video of document.querySelectorAll('video')) {
+          if (video.dataset.loaded === 'yes') continue
+          video.dataset.loaded = 'yes'
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(new window.Event('durationchange'))
+        }
+        await pause()
+      })
+    }
+    const recordings = Array.from({ length: 17 }, (_, i) => ({
+      id: `old${i}`,
+      status: 'ready',
+      startAt: `2026-10-01T00:${String(i).padStart(2, '0')}:00Z`
+    }))
+    const streams = ['liveA', 'liveB', 'liveC'].map(id => ({
+      id,
+      status: 'live',
+      startAt: '2026-10-01T02:00:00Z'
+    }))
+    it('lists every camera and opens on the live ones past four earlier recordings', async () => {
+      live = true
+      videosOf = () => [...recordings, ...streams]
+      await render()
+      await loadAll()
+      expect(sources()).deep.equals([
+        'old16.mp4',
+        'liveA.mp4',
+        'liveB.mp4',
+        'liveC.mp4'
+      ])
+      expect(toggles()).length(20)
+      expect(checked()).deep.equals([
+        'Toggle Angle old16',
+        'Toggle Angle liveA',
+        'Toggle Angle liveB',
+        'Toggle Angle liveC'
+      ])
+    })
+    it('plays a camera chosen in the panel in place of one off screen, keeping the others', async () => {
+      live = true
+      videosOf = () => [...recordings, ...streams]
+      await render()
+      await loadAll()
+      await press('Toggle Angle old16')
+      const before = [...document.querySelectorAll('video')]
+      await press('Toggle Angle old3')
+      await loadAll()
+      expect(sources()).deep.equals([
+        'old3.mp4',
+        'liveA.mp4',
+        'liveB.mp4',
+        'liveC.mp4'
+      ])
+      const after = [...document.querySelectorAll('video')]
+      expect(after.slice(1), 'the other players are not reopened').deep.equals(
+        before.slice(1)
+      )
+      expect(checked()).deep.equals([
+        'Toggle Angle old3',
+        'Toggle Angle liveA',
+        'Toggle Angle liveB',
+        'Toggle Angle liveC'
+      ])
+      // With every picture on screen, the last one gives way.
+      await press('Toggle Angle old7')
+      await loadAll()
+      expect(sources()).deep.equals([
+        'old3.mp4',
+        'liveA.mp4',
+        'liveB.mp4',
+        'old7.mp4'
+      ])
+      expect(checked()).deep.equals([
+        'Toggle Angle old3',
+        'Toggle Angle old7',
+        'Toggle Angle liveA',
+        'Toggle Angle liveB'
+      ])
+      expect(document.querySelectorAll('video')).length(4)
+    })
+    it('offers a camera that starts later without changing what is on screen', async () => {
+      live = true
+      const cameras = [streams[0], streams[1]]
+      videosOf = () => cameras
+      const originalInterval = globalThis.setInterval
+      let poll: (() => void) | undefined
+      globalThis.setInterval = ((callback: () => void, delay: number) => {
+        if (delay === 10000) poll = callback
+        return originalInterval(callback, delay)
+      }) as typeof setInterval
+      try {
+        await render()
+        await loadAll()
+        await press('Toggle Angle liveB')
+        const before = [...document.querySelectorAll('video')]
+        cameras.push(streams[2])
+        await act(async () => {
+          poll!()
+          await pause()
+          await pause()
+        })
+        expect(toggles()).length(3)
+        expect(checked()).deep.equals(['Toggle Angle liveA'])
+        expect([...document.querySelectorAll('video')]).deep.equals(before)
+        await press('Toggle Angle liveC')
+        await loadAll()
+        expect(sources()).deep.equals(['liveA.mp4', 'liveB.mp4', 'liveC.mp4'])
+        expect([...document.querySelectorAll('video')].slice(0, 2)).deep.equals(
+          before
+        )
+        expect(checked()).deep.equals([
+          'Toggle Angle liveA',
+          'Toggle Angle liveC'
+        ])
+        // Deleted from the game while a player holds it, it stays offered.
+        cameras.splice(1, 1)
+        await act(async () => {
+          poll!()
+          await pause()
+          await pause()
+        })
+        expect(toggles().map(t => t.getAttribute('aria-label'))).deep.equals([
+          'Toggle Angle liveA',
+          'Toggle Angle liveC',
+          'Toggle Angle liveB'
+        ])
+      } finally {
+        globalThis.setInterval = originalInterval
+      }
+    })
   })
   it('keeps a paused live remount that is waiting for its seekable bounds', async () => {
     live = true
