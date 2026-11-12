@@ -531,7 +531,9 @@ export class RtmpPublisher {
     if (!this.closed) {
       try {
         this.command(['deleteStream', 6, null, this.streamId])
-      } catch {}
+      } catch {
+        // The socket is already gone: there is no stream left to delete.
+      }
     }
     this.closed = true
     this.socket.destroy()

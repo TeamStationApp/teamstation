@@ -7,6 +7,7 @@ import {
   type Sleep,
   type SoakSurfaceDriver,
   type SurfaceProbe,
+  tapIfShown,
   TILE_NOTICE
 } from './surface'
 
@@ -147,11 +148,7 @@ export class ChromeSurface implements SoakSurfaceDriver {
 
   private async openAngles(): Promise<void> {
     await this.device.tapOn({ text: LABELS.openAngles, timeout: 30000 })
-    await this.device.tapOn({
-      text: LABELS.watch,
-      optional: true,
-      timeout: 5000
-    })
+    await tapIfShown(this.device, { text: LABELS.watch }, 5000)
   }
 
   async join(): Promise<void> {

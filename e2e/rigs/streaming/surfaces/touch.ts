@@ -7,7 +7,8 @@ import {
   realSleep,
   type Sleep,
   type SoakSurfaceDriver,
-  type SurfaceProbe
+  type SurfaceProbe,
+  tapIfShown
 } from './surface'
 
 /**
@@ -51,18 +52,25 @@ export abstract class TouchSurface implements SoakSurfaceDriver {
   }
 
   protected async openAngles(): Promise<void> {
-    await this.device.tapOn({ text: LABELS.openAngles, timeout: 30000 })
-    await this.device.tapOn({
-      text: LABELS.watch,
-      optional: true,
-      timeout: 5000
-    })
+    // All angles is the camera pills' last: on a phone's page it can sit
+    // scrolled off the row's right, so the row is swiped left to bring it in.
+    if (!(await tapIfShown(this.device, { text: LABELS.openAngles }, 15000))) {
+      const row = findBounds(await this.hierarchy(), 'Camera angles')
+      if (row != null) {
+        const y = Math.round(row.y + row.height / 2)
+        await this.device.swipe({
+          startX: Math.round(row.x + row.width * 0.9),
+          startY: y,
+          endX: Math.round(row.x + row.width * 0.1),
+          endY: y,
+          duration: 400
+        })
+      }
+      await this.device.tapOn({ text: LABELS.openAngles, timeout: 15000 })
+    }
+    await tapIfShown(this.device, { text: LABELS.watch }, 5000)
     // Sound needs a tap on a phone's browser; elsewhere the prompt is never there.
-    await this.device.tapOn({
-      text: LABELS.tapForSound,
-      optional: true,
-      timeout: 2000
-    })
+    await tapIfShown(this.device, { text: LABELS.tapForSound }, 2000)
   }
 
   private async hierarchy(): Promise<HierarchyNode> {

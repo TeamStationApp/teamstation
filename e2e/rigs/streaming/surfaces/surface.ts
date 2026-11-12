@@ -1,3 +1,4 @@
+import type { MaestroDevice } from '../../../core/maestro'
 import type { ProbeTile } from '../soakRecords'
 
 /**
@@ -111,4 +112,23 @@ export async function performAction(
     default:
       throw new Error(`no surface action "${action}"`)
   }
+}
+
+/**
+ * Taps `target` when it shows within `timeout`, and says whether it did: for
+ * a prompt that only some surfaces or states show. Whether it showed is the
+ * caller's to judge, unlike a maestro optional step, which hides it.
+ */
+export async function tapIfShown(
+  device: MaestroDevice,
+  target: Record<string, unknown>,
+  timeout: number
+): Promise<boolean> {
+  try {
+    await device.assertVisible({ ...target, timeout })
+  } catch {
+    return false
+  }
+  await device.tapOn(target)
+  return true
 }

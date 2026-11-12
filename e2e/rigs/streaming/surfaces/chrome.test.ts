@@ -185,7 +185,9 @@ describe('the Chrome surface', function () {
     await surface.jumpToPresent()
     await surface.exitAndReenter(1)
     await surface.relaunch()
-    expect(calls.map(call => call[0])).deep.equals([
+    expect(
+      calls.map(call => call[0]).filter(name => name !== 'assertVisible')
+    ).deep.equals([
       'tapOn',
       'tapOn',
       'tapOn',

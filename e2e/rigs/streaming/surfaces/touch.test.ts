@@ -131,13 +131,9 @@ describe('the native app surface', function () {
   it('joins by the game link, then opens every angle', async function () {
     const { surface, calls } = appSurface()
     await surface.join()
-    expect(calls.map(call => call[0])).deep.equals([
-      'launchApp',
-      'openLink',
-      'tapOn',
-      'tapOn',
-      'tapOn'
-    ])
+    expect(
+      calls.map(call => call[0]).filter(name => name !== 'assertVisible')
+    ).deep.equals(['launchApp', 'openLink', 'tapOn', 'tapOn', 'tapOn'])
     expect(calls[0][1]).deep.equals({
       appId: 'app.example.develop',
       stopApp: false
@@ -228,13 +224,9 @@ describe('the native app surface', function () {
     expect(calls[0]).deep.equals(['tapOn', { text: 'PhoneB angle' }])
     calls.length = 0
     await surface.exitAndReenter(10000)
-    expect(calls.map(call => call[0])).deep.equals([
-      'hierarchy',
-      'tapOnPoint',
-      'tapOn',
-      'tapOn',
-      'tapOn'
-    ])
+    expect(
+      calls.map(call => call[0]).filter(name => name !== 'assertVisible')
+    ).deep.equals(['hierarchy', 'tapOnPoint', 'tapOn', 'tapOn', 'tapOn'])
     calls.length = 0
     await surface.relaunch()
     expect(calls[0]).deep.equals(['stopApp', { appId: 'app.example.develop' }])
@@ -343,10 +335,7 @@ describe('the iPhone Safari surface', function () {
     )
     expect(calls.find(call => call[0] === 'pressKey')![1]).equals('Enter')
     expect(calls.some(call => call[0] === 'openLink')).equals(false)
-    expect(calls.at(-1)).deep.equals([
-      'tapOn',
-      { text: 'Tap for sound', optional: true, timeout: 2000 }
-    ])
+    expect(calls.at(-1)).deep.equals(['tapOn', { text: 'Tap for sound' }])
   })
 
   it('relaunches by closing the tab and opening the address again', async function () {
@@ -355,7 +344,7 @@ describe('the iPhone Safari surface', function () {
     const ids = calls
       .map(call => (call[1] as { id?: string } | undefined)?.id)
       .filter(id => id != null)
-    expect(ids).includes('closeTabButton')
+    expect(ids).includes('Close')
     expect(calls.some(call => call[0] === 'inputText')).equals(true)
     calls.length = 0
     await surface.resume()
