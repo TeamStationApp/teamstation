@@ -354,6 +354,7 @@ describe('stack transitions in the actual app', () => {
       {
         id: 'sea_spring',
         leagueId: null,
+        leaguePictureUrl: null,
         name: 'Spring 2026',
         year: 2026,
         term: null,

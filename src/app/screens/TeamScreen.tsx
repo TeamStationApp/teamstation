@@ -129,7 +129,11 @@ export interface TeamScreenProps {
   onOpenPlayer?: (
     userId: string,
     name: string,
-    from?: { seasonId?: string; teamId?: string; onTeam?: string }
+    from?: {
+      seasonId?: string
+      teamId?: string
+      onTeam?: string
+    }
   ) => void
   /**
    * Somebody on the roster who is not a player, opened as their person
@@ -238,7 +242,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
             and the name the width of one, and a team is easier to recognise by
             its badge than by the first twenty characters of its name.
           */}
-          <TeamEmblem uri={team.logoUrl} name={team.name} size={1.75} />
+          <TeamEmblem
+            teamId={team.id}
+            uri={team.logoUrl}
+            name={team.name}
+            size={1.75}
+          />
           <Text style={styles.headerName} numberOfLines={1}>
             {team.name}
           </Text>
@@ -248,6 +257,7 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
         progress,
         styles.headerHandoff,
         styles.headerName,
+        team.id,
         team.logoUrl,
         team.name
       ]
@@ -461,7 +471,12 @@ export function TeamScreen(props: TeamScreenProps): React.ReactElement {
               setIdentityWidth(event.nativeEvent.layout.width)
             }}
           >
-            <TeamEmblem uri={team.logoUrl} name={team.name} size={3.5} />
+            <TeamEmblem
+              teamId={team.id}
+              uri={team.logoUrl}
+              name={team.name}
+              size={3.5}
+            />
             {nameBelowControls ? (
               <View style={styles.identitySpace} />
             ) : (

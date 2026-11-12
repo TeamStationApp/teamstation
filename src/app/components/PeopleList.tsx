@@ -5,9 +5,9 @@ import type { RosterEntry, RosterSection } from '../../common/api'
 import type { StringKey } from '../locales/en_US'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { initialsOf } from './initials'
 import { ListCard } from './ListCard'
 import { ListRow } from './ListRow'
+import { PersonAffiliationLine } from './PersonAffiliationLine'
 import { positionLabel } from './roleLabels'
 import { SectionHeader } from './SectionHeader'
 
@@ -73,17 +73,19 @@ export function PeopleList({
 /** Shared member/public presentation; callers alone supply navigation. */
 type PersonPresentation = Pick<
   RosterEntry,
+  | 'userId'
   | 'shortName'
   | 'section'
   | 'staffRoles'
   | 'isHeadCoach'
   | 'positions'
-  | 'teamNames'
-  | 'guardianOf'
   | 'avatarUrl'
   | 'inheritedFrom'
   | 'jersey'
->
+> & {
+  /** The affiliation line under the name; none on a public page. */
+  affiliations?: string
+}
 export function PersonRow({
   person,
   onPress
@@ -91,13 +93,18 @@ export function PersonRow({
   person: PersonPresentation
   onPress?: () => void
 }): React.ReactElement {
+  const subtitle = peopleSubtitle(person)
   return (
     <ListRow
       title={person.shortName}
-      subtitle={peopleSubtitle(person)}
-      emblem={initialsOf(person.shortName)}
-      emblemUri={person.avatarUrl}
-      emblemShape="circle"
+      subtitle={subtitle}
+      accessibilityLabel={[person.shortName, subtitle, person.affiliations]
+        .filter(part => part != null && part !== '')
+        .join(', ')}
+      person={{
+        userId: person.userId,
+        uri: person.avatarUrl
+      }}
       badgeLabel={inheritedPill(person)}
       badgeTone="neutral"
       trailing={
@@ -105,29 +112,28 @@ export function PersonRow({
           ? undefined
           : `#${person.jersey.trim()}`
       }
+      detailContent={
+        <PersonAffiliationLine affiliations={person.affiliations} />
+      }
       onPress={onPress}
     />
   )
 }
 
 /**
- * The line under a name: a player's positions, or on a season's or league's
- * list the teams they play on; for an admin or staff the roles they hold,
- * `Coach · Scorekeeper`; and for a family member the players here they are a
- * parent or guardian of, `Parent/guardian of Avery S`.
+ * What somebody does here, on the line under their name and above their
+ * affiliation line: a player's positions, and for an admin or staff the
+ * roles they hold, `Coach · Scorekeeper`. Their teams and the players or
+ * guardians they are tied to are the affiliation line's.
  */
 export function peopleSubtitle<T extends PersonPresentation>(
   person: T
 ): string | undefined {
-  if (person.section === 'family')
-    return person.guardianOf != null && person.guardianOf.length > 0
-      ? sprintf(lstrings.roster_guardian_of, person.guardianOf.join(', '))
-      : undefined
   const parts =
     person.section === 'admin' || person.section === 'staff'
       ? person.staffRoles.map(flag => positionLabel(flag, person.isHeadCoach))
-      : person.teamNames != null && person.teamNames.length > 0
-        ? person.teamNames
+      : person.section === 'family'
+        ? []
         : person.positions
   return parts.length > 0 ? parts.join(' · ') : undefined
 }

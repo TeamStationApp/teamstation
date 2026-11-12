@@ -4,6 +4,7 @@ import { Pressable, type ScrollView, Text, View } from 'react-native'
 import type { TeamStationClient } from '../../common/api'
 import { Badge, Button, ButtonIcon, Card, Screen } from '../components'
 import { useBackOverride } from '../components/headerSlot'
+import { PersonAffiliationLine } from '../components/PersonAffiliationLine'
 import { lstrings, plural, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ChatAvatar } from './ChatAvatar'
@@ -367,7 +368,7 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
                           lstrings.chat_safety_number_with,
                           member.shortName
                         ),
-                    member.label,
+                    member.affiliations,
                     member.isModerator ? lstrings.chat_moderator : ''
                   ]
                     .filter(part => part !== '')
@@ -385,9 +386,7 @@ export function ChatInfoScreen(props: ChatInfoScreenProps): React.ReactElement {
                         ? `${member.shortName} (${lstrings.chat_you})`
                         : member.shortName}
                     </Text>
-                    {member.label !== '' && (
-                      <Text style={shared.small}>{member.label}</Text>
-                    )}
+                    <PersonAffiliationLine affiliations={member.affiliations} />
                     {member.safetyNumberChanged && (
                       <Text style={[shared.small, styles.changed]}>
                         {sprintf(

@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import type { RosterCandidate, TeamStationClient } from '../../common/api'
+import {
+  ROSTER_CANDIDATE_MAX,
+  type RosterCandidate,
+  type TeamStationClient
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import {
   candidate,
@@ -13,7 +17,6 @@ import {
 } from '../../test/fakeCandidateClient'
 import { heldTimers } from '../../test/fakeScreenScope'
 import {
-  CANDIDATE_PAGE,
   candidateMatches,
   type RosterCandidates,
   useRosterCandidates
@@ -99,82 +102,63 @@ describe('useRosterCandidates', function () {
     return fake
   }
 
-  it('asks for the first page of 30 on open, and the next after the last row', async () => {
+  it('asks once per search, and draws the answer whole', async () => {
     const fake = await open(undefined, 'gam_one')
     expect(fake.asks).has.length(1)
     expect(fake.last()).to.include({
       teamId: 'tem_falcons',
       gameId: 'gam_one',
       q: '',
-      limit: CANDIDATE_PAGE
+      // It tells the server it shows when the answer is full.
+      capped: true
     })
-    expect(fake.last().after).equals(undefined)
+    expect(fake.last()).not.have.property('after')
+    expect(fake.last().limit).equals(undefined)
     expect(state.loading).equals(true)
-    await answer(fake.last(), page(30))
+    await answer(fake.last(), page(40))
     expect(state.loading).equals(false)
-    expect(state.rows).has.length(30)
-    expect(state.ended).equals(false)
-
-    await act(async () => {
-      state.loadMore()
-    })
-    // One page at a time.
-    await act(async () => {
-      state.loadMore()
-    })
-    expect(fake.asks).has.length(2)
-    expect(fake.last().after).equals(page(30)[29].cursor)
-    expect(state.loadingMore).equals(true)
-    await answer(fake.last(), page(4, 30))
-    expect(state.rows).has.length(34)
-    expect(state.loadingMore).equals(false)
-    // A short page ends the list.
-    expect(state.ended).equals(true)
-    await act(async () => {
-      state.loadMore()
-    })
-    expect(fake.asks).has.length(2)
+    expect(state.updating).equals(false)
+    expect(state.rows).has.length(40)
+    expect(state.capped).equals(false)
+    // Nothing more is asked for the same search.
+    await show(fake, '', 'gam_one')
+    await settle()
+    expect(fake.asks).has.length(1)
   })
 
-  it('keeps the rows over a failed page and retries just that page', async () => {
+  it('says a full answer may hold more, and typing more narrows it', async () => {
     const fake = await open()
-    await answer(fake.last(), page(30))
-    await act(async () => {
-      state.loadMore()
-    })
-    await fail(fake.last(), new Error('socket hang up'))
-    expect(state.rows).has.length(30)
-    expect(state.error).equals('Unable to load players. Please try again.')
-    expect(state.loadingMore).equals(false)
-    await act(async () => {
-      state.retry()
-    })
-    expect(fake.asks).has.length(3)
-    expect(fake.last().after).equals(page(30)[29].cursor)
-    expect(state.error).equals(undefined)
-    await answer(fake.last(), page(2, 30))
-    expect(state.rows).has.length(32)
+    await answer(fake.last(), page(ROSTER_CANDIDATE_MAX))
+    expect(state.rows).has.length(ROSTER_CANDIDATE_MAX)
+    expect(state.capped).equals(true)
+    await show(fake, 'Player1')
+    await settle()
+    expect(state.capped).equals(false)
+    await answer(fake.last(), page(ROSTER_CANDIDATE_MAX - 1))
+    expect(state.capped).equals(false)
   })
 
-  it("shows the server's message for a refused first page, and retries the first page", async () => {
+  it("shows the server's message for a refused search, and asks again on retry", async () => {
     const fake = await open()
     await fail(fake.last(), new HttpError('forbidden', 'Not found'))
     expect(state.error).equals('Not found')
     expect(state.rows).deep.equals([])
-    // No rows: nothing to load more of.
-    await act(async () => {
-      state.loadMore()
-    })
-    expect(fake.asks).has.length(1)
+    expect(state.loading).equals(false)
     await act(async () => {
       state.retry()
     })
     expect(fake.asks).has.length(2)
-    expect(fake.last().after).equals(undefined)
+    expect(fake.last().q).equals('')
     expect(state.loading).equals(true)
+    expect(state.error).equals(undefined)
     await answer(fake.last(), page(3))
     expect(state.rows).has.length(3)
-    expect(state.ended).equals(true)
+  })
+
+  it('says a failure it cannot name plainly', async () => {
+    const fake = await open()
+    await fail(fake.last(), new Error('socket hang up'))
+    expect(state.error).equals('Unable to load players. Please try again.')
   })
 
   it('sends one request for "Be", "Bet", "Betts" typed within half a second, and aborts the one before', async () => {
@@ -191,7 +175,7 @@ describe('useRosterCandidates', function () {
     expect(state.query).equals('Betts')
   })
 
-  it('drops an older answer that arrives last, and returns to the unfiltered first page when cleared', async () => {
+  it('drops an older answer that arrives last, and returns to the unfiltered search when cleared', async () => {
     const fake = await open()
     const unfiltered = fake.last()
     await show(fake, 'Betts')
@@ -199,14 +183,9 @@ describe('useRosterCandidates', function () {
     const betts = fake.last()
     await answer(betts, [candidate('Mookie Betts')])
     await answer(unfiltered, page(30))
+    await fail(unfiltered, new Error('late'))
     expect(state.rows.map(row => row.shortName)).deep.equals(['Mookie B'])
-
-    // One match is a short page: there is nothing more to ask for.
-    expect(state.ended).equals(true)
-    await act(async () => {
-      state.loadMore()
-    })
-    expect(fake.asks).has.length(2)
+    expect(state.error).equals(undefined)
 
     await show(fake, '')
     await settle()
@@ -215,22 +194,6 @@ describe('useRosterCandidates', function () {
     expect(state.rows).deep.equals([])
     await answer(fake.last(), page(5))
     expect(state.rows).has.length(5)
-  })
-
-  it('drops a further page for a search that has since changed', async () => {
-    const fake = await open()
-    await answer(fake.last(), page(30))
-    await act(async () => {
-      state.loadMore()
-    })
-    const stale = fake.last()
-    await show(fake, 'Trout')
-    await settle()
-    await answer(stale, page(30, 30))
-    await fail(stale, new Error('late'))
-    expect(state.rows).deep.equals([])
-    expect(state.loadingMore).equals(false)
-    expect(state.error).equals(undefined)
   })
 
   it('asks nothing while offline, and asks again once back', async () => {
@@ -252,10 +215,7 @@ describe('useRosterCandidates', function () {
   })
 
   describe('cache first (U43)', function () {
-    const kept = [
-      candidate('Mookie Betts', { cursor: 'kept-1' }),
-      candidate('Shohei Ohtani', { cursor: 'kept-2' })
-    ]
+    const kept = [candidate('Mookie Betts'), candidate('Shohei Ohtani')]
     const openFirst = async (
       fake = new FakeCandidateClient()
     ): Promise<FakeCandidateClient> => {
@@ -269,58 +229,30 @@ describe('useRosterCandidates', function () {
       return fake
     }
 
-    it('lists the kept people at once, and pages on from the server’s own last row', async () => {
+    it('lists the kept people at once, then the server’s first and the rest of the phone’s', async () => {
       const fake = await openFirst()
       expect(state.rows.map(row => row.shortName)).deep.equals([
         'Mookie B',
         'Shohei O'
       ])
       expect(state.loading).equals(false)
-      expect(state.loadingMore).equals(true)
-      // No server row yet: nothing to page on from.
-      await act(async () => {
-        state.loadMore()
-      })
-      expect(fake.asks).has.length(1)
-      await answer(fake.last(), page(30))
-      expect(state.rows).has.length(32)
-      expect(state.loadingMore).equals(false)
-      await act(async () => {
-        state.loadMore()
-      })
-      expect(fake.last().after).equals(page(30)[29].cursor)
-      await answer(fake.last(), page(2, 30))
-      expect(state.rows.slice(30, 32).map(row => row.shortName)).deep.equals([
-        'Player30 O',
-        'Player31 O'
+      expect(state.updating).equals(true)
+      await answer(fake.last(), [candidate('Shohei Ohtani'), ...page(2)])
+      expect(state.updating).equals(false)
+      expect(state.rows.map(row => row.shortName)).deep.equals([
+        'Shohei O',
+        'Player0 O',
+        'Player1 O',
+        'Mookie B'
       ])
-    })
-
-    it('pages a new search on only from its own first page', async () => {
-      const fake = await openFirst()
-      await answer(fake.last(), page(30))
-      // A new search: its first page has not come when the end is reached.
-      await show(fake, 'Mookie', undefined, true)
-      await settle()
-      expect(fake.asks).has.length(2)
-      expect(fake.last().q).equals('Mookie')
-      await act(async () => {
-        state.loadMore()
-      })
-      expect(fake.asks).has.length(2)
-      await answer(fake.last(), [candidate('Mookie Betts')])
-      expect(state.ended).equals(true)
-      await act(async () => {
-        state.loadMore()
-      })
-      expect(fake.asks).has.length(2)
+      expect(fake.asks).has.length(1)
     })
 
     it('takes no signal as no failure, and asks nothing offline', async () => {
       const fake = await openFirst()
       await fail(fake.last(), new HttpError('offline', 'No connection'))
       expect(state.error).equals(undefined)
-      expect(state.ended).equals(true)
+      expect(state.updating).equals(false)
       expect(state.rows).has.length(2)
       await act(async () => {
         fake.offline = true
@@ -375,6 +307,33 @@ describe('useRosterCandidates', function () {
       expect(candidateMatches(mookie, 'MOOKIE b')).equals(true)
       expect(candidateMatches(mookie, 'ookie')).equals(false)
       expect(candidateMatches(mookie, 'moo x')).equals(false)
+    })
+
+    it('finds a row by the surname of the full name it carries', async () => {
+      // Read in full, the row's name is the full one; its parts stay public.
+      const full = candidate('Josh Smith', {
+        shortName: 'Josh Smith',
+        compactName: 'Josh S',
+        affiliations: 'Guardians: Ken G · Demo Hawks'
+      })
+      const short = candidate('Josh Staumont')
+      expect(full.shortParts).deep.equals({ first: 'Josh', last: 'S' })
+      expect(candidateMatches(full, 'smith')).equals(true)
+      expect(candidateMatches(full, 'josh smi')).equals(true)
+      // A public row carries no surname to match.
+      expect(candidateMatches(short, 'staumont')).equals(false)
+      expect(candidateMatches(short, 'josh s')).equals(true)
+      // The kept rows are listed by that match while the server is asked.
+      const fake = new FakeCandidateClient()
+      fake.kept.tem_falcons = [full, short]
+      timers = heldTimers(500)
+      root = createRoot(document.createElement('div'))
+      await show(fake, 'Smith', undefined, true)
+      await act(async () => {
+        await Promise.resolve()
+      })
+      expect(state.rows.map(row => row.shortName)).deep.equals(['Josh Smith'])
+      expect(state.rows[0].affiliations).equals('Guardians: Ken G · Demo Hawks')
     })
   })
 })

@@ -46,8 +46,16 @@ export interface ScopeIdentity {
   scopeName: string
   /** The stored logo, for the caller to sign; never sent as it is. */
   logoPath: string | null
-  /** A season's league, for who moderates its chats; null for the rest. */
+  /**
+   * A season's league, for who moderates its chats and whose colour its
+   * tile takes; null for the rest.
+   */
   leagueId: string | null
+  /**
+   * A season's league's stored logo, drawn when the season has none, for the
+   * caller to sign; null for the rest.
+   */
+  leagueLogoPath: string | null
 }
 
 /** `<season name> - <league name>`, or the season's own name without one. */
@@ -73,7 +81,8 @@ export function scopesOf(conversations: Titled[]): Scope[] {
 }
 
 /**
- * Each scope's name, title name, logo and (for a season) league, by
+ * Each scope's name, title name, logo and (for a season) league and its
+ * logo, by
  * `scopeKey`: one read of each scope table, and none of a table no scope
  * names. A scope whose row is gone has no entry. Everything a chat shows of
  * its scope comes from this one map, so its title and `scopeName` cannot
@@ -99,7 +108,8 @@ export async function scopeIdentities(
         name: row.name,
         scopeName: row.name,
         logoPath: row.logo_path,
-        leagueId: null
+        leagueId: null,
+        leagueLogoPath: null
       })
     }
   }
@@ -113,7 +123,8 @@ export async function scopeIdentities(
         'seasons.name',
         'seasons.logo_path',
         'seasons.league_id',
-        'leagues.name as leagueName'
+        'leagues.name as leagueName',
+        'leagues.logo_path as leagueLogoPath'
       ])
       .where('seasons.id', 'in', seasonIds)
       .execute()
@@ -122,7 +133,8 @@ export async function scopeIdentities(
         name: row.name,
         scopeName: seasonTitle(row.name, row.leagueName),
         logoPath: row.logo_path,
-        leagueId: row.league_id
+        leagueId: row.league_id,
+        leagueLogoPath: row.leagueLogoPath
       })
     }
   }
@@ -138,7 +150,8 @@ export async function scopeIdentities(
         name: row.name,
         scopeName: row.name,
         logoPath: row.logo_path,
-        leagueId: null
+        leagueId: null,
+        leagueLogoPath: null
       })
     }
   }

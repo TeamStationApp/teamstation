@@ -17,6 +17,13 @@ export const PARENT = 306
 export const MOOKIE = 7003
 /** A teammate: sees the game, and may not dictate. */
 export const TEAMMATE = 4001
+/**
+ * Mike Trout, the group fixture's account 103: a member of Spring
+ * (`season_members`) who plays on no team of it.
+ */
+export const TROUT = 103
+/** Spring's coach (a season role), who manages Spring's people. */
+export const SPRING_COACH = 307
 
 const fillers = (start: number): number[] =>
   Array.from({ length: 9 }, (_, i) => start + i)
@@ -26,7 +33,8 @@ const fillers = (start: number): number[] =>
  * throughout: Alex Lee of Demo Hawks, whom Spring and Fall of the league
  * Lakeshore manage and who also compete in a third season, batting against
  * Riley Chen after one pitch. Alex's parent is linked to Alex alone, and
- * Mookie Betts is on Demo Hawks' roster beside him.
+ * Mookie Betts is on Demo Hawks' roster beside him. Mike Trout is a member
+ * of Spring who plays on none of its teams, and Ryne Sandberg coaches Spring.
  */
 export async function seedPrivacyGame(
   f: GroupFixture
@@ -73,7 +81,8 @@ export async function seedPrivacyGame(
         [COACH, 'Cal Ripken'],
         [SCOREKEEPER, 'Ozzie Smith'],
         [STRANGER, 'Babe Ruth'],
-        [PARENT, 'Lou Gehrig']
+        [PARENT, 'Lou Gehrig'],
+        [SPRING_COACH, 'Ryne Sandberg']
       ] as const
     ).map(([id, name]) => ({
       id,
@@ -131,7 +140,37 @@ export async function seedPrivacyGame(
         granted_at: new Date()
       })
       .execute()
-  for (const id of [COACH, SCOREKEEPER, STRANGER, TEAMMATE, PARENT])
+  // Spring's coach manages its people, Mike Trout among them: he reads
+  // Mike's full name, and may still not change it.
+  await db
+    .insertInto('scope_roles')
+    .values({
+      id: makeId('scopeRole'),
+      user_id: userIdOfGumbo(SPRING_COACH),
+      scope_type: 'season',
+      scope_id: f.seasonA,
+      role: 'coach',
+      granted_by: userIdOfGumbo(101),
+      granted_at: new Date()
+    })
+    .execute()
+  await db
+    .insertInto('season_members')
+    .values({
+      id: makeId('seasonMember'),
+      user_id: userIdOfGumbo(TROUT),
+      season_id: f.seasonA,
+      joined_at: new Date()
+    })
+    .execute()
+  for (const id of [
+    COACH,
+    SCOREKEEPER,
+    STRANGER,
+    TEAMMATE,
+    PARENT,
+    SPRING_COACH
+  ])
     tokens.set(
       id,
       (await createSession(db, userIdOfGumbo(id), 'privacy-fixture')).token

@@ -31,6 +31,7 @@ import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import { reachEnd } from '../../test/PagedListStandIn'
 import { App } from '../App'
 import { chat } from '../chat/chatViews.test.helpers'
+import { personTint } from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
@@ -274,7 +275,12 @@ describe('a player’s tabs', function () {
   it('opens an eligible player conversation from the hero Message action', async function () {
     const client = playerClient()
     client.dmCandidates = async () => [
-      { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        shortName: 'Jordan P',
+        avatarUrl: null,
+        affiliations: ''
+      }
     ]
     client.createDm = async ids => {
       expect(ids).deep.equals([userIdOfGumbo(7)])
@@ -307,7 +313,12 @@ describe('a player’s tabs', function () {
   it('draws its Message action before the age sheet is agreed to', async function () {
     const client = playerClient()
     client.dmCandidates = async () => [
-      { userId: userIdOfGumbo(7), shortName: 'Jordan P', avatarUrl: null }
+      {
+        userId: userIdOfGumbo(7),
+        shortName: 'Jordan P',
+        avatarUrl: null,
+        affiliations: ''
+      }
     ]
     await render(
       <TestChatAge access="ask">
@@ -1113,6 +1124,37 @@ describe('a player’s Settings tab', function () {
     expect(text()).includes('Paul Goldschmidt')
   })
 
+  it('draws the tile on the account’s colour before the page loads and after, with the shown name’s letters', async function () {
+    const client = playerClient()
+    let reads = 0
+    client.player = async () => {
+      reads++
+      return asPlayerDetail({
+        userId: userIdOfGumbo(7),
+        name: 'Derek J',
+        teams: []
+      })
+    }
+    const hex = personTint(userIdOfGumbo(7))!
+    const colour = `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`
+    await render(
+      <PlayerScreen
+        client={client}
+        userId={userIdOfGumbo(7)}
+        title="Derek Jeter"
+      />
+    )
+    expect(reads).greaterThan(0)
+    const tiles = [...document.querySelectorAll<HTMLElement>('*')].filter(
+      node => node.children.length === 0 && node.textContent === 'DJ'
+    )
+    expect(tiles.length).greaterThan(0)
+    for (const tile of tiles)
+      expect(getComputedStyle(tile.parentElement!).backgroundColor).equals(
+        colour
+      )
+  })
+
   it('retains the saved public name while the initial player profile is delayed', async function () {
     const client = playerClient()
     const entry = {
@@ -1244,14 +1286,14 @@ describe('a player’s Settings tab', function () {
     await press('Videos')
     expect(text()).includes('Paul G').and.not.includes('Goldschmidt')
   })
-  it('falls back to its own name, not the roster label, when the read after a save fails', async function () {
+  it('falls back to its own short name when the read after a save fails', async function () {
     for (const details of [true, false]) {
       const client = playerClient()
-      // The roster tells him from a teammate by a second letter; the page,
-      // which names him alone, does not.
+      // The roster writes him alone, as the page does, even beside a
+      // teammate whose name shares his short form.
       const entry = {
         ...jordan,
-        shortName: 'Jordan Pa',
+        shortName: 'Jordan P',
         ...(details
           ? {
               nameDetails: {
@@ -1295,6 +1337,7 @@ describe('a player’s Settings tab', function () {
       expect(text(), `with details ${details}`)
         .includes('Jordan P')
         .and.not.includes('Jordan Pa')
+        .and.not.includes('Pacheco')
       await act(async () => {
         root?.unmount()
       })

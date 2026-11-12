@@ -495,6 +495,50 @@ describe('the non-member view', function () {
         await leave()
       }
     })
+
+    it('names no guardian or child to a reader who sees the child through another team', async function () {
+      // The watcher coaches Demo Comets, where Alfonso also plays, so he may
+      // see Alfonso, but reads Demo Hawks as a non-member.
+      const coach = makeId('scopeRole')
+      await f.h.db
+        .insertInto('scope_roles')
+        .values({
+          id: coach,
+          user_id: userIdOfGumbo(watcher),
+          scope_type: 'team',
+          scope_id: f.secondTeam,
+          role: 'coach',
+          granted_by: userIdOfGumbo(101),
+          granted_at: new Date()
+        })
+        .execute()
+      try {
+        expect(
+          (await call(`/teams/${f.teamA}`, watcher)).body.nonMemberView
+        ).equals(true)
+        const { status, body } = await call(`/teams/${f.teamA}/roster`, watcher)
+        expect(status).equals(200)
+        const rows = body as Array<Record<string, unknown>>
+        const guardian = userIdOfGumbo(f.people.guardian)
+        const child = userIdOfGumbo(f.players[0].id)
+        expect(rows.map(row => row.userId)).includes.members([guardian, child])
+        for (const row of rows) {
+          expect(row.affiliations, String(row.userId)).equals('')
+          expect(row).not.to.have.property('guardianOf')
+          // Each row names its own person, and nobody else of the family.
+          const {
+            shortName: _shortName,
+            compactName: _compactName,
+            ...rest
+          } = row
+          const others = JSON.stringify(rest)
+          for (const name of ['Tim', 'Raines', 'Alfonso', 'Soriano'])
+            expect(others, `${String(row.userId)} ${name}`).not.includes(name)
+        }
+      } finally {
+        await f.h.db.deleteFrom('scope_roles').where('id', '=', coach).execute()
+      }
+    })
   })
 
   describe('for a team that is not there', function () {

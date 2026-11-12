@@ -48,8 +48,12 @@ export function PlayerTeamsTab(props: PlayerTeamsTabProps): React.ReactElement {
             key={`${team.teamId} ${team.seasonId ?? ''}`}
             title={team.teamName}
             subtitle={subtitle === '' ? undefined : subtitle}
-            teamName={team.teamName}
-            emblemUri={team.logoUrl}
+            group={{
+              kind: 'team',
+              id: team.teamId,
+              name: team.teamName,
+              uri: team.logoUrl
+            }}
             trailing={jersey === '' ? undefined : `#${jersey}`}
             onPress={
               onOpenTeam == null

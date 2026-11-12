@@ -10,14 +10,16 @@ import {
   guardedPlayers,
   guardiansOfEach,
   levelsAboveTeam,
-  mayEditName,
+  mayViewFullName,
+  mayViewFullNames,
   membersOfLevels,
   openAdds,
   openAddsOf,
   openAddTeams,
   type RoleLevel,
   teamsPlayedOnNow,
-  teamsUnder
+  teamsUnder,
+  type VisibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
@@ -27,13 +29,16 @@ import { compactFields, readerNaming } from '../groups/playerNamePrivacy'
 import { heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { personAffiliations } from '../users/personAffiliations'
 import type { Reader } from '../users/readerNames'
 import { gumboIdsOf, teamRosterCore } from './rosterCore'
 import { teamHeadCoach } from './teamHeadCoach'
 
 /**
- * The rows held from this reader: not a site administrator, a guardian, the
- * player, or the staff of a team of theirs, whose rights no add takes away.
+ * The rows held from this reader: not anybody who may see the player's full
+ * name (`mayViewFullNames`: a site administrator, a guardian, the player, the
+ * staff of a team of theirs, or a people manager of a level whose list holds
+ * them otherwise), whose rights no add takes away. One answer for the list.
  */
 async function heldAgainst(
   db: Kysely<Database>,
@@ -42,15 +47,10 @@ async function heldAgainst(
   viewer?: { userId: string; isAdmin: boolean }
 ): Promise<Set<string>> {
   if (viewer == null) return held
-  const shown = await Promise.all(
-    userIds
-      .filter(id => held.has(id))
-      .map(
-        async id =>
-          [id, await mayEditName(db, viewer.userId, id, viewer)] as const
-      )
-  )
-  return new Set(shown.filter(([, may]) => !may).map(([id]) => id))
+  const asked = userIds.filter(id => held.has(id))
+  if (asked.length === 0) return new Set()
+  const shown = await mayViewFullNames(db, viewer.userId, asked, viewer)
+  return new Set(asked.filter(id => !shown.has(id)))
 }
 
 /**
@@ -86,7 +86,9 @@ export async function teamRoster(
    * inside a write transaction.
    */
   cache?: ValkeyCache,
-  reader?: Reader
+  reader?: Reader,
+  /** What the reader may see, for the affiliation lines; none leaves them empty. */
+  scopes?: VisibleScopes
 ): Promise<RosterEntry[]> {
   const core = await teamRosterCore(db, teamId, cache)
   const members = core.members
@@ -140,7 +142,8 @@ export async function teamRoster(
     teamId,
     includeFullNames,
     selfIds: await viewerIds(db, viewer),
-    reader
+    reader,
+    scopes
   })
 }
 
@@ -164,7 +167,9 @@ export async function levelPeople(
   space: MediaContext['space'] | undefined,
   ref: { kind: 'season' | 'league'; id: string },
   viewer?: { userId: string; isAdmin: boolean },
-  reader?: Reader
+  reader?: Reader,
+  /** What the reader may see, for the affiliation lines; none leaves them empty. */
+  scopes?: VisibleScopes
 ): Promise<RosterEntry[] | undefined> {
   let levels: { seasonIds: string[]; leagueIds: string[] }
   if (ref.kind === 'season') {
@@ -279,7 +284,8 @@ export async function levelPeople(
       memberLevels,
       family,
       selfIds: await viewerIds(db, viewer),
-      reader
+      reader,
+      scopes
     }
   )
 }
@@ -300,7 +306,8 @@ export async function peopleAt(
   ref: { kind: 'league' | 'season' | 'team'; id: string },
   viewer?: { userId: string; isAdmin: boolean },
   cache?: ValkeyCache,
-  reader?: Reader
+  reader?: Reader,
+  scopes?: VisibleScopes
 ): Promise<RosterEntry[] | undefined> {
   if (ref.kind !== 'team')
     return await levelPeople(
@@ -308,7 +315,8 @@ export async function peopleAt(
       space,
       { kind: ref.kind, id: ref.id },
       viewer,
-      reader
+      reader,
+      scopes
     )
   const team = await db
     .selectFrom('teams')
@@ -318,7 +326,7 @@ export async function peopleAt(
     .executeTakeFirst()
   return team == null
     ? undefined
-    : await teamRoster(db, space, ref.id, false, viewer, cache, reader)
+    : await teamRoster(db, space, ref.id, false, viewer, cache, reader, scopes)
 }
 
 /** Whether somebody is on a level's people list, in any section. */
@@ -400,7 +408,7 @@ export async function onPeopleList(
   )
     return true
 
-  // The team roster can show a held child's family to a viewer allowed to edit their name.
+  // The team roster can show a held child's family to a viewer who may see their full name.
   // Season and league lists only include family through a settled player.
   for (const child of await guardedPlayers(db, userId)) {
     const held = await openAddTeams(db, [child])
@@ -410,7 +418,7 @@ export async function onPeopleList(
         !held.includes(team) ||
         (ref.kind === 'team' &&
           viewer != null &&
-          (await mayEditName(db, viewer.userId, child, viewer)))
+          (await mayViewFullName(db, viewer.userId, child, viewer)))
       )
         return true
     }
@@ -504,6 +512,8 @@ async function sectionPeople(
     selfIds?: ReadonlySet<string>
     /** Who reads the list: the people they may read in full are named so. */
     reader?: Reader
+    /** What the reader may see, for the affiliation lines. */
+    scopes?: VisibleScopes
   }
 ): Promise<RosterEntry[]> {
   const headCoach =
@@ -531,6 +541,17 @@ async function sectionPeople(
   }))
   const naming = await readerNaming(db, people, facts.reader)
   const { names, formats } = naming
+  // On a team's roster the team is the page: its lines name no team.
+  const affiliations = await personAffiliations(
+    db,
+    rows.map(row => row.userId),
+    {
+      reader: facts.reader,
+      scopes: facts.scopes,
+      onTeam: facts.teamId,
+      readsFull: naming.readsFull
+    }
+  )
   const above = (level: RoleLevel | undefined): level is 'season' | 'league' =>
     level != null && level !== ownLevel && level !== 'team'
 
@@ -632,7 +653,8 @@ async function sectionPeople(
         ...(headCoach?.userId === row.userId ? { isHeadCoach: true } : {}),
         walkUpSong: songs?.get(row.userId) ?? null,
         ...(row.teamNames == null ? {} : { teamNames: row.teamNames }),
-        ...guardianOf(row, place.section)
+        ...guardianOf(row, place.section),
+        affiliations: affiliations.get(row.userId) ?? ''
       }
     })
     .sort((a, b) => {

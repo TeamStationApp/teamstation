@@ -25,7 +25,7 @@ import { asFieldSize } from '../../common/venues'
 import {
   canSeeGame,
   canSeeTeam,
-  mayEditName,
+  mayViewFullNames,
   openAdds,
   visibleScopes
 } from '../access'
@@ -295,12 +295,18 @@ async function eventPeople(
   for (const member of members)
     if (open.has(member.user_id))
       held.add((await identity(member.user_id)).userId)
+  // Unless the reader may see their full name, whose rights no add takes
+  // away: one answer for every held player.
+  const heldPlayers = activePlayers
+    .map(player => player.id)
+    .filter(id => held.has(id))
+  const shownHeld =
+    heldPlayers.length === 0
+      ? new Set<string>()
+      : await mayViewFullNames(db, actor.userId, heldPlayers, actor)
   const playerAliases = new Set<string>()
   for (const player of activePlayers)
-    if (
-      !held.has(player.id) ||
-      (await mayEditName(db, actor.userId, player.id, actor))
-    )
+    if (!held.has(player.id) || shownHeld.has(player.id))
       for (const alias of (await identity(player.id)).userIds)
         playerAliases.add(alias)
   const guardianLinks =

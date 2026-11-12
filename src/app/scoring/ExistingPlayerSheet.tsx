@@ -11,8 +11,13 @@ import {
 } from 'react-native'
 import { initialWindowMetrics } from 'react-native-safe-area-context'
 
-import type { RosterCandidate, TeamStationClient } from '../../common/api'
+import {
+  ROSTER_CANDIDATE_MAX,
+  type RosterCandidate,
+  type TeamStationClient
+} from '../../common/api'
 import { useRosterCandidates } from '../hooks/useRosterCandidates'
+import { lstrings, sprintf } from '../locales/strings'
 import { ScoringCandidateCard } from './ScoringCandidateCard'
 import { ScoringPlayerSearchField } from './ScoringPlayerSearchField'
 import { ScoringSheet } from './ScoringSheet'
@@ -125,7 +130,7 @@ export function ExistingPlayerSheet({
   else empty = <Text style={line}>No players match “{list.query}”.</Text>
 
   const footer =
-    list.rows.length === 0 ? null : list.loadingMore ? (
+    list.rows.length === 0 ? null : list.updating ? (
       <ActivityIndicator
         testID="Candidates loading more"
         color={surface.accent}
@@ -133,6 +138,10 @@ export function ExistingPlayerSheet({
       />
     ) : list.error != null ? (
       problem(list.error)
+    ) : list.capped ? (
+      <Text style={line}>
+        {sprintf(lstrings.candidates_capped, ROSTER_CANDIDATE_MAX)}
+      </Text>
     ) : null
 
   return (
@@ -169,10 +178,6 @@ export function ExistingPlayerSheet({
             )}
             recycleItems
             estimatedItemSize={72}
-            onEndReachedThreshold={0.5}
-            onEndReached={() => {
-              if (list.error == null) list.loadMore()
-            }}
             // On the web this is a DOM list, which has no keyboard to keep.
             {...(Platform.OS === 'web'
               ? {}

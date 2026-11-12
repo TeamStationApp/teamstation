@@ -28,6 +28,7 @@ const member = (userId: string, shortName: string): MemberView => ({
   shortName,
   avatarUrl: null,
   label: 'Member',
+  affiliations: '',
   isModerator: false,
   isApprover: false,
   eligible: true,

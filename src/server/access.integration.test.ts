@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import type { Kysely } from 'kysely'
+import type { Insertable, Kysely } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -11,6 +11,7 @@ import { migrateUp } from '../migrate/runner'
 import { testDatabaseUrl } from '../migrate/testDatabase'
 import { mintUserId } from '../test/historicalUserIds'
 import { insertFixtureUsers } from '../test/insertFixtureUsers'
+import { statsDatabase } from '../test/statsDatabase'
 import {
   adminScopes,
   canCoach,
@@ -18,6 +19,7 @@ import {
   canKeepSongs,
   canScore,
   canSeeTeam,
+  fullNameReach,
   givenRolesOnTeam,
   guardedPlayers,
   guardiansOf,
@@ -27,6 +29,8 @@ import {
   isHeadCoach,
   mayEditName,
   mayManagePlayer,
+  mayViewFullName,
+  mayViewFullNames,
   type RoleScopes,
   roleScopes,
   rolesOnTeam,
@@ -35,7 +39,12 @@ import {
   visibleScopes
 } from './access'
 import { onePerson } from './admin/people'
-import { type Database, makeDatabase } from './db/database'
+import {
+  type Database,
+  makeDatabase,
+  type MembershipsTable,
+  type ScopeRolesTable
+} from './db/database'
 
 const scopes = (
   teamIds: string[],
@@ -1035,5 +1044,616 @@ describe('guardians', function () {
         null
       )
     ).equals(false)
+  })
+})
+
+/**
+ * Who reads a person's full name without being able to change it: the people
+ * managers of a level whose people list holds them.
+ *
+ * League `lea_v` holds season `sea_v1` (teams `tem_v1` and `tem_v2`);
+ * `tem_vold` was merged into `tem_v1`. League `lea_w` holds `sea_w1`
+ * (`tem_w1`). Placeholder `tem_vx` is kept by `sea_v1`, `tem_vy` by
+ * `tem_v1`, and `tem_vz` by `tem_vx`, a placeholder, so by nobody.
+ */
+describe('mayViewFullNames', function () {
+  this.timeout(60000)
+  const fixture = statsDatabase('mayview')
+  const taken = new Set<number>()
+  const ids = new Map<string, string>()
+  const idOf = (name: string): string => {
+    const id = ids.get(name)
+    if (id == null) throw new Error(`nobody called ${name}`)
+    return id
+  }
+  const about = { isAdmin: false }
+  const sees = async (
+    reader: string,
+    person: string,
+    isAdmin = false
+  ): Promise<boolean> =>
+    await mayViewFullName(fixture.db, idOf(reader), idOf(person), { isAdmin })
+
+  const PEOPLE = [
+    // Readers.
+    'Tony La Russa',
+    'Joe Torre',
+    'Dusty Baker',
+    'Bruce Bochy',
+    'Terry Francona',
+    'Bobby Cox',
+    'Lou Piniella',
+    'Jim Leyland',
+    'Sparky Anderson',
+    'Tommy Lasorda',
+    'Walter Alston',
+    'Cal Ripken',
+    // People read.
+    'Mookie Betts',
+    'Aaron Judge',
+    'Mike Trout',
+    'Derek Jeter',
+    'Ken Griffey',
+    'Tony Gwynn',
+    'Craig Biggio',
+    'Barry Larkin',
+    'Barry Bonds',
+    'Edgar Martinez',
+    'Chipper Jones',
+    'Andruw Jones',
+    'Greg Maddux',
+    'Javy Lopez',
+    'John Smoltz',
+    'Tom Glavine',
+    'Rickey Henderson',
+    'Tim Raines'
+  ]
+  const DISABLED = new Set([
+    'Sparky Anderson',
+    'Rickey Henderson',
+    'Tim Raines'
+  ])
+
+  before(async function () {
+    const db = fixture.db
+    for (const name of PEOPLE) {
+      const one = mintUserId(id => taken.has(id))
+      taken.add(one.userId)
+      ids.set(name, userIdOfGumbo(one.userId))
+      const [first, last] = name.split(' ')
+      await insertFixtureUsers(db, {
+        id: one.userId,
+        legacyId: one.legacyId,
+        display_name: name,
+        first_name: first,
+        last_name: last,
+        login_enabled: true,
+        disabled_at: DISABLED.has(name) ? new Date() : null
+      })
+    }
+    // Tommy Lasorda's row was closed into Walter Alston's.
+    await db
+      .updateTable('users')
+      .set({ merged_into: idOf('Walter Alston') })
+      .where('id', '=', idOf('Tommy Lasorda'))
+      .execute()
+    await db
+      .insertInto('leagues')
+      .values([
+        { id: 'lea_v', name: 'League V' },
+        { id: 'lea_w', name: 'League W' }
+      ])
+      .execute()
+    await db
+      .insertInto('seasons')
+      .values([
+        {
+          starts_on: '2026-03-01',
+          ends_on: '2026-05-31',
+          id: 'sea_v1',
+          name: 'V1',
+          year: 2026,
+          league_id: 'lea_v'
+        },
+        {
+          starts_on: '2026-03-01',
+          ends_on: '2026-05-31',
+          id: 'sea_w1',
+          name: 'W1',
+          year: 2026,
+          league_id: 'lea_w'
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('teams')
+      .values([
+        { id: 'tem_v1', name: 'Demo Hawks', league_id: 'lea_v' },
+        { id: 'tem_v2', name: 'Demo Owls', league_id: 'lea_v' },
+        {
+          id: 'tem_vold',
+          name: 'Demo Old Hawks',
+          league_id: 'lea_v',
+          merged_into: 'tem_v1'
+        },
+        { id: 'tem_w1', name: 'Demo Wrens', league_id: 'lea_w' },
+        {
+          id: 'tem_vx',
+          name: 'Demo Visitors',
+          kind: 'external',
+          custodian_type: 'season',
+          custodian_id: 'sea_v1'
+        },
+        {
+          id: 'tem_vy',
+          name: 'Demo Guests',
+          kind: 'external',
+          custodian_type: 'team',
+          custodian_id: 'tem_v1'
+        },
+        {
+          id: 'tem_vz',
+          name: 'Demo Strays',
+          kind: 'external',
+          custodian_type: 'team',
+          custodian_id: 'tem_vx'
+        }
+      ])
+      .execute()
+    const links = [
+      { season_id: 'sea_v1', team_id: 'tem_v1' },
+      { season_id: 'sea_v1', team_id: 'tem_v2' },
+      { season_id: 'sea_w1', team_id: 'tem_w1' }
+    ]
+    await db.insertInto('season_teams').values(links).execute()
+    await db.insertInto('season_team_parents').values(links).execute()
+
+    const role = (
+      name: string,
+      scopeType: 'league' | 'season' | 'team',
+      scopeId: string,
+      given: Role
+    ): Insertable<ScopeRolesTable> => ({
+      id: makeId('scopeRole'),
+      user_id: idOf(name),
+      scope_type: scopeType,
+      scope_id: scopeId,
+      role: given,
+      granted_at: new Date()
+    })
+    await db
+      .insertInto('scope_roles')
+      .values([
+        role('Tony La Russa', 'league', 'lea_v', 'admin'),
+        role('Joe Torre', 'season', 'sea_v1', 'coach'),
+        role('Dusty Baker', 'team', 'tem_v1', 'assistant'),
+        role('Bruce Bochy', 'team', 'tem_v1', 'admin'),
+        role('Terry Francona', 'team', 'tem_v1', 'scorekeeper'),
+        role('Bobby Cox', 'league', 'lea_w', 'admin'),
+        role('Jim Leyland', 'team', 'tem_v1', 'songkeeper'),
+        role('Sparky Anderson', 'league', 'lea_v', 'admin'),
+        role('Tommy Lasorda', 'league', 'lea_v', 'admin'),
+        role('Ken Griffey', 'league', 'lea_v', 'coach')
+      ])
+      .execute()
+    const member = (
+      name: string,
+      teamId: string,
+      isPlayer: boolean
+    ): Insertable<MembershipsTable> => ({
+      id: makeId('membership'),
+      user_id: idOf(name),
+      team_id: teamId,
+      is_player: isPlayer,
+      role: 'member'
+    })
+    const andruw = makeId('membership')
+    await db
+      .insertInto('memberships')
+      .values([
+        member('Mookie Betts', 'tem_v1', true),
+        member('Aaron Judge', 'tem_v2', false),
+        member('Lou Piniella', 'tem_v1', false),
+        { ...member('Andruw Jones', 'tem_v1', true), id: andruw },
+        member('Javy Lopez', 'tem_vx', true),
+        member('John Smoltz', 'tem_vy', true),
+        member('Tom Glavine', 'tem_w1', true),
+        member('Greg Maddux', 'tem_vz', true),
+        member('Tim Raines', 'tem_v2', false)
+      ])
+      .execute()
+    await db
+      .insertInto('season_members')
+      .values([
+        {
+          id: makeId('seasonMember'),
+          user_id: idOf('Mike Trout'),
+          season_id: 'sea_v1',
+          joined_at: new Date()
+        },
+        {
+          id: makeId('seasonMember'),
+          user_id: idOf('Rickey Henderson'),
+          season_id: 'sea_v1',
+          joined_at: new Date()
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('league_members')
+      .values({
+        id: makeId('leagueMember'),
+        user_id: idOf('Derek Jeter'),
+        league_id: 'lea_v',
+        joined_at: new Date()
+      })
+      .execute()
+    await db
+      .insertInto('follows')
+      .values([
+        {
+          user_id: idOf('Barry Larkin'),
+          group_type: 'team',
+          group_id: 'tem_v1'
+        },
+        {
+          user_id: idOf('Barry Bonds'),
+          group_type: 'team',
+          group_id: 'tem_vold'
+        },
+        {
+          user_id: idOf('Edgar Martinez'),
+          group_type: 'season',
+          group_id: 'sea_v1'
+        }
+      ])
+      .execute()
+    await db
+      .insertInto('league_umpires')
+      .values({
+        league_id: 'lea_v',
+        user_id: idOf('Chipper Jones'),
+        granted_by: idOf('Tony La Russa')
+      })
+      .execute()
+    await db
+      .insertInto('user_links')
+      .values([
+        {
+          id: makeId('userLink'),
+          user_id: idOf('Tony Gwynn'),
+          related_user_id: idOf('Mookie Betts'),
+          kind: 'guardian' as const,
+          created_at: new Date()
+        },
+        {
+          id: makeId('userLink'),
+          user_id: idOf('Craig Biggio'),
+          related_user_id: idOf('Mookie Betts'),
+          kind: 'family' as const,
+          created_at: new Date()
+        },
+        {
+          id: makeId('userLink'),
+          user_id: idOf('Greg Maddux'),
+          related_user_id: idOf('Andruw Jones'),
+          kind: 'guardian' as const,
+          created_at: new Date()
+        }
+      ])
+      .execute()
+    // The Hawks hold Andruw Jones only by an add his side may still reject.
+    await db
+      .insertInto('group_requests')
+      .values({
+        id: 'grq_mayview_add',
+        kind: 'playerAdd',
+        sender_id: idOf('Bruce Bochy'),
+        sender_scope_type: 'team',
+        sender_scope_id: 'tem_v1',
+        terms: JSON.stringify({
+          mode: 'roster',
+          userId: idOf('Andruw Jones'),
+          membershipId: andruw
+        }),
+        status: 'applied',
+        sent_at: new Date(Date.now() - 86_400_000),
+        expires_at: new Date(Date.now() + 86_400_000),
+        initiating_team_id: 'tem_v1'
+      })
+      .execute()
+  })
+
+  it('reads in full everybody mayEditNames allows', async function () {
+    for (const reader of [
+      'Mookie Betts',
+      'Tony Gwynn',
+      'Craig Biggio',
+      'Terry Francona',
+      'Bruce Bochy'
+    ])
+      expect(await sees(reader, 'Mookie Betts'), reader).equals(true)
+    const everyone = await mayViewFullNames(
+      fixture.db,
+      idOf('Lou Piniella'),
+      PEOPLE.map(idOf),
+      { isAdmin: true }
+    )
+    expect(everyone.size).equals(PEOPLE.length)
+    expect(await sees('Bobby Cox', 'Mookie Betts', true)).equals(true)
+  })
+
+  it('reads in full whom a team, a season and a league people manager has on a list of theirs', async function () {
+    // A team's assistant: its adults and players, and the league's members,
+    // role holders and the team's followers shown on its list.
+    for (const person of [
+      'Mookie Betts',
+      'Lou Piniella',
+      'Derek Jeter',
+      'Ken Griffey',
+      'Mike Trout',
+      'Barry Larkin',
+      'Barry Bonds',
+      'Tony Gwynn',
+      'Craig Biggio'
+    ])
+      expect(await sees('Dusty Baker', person), person).equals(true)
+    // Not another team's adult, nor the season's follower.
+    for (const person of ['Aaron Judge', 'Edgar Martinez', 'Chipper Jones'])
+      expect(await sees('Dusty Baker', person), person).equals(false)
+    // A season's coach: an adult on a team the season reaches, its member,
+    // follower, and the league's members and role holders.
+    for (const person of [
+      'Aaron Judge',
+      'Mike Trout',
+      'Edgar Martinez',
+      'Derek Jeter',
+      'Ken Griffey',
+      'Tony Gwynn',
+      'Mookie Betts'
+    ])
+      expect(await sees('Joe Torre', person), person).equals(true)
+    // A league's administrator: all of those, and the league's umpire, whose
+    // profile they open; a season's coach is not shown the umpire.
+    for (const person of [
+      'Aaron Judge',
+      'Mike Trout',
+      'Derek Jeter',
+      'Ken Griffey',
+      'Barry Larkin',
+      'Chipper Jones'
+    ])
+      expect(await sees('Tony La Russa', person), person).equals(true)
+    expect(await sees('Joe Torre', 'Chipper Jones')).equals(false)
+    // Reading never grants changing: the adults stay out of mayEditNames.
+    expect(
+      await mayEditName(
+        fixture.db,
+        idOf('Tony La Russa'),
+        idOf('Derek Jeter'),
+        about
+      )
+    ).equals(false)
+  })
+
+  it('keeps a disabled person on a list only as a team member or a player', async function () {
+    expect(await sees('Joe Torre', 'Tim Raines')).equals(true)
+    expect(await sees('Joe Torre', 'Rickey Henderson')).equals(false)
+  })
+
+  it('reads nobody more for a disabled, closed or unknown reader, and does not throw', async function () {
+    for (const reader of ['Sparky Anderson', 'Tommy Lasorda']) {
+      expect(await sees(reader, 'Derek Jeter'), reader).equals(false)
+      expect(await sees(reader, reader), reader).equals(true)
+    }
+    expect(
+      await mayViewFullName(
+        fixture.db,
+        'usr_nobody0000000000000',
+        idOf('Derek Jeter'),
+        about
+      )
+    ).equals(false)
+  })
+
+  it('denies an unrelated manager, a plain member and a songkeeper', async function () {
+    for (const reader of ['Bobby Cox', 'Lou Piniella', 'Jim Leyland'])
+      for (const person of [
+        'Aaron Judge',
+        'Mike Trout',
+        'Derek Jeter',
+        'Tony Gwynn'
+      ])
+        expect(await sees(reader, person), `${reader} ${person}`).equals(false)
+    expect(await sees('Bobby Cox', 'Mookie Betts')).equals(false)
+    expect(await sees('Bobby Cox', 'Tom Glavine')).equals(true)
+  })
+
+  it('counts no team holding a player only by an open add, for them or their guardian', async function () {
+    for (const reader of ['Bruce Bochy', 'Joe Torre', 'Tony La Russa']) {
+      expect(await sees(reader, 'Andruw Jones'), reader).equals(false)
+      expect(await sees(reader, 'Greg Maddux'), reader).equals(false)
+    }
+    const expire = async (at: Date): Promise<void> => {
+      await fixture.db
+        .updateTable('group_requests')
+        .set({ expires_at: at })
+        .where('id', '=', 'grq_mayview_add')
+        .execute()
+    }
+    await expire(new Date(Date.now() - 1000))
+    try {
+      expect(await sees('Joe Torre', 'Andruw Jones')).equals(true)
+      expect(await sees('Joe Torre', 'Greg Maddux')).equals(true)
+    } finally {
+      await expire(new Date(Date.now() + 86_400_000))
+    }
+  })
+
+  it("gives a placeholder team's people to its custodian's administrators", async function () {
+    // Kept by the season: its league's administrator, not its coach.
+    expect(await sees('Tony La Russa', 'Javy Lopez')).equals(true)
+    expect(await sees('Joe Torre', 'Javy Lopez')).equals(false)
+    // Kept by a full team: its administrator, not its assistant.
+    expect(await sees('Bruce Bochy', 'John Smoltz')).equals(true)
+    expect(await sees('Dusty Baker', 'John Smoltz')).equals(false)
+    // Kept by a placeholder: nobody's.
+    expect(await sees('Bruce Bochy', 'Greg Maddux')).equals(false)
+  })
+
+  it('reaches, for every reader, everybody they read in full', async function () {
+    const everybody = [...ids.values()]
+    for (const reader of ids.keys()) {
+      const reads = await mayViewFullNames(
+        fixture.db,
+        idOf(reader),
+        everybody,
+        about
+      )
+      const reach = await fullNameReach(fixture.db, idOf(reader), about)
+      expect(
+        [...reads].filter(id => reach?.has(id) !== true),
+        reader
+      ).deep.equals([])
+    }
+    // Somebody on no level of the reader's is out of reach.
+    const reach = await fullNameReach(fixture.db, idOf('Dusty Baker'), about)
+    expect(reach?.has(idOf('Aaron Judge'))).equals(false)
+    expect(reach?.has(idOf('Mookie Betts'))).equals(true)
+    // A site admin reads everybody, with no reach to read.
+    expect(
+      await fullNameReach(fixture.db, idOf('Bobby Cox'), { isAdmin: true })
+    ).equals(undefined)
+  })
+
+  it('reuses rows the caller has, and asks about fifty in as many queries as two', async function () {
+    const known = await onePerson(fixture.db, idOf('Mike Trout'))
+    expect(
+      await mayViewFullName(
+        fixture.db,
+        idOf('Joe Torre'),
+        idOf('Mike Trout'),
+        about,
+        new Map([[idOf('Mike Trout'), known]])
+      )
+    ).equals(true)
+    const others: string[] = []
+    for (let i = 0; i < 48; i++) {
+      const one = mintUserId(id => taken.has(id))
+      taken.add(one.userId)
+      others.push(userIdOfGumbo(one.userId))
+      await insertFixtureUsers(fixture.db, {
+        id: one.userId,
+        legacyId: one.legacyId,
+        display_name: `Demo Player ${i}`
+      })
+    }
+    const counted = (): { db: Kysely<Database>; queries: () => number } => {
+      let queries = 0
+      return {
+        db: fixture.db.withPlugin({
+          transformQuery(args) {
+            queries++
+            return args.node
+          },
+          async transformResult(args) {
+            return args.result
+          }
+        }),
+        queries: () => queries
+      }
+    }
+    const two = counted()
+    const few = await mayViewFullNames(
+      two.db,
+      idOf('Joe Torre'),
+      [idOf('Tony Gwynn'), others[0]],
+      about
+    )
+    const fifty = counted()
+    const many = await mayViewFullNames(
+      fifty.db,
+      idOf('Joe Torre'),
+      [idOf('Tony Gwynn'), ...others, idOf('Tom Glavine')],
+      about
+    )
+    expect([...few]).deep.equals([idOf('Tony Gwynn')])
+    expect([...many]).deep.equals([idOf('Tony Gwynn')])
+    expect(fifty.queries()).equals(two.queries())
+  })
+
+  it("reads the open adds of a listed person's own teams alone, never the other teams of a league they belong to", async function () {
+    const asked: unknown[][] = []
+    const executor = fixture.db.getExecutor()
+    const db = fixture.db.withPlugin({
+      transformQuery(args) {
+        const compiled = executor.compileQuery(args.node, args.queryId)
+        if (compiled.sql.includes('from "group_requests"'))
+          asked.push([...compiled.parameters])
+        return args.node
+      },
+      async transformResult(args) {
+        return args.result
+      }
+    })
+    // Derek Jeter belongs to League V and to none of its teams; his reader
+    // assists on one of them.
+    expect([
+      ...(await mayViewFullNames(
+        db,
+        idOf('Dusty Baker'),
+        [idOf('Derek Jeter')],
+        about
+      ))
+    ]).deep.equals([idOf('Derek Jeter')])
+    const teams = asked.flat(Infinity)
+    for (const team of ['tem_v2', 'tem_vold', 'tem_w1'])
+      expect(teams, team).not.includes(team)
+  })
+
+  it('reads the reader’s roles once, for changing and seeing alike', async function () {
+    const traced = (): { db: Kysely<Database>; sql: string[] } => {
+      const sql: string[] = []
+      const executor = fixture.db.getExecutor()
+      return {
+        db: fixture.db.withPlugin({
+          transformQuery(args) {
+            sql.push(executor.compileQuery(args.node, args.queryId).sql)
+            return args.node
+          },
+          async transformResult(args) {
+            return args.result
+          }
+        }),
+        sql
+      }
+    }
+    // Somebody Joe may neither change nor see in full, so both halves run.
+    const stranger = mintUserId(id => taken.has(id))
+    taken.add(stranger.userId)
+    await insertFixtureUsers(fixture.db, {
+      id: stranger.userId,
+      legacyId: stranger.legacyId,
+      display_name: 'Demo Stranger'
+    })
+    const view = traced()
+    expect([
+      ...(await mayViewFullNames(
+        view.db,
+        idOf('Joe Torre'),
+        [idOf('Tony Gwynn'), userIdOfGumbo(stranger.userId)],
+        about
+      ))
+    ]).deep.equals([idOf('Tony Gwynn')])
+    const roles = traced()
+    await roleScopes(roles.db, idOf('Joe Torre'), false)
+    // Each read of who holds what that `roleScopes` makes, made once in all.
+    const held = roles.sql.filter(
+      query =>
+        query.includes('from "scope_roles"') || query.includes('from "users"')
+    )
+    expect(held.length).greaterThan(1)
+    for (const query of held)
+      expect(view.sql.filter(made => made === query).length, query).equals(1)
   })
 })

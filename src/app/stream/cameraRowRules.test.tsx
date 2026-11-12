@@ -121,7 +121,11 @@ describe('a camera row’s words', function () {
   })
 
   it('names the owner on somebody else’s row, whatever filmed it', function () {
-    const theirs = stream({ deviceModel: 'Pixel 10', source: 'gopro' })
+    const theirs = stream({
+      deviceModel: 'Pixel 10',
+      source: 'gopro',
+      ownerName: 'Mookie B'
+    })
     expect(cameraSubtitle(theirs, false)).equals(
       'Waiting for stream from Mookie B'
     )
@@ -130,6 +134,18 @@ describe('a camera row’s words', function () {
     )
     expect(cameraSubtitle({ ...theirs, ...ended }, false)).equals(
       'Mookie B streaming'
+    )
+  })
+
+  it('names the owner as the server wrote them for this reader', function () {
+    // A public label in another format is drawn as it came, not shortened
+    // again.
+    expect(
+      cameraSubtitle(stream({ ownerName: 'A Lee', ...live }), false)
+    ).equals('A Lee streaming')
+    // A reader who may read the whole name sees it whole.
+    expect(cameraSubtitle(stream({ ownerName: 'Robin Yount' }), false)).equals(
+      'Waiting for stream from Robin Yount'
     )
   })
 

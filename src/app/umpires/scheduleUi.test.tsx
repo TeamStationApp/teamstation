@@ -786,7 +786,11 @@ describe('scheduleUi.test.tsx', () => {
       <AppHeader
         nav={<span>Tabs</span>}
         notifications={{ pending: false, onPress: () => undefined }}
-        account={{ name: 'Uma', onPress: () => undefined }}
+        account={{
+          userId: 'usr_uma',
+          name: 'Uma',
+          onPress: () => undefined
+        }}
       />
     )
     const labels = [...document.querySelectorAll('[role="button"]')].map(n =>

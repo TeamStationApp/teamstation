@@ -133,6 +133,7 @@ function season(
   return {
     id,
     leagueId: null,
+    leaguePictureUrl: null,
     name,
     year: 2026,
     term: null,
@@ -187,6 +188,8 @@ function liveGame(
     videoId,
     gameId,
     title: `${away} @ ${home}`,
+    awayTeamId: `tem_${away}`,
+    homeTeamId: `tem_${home}`,
     awayTeamName: away,
     homeTeamName: home,
     startedAt: null,

@@ -42,6 +42,8 @@ const COACH = 'tok_coach_00000000000000000000000'
 const PARENT = 'tok_parent_0000000000000000000000'
 const FILMER = 'tok_filmer_0000000000000000000000'
 const SCORER = 'tok_scorer_0000000000000000000000'
+/** A machine token of the home manager's, as streaming software holds. */
+const MANAGER_MACHINE = 'tok_managermachine_000000000000000'
 
 const legacyOf = new Map<number, string>()
 function mintUser(): number {
@@ -163,6 +165,8 @@ describe('a game’s stream key over the API', function () {
         display_name: name,
         first_name: null,
         last_name: null,
+        // Each signs in, as a reader of full names must.
+        login_enabled: true,
         created_at: now,
         updated_at: now
       })
@@ -185,6 +189,17 @@ describe('a game’s stream key over the API', function () {
         })
         .execute()
     }
+    await db
+      .insertInto('api_tokens')
+      .values({
+        id: 'tok_machine_manager',
+        user_id: userIdOfGumbo(managerId),
+        label: 'Demo streaming software',
+        token_hash: hashToken(MANAGER_MACHINE),
+        created_at: now,
+        expires_at: null
+      })
+      .execute()
     for (const [id, name] of [
       ['tem_home', 'Demo Home'],
       ['tem_away', 'Demo Away']
@@ -211,7 +226,9 @@ describe('a game’s stream key over the API', function () {
       'gam_13',
       'gam_14',
       'gam_15',
-      'gam_16'
+      'gam_16',
+      'gam_17',
+      'gam_18'
     ]) {
       await db
         .insertInto('games')
@@ -355,6 +372,8 @@ describe('a game’s stream key over the API', function () {
     expect(url.startsWith('rtmp://live.example:1936/live/ts_')).equals(true)
     expect(made.body.label).equals('Camera 1')
     expect(made.body.ownerName).equals('Casey Manager')
+    // No label for the owner's tile: its colour is the owner's id.
+    expect(made.body).not.have.property('ownerPublicName')
 
     // And the list afterwards says what it is without saying the key.
     const asked = await ask('/games/gam_1/live-streams', MANAGER)
@@ -391,6 +410,7 @@ describe('a game’s stream key over the API', function () {
     expect(list.others.length).equals(1)
     // Theirs is named, and only named.
     expect(list.others[0].ownerName).equals('Casey Manager')
+    expect(list.others[0]).not.have.property('ownerPublicName')
     expect(list.others[0].url).equals(undefined)
     expect(String(list.others[0].keyPrefix).startsWith('ts_')).equals(true)
   })
@@ -733,6 +753,47 @@ describe('a game’s stream key over the API', function () {
     }
   })
 
+  it('names a camera’s owner in full only to a reader who may read it', async function () {
+    if (db == null) this.skip()
+    const made = await ask('/games/gam_17/live-streams', COACH, 'POST')
+    expect(made.status).equals(201)
+    const owner = async (token: string): Promise<Record<string, unknown>> => {
+      const listed = await ask('/games/gam_17/live-streams', token)
+      expect(listed.status).equals(200)
+      const list = listed.body as unknown as {
+        others: Array<Record<string, unknown>>
+      }
+      return list.others.find(row => row.userId === made.body.userId)!
+    }
+    // The away team's videographer sees the game, and not the home staff's
+    // surnames.
+    const filmed = await owner(FILMER)
+    expect(filmed.ownerName).equals('Robin Y')
+    expect(filmed).not.have.property('ownerPublicName')
+    expect(JSON.stringify(filmed)).not.includes('Yount')
+    // The team's manager manages its people, and reads him whole.
+    const managed = await owner(MANAGER)
+    expect(managed.ownerName).equals('Robin Yount')
+    expect(managed).not.have.property('ownerPublicName')
+  })
+
+  it('names a camera’s owner by the public short name to a machine token', async function () {
+    if (db == null) this.skip()
+    const made = await ask('/games/gam_18/live-streams', COACH, 'POST')
+    expect(made.status).equals(201)
+    // The manager reads the coach whole when signed in (above); his machine
+    // token is not him, and reads only the short name everyone reads.
+    const listed = await ask('/games/gam_18/live-streams', MANAGER_MACHINE)
+    expect(listed.status).equals(200)
+    const list = listed.body as unknown as {
+      others: Array<Record<string, unknown>>
+    }
+    const row = list.others.find(other => other.userId === made.body.userId)!
+    expect(row.ownerName).equals('Robin Y')
+    expect(row).not.have.property('ownerPublicName')
+    expect(JSON.stringify(listed.body)).not.includes('Yount')
+  })
+
   it('turns a stranger away', async function () {
     if (db == null) this.skip()
     const answer = await ask('/games/gam_1/live-streams', 'tok_nobody', 'GET')
@@ -838,6 +899,9 @@ describe('a game’s stream key over the API', function () {
       expect(live.length).equals(1)
       expect(live[0].videoId).equals('vid_onNow')
       expect(live[0].homeTeamName).equals('Demo Home')
+      // The ids pick each team's tile colour on Home.
+      expect(live[0].homeTeamId).equals('tem_home')
+      expect(live[0].awayTeamId).equals('tem_away')
       expect(JSON.stringify(live[0])).does.not.contain('ts_')
     }
     // Home's scope gates this read by time: it answers no revision.

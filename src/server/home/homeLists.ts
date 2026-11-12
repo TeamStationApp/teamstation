@@ -7,6 +7,7 @@ import { guardedRows, teamsPlayedOnNow, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
+import { leaguePictures } from '../groups/leaguePictures'
 import { publicGroup } from '../groups/publicSummary'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
@@ -494,6 +495,11 @@ export async function homeLists(
     })
   )
 
+  const leagueLogos = await leaguePictures(
+    db,
+    space,
+    seasons.map(season => season.league_id)
+  )
   const seasonEntries = ordered(
     seasons.map(season => {
       const direct = directSeason.has(season.id)
@@ -514,6 +520,10 @@ export async function homeLists(
               games: count.games,
               videos: count.videos,
               logoUrl: imageUrl(space, season.logo_path),
+              leaguePictureUrl:
+                season.league_id == null
+                  ? null
+                  : (leagueLogos.get(season.league_id) ?? null),
               direct,
               source: 'member'
             }

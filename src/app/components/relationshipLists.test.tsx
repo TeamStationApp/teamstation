@@ -4,8 +4,13 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
-import { TeamStationClient } from '../../common/api'
+import {
+  asRosterEntry,
+  asSessionUser,
+  TeamStationClient
+} from '../../common/api'
 import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
+import { userIdOfGumbo } from '../../common/userId'
 import {
   find,
   press,
@@ -23,8 +28,11 @@ import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
 import { ActionList, ActionRow } from './ActionRow'
+import { AppHeader } from './AppHeader'
 import { Button } from './Button'
 import { DangerText } from './DangerText'
+import { PeopleList, peopleSubtitle, PersonRow } from './PeopleList'
+import { leagueTint, personTint, teamTint } from './teamTile'
 import { useConfirmedAction } from './useConfirmedAction'
 
 let root: Root | undefined
@@ -48,6 +56,17 @@ const group = (kind: 'team' | 'season' | 'league', id = 'one'): PublicGroup =>
     locality: null
   })
 const api = new TeamStationClient({ baseUrl: '/api/v1' })
+function rgb(hex: string): string {
+  return `rgb(${[1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`
+}
+/** The background of the tile drawing `letters`. */
+function tileColour(letters: string): string {
+  const leaf = [...document.querySelectorAll<HTMLElement>('*')].find(
+    node => node.children.length === 0 && node.textContent === letters
+  )
+  if (leaf?.parentElement == null) throw new Error(`no tile ${letters}`)
+  return getComputedStyle(leaf.parentElement).backgroundColor
+}
 describe('relationship list presentation and confirmation', () => {
   afterEach(async () => {
     await act(async () => root?.unmount())
@@ -213,7 +232,7 @@ describe('relationship list presentation and confirmation', () => {
     expect(find('Confirm end participation')).equals(undefined)
     expect(writes).equals(0)
   })
-  it('uses the existing team tint and facts, without inventing absent details', async () => {
+  it('uses the team id’s tint and facts, without inventing absent details', async () => {
     expect(relationshipDetails(group('team'))).equals(undefined)
     expect(
       relationshipDetails({
@@ -238,7 +257,35 @@ describe('relationship list presentation and confirmation', () => {
       />
     )
     expect(text()).includes('DO')
+    expect(tileColour('DO')).equals(rgb(teamTint('one')))
     expect(find('End Demo one')?.textContent).equals('End')
+  })
+  it('draws a league on its id’s tint, and a season on its league’s tint and picture', async () => {
+    await render(
+      <ActionList bounded>
+        <GroupRelationshipRow group={group('league', 'lea_demo')} />
+        <GroupRelationshipRow
+          group={{
+            ...group('season', 'sea_plain'),
+            name: 'Plain Season',
+            leagueId: 'lea_demo'
+          }}
+        />
+        <GroupRelationshipRow
+          group={{
+            ...group('season', 'sea_pictured'),
+            leagueId: 'lea_demo',
+            leaguePictureUrl: 'https://images.example.test/league.png'
+          }}
+        />
+      </ActionList>
+    )
+    expect(tileColour('DL')).equals(rgb(leagueTint('lea_demo')))
+    // Initials on the league's colour where neither has a picture.
+    expect(tileColour('PS')).equals(rgb(leagueTint('lea_demo')))
+    // A season without a picture of its own draws its league's.
+    expect(document.body.innerHTML).includes('league.png')
+    expect(text()).not.includes('DS')
   })
   it('confirms only the selected season-side team, with retry and one success refresh', async () => {
     const calls: unknown[] = []
@@ -385,5 +432,186 @@ describe('relationship list presentation and confirmation', () => {
     expect(text()).includes('Retry removal')
     await press('Cancel')
     expect(find('Remove')).equals(undefined)
+  })
+})
+
+describe('people list rows and their affiliation lines', () => {
+  afterEach(async () => {
+    await act(async () => root?.unmount())
+    root = undefined
+    document.body.replaceChildren()
+  })
+  const person = (
+    gumbo: number,
+    shortName: string,
+    over: Record<string, unknown>
+  ): ReturnType<typeof asRosterEntry> =>
+    asRosterEntry({
+      userId: userIdOfGumbo(gumbo),
+      gumboId: gumbo,
+      shortName,
+      // The label the server sends beside every name, which the tile hashes.
+      jersey: null,
+      positions: [],
+      isPlayer: false,
+      role: 'member',
+      section: 'spectator',
+      staffRoles: [],
+      inheritedFrom: null,
+      ...over
+    })
+  const people = [
+    person(1, 'Cal Ripken', {
+      section: 'admin',
+      staffRoles: ['coach', 'scorekeeper'],
+      affiliations: 'Demo Hawks'
+    }),
+    person(2, 'Josh S', {
+      section: 'player',
+      isPlayer: true,
+      positions: ['SS', '2B'],
+      teamNames: ['Demo Hawks'],
+      affiliations: 'Guardians: Ken G · Demo Hawks'
+    }),
+    person(3, 'Josh S', {
+      section: 'player',
+      isPlayer: true,
+      teamNames: ['Demo Owls'],
+      affiliations: 'Guardians: Tony G · Demo Owls'
+    }),
+    person(4, 'Ken G', {
+      section: 'family',
+      guardianOf: ['Josh S'],
+      affiliations: 'Guardian of Josh S · Demo Hawks'
+    }),
+    person(5, 'Barry L', { section: 'spectator' })
+  ]
+  const rowOf = (gumbo: number): HTMLElement => {
+    const { shortName, affiliations } = people.find(p => p.gumboId === gumbo)!
+    const row = [
+      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+    ].find(node => {
+      const label = node.getAttribute('aria-label') ?? ''
+      return label.startsWith(shortName) && label.includes(affiliations)
+    })
+    expect(row, String(gumbo)).not.equals(undefined)
+    return row!
+  }
+
+  it('draws the line under the name, after role words and positions, and tells twins apart by it', async () => {
+    await render(<PeopleList people={people} onOpen={() => () => {}} />)
+    // The admin's roles stay on their own line, before the affiliation line.
+    expect(rowOf(1).textContent).equals(
+      'CRCal RipkenCoach · ScorekeeperDemo Hawkschevron_right'
+    )
+    // A player's positions stay before the line; the line holds the teams,
+    // which no longer come from `teamNames`.
+    expect(rowOf(2).textContent).equals(
+      'JSJosh SSS · 2BGuardians: Ken G · Demo Hawkschevron_right'
+    )
+    // Twins read the same name and are told apart by their lines.
+    expect(rowOf(3).textContent).equals(
+      'JSJosh SGuardians: Tony G · Demo Owlschevron_right'
+    )
+    // A family member has only the line, not `Parent/guardian of …`.
+    expect(rowOf(4).textContent).equals(
+      'KGKen GGuardian of Josh S · Demo Hawkschevron_right'
+    )
+    expect(text()).not.contains('Parent/guardian')
+    // The accessible label reads the name, the roles and the line.
+    expect(rowOf(1).getAttribute('aria-label')).equals(
+      'Cal Ripken, Coach · Scorekeeper, Demo Hawks'
+    )
+    expect(rowOf(2).getAttribute('aria-label')).equals(
+      'Josh S, SS · 2B, Guardians: Ken G · Demo Hawks'
+    )
+  })
+
+  it('draws each person on the colour of their account id, twins apart', async () => {
+    const full = person(6, 'Cal Ripken', {
+      section: 'staff',
+      staffRoles: ['coach'],
+      compactName: 'Cal R'
+    })
+    await render(
+      <PeopleList
+        people={[people[1], people[2], full]}
+        onOpen={() => () => {}}
+      />
+    )
+    const tiles = [...document.querySelectorAll<HTMLElement>('*')]
+      .filter(node => node.children.length === 0 && node.textContent === 'JS')
+      .map(leaf => getComputedStyle(leaf.parentElement!).backgroundColor)
+    expect(tiles).deep.equals(
+      [2, 3].map(gumbo => rgb(personTint(userIdOfGumbo(gumbo))!))
+    )
+    // Read in full, the tile is still the account's colour.
+    expect(tileColour('CR')).equals(rgb(personTint(userIdOfGumbo(6))!))
+  })
+
+  it('draws the header’s own tile on the colour of the account’s roster row', async () => {
+    // The session answer, as the server sends it to Cal, who reads himself in
+    // full on the roster beside the public label every other reader gets.
+    const user = asSessionUser({
+      id: userIdOfGumbo(6),
+      displayName: 'Cal Ripken',
+      isAdmin: false
+    })
+    const row = person(6, 'Cal Ripken', {
+      section: 'staff',
+      staffRoles: ['coach'],
+      compactName: 'Cal R'
+    })
+    await render(
+      <>
+        <AppHeader
+          title="Your Home"
+          account={{
+            userId: user.id,
+            name: user.displayName,
+            onPress: () => undefined
+          }}
+        />
+        <PeopleList people={[row]} onOpen={() => () => {}} />
+      </>
+    )
+    const tiles = [...document.querySelectorAll<HTMLElement>('*')]
+      .filter(node => node.children.length === 0 && node.textContent === 'CR')
+      .map(leaf => getComputedStyle(leaf.parentElement!).backgroundColor)
+    const colour = rgb(personTint(user.id)!)
+    expect(tiles).deep.equals([colour, colour])
+  })
+
+  it('draws no line for an empty one, nor for a public row that has none', async () => {
+    await render(
+      <>
+        <PeopleList people={[people[4]]} onOpen={() => () => {}} />
+        <PersonRow
+          person={{
+            userId: 'usr_gwynn',
+            shortName: 'Tony G',
+            section: 'staff',
+            staffRoles: ['coach'],
+            avatarUrl: null,
+            inheritedFrom: null,
+            jersey: null,
+            positions: []
+          }}
+        />
+      </>
+    )
+    expect(text()).contains('BLBarry L').and.contains('TGTony GCoach')
+    expect(
+      document.querySelector('[role="button"]')!.getAttribute('aria-label')
+    ).equals('Barry L')
+    expect(document.querySelectorAll('[data-testid$="-viewport"]')).length(0)
+  })
+
+  it('keeps role words and positions in the subtitle, and nothing for family', () => {
+    expect(peopleSubtitle(people[0])).equals('Coach · Scorekeeper')
+    expect(peopleSubtitle(people[1])).equals('SS · 2B')
+    expect(peopleSubtitle(people[2])).equals(undefined)
+    expect(peopleSubtitle({ ...people[3], positions: ['C'] })).equals(undefined)
+    expect(peopleSubtitle(people[4])).equals(undefined)
   })
 })

@@ -10,9 +10,8 @@ import { type TabCorrection, useChatsTabGate } from '../chat/ChatAgeGate'
 import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Card,
-  Emblem,
+  GroupEmblem,
   HandoffView,
-  initialsOf,
   ListCard,
   ListRow,
   PillTabs,
@@ -114,9 +113,11 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
     useMemo(
       () => (
         <HandoffView progress={progress} style={styles.headerHandoff}>
-          <Emblem
+          <GroupEmblem
+            kind="league"
+            id={group.id}
+            name={group.name}
             uri={group.imageUrl}
-            fallback={initialsOf(group.name)}
             size={1.75}
           />
           <Text style={styles.headerName} numberOfLines={1}>
@@ -125,6 +126,7 @@ export function LeaguePage(props: LeaguePageProps): React.ReactElement {
         </HandoffView>
       ),
       [
+        group.id,
         group.imageUrl,
         group.name,
         progress,
@@ -408,9 +410,11 @@ function LeagueHeroContent({
   return (
     <>
       <View style={styles.identityTop}>
-        <Emblem
+        <GroupEmblem
+          kind="league"
+          id={group.id}
+          name={group.name}
           uri={group.imageUrl}
-          fallback={initialsOf(group.name)}
           size={2.25}
         />
         <Text style={styles.name}>{group.name}</Text>

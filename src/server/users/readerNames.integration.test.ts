@@ -197,6 +197,65 @@ describe('reader names', function () {
     ).equals(0)
   })
 
+  it("reads a level people manager's people in full, never for a machine or a model", async function () {
+    const db = fixture.db
+    const one = mintUserId(id => taken.has(id))
+    taken.add(one.userId)
+    ids.set('Joe Girardi', userIdOfGumbo(one.userId))
+    await insertFixtureUsers(db, {
+      id: one.userId,
+      legacyId: one.legacyId,
+      display_name: 'Joe Girardi',
+      login_enabled: true
+    })
+    await db
+      .insertInto('season_team_parents')
+      .values({ season_id: 'sea_demo', team_id: 'tem_home' })
+      .execute()
+    await db
+      .insertInto('season_teams')
+      .values({ season_id: 'sea_demo', team_id: 'tem_home' })
+      .execute()
+    await db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: idOf('Joe Girardi'),
+        scope_type: 'season',
+        scope_id: 'sea_demo',
+        role: 'coach',
+        granted_at: new Date()
+      })
+      .execute()
+    // Mookie's guardian is on the Hawks' list, which the season's coach
+    // manages; the stranger is on no list of the season.
+    const asked = [idOf('Ken Griffey'), idOf('Aaron Judge')]
+    expect([
+      ...(await fullNamesFor(db, reader('Joe Girardi'), asked))
+    ]).deep.equals([idOf('Ken Griffey')])
+    const person: Actor = {
+      userId: idOf('Joe Girardi'),
+      isAdmin: false,
+      scopes: []
+    }
+    expect(
+      (
+        await fullNamesFor(
+          db,
+          readerOf({ ...person, apiTokenId: 'tok_machine' }),
+          asked
+        )
+      ).size
+    ).equals(0)
+    expect(
+      (
+        await runSpoken(
+          async () => await fullNamesFor(db, reader('Joe Girardi'), asked)
+        )
+      ).size
+    ).equals(0)
+  })
+
   it('asks about a list of fifty in as many queries as about two', async function () {
     const others: string[] = []
     for (let i = 0; i < 48; i++) {

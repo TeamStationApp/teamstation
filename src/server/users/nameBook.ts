@@ -28,10 +28,10 @@ import { survivorsOf } from './survivors'
  * Names read from `users`, a response at a time. A **name book** answers the
  * name of each gumbo id it was built for: one query of `gumbo_ids` joined to
  * `users` for every id of a response, merged accounts followed to their
- * survivor, and short names computed over a **scope**, the people one
- * surface shows together, so two players in the same game never read the
- * same. Each player is written in the public format of the team they appear
- * for, and somebody with no team here in the format of the teams they play
+ * survivor, and names written over a **scope**, the people one surface
+ * shows together, each name in its format alone: two players whose names
+ * format the same read the same. Each player is written in the public format
+ * of the team they appear for, and somebody with no team here in the format of the teams they play
  * for now (`currentFormats`). A book carries a full name the formats do not
  * show only when it is built for a reader: then everyone that reader may read
  * in full (`fullNamesFor`) is written in full, unless its names go to a
@@ -200,7 +200,8 @@ function bookOf(
     digest: createHash('md5')
       .update(
         JSON.stringify(
-          // A list going to a model is not lengthened, whatever its formats.
+          // A list going to a model is written as a model is given it
+          // (`modelLabel`), whatever its formats.
           [
             spoken ?? isSpoken(),
             ...[...accounts.values()]

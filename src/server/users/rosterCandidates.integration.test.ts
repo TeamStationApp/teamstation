@@ -18,6 +18,14 @@ import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { userRoutes } from '../routes/users'
 import { ensureGumboId, insertUser } from './insertUser'
+import { mintUserId } from './mintUserId'
+import { runSpoken } from './readerNames'
+import {
+  CANDIDATE_LIMIT,
+  CANDIDATE_SCAN,
+  CANDIDATE_SCAN_BATCH,
+  rosterCandidates
+} from './rosterCandidates'
 
 /**
  * `GET /users?forTeam=`, through the real router.
@@ -362,8 +370,8 @@ describe('roster candidates', function () {
       answer.body.map((row: any) => [row.shortName, row.tier])
     ).deep.equals([
       ['Aaron J', 'mine'],
-      ['Cody Be', 'mine'],
-      ['Cody Br', 'mine'],
+      ['Cody B', 'mine'],
+      ['Cody B', 'mine'],
       ['Mookie B', 'mine'],
       ['Corbin B', 'season'],
       ['Max F', 'league'],
@@ -399,13 +407,13 @@ describe('roster candidates', function () {
     const two = await ask(COACH, {
       forTeam: team.falcons,
       forGame: GAME,
-      q: 'ra'
+      q: 'jo'
     })
     expect(names(two.body)).deep.equals([])
     const three = await ask(COACH, {
       forTeam: team.falcons,
       forGame: GAME,
-      q: 'ram'
+      q: 'jos'
     })
     expect(three.body.map((row: any) => [row.shortName, row.tier])).deep.equals(
       [['José R', 'other']]
@@ -513,8 +521,13 @@ describe('roster candidates', function () {
   it('leaves out somebody whose guest entry sits under an account merged since', async function () {
     const search = async (): Promise<string[]> =>
       names(
-        (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q: 'jud' }))
-          .body
+        (
+          await ask(COACH, {
+            forTeam: team.falcons,
+            forGame: GAME,
+            q: 'aaron j'
+          })
+        ).body
       )
     expect(await search()).includes('Aaron J')
     const gumbo = await ensureGumboId(db!, id('Aaron Judge (old)'))
@@ -605,26 +618,199 @@ describe('roster candidates', function () {
   })
 
   it('matches the start of every word typed', async function () {
-    const bet = await ask(COACH, { forTeam: team.falcons, q: 'bet' })
-    expect(names(bet.body)).deep.equals(['Mookie B'])
-    const both = await ask(COACH, { forTeam: team.falcons, q: 'mo  be' })
+    const both = await ask(COACH, { forTeam: team.falcons, q: 'mo  b' })
     expect(names(both.body)).deep.equals(['Mookie B'])
     const cody = await ask(COACH, { forTeam: team.falcons, q: 'cody' })
     expect(cody.body.map((row: any) => row.shortParts)).deep.equals([
-      { first: 'Cody', last: 'Be' },
-      { first: 'Cody', last: 'Br' }
+      { first: 'Cody', last: 'B' },
+      { first: 'Cody', last: 'B' }
     ])
   })
 
-  it('sends nothing about a person but the card, with teams in a current or future season', async function () {
+  it('finds nobody the asker reads short by a surname the row hides', async function () {
+    // The coach reads Mookie (his own Owls) and José (a stranger) short.
+    for (const q of ['bet', 'betts', 'ramírez', 'ram'])
+      expect(
+        names(
+          (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q })).body
+        ),
+        q
+      ).deep.equals([])
+    // Both halves typed whole find them, and show no more than the label.
+    const mookie = await ask(COACH, {
+      forTeam: team.falcons,
+      q: 'mookie betts'
+    })
+    expect(names(mookie.body)).deep.equals(['Mookie B'])
+    expect(JSON.stringify(mookie.body)).not.includes('Betts')
+    const jose = await ask(COACH, {
+      forTeam: team.falcons,
+      forGame: GAME,
+      q: 'jose ramirez'
+    })
+    expect(names(jose.body)).deep.equals(['José R'])
+    // A half typed whole beside the other's start is still the surname alone.
+    expect(
+      names((await ask(COACH, { forTeam: team.falcons, q: 'mo betts' })).body)
+    ).deep.equals([])
+  })
+
+  it('reads on past rows a hidden surname found, to fill the answer', async function () {
+    // Both play on the Bears, in the Falcons' season, read short by the
+    // coach: the first, by first name, is found by his surname alone.
+    const hidden = await person('Adam Wainwright', { teamId: team.bears })
+    const shown = await person('Walker Buehler', { teamId: team.bears })
+    try {
+      const answer = await ask(COACH, {
+        forTeam: team.falcons,
+        q: 'wa',
+        capped: '1',
+        limit: '1'
+      })
+      expect(answer.body.map((row: any) => row.userId)).deep.equals([shown])
+    } finally {
+      await db!
+        .deleteFrom('memberships')
+        .where('user_id', 'in', [hidden, shown])
+        .execute()
+    }
+  })
+
+  /** Strangers on the Gulls, put in at once: a user and a membership each. */
+  async function strangers(names: string[]): Promise<string[]> {
+    const rows = names.map(name => {
+      const [first, ...rest] = name.split(' ')
+      return {
+        id: mintUserId(),
+        display_name: name,
+        first_name: first,
+        last_name: rest.join(' ')
+      }
+    })
+    await db!.insertInto('users').values(rows).execute()
+    await db!
+      .insertInto('memberships')
+      .values(
+        rows.map(row => ({
+          id: makeId('membership'),
+          user_id: row.id,
+          team_id: team.gulls,
+          role: 'member' as const,
+          is_player: true
+        }))
+      )
+      .execute()
+    return rows.map(row => row.id)
+  }
+
+  it('finds a stranger named John past hidden Johnsons in one answer, and stops at the scan bound', async function () {
+    // Strangers on the Gulls, read short by the coach: every Davey… Johnson
+    // sorts ahead of John Smoltz and is found by his hidden surname alone.
+    const hidden = await strangers(
+      Array.from(
+        { length: 95 },
+        (_, index) => `Davey${String(index).padStart(4, '0')} Johnson`
+      )
+    )
+    const john = await person('John Smoltz', { teamId: team.gulls })
+    let reads = 0
+    const counted = db!.withPlugin({
+      transformQuery: args => {
+        const node = args.node as { kind: string; sqlFragments?: string[] }
+        if (
+          node.kind === 'RawNode' &&
+          node.sqlFragments?.join('').includes('cursor_user') === true
+        )
+          reads++
+        return args.node
+      },
+      transformResult: async args => await Promise.resolve(args.result)
+    })
+    const actor = { userId: id('Dave Roberts'), isAdmin: false, scopes: [] }
+    try {
+      const answer = await ask(COACH, { forTeam: team.falcons, q: 'john' })
+      expect(answer.status).equals(200)
+      expect(answer.body.map((row: any) => row.userId)).deep.equals([john])
+      expect(JSON.stringify(answer.body)).not.includes('Johnson')
+      // A thousand more ahead of him: the search reads its bound of matches
+      // and answers what it kept by then.
+      hidden.push(
+        ...(await strangers(
+          Array.from(
+            { length: CANDIDATE_SCAN },
+            (_, index) => `Davey${String(index + 95).padStart(4, '0')} Johnson`
+          )
+        ))
+      )
+      const bounded = await rosterCandidates(counted, actor, {
+        teamId: team.falcons,
+        q: 'john',
+        limit: CANDIDATE_LIMIT.max
+      })
+      expect(bounded).deep.equals([])
+      expect(reads).equals(CANDIDATE_SCAN / CANDIDATE_SCAN_BATCH)
+    } finally {
+      await db!
+        .deleteFrom('memberships')
+        .where('user_id', 'in', [...hidden, john])
+        .execute()
+    }
+  })
+
+  it('sends no team the reader may not see, in teams or on the line', async function () {
+    // José Ramírez, a stranger to the coach, plays for the Gulls, which are
+    // not the coach's to see.
     const answer = await ask(COACH, {
       forTeam: team.falcons,
       forGame: GAME,
-      q: 'ram'
+      q: 'jos'
+    })
+    expect(answer.body.map((row: any) => row.userId)).deep.equals([
+      id('José Ramírez')
+    ])
+    const [row] = answer.body
+    expect(row.tier).equals('other')
+    expect(row.teams).deep.equals([])
+    expect(row.affiliations).equals('')
+    expect(JSON.stringify(answer.body)).not.includes('Coastal Gulls')
+  })
+
+  it('sends nothing about a person but the card, with teams in a current or future season', async function () {
+    // A member of each team below, the coach sees them all.
+    const seen = [team.gulls, team.bears, team.hawks, team.pirates].map(
+      teamId => ({
+        id: makeId('membership'),
+        user_id: id('Dave Roberts'),
+        team_id: teamId,
+        role: 'member' as const,
+        is_player: false
+      })
+    )
+    await db!.insertInto('memberships').values(seen).execute()
+    try {
+      await cardTeams()
+    } finally {
+      await db!
+        .deleteFrom('memberships')
+        .where(
+          'id',
+          'in',
+          seen.map(each => each.id)
+        )
+        .execute()
+    }
+  })
+
+  async function cardTeams(): Promise<void> {
+    const answer = await ask(COACH, {
+      forTeam: team.falcons,
+      forGame: GAME,
+      q: 'jos'
     })
     const [row] = answer.body
     expect(Object.keys(row).sort()).deep.equals(
       [
+        'affiliations',
         'avatarUrl',
         'bats',
         'cursor',
@@ -638,7 +824,12 @@ describe('roster candidates', function () {
         'userId'
       ].sort()
     )
-    expect(row).to.include({ bats: 'right', throws: 'left', avatarUrl: null })
+    expect(row).to.include({
+      bats: 'right',
+      throws: 'left',
+      avatarUrl: null,
+      cursor: ''
+    })
     // A season starting next month counts.
     expect(row.teams).deep.equals([
       { teamId: team.gulls, name: 'Coastal Gulls' }
@@ -655,6 +846,70 @@ describe('roster candidates', function () {
     ])
     expect(teamsOf('Paul S')).deep.equals([])
     expect(teamsOf('Mookie B')).deep.equals([])
+  }
+
+  it('lines up each candidate’s guardians and teams as the asker may see them', async function () {
+    const link = makeId('userLink')
+    await db!
+      .insertInto('user_links')
+      .values({
+        id: link,
+        user_id: id('Bob Melvin'),
+        related_user_id: id('Mookie Betts'),
+        kind: 'guardian'
+      })
+      .execute()
+    try {
+      const mookie = await ask(COACH, { forTeam: team.falcons, q: 'mook' })
+      // The coach is a member of the Owls: he sees Mookie and his guardian.
+      // The Owls are in no season, so the line does not name them.
+      expect(mookie.body.map((row: any) => row.affiliations)).deep.equals([
+        'Guardians: Bob M'
+      ])
+      // The Gulls are not the coach's to see.
+      const ramirez = await ask(COACH, {
+        forTeam: team.falcons,
+        forGame: GAME,
+        q: 'jos'
+      })
+      expect(ramirez.body.map((row: any) => row.affiliations)).deep.equals([''])
+    } finally {
+      await db!.deleteFrom('user_links').where('id', '=', link).execute()
+    }
+  })
+
+  it('names on the line only the teams of a season ending today or later', async function () {
+    // The coach and Mookie are both on the Hawks, whose season ends today,
+    // and on the Pirates, whose season ended yesterday.
+    const places = [
+      [id('Dave Roberts'), team.hawks, false],
+      [id('Dave Roberts'), team.pirates, false],
+      [id('Mookie Betts'), team.hawks, true],
+      [id('Mookie Betts'), team.pirates, true]
+    ] as const
+    const ids = places.map(() => makeId('membership'))
+    await db!
+      .insertInto('memberships')
+      .values(
+        places.map(([userId, teamId, isPlayer], index) => ({
+          id: ids[index],
+          user_id: userId,
+          team_id: teamId,
+          role: 'member',
+          is_player: isPlayer
+        }))
+      )
+      .execute()
+    try {
+      const [mookie] = (await ask(COACH, { forTeam: team.falcons, q: 'mook' }))
+        .body
+      expect(mookie.affiliations).equals('Hillcrest Hawks')
+      expect(mookie.teams).deep.equals([
+        { teamId: team.hawks, name: 'Hillcrest Hawks' }
+      ])
+    } finally {
+      await db!.deleteFrom('memberships').where('id', 'in', ids).execute()
+    }
   })
 
   it('sends the public label beside a name full only for the asker', async function () {
@@ -695,31 +950,103 @@ describe('roster candidates', function () {
     }
   })
 
-  it('pages thirty at a time with no row twice, and a row added before the cursor does not move the next page', async function () {
-    const pages: any[][] = []
-    let cursor: string | undefined
-    for (;;) {
-      const page = await ask(COACH, {
-        forTeam: team.falcons,
-        q: 'page',
-        ...(cursor == null ? {} : { after: cursor })
+  it('writes a spoken answer’s short name and parts with no surname for a player stored with none but it', async function () {
+    const smith = await insertUser(db!, {
+      display_name: 'Smith',
+      first_name: null,
+      last_name: 'Smith'
+    })
+    await ensureGumboId(db!, smith)
+    await db!
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: smith,
+        team_id: team.bears,
+        role: 'member',
+        is_player: true
       })
-      expect(page.status).equals(200)
-      pages.push(page.body)
-      if (page.body.length < 30) break
-      cursor = page.body[page.body.length - 1].cursor
+      .execute()
+    try {
+      const actor = {
+        userId: id('Oliver Marmol'),
+        isAdmin: false,
+        scopes: []
+      }
+      // In the Herons' season, found by the label each read shows: `S`
+      // spoken, `Smith` to a person, so one letter is enough.
+      const ask = { teamId: team.herons, q: 's', limit: 50 }
+      const spoken = await runSpoken(
+        async () => await rosterCandidates(db!, actor, ask)
+      )
+      const row = spoken.find(each => each.userId === smith)!
+      expect(row.shortName).equals('S')
+      expect(row.shortParts).deep.equals({ first: '', last: 'S' })
+      expect(JSON.stringify(row)).not.includes('Smith')
+      // Read by a person, the surname is the short name it always was.
+      const read = (await rosterCandidates(db!, actor, ask)).find(
+        each => each.userId === smith
+      )!
+      expect(read.shortParts).deep.equals({ first: '', last: 'Smith' })
+    } finally {
+      await db!.deleteFrom('memberships').where('user_id', '=', smith).execute()
     }
-    expect(pages.map(page => page.length)).deep.equals([30, 30, 5])
-    const all = pages.flat().map(row => row.userId)
-    expect(new Set(all).size).equals(65)
-    const second = pages[1].map(row => row.userId)
-    await person('Page Aaron', { teamId: team.mets })
-    const again = await ask(COACH, {
+  })
+
+  it('answers at most a hundred, fewer when a capped request’s limit asks, and nothing to a request with after', async function () {
+    // Sixty-five Page Players on the Mets, and forty more.
+    // An installed build asks for thirty, draws no capped notice, and pages
+    // on with after, which answers nothing: it is answered every match.
+    const uncapped = await ask(COACH, {
       forTeam: team.falcons,
       q: 'page',
-      after: pages[0][29].cursor
+      limit: '30'
     })
-    expect(again.body.map((row: any) => row.userId)).deep.equals(second)
+    expect(uncapped.status).equals(200)
+    expect(uncapped.body).length(65)
+    const more = []
+    for (let index = 65; index < 105; index++)
+      more.push(
+        await person(`Page Player${String(index).padStart(3, '0')}`, {
+          teamId: team.mets
+        })
+      )
+    try {
+      const all = await ask(COACH, { forTeam: team.falcons, q: 'page' })
+      expect(all.status).equals(200)
+      expect(all.body).length(CANDIDATE_LIMIT.max)
+      expect(new Set(all.body.map((row: any) => row.userId)).size).equals(100)
+      expect(all.body.every((row: any) => row.cursor === '')).equals(true)
+      const thirty = await ask(COACH, {
+        forTeam: team.falcons,
+        q: 'page',
+        capped: '1',
+        limit: '30'
+      })
+      expect(thirty.body.map((row: any) => row.userId)).deep.equals(
+        all.body.slice(0, 30).map((row: any) => row.userId)
+      )
+      // An unmarked limit below the cap is answered whole.
+      const installed = await ask(COACH, {
+        forTeam: team.falcons,
+        q: 'page',
+        limit: '30'
+      })
+      expect(installed.body).length(CANDIDATE_LIMIT.max)
+      // An installed build scrolling on from its last row stops there.
+      for (const after of ['', 'eyJ0aWVyIjozfQ', all.body[29].userId]) {
+        const scrolled = await ask(COACH, {
+          forTeam: team.falcons,
+          q: 'page',
+          limit: '30',
+          after
+        })
+        expect(scrolled.status).equals(200)
+        expect(scrolled.body).deep.equals([])
+      }
+    } finally {
+      await db!.deleteFrom('memberships').where('user_id', 'in', more).execute()
+    }
   })
 
   it('refuses a malformed question and anybody who may not add to the team', async function () {
@@ -746,12 +1073,12 @@ describe('roster candidates', function () {
       'forTeam must play in forGame'
     )
     await refused(COACH, { forTeam: team.falcons, limit: '0' }, 400, 'limit')
-    await refused(COACH, { forTeam: team.falcons, limit: '51' }, 400, 'limit')
+    await refused(COACH, { forTeam: team.falcons, limit: '101' }, 400, 'limit')
     await refused(
       COACH,
-      { forTeam: team.falcons, after: 'bm90IGEgY3Vyc29y' },
+      { forTeam: team.falcons, capped: 'yes' },
       400,
-      'after'
+      'capped must be 1'
     )
     await refused(
       COACH,

@@ -24,8 +24,8 @@ import {
 import { umpireFilterError } from '../../common/umpireTime'
 import { Button, TextWidthButton } from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
-import { Emblem } from '../components/Emblem'
 import { TimePicker } from '../components/EventScheduleFields'
+import { GroupEmblem } from '../components/GroupEmblem'
 import { PagedList } from '../components/PagedList'
 import { PagedListEnd, PagedListStart } from '../components/PagedListEnd'
 import { usePageScroll } from '../components/pageScroll'
@@ -658,7 +658,13 @@ export function UmpireScheduleScreen({
                       })
                   }}
                 >
-                  <Emblem fallback="L" uri={l.logoUrl} size={3} />
+                  <GroupEmblem
+                    kind="league"
+                    id={l.id}
+                    name={l.name}
+                    uri={l.logoUrl}
+                    size={3}
+                  />
                   <Text style={s.text}>{l.name}</Text>
                 </Pressable>
               ))}

@@ -3,17 +3,14 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { RosterCandidate } from '../../common/api'
 import { ButtonIcon } from '../components/ButtonIcon'
-import { Emblem } from '../components/Emblem'
-import { initialsOf } from '../components/initials'
+import { PersonAffiliationLine } from '../components/PersonAffiliationLine'
+import { PersonEmblem } from '../components/PersonEmblem'
 import { useScoringSheetTheme } from './scoringSheetTheme'
-
-/** A pill's height; its padding is at least half of it (`docs/ui-rules.md`). */
-const PILL_HEIGHT = 22
 
 /**
  * One search result in scoring colours: the player's picture or initials,
- * their short name, a pill for each team they play for in a current or
- * future season, and a chevron.
+ * their name, the affiliation line under it (`PersonAffiliationLine`), and a
+ * chevron.
  */
 export function ScoringCandidateCard({
   candidate,
@@ -48,12 +45,12 @@ export function ScoringCandidateCard({
         opacity: disabled ? 0.4 : 1
       })}
     >
-      <Emblem
-        shape="circle"
+      <PersonEmblem
+        userId={candidate.userId}
+        name={candidate.shortName}
         uri={candidate.avatarUrl}
-        fallback={initialsOf(candidate.shortName)}
       />
-      <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Text
           numberOfLines={1}
           style={{
@@ -64,39 +61,11 @@ export function ScoringCandidateCard({
         >
           {candidate.shortName}
         </Text>
-        {candidate.teams.length > 0 && (
-          <View
-            testID="Candidate teams"
-            style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}
-          >
-            {candidate.teams.map(team => (
-              <View
-                key={team.teamId}
-                style={{
-                  height: PILL_HEIGHT,
-                  paddingHorizontal: PILL_HEIGHT / 2,
-                  maxWidth: '100%',
-                  justifyContent: 'center',
-                  borderRadius: PILL_HEIGHT / 2,
-                  borderWidth: 1,
-                  borderColor: surface.badges.green.border,
-                  backgroundColor: surface.badges.green.background
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    color: surface.badges.green.text,
-                    fontFamily: theme.regularTextFont,
-                    fontSize: 12
-                  }}
-                >
-                  {team.name}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
+        <PersonAffiliationLine
+          affiliations={candidate.affiliations}
+          color={surface.secondaryText}
+          testID="Candidate affiliations"
+        />
       </View>
       <ButtonIcon name="chevron_right">
         <Text

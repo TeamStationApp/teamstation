@@ -27,10 +27,9 @@ import {
   Button,
   Card,
   CardBand,
-  Emblem,
   GameRow,
   HandoffView,
-  initialsOf,
+  PersonEmblem,
   PillBand,
   PillTabs,
   PinnedContent,
@@ -474,10 +473,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
     useMemo(
       () => (
         <HandoffView progress={progress} style={styles.headerHandoff}>
-          <Emblem
+          <PersonEmblem
+            userId={userId}
+            name={shown}
             uri={avatarUrl}
-            fallback={initialsOf(shown)}
-            shape="circle"
             size={1.75}
           />
           <Text style={styles.headerName} numberOfLines={1}>
@@ -485,7 +484,14 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
           </Text>
         </HandoffView>
       ),
-      [progress, styles.headerHandoff, styles.headerName, avatarUrl, shown]
+      [
+        progress,
+        styles.headerHandoff,
+        styles.headerName,
+        avatarUrl,
+        shown,
+        userId
+      ]
     )
   )
 
@@ -619,10 +625,10 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
       <CardBand part={pinned.cardBand}>
         <Card style={styles.identity}>
           <View style={styles.identityTop}>
-            <Emblem
+            <PersonEmblem
+              userId={userId}
+              name={shown}
               uri={player?.avatarUrl}
-              fallback={initialsOf(shown)}
-              shape="circle"
               size={3.5}
             />
             <View style={styles.identityText}>
@@ -817,10 +823,8 @@ export function PlayerScreen(props: PlayerScreenProps): React.ReactElement {
                     })
                     // Should the server never answer, the page's own name: a
                     // full one is the entry's, and otherwise the saved parts
-                    // in the entry's format (the page tells nobody apart),
-                    // or what the page drew before, never the roster's
-                    // label, which may be lengthened to tell a teammate
-                    // apart.
+                    // in the entry's format, written alone as the roster
+                    // writes every name, or what the page drew before.
                     const pageName =
                       entry.nameFormat === 'full'
                         ? entry.shortName

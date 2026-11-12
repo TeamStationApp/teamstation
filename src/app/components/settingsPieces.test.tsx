@@ -54,7 +54,9 @@ describe('settings identity and text actions', () => {
           <HeroCard
             name="Babe Ruth"
             secondary="Demo City"
-            person={person}
+            {...(person
+              ? { person: { userId: 'usr_ruth' } }
+              : { group: { kind: 'team' as const, id: 'tem_demo' } })}
             uri={uri}
             onEdit={() => {
               edits++
@@ -69,7 +71,9 @@ describe('settings identity and text actions', () => {
         expect(edits).equals(1)
       })
   it('has no editing control or secondary line when neither is supplied', async () => {
-    await render(<HeroCard name="Bluebirds" />)
+    await render(
+      <HeroCard name="Bluebirds" group={{ kind: 'team', id: 'tem_blue' }} />
+    )
     expect(document.querySelector('[role="button"]')).equals(null)
     expect(document.body.textContent).not.includes('edit')
   })
@@ -78,6 +82,7 @@ describe('settings identity and text actions', () => {
     await render(
       <HeroCard
         name="Bluebirds"
+        group={{ kind: 'team', id: 'tem_blue' }}
         uri=""
         disabled
         onEdit={() => {
@@ -124,6 +129,7 @@ describe('photo sheet saves and recovery', () => {
         <PictureSheet
           client={client}
           name="Babe Ruth"
+          person={{ userId: 'usr_ruth' }}
           pickPhoto={async () => ({
             contentType: 'image/png',
             base64: 'placeholder'
@@ -154,6 +160,7 @@ describe('photo sheet saves and recovery', () => {
         <PictureSheet
           client={client}
           name="Babe Ruth"
+          person={{ userId: 'usr_ruth' }}
           onSave={async () => {
             // eslint-disable-next-line @typescript-eslint/only-throw-error -- Exercise recovery from an unknown rejection.
             if (fails) throw failure
@@ -182,6 +189,7 @@ describe('photo sheet saves and recovery', () => {
       <PictureSheet
         client={client}
         name="Babe Ruth"
+        person={{ userId: 'usr_ruth' }}
         onSave={async () => {
           saves++
         }}
@@ -202,6 +210,7 @@ describe('photo sheet saves and recovery', () => {
       <PictureSheet
         client={client}
         name="Babe Ruth"
+        person={{ userId: 'usr_ruth' }}
         onSave={async () => {
           saves++
           await new Promise<void>(resolve => {

@@ -2,7 +2,7 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
-import { shortParts } from '../../common/names'
+import { type NamedPerson, shortParts } from '../../common/names'
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import { teamsOfRow } from '../../common/teamLists'
 import {
@@ -13,14 +13,20 @@ import {
   nonMemberTeam,
   openAddTeams,
   roleScopes,
+  type VisibleScopes,
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
-import { compactFields, readerNaming } from '../groups/playerNamePrivacy'
+import {
+  compactFields,
+  type ReaderNaming,
+  readerNaming
+} from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
+import { personAffiliations } from './personAffiliations'
 import { readerOf } from './readerNames'
 
 /** How close a player is to the asker, nearest first. */
@@ -32,7 +38,7 @@ export interface RosterCandidate {
   userId: string
   gumboId: number | null
   externalIds: string[]
-  /** `Jordan P`, told apart from anybody else on the same page. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: string
   /**
    * The public label split where it was built: "Mookie" and "B", even for an
@@ -42,11 +48,20 @@ export interface RosterCandidate {
   avatarUrl: string | null
   bats: 'left' | 'right' | 'switch' | null
   throws: 'left' | 'right' | null
-  /** The teams they play for in a season that ends today or later. */
+  /**
+   * The teams they play for in a season that ends today or later, of those
+   * the reader may see (`canSeeTeam`), as the line names them. Kept for
+   * clients that still draw them.
+   */
   teams: Array<{ teamId: string; name: string }>
+  /** Their affiliation line, as the reader may see it (`personAffiliations`). */
+  affiliations: string
   tier: CandidateTier
-  /** Opaque; pass as `after` for the next page. */
-  cursor: string
+  /**
+   * Always empty: an installed build's cleaner needs the field, and goes on
+   * from it with `after`, which answers nothing. The search has no pages.
+   */
+  cursor: ''
 }
 
 export interface CandidateQuery {
@@ -54,9 +69,17 @@ export interface CandidateQuery {
   gameId?: string
   /** Trimmed; its words each prefix-match a name. */
   q: string
+  /**
+   * At most `CANDIDATE_LIMIT.max`. Read only with `capped=1`: an installed
+   * build sends `limit=30` and pages on with `after`, which answers nothing,
+   * so without the marker the answer is the whole `CANDIDATE_LIMIT.max`.
+   */
   limit: number
-  /** A row's `cursor`: the rows after it. */
-  after?: string
+  /**
+   * `after` was sent: an installed build scrolling past the answer it has.
+   * The search has no further pages, so it answers nothing.
+   */
+  after?: true
 }
 
 /**
@@ -75,7 +98,20 @@ export function fullAccount(user: string): RawBuilder<boolean> {
 
 /** Somebody with no tie to the asker is listed only once this much is typed. */
 export const OTHER_TIER_QUERY = 3
-export const CANDIDATE_LIMIT = { default: 30, max: 50 } as const
+/**
+ * One answer per search, of at most this many rows; `limit` may ask fewer
+ * beside `capped=1`.
+ */
+export const CANDIDATE_LIMIT = { default: 100, max: 100 } as const
+
+/**
+ * The most matches one search reads looking for rows the asker is shown: a
+ * common surname that the rows hide would otherwise walk every match
+ * site-wide on each keystroke. It reads them `CANDIDATE_SCAN_BATCH` at a
+ * time, and answers what it kept by then.
+ */
+export const CANDIDATE_SCAN = 1000
+export const CANDIDATE_SCAN_BATCH = 200
 export const CANDIDATE_QUERY_MAX = 100
 
 /** The query string of `GET /users?forTeam=`, checked. */
@@ -98,43 +134,32 @@ export function candidateQueryOf(
   const q = (one('q') ?? '').trim().replace(/\s+/g, ' ')
   if (q.length > CANDIDATE_QUERY_MAX)
     throw badRequest(`q is at most ${CANDIDATE_QUERY_MAX} characters`)
+  const capped = one('capped')
+  if (capped !== undefined && capped !== '1')
+    throw badRequest('capped must be 1')
   const limitText = one('limit')
   const limit = limitText == null ? CANDIDATE_LIMIT.default : Number(limitText)
   if (!Number.isInteger(limit) || limit < 1 || limit > CANDIDATE_LIMIT.max)
     throw badRequest(
       `limit must be a whole number from 1 to ${CANDIDATE_LIMIT.max}`
     )
+  // Whatever it holds: no cursor is ever issued, so none is read.
   const after = one('after')
-  if (after != null) cursorOf(after)
   return {
     teamId,
     ...(gameId == null ? {} : { gameId }),
     q,
-    limit,
-    ...(after == null ? {} : { after })
+    // A build that draws no capped notice asks for a page it would scroll
+    // past, so it is answered the whole list.
+    limit: capped == null ? CANDIDATE_LIMIT.max : limit,
+    ...(after == null ? {} : { after: true as const })
   }
 }
 
-function cursorOf(raw: string): { tier: number; userId: string } {
-  try {
-    const parsed: unknown = JSON.parse(
-      Buffer.from(raw, 'base64url').toString('utf8')
-    )
-    if (
-      Array.isArray(parsed) &&
-      parsed.length === 2 &&
-      Number.isInteger(parsed[0]) &&
-      parsed[0] >= 0 &&
-      parsed[0] < CANDIDATE_TIERS.length &&
-      typeof parsed[1] === 'string'
-    )
-      return { tier: parsed[0], userId: parsed[1] }
-  } catch {}
-  throw badRequest('after must be a cursor this search answered')
-}
-
-function cursorFor(tier: number, userId: string): string {
-  return Buffer.from(JSON.stringify([tier, userId])).toString('base64url')
+/** Where the scan of one search goes on: after this row. Never sent. */
+interface ScanPosition {
+  tier: number
+  userId: string
 }
 
 interface Target {
@@ -287,16 +312,20 @@ export async function hasTie(
  * A full account that plays for no team is everyone else too (or the
  * asker's own, when they guard it).
  * Players already on the team, and with a game anybody already in it, are
- * left out. Pages are keyset pages over (tier, folded first, folded last, id),
- * so the list growing between pages repeats and skips nobody.
+ * left out. One answer per search, of at most `ask.limit` rows, in order of
+ * (tier, folded first, folded last, id); there are no further pages, so a
+ * request with `after` answers none.
  */
 export async function rosterCandidates(
   db: Kysely<Database>,
   actor: Actor,
   ask: CandidateQuery,
-  space?: SpaceSettings
+  space?: SpaceSettings,
+  /** What the asker may see, when the route has read it already. */
+  scopes?: VisibleScopes
 ): Promise<RosterCandidate[]> {
   const target = await candidateTarget(db, actor, ask.teamId, ask.gameId)
+  if (ask.after === true) return []
   const words = ask.q === '' ? [] : ask.q.split(' ')
   const inGame =
     target.game == null
@@ -312,7 +341,6 @@ export async function rosterCandidates(
           )
           return [...guests.away, ...guests.home]
         })()
-  const after = ask.after == null ? null : cursorOf(ask.after)
   const seasons =
     target.gameSeasonId != null
       ? sql`select ${target.gameSeasonId}::text as season_id`
@@ -347,7 +375,12 @@ export async function rosterCandidates(
         word => !letters.some(other => other !== word && other.startsWith(word))
       )
       .join('').length >= OTHER_TIER_QUERY
-  const rows = await sql<CandidateRow>`
+  const page = async (
+    after: ScanPosition | null,
+    limit: number
+  ): Promise<CandidateRow[]> =>
+    (
+      await sql<CandidateRow>`
     with recursive
     team_seasons as (
       select season_id, team_id from season_teams where active
@@ -470,28 +503,80 @@ export async function rosterCandidates(
         }
       order by ranked.tier, ts_name_fold(u.first_name),
                ts_name_fold(u.last_name), u.id
-      limit ${ask.limit}
+      limit ${limit}
   `.execute(db)
-  const people = rows.rows
-  if (people.length === 0) return []
-  const teams = await currentTeams(
-    db,
-    people.map(row => row.user_id)
-  )
-  const named = people.map(row => ({
+    ).rows
+  const nameOf = (row: CandidateRow): NamedPerson => ({
     id: row.user_id,
     firstName: row.first_name,
     lastName: row.last_name,
     displayName: row.display_name
-  }))
+  })
   // Anybody's player, from anywhere: the formats of the teams they play for,
   // and in full for those the asker may read in full.
   // The public label goes beside a full one: a phone adding him offline puts
   // it on the field, the board strip and the lineup QR.
-  const naming = await readerNaming(
+  const nameRows = async (rows: CandidateRow[]): Promise<ReaderNaming> =>
+    await readerNaming(
+      db,
+      rows.map(row => ({ person: nameOf(row) })),
+      readerOf(actor)
+    )
+  // The words find a stored name, but only somebody the asker reads in full
+  // is found by it: anybody else by the name their row shows, or by both
+  // halves of the stored one typed whole, so no word confirms a surname the
+  // row hides. Matches are read `CANDIDATE_SCAN_BATCH` at a time until
+  // enough are found, none are left, or `CANDIDATE_SCAN` have been read; what
+  // was found by then is the answer.
+  let people: CandidateRow[] = []
+  let naming: ReaderNaming | undefined
+  let after: ScanPosition | null = null
+  for (let read = 0; ;) {
+    const rows = await page(after, CANDIDATE_SCAN_BATCH)
+    read += rows.length
+    const pageNaming = rows.length === 0 ? undefined : await nameRows(rows)
+    const found =
+      pageNaming == null || words.length === 0
+        ? rows
+        : rows.filter(
+            row =>
+              pageNaming.readsFull.has(row.user_id) ||
+              shownMatches(words, pageNaming.names.get(row.user_id) ?? '', row)
+          )
+    people = [...people, ...found].slice(0, ask.limit)
+    if (pageNaming != null)
+      naming = naming == null ? pageNaming : joinNaming(naming, pageNaming)
+    const last = rows.at(-1)
+    if (
+      people.length >= ask.limit ||
+      rows.length < CANDIDATE_SCAN_BATCH ||
+      last == null ||
+      read >= CANDIDATE_SCAN
+    )
+      break
+    after = { tier: last.tier, userId: last.user_id }
+  }
+  if (people.length === 0 || naming == null) return []
+  const teams = await currentTeams(
     db,
-    named.map(person => ({ person })),
-    readerOf(actor)
+    people.map(row => row.user_id)
+  )
+  const named = people.map(nameOf)
+  const seen = scopes ?? (await visibleScopes(db, actor.userId, actor.isAdmin))
+  // The line tells two candidates of one short name apart by where they are
+  // now: only teams of a season ending today or later.
+  const affiliations = await personAffiliations(
+    db,
+    people.map(row => row.user_id),
+    {
+      reader: readerOf(actor),
+      scopes: seen,
+      teams: await currentSeasonTeams(
+        db,
+        people.map(row => row.user_id)
+      ),
+      readsFull: naming.readsFull
+    }
   )
   return people.map((row, index) => {
     const short = naming.names.get(row.user_id) ?? ''
@@ -514,11 +599,98 @@ export async function rosterCandidates(
       avatarUrl: space == null ? null : imageUrl(space, row.avatar_path),
       bats: row.bats,
       throws: row.throws,
-      teams: teams.get(row.user_id) ?? [],
+      // No team the line leaves out for the reader.
+      teams: (teams.get(row.user_id) ?? []).filter(each =>
+        canSeeTeam(seen, each.teamId)
+      ),
+      affiliations: affiliations.get(row.user_id) ?? '',
       tier: CANDIDATE_TIERS[row.tier],
-      cursor: cursorFor(row.tier, row.user_id)
+      cursor: '' as const
     }
   })
+}
+
+/** A name folded as `ts_name_fold` folds it: no accents, lower case. */
+const fold = (name: string | null): string =>
+  (name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+/** Folded words of a name. */
+const wordsOf = (name: string | null): string[] =>
+  fold(name)
+    .split(/\s+/)
+    .filter(word => word !== '')
+
+/**
+ * Whether the typed words find a row the asker does not read in full: each
+ * starts a word of the name the row shows, or the stored first and last
+ * names are both typed whole (each word of them), the other words starting
+ * a word of either or of the shown name. A stored half alone finds nobody.
+ */
+export function shownMatches(
+  words: readonly string[],
+  shown: string,
+  row: Pick<CandidateRow, 'first_name' | 'last_name'>
+): boolean {
+  const typed = words.map(fold)
+  const label = wordsOf(shown)
+  const onLabel = (word: string): boolean =>
+    label.some(each => each.startsWith(word))
+  if (typed.every(onLabel)) return true
+  const halves = [wordsOf(row.first_name), wordsOf(row.last_name)].filter(
+    half => half.length > 0
+  )
+  if (halves.length < 2) return false
+  const stored = halves.flat()
+  return (
+    stored.every(part => typed.includes(part)) &&
+    typed.every(
+      word => onLabel(word) || stored.some(part => part.startsWith(word))
+    )
+  )
+}
+
+/** Two pages' `readerNaming`, as one. */
+function joinNaming(a: ReaderNaming, b: ReaderNaming): ReaderNaming {
+  return {
+    names: new Map([...a.names, ...b.names]),
+    formats: new Map([...a.formats, ...b.formats]),
+    compact: new Map([...a.compact, ...b.compact]),
+    compactFormats: new Map([...a.compactFormats, ...b.compactFormats]),
+    readsFull: new Set([...a.readsFull, ...b.readsFull])
+  }
+}
+
+/**
+ * The teams of a season ending today or later (the rule `currentTeams`
+ * keeps) that these people, or the players they guard or are family of, hold
+ * a place on, player or not.
+ */
+async function currentSeasonTeams(
+  db: Kysely<Database>,
+  userIds: string[]
+): Promise<Set<string>> {
+  const rows = await sql<{ team_id: string }>`
+    with team_seasons as (
+      select season_id, team_id from season_teams where active
+      union
+      select season_id, team_id from season_team_parents
+    ),
+    family as (
+      select unnest(array[${sql.join(userIds)}]::text[]) as user_id
+      union
+      select related_user_id from user_links
+        where user_id in (${sql.join(userIds)})
+          and kind in ('guardian', 'family')
+    )
+    select distinct t.id as team_id
+      from memberships m
+      join teams t on t.id = m.team_id and t.merged_into is null
+      join team_seasons ts on ts.team_id = t.id
+      join seasons s on s.id = ts.season_id
+      where m.user_id in (select user_id from family)
+        and s.ends_on >= current_date
+  `.execute(db)
+  return new Set(rows.rows.map(row => row.team_id))
 }
 
 /** The teams each person plays for in a season ending today or later. */

@@ -93,10 +93,11 @@ export const enUs = {
   roster_admins: 'Admins',
   roster_staff: 'Staff',
   roster_players: 'Players',
+  /** Under a roster search's list when it answered as many as it answers. */
+  candidates_capped: 'Showing the first %s \u2014 type more to narrow.',
   roster_family: 'Family members',
   roster_spectators: 'Spectators',
   roster_followers: 'Followers',
-  roster_guardian_of: 'Parent/guardian of %s',
   // The pill on somebody given their place from above: `Season coach`, and
   // for a member of the season or league, `Season spectator`.
   roster_inherited_pill: '%1$s %2$s',

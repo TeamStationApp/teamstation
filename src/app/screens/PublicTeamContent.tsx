@@ -127,6 +127,7 @@ export function PublicTeamContent({
                 <PersonRow
                   key={index}
                   person={{
+                    userId: person.userId,
                     shortName: person.name,
                     section,
                     isHeadCoach: person.isHeadCoach,

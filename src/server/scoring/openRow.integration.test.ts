@@ -1007,24 +1007,25 @@ describe('one scope for every surface of a game', function () {
       .execute()
   })
 
-  it("breaks a short-name tie with a tagged player the documents do not name the same in the plays and the highlights, under the board's digest", async () => {
+  it("names a player and a tagged player the documents do not name, who share a short name, the same in the plays and the highlights, under the board's digest", async () => {
     const stored: StoredGame = { plays: [play], currentPlay: null }
     const named = await namedScoringGame(fixture.db, stored, { gameId })
     expect(named.game.plays[0].matchup?.batter).deep.equals({
       id: smith.userId,
-      fullName: 'Lee Sm'
+      fullName: 'Lee S'
     })
     expect(
       (await resolveScoringGame(fixture.db, stored, { gameId })).plays[0]
         .matchup?.batter?.fullName
-    ).equals('Lee Sm')
+    ).equals('Lee S')
     // The highlights' book, read for the game alone.
     const book = (await gameNames(fixture.db, [gameId])).get(gameId)!
-    expect(book.nameOf(smith.userId)).equals('Lee Sm')
-    expect(book.nameOf(stange.userId)).equals('Lee St')
+    // Each name is written alone: the tagged player adds no letter.
+    expect(book.nameOf(smith.userId)).equals('Lee S')
+    expect(book.nameOf(stange.userId)).equals('Lee S')
     expect(named.names.digest).equals(book.digest)
     expect(await gameNamesDigest(fixture.db, gameId)).equals(book.digest)
-    // Without the game, only its documents: the tie is not seen.
+    // Without the game, only its documents: the same label.
     expect(
       (await resolveScoringGame(fixture.db, stored)).plays[0].matchup?.batter
         ?.fullName

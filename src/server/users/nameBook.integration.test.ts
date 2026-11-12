@@ -87,8 +87,8 @@ describe('name books', function () {
     expect(queries).equals(2)
     const both = books.get('both')!
     const one = books.get('one')!
-    expect(both.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
-    expect(both.nameOf(people.jordanPerez.userId)).equals('Jordan Pe')
+    expect(both.nameOf(people.jordanPujols.userId)).equals('Jordan P')
+    expect(both.nameOf(people.jordanPerez.userId)).equals('Jordan P')
     expect(one.nameOf(people.jordanPujols.userId)).equals('Jordan P')
     expect(one.nameOf(people.babe.userId)).equals('Babe R')
     // Only the scope's own people, and nobody unknown.
@@ -109,7 +109,7 @@ describe('name books', function () {
     expect(read.nameOf(people.jordanPujols.userId)).equals('Jordan Pujols')
     expect(read.formatOf(people.jordanPujols.userId)).equals('full')
     expect(read.nameOf(people.jordanPerez.userId)).equals('Jordan P')
-    expect(open.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
+    expect(open.nameOf(people.jordanPujols.userId)).equals('Jordan P')
     expect(read.digest).not.equals(open.digest)
     // A book going to a model names nobody in full, whoever reads it.
     const admin = { userId: pujols, isAdmin: true }
@@ -194,6 +194,72 @@ describe('name books', function () {
     )
   })
 
+  it("keeps the public book whoever reads, and gives a league administrator's book its adults in full", async () => {
+    const posey = mint()
+    const laRussa = mint()
+    await insertFixtureUsers(fixture.db, [
+      {
+        id: posey.userId,
+        legacyId: posey.legacyId,
+        display_name: 'Buster Posey',
+        first_name: 'Buster',
+        last_name: 'Posey'
+      },
+      {
+        id: laRussa.userId,
+        legacyId: laRussa.legacyId,
+        display_name: 'Tony La Russa',
+        login_enabled: true
+      }
+    ])
+    await fixture.db
+      .insertInto('leagues')
+      .values({ id: 'lea_book', name: 'Demo Book League' })
+      .execute()
+    await fixture.db
+      .updateTable('teams')
+      .set({ league_id: 'lea_book' })
+      .where('id', '=', 'tem_home')
+      .execute()
+    await fixture.db
+      .insertInto('scope_roles')
+      .values([
+        {
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(posey.userId),
+          scope_type: 'team',
+          scope_id: 'tem_home',
+          role: 'scorekeeper',
+          granted_at: new Date()
+        },
+        {
+          id: makeId('scopeRole'),
+          user_id: userIdOfGumbo(laRussa.userId),
+          scope_type: 'league',
+          scope_id: 'lea_book',
+          role: 'admin',
+          granted_at: new Date()
+        }
+      ])
+      .execute()
+    const scope = new Map([[0, [posey.userId, people.babe.userId]]])
+    const before = (await booksOver(fixture.db, scope)).get(0)!
+    const reader = { userId: userIdOfGumbo(laRussa.userId), isAdmin: false }
+    const read = (await booksOver(fixture.db, scope, { reader })).get(0)!
+    const after = (await booksOver(fixture.db, scope)).get(0)!
+    // The scorekeeper is on the league's people list: read in full, in a
+    // book of the administrator's own.
+    expect(read.nameOf(posey.userId)).equals('Buster Posey')
+    expect(read.nameOf(people.babe.userId)).equals('Babe R')
+    expect(read.digest).not.equals(before.digest)
+    // The public book is the same before and after.
+    for (const book of [before, after]) {
+      expect(book.nameOf(posey.userId)).equals('Buster P')
+      expect(book.nameOf(people.babe.userId)).equals('Babe R')
+    }
+    expect(after.digest).equals(before.digest)
+  })
+
   it('reads a merged account as its survivor', async () => {
     const book = (
       await booksOver(
@@ -254,7 +320,7 @@ describe('name books', function () {
       )
       .execute()
     const nameOf = await teamNames(fixture.db, team, [people.babe.userId])
-    expect(nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
+    expect(nameOf(people.jordanPujols.userId)).equals('Jordan P')
     expect(nameOf(people.babe.userId)).equals('Babe R')
     expect((await teamNames(fixture.db, team))(people.babe.userId)).equals(
       undefined
@@ -318,8 +384,8 @@ describe('name books', function () {
       .execute()
     const books = await gameNames(fixture.db, [game, pregameOnly, game])
     const book = books.get(game)!
-    expect(book.nameOf(people.jordanPujols.userId)).equals('Jordan Pu')
-    expect(book.nameOf(people.jordanPerez.userId)).equals('Jordan Pe')
+    expect(book.nameOf(people.jordanPujols.userId)).equals('Jordan P')
+    expect(book.nameOf(people.jordanPerez.userId)).equals('Jordan P')
     expect(book.nameOf(people.babe.userId)).equals('Babe R')
     expect(books.get(pregameOnly)!.nameOf(people.babe.userId)).equals(undefined)
     expect((await gameNames(fixture.db, [])).size).equals(0)
@@ -505,6 +571,11 @@ describe('name books', function () {
     expect(await page()).deep.equals(first)
     expect(queries).has.length(4)
     expect(plays()).equals(0)
+    expect(
+      (await gameNames(fixture.db, [games[0]]))
+        .get(games[0])!
+        .nameOf(people.jordanPerez.userId)
+    ).equals(undefined)
     // One game tagged since: only its scope is read again, and a player its
     // tag names joins it.
     await fixture.db
@@ -526,8 +597,13 @@ describe('name books', function () {
         query => query.includes('"name":"gumbo"') && query.includes(games[1])
       )
     ).equals(false)
+    // Each name is written alone: the player who joined takes no letter
+    // from the one already there, and is named in the scope he joined.
     expect(books.get(games[0])!.nameOf(people.jordanPujols.userId)).equals(
-      'Jordan Pu'
+      'Jordan P'
+    )
+    expect(books.get(games[0])!.nameOf(people.jordanPerez.userId)).equals(
+      'Jordan P'
     )
     expect(books.get(games[1])!.nameOf(people.jordanPerez.userId)).equals(
       'Jordan P'

@@ -2177,7 +2177,11 @@ function Shell(props: AppProps): React.ReactElement {
     (
       userId: string,
       title: string,
-      from: { seasonId?: string; teamId?: string; onTeam?: string } = {}
+      from: {
+        seasonId?: string
+        teamId?: string
+        onTeam?: string
+      } = {}
     ): void => {
       const narrowed = from.seasonId != null || from.teamId != null
       const next: Pushed = {
@@ -3946,6 +3950,7 @@ function Shell(props: AppProps): React.ReactElement {
         session == null
           ? undefined
           : {
+              userId: session.user.id,
               name: session.user.displayName,
               avatarUrl: session.user.avatarUrl,
               onPress: () => {

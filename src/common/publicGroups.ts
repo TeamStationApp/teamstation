@@ -36,7 +36,13 @@ export const asPublicGroup = asObject({
   external: asOptional(asBoolean, false),
   parentNames: asOptional(asArray(asString), []),
   /** A season's or team's parent league, so a picker can keep to one. */
-  leagueId: asOptional(nullable(asString), null)
+  leagueId: asOptional(nullable(asString), null),
+  /**
+   * A season's league's picture, signed, which the season is drawn with when
+   * it has none of its own; null for a team or a league, and absent on older
+   * servers.
+   */
+  leaguePictureUrl: asOptional(nullable(asString), null)
 })
 export type PublicGroup = ReturnType<typeof asPublicGroup>
 /**
@@ -78,6 +84,11 @@ export const asPublicGame = withEventMetadata(
 )
 export type PublicGame = ReturnType<typeof asPublicGame>
 const cleanPublicStaff = asObject({
+  /**
+   * Their account, whose id picks their tile's colour (`personTint`); empty
+   * from an older server, which sent none.
+   */
+  userId: asOptional(asString, ''),
   name: asString,
   roles: asArray(asString),
   avatarUrl: asOptional(nullable(asString), null),

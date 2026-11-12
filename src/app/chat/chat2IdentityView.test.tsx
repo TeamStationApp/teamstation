@@ -5,6 +5,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import { asChatDmPerson } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
+import { GroupEmblem } from '../components/GroupEmblem'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ChatAvatar } from './ChatAvatar'
 import { conversationIdentity } from './chatIdentityModel'
@@ -39,7 +40,61 @@ async function render(element: React.ReactElement): Promise<HTMLElement> {
   return host!
 }
 
+/** The background of each leaf drawing `letters`, in document order. */
+function tileColours(node: HTMLElement, letters: string): string[] {
+  return [...node.querySelectorAll<HTMLElement>('*')]
+    .filter(n => n.children.length === 0 && n.textContent === letters)
+    .map(n => getComputedStyle(n.parentElement!).backgroundColor)
+}
+
 describe('chat identity presentation', function () {
+  it('draws a team, league and season chat on the tile the group has everywhere else', async function () {
+    const cases = [
+      {
+        scope: { type: 'team' as const, id: 'tem_harbor' },
+        name: 'Harbor Hawks',
+        letters: 'HH',
+        group: { kind: 'team' as const, id: 'tem_harbor' }
+      },
+      {
+        scope: { type: 'league' as const, id: 'lea_harbor' },
+        name: 'Harbor League',
+        letters: 'HL',
+        group: { kind: 'league' as const, id: 'lea_harbor' }
+      },
+      {
+        scope: { type: 'season' as const, id: 'sea_autumn' },
+        name: 'Autumn Ball',
+        letters: 'AB',
+        group: {
+          kind: 'season' as const,
+          id: 'sea_autumn',
+          leagueId: 'lea_harbor'
+        }
+      }
+    ]
+    for (const each of cases) {
+      const identity = conversationIdentity(
+        chat({
+          kind: each.scope.type === 'season' ? 'seasonStaff' : 'teamMembers',
+          scope: each.scope,
+          avatarName: each.name,
+          avatarUrl: null,
+          leagueId: each.scope.type === 'season' ? 'lea_harbor' : null
+        })
+      )
+      const node = await render(
+        <>
+          <ChatAvatar identity={identity} size={2.5} />
+          <GroupEmblem {...each.group} name={each.name} />
+        </>
+      )
+      const [chatTile, groupTile] = tileColours(node, each.letters)
+      expect(chatTile, each.name).equals(groupTile)
+      expect(chatTile).not.equals('rgba(0, 0, 0, 0)')
+    }
+  })
+
   it('draws shared rounded tiles and a deterministic composite for several current participants', async function () {
     for (const count of [1, 2, 3, 5]) {
       const people = Array.from({ length: count }, (_, index) =>

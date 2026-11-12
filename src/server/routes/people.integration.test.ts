@@ -1019,12 +1019,13 @@ describe('people at a team, a season and a league', function () {
       })
       expect(body.person).includes({
         userId: userIdOfGumbo(GUARDIAN),
-        shortName: 'Pat N',
+        shortName: 'Pat Neshek',
+        // Read in full; the tile hashes the label everyone reads.
         fullName: 'Pat Neshek',
         canHoldRoles: true
       })
-      // The coach reads the parent, whom they may not read in full, short,
-      // and the child, their player, in full.
+      // The coach manages the team's people, so reads the parent on its list
+      // in full (`mayViewFullNames`), and the child, their player, too.
       expect(body.guardianOf).deep.equals([
         {
           userId: userIdOfGumbo(PLAYER),

@@ -2,7 +2,7 @@ import React from 'react'
 import { View } from 'react-native'
 
 import type { UmpireGameBlock } from '../../common/umpireSchedule'
-import { Card, initialsOf, ListRow, SectionHeader } from '../components'
+import { Card, ListRow, SectionHeader } from '../components'
 import { useTheme } from '../theme/ThemeContext'
 
 export function GameUmpires({
@@ -45,9 +45,10 @@ export function GameUmpires({
             title={person.name}
             subtitle={[...types].join(', ')}
             subtitleNumberOfLines={0}
-            emblem={initialsOf(person.name)}
-            emblemUri={person.avatarUrl}
-            emblemShape="circle"
+            person={{
+              userId: person.userId,
+              uri: person.avatarUrl
+            }}
           />
         </Card>
       ))}

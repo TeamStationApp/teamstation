@@ -141,6 +141,7 @@ it('retains initials when upload is canceled or fails and previews a successful 
       <GroupPictureChooser
         client={api}
         name="Demo Club"
+        group={{ kind: 'team', id: null }}
         value={value}
         onChange={setValue}
         pickPhoto={async () => {
@@ -223,6 +224,7 @@ it('places navigation before the picture, whose menu keeps its dot, and preserve
           }
         }}
         account={{
+          userId: 'usr_demo',
           name: 'Demo User',
           onPress: () => {
             accounts++

@@ -507,8 +507,12 @@ export function GameFormScreen({
       <ListRow
         title={choice.group.name}
         subtitle={`${label}${choice.group.external ? ' · Placeholder' : ''}`}
-        teamName={choice.group.name}
-        emblemUri={choice.group.imageUrl}
+        group={{
+          kind: 'team',
+          id: choice.group.id,
+          name: choice.group.name,
+          uri: choice.group.imageUrl
+        }}
         onPress={open}
       />
     )

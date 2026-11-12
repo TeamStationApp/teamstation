@@ -706,8 +706,11 @@ describe('roster sections', function () {
         jersey: null,
         walkUpSong: null
       })
+    // The league's admin manages the team's people, and reads the family on
+    // its list in full too (`mayViewFullNames`), the public label beside it.
     expect(byUser.get(userIdOfGumbo(f.people.guardian))).to.include({
-      shortName: 'Tim R',
+      shortName: 'Tim Raines',
+      compactName: 'Tim R',
       bats: 'left',
       throws: 'right'
     })
@@ -848,8 +851,13 @@ describe('roster sections', function () {
       nameFormat: 'full',
       compactName: 'Alfonso S'
     })
-    // An adult with no tie the coach may read in full stays short.
-    expect(named(coach, f.people.follower).compactName).equals(undefined)
+    // The coach manages the team's people, so reads a follower on its list
+    // in full too, though they may not change the name.
+    expect(named(coach, f.people.follower)).deep.equals({
+      shortName: 'Grant Hartwig',
+      nameFormat: 'full',
+      compactName: 'Grant H'
+    })
     // A guardian reads their own child in full, and another child short.
     const guardian = await as(f.people.guardian)
     expect(named(guardian, 201)).deep.equals({
@@ -872,7 +880,138 @@ describe('roster sections', function () {
     ).deep.equals(['Alfonso Soriano'])
   })
 
-  it('keeps the public label of a teammate the public lengthens to tell from a player the reader reads in full', async function () {
+  it('gives a player on two teams of different formats one id and no label on both rosters and the level list', async function () {
+    const alfonso = userIdOfGumbo(201)
+    const comets = (
+      await f.h.db
+        .selectFrom('memberships')
+        .select('team_id')
+        .where('user_id', '=', alfonso)
+        .where('team_id', '<>', f.teamA)
+        .executeTakeFirstOrThrow()
+    ).team_id
+    // Each team writes his name its own way.
+    await f.h.db
+      .updateTable('teams')
+      .set({ player_name_privacy: 'initialLast' })
+      .where('id', '=', f.teamA)
+      .execute()
+    await f.h.db
+      .updateTable('teams')
+      .set({ player_name_privacy: 'initials' })
+      .where('id', '=', comets)
+      .execute()
+    const row = async (
+      path: string,
+      reader: number
+    ): Promise<RosterEntry & Record<string, unknown>> => {
+      const response = await f.h.request('GET', path, undefined, reader)
+      expect(response.status, path).equals(200)
+      const body = (await response.json()) as unknown
+      const rows = (
+        Array.isArray(body) ? body : (body as { people: unknown[] }).people
+      ) as Array<RosterEntry & Record<string, unknown>>
+      return rows.find(entry => entry.userId === alfonso)!
+    }
+    const hawks = await row(`/teams/${f.teamA}/roster`, f.people.admin)
+    const other = await row(`/teams/${comets}/roster`, f.people.admin)
+    const season = await row(`/seasons/${f.seasonA}/people`, f.people.admin)
+    // A reader who sees his full name and one who reads his team's format
+    // get the one id, which alone colours his tile.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(f.people.follower),
+        team_id: f.teamA,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const member = await row(`/teams/${f.teamA}/roster`, f.people.follower)
+    expect(member.shortName).equals('A Soriano')
+    expect(hawks.shortName).equals('Alfonso Soriano')
+    for (const entry of [hawks, other, season, member]) {
+      expect(entry.userId).equals(alfonso)
+      expect(entry).not.have.property('publicName')
+    }
+  })
+
+  it('lines each person up on the team’s roster with only that team’s family, and with the teams on a season’s list', async function () {
+    // Tim also guards a player of a team nobody here may see.
+    await user(230, 'Willie Mays')
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(230),
+        team_id: f.rookies,
+        role: 'member',
+        is_player: true
+      })
+      .execute()
+    await link(f.people.guardian, 230)
+    const lines = async (reader: number): Promise<Map<string, string>> => {
+      const response = await f.h.request(
+        'GET',
+        `/teams/${f.teamA}/roster`,
+        undefined,
+        reader
+      )
+      expect(response.status).equals(200)
+      return new Map(
+        ((await response.json()) as unknown[])
+          .map(asRosterEntry)
+          .map(row => [row.userId, row.affiliations] as const)
+      )
+    }
+    const tim = userIdOfGumbo(f.people.guardian)
+    const alfonso = userIdOfGumbo(201)
+    // The team is the page: no team is named, nor Willie, who is not on it.
+    const coach = await lines(f.people.teamCoach)
+    expect(coach.get(tim)).equals('Guardian of Alfonso Soriano')
+    expect(coach.get(alfonso)).equals('Guardians: Tim Raines')
+    expect(coach.get(userIdOfGumbo(202))).equals('')
+    // Somebody outside the team sees none of its players, so no family of
+    // one, though he sees Willie on his own team.
+    const outsider = await lines(f.people.oneTeam)
+    expect(outsider.get(alfonso)).equals('')
+    expect(outsider.get(tim)).equals('')
+    // A plain member of the team reads the public names.
+    await f.h.db
+      .insertInto('memberships')
+      .values({
+        id: makeId('membership'),
+        user_id: userIdOfGumbo(f.people.follower),
+        team_id: f.teamA,
+        role: 'member',
+        is_player: false
+      })
+      .execute()
+    const member = await lines(f.people.follower)
+    expect(member.get(tim)).equals('Guardian of Alfonso S')
+    expect(member.get(alfonso)).equals('Guardians: Tim R')
+    // A season's list names the teams the reader may see: the league's
+    // administrator sees both of Alfonso's, and not Willie's.
+    const season = await f.h.request(
+      'GET',
+      `/seasons/${f.seasonA}/people`,
+      undefined,
+      f.people.admin
+    )
+    expect(season.status).equals(200)
+    const people = ((await season.json()) as { people: unknown[] }).people.map(
+      asRosterEntry
+    )
+    expect(people.find(row => row.userId === tim)?.affiliations).equals(
+      'Guardian of Alfonso Soriano · Demo Comets, Demo Hawks'
+    )
+    expect(people.find(row => row.userId === alfonso)?.affiliations).equals(
+      'Guardians: Tim Raines · Demo Comets, Demo Hawks'
+    )
+  })
+
+  it('keeps the public label beside a name read in full only, and none beside a teammate who shares its short form', async function () {
     for (const [id, name] of [
       [61, 'Chris Sale'],
       [62, 'Chris Sabo']
@@ -911,22 +1050,22 @@ describe('roster sections', function () {
       )!
       return { shortName, nameFormat, compactName }
     }
-    // The public tells the two apart by a second letter.
+    // The public reads the two the same: each name in its format alone.
     const follower = await as(f.people.follower)
     expect([named(follower, 61), named(follower, 62)]).deep.equals([
-      { shortName: 'Chris Sal', nameFormat: undefined, compactName: undefined },
-      { shortName: 'Chris Sab', nameFormat: undefined, compactName: undefined }
+      { shortName: 'Chris S', nameFormat: undefined, compactName: undefined },
+      { shortName: 'Chris S', nameFormat: undefined, compactName: undefined }
     ])
-    // Sale's guardian reads him in full, so his own list needs no second
-    // letter for Sabo; Sabo keeps the label everyone else reads beside it.
+    // Sale's guardian reads him in full, beside the label everyone else
+    // reads; Sabo reads as the public reads him, with nothing beside.
     const guardian = await as(f.people.guardian)
     expect([named(guardian, 61), named(guardian, 62)]).deep.equals([
       {
         shortName: 'Chris Sale',
         nameFormat: 'full',
-        compactName: 'Chris Sal'
+        compactName: 'Chris S'
       },
-      { shortName: 'Chris S', nameFormat: undefined, compactName: 'Chris Sab' }
+      { shortName: 'Chris S', nameFormat: undefined, compactName: undefined }
     ])
   })
 

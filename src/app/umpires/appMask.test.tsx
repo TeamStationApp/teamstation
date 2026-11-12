@@ -40,7 +40,14 @@ it('mounts the shell with role-only mask visibility and preserves header order a
     { id: 'majors', name: 'majors', position: 0, inUse: true }
   ]
   proto.umpireRequirements = async () => [
-    { id: 'spring', name: 'Spring', logoUrl: null, requirement: null }
+    {
+      id: 'spring',
+      name: 'Spring',
+      logoUrl: null,
+      leagueId: 'lea_demo',
+      leaguePictureUrl: null,
+      requirement: null
+    }
   ]
   proto.umpirePeople = async () => [
     {

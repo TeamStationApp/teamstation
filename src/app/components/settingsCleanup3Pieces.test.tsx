@@ -109,18 +109,28 @@ describe('settings cleanup shared presentation', () => {
       await press('Cancel dialog')
       expect(calls).equals(1)
     })
-  it('uses one trimmed name for team initials/color with a readable empty-name fallback', async () => {
+  it('draws trimmed team initials on the team id’s colour, with a readable empty-name fallback', async () => {
     await mount(
       <>
-        <TeamEmblem name=" Winter Wolves " />
-        <TeamEmblem name="" />
+        <TeamEmblem teamId="tem_winterWolves" name=" Winter Wolves " />
+        <TeamEmblem teamId="tem_unnamed" name="" />
+        <TeamEmblem teamId={null} name="Draft Team" />
         <Emblem fallback="WW" />
       </>
     )
-    expect(getComputedStyle(leaf('WW').parentElement!).backgroundColor).equals(
-      rgb(teamTint('Winter Wolves'))
+    const wolves = getComputedStyle(leaf('WW').parentElement!)
+    expect(wolves.backgroundColor).equals(rgb(teamTint('tem_winterWolves')))
+    expect(wolves.backgroundColor).not.equals(rgb(teamTint('Winter Wolves')))
+    expect(getComputedStyle(leaf('T').parentElement!).backgroundColor).equals(
+      rgb(teamTint('tem_unnamed'))
     )
-    expect(leaf('T')).not.equals(undefined)
+    // A team not saved yet has no id, and so no colour of its own.
+    expect(
+      getComputedStyle(leaf('DT').parentElement!).backgroundColor
+    ).not.equals(rgb(teamTint('tem_winterWolves')))
+    expect(TEAM_TINTS.map(rgb)).not.includes(
+      getComputedStyle(leaf('DT').parentElement!).backgroundColor
+    )
     expect(new Set(TEAM_TINTS).size).equals(32)
     const colors = new Set(
       Array.from({ length: 4096 }, (_, i) => teamTint(`Team ${i}`))
@@ -145,7 +155,11 @@ describe('settings cleanup shared presentation', () => {
       const [uri, setUri] = useState('https://images.example.test/expired.png')
       return (
         <>
-          <TeamEmblem name="Winter Wolves" uri={uri} />
+          <TeamEmblem
+            teamId="tem_winterWolves"
+            name="Winter Wolves"
+            uri={uri}
+          />
           <Button
             label="New photo"
             onPress={() => {
@@ -164,7 +178,7 @@ describe('settings cleanup shared presentation', () => {
       expect(leaf('WW')).not.equals(undefined)
       expect(
         getComputedStyle(leaf('WW').parentElement!).backgroundColor
-      ).equals(rgb(teamTint('Winter Wolves')))
+      ).equals(rgb(teamTint('tem_winterWolves')))
       await press('New photo')
       expect(document.body.innerHTML).includes('replacement.png')
       expect(

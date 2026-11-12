@@ -177,12 +177,13 @@ describe('CachingClient', function () {
     await client.rosterCandidates({ teamId: 'tem_owls', limit: 30 })
     const kept = await client.cached(
       candidatesKey('tem_hawks'),
-      raw => raw as Array<{ userId: string; cursor: string }>
+      raw => raw as Array<{ userId: string; cursor?: string }>
     )
+    // An older server's cursors are not kept: the search has no pages.
     expect(kept?.map(row => [row.userId, row.cursor])).deep.equals([
-      ['usr_Aaron', 'c3'],
-      ['usr_Mike', 'c4'],
-      ['usr_Mookie', 'c1']
+      ['usr_Aaron', undefined],
+      ['usr_Mike', undefined],
+      ['usr_Mookie', undefined]
     ])
     expect(await client.cached(candidatesKey('tem_owls'), raw => raw)).equals(
       undefined

@@ -2039,6 +2039,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       <GameHeroCard
         testID="event-hero"
         onSettings={canManageSchedule ? props.onSettings : undefined}
+        awayTeamId={game.awayTeamId}
+        homeTeamId={game.homeTeamId}
         awayName={game.awayTeamName}
         homeName={game.homeTeamName}
         awayScore={game.awayScore}

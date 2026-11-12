@@ -6,7 +6,6 @@ import type { PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Card } from './Card'
-import { initialsOf } from './initials'
 import { ListRow } from './ListRow'
 
 /** Home's group row, in its own card for an unbounded search result list. */
@@ -39,9 +38,14 @@ export function GroupSearchCard({
       <View style={styles.identity}>
         <ListRow
           title={group.name}
-          teamName={group.kind === 'team' ? group.name : undefined}
-          emblem={initialsOf(group.name)}
-          emblemUri={group.imageUrl}
+          group={{
+            kind: group.kind,
+            id: group.id,
+            leagueId: group.leagueId,
+            name: group.name,
+            uri: group.imageUrl,
+            leagueUri: group.leaguePictureUrl
+          }}
           subtitle={details.length === 0 ? undefined : details.join('\n')}
           subtitleNumberOfLines={0}
           accessibilityLabel={accessibilityLabel}

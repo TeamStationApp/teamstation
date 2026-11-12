@@ -61,13 +61,17 @@ export async function publicGroup(
     .executeTakeFirst()
   if (row == null) throw notFound()
   const parentNames: string[] = []
+  let leaguePictureUrl: string | null = null
   if ('league_id' in row && row.league_id != null) {
     const parent = await db
       .selectFrom('leagues')
-      .select('name')
+      .select(['name', 'logo_path'])
       .where('id', '=', row.league_id)
       .executeTakeFirst()
     if (parent != null) parentNames.push(parent.name)
+    // A season with no picture of its own is drawn with its league's.
+    if (parent != null && ref.kind === 'season')
+      leaguePictureUrl = imageUrl(space, parent.logo_path, PROFILE_SIZE)
   }
   if (ref.kind === 'team') {
     const parents = await db
@@ -107,7 +111,8 @@ export async function publicGroup(
     endsOn: 'ends_on' in row ? calendarDateText(row.ends_on) : null,
     timezone: 'timezone' in row ? row.timezone : 'UTC',
     external: 'kind' in row && row.kind === 'external',
-    leagueId: 'league_id' in row ? row.league_id : null
+    leagueId: 'league_id' in row ? row.league_id : null,
+    leaguePictureUrl
   }
 }
 
@@ -607,16 +612,19 @@ export async function groupDetail(
       const roles = [...held.keys()]
       const placing = roles[0]
       const level = held.get(placing)
+      const unnamed = user.onboarding_step === 'name'
+      // Somebody who has not named themselves yet is named by nothing.
+      const name = unnamed
+        ? 'Staff member'
+        : publicStaffName({
+            firstName: user.first_name,
+            lastName: user.last_name,
+            displayName: user.display_name
+          })
       staff.push({
         ...(headCoach?.userId === user.id ? { isHeadCoach: true } : {}),
-        name:
-          user.onboarding_step === 'name'
-            ? 'Staff member'
-            : publicStaffName({
-                firstName: user.first_name,
-                lastName: user.last_name,
-                displayName: user.display_name
-              }),
+        userId: user.id,
+        name,
         roles,
         inheritedFrom:
           level === 'season' || level === 'league'

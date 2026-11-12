@@ -1,16 +1,21 @@
+import { mock } from 'node:test'
+
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
+import { makeId } from '../../common/ids'
 import { umpireLevelHint, umpireLevelName } from '../../common/umpires'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
+import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import {
   fixtureCounts,
   fixturePositions,
   seedUmpireTypes
 } from '../../test/umpireTypes'
+import * as access from '../access'
 import { umpireRoutes } from '../routes/umpires'
-import { people } from './admin'
+import { people, requirements } from './admin'
 
 describe('umpire levels, needs and certification', function () {
   this.timeout(60000)
@@ -125,12 +130,62 @@ describe('umpire levels, needs and certification', function () {
     expect(usage.find((l: any) => l.id === minor).inUse).equals(false)
     const rows = (await (await request('GET', 'umpire-requirements')).json())
       .seasons
+    // Each season carries its league, whose colour and picture its tile takes.
+    for (const season of rows) {
+      expect(season.leagueId).equals(f.leagueA)
+      expect(season.leaguePictureUrl).equals(null)
+    }
     expect(rows.find((s: any) => s.id === f.seasonA).requirement).deep.equals({
       levelId: major,
       levelName: 'majors',
       types: fixtureCounts(true, 2)
     })
   })
+  it("signs each season's league picture, for a season with none of its own", async () => {
+    await f.h.db
+      .updateTable('leagues')
+      .set({ logo_path: 'fixtures/league-a' })
+      .where('id', '=', f.leagueA)
+      .execute()
+    try {
+      const seasons = await requirements(f.h.db, f.leagueA, Date.now(), {
+        mediaRoot: '/tmp',
+        ffmpegPath: 'ffmpeg',
+        mediaSecret: 'secret',
+        publicUrl: 'http://127.0.0.1',
+        space: {
+          endpoint: 'https://media.example.test',
+          region: 'test',
+          bucket: 'synthetic-images',
+          accessKeyId: '00000000000000000000',
+          secretAccessKey: '0000000000000000000000000000000000000000',
+          pathStyle: true
+        }
+      })
+      expect(seasons.length).greaterThan(0)
+      for (const season of seasons) {
+        expect(season.leagueId).equals(f.leagueA)
+        const picture = new URL(String(season.leaguePictureUrl))
+        expect(picture.hostname).equals('media.example.test')
+        expect(picture.pathname.endsWith('/fixtures/league-a-96.png')).equals(
+          true
+        )
+      }
+      // Without media to sign with, nothing is signed.
+      expect(
+        (await requirements(f.h.db, f.leagueA, Date.now())).every(
+          season => season.leaguePictureUrl == null
+        )
+      ).equals(true)
+    } finally {
+      await f.h.db
+        .updateTable('leagues')
+        .set({ logo_path: null })
+        .where('id', '=', f.leagueA)
+        .execute()
+    }
+  })
+
   it('searches affiliations, grants canonical people, and preserves certifications on revoke', async () => {
     expect(
       (await (await request('GET', 'umpire-candidates?q=')).json()).people
@@ -139,6 +194,10 @@ describe('umpire levels, needs and certification', function () {
       await (await request('GET', 'umpire-candidates?q=Babe')).json()
     ).people
     expect(candidates.some((p: any) => p.id === person)).equals(true)
+    // No tile label beside the name: the tile's colour is the id's.
+    expect(candidates.find((p: any) => p.id === person)).not.have.property(
+      'publicName'
+    )
     expect(
       (await request('POST', 'umpires', { userId: person })).status
     ).equals(200)
@@ -256,5 +315,149 @@ describe('umpire levels, needs and certification', function () {
     expect((await request('DELETE', `umpire-levels/${minor}`)).status).equals(
       404
     )
+  })
+  it('finds a candidate by a surname only where the administrator reads it', async () => {
+    const member = userIdOfGumbo(131)
+    const relative = userIdOfGumbo(132)
+    for (const [id, name] of [
+      [131, 'Hank Aaron'],
+      [132, 'Eddie Mathews']
+    ] as const)
+      await insertFixtureUsers(f.h.db, {
+        id,
+        legacyId: `usr_umpire_search_${id}`,
+        display_name: name,
+        first_name: name.split(' ')[0],
+        last_name: name.split(' ')[1]
+      })
+    const added = [makeId('leagueMember'), makeId('userLink')]
+    await f.h.db
+      .insertInto('league_members')
+      .values({
+        id: added[0],
+        league_id: f.leagueA,
+        user_id: member,
+        role: 'member',
+        source: 'manual'
+      })
+      .execute()
+    // A relative of a member is in the pool, and on no list of the league's.
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: added[1],
+        user_id: member,
+        related_user_id: relative,
+        kind: 'family'
+      })
+      .execute()
+    try {
+      const found = async (q: string): Promise<Array<[string, string]>> =>
+        (
+          (await (await request('GET', `umpire-candidates?q=${q}`)).json())
+            .people as Array<{ id: string; name: string }>
+        ).map(p => [p.id, p.name])
+      expect(await found('Mathews')).deep.equals([])
+      expect(await found('Eddie')).deep.equals([[relative, 'Eddie M']])
+      expect(await found('Aaron')).deep.equals([[member, 'Hank Aaron']])
+      // Who reads in full (`mayViewFullNames`, behind `fullNamesFor`) is
+      // asked first by the search, only of the rows it matched by label or
+      // stored name, never of the league's whole pool; the lines then ask
+      // only of the family they name.
+      let asked: string[][] = []
+      const original = access.mayViewFullNames
+      const spy = mock.method(
+        access,
+        'mayViewFullNames',
+        async (...args: Parameters<typeof original>) => {
+          asked.push([...args[2]])
+          return await original(...args)
+        }
+      )
+      try {
+        for (const [q, rows] of [
+          ['Aaron', [member]],
+          ['Mathews', [relative]],
+          ['Eddie', [relative]]
+        ] as const) {
+          asked = []
+          await found(q)
+          expect(asked[0], q).deep.equals(rows)
+          expect(asked.flat(), q).not.includes(person)
+        }
+      } finally {
+        spy.mock.restore()
+      }
+    } finally {
+      await f.h.db.deleteFrom('user_links').where('id', '=', added[1]).execute()
+      await f.h.db
+        .deleteFrom('league_members')
+        .where('id', '=', added[0])
+        .execute()
+    }
+  })
+
+  it('lines each person up with the league teams and family the administrator may see', async () => {
+    const child = userIdOfGumbo(106)
+    const parent = userIdOfGumbo(103)
+    const added = [
+      makeId('membership'),
+      makeId('membership'),
+      makeId('userLink')
+    ]
+    await f.h.db
+      .insertInto('memberships')
+      .values([
+        {
+          id: added[0],
+          team_id: f.teamA,
+          user_id: child,
+          role: 'member',
+          is_player: true
+        },
+        {
+          id: added[1],
+          team_id: f.teamB,
+          user_id: child,
+          role: 'member',
+          is_player: true
+        }
+      ])
+      .execute()
+    await f.h.db
+      .insertInto('user_links')
+      .values({
+        id: added[2],
+        user_id: parent,
+        related_user_id: child,
+        kind: 'guardian'
+      })
+      .execute()
+    try {
+      const lineOf = async (q: string): Promise<unknown> =>
+        (
+          (await (await request('GET', `umpire-candidates?q=${q}`)).json())
+            .people as Array<{ affiliations: string }>
+        ).map(p => p.affiliations)
+      // The league's administrator manages Tim's team and so reads him and
+      // his guardian in full; Demo Eagles is another league's team.
+      expect(await lineOf('Mike')).deep.equals([
+        'Guardian of Tim Raines · Demo Hawks'
+      ])
+      expect(await lineOf('Tim')).deep.equals([
+        'Guardians: Mike Trout · Demo Hawks'
+      ])
+      // Read with nobody's scopes, as the save and the schedule read it,
+      // nothing private is listed.
+      expect(
+        (await people(f.h.db, f.leagueA, 'Mike')).map(p => p.affiliations)
+      ).deep.equals([''])
+    } finally {
+      await f.h.db.deleteFrom('user_links').where('id', '=', added[2]).execute()
+      await f.h.db
+        .deleteFrom('memberships')
+        .where('id', 'in', added.slice(0, 2))
+        .execute()
+    }
   })
 })

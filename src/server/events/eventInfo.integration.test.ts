@@ -295,6 +295,11 @@ describe('real event info and guardian attendance', function () {
       'Mookie B',
       'Willie M'
     ])
+    // No label for a tile beside the name: its colour is the id's.
+    for (const shown of [read, member])
+      expect(
+        shown.attendees.find(row => row.userId === userIdOfGumbo(108))
+      ).not.have.property('publicName')
     await f.h.db
       .insertInto('user_links')
       .values({

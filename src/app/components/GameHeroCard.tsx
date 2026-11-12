@@ -12,6 +12,9 @@ import { VideoPoster } from './VideoPoster'
 export interface GameHeroCardProps {
   onSettings?: () => void
   testID?: string
+  /** Each side's team id, which picks its tile's colour. */
+  awayTeamId: string
+  homeTeamId: string
   awayName: string
   homeName: string
   awayScore: number | null
@@ -225,6 +228,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
         )}
         <View style={[styles.plain, narrow && styles.plainStacked]}>
           <ScoreLine
+            teamId={props.awayTeamId}
             name={awayName}
             score={awayScore}
             record={awayRecord}
@@ -236,6 +240,7 @@ export function GameHeroCard(props: GameHeroCardProps): React.ReactElement {
           />
           {!hasMeta && <Text style={styles.plainStatus}>{status}</Text>}
           <ScoreLine
+            teamId={props.homeTeamId}
             name={homeName}
             score={homeScore}
             record={homeRecord}
@@ -328,6 +333,7 @@ function StatLines(props: {
 }
 
 function ScoreLine(props: {
+  teamId: string
   name: string
   score: number | null
   record?: string | null
@@ -362,7 +368,9 @@ function ScoreLine(props: {
   // around the row would take in the record on one of them and not the other.
   // The mark and the name are the two things Paul named, and they are the two
   // things wrapped, in both.
-  const emblem = <TeamEmblem uri={logoUrl} name={name} size={2} />
+  const emblem = (
+    <TeamEmblem teamId={props.teamId} uri={logoUrl} name={name} size={2} />
+  )
   const mark =
     onPress == null ? (
       emblem

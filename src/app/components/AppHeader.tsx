@@ -8,9 +8,9 @@ import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { BuildInfoModal } from './BuildInfoModal'
 import { ButtonIcon } from './ButtonIcon'
-import { Emblem } from './Emblem'
 import { GlassView } from './GlassView'
 import { HeaderMenu, type HeaderMenuItem } from './HeaderMenu'
+import { PersonEmblem } from './PersonEmblem'
 import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -41,6 +41,7 @@ export interface AppHeaderProps {
   navMinWidth?: number
   /** The signed-in person, whose picture at the right opens their menu. */
   account?: {
+    userId: string
     name: string
     avatarUrl?: string | null
     onPress: () => void
@@ -103,11 +104,12 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
     setAbout(true)
   }
   const picture = account != null && (
-    <Emblem
+    // The account's id, so its tile is the colour its rows are.
+    <PersonEmblem
       key={account.avatarUrl}
+      userId={account.userId}
+      name={account.name}
       uri={account.avatarUrl}
-      fallback={initials(account.name)}
-      shape="circle"
       size={2}
     />
   )
@@ -326,15 +328,6 @@ function PendingDot(props: { testID: string }): React.ReactElement {
       }}
     />
   )
-}
-
-/** Local rather than imported, to keep the header free of a component cycle. */
-function initials(name: string): string {
-  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
-  return words
-    .slice(0, 2)
-    .map(word => word[0]?.toUpperCase() ?? '')
-    .join('')
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({

@@ -11,7 +11,7 @@ import {
 import type { GroupRef } from '../../common/groupCreation'
 import { asRole, type Role, ROLE_FLAGS } from '../../common/roles'
 import { asUserId } from '../../common/userId'
-import { seesPeopleOf } from '../access'
+import { seesPeopleOf, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -95,7 +95,8 @@ export function peopleRoutes(
           media.space,
           ref,
           actor,
-          readerOf(req.actor)
+          readerOf(req.actor),
+          await visibleScopes(db, actor.userId, actor.isAdmin)
         )
         if (people == null) throw notFound()
         const manages = await canManagePeople(db, actor, ref)

@@ -223,8 +223,12 @@ export function TeamSelectorScene({
                       accessibilityLabel={`Choose ${row.name}`}
                       selected={row.id === currentId}
                       disabled={choosing}
-                      teamName={row.name}
-                      emblemUri={row.imageUrl}
+                      group={{
+                        kind: 'team',
+                        id: row.id,
+                        name: row.name,
+                        uri: row.imageUrl
+                      }}
                       title={row.name}
                       subtitle={
                         teamRowContext(row) === ''

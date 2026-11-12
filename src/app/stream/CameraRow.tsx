@@ -5,7 +5,7 @@ import type { LiveStream } from '../../common/api'
 import { Button } from '../components/Button'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { Emblem } from '../components/Emblem'
-import { initialsOf } from '../components/initials'
+import { PersonEmblem } from '../components/PersonEmblem'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -67,10 +67,10 @@ export function CameraRow(props: CameraRowProps): React.ReactElement {
         {mine ? (
           <Emblem fallback="" icon="videocam" />
         ) : (
-          <Emblem
+          <PersonEmblem
+            userId={stream.userId}
+            name={stream.ownerName}
             uri={stream.ownerPicture}
-            fallback={initialsOf(stream.ownerName)}
-            shape="circle"
           />
         )}
         <View style={styles.words}>

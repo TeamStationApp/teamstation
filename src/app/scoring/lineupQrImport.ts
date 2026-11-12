@@ -61,8 +61,9 @@ export function scannedJersey(jersey: string): string {
 }
 
 /**
- * Whether a TeamStation short name ("Jordan P", or "Jordan Pu" where two
- * would collide) is this first name and the start of this last name.
+ * Whether a TeamStation short name ("Jordan P", or a longer start of the last
+ * name, as a label stored before every name was written in its format alone
+ * may read) is this first name and the start of this last name.
  */
 function shortNameMatches(
   short: string,

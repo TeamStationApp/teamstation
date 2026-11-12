@@ -421,6 +421,13 @@ export const asChatConversation = asObject({
   /** The scope's own identity; absent on older servers and for DMs. */
   avatarName: asOptional(asNullable(asString), null),
   avatarUrl: asOptional(asNullable(asString), null),
+  /**
+   * A season chat's league, whose colour its tile takes, and the league's
+   * signed picture, drawn when the season has none; null for the rest and
+   * absent on older servers.
+   */
+  leagueId: asOptional(asNullable(asString), null),
+  leaguePictureUrl: asOptional(asNullable(asString), null),
   lastSeq: asNumber,
   /** When the newest message was posted, ISO; null before the first. */
   lastMessageAt: asNullable(asString),
@@ -450,7 +457,7 @@ export const asChatConversation = asObject({
 export type ChatConversation = ReturnType<typeof asChatConversation>
 
 /** One member of a chat, from `GET /chat/conversations/:id/members`. */
-export const asChatMember = asObject({
+const cleanChatMember = asObject({
   userId: asUserId,
   shortName: asString,
   /**
@@ -461,6 +468,12 @@ export const asChatMember = asObject({
   avatarUrl: asNullable(asString),
   /** How they stand in the chat, such as "Coach · Guardian". */
   label: asString,
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, ''),
   isModerator: asBoolean,
   isApprover: asBoolean,
   /** Has an identity and is not waiting for reset approval here. */
@@ -472,11 +485,12 @@ export const asChatMember = asObject({
   generation: asNullable(asNumber)
 })
 export type ChatMember = Omit<
-  ReturnType<typeof asChatMember>,
+  ReturnType<typeof cleanChatMember>,
   'compactName'
 > & {
   compactName?: string
 }
+export const asChatMember: Cleaner<ChatMember> = cleanChatMember
 
 /**
  * One row of a chat's hash-chained membership log. `prevHash` and `hash` are
@@ -495,7 +509,7 @@ export const asChatLogRow = asObject({
 export type ChatLogRow = ReturnType<typeof asChatLogRow>
 
 /** Somebody the caller may name in a DM, from `GET /chat/dm-candidates`. */
-export const asChatPerson = asObject({
+const cleanChatPerson = asObject({
   userId: asUserId,
   shortName: asString,
   /**
@@ -503,14 +517,21 @@ export const asChatPerson = asObject({
    * what the reader writes to others, such as a mention's label.
    */
   compactName: asOptional(asString),
-  avatarUrl: asNullable(asString)
+  avatarUrl: asNullable(asString),
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, '')
 })
 export type ChatPerson = Omit<
-  ReturnType<typeof asChatPerson>,
+  ReturnType<typeof cleanChatPerson>,
   'compactName'
 > & {
   compactName?: string
 }
+export const asChatPerson: Cleaner<ChatPerson> = cleanChatPerson
 
 export const asChatBlock = asObject({
   userId: asUserId,
@@ -1473,7 +1494,7 @@ const cleanRosterEntry = asObject({
   gumboId: asOptional(asNullable(asGumboId), null),
   /**
    * The name as this reader reads it: the full name for somebody the reader
-   * may read in full (`mayEditName`), and otherwise the public name, first
+   * may read in full (`mayViewFullNames`), and otherwise the public name, first
    * name and last initial unless the team has chosen another format.
    */
   shortName: asString,
@@ -1533,7 +1554,13 @@ const cleanRosterEntry = asObject({
    * Under a family member, the players on this list they are a guardian of,
    * by the names the list gives them; absent for everybody else.
    */
-  guardianOf: asOptional(asArray(asString))
+  guardianOf: asOptional(asArray(asString)),
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, '')
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
@@ -1766,8 +1793,9 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
  * One person, for their own page.
  *
  * `name` is the person's full name for a reader who may read it
- * (`mayEditName`: a guardian, the player, the staff of a team they play on),
- * and the public short form — `Jordan P` — for everybody else. The halves are
+ * (`mayViewFullNames`: a guardian, the player, the staff of a team they play
+ * on, a people manager of a level whose people list holds them), and the
+ * public short form — `Jordan P` — for everybody else. The halves are
  * fetched separately, by `playerName`, when somebody who may change them
  * opens the name field.
  *
@@ -1946,7 +1974,12 @@ export const asSeasonSummary = asObject({
    * The season's mark, from the organisation it was imported from. Signed and
    * short-lived, like every other picture the app is given.
    */
-  logoUrl: asOptional(asNullable(asString), null)
+  logoUrl: asOptional(asNullable(asString), null),
+  /**
+   * The league's picture, signed, which the season is drawn with when it has
+   * none of its own; null without a league. Absent on older servers.
+   */
+  leaguePictureUrl: asOptional(asNullable(asString), null)
 })
 export type SeasonSummary = ReturnType<typeof asSeasonSummary>
 
@@ -2181,10 +2214,11 @@ export interface RosterCandidate {
   bats: 'left' | 'right' | 'switch' | null
   throws: 'left' | 'right' | null
   teams: Array<{ teamId: string; name: string }>
+  /** Their affiliation line, as the reader may see it; empty for nothing. */
+  affiliations: string
   tier: 'mine' | 'season' | 'league' | 'other'
-  cursor: string
 }
-export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
+const cleanRosterCandidate = asObject({
   userId: asString,
   gumboId: asNullable(asNumber),
   externalIds: asArray(asString),
@@ -2197,14 +2231,18 @@ export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
   bats: asBats,
   throws: asThrows,
   teams: asArray(asObject({ teamId: asString, name: asString })),
+  affiliations: asOptional(asString, ''),
   tier: asEither(
     asLiteral('mine'),
     asLiteral('season'),
     asLiteral('league'),
     asLiteral('other')
-  ),
-  cursor: asString
+  )
 })
+export const asRosterCandidate: Cleaner<RosterCandidate> = cleanRosterCandidate
+
+/** The most rows one roster search answers: there are no further pages. */
+export const ROSTER_CANDIDATE_MAX = 100
 
 /**
  * An existing player's add: their entry, with the notice their side was sent
@@ -2246,7 +2284,7 @@ const cleanUserMatch = asObject({
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
-  /** `Jordan P`, told apart from anybody else in the same answer. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: asOptional(asString),
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: asOptional(asNullable(asString), null)
@@ -2330,8 +2368,9 @@ export function canDeleteCameraVideo(stream: {
 const cleanLiveStream = asObject({
   id: asString,
   gameId: asString,
-  /** Whose camera it is, and what they are called. */
+  /** Whose camera it is. */
   userId: asUserId,
+  /** What the reader calls them: whole only for whom they may read in full. */
   ownerName: asString,
   /** Which of that person's four, and what they call it. */
   slot: asNumber,
@@ -2506,6 +2545,9 @@ export const asLiveNow = asObject({
   videoId: asString,
   gameId: asString,
   title: asString,
+  /** The teams' ids, for their tiles' colours; absent on older servers. */
+  homeTeamId: asOptional(asString, ''),
+  awayTeamId: asOptional(asString, ''),
   homeTeamName: asString,
   awayTeamName: asString,
   startedAt: asNullable(asString),
@@ -2659,7 +2701,7 @@ export type RoleGrant = ReturnType<typeof asRoleGrant>
  * and who also joined the league holds two, and an administrator who removes
  * one and sees nothing change has been told a half-truth.
  */
-export const asScopePerson = asObject({
+const cleanScopePerson = asObject({
   userId: asUserId,
   displayName: asString,
   emails: asArray(asString),
@@ -2690,6 +2732,7 @@ export const asScopePerson = asObject({
   lastSignInAt: asNullable(asString),
   lastSeenAt: asNullable(asString)
 })
+export const asScopePerson = cleanScopePerson
 type ScopePersonFromPage = ReturnType<typeof asScopePerson>
 export type ScopePerson = Omit<
   ScopePersonFromPage,
@@ -5136,21 +5179,31 @@ export class TeamStationClient {
     })
   }
 
-  async onboarding(): Promise<{ displayName: string; onboarding: Onboarding }> {
+  async onboarding(): Promise<{
+    displayName: string
+    onboarding: Onboarding
+  }> {
     return await this.request(
       'GET',
       '/me/onboarding',
-      asObject({ displayName: asString, onboarding: asOnboarding })
+      asObject({
+        displayName: asString,
+        onboarding: asOnboarding
+      })
     )
   }
 
-  async saveOnboardingName(
+  async saveOnboardingName(displayName: string): Promise<{
     displayName: string
-  ): Promise<{ displayName: string; onboarding: Onboarding }> {
+    onboarding: Onboarding
+  }> {
     return await this.request(
       'PUT',
       '/me/onboarding/name',
-      asObject({ displayName: asString, onboarding: asOnboarding }),
+      asObject({
+        displayName: asString,
+        onboarding: asOnboarding
+      }),
       { displayName }
     )
   }
@@ -6333,20 +6386,24 @@ export class TeamStationClient {
 
   /**
    * The players a roster manager may add to a team, or to its side of a
-   * game, nearest first, a page at a time (`GET /users?forTeam=`).
+   * game, nearest first (`GET /users?forTeam=`): one answer per search, of
+   * at most `ROSTER_CANDIDATE_MAX`, with no further pages. `capped` sends
+   * `capped=1`: the caller tells the user when the answer is full, so the
+   * server reads its `limit`. Without it the server answers the whole
+   * `ROSTER_CANDIDATE_MAX`, as installed builds that page on need.
    */
   async rosterCandidates(ask: {
     teamId: string
     gameId?: string
     q?: string
-    after?: string
     limit?: number
+    capped?: boolean
     signal?: AbortSignal
   }): Promise<RosterCandidate[]> {
     const params = new URLSearchParams({ forTeam: ask.teamId })
     if (ask.gameId != null) params.set('forGame', ask.gameId)
     if (ask.q != null && ask.q !== '') params.set('q', ask.q)
-    if (ask.after != null) params.set('after', ask.after)
+    if (ask.capped === true) params.set('capped', '1')
     if (ask.limit != null) params.set('limit', String(ask.limit))
     return await this.request(
       'GET',

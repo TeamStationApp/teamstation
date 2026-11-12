@@ -6,6 +6,7 @@ import {
   UMPIRE_LEADERBOARD_MAX_PAGE,
   type UmpireLeaderboardQuery
 } from '../../common/umpireSchedule'
+import { visibleScopes } from '../access'
 import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -272,7 +273,8 @@ export function umpireRoutes(
           league,
           String(req.query.q ?? ''),
           media,
-          readerOf(req.actor)
+          readerOf(req.actor),
+          await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
         )
       }
     }
@@ -283,7 +285,8 @@ export function umpireRoutes(
       league,
       undefined,
       media,
-      readerOf(req.actor)
+      readerOf(req.actor),
+      await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
     )
   }))
   manage('put', '/leagues/:leagueId/umpires', async (trx, league, req) => {
@@ -294,7 +297,8 @@ export function umpireRoutes(
         league,
         undefined,
         media,
-        readerOf(req.actor)
+        readerOf(req.actor),
+        await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
       )
     }
   })

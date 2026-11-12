@@ -1273,7 +1273,7 @@ describe('a team’s people by external id', function () {
           userId,
           gumboId: players[0].gumboId,
           externalIds: ['found-1'],
-          // The site administrator reads him in full.
+          // The site administrator reads him in full; his tile, the label.
           shortName: 'Ken Macha',
           avatarUrl: null
         }

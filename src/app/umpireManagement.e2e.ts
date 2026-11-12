@@ -262,13 +262,15 @@ async function main(): Promise<void> {
             await open(settings)
             await tap(m, 'Manage Umpires')
             await fill(m, 'Search affiliated people', 'Uma')
-            await contains(page, 'Uma L')
+            // The league's administrator manages its people, Uma among
+            // them as a guardian of a player of its team: she reads in full.
+            await contains(page, 'Uma Lee')
             await shot('candidate-row.png')
-            await tap(m, 'Uma L')
-            await m.tapOn({ text: 'Uma L, minors, Field', role: 'button' })
+            await tap(m, 'Uma Lee')
+            await m.tapOn({ text: 'Uma Lee, minors, Field', role: 'button' })
             await page.waitForFunction(() => {
               const cell = document.querySelector(
-                '[aria-label="Uma L, minors, Field"]'
+                '[aria-label="Uma Lee, minors, Field"]'
               )
               return (
                 cell !== null && cell.getAttribute('aria-pressed') === 'true'
@@ -397,10 +399,11 @@ async function main(): Promise<void> {
           await contains(page, 'Go to profile page')
           expect(await page.$('[aria-label="Remove assignment"]')).equals(null)
           await tap(m, 'Cancel')
+          // The league's administrator reads its umpire in full.
           await signIn(101, `/umpires/${f.leagueA}?view=league`)
-          await contains(page, 'Uma L')
+          await contains(page, 'Uma Lee')
           await m.tapOn({
-            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
+            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma Lee, uty_plate:1"]'
           })
           await contains(page, 'Uma Lee')
           await contains(page, 'Remove assignment')

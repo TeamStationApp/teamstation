@@ -98,23 +98,13 @@ describe('a list of names', function () {
     expect(names.get('2')).equals('Casey M')
   })
 
-  it('takes another letter when two would read the same', function () {
+  it('writes two names that share a short form the same', function () {
     const names = shortNames([
-      person('1', 'Jordan', 'Pujols'),
-      person('2', 'Jordan', 'Palmeiro')
+      person('1', 'Josh', 'Smith'),
+      person('2', 'Josh', 'Staumont')
     ])
-    expect(names.get('1')).equals('Jordan Pu')
-    expect(names.get('2')).equals('Jordan Pa')
-  })
-
-  it('takes as many letters as it needs', function () {
-    const names = shortNames([
-      person('1', 'Jordan', 'Palmeiro'),
-      person('2', 'Jordan', 'Palms')
-    ])
-    // `Palm` is still shared, so it takes one more: `Palme` and `Palms`.
-    expect(names.get('1')).equals('Jordan Palme')
-    expect(names.get('2')).equals('Jordan Palms')
+    expect(names.get('1')).equals('Josh S')
+    expect(names.get('2')).equals('Josh S')
   })
 
   it('does not invent a difference between two of the same name', function () {
@@ -128,7 +118,7 @@ describe('a list of names', function () {
 })
 
 describe('the same person listed twice', function () {
-  it('is one person, not a collision with themselves', function () {
+  it('is written once, as one person', function () {
     const twice = person('1', 'Henry', 'Hicks')
     const names = shortNames([twice, twice, person('2', 'Casey', 'Mize')])
     expect(names.get('1')).equals('Henry H')
@@ -139,9 +129,9 @@ describe('the same person listed twice', function () {
 describe('a short name in two halves', function () {
   it('splits where the short name was built, and keeps a name with no first half whole', function () {
     const jordan = person('a', 'Jordan', 'Palmeiro')
-    expect(shortParts(jordan, 'Jordan Pa')).deep.equals({
+    expect(shortParts(jordan, 'Jordan P')).deep.equals({
       first: 'Jordan',
-      last: 'Pa'
+      last: 'P'
     })
     expect(
       shortParts({ id: 'b', displayName: 'Ichiro' }, 'Ichiro')
@@ -149,6 +139,18 @@ describe('a short name in two halves', function () {
     expect(shortParts(person('c', '', 'Suzuki'), 'Suzuki')).deep.equals({
       first: '',
       last: 'Suzuki'
+    })
+  })
+
+  it('splits a row label that shares its short form with another, as the row reads it', function () {
+    const names = shortNames([
+      person('a', 'Josh', 'Smith'),
+      person('b', 'Josh', 'Staumont')
+    ])
+    const josh = person('b', 'Josh', 'Staumont')
+    expect(shortParts(josh, names.get('b')!)).deep.equals({
+      first: 'Josh',
+      last: 'S'
     })
   })
 
@@ -233,28 +235,26 @@ describe('a list in public formats', function () {
     ).deep.equals(shortNames(people))
   })
 
-  it('lengthens the given name of a first initial and last name', function () {
-    const names = formatNames([
-      entry('1', 'Alex', 'Lee', 'initialLast'),
-      entry('2', 'Amy', 'Lee', 'initialLast')
+  it('writes two names that share a short form the same in every abbreviating format', function () {
+    const josh = (format: PlayerNamePrivacy): Map<string | number, string> =>
+      formatNames([
+        entry('1', 'Josh', 'Smith', format),
+        entry('2', 'Josh', 'Staumont', format)
+      ])
+    expect([...josh('firstLastInitial').values()]).deep.equals([
+      'Josh S',
+      'Josh S'
     ])
-    expect(names.get('1')).equals('Al Lee')
-    expect(names.get('2')).equals('Am Lee')
-  })
-
-  it('lengthens initials by the given name, then the surname', function () {
-    const given = formatNames([
-      entry('1', 'Alex', 'Lee', 'initials'),
-      entry('2', 'Amy', 'Lopez', 'initials')
+    expect([...josh('initials').values()]).deep.equals(['J S', 'J S'])
+    expect([...josh('full').values()]).deep.equals([
+      'Josh Smith',
+      'Josh Staumont'
     ])
-    expect(given.get('1')).equals('Al L')
-    expect(given.get('2')).equals('Am L')
-    const surname = formatNames([
-      entry('1', 'Al', 'Lee', 'initials'),
-      entry('2', 'Al', 'Lopez', 'initials')
+    const smith = formatNames([
+      entry('1', 'Lee', 'Smith', 'initialLast'),
+      entry('2', 'Lonnie', 'Smith', 'initialLast')
     ])
-    expect(surname.get('1')).equals('Al Le')
-    expect(surname.get('2')).equals('Al Lo')
+    expect([...smith.values()]).deep.equals(['L Smith', 'L Smith'])
   })
 
   it('leaves two identical full names identical', function () {
@@ -266,26 +266,21 @@ describe('a list in public formats', function () {
     expect(names.get('2')).equals('Alex Lee')
   })
 
-  it('breaks a collision across formats', function () {
+  it('writes each name in its own format, across formats, alone', function () {
     const names = formatNames([
-      entry('1', 'Alex', 'Lee', 'initials'),
-      entry('2', 'Amy', 'Lopez', 'initialLast'),
-      entry('3', 'A', 'L', 'firstLastInitial')
+      entry('1', 'Lee', 'Smith', 'initials'),
+      entry('2', 'Lonnie', 'Smith', 'initialLast'),
+      entry('3', 'L', 'S', 'firstLastInitial'),
+      entry('4', 'Josh', 'Smith', 'firstLastInitial'),
+      entry('5', 'Josh', 'Staumont', 'full')
     ])
-    expect(names.get('1')).equals('Al L')
-    expect(names.get('3')).equals('A L')
-    expect(names.get('2')).equals('A Lopez')
-  })
-
-  it('breaks a collision on opposite teams of one box score', function () {
-    const names = formatNames([
-      entry('1', 'Jordan', 'Pujols', 'firstLastInitial'),
-      entry('2', 'Jordan', 'Palmeiro', 'firstLastInitial'),
-      entry('3', 'Casey', 'Mize', 'full')
-    ])
-    expect(names.get('1')).equals('Jordan Pu')
-    expect(names.get('2')).equals('Jordan Pa')
-    expect(names.get('3')).equals('Casey Mize')
+    expect(Object.fromEntries(names)).deep.equals({
+      1: 'L S',
+      2: 'L Smith',
+      3: 'L S',
+      4: 'Josh S',
+      5: 'Josh Staumont'
+    })
   })
 
   it('writes somebody listed in two formats in the more restrictive', function () {
@@ -296,40 +291,28 @@ describe('a list in public formats', function () {
     expect(names.get('1')).equals('A L')
   })
 
-  it('goes on when a lengthened name lands on another', function () {
+  it('keeps the most restrictive format of somebody listed twice beside a twin', function () {
     const names = formatNames([
-      entry('1', 'Alex', 'Lee', 'initials'),
-      entry('2', 'Amy', 'Lin', 'initials'),
-      entry('3', 'Al', 'Lu', 'firstLastInitial')
+      entry('1', 'Josh', 'Smith', 'full'),
+      entry('2', 'Josh', 'Staumont', 'firstLastInitial'),
+      entry('1', 'Josh', 'Smith', 'firstLastInitial')
     ])
-    expect(new Set(names.values()).size).equals(3)
-  })
-
-  it('ends, with nobody left identical, whatever the mix', function () {
-    const names = formatNames([
-      entry('1', 'Ann', 'Le', 'firstLastInitial'),
-      entry('2', 'Ann', 'Leonard', 'firstLastInitial'),
-      entry('3', 'Ann', 'L', 'firstLastInitial'),
-      entry('4', 'Ann', 'Leo', 'full')
-    ])
-    expect(names.size).equals(4)
-    const mixed = formatNames([
-      entry('1', 'Alan', 'Lindsey', 'initials'),
-      entry('2', 'Alan', 'Lopez', 'initials'),
-      entry('3', 'Alan', 'Lin', 'firstLastInitial'),
-      entry('4', 'Alan', 'Long', 'firstLastInitial')
-    ])
-    expect(new Set(mixed.values()).size).equals(4)
+    expect(names.size).equals(2)
+    expect(names.get('1')).equals('Josh S')
+    expect(names.get('2')).equals('Josh S')
   })
 
   it('gives a model no surname for somebody with no first name', function () {
     const names = formatNames([entry('1', '', 'Pujols', 'firstLastInitial')], {
-      lengthen: false
+      spoken: true
     })
     expect(names.get('1')).equals('P')
+    expect(
+      formatNames([entry('1', '', 'Pujols', 'firstLastInitial')]).get('1')
+    ).equals('Pujols')
   })
 
-  it('adds no letter to a list going to a model', function () {
+  it('gives a model each name in its format, twins alike', function () {
     const names = formatNames(
       [
         entry('1', 'Alex', 'Lee', 'firstLastInitial'),
@@ -337,7 +320,7 @@ describe('a list in public formats', function () {
         entry('3', 'Al', 'Lim', 'initials'),
         entry('4', 'Amy', 'Lopez', 'initials')
       ],
-      { lengthen: false }
+      { spoken: true }
     )
     expect(names.get('1')).equals('Alex L')
     expect(names.get('2')).equals('Alex L')

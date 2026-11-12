@@ -4,40 +4,51 @@ import { Pressable, Text, View } from 'react-native'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { ButtonIcon } from './ButtonIcon'
 import { Card } from './Card'
-import { Emblem } from './Emblem'
-import { initialsOf } from './initials'
-import { TeamEmblem } from './TeamEmblem'
+import { GroupEmblem } from './GroupEmblem'
+import { PersonEmblem, type PersonEmblemProps } from './PersonEmblem'
+import type { GroupTileSource } from './teamTile'
 
 export function HeroCard({
   name,
   secondary,
   uri,
-  person = false,
-  team = false,
   onEdit,
-  disabled = false
+  disabled = false,
+  ...identity
 }: {
   name: string
   secondary?: string | null
   uri?: string | null
-  person?: boolean
-  team?: boolean
   onEdit?: () => void
   disabled?: boolean
-}): React.ReactElement {
+} & (
+  | {
+      /**
+       * A person, drawn as their tile (`PersonEmblem`): a circle with the
+       * initials of `name` on the colour their account id gives them.
+       */
+      person: Pick<PersonEmblemProps, 'userId'>
+      group?: undefined
+    }
+  | {
+      person?: undefined
+      /**
+       * A team, league or season, drawn as its tile (`GroupEmblem`); `uri` is
+       * still its own picture, so a season without one is offered `Add
+       * picture` while its league's is drawn.
+       */
+      group: Omit<GroupTileSource, 'name' | 'uri'>
+    }
+)): React.ReactElement {
   const styles = getStyles(useTheme())
-  const emblem = team ? (
-    <TeamEmblem name={name} uri={uri} size={3.5} />
-  ) : (
-    <Emblem
-      key={uri}
-      uri={uri}
-      fallback={initialsOf(name)}
-      shape={person ? 'circle' : 'rounded'}
-      size={3.5}
-    />
-  )
-  const label = `${uri == null || uri === '' ? 'Add' : 'Change'} ${person ? 'photo' : 'picture'}`
+  const { person, group } = identity
+  const emblem =
+    person != null ? (
+      <PersonEmblem key={uri} {...person} name={name} uri={uri} size={3.5} />
+    ) : (
+      <GroupEmblem {...group} name={name} uri={uri} size={3.5} />
+    )
+  const label = `${uri == null || uri === '' ? 'Add' : 'Change'} ${person != null ? 'photo' : 'picture'}`
   return (
     <Card style={styles.card}>
       {onEdit == null ? (

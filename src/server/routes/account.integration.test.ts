@@ -166,6 +166,56 @@ describe('account settings HTTP API', function () {
       ).last_name
     ).equals(null)
   })
+  it('names the session by the account id its roster row carries, with no label, on every session answer', async () => {
+    const before = await h.db
+      .selectFrom('teams')
+      .select('player_name_privacy')
+      .where('id', '=', 'tem_account')
+      .executeTakeFirstOrThrow()
+    // Their team writes initials, so the roster's name is not the session's.
+    await h.db
+      .updateTable('teams')
+      .set({ player_name_privacy: 'initials' })
+      .where('id', '=', 'tem_account')
+      .execute()
+    try {
+      const roster = (await (
+        await h.request('GET', '/teams/tem_account/roster')
+      ).json()) as Array<Record<string, unknown>>
+      const row = roster.find(entry => entry.userId === userIdOfGumbo(101))
+      const me = (await (await h.request('GET', '/auth/me')).json()) as Record<
+        string,
+        unknown
+      >
+      // The header's tile and the row's are one colour: one id, no label.
+      expect(me.id).equals(row?.userId)
+      expect(row).not.have.property('publicName')
+      expect(me).not.have.property('publicName')
+      expect((await read()).user).not.have.property('publicName')
+      const email = 'alex@example.com'
+      expect(
+        (await h.request('POST', '/auth/email-code', { email }, null)).status
+      ).equals(202)
+      const signedIn = await h.request(
+        'POST',
+        '/auth/email-code/verify',
+        { email, code: h.mail.get(email) },
+        null
+      )
+      expect(signedIn.status).equals(200)
+      const session = (await signedIn.json()) as {
+        user: Record<string, unknown>
+      }
+      expect(session.user.id).equals(row?.userId)
+      expect(session.user).not.have.property('publicName')
+    } finally {
+      await h.db
+        .updateTable('teams')
+        .set({ player_name_privacy: before.player_name_privacy })
+        .where('id', '=', 'tem_account')
+        .execute()
+    }
+  })
   it('uploads both profile renditions through the Space and preserves pictures on failure', async () => {
     expect(
       (await h.request('PUT', ROOT + '/photo', { image: accountTestPicture }))

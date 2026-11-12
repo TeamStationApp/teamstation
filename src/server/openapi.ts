@@ -2822,7 +2822,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'section',
             'staffRoles',
             'inheritedFrom',
-            'walkUpSong'
+            'walkUpSong',
+            'affiliations'
           ],
           description:
             'One person on a team\u2019s roster. Somebody listed without a ' +
@@ -2972,6 +2973,17 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'For a family member, the names this list gives the players on ' +
                 'it they are a parent or guardian of. Absent for everybody ' +
                 'else.'
+            },
+            affiliations: {
+              type: 'string',
+              description:
+                'The line under the name: `Guardian of <players>`, ' +
+                '`Guardians: <names>` and their teams, joined by ` \u00b7 `, ' +
+                'naming only the teams and people the caller may see, in full ' +
+                'for whoever the caller may read in full (`mayViewFullNames`). ' +
+                'On a team\u2019s roster it names no team, and only guardians ' +
+                'of, or guarded players on, that team. Empty when nothing is ' +
+                'visible.'
             }
           }
         },
@@ -3870,7 +3882,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the latest game start comes first, a row with no game last, ' +
             'then name, then id. Each entry has `direct` and `source` ' +
             '(`member` or `follow`). A follow whose group is gone is left ' +
-            'out. The five-row window is the client\u2019s.',
+            'out. The five-row window is the client\u2019s. A member ' +
+            'season carries `leagueId` and `leaguePictureUrl`, its ' +
+            'league\u2019s signed picture (null without one), as a followed ' +
+            'season\u2019s public group does.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -4907,7 +4922,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`replayable` is whether anything TeamStation scored is stored ' +
             'for the game — a play carrying its `teamStation` record, or a ' +
             'recorded at-bat in progress — so it can be replayed. ' +
-            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null). Names are abbreviated.',
+            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -6802,7 +6817,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`team` may be repeated, and narrows the list to the seasons ' +
             'those teams play in. Asked that way, a season the caller may ' +
             'schedule games in counts as one they may see. Leaving it out ' +
-            'lists every season the caller may watch.',
+            'lists every season the caller may watch. `leagueId` is the ' +
+            'season\u2019s league or null, and `leaguePictureUrl` that ' +
+            'league\u2019s signed picture (null without one), which a season ' +
+            'with no `logoUrl` of its own is drawn with.',
           security: [{}, { bearer: [] }],
           parameters: [
             {
@@ -7042,7 +7060,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
-            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayEditName permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
+            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayViewFullNames permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and the affiliation line: the guarded players, guardians and teams the caller may see, named as the caller may read them, empty when none is visible; prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
             'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
@@ -7074,7 +7092,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Players already on the team, and with `forGame` ' +
             'anybody already in that game, are left out. Each row adds ' +
             '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
-            'in a season ending today or later), `tier` and `cursor`, and ' +
+            'in a season ending today or later), `affiliations` (the line ' +
+            'under the name, as on the account search), `tier` and `cursor` ' +
+            '(always empty: the search answers once, at most 100 rows, with ' +
+            'no further pages, and a request with `after` answers `[]`), and ' +
             'nothing else about the person; `nameFormat` when `shortName` is ' +
             'not in the built-in format, and beside a name full only for the ' +
             'asker, the public name in `compactName` (its format in ' +
@@ -7165,16 +7186,28 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
-              schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 100
+              },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default 30, maximum 50.'
+                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100.'
+            },
+            {
+              name: 'capped',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is up to 100 whatever limit says, for installed builds that send limit=30 and page on with after.'
             },
             {
               name: 'after',
               in: 'query',
               schema: { type: 'string' },
               description:
-                'With forTeam: the cursor of the last row of the previous page.'
+                'With forTeam: the search has no further pages, so a request with after answers []. Installed builds send it to scroll on.'
             },
             {
               name: 'guardedBy',
@@ -7188,7 +7221,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'By externalId, in user id order; by guardedBy, by short name. Empty when nobody matches'
+                'By externalId, in user id order; by guardedBy, by short name; by forTeam, a bare array of at most 100, nearest first. Empty when nobody matches'
             },
             400: errorResponse,
             401: errorResponse
@@ -7312,7 +7345,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'name. Anybody signed in who is not a member of the team (the ' +
             'non-member view) reads the same roster, followers included, ' +
             'with `avatarUrl` null on every entry. ' +
-            'Somebody the caller may read in full (`mayEditName`) is named in ' +
+            'Somebody the caller may read in full (`mayViewFullNames`) is named in ' +
             "full, with the public name in `compactName` (its format in `compactFormat`); everybody else follows the team's player name privacy, a first name and last " +
             'initial by default, and a row in another format says so in ' +
             '`nameFormat`. includeFullNames=true ' +
@@ -7579,7 +7612,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
             'including a deleted post; edits, reactions and preferences do not change post recency. ' +
             'Additive `avatarName` and `avatarUrl` describe the scope’s own identity ' +
-            'and signed image URL, or null for a DM. DM people have an optional ' +
+            'and signed image URL, or null for a DM. Additive `leagueId` and ' +
+            '`leaguePictureUrl` are a season chat\u2019s league and its signed ' +
+            'picture, which its tile falls back on; null for every other chat. ' +
+            'DM people have an optional ' +
             '`avatarUrl`, null for former members. Older responses may omit these fields.',
           security: [{ bearer: [] }],
           responses: {
@@ -7680,10 +7716,13 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A chat's members",
           description:
             'For members only; anybody else gets 404. Each is `{userId, ' +
-            'shortName, compactName?, avatarUrl, label, isModerator, ' +
-            'isApprover, eligible, hasIdentity, identityKey, generation}`. ' +
+            'shortName, compactName?, avatarUrl, label, affiliations, ' +
+            'isModerator, isApprover, eligible, hasIdentity, identityKey, ' +
+            'generation}`. ' +
             '`shortName` is full for somebody the caller may read in full; ' +
-            '`compactName` is then the public label, what a mention writes.',
+            '`compactName` is then the public label, what a mention writes. ' +
+            '`affiliations` is the line under the name: the guarded players, ' +
+            'guardians and teams the caller may see, empty when none is.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
           responses: {
@@ -7739,8 +7778,10 @@ export function openApiDocument(version: string): OpenApiDocument {
           description:
             'Exactly those the DM rules let the caller name, whose name holds ' +
             '`q`, at most 50: `{userId, shortName, compactName?, ' +
-            'avatarUrl}`, `compactName` the public label beside a full ' +
-            '`shortName`. Empty for ' +
+            'avatarUrl, affiliations}`, `compactName` the public label beside a full ' +
+            '`shortName`, `affiliations` the line under the name (guarded ' +
+            'players, guardians and teams the caller may see, empty when none ' +
+            'is). Empty for ' +
             'somebody whose only tie is following a team.',
           security: [{ bearer: [] }],
           parameters: [
@@ -9795,6 +9836,10 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/live': {
         get: {
           summary: 'The games being played right now that you may watch',
+          description:
+            'Each is `{videoId, gameId, title, homeTeamId, awayTeamId, ' +
+            'homeTeamName, awayTeamName, startedAt, gameStartAt, angles}`; ' +
+            'the team ids pick each team\u2019s tile colour.',
           security: [{ bearer: [] }],
           responses: {
             200: {
