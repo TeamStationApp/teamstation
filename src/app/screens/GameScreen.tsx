@@ -1693,7 +1693,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * videos page's picture has no controls of its own, and a tap on it is
    * what watching it means.
    */
-  const openPlayer = (sec: number, untilSec?: number): void => {
+  const openPlayer = (sec: number | null, untilSec?: number): void => {
     if (video == null) return
     // Its wall times by its own mapping, which knows where a stream's gaps
     // and discontinuities are, as its start time does not.
@@ -1703,14 +1703,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       audio: video.id,
       zoom: null,
       at: null,
-      from: {
-        videoId: video.id,
-        sec,
-        wallMs: mapping.wallAt(sec),
-        ...(untilSec == null
-          ? {}
-          : { untilSec, untilWallMs: mapping.wallAt(untilSec) })
-      },
+      // No moment at all opens a live game where a live viewer plays.
+      from:
+        sec == null
+          ? null
+          : {
+              videoId: video.id,
+              sec,
+              wallMs: mapping.wallAt(sec),
+              ...(untilSec == null
+                ? {}
+                : { untilSec, untilWallMs: mapping.wallAt(untilSec) })
+            },
       highlightUntil: null
     })
   }
@@ -2220,7 +2224,13 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
             playback?.url == null || !playable
               ? undefined
               : () => {
-                  openPlayer(playerRef.current?.currentTime ?? lastTime.current)
+                  const at = playerRef.current?.currentTime ?? lastTime.current
+                  // A live picture still at nought has not joined the game:
+                  // Safari opens a live recording at its first frame and
+                  // moves on only once it plays. Its nought is where the
+                  // recording began, hours behind, and the full-screen
+                  // player opened there.
+                  openPlayer(freshStatus === 'live' && at <= 0 ? null : at)
                 }
           }
         >

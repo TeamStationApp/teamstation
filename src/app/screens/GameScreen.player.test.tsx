@@ -277,6 +277,45 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     })
   })
 
+  it('opens a live picture that has not joined the game yet where a live viewer plays', async function () {
+    const live = { ...videoOf('v1', START), status: 'live' as const }
+    const view = await page([live])
+    const video = inline()
+    // Safari's own player, opened on a live recording: at its first frame
+    // until it plays.
+    drive(video, 0)
+    const open = document.querySelector<HTMLElement>(
+      '[data-testid="gameVideoOpen"]'
+    )!
+    await act(async () => {
+      open.click()
+    })
+    await act(async () => {
+      open.click()
+    })
+    expect(view.changes.at(-1)).deep.equals({
+      angles: ['v1'],
+      audio: 'v1',
+      zoom: null,
+      at: null,
+      from: null,
+      highlightUntil: null
+    })
+    // Once it is somewhere in the game, that is where it opens.
+    drive(video, 41.5)
+    await act(async () => {
+      open.click()
+    })
+    await act(async () => {
+      open.click()
+    })
+    expect(view.changes.at(-1)?.from).deep.equals({
+      videoId: 'v1',
+      sec: 41.5,
+      wallMs: Date.parse(START) + 41_500
+    })
+  })
+
   it('keeps the picture silent until its own sound square, and heard after (U15)', async function () {
     await page([videoOf('v1', START)])
     expect(inline().muted).equals(true)
