@@ -1380,6 +1380,39 @@ describe('useMultiCam on live angles', function () {
     expect(mc().waiting).equals(false)
   })
 
+  it('traces what a live grid that has not opened is waiting for', async function () {
+    this.timeout(5000)
+    const records: Array<{ event: string; values: Record<string, unknown> }> =
+      []
+    const traced = globalThis as { __TS_PLAYER_TRACE__?: unknown }
+    traced.__TS_PLAYER_TRACE__ = (record: {
+      event: string
+      values: Record<string, unknown>
+    }) => records.push(record)
+    try {
+      // A phone's paused players: a picture, and nothing to say where their
+      // newest footage is.
+      const { mc } = await grid(live, {}, tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+      })
+      await ticks(1)
+      expect(mc().atWallMs).equals(null)
+      const waits = records.filter(one => one.event === 'grid.opening.wait')
+      expect(waits.map(one => one.values.tile)).include.members([0, 1])
+      expect(waits[0].values).deep.equals({
+        tile: 0,
+        address: true,
+        readyState: 4,
+        newestAgoMs: null,
+        mapped: false,
+        byTimeline: false
+      })
+    } finally {
+      delete traced.__TS_PLAYER_TRACE__
+    }
+  })
+
   it('asks again for a live angle that has no address yet, until it has one', async function () {
     this.timeout(5000)
     // B's stream is publishing, but its first segment is not written yet: the
