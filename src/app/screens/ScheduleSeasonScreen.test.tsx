@@ -6,6 +6,7 @@ import type { TeamStationClient } from '../../common/api'
 import type {
   ScheduleSettings,
   ScheduleSetup,
+  SetupField,
   SetupSeason
 } from '../../common/seasonScheduling'
 import {
@@ -22,7 +23,9 @@ import {
   chooseDateRange,
   hasLabel,
   tapLabel,
-  tapText
+  tapText,
+  venueDetail,
+  venueField
 } from '../../test/venueDom'
 import { ScopedThemeProvider } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
@@ -155,22 +158,195 @@ describe('a season of the next schedule', () => {
     else process.env.TZ = zone
   })
 
+  it('selects season fields explicitly, disables incompatible fields and prunes them on size changes', async () => {
+    const fields: SetupField[] = [
+      {
+        id: 'fld_one',
+        name: 'Field 1',
+        venueId: 'ven_demo',
+        venueName: 'Example Park',
+        sizes: ['50/70'],
+        startsOn: null,
+        endsOn: null,
+        deleted: false,
+        ours: true,
+        ownerNames: []
+      },
+      {
+        id: 'fld_two',
+        name: 'Field 2',
+        venueId: 'ven_demo',
+        venueName: 'Example Park',
+        sizes: ['60/90'],
+        startsOn: null,
+        endsOn: null,
+        deleted: false,
+        ours: true,
+        ownerNames: []
+      }
+    ]
+    const record = fakeClient(SEASON)
+    const original = record.client.scheduleSetup.bind(record.client)
+    record.client.scheduleSetup = async id => ({
+      ...(await original(id)),
+      fields
+    })
+    await show(record.client)
+    expect(text()).includes('Season Scheduling Constraints')
+    expect(text()).includes('CHOOSE REQUIRED FIELD SIZE')
+    const incompatible = document.querySelector(
+      '[aria-label="Field 2, Example Park"]'
+    )!
+    expect(incompatible.getAttribute('aria-disabled')).equals('true')
+    await tapLabel('Field 2, Example Park')
+    expect(record.saves).length(0)
+    await tapLabel('Field 1, Example Park')
+    expect(record.saves.at(-1)?.fieldIds).deep.equals(['fld_one'])
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Required field size 60/90"]')!
+        .click()
+    })
+    await settle()
+    expect(record.saves.at(-1)).includes({ fieldSize: '60/90' })
+    expect(record.saves.at(-1)?.fieldIds).deep.equals([])
+    expect(
+      document.querySelector<HTMLInputElement>(
+        '[aria-label="Required field size 50/70"]'
+      )!.checked
+    ).equals(false)
+    await tapLabel('Field 2, Example Park')
+    expect(record.saves.at(-1)?.fieldIds).deep.equals(['fld_two'])
+    await tapLabel('Change season dates')
+    await chooseDateRange('2027-03-08', '2027-03-20')
+    expect(record.saves.at(-1)).includes({
+      startsOn: '2027-03-08',
+      endsOn: '2027-03-20'
+    })
+  })
+
+  it('adds a registry field to the list and selects it only when its size matches', async () => {
+    const record = fakeClient(SEASON)
+    const chosen = venueField({
+      id: 'fld_harbor',
+      name: 'Harbor Diamond',
+      sizes: ['50/70']
+    })
+    const venue = venueDetail({ fields: [chosen] })
+    record.client.venues = async () => [
+      {
+        ...venue,
+        placeId: 'demo',
+        group: 'unclaimed',
+        distanceKm: null,
+        claimed: false,
+        pendingClaim: false
+      }
+    ]
+    record.client.venue = async () => venue
+    let added: string[] = []
+    record.client.saveScheduleSetup = async (_id, choice) => {
+      added = choice.addedFieldIds ?? []
+      return {
+        ...(await record.client.scheduleSetup('lea_a')),
+        addedFieldIds: added,
+        fields: [
+          {
+            ...chosen,
+            venueId: venue.id!,
+            venueName: venue.name,
+            deleted: false,
+            ours: false,
+            ownerNames: []
+          }
+        ]
+      }
+    }
+    await show(record.client)
+    await tapLabel('Add a field from the registry')
+    await settle()
+    await press(`${venue.name}, ${venue.address}`)
+    await settle()
+    await press('Harbor Diamond, 50/70')
+    await settle()
+    expect(added).deep.equals(['fld_harbor'])
+    expect(record.saves.at(-1)?.fieldIds).deep.equals(['fld_harbor'])
+    await tapLabel(`Remove Harbor Diamond, ${venue.name} from the list`)
+    await settle()
+    expect(added).deep.equals([])
+    expect(record.saves.at(-1)?.fieldIds).deep.equals([])
+  })
+
+  it('repairs multiple deleted, incompatible and missing selections in one save', async () => {
+    const record = fakeClient({
+      ...SEASON,
+      settings: {
+        ...SEASON.settings,
+        fieldIds: ['stale', 'stale2', 'incompatible', 'missing', 'valid']
+      }
+    })
+    const original = record.client.scheduleSetup.bind(record.client)
+    const stale: SetupField = {
+      id: 'stale',
+      name: 'Old Field',
+      venueId: 'venue',
+      venueName: 'Park',
+      sizes: ['50/70'],
+      startsOn: null,
+      endsOn: null,
+      deleted: true,
+      ours: true,
+      ownerNames: []
+    }
+    record.client.scheduleSetup = async id => ({
+      ...(await original(id)),
+      fields: [
+        stale,
+        { ...stale, id: 'stale2', name: 'Old Field 2' },
+        {
+          ...stale,
+          id: 'incompatible',
+          name: 'Large Field',
+          sizes: ['60/90'],
+          deleted: false
+        },
+        { ...stale, id: 'valid', name: 'Current Field', deleted: false }
+      ]
+    })
+    const save = record.client.saveScheduleSettings.bind(record.client)
+    record.client.saveScheduleSettings = async (id, settings) => {
+      if (settings.fieldIds?.some(field => field !== 'valid') === true)
+        throw new Error('Choose available fields of the required size')
+      return await save(id, settings)
+    }
+    await show(record.client)
+    expect(
+      document
+        .querySelector('[aria-label="Old Field, Park"]')!
+        .getAttribute('aria-disabled')
+    ).equals('true')
+    await tapLabel('Remove unavailable selection Old Field')
+    await settle()
+    expect(record.saves.at(-1)?.fieldIds).deep.equals(['valid'])
+    expect(hasLabel('Remove unavailable selection Old Field')).equals(false)
+    expect(hasLabel('Remove unavailable selection Old Field 2')).equals(false)
+    expect(hasLabel('Remove unavailable selection Large Field')).equals(false)
+  })
+
   it('shows and saves weekly maximums and the preferred portion, preserving other settings', async () => {
     const record = fakeClient(SEASON)
     await show(record.client)
     const field = (label: string): HTMLInputElement =>
       document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
-    expect(field('Max games on weekdays').value).equals('1')
-    expect(field('Max games on weekend').value).equals('1')
+    expect(hasLabel('Max games on weekdays: 1')).equals(true)
+    expect(hasLabel('Max games on weekend: 1')).equals(true)
     expect(text().indexOf('Max games on weekdays')).lessThan(
       text().indexOf('Max games on weekend')
     )
     expect(text().indexOf('Max games on weekend')).lessThan(
       text().indexOf('Prefer game on:')
     )
-    await act(async () => {
-      field('Max games on weekdays').focus()
-    })
+    await tapLabel('Max games on weekdays: 1')
     await fill('Max games on weekdays', '2')
     await act(async () => {
       field('Max games on weekdays').blur()
@@ -180,9 +356,7 @@ describe('a season of the next schedule', () => {
       maxGamesOnWeekdays: 2,
       gameMinutes: 90
     })
-    await act(async () => {
-      field('Max games on weekend').focus()
-    })
+    await tapLabel('Max games on weekend: 1')
     await fill('Max games on weekend', '0')
     await act(async () => {
       field('Max games on weekend').blur()
@@ -195,9 +369,7 @@ describe('a season of the next schedule', () => {
       preferGameOn: 'weekdays'
     })
     const count = record.saves.length
-    await act(async () => {
-      field('Max games on weekend').focus()
-    })
+    await tapLabel('Max games on weekend: 0')
     await fill('Max games on weekend', '201')
     await act(async () => {
       field('Max games on weekend').blur()
@@ -215,18 +387,8 @@ describe('a season of the next schedule', () => {
     await settle()
     expect(record.saves).length(count)
     expect(text()).not.includes('Choose a maximum from 0 to 200.')
-    await act(async () => {
-      field('Max games on weekend').focus()
-    })
-    await fill('Max games on weekend', '201')
-    await act(async () => {
-      field('Max games on weekend').blur()
-    })
-    await settle()
     await tapLabel('weekend')
-    expect(text()).includes('Game preference saved.')
-    expect(text()).not.includes('Choose a maximum from 0 to 200.')
-    expect(field('Max games on weekend').value).equals('0')
+    expect(hasLabel('Max games on weekend: 0')).equals(true)
     expect(record.saves.at(-1)).includes({
       maxGamesOnWeekend: 0,
       preferGameOn: 'weekend'
@@ -250,6 +412,7 @@ describe('a season of the next schedule', () => {
     )
     await settle(50)
     expect(rowTextColor('Starts')).equals('rgb(31, 36, 24)')
+    await tapLabel('Max games on weekdays: 1')
     expect(
       getComputedStyle(
         document.querySelector('[aria-label="Max games on weekdays"]')!
@@ -271,8 +434,8 @@ describe('a season of the next schedule', () => {
   it('adds window periods, sets their hours, and removes one', async () => {
     const fake = fakeClient(SEASON)
     await show(fake.client)
-    expect(text()).includes('No game windows yet.')
-    await tapText('Add game windows')
+    expect(text()).includes('No time windows. No games can be scheduled.')
+    await tapText('Add another time window')
     await settle(20)
     expect(fake.saves.at(-1)?.windows).deep.equals([
       { from: '2027-03-01', hours: [] }
@@ -287,8 +450,8 @@ describe('a season of the next schedule', () => {
         hours: [{ weekday: 6, start: '17:00', end: '21:00' }]
       }
     ])
-    expect(text()).includes('Windows saved.')
-    await tapText('Add a period from a date')
+    expect(text()).includes('Time windows saved.')
+    await tapText('Add another time window')
     await chooseCalendarDate('2027-06-01')
     await settle(20)
     // The new period starts as a copy of the one before it.
@@ -302,10 +465,10 @@ describe('a season of the next schedule', () => {
         hours: [{ weekday: 6, start: '17:00', end: '21:00' }]
       }
     ])
-    await tapText('Add a period from a date')
+    await tapText('Add another time window')
     await chooseCalendarDate('2027-06-01')
     expect(text()).includes('A period already starts on that date.')
-    await tapLabel('Remove the windows from Monday, March 1, 2027')
+    await tapLabel('Remove Windows from Monday, March 1, 2027')
     await settle(20)
     expect(fake.saves.at(-1)?.windows.map(period => period.from)).deep.equals([
       '2027-06-01'
@@ -322,7 +485,7 @@ describe('a season of the next schedule', () => {
       settings: { ...SEASON.settings, windows: dated }
     })
     await show(fake.client)
-    await tapText('Add a period from a date')
+    await tapText('Add another time window')
     await chooseCalendarDate('2027-04-15')
     await settle(20)
     expect(text()).not.includes('can’t overlap')
@@ -333,7 +496,7 @@ describe('a season of the next schedule', () => {
     ])
     expect(text()).includes('Mar 1 – Apr 14')
     expect(text()).includes('Apr 15 – May 31')
-    expect(text()).includes('Period added.')
+    expect(text()).includes('Time windows saved.')
   })
 
   it('gives a period an end date, then takes it away again', async () => {
@@ -348,7 +511,7 @@ describe('a season of the next schedule', () => {
     // season's end.
     expect(text()).includes('When the next period begins')
     expect(text()).includes('End of season')
-    await tapLabel('Change the end of the windows from Monday, March 1, 2027')
+    await tapLabel('Change the end of Windows from Monday, March 1, 2027')
     // The calendar opens on the day before the next period.
     expect(hasLabel('Choose 2027-05-31')).equals(true)
     await chooseCalendarDate('2027-05-20')
@@ -359,29 +522,29 @@ describe('a season of the next schedule', () => {
     ])
     expect(text()).includes('Mar 1 – May 20')
     expect(text()).includes('Thursday, May 20, 2027')
-    expect(text()).includes('End date saved.')
+    expect(text()).includes('Time windows saved.')
     // An end date on or after the next period's start is refused here.
-    await tapLabel('Change the end of the windows from Monday, March 1, 2027')
+    await tapLabel('Change the end of Windows from Monday, March 1, 2027')
     await chooseCalendarDate('2027-06-01')
     await settle(20)
     expect(fake.saves).length(1)
     expect(text()).includes('Periods of game windows can’t overlap.')
     // So is one before the period's start.
-    await tapLabel('Change the end of the windows from Monday, March 1, 2027')
+    await tapLabel('Change the end of Windows from Monday, March 1, 2027')
     await chooseCalendarDate('2027-02-27')
     expect(text()).includes(
       'End each period of game windows on or after the day it starts.'
     )
     expect(fake.saves).length(1)
-    await tapLabel('Change the end of the windows from Monday, March 1, 2027')
+    await tapLabel('Change the end of Windows from Monday, March 1, 2027')
     await tapText('No end date')
     await settle(20)
     expect(fake.saves.at(-1)?.windows).deep.equals(PERIODS)
     expect(Object.keys(fake.saves.at(-1)!.windows[0])).not.includes('until')
     expect(text()).includes('From Mar 1')
-    expect(text()).includes('End date removed.')
+    expect(text()).includes('Time windows saved.')
     // The last period's calendar opens on the season's last day.
-    await tapLabel('Change the end of the windows from Tuesday, June 1, 2027')
+    await tapLabel('Change the end of Windows from Tuesday, June 1, 2027')
     expect(hasLabel('Choose 2027-07-31')).equals(true)
     await tapText('Cancel')
     expect(fake.saves).length(2)
@@ -401,16 +564,16 @@ describe('a season of the next schedule', () => {
     })
     await show(fake.client)
     expect(text()).includes('Dec 20 – Jan 10, 2028')
-    await tapLabel('Change the start of the windows from Monday, March 1, 2027')
+    await tapLabel('Change the start of Windows from Monday, March 1, 2027')
     await chooseCalendarDate('2027-03-08')
     await settle(20)
     expect(fake.saves.at(-1)?.windows.map(period => period.from)).deep.equals([
       '2027-03-08',
       '2027-12-20'
     ])
-    expect(text()).includes('Start saved.')
+    expect(text()).includes('Time windows saved.')
     // A start past the next period's moves it after that one.
-    await tapLabel('Change the start of the windows from Monday, March 8, 2027')
+    await tapLabel('Change the start of Windows from Monday, March 8, 2027')
     await chooseCalendarDate('2028-01-20')
     await settle(20)
     expect(fake.saves.at(-1)?.windows.map(period => period.from)).deep.equals([
@@ -563,7 +726,7 @@ describe('a season of the next schedule', () => {
         'time zone'
       ])
         expect(text(), timezone).not.includes(named)
-      await tapText('Add game windows')
+      await tapText('Add another time window')
       await settle(20)
       await press('Add blackout dates')
       await chooseDateRange('2027-04-17', '2027-04-17')

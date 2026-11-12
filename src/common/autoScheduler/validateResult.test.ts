@@ -91,6 +91,37 @@ describe('device result summaries', () => {
     clean.options[0].games[0].startAt = '2027-01-01T00:00:00Z'
     expect(() => summarizeResult(run, clean)).throws('time windows')
   })
+  it('derives missing requests, fixed-game counts and alternative summaries', () => {
+    const run = input({
+      seasons: [season({ regularGames: 1, exhibitionGames: 0 })]
+    })
+    const built = buildOptions(run)
+    const game = built.options[0].games[0]
+    const empty = { games: [], fairness: [], reasons: [], unmet: [], score: [] }
+    expect(
+      summarizeResult(run, { options: [empty, empty], blocking: null })
+        .options[0].unmet
+    ).has.length.greaterThan(0)
+    run.required = [{ ...game }]
+    expect(
+      summarizeResult(run, { options: [empty], blocking: null }).options[0]
+        .unmet[0].message
+    ).equals('1 requested games remain unplaced')
+    expect(
+      summarizeResult(run, {
+        options: [{ ...empty, games: [game] }],
+        blocking: null
+      }).options[0].unmet
+    ).deep.equals([])
+    run.fixed = [
+      { ...game, start: Date.parse(game.startAt), end: Date.parse(game.endAt) }
+    ]
+    run.required = []
+    expect(
+      summarizeResult(run, { options: [empty], blocking: null }).options[0]
+        .unmet
+    ).deep.equals([])
+  })
   it('accepts bounded blocked results and refuses malformed or contradictory payloads', () => {
     const blocked = { options: [], blocking: 'No selected fields' }
     expect(summarizeResult(input(), asPreviewResult(blocked))).deep.equals(

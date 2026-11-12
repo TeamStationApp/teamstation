@@ -257,7 +257,7 @@ export const asVenueField = asObject({
   endsOn: asNullable(asString),
   /** Null takes the venue's default hours. */
   hours: asNullable(asArray(asWeekdayHours)),
-  windows: asOptional(asNullable(asWindowPeriods)),
+  windows: asEither(asNull, asOptional(asWindowPeriods)),
   blackouts: asArray(asString),
   photoUrl: asNullable(asString),
   photoLargeUrl: asNullable(asString)
