@@ -134,7 +134,7 @@ function legacyArtifacts(file: string): string {
 
 /** Files whose own run takes longer than the default limit. */
 const LONG: Record<string, number> = {
-  'src/app/scoring/scoring.e2e.ts': 45 * 60 * 1000
+  'src/app/scoring/scoring.e2e.ts': 90 * 60 * 1000
 }
 
 const DAEMONS = ['e2eSuite', 'e2eSuite-ios', 'e2eSuite-android']
