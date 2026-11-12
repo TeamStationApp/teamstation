@@ -10,6 +10,7 @@ import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { appFiles, tierOf } from './testTiers.mjs'
@@ -170,7 +171,8 @@ const bundle = async entry =>
       'process.env.TS_SENTRY_DSN': JSON.stringify(''),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+    // The crowd's sounds as files beside the bundle, as the web build has them.
+    loader: ASSET_LOADER
   })
 
 await Promise.all(entries.map(bundle))

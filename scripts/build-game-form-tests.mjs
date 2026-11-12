@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
@@ -71,5 +72,5 @@ await build({
     'process.env.NODE_ENV': JSON.stringify('test'),
     'process.env.TS_SENTRY_DSN': JSON.stringify('')
   },
-  loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+  loader: ASSET_LOADER
 })

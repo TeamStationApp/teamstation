@@ -10,6 +10,7 @@ import {
   replayContextOf,
   replayTimelineOf
 } from '../../common/replay/replayTimeline'
+import { CHEER_GAIN, CROWD_IDLE_GAIN } from './crowdCheer'
 import {
   artifactsDir,
   attachWeb,
@@ -118,6 +119,20 @@ import { stepHalfEnds } from './replayGaps'
  *     shows the batter's and the pitcher's jersey numbers, as `#12`, before
  *     their names. Adds a ball to the scorer's at-bat in progress, so
  *     reseed before another live scenario.
+ *
+ *   REPLAY_SCENARIO=crowd
+ *     The final game's replay with the sound on, to its first home run, past
+ *     a minute: the idle crowd's two copies of its file take turns, the
+ *     second starting about 20 s after the first, the two playing together
+ *     for about 2 s with their gains crossing at equal power (g1² + g2²
+ *     within 5% of the idle gain's square, sampled every 100 ms), each
+ *     routed once through its own GainNode at volume 1; each play that
+ *     cheers plays its sound from the site's root, Judge's strikeout,
+ *     Rizzo's single, Torres's double play and Betts's home run, at gains
+ *     that rise with the play, each gain on the element's own Web Audio
+ *     GainNode with the element at volume 1 and one source per element, and
+ *     pause pauses the crowd and the cheers
+ *     still sounding, which play plays on. Writes crowd-web.log.
  *
  * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
  * REPLAY_IMPORTED override them.
@@ -517,14 +532,19 @@ async function desktop(m: Device): Promise<void> {
 
 /**
  * Records the announcer's element in the page: it is never in the document,
- * so its play, pause and end are caught on the element's prototype.
+ * so its play, pause and end are caught on the element's prototype. The
+ * field cues (data URLs) and the crowd's bed and cheers (/crowd-idle-…,
+ * /cheer-…) are not the announcer and are left out; the crowd scenario
+ * records those itself.
  */
 const MEDIA_LOG = `
   if (!window.__narrated) {
     window.__narrated = [];
     const card = () => ${CARD_TEXT};
     const log = (type, el) => {
-      if (String(el.src).startsWith('data:')) return;
+      const src = String(el.src);
+      if (src.startsWith('data:')) return;
+      if (/\\/(crowd-idle|cheer)-/.test(src)) return;
       window.__narrated.push({ type, t: Date.now(), src: String(el.src), card: card() });
     };
     const proto = HTMLMediaElement.prototype;
@@ -751,6 +771,419 @@ async function announcer(m: Device): Promise<void> {
     `${lines.join('\n')}\n`
   )
   console.log(lines.slice(-2).join('\n'))
+}
+
+/** How long the stand-in for the idle crowd's file runs: as long as the file. */
+const CROWD_STAND_IN_SECONDS = 22
+
+/**
+ * Records the crowd's sounds in the page: every play and pause of an `.m4a`
+ * element, with its file, whether it is a copy of the idle crowd, its
+ * volume, Web Audio gain and muting, and the card at the time. The elements
+ * are never in the document, so their prototype is watched. The crowd sets
+ * its gains on a GainNode per element, as iPhone Safari ignores `volume`, so
+ * the AudioContext's `createMediaElementSource` is watched as well: each
+ * element's source count, and the node its source connects to, whose gain
+ * is read at each play. Every 100 ms the idle crowd's copies are sampled:
+ * each one's state and gain, into `window.__crowdSamples`. The app exposes
+ * nothing for this; the test watches the browser's own API, as it does
+ * `play`.
+ *
+ * A Chromium built without AAC cannot decode the idle crowd's `.m4a`, so
+ * its copies would never move on and never cross. There, each copy is given
+ * a stand-in of the same length the browser can play, 22 s of quiet noise
+ * as a WAV, set in place of the file the page asked for, which is what is
+ * recorded and fetched.
+ */
+const CROWD_LOG = `
+  if (!window.__crowd) {
+    window.__crowd = [];
+    window.__crowdElements = [];
+    window.__crowdSamples = [];
+    const card = () => ${CARD_TEXT};
+    const asked = el => String(el.__crowdAsked ?? el.src);
+    const isBed = el => /\\/crowd-idle-[^/]*\\.m4a$/.test(asked(el));
+    const gainOf = el => el.__crowdGain ? el.__crowdGain.gain.value : null;
+    const log = (type, el) => {
+      const src = asked(el);
+      if (!src.includes('.m4a')) return;
+      if (!window.__crowdElements.includes(el)) window.__crowdElements.push(el);
+      window.__crowd.push({ type, t: Date.now(), src, bed: isBed(el), muted: el.muted, volume: el.volume, gain: gainOf(el), sources: el.__crowdSources ?? 0, card: card() });
+    };
+    const aac = document.createElement('audio').canPlayType('audio/mp4; codecs="mp4a.40.2"') !== '';
+    window.__crowdStandIn = !aac;
+    if (!aac) {
+      const seconds = ${CROWD_STAND_IN_SECONDS}, rate = 8000, n = seconds * rate;
+      const wav = new DataView(new ArrayBuffer(44 + n));
+      const text = (at, value) => { for (let i = 0; i < value.length; i++) wav.setUint8(at + i, value.charCodeAt(i)); };
+      text(0, 'RIFF'); wav.setUint32(4, 36 + n, true); text(8, 'WAVEfmt ');
+      wav.setUint32(16, 16, true); wav.setUint16(20, 1, true); wav.setUint16(22, 1, true);
+      wav.setUint32(24, rate, true); wav.setUint32(28, rate, true); wav.setUint16(32, 1, true); wav.setUint16(34, 8, true);
+      text(36, 'data'); wav.setUint32(40, n, true);
+      for (let i = 0; i < n; i++) wav.setUint8(44 + i, 128 + Math.round((Math.random() - 0.5) * 8));
+      const standIn = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+      const src = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+      Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+        configurable: true,
+        get() { return src.get.call(this); },
+        set(value) {
+          const url = new URL(String(value), location.href).href;
+          if (/\\/crowd-idle-[^/]*\\.m4a$/.test(url)) { this.__crowdAsked = url; value = standIn; }
+          src.set.call(this, value);
+        }
+      });
+    }
+    setInterval(() => {
+      const copies = window.__crowdElements.filter(isBed);
+      if (copies.length === 0) return;
+      window.__crowdSamples.push({ t: Date.now(), copies: copies.map(el => ({ paused: el.paused, ended: el.ended, time: el.currentTime, gain: gainOf(el), volume: el.volume })) });
+    }, 100);
+    for (const Context of [window.AudioContext, window.webkitAudioContext]) {
+      if (Context == null || Context.prototype.__crowdWatched) continue;
+      Context.prototype.__crowdWatched = true;
+      const route = Context.prototype.createMediaElementSource;
+      Context.prototype.createMediaElementSource = function (el) {
+        const source = route.call(this, el);
+        el.__crowdSources = (el.__crowdSources ?? 0) + 1;
+        const connect = source.connect;
+        source.connect = function (to) { el.__crowdGain = to; return connect.apply(this, arguments); };
+        return source;
+      };
+    }
+    const proto = HTMLMediaElement.prototype;
+    const play = proto.play, pause = proto.pause;
+    proto.play = function () { log('play', this); return play.apply(this, arguments); };
+    proto.pause = function () { log('pause', this); return pause.apply(this, arguments); };
+  }
+  return true;
+`
+
+/**
+ * Whether the browser decodes AAC. A Chromium built without the licensed
+ * codecs does not, though Chrome, Safari, Edge and Firefox do: it is asked
+ * to play the crowd and cannot, and only what the page asked is checked.
+ */
+const PLAYS_AAC = `return document.createElement('audio').canPlayType('audio/mp4; codecs="mp4a.40.2"') !== ''`
+
+/**
+ * Fetches each sound's file as the page does, into `window.__crowdFiles`:
+ * its status and size.
+ */
+const CROWD_FILES = `
+  const files = [...new Set((window.__crowd ?? []).map(event => event.src))];
+  window.__crowdFiles = null;
+  Promise.all(files.map(async src => {
+    const answer = await fetch(src);
+    return { src, status: answer.status, bytes: (await answer.arrayBuffer()).byteLength };
+  })).then(read => { window.__crowdFiles = read; }, error => { window.__crowdFiles = String(error); });
+  return true;
+`
+
+/** A sound's file as the page fetched it. */
+interface CrowdFile {
+  src: string
+  status: number
+  bytes: number
+}
+
+interface CrowdEvent {
+  type: 'play' | 'pause'
+  t: number
+  src: string
+  /** Whether it is one of the idle crowd's copies. */
+  bed: boolean
+  muted: boolean
+  volume: number
+  /** Its GainNode's gain, if its element was routed through Web Audio. */
+  gain: number | null
+  /** How many Web Audio sources were made on its element. */
+  sources: number
+  card: string
+}
+
+/** The idle crowd's copies as they stand: each one's file, gain and state. */
+const CROWD_BED = `
+  const copies = (window.__crowdElements ?? []).filter(el => /\\/crowd-idle-[^/]*\\.m4a$/.test(String(el.__crowdAsked ?? el.src)));
+  return copies.map(bed => ({ src: String(bed.__crowdAsked ?? bed.src), loop: bed.loop, volume: bed.volume, gain: bed.__crowdGain ? bed.__crowdGain.gain.value : null, sources: bed.__crowdSources ?? 0, paused: bed.paused, time: bed.currentTime, duration: bed.duration, error: bed.error?.code ?? null }));
+`
+
+interface CrowdBed {
+  src: string
+  loop: boolean
+  volume: number
+  gain: number | null
+  sources: number
+  paused: boolean
+  time: number
+  duration: number
+  error: number | null
+}
+
+/** The idle crowd's copies, sampled every 100 ms. */
+interface CrowdSample {
+  t: number
+  copies: Array<{
+    paused: boolean
+    ended: boolean
+    time: number
+    gain: number | null
+    volume: number
+  }>
+}
+
+async function crowd(m: Device): Promise<void> {
+  await signInWeb(m, LEAGUE)
+  await m.openBrowser({
+    url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+  })
+  await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+  await evalJson<boolean>(m, CROWD_LOG)
+  const started = Date.now()
+  await m.tapOn({ id: 'replay-speaker' })
+  await m.assertVisible({ text: 'Mute game sounds' })
+  const homer = await cardUntil(
+    m,
+    'the first home run',
+    text => /home run|grand slam/i.test(text),
+    180000
+  )
+  await wait(3000)
+  const aac = await evalJson<boolean>(m, PLAYS_AAC)
+  const standIn = await evalJson<boolean>(m, 'return window.__crowdStandIn')
+  const copies = await evalJson<CrowdBed[]>(m, CROWD_BED)
+  assert.equal(copies.length, 2, `${copies.length} copies of the idle crowd`)
+  const origin = new URL(required('REPLAY_WEB_URL')).origin
+  for (const copy of copies) {
+    assert.equal(copy.loop, false, 'a copy of the idle crowd loops')
+    // Through Web Audio: its node holds the gain, its element plays at 1.
+    assert.equal(
+      copy.sources,
+      1,
+      'a copy of the idle crowd was not routed once'
+    )
+    assert.equal(
+      copy.volume,
+      1,
+      "a copy of the idle crowd's element is not at 1"
+    )
+    assert.equal(
+      copy.error,
+      null,
+      `a copy of the idle crowd failed: ${copy.error}`
+    )
+    assert.match(copy.src, /\/crowd-idle-[^/]*\.m4a$/)
+    assert.ok(copy.src.startsWith(`${origin}/crowd-idle-`), copy.src)
+  }
+  assert.equal(copies[1].src, copies[0].src, 'the copies play different files')
+  const length = copies[0].duration
+  assert.ok(
+    Math.abs(length - 22) < 0.1,
+    `the idle crowd's file is ${length} s long`
+  )
+  // Past a minute, the copies have each played: the crossfades.
+  const sounding = copies.filter(copy => !copy.paused)
+  assert.ok(sounding.length >= 1, 'no copy of the idle crowd is playing')
+  // Where an AudioParam is a 32-bit float, the gains read back rounded.
+  const full = CROWD_IDLE_GAIN ** 2
+  const samples = await evalJson<CrowdSample[]>(
+    m,
+    'return window.__crowdSamples ?? []'
+  )
+  const playingIn = (sample: CrowdSample): number[] =>
+    sample.copies.flatMap((copy, i) => (copy.paused || copy.ended ? [] : [i]))
+  const power = (sample: CrowdSample): number =>
+    sample.copies.reduce(
+      (sum, copy) =>
+        copy.paused || copy.ended ? sum : sum + (copy.gain ?? 0) ** 2,
+      0
+    )
+  // Each copy's first play out loud, after the tap's muted one.
+  const bedEvents = (
+    await evalJson<CrowdEvent[]>(m, 'return window.__crowd ?? []')
+  ).filter(event => event.bed)
+  const startsOf = bedEvents.filter(
+    event => event.type === 'play' && !event.muted
+  )
+  assert.ok(startsOf.length >= 3, `${startsOf.length} starts of the idle crowd`)
+  const firstStart = startsOf[0].t
+  const secondStart = startsOf[1].t
+  const handover = (secondStart - firstStart) / 1000
+  assert.ok(
+    handover > 19 && handover < 21.5,
+    `the second copy started ${handover.toFixed(2)} s after the first`
+  )
+  // The first overlap: the samples with both copies playing.
+  const both = samples.filter(sample => playingIn(sample).length === 2)
+  assert.ok(both.length > 0, 'the copies never played together')
+  const overlaps: CrowdSample[][] = []
+  for (const sample of both) {
+    const run = overlaps.at(-1)
+    if (run != null && sample.t - run[run.length - 1].t <= 250) run.push(sample)
+    else overlaps.push([sample])
+  }
+  const firstOverlap = overlaps[0]
+  const overlapSeconds =
+    (firstOverlap[firstOverlap.length - 1].t - firstOverlap[0].t) / 1000 + 0.1
+  assert.ok(
+    overlapSeconds > 1.6 && overlapSeconds < 2.4,
+    `the copies played together for ${overlapSeconds.toFixed(2)} s`
+  )
+  // Through the overlap, the summed power holds at the idle gain's square.
+  const powers = both.map(sample => power(sample) / full)
+  const low = Math.min(...powers)
+  const high = Math.max(...powers)
+  assert.ok(
+    low > 0.95 && high < 1.05,
+    `the summed power ran ${low.toFixed(3)}–${high.toFixed(3)} of the idle gain's`
+  )
+  // And the gains crossed: one fell as the other rose.
+  const [outgoing, incoming] = [0, 1].map(i =>
+    firstOverlap.map(sample => sample.copies[i].gain ?? 0)
+  )
+  assert.ok(
+    outgoing[0] > incoming[0] &&
+      outgoing[outgoing.length - 1] < incoming[incoming.length - 1],
+    `the gains did not cross: ${outgoing.map(g => g.toFixed(2)).join(' ')} / ${incoming.map(g => g.toFixed(2)).join(' ')}`
+  )
+  // Alone, a copy plays at the idle gain.
+  const alone = samples.filter(
+    sample =>
+      playingIn(sample).length === 1 &&
+      sample.copies[playingIn(sample)[0]].time > 2.5 &&
+      sample.copies[playingIn(sample)[0]].time < length - 2.5
+  )
+  assert.ok(alone.length > 0, 'no copy played alone')
+  for (const sample of alone)
+    assert.equal(
+      sample.copies[playingIn(sample)[0]].gain,
+      Math.fround(CROWD_IDLE_GAIN),
+      'a copy alone is not at the idle gain'
+    )
+  // Pause pauses the crowd; play plays it on.
+  const asked = async (
+    type: 'play' | 'pause',
+    since: number
+  ): Promise<boolean> =>
+    (await evalJson<CrowdEvent[]>(m, 'return window.__crowd ?? []')).some(
+      event => event.bed && event.type === type && event.t >= since
+    )
+  const pausedAt = Date.now()
+  let since = pausedAt
+  await m.tapOn({ id: 'replay-pause' })
+  await wait(500)
+  assert.ok(await asked('pause', since), 'pause did not pause the crowd')
+  const paused = await evalJson<CrowdBed[]>(m, CROWD_BED)
+  assert.ok(
+    paused.every(copy => copy.paused),
+    'pause left the crowd playing'
+  )
+  const playedAt = Date.now()
+  since = playedAt
+  await m.tapOn({ id: 'replay-pause' })
+  await wait(500)
+  assert.ok(await asked('play', since), 'play did not play the crowd')
+  const playing = await evalJson<CrowdBed[]>(m, CROWD_BED)
+  assert.ok(
+    playing.some(copy => !copy.paused),
+    'play left the crowd paused'
+  )
+  // Every sound is served where the page asks for it.
+  await evalJson<boolean>(m, CROWD_FILES)
+  let fetched: CrowdFile[] | string | null = null
+  for (let i = 0; i < 50 && fetched == null; i++) {
+    await wait(100)
+    fetched = await evalJson<CrowdFile[] | string | null>(
+      m,
+      'return window.__crowdFiles ?? null'
+    )
+  }
+  assert.ok(
+    Array.isArray(fetched),
+    `the sounds were not fetched: ${JSON.stringify(fetched)}`
+  )
+  const files: CrowdFile[] = fetched
+  // The idle crowd and the three sizes of cheer heard before the home run.
+  assert.equal(files.length, 4, `${files.length} sounds fetched`)
+  for (const file of files) {
+    assert.equal(file.status, 200, `${file.src} answered ${file.status}`)
+    assert.ok(file.bytes > 10000, `${file.src} is ${file.bytes} bytes`)
+  }
+  const events = await evalJson<CrowdEvent[]>(m, 'return window.__crowd ?? []')
+  // Each cheer as it started: playing on after the pause plays the cheers
+  // still sounding again, which are not new ones.
+  const cheers = events.filter(
+    event => event.type === 'play' && !event.bed && event.t < pausedAt
+  )
+  // Pause paused the cheers sounding, and play played the same ones on.
+  const cheerFiles = (
+    type: 'play' | 'pause',
+    from: number,
+    to: number
+  ): string[] =>
+    events
+      .filter(
+        event =>
+          event.type === type && !event.bed && event.t >= from && event.t < to
+      )
+      .map(event => event.src)
+      .sort()
+  const heldCheers = cheerFiles('pause', pausedAt, playedAt)
+  const playedOn = cheerFiles('play', playedAt, playedAt + 500)
+  assert.deepEqual(
+    playedOn,
+    heldCheers,
+    'play did not play on the cheers pause held'
+  )
+  const size = (src: string): string =>
+    /\/cheer-([a-z]+)-[^/]*\.m4a$/.exec(src)?.[1] ?? src
+  const sizes = cheers.map(event => size(event.src))
+  // Judge's strikeout, Rizzo's single, Torres's double play, Betts's homer.
+  assert.deepEqual(sizes, ['small', 'small', 'medium', 'huge'])
+  for (const cheer of cheers)
+    assert.ok(cheer.src.startsWith(`${origin}/cheer-`), cheer.src)
+  // Each cheer at its size's gain on its element's node, the element at 1,
+  // each element routed once though the pool's are reused.
+  for (const cheer of cheers) {
+    const name = size(cheer.src) as keyof typeof CHEER_GAIN
+    assert.equal(
+      cheer.gain,
+      Math.fround(CHEER_GAIN[name]),
+      `${name} cheer's gain`
+    )
+    assert.equal(cheer.volume, 1, `${name} cheer's element volume`)
+    assert.equal(cheer.sources, 1, `${name} cheer's element sources`)
+  }
+  const gain = (name: string): number =>
+    cheers.find(event => size(event.src) === name)?.gain ?? NaN
+  assert.ok(
+    gain('small') < gain('medium') && gain('medium') < gain('huge'),
+    `gains ${cheers.map(event => event.gain).join(', ')}`
+  )
+  const out = await artifactsDir()
+  const lines = [
+    '$ REPLAY_SCENARIO=crowd node -r sucrase/register src/app/replay/replay.e2e.ts',
+    "# the crowd's sounds, seconds from turning the sound on:",
+    ...events.map(
+      event =>
+        `${((event.t - started) / 1000).toFixed(2).padStart(7)}s  ${event.type.padEnd(5)} ${event.src.slice(origin.length).padEnd(34)} bed=${event.bed} muted=${event.muted} volume=${event.volume.toFixed(2)} gain=${event.gain?.toFixed(2) ?? '-'} sources=${event.sources}  card: ${event.card}`
+    ),
+    `# the browser: ${aac ? 'plays AAC' : standIn ? `a Chromium without AAC: the idle crowd's copies played a ${CROWD_STAND_IN_SECONDS} s WAV stand-in for its file, so they moved on and crossed; the cheers were asked for but not heard` : 'a Chromium without AAC'}`,
+    "# the idle crowd's first crossfade, sampled every 100 ms (seconds from the sound on: each copy's position and gain, and g1² + g2² over the idle gain's square):",
+    ...firstOverlap.map(
+      sample =>
+        `${((sample.t - started) / 1000).toFixed(2).padStart(7)}s  ${sample.copies.map(copy => `${copy.time.toFixed(2).padStart(5)} s ${(copy.gain ?? 0).toFixed(3)}`).join('  ')}  power ${(power(sample) / full).toFixed(3)}`
+    ),
+    `# idle crowd: ${copies.length} copies of ${copies[0].src.slice(origin.length)}, ${length.toFixed(2)} s, loop=false, each routed once at volume 1; the second started ${handover.toFixed(2)} s after the first; ${overlaps.length} crossfades seen, the first ${overlapSeconds.toFixed(2)} s long; summed power ${low.toFixed(3)}–${high.toFixed(3)} of ${CROWD_IDLE_GAIN}² across ${both.length} samples in the overlaps; alone at gain ${Math.fround(CROWD_IDLE_GAIN)}; paused with the replay, played again on play`,
+    ...files.map(
+      file =>
+        `# served ${file.src.slice(origin.length)}: ${file.status}, ${file.bytes} bytes`
+    ),
+    `# cheers: ${sizes.join(', ')} at Web Audio gains ${cheers.map(event => event.gain).join(', ')}, element volume ${cheers.map(event => event.volume).join(', ')}`,
+    `# cheers paused with the replay and played on: ${heldCheers.length === 0 ? 'none still sounding' : heldCheers.map(src => size(src)).join(', ')}`,
+    `# home run card: ${homer}`
+  ]
+  await writeFile(join(out, 'crowd-web.log'), `${lines.join('\n')}\n`)
+  console.log(lines.slice(-3).join('\n'))
 }
 
 const SCORER = 'replay-scorer@example.test'
@@ -2290,6 +2723,7 @@ async function main(): Promise<void> {
     else if (scenario === 'rewindAnnouncer')
       await rewindAnnouncer((m = await attachWeb(daemon)))
     else if (scenario === 'liveInPlay') await liveInPlay(daemon)
+    else if (scenario === 'crowd') await crowd((m = await attachWeb(daemon)))
     else if (scenario === 'scorers')
       await scorers((m = await attachWeb(daemon)))
     else assert.fail(`Unknown scenario ${scenario}`)

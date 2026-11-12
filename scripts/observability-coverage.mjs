@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import counters from './changed-line-coverage.cjs'
 import gateModule from './observability-line-gate.cjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
@@ -71,7 +72,7 @@ await build({
     'process.env.TS_API_BASE_URL': '"https://app.example.test/api/v1"',
     'process.env.NODE_ENV': '"test"'
   },
-  loader: { '.png': 'dataurl', '.svg': 'dataurl' }
+  loader: ASSET_LOADER
 })
 const tests = [
   ...globSync('src/**/observability/*.test.ts'),

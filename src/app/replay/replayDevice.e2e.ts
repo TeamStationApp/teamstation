@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 
 import { FLOATING_SIZE, floatingBottom, topLift } from '../field/fieldSafeArea'
 import {
@@ -32,7 +33,11 @@ import {
  *
  * The replay: open the final game's replay, turn the sound on, pause
  * and play, watch to the first home run, scroll the box score to the
- * pitchers, the X. replay-<phone>-webcam.mp4 has the camera and its sound.
+ * pitchers, the X. replay-<phone>-webcam.mp4 has the camera and its sound:
+ * the announcer, the idle crowd and its cheers. crowd-levels.log has each
+ * sentence the card showed, timed from the recording's start, and the
+ * recording's loudness (FFmpeg's ebur128), each second's beside them, so a
+ * cheer can be heard rising over the crowd at its play.
  *
  * The live view: open the game in progress while a web scorer throws three
  * pitches; each shows on the phone. live-<phone>-webcam.mp4.
@@ -75,29 +80,94 @@ function filming(path: string, seconds: number): { done: Promise<unknown> } {
   return { done: new Promise(resolve => camera.on('exit', resolve)) }
 }
 
+/** A sentence the card showed, seconds into the camera's recording. */
+interface Shown {
+  at: number
+  text: string
+}
+
+/**
+ * Reads the card's newest line until `until` holds for it or `ms` pass,
+ * noting each new one against the recording's start.
+ */
+async function watchLines(
+  m: Device,
+  recording: number,
+  shown: Shown[],
+  ms: number,
+  until: (text: string) => boolean = () => false
+): Promise<boolean> {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    const line = (await nodes(m)).find(
+      node => node.id === 'replay-play-card-line'
+    )
+    const text = line?.text ?? line?.accessibilityText ?? ''
+    if (text !== '' && text !== shown.at(-1)?.text)
+      shown.push({ at: (Date.now() - recording) / 1000, text })
+    if (until(text)) return true
+    await wait(300)
+  }
+  return false
+}
+
+/**
+ * The recording's loudness beside the sentences: FFmpeg's ebur128 momentary
+ * loudness each second, the sentence the card had just shown on its line.
+ */
+function crowdLevels(video: string, shown: readonly Shown[]): string {
+  const measured = spawnSync(
+    'ffmpeg',
+    ['-nostdin', '-i', video, '-vn', '-af', 'ebur128', '-f', 'null', '-'],
+    { encoding: 'utf8' }
+  )
+  assert.equal(measured.status, 0, 'ffmpeg measured nothing')
+  const seconds = new Map<number, string>()
+  for (const match of measured.stderr.matchAll(
+    /t:\s*([\d.]+)\s+TARGET:.*?M:\s*(-?[\d.]+|-inf)/g
+  )) {
+    const second = Math.floor(Number(match[1]))
+    if (!seconds.has(second)) seconds.set(second, match[2])
+  }
+  const summary = /Summary:[\s\S]*$/.exec(measured.stderr)?.[0] ?? ''
+  return [
+    `$ ffmpeg -nostdin -i ${basename(video)} -vn -af ebur128 -f null -`,
+    '# second  momentary LUFS  sentence shown in that second',
+    ...[...seconds].map(([second, loudness]) => {
+      const said = shown.filter(line => Math.floor(line.at) === second)
+      return `${String(second).padStart(6)}s  ${loudness.padStart(7)}  ${said.map(line => line.text).join(' | ')}`
+    }),
+    summary.trim()
+  ].join('\n')
+}
+
 async function replay(m: Device, name: string): Promise<void> {
   await m.openLink({ link: `teamstation://games/${FINAL}/replay` })
   await m.assertVisible({ id: 'replay-pause', timeout: 30000 })
   const video = join(await artifactsDir(), `replay-${name}-webcam.mp4`)
   const camera = filming(video, REPLAY_SECONDS)
   const started = Date.now()
+  const shown: Shown[] = []
   await m.tapOn({ id: 'replay-speaker' })
   await m.assertVisible({ text: 'Mute game sounds', timeout: 5000 })
   await shot(m, `replay-${name}-open`)
-  await wait(25000)
+  await watchLines(m, started, shown, 25000)
   await m.tapOn({ id: 'replay-pause' })
   await m.assertVisible({ text: 'Paused', timeout: 5000 })
   await shot(m, `replay-${name}-paused`)
   await wait(5000)
   await m.tapOn({ id: 'replay-pause' })
   // The first home run comes a minute or two in, with the announcer on.
-  await m.assertVisible({
-    text: '.*(home run|grand slam).*',
-    timeout: Math.max(
-      5000,
-      REPLAY_SECONDS * 1000 - 15000 - (Date.now() - started)
-    )
-  })
+  assert.ok(
+    await watchLines(
+      m,
+      started,
+      shown,
+      Math.max(5000, REPLAY_SECONDS * 1000 - 15000 - (Date.now() - started)),
+      text => /home run|grand slam/i.test(text)
+    ),
+    'no home run'
+  )
   await shot(m, `replay-${name}-home-run`)
   // Scrolls the box score itself, which fills the lower part of the screen.
   for (
@@ -112,6 +182,10 @@ async function replay(m: Device, name: string): Promise<void> {
   )
   await shot(m, `replay-${name}-box-pitchers`)
   await camera.done
+  await writeFile(
+    join(await artifactsDir(), 'crowd-levels.log'),
+    `${crowdLevels(video, shown)}\n`
+  )
   await m.tapOn({ id: 'replay-exit' })
   assert.ok(await visible(m, 'Box score', 10000), 'the X did not show the game')
   console.log(`replay on ${name}: camera at ${video}`)

@@ -60,6 +60,8 @@ import { scoringSheetTheme } from '../scoring/scoringSheetTheme'
 import { scoringSurface as surface } from '../theme/scoringSurface'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { type AnnouncerLines, nextLines, NO_LINES } from './announcerLines'
+import { cheerForStep } from './crowdCheer'
+import { useCrowd } from './crowdPlayer'
 import { useNarrationPlayer } from './narrationPlayer'
 import type { NarrationClient } from './narrationPlayerTypes'
 import { NarrationQueue, type NarrationStep, PREFETCH } from './narrationQueue'
@@ -477,6 +479,48 @@ function ReplayView(props: {
     // `saidSince` reads `rewinds`, which the dependencies name.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [narration, shownKey, shownCount, sentence, hurrying, rewinds])
+  // The stadium crowd under it all while the sound is on, and a cheer for
+  // each play a step completes, once a pass: a step that grows after its
+  // play, or a correction that shows it again, does not cheer again, and a
+  // rewind starts a new pass. A live view opens on a step already shown,
+  // and a rewind on one it passes over.
+  // The murmur stops once the replay is over, a cheer still sounding plays
+  // out, and a rewind starts it again.
+  const crowd = useCrowd({
+    on: !muted,
+    paused: state.paused,
+    over: state.final
+  })
+  const { cheer } = crowd
+  const cheered = useRef(new Set<string>())
+  const cheeredStep = useRef(`${shownKey}#${shownCount}`)
+  const { shown } = state
+  const { session: shownSession } = state.scoring
+  // A rewind lands on the step before the half, the last play of the half
+  // before it: that play is the past, and is not cheered on the way, as the
+  // announcer does not read it. Declared before the effect that cheers the
+  // shown step, so it runs first.
+  const cheerRewound = useRef(rewinds)
+  useEffect(() => {
+    if (cheerRewound.current === rewinds) return
+    cheerRewound.current = rewinds
+    cheeredStep.current = `${shownKey}#${shownCount}`
+    // Only a new rewind does this; the step shown is as it left it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rewinds])
+  useEffect(() => {
+    const id = `${shownKey}#${shownCount}`
+    if (shown == null || cheeredStep.current === id) return
+    cheeredStep.current = id
+    const size = cheerForStep(shownSession, shown)
+    const play = `${shown.atBatIndex}#${rewinds}`
+    if (size == null || cheered.current.has(play)) return
+    // A play hurried past is never cheered, not even when it grows later.
+    cheered.current.add(play)
+    if (!hurrying) cheer(size)
+    // The step's key and count say when it is shown; the rest is read then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownKey, shownCount, rewinds, cheer])
   // A replay fetches the next two sentences; a live game all it has queued,
   // or, while it is catching up, the step it will land on. A ball in play
   // the scorer has yet to place has no sentence to fetch.
@@ -504,6 +548,7 @@ function ReplayView(props: {
       scoringAudio.unlock()
       scoringAudio.setEnabled(true)
       player.unlock()
+      crowd.unlock()
       setUnavailable(false)
     } else scoringAudio.setEnabled(false)
     setMuted(!muted)
@@ -779,6 +824,7 @@ function ReplayView(props: {
     >
       <View style={{ flex: 1 }}>
         {player.element}
+        {crowd.element}
         <View testID="replay-field" style={fieldHolderStyle(-lift)}>
           {field}
         </View>

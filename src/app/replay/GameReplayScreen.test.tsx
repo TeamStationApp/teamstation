@@ -15,6 +15,7 @@ import {
   type WebSocketLike
 } from '../../common/gameSocket'
 import { replayTimelineOf } from '../../common/replay/replayTimeline'
+import type { ScoringAction } from '../../common/scoring/actions'
 import type { StoredGame } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
 import { stubFieldInsets } from '../../test/fieldInsetsStub'
@@ -46,6 +47,7 @@ import type { Insets } from '../platform/insets'
 import { scoringAudio } from '../scoring/scoringAudio'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
+import { CHEER_GAIN, type CheerSize } from './crowdCheer'
 import {
   boxScoreInset,
   DECK_MIN,
@@ -350,6 +352,34 @@ let unstubSafeArea = (): void => undefined
 /** An iPhone held upright: the island and the home indicator. */
 const IPHONE: Insets = { top: 59, bottom: 34, left: 0, right: 0 }
 
+/**
+ * The crowd's sounds as the page played and paused them, by file: the idle
+ * murmur's copies (`bed`) and each cheer, with the gain each played at.
+ */
+const crowd: Array<{
+  type: 'play' | 'pause'
+  file: string
+  bed: boolean
+  volume: number
+}> = []
+/** The cheers played, by size, in order. */
+const cheers = (): string[] =>
+  crowd
+    .filter(sound => sound.type === 'play' && !sound.bed)
+    .map(sound => /cheer-([a-z]+)/.exec(sound.file)?.[1] ?? sound.file)
+/** The idle murmur's last play or pause. */
+const bed = (): (typeof crowd)[number] | undefined =>
+  crowd.filter(sound => sound.bed).at(-1)
+const heard = (media: HTMLMediaElement, type: 'play' | 'pause'): void => {
+  if (media.src.includes('.m4a'))
+    crowd.push({
+      type,
+      file: media.src.slice(media.src.lastIndexOf('/') + 1),
+      bed: media.src.includes('crowd-idle'),
+      volume: media.volume
+    })
+}
+
 /** What the replay asked of the field cues, in order. */
 const cues: string[] = []
 const setCues = scoringAudio.setEnabled
@@ -366,6 +396,7 @@ describe('the replay screen', function () {
     announcer.readied = 0
     announcer.played = []
     cues.length = 0
+    crowd.length = 0
     safeArea = null
     unstubSafeArea = stubFieldInsets(() => safeArea)
     scoringAudio.setEnabled = value => {
@@ -380,6 +411,7 @@ describe('the replay screen', function () {
     const values: unknown[] = [
       async function (this: HTMLMediaElement) {
         const src = this.src
+        heard(this, 'play')
         if (src.startsWith('blob:')) {
           announcer.played.push(src.slice('blob:'.length))
           setTimeout(() => {
@@ -387,7 +419,9 @@ describe('the replay screen', function () {
           }, 20)
         }
       },
-      () => undefined,
+      function (this: HTMLMediaElement) {
+        heard(this, 'pause')
+      },
       (blob: Blob & { stepKey?: string }) => `blob:${blob.stepKey ?? ''}`,
       () => undefined
     ]
@@ -1103,9 +1137,21 @@ describe('the replay screen', function () {
     // The announcer is unlocked on the tap, and fetches ahead.
     await wait(50)
     expect(announcer.asked).not.deep.equals([])
+    // The crowd murmurs under it all, rising from silence to its idle gain.
+    expect(bed()).deep.include({
+      type: 'play',
+      bed: true,
+      volume: 0
+    })
+    expect(bed()?.file).match(/^crowd-idle.*\.m4a$/)
+    // Readied in the tap, muted and paused again, then played.
+    expect(
+      crowd.filter(sound => sound.bed).map(sound => sound.type)
+    ).deep.equals(['play', 'pause', 'play', 'pause', 'play'])
     await press(MUTE)
     expect(byLabel(UNMUTE)).not.equals(undefined)
     expect(cues.at(-1)).equals('off')
+    expect(bed()?.type).equals('pause')
   })
 
   it('puts the box score in a column beside the field on a wide window', async function () {
@@ -1445,6 +1491,7 @@ describe('the replay screen', function () {
         expect(announcer.readied).equals(0)
         expect(announcer.played).deep.equals([])
         expect(cues.at(-1)).equals('on')
+        expect(bed()).deep.include({ type: 'play', bed: true })
       })
 
     it('reads nothing while muted, and each step once the speaker is on', async function () {
@@ -1485,9 +1532,10 @@ describe('the replay screen', function () {
       }
       expect(announcer.asked.length).greaterThanOrEqual(3)
       expect(card()).includes('Announcer unavailable')
-      // The button stays on, and so do the field cues.
+      // The button stays on, and so do the field cues and the crowd.
       expect(byLabel(MUTE)).not.equals(undefined)
       expect(cues.at(-1)).equals('on')
+      expect(bed()).deep.include({ type: 'play', bed: true })
       // Nothing more is asked of it while it is unavailable.
       const asked = announcer.asked.length
       now += 10000
@@ -1535,6 +1583,208 @@ describe('the replay screen', function () {
       })
       await show(gameOf(), finalGame())
       expect(byLabel(UNMUTE)).not.equals(undefined)
+    })
+  })
+
+  /** Plays on until `done`, the field's runners arriving at once. */
+  async function playOn(done: () => boolean, step = 2000): Promise<void> {
+    for (let i = 0; i < 600 && !done(); i++) {
+      now += step
+      await wait(40)
+      // jsdom draws no field: its runners arrive at once.
+      await act(async () => {
+        for (const player of field().players)
+          if (player.motion != null && !player.motion.reported)
+            field().onMovementComplete?.(
+              player.motion.id,
+              player.motion.generation
+            )
+      })
+    }
+  }
+
+  /**
+   * A half of hits: a single, a double play, a double, a triple, a home run
+   * and a strikeout on three pitches, for `bat` against `field`.
+   */
+  function hitsHalf(bat: number[], fielders: number[]): ScoringAction[] {
+    const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const hit = (
+      eventType: 'single' | 'double' | 'triple' | 'home_run',
+      x: number,
+      z: number,
+      launchAngle: number
+    ): ScoringAction[] => [
+      { type: 'ballInPlay', contact: 'swing', launchAngle, location: { x, z } },
+      { type: 'result', eventType }
+    ]
+    return [
+      ...hit('single', -45, -75, 12),
+      close,
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        launchAngle: -8,
+        location: { x: -12, z: -32 },
+        fielder: fielders[5]
+      },
+      { type: 'result', eventType: 'field_out' },
+      {
+        type: 'runnerMovement',
+        runner: bat[0],
+        to: '2B',
+        out: true,
+        fielders: [fielders[5], fielders[3]]
+      },
+      {
+        type: 'runnerMovement',
+        runner: bat[1],
+        to: '1B',
+        out: true,
+        fielders: [fielders[3], fielders[2]]
+      },
+      close,
+      ...hit('double', 40, -110, 18),
+      close,
+      ...hit('triple', 60, -120, 20),
+      { type: 'runnerMovement', runner: bat[2], to: 'home', reason: 'Advance' },
+      close,
+      ...hit('home_run', -40, -128, 31),
+      close,
+      { type: 'pitch', call: 'S' },
+      { type: 'pitch', call: 'F' },
+      { type: 'pitch', call: 'C' },
+      close
+    ]
+  }
+
+  describe('cheers', function () {
+    const HALF = ['small', 'medium', 'medium', 'large', 'huge', 'small']
+
+    it('cheers each play by its size for either side, and no pitch that leaves its play open', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const setup = replaySetup()
+      const { away, home } = setup.sides
+      const stored = await scored(
+        [
+          ...hitsHalf(away.players, home.players),
+          ...hitsHalf(home.players, away.players)
+        ],
+        setup
+      )
+      await show(gameOf(), stored)
+      await showCatcher()
+      await press(UNMUTE)
+      await playOn(() => cheers().length >= 12)
+      await playOn(() => false, 5000)
+      // The single, the double play, the double, the triple, the home run
+      // and the strikeout, top and bottom; the strikeout's first two
+      // pitches raise nothing.
+      expect(cheers()).deep.equals([...HALF, ...HALF])
+      const gains = crowd
+        .filter(sound => sound.type === 'play' && !sound.bed)
+        .map(sound => sound.volume)
+      expect(gains.slice(0, 6)).deep.equals(
+        HALF.map(size => CHEER_GAIN[size as CheerSize])
+      )
+    })
+
+    it('pauses the crowd with the replay, and plays it on', async function () {
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press(UNMUTE)
+      expect(bed()?.type).equals('play')
+      await press('Pause replay')
+      expect(bed()?.type).equals('pause')
+      await press('Play replay')
+      expect(bed()?.type).equals('play')
+    })
+
+    it('stops the crowd once the replay is over, and starts it on a rewind', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press(UNMUTE)
+      expect(bed()?.type).equals('play')
+      await playOn(() => byLabel('Pause replay') == null)
+      expect(byLabel('Pause replay')).equals(undefined)
+      expect(bed()?.type).equals('pause')
+      await press('Rewind half an inning')
+      expect(bed()?.type).equals('play')
+    })
+
+    it('cheers nothing while the sound is off', async function () {
+      this.timeout(60000)
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await playOn(() => card().includes('single'))
+      expect(crowd).deep.equals([])
+    })
+
+    it('cheers the rewound plays again', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press(UNMUTE)
+      // Judge's strikeout, Rizzo's single and Torres's double play.
+      await playOn(() => cheers().length >= 3)
+      expect(cheers()).deep.equals(['small', 'small', 'medium'])
+      await press('Rewind half an inning')
+      await playOn(() => cheers().length >= 6)
+      expect(cheers()).deep.equals([
+        'small',
+        'small',
+        'medium',
+        'small',
+        'small',
+        'medium'
+      ])
+    })
+
+    it('cheers nothing for the half before on a rewind, until a play completes', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const setup = replaySetup()
+      const { away, home } = setup.sides
+      const stored = await scored(
+        [
+          ...hitsHalf(away.players, home.players),
+          ...hitsHalf(home.players, away.players)
+        ],
+        setup
+      )
+      await show(gameOf(), stored)
+      await showCatcher()
+      await press(UNMUTE)
+      // The top half, which ends on a strikeout, and the bottom's single,
+      // double play and double.
+      await playOn(() => cheers().length >= 9)
+      expect(cheers()).deep.equals([...HALF, 'small', 'medium', 'medium'])
+      // Back to the bottom's start: it stands on the top's strikeout, which
+      // is not cheered again.
+      await press('Rewind half an inning')
+      expect(card()).includes('Rewind to bottom of first')
+      expect(cheers()).length(9)
+      // The bottom's plays, played again, are, from its single on.
+      await playOn(() => cheers().length >= 11)
+      expect(cheers()).deep.equals([
+        ...HALF,
+        'small',
+        'medium',
+        'medium',
+        'small',
+        'medium'
+      ])
     })
   })
 
@@ -1652,7 +1902,8 @@ describe('the replay screen', function () {
       /** The teams whose players' halves each read carries. */
       halves?: string[]
     ): Promise<{
-      setStored: (count: number) => Promise<StoredGame>
+      /** The scorer's first `count` actions, or these actions. */
+      setStored: (count: number | ScoringAction[]) => Promise<StoredGame>
       /** What the server answers a read of the game now. */
       current: () => StoredGame
       reads: () => number
@@ -1678,7 +1929,12 @@ describe('the replay screen', function () {
       reads = 0
       return {
         setStored: async count => {
-          stored = asRead(await scored(actions.slice(0, count)), halves)
+          stored = asRead(
+            await scored(
+              typeof count === 'number' ? actions.slice(0, count) : count
+            ),
+            halves
+          )
           return stored
         },
         current: () => stored,
@@ -1879,6 +2135,60 @@ describe('the replay screen', function () {
       expect(card()).includes("That's the ballgame!")
       // Hurrying through the missed steps, it read only the last.
       expect(announcer.played).deep.equals(['9999-1'])
+    })
+
+    it('cheers nothing it hurries past to catch the scorer up', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const socket = new FakeSocket()
+      const game = await following(socket)
+      await press(UNMUTE)
+      // Away while the scorer finished the game: a single, a double play,
+      // two home runs and a run of strikeouts, all hurried past.
+      await game.setStored(actions.length)
+      await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
+      await playOn(() => byLabel('Pause replay') == null)
+      expect(card()).includes("That's the ballgame!")
+      expect(cheers()).deep.equals([])
+      // The murmur played on the way, and stops at the end.
+      expect(crowd.some(sound => sound.bed && sound.type === 'play')).equals(
+        true
+      )
+      expect(bed()?.type).equals('pause')
+    })
+
+    it('cheers a play once, when the scorer closes it, and not again for a correction', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const socket = new FakeSocket()
+      const game = await following(socket)
+      await press(UNMUTE)
+      // Rizzo's single, placed: shown, but not yet closed.
+      const inPlay = actions.findIndex(action => action.type === 'ballInPlay')
+      expect(actions[inPlay + 1]).deep.include({ eventType: 'single' })
+      await socket.emit(change('playEdits', await game.setStored(inPlay + 2)))
+      await playOn(() => card().includes('single'), 1000)
+      expect(card()).includes('single')
+      expect(cheers()).deep.equals([])
+      // Closed: the step grows, and its play cheers.
+      await socket.emit(change('playEdits', await game.setStored(inPlay + 4)))
+      await playOn(() => cheers().length > 0, 1000)
+      expect(cheers()).deep.equals(['small'])
+      // The scorer makes it a double: the play is shown again, changed, and
+      // not cheered again.
+      const held = game.current()
+      const corrected = await game.setStored([
+        ...actions.slice(0, inPlay + 1),
+        { type: 'result', eventType: 'double' },
+        ...actions.slice(inPlay + 2, inPlay + 4)
+      ])
+      await socket.emit(change('playEdits', corrected, held))
+      await playOn(() => card().includes('Play changed'), 1000)
+      expect(card()).includes('Play changed')
+      await playOn(() => false, 1000)
+      expect(cheers()).deep.equals(['small'])
     })
 
     it('fetches no sentence for a ball in play until the scorer places it', async function () {

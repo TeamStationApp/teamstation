@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { resolve } from 'node:path'
+
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 const root = process.cwd()
 process.chdir(root)
 const require = createRequire(resolve('package.json'))
@@ -79,12 +81,8 @@ for (const phase of ['before', 'after']) {
       TS_API_BASE_URL: '"/api/v1"',
       global: 'globalThis'
     },
-    loader: {
-      '.png': 'dataurl',
-      '.jpg': 'dataurl',
-      '.svg': 'dataurl',
-      '.ttf': 'dataurl'
-    }
+    // Its fonts inline as well: this fixture copies no font files beside its page.
+    loader: { ...ASSET_LOADER, '.ttf': 'dataurl' }
   })
   writeFileSync(
     out + '/cancel-visual.html',

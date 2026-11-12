@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 const report = resolve('coverage/umpires')
@@ -94,7 +95,7 @@ if (!reportOnly) {
       TS_API_BASE_URL: JSON.stringify('/api/v1'),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.svg': 'dataurl' }
+    loader: ASSET_LOADER
   })
   run(
     'node_modules/.bin/mocha',

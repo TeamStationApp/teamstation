@@ -1,12 +1,7 @@
 import { useMemo } from 'react'
 
 import type { NarrationClient, NarrationPlayer } from './narrationPlayerTypes'
-
-/** A moment of silence, played in the tap so later sentences may play. */
-const SILENCE =
-  'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA='
-
-const ignore = (): void => undefined
+import { SILENCE, start } from './webAudio'
 
 /**
  * The announcer in a browser: one audio element, unlocked in the speaker's
@@ -20,7 +15,8 @@ export function webNarrationPlayer(
 ): NarrationPlayer {
   let finish: (() => void) | null = null
   let unlocked = false
-  const start = (): void => {
+  /** Plays the clip; one the browser refuses is done with. */
+  const playClip = (): void => {
     const started = audio.play() as Promise<void> | undefined
     started?.catch(() => finish?.())
   }
@@ -29,8 +25,9 @@ export function webNarrationPlayer(
     unlock() {
       if (unlocked) return
       unlocked = true
+      // The silence played in the tap, so later sentences may play.
       audio.src = SILENCE
-      ;(audio.play() as Promise<void> | undefined)?.catch(ignore)
+      start(audio)
     },
     output: {
       async load(step, signal) {
@@ -50,14 +47,14 @@ export function webNarrationPlayer(
           audio.onended = () => finish?.()
           audio.onerror = () => finish?.()
           audio.src = clip
-          start()
+          playClip()
         })
       },
       pause() {
         audio.pause()
       },
       resume() {
-        if (finish != null) start()
+        if (finish != null) playClip()
       },
       stop() {
         audio.pause()

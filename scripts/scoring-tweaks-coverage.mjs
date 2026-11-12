@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url'
 
 import ts from 'typescript'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
+
 const require = createRequire(import.meta.url)
 const {
   coverageSource,
@@ -143,7 +145,7 @@ if (!process.argv.includes('--report-only')) {
       format: 'cjs',
       sourcemap: true,
       jsx: 'automatic',
-      loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' },
+      loader: ASSET_LOADER,
       external: [
         'react',
         'react-dom',
