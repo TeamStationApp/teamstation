@@ -3,6 +3,11 @@ import { writeFile } from 'node:fs/promises'
 
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import {
+  aimLanding,
+  maestroDriver,
+  setTrajectory
+} from '../../../e2e/rigs/fieldPointer'
 import { applyFieldCamera } from '../../app/field/cameraModel'
 import { BASES } from '../../app/field/fieldModel'
 import { TeamStationClient } from '../../common/api'
@@ -194,35 +199,19 @@ export class ConcurrentScoringRig {
   }
 
   async hit(index: number, outcome: string, fielder?: number): Promise<void> {
-    const m = this.clients[index].m
     await this.pitch(index, 'Swing in Play')
     await this.tap(index, `^${outcome}$`)
-    if (fielder == null) {
-      await m.tapOn({ css: '[role="application"]' })
-      for (const key of ['Space', 'arrow_up', 'Enter', 'Enter'])
-        await m.pressKey({ key })
-    } else {
-      await this.defender(index, fielder)
-      await this.trajectory(index)
-    }
+    // A home run lands in the stands beyond centre; as on Safari, centre
+    // field takes any other ball no fielder is named for.
+    if (outcome === 'Home Run')
+      await aimLanding(maestroDriver(this.clients[index].m), 0.5, 0.18)
+    else await this.defender(index, fielder ?? 8)
+    await this.trajectory(index)
   }
 
+  /** Accepts the trajectory the field shows, with a tap on it. */
   async trajectory(index: number): Promise<void> {
-    // Undo leaves keyboard focus on its button. Enter there would undo a
-    // second step instead of accepting the restored trajectory.
-    const client = this.clients[index]
-    let focused = false
-    for (let step = 0; step < 40; step++) {
-      focused = await client.page!.evaluate(
-        () =>
-          document.activeElement != null &&
-          document.activeElement.getAttribute('role') === 'application'
-      )
-      if (focused) break
-      await client.m.pressKey({ key: 'Tab' })
-    }
-    if (!focused) throw new Error('Keyboard navigation did not reach the field')
-    await this.clients[index].m.pressKey({ key: 'Enter' })
+    await setTrajectory(maestroDriver(this.clients[index].m))
   }
 
   async more(index: number, label: string): Promise<void> {

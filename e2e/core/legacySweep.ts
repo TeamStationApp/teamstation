@@ -274,13 +274,16 @@ async function main(): Promise<void> {
             }
           }
           // `{legacy:<name>}` in a value is that script's artifact directory, for
-          // a script that reads what an earlier one left (chat.e2e's profiles).
+          // a script that reads what an earlier one left (chat.e2e's profiles);
+          // `{stack:apiLog}` is the stack API's log, for a sign-in code.
           const env = Object.fromEntries(
             Object.entries(invocation.env ?? {}).map(([key, value]) => [
               key,
-              value.replace(/\{legacy:([^}]+)\}/g, (_, name: string) =>
-                legacyArtifacts(`${name}.x`)
-              )
+              value
+                .replace(/\{legacy:([^}]+)\}/g, (_, name: string) =>
+                  legacyArtifacts(`${name}.x`)
+                )
+                .replaceAll('{stack:apiLog}', stack.apiLog)
             ])
           )
           return await runLegacy(
