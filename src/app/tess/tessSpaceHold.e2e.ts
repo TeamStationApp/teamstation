@@ -218,10 +218,10 @@ async function main(): Promise<void> {
       await m.tapOn({ css: selector, timeout: 15000 })
     }
     const column = '[data-testid="Tess column"]'
-    const field = '[aria-label="Ask Tess"]'
+    const field = 'textarea[aria-label="Ask Tess"]'
     const mic = MIC
     const fieldValue = async (): Promise<string> =>
-      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+      await page.$eval(field, node => node.value)
     const heardCount = async (): Promise<number> =>
       await page.evaluate(
         words =>
@@ -317,7 +317,8 @@ async function main(): Promise<void> {
     })
     await m.openBrowser({ url: `${f.h.origin}/` })
     // She opens from the mark's menu on Home; a page load would close her.
-    await tap('[role="button"][aria-label="TeamStation menu"]')
+    if ((await page.$('[data-testid="navigation-sidebar"]')) == null)
+      await tap('[role="button"][aria-label="TeamStation menu"]')
     await tap('[role="button"][aria-label="Ask Tess"]')
     await waitFor(page, column)
     await page.evaluate(team => {
@@ -366,7 +367,7 @@ async function main(): Promise<void> {
     await pause(600)
     const clearField = async (): Promise<void> => {
       await page.$eval(field, node => {
-        ;(node as HTMLTextAreaElement).select()
+        node.select()
       })
       await page.keyboard.press('Backspace')
       await page.waitForFunction(

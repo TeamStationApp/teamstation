@@ -18,7 +18,7 @@ import { HEARD, type TessFixture, tessFixture } from '../../test/tessFixture'
 import { recordBrowserCoverage } from '../browserCoverage.e2e'
 
 /**
- * Tess on a wide browser window (Chromium, 1280 × 900), driven through
+ * Tess on a wide browser window (Chromium, 1536 × 900), driven through
  * maestro-d with puppeteer beside it for what a test reads back: the split,
  * links into the pane, rich HTML that loads nothing remote, a reply's
  * changes as one table and the 2-second hold, attachments, the microphone, the narrow layout and Back, the
@@ -128,7 +128,7 @@ async function main(): Promise<void> {
     s = await browserSession(
       daemon,
       'tess-wide-chromium',
-      1280,
+      1536,
       900,
       out,
       'chrome'
@@ -174,11 +174,15 @@ async function main(): Promise<void> {
       await m.tapOn({ css: selector, timeout: 15000 })
     }
     const picture = '[role="button"][aria-label^="Account, "]'
-    const mark = '[role="button"][aria-label="TeamStation menu"]'
+    const mark =
+      '[role="button"][aria-label="TeamStation menu"], [data-testid="sidebar-header-mark"]'
     const closeTess = '[role="button"][aria-label="Close Tess"]'
     // She opens from the mark's menu, and only a tab root has the mark.
     const openTess = async (): Promise<void> => {
-      await tap(mark)
+      if (
+        (await page.$('[role="button"][aria-label="TeamStation menu"]')) != null
+      )
+        await tap('[role="button"][aria-label="TeamStation menu"]')
       await tap('[role="button"][aria-label="Ask Tess"]')
     }
     // A screen reached inside the app, because a page load closes her.
@@ -195,7 +199,7 @@ async function main(): Promise<void> {
     const column = '[data-testid="Tess column"]'
     const layer = '[data-testid="Tess layer"]'
     const chat = '[data-testid="Tess chat"]'
-    const field = '[aria-label="Ask Tess"]'
+    const field = 'textarea[aria-label="Ask Tess"]'
     const say = async (words: string, answered: string): Promise<void> => {
       await waitFor(page, field)
       await page.click(field)
@@ -254,8 +258,8 @@ async function main(): Promise<void> {
       column: await rectOf(page, column),
       pane: await paneRect(page)
     }
-    expect(split.column).deep.include({ x: 0, width: 400 })
-    expect(split.pane).deep.include({ x: 400, width: 880 })
+    expect(split.column).deep.include({ x: 256, width: 400 })
+    expect(split.pane).deep.include({ x: 656, width: 880 })
     await contains(page, 'Your Home')
     await contains(page, 'Ask Tess')
     await shot('wide-split.png')
@@ -389,7 +393,7 @@ async function main(): Promise<void> {
     const angleBox = (await overlay.jsonValue()) as Rect
     const paneNow = await paneRect(page)
     expect(angleBox).deep.equals(paneNow)
-    expect(await rectOf(page, column)).deep.include({ x: 0, width: 400 })
+    expect(await rectOf(page, column)).deep.include({ x: 256, width: 400 })
     await pause(1500)
     await shot('wide-angle-link.png')
     console.log('W6 angle overlay equals pane', JSON.stringify(angleBox))
@@ -412,9 +416,7 @@ async function main(): Promise<void> {
     // The chat stays usable beside it.
     await page.click(field)
     await page.type(field, 'still here')
-    expect(
-      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
-    ).equals('still here')
+    expect(await page.$eval(field, node => node.value)).equals('still here')
     await page.evaluate(selector => {
       document.querySelector<HTMLTextAreaElement>(selector)!.select()
     }, field)
@@ -462,7 +464,7 @@ async function main(): Promise<void> {
     )
     await gone(page, '[data-testid="Tess overlay"]')
     await contains(page, 'Team Settings')
-    expect(await rectOf(page, column)).deep.include({ x: 0, width: 400 })
+    expect(await rectOf(page, column)).deep.include({ x: 256, width: 400 })
     console.log('W7b the bubble closed the chart; the pane shows team settings')
 
     // W7c: with the multi-angle view filling the pane, the chart still opens
@@ -675,7 +677,7 @@ async function main(): Promise<void> {
     expect(await rectOf(page, '[data-testid="Tess overlay"]')).deep.equals(
       await paneRect(page)
     )
-    expect(await rectOf(page, column)).deep.include({ x: 0, width: 400 })
+    expect(await rectOf(page, column)).deep.include({ x: 256, width: 400 })
     const expandedPage = await page.$eval(
       '[data-testid="Tess overlay"] iframe',
       node => node.getAttribute('srcdoc') || ''
@@ -780,7 +782,7 @@ async function main(): Promise<void> {
       )
     }
     const fieldValue = async (): Promise<string> =>
-      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
+      await page.$eval(field, node => node.value)
     // How often the page has opened a microphone, from here on.
     await page.evaluate(() => {
       const devices = navigator.mediaDevices
@@ -871,17 +873,14 @@ async function main(): Promise<void> {
     await waitForMic('Off')
     expect(await page.$(wave)).equals(null)
     expect(
-      await page.$eval(field, node => [
-        (node as HTMLTextAreaElement).selectionStart,
-        (node as HTMLTextAreaElement).selectionEnd
-      ]),
+      await page.$eval(field, node => [node.selectionStart, node.selectionEnd]),
       'the caret after the words'
     ).deep.equals([6 + HEARD.length, 6 + HEARD.length])
     await pause(1000)
     console.log(`W12 tap, tap: "${inserted}" in the field; nothing sent`)
     // Held a second while speaking: recording from the press to the release.
     await page.$eval(field, node => {
-      ;(node as HTMLTextAreaElement).select()
+      node.select()
     })
     await page.keyboard.press('Backspace')
     micBox = (await rectOf(page, mic))!
@@ -920,7 +919,7 @@ async function main(): Promise<void> {
     expect(await page.$('[data-testid="Tess thinking"]')).equals(null)
     console.log('W12 held 1 s: recorded while held; the words in the field')
     await page.$eval(field, node => {
-      ;(node as HTMLTextAreaElement).select()
+      node.select()
     })
     await page.keyboard.press('Backspace')
 
@@ -994,7 +993,7 @@ async function main(): Promise<void> {
       width: 1024,
       height: 900
     })
-    await page.setViewport({ width: 1280, height: 900 })
+    await page.setViewport({ width: 1536, height: 900 })
     await waitFor(page, column)
     await page.waitForFunction(
       count =>
@@ -1009,12 +1008,12 @@ async function main(): Promise<void> {
     await tap('[role="button"][aria-label="Close Tess"]')
     await gone(page, chat)
     await contains(page, 'Your Home')
-    console.log('W15 1024 full screen, 1280 split, closed at 1024')
+    console.log('W15 1024 full screen, 1536 split, closed at 1024')
     // Into a team from Home, inside the app, so Back has a step of its own
     // to take: f.teamA, the Demo Hawks with a season. Wide, because the mark
     // is only on Home and her layer stops anything moving beneath it.
     const intoTheTeam = async (): Promise<void> => {
-      await page.setViewport({ width: 1280, height: 900 })
+      await page.setViewport({ width: 1536, height: 900 })
       await openTess()
       await waitFor(page, column)
       await tap('[role="button"][aria-label^="Demo Hawks, Demo Regular"]')
@@ -1140,7 +1139,7 @@ async function main(): Promise<void> {
     )
     expect(t.dictation.begun, 'no utterance started').equals(begun)
     await page.$eval(field, node => {
-      ;(node as HTMLTextAreaElement).select()
+      node.select()
     })
     await page.keyboard.press('Backspace')
     await page.waitForFunction(
@@ -1180,7 +1179,7 @@ async function main(): Promise<void> {
       `W15c Space held 800 ms in the field: recording after ${inField} ms; "Hi ${HEARD}" in the field`
     )
     await page.$eval(field, node => {
-      ;(node as HTMLTextAreaElement).select()
+      node.select()
     })
     await page.keyboard.press('Backspace')
     // On the page, nothing focused.
@@ -1198,7 +1197,7 @@ async function main(): Promise<void> {
       `W15c Space held 800 ms on the page: recording after ${onPage} ms; the words in the field, nothing sent`
     )
     await page.$eval(field, node => {
-      ;(node as HTMLTextAreaElement).select()
+      node.select()
     })
     await page.keyboard.press('Backspace')
 
@@ -1395,9 +1394,7 @@ async function main(): Promise<void> {
       { timeout: 5000 }
     )
     expect(await queuedTexts()).deep.equals([queueA, queueB, queueC])
-    expect(
-      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
-    ).equals('')
+    expect(await page.$eval(field, node => node.value)).equals('')
     // Pinned: the stack keeps its place over the composer while the reply
     // grows and the conversation scrolls under it.
     const queueBox = '[data-testid="Tess queue"]'
@@ -1744,9 +1741,7 @@ async function main(): Promise<void> {
     await page.keyboard.up('Shift')
     await page.type(field, 'b')
     const twoLines = await fieldHeight()
-    expect(
-      await page.$eval(field, node => (node as HTMLTextAreaElement).value)
-    ).equals('a\nb')
+    expect(await page.$eval(field, node => node.value)).equals('a\nb')
     expect(oneLine).equals(48)
     expect(twoLines, 'two lines').equals(70)
     const callsBeforeLines = t.model.calls.length
@@ -1816,16 +1811,16 @@ async function main(): Promise<void> {
     const drag = await startVideo(s, out, 'divider-drag.mp4')
     await pause(500)
     await dragBy(120)
-    expect(await rectOf(page, column)).deep.include({ x: 0, width: 520 })
-    expect(await paneRect(page)).deep.include({ x: 520, width: 760 })
+    expect(await rectOf(page, column)).deep.include({ x: 256, width: 520 })
+    expect(await paneRect(page)).deep.include({ x: 776, width: 760 })
     await breakpointIs('tablet')
     await dragBy(600)
     expect(await rectOf(page, column)).deep.include({ width: 720 })
-    expect(await paneRect(page)).deep.include({ x: 720, width: 560 })
+    expect(await paneRect(page)).deep.include({ x: 976, width: 560 })
     await breakpointIs('phone')
     await dragBy(-1000)
     expect(await rectOf(page, column)).deep.include({ width: 320 })
-    expect(await paneRect(page)).deep.include({ x: 320, width: 960 })
+    expect(await paneRect(page)).deep.include({ x: 576, width: 960 })
     await breakpointIs('tablet')
     await dragBy(200)
     await pause(500)
@@ -1842,7 +1837,7 @@ async function main(): Promise<void> {
       { timeout: 10000 },
       column
     )
-    expect(await paneRect(page)).deep.include({ x: 520, width: 760 })
+    expect(await paneRect(page)).deep.include({ x: 776, width: 760 })
     console.log(
       'L2 520/760, 720/560 (phone), 320/960 (tablet); the reload kept 520'
     )
