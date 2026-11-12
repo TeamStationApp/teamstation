@@ -13,7 +13,10 @@ import {
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
 import { FOLD_VERSION } from '../../common/scoring/actions'
-import type { ScoringMutation } from '../../common/scoring/scoringMutation'
+import {
+  sameScoringMutation,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import {
   type LineupRecovery,
   type SaveChange,
@@ -671,6 +674,53 @@ interface ReleasedSend {
 }
 
 /**
+ * What `giveUp` gave up of a chain: `lost`, the rows the server did not
+ * take, and `unsure`, the rows sent with no answer whose fate the server's
+ * copy read after does not tell, which may or may not have been kept.
+ */
+export interface GivenUp {
+  lost: number
+  unsure: number
+}
+
+/**
+ * What a save of plays cut off at `giveUp`'s deadline did, by the server's
+ * copy of the game's events read after: `kept` when the game's accepted
+ * scoring is the save's own, `lost` when it is still the scoring the save
+ * was built on (the server took nothing of it, which would have moved it
+ * on) or the plays were reset since, else `unsure`. A row that is no save of
+ * plays, or with no events read back, is `unsure`.
+ */
+function cutFate(
+  row: OutboxRow,
+  events: Json | undefined
+): 'kept' | 'lost' | 'unsure' {
+  if (events == null || callOfRow(row).kind !== 'events') return 'unsure'
+  const body = parsed(row.body)
+  const server = (events.scoringMutation ?? undefined) as
+    ScoringMutation | undefined
+  const own = (body.scoringMutation ?? undefined) as ScoringMutation | undefined
+  if (own != null && sameScoringMutation(own, server)) return 'kept'
+  if (
+    typeof body.generation === 'number' &&
+    typeof events.generation === 'number' &&
+    body.generation !== events.generation
+  )
+    return 'lost'
+  // Only a save with a scoring identity of its own moves the game's on.
+  if (
+    own != null &&
+    'scoringBase' in body &&
+    sameScoringMutation(
+      (body.scoringBase ?? undefined) as ScoringMutation | undefined,
+      server
+    )
+  )
+    return 'lost'
+  return 'unsure'
+}
+
+/**
  * The rows giving up `chain` drops: all of its own, and a held create one of
  * them waits for that no row of another chain left behind waits for too.
  */
@@ -957,9 +1007,10 @@ export class Outbox {
   private readonly released = new Map<string, ReleasedSend>()
   /**
    * Each chain's requests still out, direct, released or the drain's, by
-   * chain: `giveUp` aborts them at its deadline.
+   * chain, with the key each was sent under: `giveUp` aborts them at its
+   * deadline.
    */
-  private readonly requests = new Map<string, Set<AbortController>>()
+  private readonly requests = new Map<string, Map<AbortController, string>>()
   /**
    * Chains `giveUp` has stopped waiting for: a request of one that starts
    * is aborted at once.
@@ -1123,26 +1174,33 @@ export class Outbox {
    * waited for and land as they would, the server judging them, and then
    * every row left (one queued after a send that got no answer in time too)
    * is dropped, and a game's documents are read again from the server.
-   * Answers how many of the chain's rows were given up.
+   * Answers how many of the chain's rows were given up (`GivenUp`).
    *
    * None of it is waited for past `REQUEST_DEADLINE_MS` from the call: the
    * scorer is not kept on a closed game by a link that stalls mid-answer, or
    * by an upload, which has no deadline of its own. A send still out then
    * is aborted and answered as not answered: queued as sent, as at its own
-   * deadline, and given up and counted with the rest. Its answer, when it
-   * comes anyway, is nobody's: it lands no row and no document, and tells
-   * nothing. What the server took of it, the read after shows.
+   * deadline, and given up with the rest. Its answer, when it comes anyway,
+   * is nobody's: it lands no row and no document, and tells nothing. What
+   * the server took of it, the read after shows: a save the server's copy
+   * holds is not counted, one it shows the server never took is counted as
+   * lost, and one it cannot tell of is counted as `unsure`.
    */
-  async giveUp(chain: string): Promise<number> {
+  async giveUp(chain: string): Promise<GivenUp> {
     // Taken before anything is awaited: no drain picks the chain from here.
     this.givingUp.add(chain)
     let expire!: () => void
     const deadline = new Promise<void>(resolve => {
       expire = resolve
     })
+    // The keys of the sends cut off at the deadline with no answer.
+    const unanswered = new Set<string>()
     const timer = this.options.setTimer(() => {
       this.cut.add(chain)
-      for (const request of this.requests.get(chain) ?? []) request.abort()
+      for (const [request, key] of this.requests.get(chain) ?? []) {
+        unanswered.add(key)
+        request.abort()
+      }
       expire()
     }, REQUEST_DEADLINE_MS)
     const stop = (): void => {
@@ -1166,11 +1224,16 @@ export class Outbox {
           ([, send]) => send.chain === chain
         )
         const kept = new Set<string>()
-        for (const [key, send] of out)
-          if (await Promise.race([send.kept, deadline.then(() => false)]))
-            kept.add(key)
+        for (const [key, send] of out) {
+          const taken = await Promise.race([
+            send.kept,
+            deadline.then(() => undefined)
+          ])
+          if (taken === true) kept.add(key)
+          if (taken === undefined) unanswered.add(key)
+        }
         const store = await this.options.store()
-        if (store == null) return 0
+        if (store == null) return { lost: 0, unsure: 0 }
         const given = await store.atomically(async tx => {
           const rows = await tx.outbox()
           const own = rows.filter(row => row.chain === chain)
@@ -1183,26 +1246,51 @@ export class Outbox {
           )
             return undefined
           for (const [key] of out) this.released.delete(key)
-          if (own.length === 0) return { count: 0, reads: [] }
+          if (own.length === 0) return { lost: 0, cut: [], reads: [] }
+          const taken = own.filter(row => !kept.has(row.idempotencyKey))
+          const cut = taken.filter(row => unanswered.has(row.idempotencyKey))
           return {
-            count: own.filter(row => !kept.has(row.idempotencyKey)).length,
+            lost: taken.length - cut.length,
+            cut,
             reads: await this.drop(tx, droppedWith(rows, chain))
           }
         })
         if (given == null) continue
         // Given up: a send of the chain's from here is no longer cut off.
         stop()
-        if (given.count > 0) this.notify()
+        if (given.lost + given.cut.length > 0) this.notify()
         // The game's documents are read again whatever was given up: the
         // phone's copy is of the sides, or the plays, from before.
         const gameId = chain.startsWith('game:') ? chain.slice(5) : undefined
-        await this.reread([
+        const back = await this.rereadEach([
           ...new Set([
             ...given.reads,
             ...(gameId == null ? [] : gameDocuments(gameId).map(d => d.path))
           ])
         ])
-        return given.count
+        // A send cut off with no answer is settled by the server's copy.
+        const result: GivenUp = { lost: given.lost, unsure: 0 }
+        if (given.cut.length === 0) return result
+        const eventsPath =
+          gameId == null
+            ? undefined
+            : gameDocuments(gameId).find(doc => doc.key === eventsKey(gameId))
+                ?.path
+        const events =
+          gameId != null && eventsPath != null && back.has(eventsPath)
+            ? await store
+                .atomically(async tx =>
+                  serverBodyOf(await tx.read(eventsKey(gameId)))
+                )
+                .then(body => (body == null ? undefined : parsed(body)))
+                .catch(() => undefined)
+            : undefined
+        for (const row of given.cut) {
+          const fate = cutFate(row, events)
+          if (fate === 'lost') result.lost++
+          if (fate === 'unsure') result.unsure++
+        }
+        return result
       }
     } finally {
       stop()
@@ -1214,14 +1302,17 @@ export class Outbox {
    * A request of `chain`'s about to go out, which `giveUp` aborts at its
    * deadline; at once, while the chain is cut off. `end` once it settles.
    */
-  private outRequest(chain: string): {
+  private outRequest(
+    chain: string,
+    key: string
+  ): {
     signal: AbortSignal
     end: () => void
   } {
     const request = new AbortController()
-    const held = this.requests.get(chain) ?? new Set<AbortController>()
+    const held = this.requests.get(chain) ?? new Map<AbortController, string>()
     this.requests.set(chain, held)
-    held.add(request)
+    held.set(request, key)
     if (this.cut.has(chain)) request.abort()
     return {
       signal: request.signal,
@@ -1276,14 +1367,21 @@ export class Outbox {
 
   /** Reads `paths` from the server again; whether every one came back. */
   private async reread(paths: string[]): Promise<boolean> {
+    return (await this.rereadEach(paths)).size === paths.length
+  }
+
+  /** Reads `paths` from the server again; the ones that came back. */
+  private async rereadEach(paths: string[]): Promise<Set<string>> {
     const read = this.options.read
-    if (read == null) return paths.length === 0
+    if (read == null) return new Set()
     const answers = await Promise.allSettled(
       paths.map(async path => {
         await read(path)
       })
     )
-    return answers.every(answer => answer.status === 'fulfilled')
+    return new Set(
+      paths.filter((_path, index) => answers[index].status === 'fulfilled')
+    )
   }
 
   /**
@@ -1572,7 +1670,7 @@ export class Outbox {
     let answer: unknown
     let released = false
     let sent: Promise<unknown> | undefined
-    const request = this.outRequest(chain)
+    const request = this.outRequest(chain, key)
     const letGo = (): never => {
       released = true
       throw new HttpError('offline', 'Queued on the phone.')
@@ -3360,7 +3458,7 @@ export class Outbox {
         continue
       }
       let outcome: Outcome | typeof CUT
-      const request = this.outRequest(row.chain)
+      const request = this.outRequest(row.chain, row.idempotencyKey)
       try {
         const sent = this.options.send(
           methodOf(call),

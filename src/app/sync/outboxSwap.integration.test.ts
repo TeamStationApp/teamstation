@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'mocha'
 
 import { REQUEST_DEADLINE_MS } from '../../common/api'
 import { ScoringSession } from '../../common/scoring/session'
+import { setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
@@ -40,11 +41,19 @@ function phoneOn(
   waiting: () => number
   /** Runs the queue's timers of `ms` it set and has not cleared. */
   run: (ms: number) => void
+  /**
+   * From now on a post of plays reaches the server and commits, and its
+   * answer is held from the phone until `answer`.
+   */
+  holdAnswers: () => void
+  answer: () => void
 } {
   const posts: Post[] = []
   let gate: Promise<void> | undefined
   let opened: () => void = () => undefined
   let waiting = 0
+  let answers: Promise<void> | undefined
+  let answered: () => void = () => undefined
   const timers: Array<{ run: () => void; ms: number; cleared?: true }> = []
   const fetchThrough = (async (url: string, init: RequestInit) => {
     const path = url.replace(`${f.h.origin}/api/v1`, '').split('?')[0]
@@ -55,6 +64,8 @@ function phoneOn(
     }
     const response = await fetch(url, init)
     if (init.method === 'POST') posts.push({ path, status: response.status })
+    if (init.method === 'POST' && path.endsWith('/events') && answers != null)
+      await answers
     return response
   }) as unknown as typeof fetch
   const client = new CachingClient({
@@ -88,6 +99,15 @@ function phoneOn(
       opened()
     },
     waiting: () => waiting,
+    holdAnswers: () => {
+      answers = new Promise<void>(resolve => {
+        answered = resolve
+      })
+    },
+    answer: () => {
+      answers = undefined
+      answered()
+    },
     run: ms => {
       for (const timer of timers)
         if (timer.ms === ms && timer.cleared !== true) {
@@ -212,7 +232,9 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
         // on its way is not waited for. It is given up with the one behind
         // it, and its request aborted.
         a.run(REQUEST_DEADLINE_MS)
-        expect(await given).equals(2)
+        // The server's copy read after shows it never took the one cut
+        // off: its scoring is still what the save was built on.
+        expect(await given).deep.equals({ lost: 2, unsure: 0 })
         await saving
         a.open()
         for (let i = 0; i < 2000 && a.waiting() > 0; i++)
@@ -220,7 +242,7 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
         await new Promise(resolve => setTimeout(resolve, 50))
       } else {
         a.open()
-        expect(await given).equals(1)
+        expect(await given).deep.equals({ lost: 1, unsure: 0 })
         await saving
       }
       a.client.wakeOutbox(true)
@@ -254,4 +276,86 @@ describe("a phone's saves when another device's swap is accepted first (#260)", 
         reset ? null : (unswapped.currentPlay ?? null)
       )
     })
+
+  it('does not say a save on its way the server committed was lost, though its answer came after the request deadline (9.harness-review.2)', async () => {
+    const context = await addScorableTeams(f.h.db, {
+      home: 'Herons',
+      away: 'Terns'
+    })
+    const gameId = await addGame(f.h.db, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id,
+      startAt: new Date()
+    })
+    const a = phoneOn(f, mkdtempSync(join(dir, 'phone-')))
+    const b = phoneOn(f, mkdtempSync(join(dir, 'other-')))
+    await a.client.game(gameId)
+    await a.client.roster(context.teams.home.id)
+    await a.client.roster(context.teams.away.id)
+    await a.client.gameLineups(gameId)
+    const ours = await ScoringSession.open(
+      {
+        load: async id => await a.client.gameEvents(id),
+        save: async (id, change) => await a.client.saveGameEvents(id, change)
+      },
+      gameId,
+      { gamePk: gameId, ...context },
+      { setTimer: () => null, clearTimer: () => undefined }
+    )
+    const digest = async (): Promise<string | null> =>
+      (
+        await f.h.db
+          .selectFrom('games')
+          .select('lineups_digest')
+          .where('id', '=', gameId)
+          .executeTakeFirstOrThrow()
+      ).lineups_digest
+    const unsaved = await digest()
+
+    // Before the first pitch, this phone's lineups reach the server and
+    // commit; the answer is held on the link.
+    a.holdAnswers()
+    expect(
+      ours.apply({
+        type: 'lineup',
+        kind: 'roster',
+        setup: setupOf(ours.state),
+        confirmed: ['away', 'home']
+      }).problems
+    ).deep.equals([])
+    const saving = ours.flush().then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    for (let i = 0; i < 2000 && a.posts.length === 0; i++)
+      await new Promise(resolve => setTimeout(resolve, 1))
+    expect(a.posts.map(post => post.status)).deep.equals([200])
+    expect(await digest(), 'the lineups are on the server').not.equals(unsaved)
+
+    // The other device swaps the game after it.
+    const swapped = await b.client.swapGameSides(gameId, {
+      homeTeamId: context.teams.home.id,
+      awayTeamId: context.teams.away.id
+    })
+    expect(swapped.homeTeamId).equals(context.teams.away.id)
+
+    // As the scoring screen does on its notice. The answer never comes in
+    // time: the save is cut off at the request deadline. It was taken, so
+    // it is not counted as lost; the server's copy cannot say so of a save
+    // with no scoring identity, so it may have been kept.
+    ours.close()
+    const given = a.client.giveUpGame(gameId)
+    a.client.wakeOutbox(true)
+    await a.client.drainOutbox()
+    a.run(REQUEST_DEADLINE_MS)
+    expect(await given).deep.equals({ lost: 0, unsure: 1 })
+    await saving
+    a.answer()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    a.client.wakeOutbox(true)
+    await a.client.drainOutbox()
+    expect((await a.client.outboxSummary()).count).equals(0)
+    // Sent once, and nothing more.
+    expect(a.posts.filter(post => post.path.endsWith('/events'))).length(1)
+  })
 })

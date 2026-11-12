@@ -1010,6 +1010,48 @@ describe('a scoring session', function () {
     session.close()
   })
 
+  for (const answer of ['stale', 'superseded'] as const)
+    it(`reads nothing to rebase once closed, and counts what it held as lost to the swap (${answer}, 9.harness-review.1)`, async () => {
+      const clock = new Clock()
+      let reads = 0
+      let release!: () => void
+      const held = new Promise<void>(resolve => {
+        release = resolve
+      })
+      const session = await ScoringSession.open(
+        {
+          load: async () => {
+            // The rebase's read, on a stalled link, never settles.
+            if (++reads > 1) return await new Promise<never>(() => undefined)
+            return { plays: [], currentPlay: null }
+          },
+          save: async () => {
+            await held
+            if (answer === 'stale')
+              throw new HttpError('conflict', 'The lineups changed', {
+                stale: true
+              })
+            return { plays: [], currentPlay: null, superseded: true }
+          }
+        },
+        'g1',
+        context,
+        clock.options
+      )
+      session.apply(ball)
+      const saving = session.flush()
+      expect(session.saving).equals(true)
+      // Another device swapped the game: the screen closes the session.
+      session.close()
+      release()
+      await saving
+      expect(reads).equals(1)
+      expect(session.saving).equals(false)
+      expect(session.lostToSwap).greaterThan(0)
+      expect(session.pending).equals(0)
+      expect(clock.waiting).deep.equals([])
+    })
+
   it('backs off a retry after a server error', async function () {
     const { session, store, clock } = await open()
     store.fail = new HttpError('internal', 'Something broke')

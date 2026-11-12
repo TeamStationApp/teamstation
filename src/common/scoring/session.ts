@@ -648,6 +648,8 @@ export class ScoringSession {
   /** Closed for good: nothing more is saved from it. */
   private closed = false
   private swapLost = 0
+  /** Closed with a rebase due, its unsaved changes counted in `swapLost`. */
+  private lostOnClose = false
   private refusal: string | null = null
   private failure: string | null = null
   private isOffline = false
@@ -1083,6 +1085,8 @@ export class ScoringSession {
 
   /** Changes made here that the server has not acknowledged. */
   get pending(): number {
+    // Counted already, in `lostToSwap`: a closed session let them go.
+    if (this.lostOnClose) return 0
     const change = this.change()
     // Returning to the acknowledged picture by Undo is still pending when
     // an earlier request may already have committed. Do not let a passive
@@ -2611,6 +2615,19 @@ export class ScoringSession {
     }, ms)
   }
 
+  /**
+   * A closed session whose save needs a rebase reads nothing (#237): it
+   * saves nothing more, so the rebase's reads would only be thrown away.
+   * What the rebase would put back or drop, its unsaved changes and the
+   * ones the refused save covered, is counted as lost to the swap instead.
+   */
+  private letGoClosed(): void {
+    this.swapLost += this.pending
+    this.lostOnClose = true
+    this.attemptedSave = undefined
+    this.notify()
+  }
+
   private async save(): Promise<void> {
     let rebased = 0
     for (;;) {
@@ -2762,6 +2779,10 @@ export class ScoringSession {
         // takes theirs up and saves its own changes on top, never over them.
         if (stale(error) && this.context != null && rebased < STALE_REBASES) {
           rebased++
+          if (this.closed) {
+            this.letGoClosed()
+            return
+          }
           try {
             await this.rebase()
           } catch (reading) {
@@ -2790,6 +2811,10 @@ export class ScoringSession {
         (answer?.superseded === true || retryLineupsMoved || scoringMoved) &&
         this.context != null
       ) {
+        if (this.closed) {
+          this.letGoClosed()
+          return
+        }
         try {
           await this.rebase()
         } catch (reading) {

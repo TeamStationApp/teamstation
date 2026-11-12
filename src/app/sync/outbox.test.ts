@@ -5657,7 +5657,17 @@ describe('the phone outbox', function () {
        * then answered `answer`, or as `g` answers it; every other request
        * goes to `g`.
        */
-      async function heldPost(): Promise<{
+      async function heldPost(
+        options: {
+          /** Sent in the post besides its play. */
+          scoring?: Record<string, unknown>
+          /**
+           * The game's accepted scoring the server's events answer names
+           * once set, or `'refused'`: the events read fails.
+           */
+          serverScoring?: { value?: unknown }
+        } = {}
+      ): Promise<{
         g: ReturnType<typeof gameServer>
         p: ReturnType<typeof phone>
         taken: () => boolean
@@ -5667,6 +5677,7 @@ describe('the phone outbox', function () {
       }> {
         const g = gameServer()
         g.online.value = true
+        const scoring = options.serverScoring
         let letGo!: (answer?: Answer) => void
         const gate = new Promise<Answer | undefined>(resolve => {
           letGo = resolve
@@ -5680,6 +5691,22 @@ describe('the phone outbox', function () {
           ) {
             held = true
             return (await gate) ?? (await g.handler(sent))
+          }
+          if (
+            sent.method === 'GET' &&
+            sent.path === '/games/g1/events' &&
+            scoring?.value !== undefined
+          ) {
+            if (scoring.value === 'refused')
+              return refusal(503, 'unavailable', 'Try again')
+            const answer = await g.handler(sent)
+            if (answer === 'offline') return answer
+            return {
+              body: {
+                ...(answer.body as Record<string, unknown>),
+                scoringMutation: scoring.value
+              }
+            }
           }
           const target = /^\/games\/g1\/tags\/(.+)$/.exec(sent.path)?.[1]
           if (target != null) {
@@ -5697,7 +5724,13 @@ describe('the phone outbox', function () {
         const saving = p.client
           .saveGameEvents(
             'g1',
-            { plays: [play(1)], remove: [], lineupsBase: 'D0', generation: 1 },
+            {
+              plays: [play(1)],
+              remove: [],
+              lineupsBase: 'D0',
+              generation: 1,
+              ...options.scoring
+            },
             {
               taken: () => {
                 handed.taken = true
@@ -5760,7 +5793,7 @@ describe('the phone outbox', function () {
           await p.client.drainOutbox()
           expect(writes(p)).deep.equals(['POST /games/g1/events'])
           letGo(STALE)
-          expect(await given).equals(1)
+          expect(await given).deep.equals({ lost: 1, unsure: 0 })
           // The session takes the refusal of its own post.
           expect(await saving).to.have.property('error')
           expect(p.rows()).deep.equals([])
@@ -5774,7 +5807,7 @@ describe('the phone outbox', function () {
           await queueBehind(p)
           const given = p.client.giveUpGame('g1')
           letGo()
-          expect(await given).equals(1)
+          expect(await given).deep.equals({ lost: 1, unsure: 0 })
           expect(await saving).to.have.property('answer')
           expect(p.rows()).deep.equals([])
           await p.client.drainOutbox()
@@ -5809,7 +5842,10 @@ describe('the phone outbox', function () {
             expect(p.rows()).length(2)
             const writesBefore = writes(p).length
             letGo(taken ? { body: { plays: [] } } : STALE)
-            expect(await given, `taken ${String(taken)}`).equals(taken ? 1 : 2)
+            expect(await given, `taken ${String(taken)}`).deep.equals({
+              lost: taken ? 1 : 2,
+              unsure: 0
+            })
             expect(p.rows()).deep.equals([])
             g.online.value = true
             p.client.wakeOutbox(true)
@@ -5864,7 +5900,7 @@ describe('the phone outbox', function () {
           letGo()
           await draining
           // The first was parked by its refusal, and goes with the second.
-          expect(await given).equals(2)
+          expect(await given).deep.equals({ lost: 2, unsure: 0 })
           expect(p.rows()).deep.equals([])
           p.client.wakeOutbox(true)
           await p.client.drainOutbox()
@@ -5914,7 +5950,9 @@ describe('the phone outbox', function () {
           expect(p.rows()).length(2)
           // The request deadline passes from when it was given up.
           deadlineOf(p)!.run()
-          expect(await given).equals(2)
+          // Cut off with no answer, and no scoring identity for the
+          // server's copy to tell it by: it may have been kept.
+          expect(await given).deep.equals({ lost: 1, unsure: 1 })
           expect(firstPostAborted(p)).equals(true)
           expect(p.rows()).deep.equals([])
           const writesBefore = writes(p)
@@ -5940,8 +5978,8 @@ describe('the phone outbox', function () {
           expect(deadlineOf(p)).not.equals(undefined)
           deadlineOf(p)!.run()
           // Queued as sent, as at its own deadline, and given up with the
-          // save behind it: both counted.
-          expect(await given).equals(2)
+          // save behind it: both counted, the one cut off as unsure.
+          expect(await given).deep.equals({ lost: 1, unsure: 1 })
           expect(await saving).to.have.property('answer')
           expect(firstPostAborted(p)).equals(true)
           expect(p.rows()).deep.equals([])
@@ -6000,7 +6038,7 @@ describe('the phone outbox', function () {
           const given = p.client.giveUpGame('g1')
           await turns()
           deadlineOf(p)!.run()
-          expect(await given).equals(2)
+          expect(await given).deep.equals({ lost: 1, unsure: 1 })
           await draining
           expect(held?.aborted).equals(true)
           expect(p.rows()).deep.equals([])
@@ -6023,15 +6061,84 @@ describe('the phone outbox', function () {
           await turns()
           expect(deadlineOf(p)).not.equals(undefined)
           letGo(STALE)
-          expect(await given).equals(1)
+          expect(await given).deep.equals({ lost: 1, unsure: 0 })
           expect(await saving).to.have.property('error')
           expect(deadlineOf(p)).equals(undefined)
           expect(firstPostAborted(p)).equals(false)
         })
 
+        describe("settles a post cut off at the request deadline by the server's copy read after (9.harness-review.2)", function () {
+          const BASE = { at: 1, id: 'base', revision: 0, frontier: 0 }
+          const OWN = { at: 2, id: 'own', revision: 0, frontier: 1 }
+          const OTHER = { at: 3, id: 'other', revision: 0, frontier: 1 }
+          for (const { server, given, why } of [
+            {
+              server: OWN,
+              given: { lost: 0, unsure: 0 },
+              why: 'does not count a post the server committed'
+            },
+            {
+              server: BASE,
+              given: { lost: 1, unsure: 0 },
+              why: 'counts as lost a post the server never took: its scoring is still what the post was built on'
+            },
+            {
+              server: OTHER,
+              given: { lost: 0, unsure: 1 },
+              why: 'counts as unsure a post the server may have taken before another scoring was accepted'
+            },
+            {
+              server: 'refused',
+              given: { lost: 0, unsure: 1 },
+              why: 'counts as unsure a post whose server copy did not come back'
+            }
+          ])
+            it(why, async function () {
+              const serverScoring: { value?: unknown } = {}
+              const { p, saving, letGo } = await heldPost({
+                scoring: {
+                  currentPlay: null,
+                  scoringBase: BASE,
+                  scoringMutation: OWN
+                },
+                serverScoring
+              })
+              const settling = p.client.giveUpGame('g1')
+              await turns()
+              serverScoring.value = server
+              deadlineOf(p)!.run()
+              expect(await settling).deep.equals(given)
+              expect(await saving).to.have.property('answer')
+              expect(firstPostAborted(p)).equals(true)
+              expect(p.rows()).deep.equals([])
+              letGo()
+            })
+
+          it('counts as lost a post of an earlier generation: the reset took its plays either way', async function () {
+            const serverScoring: { value?: unknown } = {}
+            const { p, letGo } = await heldPost({
+              scoring: {
+                generation: 0,
+                currentPlay: null,
+                scoringMutation: OWN
+              },
+              serverScoring
+            })
+            const given = p.client.giveUpGame('g1')
+            await turns()
+            serverScoring.value = null
+            deadlineOf(p)!.run()
+            expect(await given).deep.equals({ lost: 1, unsure: 0 })
+            letGo()
+          })
+        })
+
         it('answers none given up for a game with nothing queued', async function () {
           const p = phone(() => 'offline')
-          expect(await p.client.giveUpGame('g1')).equals(0)
+          expect(await p.client.giveUpGame('g1')).deep.equals({
+            lost: 0,
+            unsure: 0
+          })
         })
       })
 

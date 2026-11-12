@@ -52,6 +52,7 @@ import {
 } from './documentKeys'
 import { type PictureDirectories, pictureDirectories } from './imageCache'
 import {
+  type GivenUp,
   Outbox,
   type OutboxListener,
   type OutboxNoticeListener,
@@ -362,9 +363,10 @@ export class CachingClient extends TeamStationClient {
    * or reset, once those of them already on their way are answered: the
    * queue sends no more of them from the call on, a send in flight lands as
    * the server judges it, and every one left is dropped and its documents
-   * read again. Answers how many were given up.
+   * read again. Answers how many were given up: those the server did not
+   * take, and those sent with no answer that its copy does not tell of.
    */
-  async giveUpGame(gameId: string): Promise<number> {
+  async giveUpGame(gameId: string): Promise<GivenUp> {
     return await this.outbox.giveUp(`game:${gameId}`)
   }
 

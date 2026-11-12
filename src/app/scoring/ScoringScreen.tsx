@@ -18,11 +18,12 @@ import {
   View
 } from 'react-native'
 
-import type {
-  DictationModel,
-  RosterEntry,
-  SwapSidesAnswer,
-  TeamStationClient
+import {
+  type DictationModel,
+  REQUEST_DEADLINE_MS,
+  type RosterEntry,
+  type SwapSidesAnswer,
+  type TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { TagTarget } from '../../common/eventTags'
@@ -760,13 +761,22 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
         const client = props.client
         const given =
           client instanceof CachingClient
-            ? client.giveUpGame(props.gameId).catch(() => 0)
-            : Promise.resolve(0)
+            ? client.giveUpGame(props.gameId).catch(() => ({
+                lost: 0,
+                unsure: 0
+              }))
+            : Promise.resolve({ lost: 0, unsure: 0 })
         const reopen = (): void => {
-          const unsaved = session.lostToSwap + session.pending
           given
-            .then(count => {
-              setSwapNotice(replacedNotice(change, unsaved + count))
+            .then(({ lost, unsure }) => {
+              // Counted once the queue is through: a save it cut off was
+              // handed back to the session, which no longer counts it. One
+              // still on its way, waited for no longer, may yet be kept.
+              const unsaved = session.lostToSwap + session.pending
+              const out = session.saving ? unsaved : 0
+              setSwapNotice(
+                replacedNotice(change, unsaved - out + lost, out + unsure)
+              )
               setRetry(value => value + 1)
             })
             .catch(() => undefined)
@@ -775,13 +785,24 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
           reopen()
           return false
         }
-        const stop = session.subscribe(() => {
-          if (session.saving) return
-          stop()
+        // The save on its way is waited for no longer than a request is
+        // (#237): past that, what it covers and what is unsaved is counted
+        // as lost, and its late answer, or its rebase's reads, are let go.
+        const stopWaiting = (): void => {
+          unsubscribe()
+          clearTimeout(deadline)
           waitingForSave.current = undefined
+        }
+        const unsubscribe = session.subscribe(() => {
+          if (session.saving) return
+          stopWaiting()
           reopen()
         })
-        waitingForSave.current = stop
+        const deadline = setTimeout(() => {
+          stopWaiting()
+          reopen()
+        }, REQUEST_DEADLINE_MS)
+        waitingForSave.current = stopWaiting
         return false
       }
       setSwapNotice(replacedNotice(change, 0))
