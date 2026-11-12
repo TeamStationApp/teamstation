@@ -12,7 +12,7 @@ import { asLiteral } from './asLiteral'
 import { daysBetween } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import { asCalendarDate, isRecord } from './groupCreation'
-import { asBlackouts, asFieldSize, type FieldSize } from './venues'
+import { asBlackouts, asFieldSize, type FieldSize, sizesLabel } from './venues'
 import { asWindowPeriods } from './windowPeriods'
 
 /** Whether a team may play twice in a day. */
@@ -419,12 +419,18 @@ export type ScheduleSetupChoice =
       seasonIds: string[]
       fieldIds: string[]
       addedFieldIds?: string[]
+      /**
+       * Added fields to take off the list. Given, `addedFieldIds` only adds
+       * to the list; left out, it replaces the list, as older clients send it.
+       */
+      removedFieldIds?: string[]
     }
   | {
       avoidHeadCoachConflicts: boolean
       seasonIds?: never
       fieldIds?: never
       addedFieldIds?: never
+      removedFieldIds?: never
     }
 
 export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
@@ -433,6 +439,7 @@ export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
     raw.seasonIds === undefined &&
     raw.fieldIds === undefined &&
     raw.addedFieldIds === undefined &&
+    raw.removedFieldIds === undefined &&
     raw.avoidHeadCoachConflicts !== undefined
   )
     return { avoidHeadCoachConflicts: asBoolean(raw.avoidHeadCoachConflicts) }
@@ -447,5 +454,44 @@ export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
       'added fields',
       MAX_SETUP_FIELDS
     )(raw.addedFieldIds)
+  if (raw.removedFieldIds != null)
+    choice.removedFieldIds = asIdList(
+      'removed fields',
+      MAX_SETUP_FIELDS
+    )(raw.removedFieldIds)
   return choice
+}
+
+/** The fields any of the seasons selected, in the setup's order. */
+export function selectedFields<F extends { id: string }>(
+  fields: readonly F[],
+  seasons: ReadonlyArray<{ settings: { fieldIds?: string[] } }>
+): F[] {
+  return fields.filter(field =>
+    seasons.some(
+      season => season.settings.fieldIds?.includes(field.id) === true
+    )
+  )
+}
+
+/** The setup's chosen fields that still exist, as the server accepts them. */
+export function liveFieldIds(setup: ScheduleSetup): string[] {
+  return setup.fieldIds.filter(id =>
+    setup.fields.some(field => field.id === id && !field.deleted)
+  )
+}
+
+/**
+ * A run field's detail: its sizes, and, for a field of a venue the league
+ * doesn't own, the venue and who owns it.
+ */
+export function setupFieldDetail(field: SetupField): string {
+  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
+  const sizes = sizesLabel(field.sizes)
+  if (field.ours) return sizes
+  const owners =
+    field.ownerNames.length === 0
+      ? 'unclaimed'
+      : `claimed by ${field.ownerNames.join(', ')}`
+  return `${sizes} · ${field.venueName} · ${owners}`
 }

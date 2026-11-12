@@ -2821,6 +2821,16 @@ function Shell(props: AppProps): React.ReactElement {
         onOpenSeason={seasonId => {
           push({ name: 'scheduleSeason', leagueId: top.leagueId, seasonId })
         }}
+        onOpenSeasonPage={seasonId => {
+          // Its page, from which Back returns here.
+          client
+            .seasons()
+            .then(seasons => {
+              const season = seasons.find(item => item.id === seasonId)
+              if (season != null) push({ name: 'season', season })
+            })
+            .catch(() => undefined)
+        }}
         onOpenPreview={previewId => {
           push({ name: 'schedulePreview', leagueId: top.leagueId, previewId })
         }}

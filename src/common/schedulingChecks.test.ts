@@ -131,6 +131,25 @@ describe('schedulingChecks', () => {
     ).deep.equals(['noWindows'])
   })
 
+  it('blocks a season whose weekly maxima are both 0, and only then', () => {
+    expect(kinds([season({ maxGamesOnWeekdays: 0 })])).deep.equals([])
+    expect(kinds([season({ maxGamesOnWeekend: 0 })])).deep.equals([])
+    const checks = schedulingChecks(
+      [season({ maxGamesOnWeekdays: 0, maxGamesOnWeekend: 0 })],
+      [FIELD]
+    )
+    expect(checks).deep.equals([
+      {
+        kind: 'noGameDays',
+        seasonId: 'sea_one',
+        message:
+          'Demo Regular: Max weekday games and Max weekend games are both 0, so no game can be scheduled. Raise one of them.',
+        blocking: true
+      }
+    ])
+    expect(buildable(checks)).equals(false)
+  })
+
   it('warns of a field whose dates don’t cover the season', () => {
     expect(
       schedulingChecks(

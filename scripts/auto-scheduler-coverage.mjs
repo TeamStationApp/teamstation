@@ -93,7 +93,6 @@ const tsSuites = [
   'src/server/autoScheduler/rules.test.ts',
   'src/server/autoScheduler/managerPreview.unit.test.ts',
   'src/server/autoScheduler/deviceValidation.unit.test.ts',
-  'src/server/autoScheduler/validateOffThread.test.ts',
   'src/server/auth/apiKeyFamilies.test.ts',
   'src/server/autoScheduler/devicePreview.unit.test.ts',
   'src/server/scheduler/deviceSettings.unit.test.ts',
@@ -135,6 +134,7 @@ const appSuites = [
   'src/app/components/PinMap.test.tsx',
   'src/app/components/MapFrame.test.tsx',
   'src/app/components/WeeklyHoursEditor.test.tsx',
+  'src/app/components/TimeWindowsEditor.test.tsx',
   'src/app/platform/currentPosition.native.test.tsx',
   // M4: the game form's Field row and the Info tab's warnings.
   'src/app/screens/GameFormScreen.fieldPicker.test.tsx',
@@ -151,6 +151,7 @@ const appSuites = [
   // Fixes M1: the league page's Auto-Scheduler row and the grid's cells.
   'src/app/components/GridNumberCell.test.tsx',
   'src/app/components/WideTable.test.tsx',
+  'src/app/components/VerticalToggle.test.tsx',
   'src/app/screens/LeaguePage.test.tsx',
   // Fixes M4: blackout ranges.
   'src/app/components/BlackoutDatesEditor.test.tsx',
@@ -171,7 +172,6 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/server/autoScheduler/managerDecisions.test.ts',
     'src/server/autoScheduler/managerPreview.unit.test.ts',
     'src/server/autoScheduler/deviceValidation.unit.test.ts',
-    'src/server/autoScheduler/validateOffThread.test.ts',
     'src/server/auth/apiKeyFamilies.test.ts',
     'src/server/routes/headCoach.unit.test.ts',
     'src/server/teams/headCoachViews.unit.test.ts',

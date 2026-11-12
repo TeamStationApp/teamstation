@@ -443,9 +443,11 @@ describe('Tess Messages API client', function () {
   it('gives up at the deadline, and says when the provider cannot be reached', async () => {
     const hanging: typeof fetch = async (_url, init) =>
       await new Promise<Response>((resolve, reject) => {
-        init?.signal?.addEventListener('abort', () => {
+        const aborted = (): void => {
           reject(new Error('aborted'))
-        })
+        }
+        if (init?.signal?.aborted === true) aborted()
+        else init?.signal?.addEventListener('abort', aborted, { once: true })
       })
     const late = await failure(
       createMessage(SETTINGS, REQUEST, { fetch: hanging, deadlineMs: 20 })
@@ -1044,10 +1046,13 @@ describe('Tess Messages API client, streamed', function () {
             return
           }
           await new Promise<void>(resolve => {
-            init?.signal?.addEventListener('abort', () => {
+            const aborted = (): void => {
               controller.error(new Error('aborted'))
               resolve()
-            })
+            }
+            if (init?.signal?.aborted === true) aborted()
+            else
+              init?.signal?.addEventListener('abort', aborted, { once: true })
           })
         }
       })

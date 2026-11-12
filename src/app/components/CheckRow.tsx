@@ -23,6 +23,8 @@ export function CheckRow({
     <Pressable
       accessibilityRole="checkbox"
       accessibilityState={{ checked, disabled }}
+      // react-native-web does not render `aria-checked` from the state above.
+      aria-checked={checked}
       accessibilityLabel={label}
       disabled={disabled}
       onPress={onToggle}
@@ -43,7 +45,48 @@ export function CheckRow({
   )
 }
 
+/**
+ * The row's box alone, for a place whose label does something else: the
+ * season grid's name opens the season.
+ */
+export function CheckBox({
+  label,
+  checked,
+  onToggle,
+  disabled = false
+}: {
+  label: string
+  checked: boolean
+  onToggle: () => void
+  disabled?: boolean
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return (
+    <Pressable
+      accessibilityRole="checkbox"
+      accessibilityState={{ checked, disabled }}
+      accessibilityLabel={label}
+      disabled={disabled}
+      onPress={onToggle}
+      hitSlop={8}
+      style={styles.boxTarget}
+    >
+      <View style={[styles.box, checked && styles.boxOn]}>
+        {checked && (
+          <ButtonIcon name="check">
+            <Text style={styles.mark}>✓</Text>
+          </ButtonIcon>
+        )}
+      </View>
+    </Pressable>
+  )
+}
+
 const getStyles = cacheStyles((theme: Theme) => ({
+  boxTarget: {
+    minHeight: theme.rem(3),
+    justifyContent: 'center' as const
+  },
   row: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,

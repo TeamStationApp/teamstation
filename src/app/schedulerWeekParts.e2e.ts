@@ -56,16 +56,14 @@ async function main(): Promise<void> {
     await fill(b.m, 'Sign-in code', fx.f.h.mail.get('alex@example.com')!)
     await tap(b.m, 'Sign in')
     await contains(b.page, 'Your Home')
-    const screen =
-      fx.f.h.origin +
-      `/groups/league/${fx.f.leagueA}/scheduler/seasons/${fx.f.seasonA}`
+    const screen = fx.f.h.origin + `/groups/league/${fx.f.leagueA}/scheduler`
     await b.m.openBrowser({ url: screen })
-    await contains(b.page, 'BLACKOUT DAYS')
+    await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
     if (process.argv.includes('--before')) {
       await capture(b.m, dir, 'season-settings-before.png')
       return
     }
-    await contains(b.page, 'Max games on weekdays')
+    await contains(b.page, 'MAX WEEKDAY GAMES')
     await capture(b.m, dir, 'season-settings-after.png')
     const path = `/seasons/${fx.f.seasonA}/schedule-settings`
     const read = async (): Promise<SeasonScheduleSettings> =>
@@ -76,19 +74,32 @@ async function main(): Promise<void> {
       preferGameOn: 'weekend'
     })
     const number = async (label: string, value: string): Promise<void> => {
-      const css = `input[aria-label="${label}"]`
-      await b.m.tapOn({ css })
-      await b.m.eraseText({ characters: 3 })
-      await b.m.inputText({ text: value, css })
-      await b.m.tapOn({ text: 'Times are local to each field.' })
-      await contains(b.page, 'Game maximum saved.')
+      await b.m.tapOn({ css: `[aria-label^="${label}:"]` })
+      await b.m.pressKey({ key: 'CTRL+A' })
+      await b.m.inputText({
+        text: value,
+        css: `input[aria-label="Edit ${label}"]`
+      })
+      await b.m.pressKey({ key: 'ENTER' })
+      await b.page.waitForSelector(`[aria-label="${label}: ${value}"]`)
     }
-    await number('Max games on weekdays', '2')
-    await number('Max games on weekend', '0')
-    await tap(b.m, 'weekdays', 'tab')
-    await contains(b.page, 'Game preference saved.')
+    const preferred = 'Demo Regular Preferred days'
+    // The toggle moves to weekdays, then a weekend maximum of 0 holds it there.
+    await b.m.tapOn({ css: `[aria-label="${preferred}: Weekend"]` })
+    await b.page.waitForSelector(`[aria-label="${preferred}: Weekday"]`)
+    await number(
+      'Demo Regular Most games a team plays on weekdays in a week',
+      '2'
+    )
+    await number(
+      'Demo Regular Most games a team plays on the weekend in a week',
+      '0'
+    )
+    await b.page.waitForSelector(
+      `[aria-label="${preferred}: Weekday"][aria-disabled="true"]`
+    )
     await b.m.openBrowser({ url: screen })
-    await contains(b.page, 'Max games on weekdays')
+    await contains(b.page, 'MAX WEEKDAY GAMES')
     expect((await read()).settings).includes({
       maxGamesOnWeekdays: 2,
       maxGamesOnWeekend: 0,
@@ -99,6 +110,7 @@ async function main(): Promise<void> {
     )
     const settings = {
       ...SEASON_A_SETTINGS,
+      fieldIds: [state.fieldId],
       regularGames: 2,
       exhibitionGames: 0,
       maxGamesOnWeekdays: 1,
@@ -111,10 +123,16 @@ async function main(): Promise<void> {
       fieldIds: [state.fieldId]
     })
     const build = async (): Promise<SchedulePreview> =>
-      await api(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-        mode: 'full',
-        existing: 'workAround'
-      })
+      await api(
+        fx,
+        101,
+        'POST',
+        `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+        {
+          mode: 'full',
+          existing: 'workAround'
+        }
+      )
     const preview = await build()
     expect(preview.options[0].games.length).greaterThan(0)
     const games = preview.options[0].games
