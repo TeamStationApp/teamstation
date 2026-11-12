@@ -72,7 +72,7 @@ it is changed.
 
 ## Header menus
 
-The header's actions live in two small menus rather than as loose icons. The
+At window widths below the 60rem content maximum plus a 16rem sidebar, the header's actions live in two small menus rather than as loose icons. The
 TeamStation mark opens About TeamStation and features such as Ask Tess, and the
 person's picture opens Account and Notifications. Each is a `HeaderMenu`: a
 dropdown lined up with its button's edge, with a blurred background and a drop
@@ -80,6 +80,11 @@ shadow. With no picture and no Tess, as when signed out, the mark opens About
 directly. A new header action is a row in one of these, not a new icon in the
 bar. In the signed-in app the mark is drawn only on tab roots, so an action that
 pushed screens need goes on the picture's menu.
+
+At that width and above, navigation occupies a 16rem left sidebar with About
+TeamStation, Home, Videos, Schedule, Search and Messages in order. Ask Tess stays
+at the bottom when available. The top-left mark has no action; the account menu
+keeps its existing actions.
 
 ## Cards and collections
 

@@ -59,7 +59,12 @@ export async function browserSession(
   artifacts: string,
   browserName: 'chromium' | 'chrome' = 'chromium'
 ): Promise<BrowserSession> {
-  const profile = join(artifacts, 'support', 'browser-profiles', device)
+  const profile = join(
+    process.env.TS_BROWSER_SCRATCH ?? artifacts,
+    'support',
+    'browser-profiles',
+    device
+  )
   await mkdir(profile, { recursive: true })
   const m = await daemon.attach({
     device,
