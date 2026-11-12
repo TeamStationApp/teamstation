@@ -1902,14 +1902,19 @@ export function useMultiCam(
    * yet would hold every other angle back at its own last footage. Null for
    * a take with nothing live, or none that can say yet.
    */
-  const livePointMs = (): number | null => {
-    // Only angles with an address that are not left out: none still being
-    // asked for, which the opening waits for and a move need not. And none
-    // whose newest footage the grid has already played past: a camera that
-    // has stopped sending, though still listed live, is parked there and
-    // would otherwise hold every other angle back at its last picture.
+  const livePointMs = (): number | null =>
+    liveOpeningMs(liveNewest(), Number.POSITIVE_INFINITY)
+  /**
+   * Each live angle the grid plays, at its newest footage. Only angles with
+   * an address that are not left out: none still being asked for, which the
+   * opening waits for and a move need not. And none whose newest footage the
+   * grid has already played past: a camera that has stopped sending, though
+   * still listed live, is parked there and would otherwise hold every other
+   * angle back at its last picture.
+   */
+  const liveNewest = (): Array<number | null> => {
     const here = gameNowRef.current('') ?? atWallRef.current
-    const at = chosenRef.current
+    return chosenRef.current
       .filter(
         video =>
           video.status === 'live' &&
@@ -1918,10 +1923,22 @@ export function useMultiCam(
       )
       .map(newestWallOf)
       .filter(newest => newest == null || here == null || newest >= here)
-    return liveOpeningMs(at, Number.POSITIVE_INFINITY)
+  }
+  /**
+   * The furthest a live take may be sought to: the newest footage every
+   * angle the grid plays has. The bar runs on to the newest any angle has,
+   * but a seek there sent the slower angles past their own footage, where
+   * they stood waiting for segments not yet written, and Jump to present,
+   * which never moves the grid back, could not bring them back either.
+   */
+  const liveEdgeMs = (): number | null => {
+    const known = liveNewest().filter(newest => newest != null)
+    return known.length === 0 ? null : Math.min(...known)
   }
   const livePointRef = useRef(livePointMs)
   livePointRef.current = livePointMs
+  const liveEdgeRef = useRef(liveEdgeMs)
+  liveEdgeRef.current = liveEdgeMs
 
   /**
    * A seek the viewer settled on: past a highlight's end, they have taken
@@ -1945,12 +1962,13 @@ export function useMultiCam(
   const goTo = useCallback(
     (asked: number): void => {
       // The opening cushion chooses where playback starts, not where a
-      // viewer may seek. Match the available end shown by the timeline.
-      // Never behind where the grid already is, though: that end moves a
-      // segment at a time while the pictures play on, so a move forward
-      // from past it would have jumped back.
+      // viewer may seek: up to the newest footage every angle has
+      // (`liveEdgeMs`), or the bar's end before any can say. Never behind
+      // where the grid already is, though: that end moves a segment at a
+      // time while the pictures play on, so a move forward from past it
+      // would have jumped back.
       const limit = chosenRef.current.some(video => video.status === 'live')
-        ? (takeRef.current?.toMs ?? null)
+        ? (liveEdgeRef.current() ?? takeRef.current?.toMs ?? null)
         : null
       const here = gameNowRef.current('') ?? atWallRef.current
       const ahead =

@@ -2301,7 +2301,7 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     expect(mc().tiles.B?.parked ?? null).equals(null)
     expect(tiles.B.currentTime).greaterThan(140)
   })
-  it('runs a live game’s bar from its first camera to the newest footage any angle has, and honors explicit seeks up to that footage', async function () {
+  it('runs a live game’s bar from its first camera to the newest footage any angle has, and honors explicit seeks up to the footage every angle has', async function () {
     const served: Record<string, WallMapping | null> = {
       A: dated(300),
       B: dated(300)
@@ -2328,11 +2328,20 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     // angle has, A's 260 s, though the viewer has played only to 150 s.
     expect(mc().take?.fromMs).equals(T0)
     expect(mc().take?.toMs).equals(T0 + 260_000)
-    // Explicit seeks reach the available end, not the opening cushion.
+    // Explicit seeks reach the newest footage both angles have, B's 250 s,
+    // not the opening cushion — and not A's 260 s, where B has nothing yet.
     await act(async () => {
-      mc().goTo(T0 + 260_000)
+      mc().goTo(T0 + 255_000)
     })
-    expect(mc().atWallMs).equals(T0 + 260_000)
+    expect(mc().atWallMs).equals(T0 + 250_000)
+    // A drag released beyond the bar's far end lands there too.
+    await act(async () => {
+      mc().scrub(T0 + 260_000)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(mc().atWallMs).equals(T0 + 250_000)
     // Back is anywhere in the take.
     await act(async () => {
       mc().goTo(T0 + 60_000)
