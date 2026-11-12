@@ -2,9 +2,12 @@ const path = require('node:path')
 const { getDefaultConfig, mergeConfig } = require('@react-native/metro-config')
 const app = __dirname
 const root = path.resolve(app, '..')
+const { bundleBuildInfo } = require('../scripts/build-info.cjs')
+process.env.TS_BUILD_INFO = bundleBuildInfo()
 const runtime =
   /^(react|react-native|react-native-svg|react-native-video|react-native-safe-area-context|react-native-patina)(\/|$)/
 module.exports = mergeConfig(getDefaultConfig(app), {
+  cacheVersion: process.env.TS_BUILD_INFO,
   watchFolders: [path.join(root, 'src'), path.join(root, 'node_modules')],
   resolver: {
     // Pin native modules and React while preserving nested package dependencies.

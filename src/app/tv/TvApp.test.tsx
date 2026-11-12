@@ -7,8 +7,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AppRegistry, BackHandler, NativeModules } from 'react-native'
 
 import { asSession, asVideoGame, TeamStationClient } from '../../common/api'
+import type { BuildInfo } from '../../common/distribution'
 import { userIdOfGumbo } from '../../common/userId'
-import { TvApp, tvLoginScale } from './TvApp'
+import { TvApp, tvLoginScale, tvLoginServer } from './TvApp'
 
 require('../../../appletv/index.js')
 
@@ -30,7 +31,7 @@ const original = {
 const pause = async (ms = 20): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
-async function render(probeUrls?: string): Promise<void> {
+async function render(probeUrls?: string, info?: BuildInfo): Promise<void> {
   BackHandler.addEventListener = (_name, handler) => {
     onBack = () => handler({ type: 'hardwareBackPress', timeStamp: Date.now() })
     return {
@@ -44,7 +45,11 @@ async function render(probeUrls?: string): Promise<void> {
   root = createRoot(host)
   await act(async () => {
     root!.render(
-      <TvApp apiBaseUrl="https://example.test/api/v1" probeUrls={probeUrls} />
+      <TvApp
+        apiBaseUrl="https://example.test/api/v1"
+        probeUrls={probeUrls}
+        info={info}
+      />
     )
     await pause()
   })
@@ -101,6 +106,41 @@ afterEach(async () => {
   NativeModules.TVSession = original.store
 })
 describe('TV app presentation', () => {
+  for (const branch of ['master', 'develop', 'refs/heads/master', 'feature']) {
+    it(`shows the login version and limits the server label for ${branch}`, async () => {
+      setup()
+      await render(undefined, {
+        app: 'TeamStation',
+        version: '1.2.3',
+        buildNumber: '26111201',
+        branch,
+        commit: '0'.repeat(40),
+        builtAt: '2026-01-01T00:00:00Z'
+      })
+      const footer = document.querySelector<HTMLElement>(
+        '[data-testid="tv-login-build"]'
+      )!
+      expect(footer.textContent).contains('v1.2.3 (26111201)')
+      expect(getComputedStyle(footer).position).equals('absolute')
+      expect(getComputedStyle(footer).right).equals('70px')
+      expect(getComputedStyle(footer).bottom).equals('24px')
+      const server = document.querySelector('[data-testid="tv-login-server"]')
+      if (branch === 'feature') expect(server?.textContent).equals('example')
+      else expect(server).equals(null)
+    })
+  }
+  it('uses only the API hostname prefix, independently of the sign-in host', () => {
+    expect(
+      tvLoginServer('https://develop5.example.test/api/v1', 'feature')
+    ).equals('develop5')
+    expect(
+      tvLoginServer(
+        'https://develop5.example.test/api/v1',
+        'refs/heads/develop'
+      )
+    ).equals('')
+    expect(tvLoginServer('invalid', 'feature')).equals('')
+  })
   it('fits the complete pairing panel inside smaller viewports with safe margins', () => {
     expect(tvLoginScale(1920, 1080)).equals(1)
     for (const [width, height] of [
@@ -183,6 +223,9 @@ describe('TV app presentation', () => {
     expect(document.body.textContent)
       .contains('Welcome, Babe')
       .and.not.contains('Welcome, Babe Ruth')
+    expect(document.querySelector('[data-testid="tv-login-build"]')).equals(
+      null
+    )
     await press('Sign out')
     expect(document.body.textContent).contains('ABCD–EFGH')
   })

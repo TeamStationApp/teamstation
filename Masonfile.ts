@@ -516,6 +516,9 @@ async function install(ctx: Stage, cwd?: string): Promise<void> {
 export async function buildTv(ctx: Stage): Promise<void> {
   const environment = seatEnvironment(ctx)
   const api = environment.TS_API_BASE_URL
+  const version = appVersion(ctx)
+  const build = ctx.getBuildNumber(TV_APP)
+  const provenance = provenanceEnvironment(ctx, version, build)
   await install(ctx)
   await install(ctx, 'appletv')
   await ctx.sh('pod install', { cwd: 'appletv/ios' })
@@ -523,8 +526,9 @@ export async function buildTv(ctx: Stage): Promise<void> {
     workspace: 'appletv/ios/TeamStationTV.xcworkspace',
     scheme: 'TeamStationTV',
     configuration: 'Release',
-    version: appVersion(ctx),
-    buildNumber: ctx.getBuildNumber(TV_APP),
+    version,
+    buildNumber: build,
+    env: provenance,
     // Match the iOS archive's workaround for Xcode 27 Swift module failures.
     xcargs: [
       'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
