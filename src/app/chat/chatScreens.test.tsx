@@ -2423,6 +2423,7 @@ describe('chat devices in the app', function () {
 
   for (const [width, player] of [
     [1200, false],
+    [1440, false],
     [390, false],
     [390, true]
   ] as const) {
@@ -2513,6 +2514,9 @@ describe('chat devices in the app', function () {
 
   for (const [width, retained, nested] of [
     [1200, false, false],
+    [1216, false, false],
+    [1440, true, false],
+    [1440, false, true],
     [390, false, false],
     [1200, true, false],
     [1200, false, true]

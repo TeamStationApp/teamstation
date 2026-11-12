@@ -33,8 +33,9 @@ export function breakpointFor(width: number): Breakpoint {
 /**
  * Where the app's content pane sits in the window, when it is not the whole
  * window: with Tess open on a wide screen, her chat takes a column on the
- * left and the pane is the rest. Screens that size themselves to the window
- * size themselves to this instead, so they lay out for the width they have.
+ * right, navigation can occupy the left, and the pane is the content between
+ * them. Screens size themselves to this pane instead of the window, so they
+ * lay out for the width they have.
  */
 export interface PaneFrame {
   x: number

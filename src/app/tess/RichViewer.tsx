@@ -15,8 +15,8 @@ export interface RichViewerProps {
 
 /**
  * A table or chart at full size, scrollable both ways, with a floating X.
- * Over the right pane when the Shell provides a place for it, otherwise
- * full screen.
+ * Over the content pane beside the right-hand Tess column when the Shell
+ * provides a place for it, otherwise full screen.
  */
 export function RichViewer({
   html,

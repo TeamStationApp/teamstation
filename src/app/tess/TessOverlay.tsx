@@ -11,9 +11,9 @@ import React, {
 import { TessOverlayLayer } from './TessOverlayLayer'
 
 /**
- * Where a full-size table or chart opens on a wide screen: over the right
- * pane only, so the chat beside it stays usable. Without a provider (a narrow
- * screen) the viewer is a full-screen modal instead.
+ * Where a full-size table or chart opens on a wide screen: over the content
+ * pane only, so the Tess column to its right stays usable. Without a provider
+ * (a narrow screen) the viewer is a full-screen modal instead.
  */
 export interface TessOverlaySlot {
   /** Puts `layer` over the pane; `close` is how its owner takes it down. */
@@ -77,7 +77,7 @@ export function TessOverlayProvider({
   )
 }
 
-/** Drawn last inside the right pane, covering it while a layer is open. */
+/** Covers the content pane beside Tess while a layer is open. */
 export function TessOverlayHost(): React.ReactElement | null {
   const layer = useContext(LayerContext)
   if (layer == null) return null

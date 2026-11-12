@@ -399,7 +399,7 @@ async function main(): Promise<void> {
   }
   // She opens from the mark's menu, and only a tab root has the mark.
   const openTess = async (): Promise<void> => {
-    await tap('TeamStation menu')
+    if ((await find('Ask Tess')) == null) await tap('TeamStation menu')
     await tap('Ask Tess')
   }
   // Back as far as the tab root her link was reached from.
@@ -827,7 +827,7 @@ async function main(): Promise<void> {
       await openTess()
       await show('Ask Tess')
       const field = (await find('Tess field'))!.bounds!
-      expect(field.x + field.width).lessThanOrEqual(400)
+      expect(field.x).greaterThan(400)
       await show(PICTURE)
       await capture('ipad-split.png')
       console.log('I1 the split')
@@ -843,7 +843,7 @@ async function main(): Promise<void> {
       await say('Show our standings as a table', 'The standings')
       await tap('Open full screen')
       const viewerClose = (await exactly('Close'))!
-      expect(viewerClose.bounds!.x).greaterThan(400)
+      expect(viewerClose.bounds!.x).lessThan(field.x)
       await show('Ask Tess')
       await capture('ipad-table-overlay.png')
       await tap('Close')
@@ -901,12 +901,11 @@ async function main(): Promise<void> {
         await showExactly(cell)
       await tap('Expand the changes over the page')
       const tableClose = (await exactly('Close'))!
-      expect(tableClose.bounds!.x, 'the viewer over the pane').greaterThan(400)
+      expect(tableClose.bounds!.x, 'the viewer over the pane').lessThan(field.x)
       const besideField = (await find('Tess field'))!.bounds!
-      expect(
-        besideField.x + besideField.width,
-        'the chat beside it'
-      ).lessThanOrEqual(400)
+      expect(besideField.x, 'the chat beside it').greaterThan(
+        tableClose.bounds!.x
+      )
       await show('Ask Tess')
       await capture('ipad-change-expanded.png')
       await tap('Close')

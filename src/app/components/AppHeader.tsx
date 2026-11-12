@@ -24,6 +24,8 @@ export interface AppHeaderProps {
    * else the screen says what it is.
    */
   showMark?: boolean
+  /** About is in the wide sidebar; Tess opens from the right of the header. */
+  sidebar?: boolean
   onBack?: () => void
   /**
    * What has scrolled out of view, handed up to the header.
@@ -99,6 +101,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   // whichever is wider — the design's, or the corner's.
   const insets = useInsets()
   const margin = theme.rem(edgeMarginRem(theme, wide ? 'tablet' : 'phone'))
+  const handleTessPress = props.tess?.onPress
   const pending = props.notifications?.pending === true
   const openAbout = (): void => {
     setAbout(true)
@@ -222,7 +225,13 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           {showMark &&
             // A menu wherever the header has a picture or Tess, however short.
             // Otherwise there is nothing else to offer, so it opens About.
-            (account != null || props.tess != null ? (
+            (props.sidebar === true ? (
+              <View style={markStyle} testID="sidebar-header-mark">
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
+              </View>
+            ) : account != null || props.tess != null ? (
               <HeaderMenu
                 label={lstrings.header_menu_teamstation}
                 align="left"
@@ -273,7 +282,18 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           ]}
         >
           {nav}
-          {account != null && (
+          {props.sidebar === true && props.tess != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={lstrings.tess_ask}
+              onPress={handleTessPress}
+              style={({ pressed }) => [styles.tess, pressed && styles.pressed]}
+            >
+              <ButtonIcon name="auto_awesome" color={theme.headerTextColor} />
+              <Text style={styles.tessLabel}>{lstrings.tess_ask}</Text>
+            </Pressable>
+          )}
+          {account != null && props.sidebar !== true && (
             <HeaderMenu
               label={
                 pending
@@ -331,6 +351,18 @@ function PendingDot(props: { testID: string }): React.ReactElement {
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  tess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: theme.rem(3),
+    paddingHorizontal: theme.rem(0.75),
+    gap: theme.rem(0.375)
+  },
+  tessLabel: {
+    color: theme.headerTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875)
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
