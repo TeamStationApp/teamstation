@@ -64,6 +64,7 @@ const tsSuites = [
   'src/server/media/images.integration.test.ts',
   'src/server/openapi.test.ts',
   'src/server/jsonBody.integration.test.ts',
+  'src/server/jsonBody.unit.test.ts',
   'src/common/api.venues.test.ts',
   // M3: the Field Manager, venue and field screens.
   'src/app/platform/currentPosition.test.ts',
@@ -90,7 +91,11 @@ const tsSuites = [
   'src/server/autoScheduler/reschedule.integration.test.ts',
   'src/server/autoScheduler/rules.test.ts',
   'src/server/autoScheduler/managerPreview.unit.test.ts',
-  'src/server/autoScheduler/buildOffThread.test.ts',
+  'src/server/autoScheduler/validateOffThread.test.ts',
+  'src/server/auth/apiKeyFamilies.test.ts',
+  'src/common/deviceScheduling.test.ts',
+  'src/server/routes/deviceScheduling.integration.test.ts',
+  'src/server/routes/devicePreviews.integration.test.ts',
   // Fixes M2: a season is dates, scheduled in each field’s local time.
   'src/common/eventTime.test.ts',
   'src/common/seasonScheduling.test.ts',
@@ -108,6 +113,11 @@ const tsSuites = [
   // Preview calendar M3: filters, field labels and the weeks.
   'src/app/screens/schedulePreviewCalendar.test.ts'
 ]
+
+if (unitOnly) {
+  const unitSuites = tsSuites.filter(path => !path.includes('.integration.'))
+  tsSuites.splice(0, tsSuites.length, ...unitSuites)
+}
 
 /** The `.test.tsx` suites, each bundled alone. */
 const appSuites = [
@@ -154,6 +164,8 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/server/scheduler/managerSetup.unit.test.ts',
     'src/server/autoScheduler/managerDecisions.test.ts',
     'src/server/autoScheduler/managerPreview.unit.test.ts',
+    'src/server/autoScheduler/validateOffThread.test.ts',
+    'src/server/auth/apiKeyFamilies.test.ts',
     'src/server/routes/headCoach.unit.test.ts',
     'src/server/teams/headCoachViews.unit.test.ts',
     'src/server/teams/onPeopleList.unit.test.ts',
@@ -179,7 +191,9 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/server/events/eventInfo.integration.test.ts',
     'src/server/routes/schedulingSetup.integration.test.ts',
     'src/server/routes/schedulePreviews.integration.test.ts',
-    'src/server/autoScheduler/buildOffThread.test.ts',
+    'src/common/deviceScheduling.test.ts',
+    'src/server/routes/deviceScheduling.integration.test.ts',
+    'src/server/routes/devicePreviews.integration.test.ts',
     'src/server/autoScheduler/publish.integration.test.ts',
     'src/server/autoScheduler/reschedule.integration.test.ts',
     'src/server/venues/gameFields.integration.test.ts'
