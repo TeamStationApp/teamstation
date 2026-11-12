@@ -101,6 +101,7 @@ async function open(
   uiAnimations = false
 ): Promise<{ page: Page; unexpected: string[] }> {
   const createdRoster: Record<string, RosterEntry[]> = {}
+  const failedRosters = new Set<string>()
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
   await coverage?.track(page)
@@ -372,7 +373,11 @@ async function open(
       answer().catch(() => undefined)
       return
     } else if (url.pathname.endsWith('/roster')) {
-      if (failedRoster) status = 503
+      // Each team's first roster read fails; Retry reads them again.
+      if (failedRoster && !failedRosters.has(url.pathname)) {
+        failedRosters.add(url.pathname)
+        status = 503
+      }
       body = url.pathname.includes('/away/')
         ? [
             {
@@ -3442,6 +3447,7 @@ describe('scoring browser', function () {
   it('opens More on upward drag and releases an action or escapes right', async function () {
     const { page } = await open('/games/g1/score')
     try {
+      await page.waitForSelector('[aria-label="More"]')
       const trigger = await page.$eval('[aria-label="More"]', node => {
         const r = node.getBoundingClientRect()
         return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
@@ -4600,7 +4606,17 @@ describe('scoring browser', function () {
               '[aria-label^="Tap or drag the next defender"]'
             )
             await placeOffered(puppeteerDriver(page), 1)
-            await click(page, 'Finish defensive play')
+            // The out with no runner left ends the play by itself.
+            const finish = await page.waitForSelector(
+              '[aria-label="Finish defensive play"]:not([aria-disabled="true"]), [aria-label^="Undo Out by"]',
+              { visible: true }
+            )
+            if (
+              (await finish?.evaluate(node =>
+                node.getAttribute('aria-label')
+              )) === 'Finish defensive play'
+            )
+              await click(page, 'Finish defensive play')
           }
           await waitReady(page)
           await page.waitForSelector(
@@ -4985,8 +5001,11 @@ describe('scoring browser', function () {
     }
     const { page } = await open('/games/g1/score', false, false, true)
     try {
+      await page.waitForSelector('[aria-label="Retry loading scoring"]')
+      expect(await page.$('[aria-label="Ball"]')).equals(null)
+      await click(page, 'Retry loading scoring')
       await page.waitForSelector('[aria-label*="Owls 0 · Hawks 0"]')
-      await page.waitForSelector('[aria-label*="Batter Player 1"]')
+      await page.waitForSelector('[aria-label*="Batter Jordan K"]')
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label*="1 balls"]')
     } finally {
@@ -6013,10 +6032,6 @@ describe('scoring browser', function () {
         jersey: string
       ): Promise<void> => {
         await click(page, 'Create Player')
-        await page.waitForFunction(
-          () =>
-            document.activeElement!.getAttribute('aria-label') === 'First Name'
-        )
         await page.locator('[aria-label="First Name"]').fill(first)
         await page.locator('[aria-label="Last Name"]').fill(last)
         if (jersey !== '')
@@ -6046,12 +6061,15 @@ describe('scoring browser', function () {
         { hidden: true }
       )
       await new Promise(resolve => setTimeout(resolve, 400))
-      await page.keyboard.press('Escape')
+      if ((await page.$('[aria-label="First Name"]')) != null)
+        await page.keyboard.press('Escape')
       await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
       const roster = async (): Promise<string[]> =>
         await page.$$eval(
           '[data-roster-target="roster"] [data-roster-player]',
-          nodes => nodes.map(n => String(n.textContent).trim())
+          // Each row starts with its drag grip.
+          nodes =>
+            nodes.map(n => String(n.textContent).replace(/^≡/, '').trim())
         )
       const rows = await roster()
       expect(rows).length(2 + 5)
