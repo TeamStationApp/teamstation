@@ -209,6 +209,29 @@ export function acrossStartHole(
   return null
 }
 
+/**
+ * Where a tile whose seek landed in a hole in what it holds is to be sent:
+ * the start of the footage just after it, within `START_GAP_SEC`. Null where
+ * it stands in what it holds, or no footage follows close enough.
+ *
+ * A live stream that was cut and carried on can leave a second missing
+ * between two segments. A paused player sent into that second waits for
+ * pictures there that will never be written, and hls.js steps over a hole
+ * only while it plays: the tile stood paused and seeking for minutes beside
+ * footage it already held.
+ */
+export function acrossHole(
+  ranges: Array<[number, number]>,
+  atSec: number,
+  holeSec: number = HOLE_SEC
+): number | null {
+  for (const [start, stop] of ranges) {
+    if (start - holeSec <= atSec && atSec <= stop) return null
+    if (start > atSec) return start - atSec <= START_GAP_SEC ? start : null
+  }
+  return null
+}
+
 /** `HAVE_FUTURE_DATA`: the next frame is there, if not much after it. */
 const HAVE_FUTURE_DATA = 3
 

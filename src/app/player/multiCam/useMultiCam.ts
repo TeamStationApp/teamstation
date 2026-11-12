@@ -60,6 +60,7 @@ import {
   worthCorrecting
 } from './align'
 import {
+  acrossHole,
   acrossStartHole,
   AHEAD_SEC,
   canStart,
@@ -569,6 +570,10 @@ export function useMultiCam(
     const element = elements.current.get(id)
     return element == null ? null : seekableEndOf(element)
   }
+  /** When the watchdog first saw each tile seeking, until it is not. */
+  const seekingSince = useRef(new Map<string, number>())
+  /** The hole each tile was last sent across (`acrossHole`), once each. */
+  const holeCrossed = useRef(new Map<string, number>())
   /** Tiles that have had pictures at some point, for telling a stall apart. */
   const everStarted = useRef(new Set<string>())
   /**
@@ -1630,6 +1635,29 @@ export function useMultiCam(
       const tileElement = elements.current.get(video.id)
       if (tileElement == null) continue
       if (tileElement.readyState >= 2) everStarted.current.add(video.id)
+      // A seek still unanswered a look later, standing in a hole in what the
+      // tile holds, is sent on to the footage after it: nothing else moves a
+      // seeking tile, and its player will not step over the hole paused.
+      if (tileElement.seeking === true && tileElement.buffered != null) {
+        const since = seekingSince.current.get(video.id) ?? now
+        seekingSince.current.set(video.id, since)
+        const to =
+          now - since >= WATCHDOG_MS
+            ? acrossHole(heldRanges(tileElement), tileElement.currentTime)
+            : null
+        if (to != null && holeCrossed.current.get(video.id) !== to) {
+          holeCrossed.current.set(video.id, to)
+          playerTrace('grid.hole', {
+            tile: chosen.indexOf(video),
+            from: tileElement.currentTime,
+            to
+          })
+          seekedAt.current.set(video.id, now)
+          tileElement.currentTime = to
+        }
+      } else {
+        seekingSince.current.delete(video.id)
+      }
       // What it has drawn, which is the one thing our own seeking cannot
       // fake: the alignment moves a starved tile's `currentTime` forward on
       // every tick, so a frozen picture reports a position that keeps

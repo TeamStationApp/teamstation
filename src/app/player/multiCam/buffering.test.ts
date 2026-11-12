@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  acrossHole,
   acrossStartHole,
   AHEAD_SEC,
   BEHIND_SEC,
@@ -182,6 +183,23 @@ describe('what a player holds ahead', function () {
     // In footage, or before nothing at all, it stays.
     expect(acrossStartHole([[2000, 2045]], 2009)).equals(null)
     expect(acrossStartHole([], 2009)).equals(null)
+  })
+
+  it('sends a tile whose seek landed in a hole to the footage just after it', function () {
+    // Live ingest cut and carried on: 346.68 s lies in the second between two
+    // segments.
+    const held: Array<[number, number]> = [
+      [300, 346.2],
+      [347.58, 380]
+    ]
+    expect(acrossHole(held, 346.68)).equals(347.58)
+    // In footage, or within the hole every player steps over, it stays.
+    expect(acrossHole(held, 320)).equals(null)
+    expect(acrossHole(held, 347.4)).equals(null)
+    // Footage too far on is a real gap, and past everything held, nothing.
+    expect(acrossHole([[360, 380]], 346.68)).equals(null)
+    expect(acrossHole(held, 390)).equals(null)
+    expect(acrossHole([], 346.68)).equals(null)
   })
 
   it('trusts a player that can play where it stands, once the gate has waited long enough', function () {
