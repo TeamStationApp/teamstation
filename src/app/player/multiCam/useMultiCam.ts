@@ -1949,10 +1949,23 @@ export function useMultiCam(
         ? (takeRef.current?.toMs ?? null)
         : null
       const here = gameNowRef.current('') ?? atWallRef.current
-      const wallMs =
+      const ahead =
         limit == null || asked <= limit
           ? asked
           : Math.max(limit, Math.min(asked, here ?? limit))
+      // Never before the take's first picture, nor past a finished take's
+      // last one. A rewind from near the start used to carry the clock that
+      // far before it: the bar read 0:00 while every tile sat parked under
+      // "Not recording yet" until the negative stretch had been counted out.
+      // A gap between two angles is inside the window, and stays a gap.
+      const window = takeRef.current
+      const wallMs =
+        window == null
+          ? ahead
+          : Math.max(
+              window.fromMs,
+              limit == null ? Math.min(ahead, window.toMs) : ahead
+            )
       playerTrace('grid.seek', { asked, accepted: wallMs, limit, here })
       atWallRef.current = wallMs
       setAtWallMs(wallMs)
