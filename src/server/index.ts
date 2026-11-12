@@ -45,6 +45,7 @@ import { googlePlaces } from './location/googlePlaces'
 import { FeedHolder, type MediaContext } from './media/mediaContext'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
+import { checkoutOwners } from './middleware/checkoutOwners'
 import { withAudit } from './middleware/withAudit'
 import { spokenRequests, withActor } from './middleware/withAuth'
 import { withCors } from './middleware/withCors'
@@ -664,6 +665,7 @@ function runWorker(): void {
   // Who is calling, and the ceiling of an API key, then their body, which
   // for a picture is read only when somebody is signed in, then what they
   // changed, then the routes.
+  app.use(checkoutOwners)
   app.use(spokenRequests())
   app.use(withActor(db))
   app.use(withApiKeyCeiling())
