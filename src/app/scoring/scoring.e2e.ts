@@ -50,6 +50,8 @@ const game = asGameDetail({
   ingestStatus: 'pending',
   ingestMessage: null,
   canScore: true,
+  // The reader keeps score for the home side.
+  assignedRoles: { away: [], home: ['scorekeeper'] },
   videos: []
 })
 interface ProbeFiber {
@@ -409,6 +411,26 @@ async function open(
       body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
     else if (url.pathname === '/api/v1/me/home')
       body = { teams: [], seasons: [], leagues: [] }
+    else if (/^\/api\/v1\/events\/[^/]+\/info$/.test(url.pathname))
+      // The game page's Info: the fixture game, with nobody to answer for.
+      body = {
+        id: url.pathname.split('/')[4],
+        eventKind: 'game',
+        title: null,
+        teamId: 'home',
+        teamName: 'Hawks',
+        startAt: null,
+        endAt: null,
+        timezone: 'America/Los_Angeles',
+        venue: null,
+        address: null,
+        latitude: null,
+        longitude: null,
+        status: 'scheduled',
+        canManage: false,
+        attendees: [],
+        replyUserIds: []
+      }
     else if (url.pathname === '/api/v1/me/umpire-leagues')
       body = { leagues: [] }
     else if (
@@ -1088,9 +1110,7 @@ describe('scoring browser', function () {
         await page.waitForSelector(
           '[aria-label="Finish defensive play"]:not([aria-disabled="true"])'
         )
-        expect(await page.$('[aria-label*="Batter Jordan K."]')).not.equals(
-          null
-        )
+        expect(await page.$('[aria-label*="Batter Jordan K"]')).not.equals(null)
       }
       const shortstop = spot('SS')
       await page.mouse.move(...project(shortstop.x, shortstop.z))
@@ -1308,10 +1328,10 @@ describe('scoring browser', function () {
         const play = document.querySelector('[aria-label="Swing in Play"]')!
         return {
           select: getComputedStyle(play.parentElement!).userSelect,
-          chevrons: play.textContent!.includes('⌃')
+          dragUp: String(play.getAttribute('title')).includes('drag up')
         }
       })
-      expect(styles).deep.equals({ select: 'none', chevrons: true })
+      expect(styles).deep.equals({ select: 'none', dragUp: true })
       await chooseHit(page, 'Single')
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
@@ -1338,7 +1358,7 @@ describe('scoring browser', function () {
       const saved = page.waitForResponse(
         response =>
           response.request().method() === 'POST' &&
-          response.url().endsWith('/games/g1/events')
+          new URL(response.url()).pathname.endsWith('/games/g1/events')
       )
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
@@ -1358,9 +1378,9 @@ describe('scoring browser', function () {
       await click(page, 'Full game scoring')
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       await page.waitForSelector('canvas')
+      // Held back by the server: the ball has not reached it.
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
-      await page.waitForSelector('[aria-label="Save status"]')
       const length = await page.evaluate(() => history.length)
       await page.evaluate(() => {
         history.back()
@@ -1440,7 +1460,7 @@ describe('scoring browser', function () {
         await page.mouse.up()
         const side = bats === 'right' ? 'left' : 'right'
         await page.waitForSelector(
-          `[aria-label*="Batter Jordan K. ${side} handed"]`
+          `[aria-label*="Batter Jordan K ${side} handed"]`
         )
         await click(page, 'Ball')
         await waitReady(page)
@@ -1449,7 +1469,7 @@ describe('scoring browser', function () {
         await page.mouse.move(...start, { steps: 12 })
         await page.mouse.up()
         expect(
-          await page.$(`[aria-label*="Batter Jordan K. ${side} handed"]`)
+          await page.$(`[aria-label*="Batter Jordan K ${side} handed"]`)
         ).not.equals(null)
         await click(page, 'Undo Ball')
       } finally {
@@ -1474,7 +1494,7 @@ describe('scoring browser', function () {
         expect(await page.$('[aria-label="Put Batter on Base"]')).equals(null)
         await click(page, 'Dismiss More')
         await click(page, 'Undo Put Batter on Base')
-        await page.waitForSelector('[aria-label*="Batter Jordan K."]')
+        await page.waitForSelector('[aria-label*="Batter Jordan K"]')
         expect(unexpected).deep.equals([])
       } finally {
         await page.close()
@@ -1606,9 +1626,7 @@ describe('scoring browser', function () {
         localStorage.removeItem('teamstation:scoring:100:switch-hitter')
       })
       await page.reload()
-      await page.waitForSelector(
-        '[aria-label*="Batter Jordan K. right handed"]'
-      )
+      await page.waitForSelector('[aria-label*="Batter Jordan K right handed"]')
       await page.waitForSelector('[aria-label="OK"]')
       await page.waitForSelector('canvas[data-field-ready="true"]')
       const box = await page.$eval('canvas', canvas => {
@@ -1648,7 +1666,7 @@ describe('scoring browser', function () {
         await page.screenshot({
           path: `${process.env.TS_SCORING_ARTIFACT_DIR}/field.png`
         })
-      await page.waitForSelector('[aria-label*="Batter Jordan K. left handed"]')
+      await page.waitForSelector('[aria-label*="Batter Jordan K left handed"]')
       expect(await page.$('[aria-label="OK"]')).equals(null)
       await click(page, 'Ball')
       await click(page, 'Called Strike')
@@ -1661,7 +1679,7 @@ describe('scoring browser', function () {
       await page.mouse.move(...start, { steps: 12 })
       await page.mouse.up()
       expect(
-        await page.$('[aria-label*="Batter Jordan K. left handed"]')
+        await page.$('[aria-label*="Batter Jordan K left handed"]')
       ).not.equals(null)
       await click(page, 'Undo Foul Ball')
       await click(page, 'Undo Called Strike')
@@ -4436,7 +4454,7 @@ describe('scoring browser', function () {
         const loadedEvents = page.waitForResponse(
           response =>
             response.request().method() === 'GET' &&
-            response.url().endsWith('/games/g1/events')
+            new URL(response.url()).pathname.endsWith('/games/g1/events')
         )
         await page.reload({ waitUntil: 'networkidle0', timeout: 30000 })
         const loaded = (await (await loadedEvents).json()) as {
