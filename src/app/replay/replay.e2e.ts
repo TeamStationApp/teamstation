@@ -39,8 +39,10 @@ import { stepHalfEnds } from './replayGaps'
  *   REPLAY_SCENARIO=announcer   (the server's `speech` set)
  *     The announcer through the first half-inning: every sentence played as
  *     its step is shown, none over another, pause and play mid-sentence, and
- *     muting silencing it at once. Writes narration-first-half.log and the
- *     served audio, narration-first-half.mp3.
+ *     muting silencing it at once; the card's words three lines tall at
+ *     every sentence, the newest last. Writes narration-first-half.log, the
+ *     served audio, narration-first-half.mp3, and the card's words sliding
+ *     in, announcer-scroll.mp4.
  *
  *   REPLAY_SCENARIO=live
  *     A season member follows the game in progress from its Live pill while
@@ -69,10 +71,15 @@ import { stepHalfEnds } from './replayGaps'
  *     The replay paused at its first pitch at 402 x 874 and 1024 x 1366:
  *     replay-controls-<phase>.png and box-score-centred-<phase>.png, and at
  *     402 x 874 the box score scrolled to its end, box-score-end-<phase>.png.
- *     `after` expects the volume button at the top left and the X at the top
- *     right, 48 square; rewind and pause 16 from the bottom and their sides;
- *     the canvas from the window's top; and the box score's last row above
- *     both buttons.
+ *     `after` also opens it at 393 x 660 and 375 x 667, a phone's browser
+ *     with its toolbars (replay-controls-<size>-after.png and
+ *     box-score-end-<size>-after.png). It expects the volume button at the
+ *     top left and the X at the top right, 48 square; rewind and pause 16
+ *     from the bottom and their sides; the canvas from the window's top; on
+ *     a tall window the play card, if drawn, ending above the buttons' tops
+ *     and the deck at least DECK_MIN tall, and with no card the deck no
+ *     taller than DECK_MIN, below the plate; and the box score's last row
+ *     above both buttons.
  *
  *   REPLAY_SCENARIO=rewind
  *     Rewind in the final game's replay: from "Play ball!", after two
@@ -205,13 +212,20 @@ function screenRecorder(m: Device): { stop: (path: string) => Promise<void> } {
   }
 }
 
+/**
+ * What the card says now, as a page expression: its newest line, the
+ * sentence or the rewind's words, then the detail below the words. The
+ * lines said before it stay above in the words area, and are not read.
+ */
+const CARD_TEXT = `((document.querySelector('[data-testid="replay-play-card-line"]')?.textContent ?? '') + (document.querySelector('[data-testid="replay-play-card-detail"]')?.textContent ?? ''))`
+
 /** Logs every change of the card's text in the page, with its time. */
 const CARD_LOG = `
   if (!window.__cards) {
     window.__cards = [];
     let last = null;
     const read = () => {
-      const text = document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? '';
+      const text = ${CARD_TEXT};
       if (text !== last) { last = text; window.__cards.push({ t: Date.now(), text }); }
     };
     new MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
@@ -220,7 +234,7 @@ const CARD_LOG = `
   return true;
 `
 
-const CARD = `document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? ''`
+const CARD = CARD_TEXT
 
 async function openGame(m: Device, gameId: string): Promise<void> {
   await m.openBrowser({ url: `${required('REPLAY_WEB_URL')}/games/${gameId}` })
@@ -408,7 +422,7 @@ async function replay(m: Device): Promise<void> {
     const deck = document.querySelector('[data-testid="replay-box-score"]');
     const text = deck.textContent;
     const after = text.slice(text.indexOf('Harbor Hawks pitching'), text.indexOf('Valley Pines batting'));
-    return { cole: after.indexOf('Gerrit C'), gil: after.indexOf('Luis Gi'), text: after.slice(0, 200) };
+    return { cole: after.indexOf('Gerrit C'), gil: after.indexOf('Luis G'), text: after.slice(0, 200) };
   `
   const deadline = Date.now() + 120000
   let order = await evalJson<{ cole: number; gil: number; text: string }>(
@@ -486,14 +500,18 @@ async function desktop(m: Device): Promise<void> {
     text => !text.startsWith('Play ball') && text !== '',
     20000
   )
+  // The play card heads the column, three lines of words tall, and the box
+  // score starts just below it.
   const side = await evalJson<boolean>(
     m,
     `
     const deck = document.querySelector('[data-testid="replay-box-score"]').getBoundingClientRect();
-    return deck.left > window.innerWidth / 2 && deck.top < 100;
+    const card = document.querySelector('[data-testid="replay-play-card"]').getBoundingClientRect();
+    return deck.left > window.innerWidth / 2 && card.left > window.innerWidth / 2 &&
+      card.top < 100 && deck.top >= card.bottom && deck.top < card.bottom + 20;
   `
   )
-  assert.ok(side, 'the box score is not beside the field')
+  assert.ok(side, 'the box score is not beside the field, below the card')
   await shot(m, 'replay-desktop')
 }
 
@@ -504,7 +522,7 @@ async function desktop(m: Device): Promise<void> {
 const MEDIA_LOG = `
   if (!window.__narrated) {
     window.__narrated = [];
-    const card = () => document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? '';
+    const card = () => ${CARD_TEXT};
     const log = (type, el) => {
       if (String(el.src).startsWith('data:')) return;
       window.__narrated.push({ type, t: Date.now(), src: String(el.src), card: card() });
@@ -552,6 +570,44 @@ function overlaps(events: readonly MediaEvent[]): string[] {
   return problems
 }
 
+/**
+ * Logs the card's words area at every change: its height, and whether its
+ * last line is the newest, the sentence being read.
+ */
+const WORDS_LOG = `
+  if (!window.__words) {
+    window.__words = [];
+    let last = null;
+    const read = () => {
+      const words = document.querySelector('[data-testid="replay-play-card-words"]');
+      const line = document.querySelector('[data-testid="replay-play-card-line"]');
+      if (!words || !line) return;
+      const text = line.textContent;
+      if (text === last) return;
+      last = text;
+      const lines = words.firstElementChild?.children ?? [];
+      window.__words.push({
+        t: Date.now(),
+        text,
+        height: Math.round(words.getBoundingClientRect().height * 10) / 10,
+        lines: lines.length,
+        lastIsNewest: lines[lines.length - 1] === line
+      });
+    };
+    new MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
+    read();
+  }
+  return true;
+`
+
+interface WordsChange {
+  t: number
+  text: string
+  height: number
+  lines: number
+  lastIsNewest: boolean
+}
+
 async function announcer(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
   await m.openBrowser({
@@ -559,9 +615,13 @@ async function announcer(m: Device): Promise<void> {
   })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
   await evalJson<boolean>(m, MEDIA_LOG)
+  await evalJson<boolean>(m, WORDS_LOG)
   const started = Date.now()
   await m.tapOn({ id: 'replay-speaker' })
   await m.assertVisible({ text: 'Mute game sounds' })
+  // The words area through the half: three lines, the new ones sliding in.
+  const out = await artifactsDir()
+  const recorder = screenRecorder(m)
 
   // Pause in the middle of the third sentence, then play.
   const deadline = Date.now() + 60000
@@ -590,6 +650,18 @@ async function announcer(m: Device): Promise<void> {
     'the bottom of the 1st',
     text => text.startsWith('Mookie B steps in'),
     180000
+  )
+  await recorder.stop(join(out, 'announcer-scroll.mp4'))
+  // Every sentence shown in a words area three lines tall, the newest last.
+  const words = await evalJson<WordsChange[]>(m, 'return window.__words ?? []')
+  assert.ok(words.length >= 5, `few sentences: ${words.length}`)
+  for (const change of words) {
+    assert.equal(change.height, 60, `the words were ${change.height} tall`)
+    assert.ok(change.lastIsNewest, `not the last line: ${change.text}`)
+  }
+  assert.ok(
+    words.some(change => change.lines >= 3),
+    'the words never held three sentences'
   )
   await m.tapOn({ id: 'replay-speaker' })
   const mutedAt = Date.now()
@@ -642,7 +714,6 @@ async function announcer(m: Device): Promise<void> {
   }
   const list = join(dir, 'list.txt')
   await writeFile(list, files.map(file => `file '${file}'`).join('\n'))
-  const out = await artifactsDir()
   const mp3 = join(out, 'narration-first-half.mp3')
   const joined = spawnSync(
     'ffmpeg',
@@ -666,6 +737,7 @@ async function announcer(m: Device): Promise<void> {
   assert.equal(joined.status, 0, 'ffmpeg joined nothing')
   const lines = [
     '$ REPLAY_SCENARIO=announcer node -r sucrase/register src/app/replay/replay.e2e.ts',
+    `# words area: ${words.length} sentences shown, every one 60 tall with the newest last -> announcer-scroll.mp4`,
     `# ${steps.length} steps in the top of the 1st; the announcer's element, seconds from unmuting:`,
     ...events.map(
       event =>
@@ -1229,7 +1301,7 @@ async function tapRewind(m: Device): Promise<Card> {
   }
 }
 
-/** The card's first line: the sentence or the rewind's words. */
+/** The card's newest line: the sentence or the rewind's words. */
 const LINE = `document.querySelector('[data-testid="replay-play-card-line"]')?.textContent ?? ''`
 
 /** The card and the box score's places, and the two buttons' margins. */
@@ -1298,16 +1370,33 @@ async function controls(
   daemon: Parameters<typeof attachWeb>[0]
 ): Promise<void> {
   const phase = required('REPLAY_PHASE')
-  for (const [size, name] of [
-    ['402x874', `replay-controls-${phase}`],
-    ['1024x1366', `box-score-centred-${phase}`]
-  ] as const) {
+  const sizes: Array<readonly [string, string, string | null]> = [
+    ['402x874', `replay-controls-${phase}`, `box-score-end-${phase}`],
+    ['1024x1366', `box-score-centred-${phase}`, null]
+  ]
+  // A phone's browser with its toolbars: too short for three lines of card.
+  if (phase === 'after')
+    for (const size of ['393x660', '375x667'])
+      sizes.push([
+        size,
+        `replay-controls-${size}-after`,
+        `box-score-end-${size}-after`
+      ])
+  for (const [size, name, end] of sizes) {
     const m = await attachWeb(daemon, size, `controls${size}`)
     try {
       await signInWeb(m, LEAGUE)
       await openReplay(m, FINAL)
       await evalJson<boolean>(m, CARD_LOG)
-      await eventsAfter(m, 0, 1, 30000)
+      // A window too short for one line of the card draws none: the first
+      // pitch is then waited for by the replay's pace.
+      await wait(3000)
+      const drawn = await evalJson<boolean>(
+        m,
+        `return document.querySelector('[data-testid="replay-play-card"]') != null`
+      )
+      if (drawn) await eventsAfter(m, 0, 1, 30000)
+      else await wait(6000)
       await m.tapOn({ id: 'replay-pause' })
       await wait(1000)
       await shot(m, name)
@@ -1317,7 +1406,7 @@ async function controls(
       )
       assert.ok(has, `rewind button on ${phase}`)
       if (phase === 'after') await controlPlaces(m, size)
-      if (size === '402x874') await boxScoreEnd(m, phase)
+      if (end != null) await boxScoreEnd(m, phase, end)
     } finally {
       await m.detach()
     }
@@ -1329,7 +1418,10 @@ async function controls(
  * volume button at the top left and the X at the top right, both 48 square;
  * rewind at the bottom left and pause at the bottom right, 16 from the
  * bottom and their sides; and the field's canvas from the window's top.
- * The play card's and the deck's places are logged with them.
+ * On a tall window, the play card, when it is drawn, ends above the buttons'
+ * tops, and the deck below it is at least DECK_MIN tall; with no card, the
+ * deck starts below the catcher's nameplate. The play card's and
+ * the deck's places, and the card's lines, are logged with them.
  */
 async function controlPlaces(m: Device, size: string): Promise<void> {
   const places = await evalJson<{
@@ -1358,6 +1450,7 @@ async function controlPlaces(m: Device, size: string): Promise<void> {
         canvas: rect('[data-testid="replay-field"] canvas') ??
           rect('[data-testid="replay-field"]'),
         card: rect('[data-testid="replay-play-card"]'),
+        words: rect('[data-testid="replay-play-card-words"]'),
         deck: rect('[data-testid="replay-deck"]')
       }
     }`
@@ -1396,14 +1489,54 @@ async function controlPlaces(m: Device, size: string): Promise<void> {
   near(height - rewind.bottom, 16, "rewind's bottom")
   near(height - pause.bottom, 16, "pause's bottom")
   near(at('canvas').top, 0, "the canvas's top")
+  const deck = rects.deck
+  if (deck == null) return
+  // A tall window: with a card, the card ends above the buttons and the box
+  // score keeps DECK_MIN; with none, the deck starts below the catcher's
+  // nameplate, under DECK_MIN, leaving the plate in view.
+  const buttons = Math.min(rewind.top, pause.top)
+  const { card, words } = rects
+  const lines =
+    words == null ? 0 : Math.round((words.bottom - words.top) / LINE_HEIGHT)
+  console.log(
+    `controls ${size}: card ${card == null ? 'none' : `${card.top}–${card.bottom}, ${lines} lines`}, deck from ${deck.top} (${height - deck.top} tall), buttons from ${buttons}`
+  )
+  if (card == null)
+    assert.ok(
+      height - deck.top <= DECK_MIN + 0.5,
+      `the deck at ${size} is ${height - deck.top} tall with no card, over ${DECK_MIN}`
+    )
+  else {
+    assert.ok(
+      height - deck.top >= DECK_MIN - 0.5,
+      `the deck at ${size} is ${height - deck.top} tall, under ${DECK_MIN}`
+    )
+    assert.ok(
+      card.bottom <= buttons,
+      `the card at ${size} ends at ${card.bottom}, below the buttons' top ${buttons}`
+    )
+    assert.ok(
+      lines >= 1 && lines <= 3,
+      `the card at ${size} has ${lines} lines`
+    )
+  }
 }
 
+/** The replay deck's least height (GameReplayScreen's DECK_MIN). */
+const DECK_MIN = 160
+/** One line of the card's words (ReplayPlayCard's ANNOUNCER_LINE_HEIGHT). */
+const LINE_HEIGHT = 20
+
 /**
- * The box score scrolled to its end: box-score-end-<phase>.png, and the last
+ * The box score scrolled to its end: the screenshot `name`, and the last
  * row's bottom against the tops of rewind and pause, which `after` requires
  * it to clear.
  */
-async function boxScoreEnd(m: Device, phase: string): Promise<void> {
+async function boxScoreEnd(
+  m: Device,
+  phase: string,
+  name: string
+): Promise<void> {
   const edges = await evalJson<{ last: number; buttons: number }>(
     m,
     `const box = document.querySelector('[data-testid="replay-box-score"]')
@@ -1418,9 +1551,9 @@ async function boxScoreEnd(m: Device, phase: string): Promise<void> {
     }`
   )
   await wait(500)
-  await shot(m, `box-score-end-${phase}`)
+  await shot(m, name)
   console.log(
-    `box score end ${phase}: last row bottom ${edges.last}, buttons top ${edges.buttons}`
+    `${name}: last row bottom ${edges.last}, buttons top ${edges.buttons}`
   )
   if (phase === 'after')
     assert.ok(edges.last <= edges.buttons, 'the last row clears the buttons')

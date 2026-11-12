@@ -59,6 +59,7 @@ import { scoreboardFor } from '../scoring/scoringSelectors'
 import { scoringSheetTheme } from '../scoring/scoringSheetTheme'
 import { scoringSurface as surface } from '../theme/scoringSurface'
 import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
+import { type AnnouncerLines, nextLines, NO_LINES } from './announcerLines'
 import { useNarrationPlayer } from './narrationPlayer'
 import type { NarrationClient } from './narrationPlayerTypes'
 import { NarrationQueue, type NarrationStep, PREFETCH } from './narrationQueue'
@@ -75,43 +76,80 @@ import {
   startReplay
 } from './replayMachine'
 import {
+  ANNOUNCER_LINES,
   BELOW_NAMEPLATE,
+  cardHeightOf,
+  type CardLineHeights,
+  detailStripHeight,
+  ReplayDetailStrip,
   ReplayPlayCard,
-  type ReplayPlayCardProps
+  type ReplayPlayCardProps,
+  useCardLineHeights
 } from './ReplayPlayCard'
 
 /** The box score's column beside the field on a wide window. */
 export const SIDE_DECK_WIDTH = 360
-/** The least of a tall window the box score keeps below the play card. */
+/** The least of a tall window the box score keeps at its bottom. */
 export const DECK_MIN = 160
-/** The gap between the play card and the box score below it. */
+/**
+ * The gap between the play card and the box score below it, and the least
+ * a deck's detail strip keeps above the floating buttons.
+ */
 const DECK_GAP = 8
 
-/** A tall window's deck, and whether the play card is drawn. */
+/** A tall window's play card and deck. */
 export interface TallDeck {
+  /** Where the deck starts. */
   top: number
-  card: boolean
+  /** The card's lines of words below the catcher; 0 draws no card. */
+  lines: number
 }
 /**
- * Where a tall window's deck starts. The play card hangs below the catcher's
- * nameplate when that leaves the box score DECK_MIN below it, and the deck
- * starts DECK_GAP below the card. Otherwise no card is drawn, and the deck
- * starts below the nameplate, keeping DECK_MIN. Until the catcher and the
- * card are measured, the card hangs to be measured and the deck keeps
- * DECK_MIN.
+ * Where a tall window's play card and deck go. The card hangs below the
+ * catcher's nameplate and shows as many whole lines of words, up to
+ * ANNOUNCER_LINES, as fit above the deck's least height, DECK_MIN, with its
+ * gap, its lines as tall as `heights`, as measured: at a larger text size,
+ * fewer fit. If not one line fits, no card is drawn: the announcer is heard,
+ * the field shows the play, and the deck's top writes what the card's detail
+ * must say (`deckDetailTop`). The deck starts DECK_GAP below the card, then
+ * keeping DECK_MIN; with no card it starts below the nameplate, so the play
+ * at the plate stays in view, and the box score takes what is left.
+ * Until the catcher is measured, there is no card and the deck keeps DECK_MIN.
  */
 export function tallDeck(
   height: number,
   catcher: ScreenRect | null,
-  cardHeight: number
+  heights: CardLineHeights
 ): TallDeck {
-  if (catcher == null || cardHeight <= 0)
-    return { top: height - DECK_MIN, card: true }
+  if (catcher == null) return { top: height - DECK_MIN, lines: 0 }
   const below = catcher.y + catcher.height + BELOW_NAMEPLATE
-  const hungBottom = below + cardHeight + DECK_GAP
-  return height - hungBottom >= DECK_MIN
-    ? { top: hungBottom, card: true }
-    : { top: Math.min(below, height - DECK_MIN), card: false }
+  const room = height - DECK_MIN - DECK_GAP - below - cardHeightOf(0, heights)
+  const lines = Math.max(
+    0,
+    Math.min(ANNOUNCER_LINES, Math.floor(room / heights.words))
+  )
+  return lines === 0
+    ? { top: Math.min(below, height), lines }
+    : { top: below + cardHeightOf(lines, heights) + DECK_GAP, lines }
+}
+
+/**
+ * Where the deck starts when its top writes the detail strip: at `deckTop`,
+ * unless the strip would then reach within DECK_GAP of the floating buttons'
+ * tops. The deck then rises just enough over the field's bottom that the
+ * strip clears them, and the box score below it keeps its end clear too.
+ */
+export function deckDetailTop(
+  deckTop: number,
+  height: number,
+  insetBottom: number,
+  heights: CardLineHeights
+): number {
+  const buttonsTop = height - floatingBottom(insetBottom) - FLOATING_SIZE
+  return Math.max(
+    0,
+    Math.min(deckTop, buttonsTop - DECK_GAP - detailStripHeight(heights))
+  )
 }
 const TICK_MS = 100
 /** How often a fading rewind notice is drawn. */
@@ -481,7 +519,6 @@ function ReplayView(props: {
   const topPadding = liftedSafePadding(insets, lift)
   const [catcher, setCatcher] = useState<ScreenRect | null>(null)
   const fieldWidth = layout.side ? width - SIDE_DECK_WIDTH : width
-  const [cardHeight, setCardHeight] = useState(0)
 
   const session = state.scoring.session
   // Everyone is named as the card and the box score name them: first name
@@ -537,12 +574,26 @@ function ReplayView(props: {
       ),
     [statistics, state.applied]
   )
+  // The card's line heights, measured by hidden probes once they are laid
+  // out, and estimated from the text size until then.
+  const { heights: lineHeights, probes: lineProbes } = useCardLineHeights()
   const card = replayCard(state, {
     playBall: lstrings.replay_play_ball,
     waiting: lstrings.replay_waiting,
     paused: lstrings.replay_paused,
     changed: lstrings.replay_play_changed
   })
+  // The card's last few sentences, kept from render to render: React's own
+  // way of holding what earlier renders showed. The line is the shown step's
+  // own when it has a sentence; otherwise the card says an earlier one again.
+  const [held, setHeld] = useState<AnnouncerLines>(NO_LINES)
+  const words = nextLines(held, {
+    line: card.line,
+    step: sentence === '' ? null : (shownKey ?? null),
+    notice: state.notice != null,
+    rewinds: state.rewinds
+  })
+  if (words !== held) setHeld(words)
   const field = (
     <FieldCanvas
       {...SCORING_CAMERA}
@@ -681,16 +732,29 @@ function ReplayView(props: {
   const cardProps = {
     notice: state.notice,
     clock,
-    line: card.line,
+    lines: words.entries,
     detail: unavailable ? lstrings.replay_announcer_unavailable : card.detail,
     width: fieldWidth,
     height
   }
   // A tall window: the card below the catcher, the canvas's report moved up
-  // with the lifted scene, or no card when hanging there would leave the box
-  // score less than DECK_MIN.
+  // with the lifted scene, with as many lines as leave the box score DECK_MIN.
+  // With no line, the deck starts below the nameplate.
   const lifted = catcher == null ? null : { ...catcher, y: catcher.y - lift }
-  const deck = tallDeck(height, lifted, cardHeight)
+  // How tall the card's lines are drawn, as the probes measure them: so how
+  // many fit, the card's height and the deck's top.
+  const deck = tallDeck(height, lifted, lineHeights)
+  // With no card, what the card's detail must say still shows, at the deck's
+  // top: the announcer has stopped, or the replay is paused. The situation
+  // is left to the field and the box score.
+  const deckDetail =
+    !layout.side && deck.lines === 0 && (unavailable || state.paused)
+      ? cardProps.detail
+      : null
+  const deckTop =
+    deckDetail == null
+      ? deck.top
+      : deckDetailTop(deck.top, height, insets.bottom, lineHeights)
   const boxScore = (containerBottom: number): React.ReactElement =>
     box === null ? (
       <Text>Statistics are unavailable for this recorded play.</Text>
@@ -718,11 +782,12 @@ function ReplayView(props: {
         <View testID="replay-field" style={fieldHolderStyle(-lift)}>
           {field}
         </View>
-        {!layout.side && deck.card && (
+        {!layout.side && deck.lines > 0 && (
           <FadingPlayCard
             {...cardProps}
             catcher={lifted}
-            onHeight={setCardHeight}
+            lineCount={deck.lines}
+            lineHeights={lineHeights}
           />
         )}
         <View
@@ -744,22 +809,30 @@ function ReplayView(props: {
             testID="replay-deck"
             style={{
               position: 'absolute',
-              top: deck.top,
+              top: deckTop,
               left: 0,
               right: 0,
-              bottom: 0
+              bottom: 0,
+              backgroundColor: surface.canvas
             }}
           >
+            {deckDetail != null && <ReplayDetailStrip detail={deckDetail} />}
             {boxScore(0)}
           </View>
         )}
+        {lineProbes}
       </View>
       {layout.side && (
         <View
           testID="replay-side"
           style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}
         >
-          <FadingPlayCard {...cardProps} catcher={null} placement="column" />
+          <FadingPlayCard
+            {...cardProps}
+            catcher={null}
+            placement="column"
+            lineHeights={lineHeights}
+          />
           <View style={{ flex: 1, marginTop: DECK_GAP }}>
             {boxScore(insets.bottom + FIELD_EDGE_GAP)}
           </View>

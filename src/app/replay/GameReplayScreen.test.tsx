@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { PixelRatio, Platform } from 'react-native'
 
 import {
   asGameDetail,
@@ -49,6 +49,7 @@ import { tsBallpark } from '../theme/tsBallpark'
 import {
   boxScoreInset,
   DECK_MIN,
+  deckDetailTop,
   FLOATING_BUTTON,
   GameReplayScreen,
   type ReplayClient,
@@ -57,6 +58,13 @@ import {
   SIDE_DECK_WIDTH,
   tallDeck
 } from './GameReplayScreen'
+import {
+  ANNOUNCER_LINE_HEIGHT,
+  BELOW_NAMEPLATE,
+  cardHeightOf,
+  detailStripHeight,
+  estimatedLineHeights as est
+} from './ReplayPlayCard'
 
 type FieldProps = Parameters<typeof FieldCanvas>[0]
 /** A `#RRGGBB` colour as the browser writes it in a style. */
@@ -309,8 +317,12 @@ async function press(label: string): Promise<void> {
   })
 }
 
+const textOf = (testID: string): string =>
+  document.querySelector(`[data-testid="${testID}"]`)?.textContent ?? ''
+
+/** What the card says now: its newest line, and the detail below. */
 const card = (): string =>
-  document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? ''
+  textOf('replay-play-card-line') + textOf('replay-play-card-detail')
 
 /** On to a replay's first pitch: it opens on "Play ball!" for a moment. */
 async function firstPitch(): Promise<void> {
@@ -653,7 +665,7 @@ describe('the replay screen', function () {
       // The card hangs below the catcher where the lifted canvas draws it.
       await showCatcher()
       expect(px(cardStyle()?.top)).equals(
-        CATCHER.y + CATCHER.height + 24 - lift
+        CATCHER.y + CATCHER.height + BELOW_NAMEPLATE - lift
       )
     })
 
@@ -688,7 +700,9 @@ describe('the replay screen', function () {
         Math.max(FIELD_EDGE_GAP, IPHONE.top)
       )
       await showCatcher()
-      expect(px(cardStyle()?.top)).equals(CATCHER.y + CATCHER.height + 24)
+      expect(px(cardStyle()?.top)).equals(
+        CATCHER.y + CATCHER.height + BELOW_NAMEPLATE
+      )
     } finally {
       Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
     }
@@ -751,75 +765,305 @@ describe('the replay screen', function () {
     ).equals(boxScoreInset(21, 21 + FIELD_EDGE_GAP))
   })
 
-  /** The play card's layout event, as the browser would send it. */
-  async function measureCard(height: number): Promise<void> {
-    await act(async () => {
-      ;(
-        propsOf('replay-play-card') as {
-          onLayout: (event: unknown) => void
-        }
-      ).onLayout({
-        nativeEvent: { layout: { x: 0, y: 0, width: 320, height } }
-      })
-    })
-  }
+  /** The floating buttons' top, in a browser with no insets. */
+  const buttonsTop = (height: number): number =>
+    height - floatingBottom(0) - FLOATING_SIZE
 
-  it('keeps the deck its least height until the card is measured', async function () {
-    resize(402, 874)
+  /**
+   * A tall window with the catcher where the canvas reports it: the card
+   * below the nameplate with `lines` lines of words and the deck after it
+   * with at least DECK_MIN, or no card at all and the deck below the
+   * nameplate.
+   */
+  async function tallWindow(
+    width: number,
+    height: number,
+    catcher: ScreenRect,
+    lines: number,
+    scale = 1
+  ): Promise<void> {
+    resize(width, height)
     await show(gameOf(), finalGame())
-    expect(px(node('replay-deck').style.top)).equals(874 - DECK_MIN)
-    expect(tallDeck(874, null, 96)).deep.equals({
-      top: 874 - DECK_MIN,
-      card: true
-    })
-    expect(tallDeck(874, CATCHER, 0)).deep.equals({
-      top: 874 - DECK_MIN,
-      card: true
-    })
-  })
-
-  it('hangs the card below the catcher at 402 × 874, the box score below it', async function () {
-    resize(402, 874)
-    await show(gameOf(), finalGame())
-    await showCatcher()
-    await measureCard(96)
-    const below = CATCHER.y + CATCHER.height + 24
-    expect(px(cardStyle()?.top)).equals(below)
-    expect(cardStyle()?.position).equals('absolute')
-    const deck = node('replay-deck')
-    expect(px(deck.style.top)).equals(below + 96 + 8)
-    expect(deck.contains(node('replay-play-card'))).equals(false)
-    expect(874 - (below + 96 + 8)).gte(DECK_MIN)
-    expect(tallDeck(874, CATCHER, 96)).deep.equals({
-      top: below + 96 + 8,
-      card: true
-    })
-  })
-
-  it('draws no card on a tall window whose catcher sits too low for it, the deck below the nameplate', async function () {
-    resize(600, 1000)
-    await show(gameOf(), finalGame())
-    // A catcher this low: hung below it, the card would leave the
-    // box score less than DECK_MIN.
-    const catcher = { x: 285, y: 760, width: 30, height: 40 }
     await act(async () => {
       field().onCatcherBounds?.(catcher)
     })
-    await measureCard(96)
-    const below = catcher.y + catcher.height + 24
-    expect(1000 - (below + 96 + 8)).lessThan(DECK_MIN)
+    if (lines > 0) await firstPitch()
+    const below = catcher.y + catcher.height + BELOW_NAMEPLATE
+    const deck = node('replay-deck')
+    const deckTop = px(deck.style.top)
+    expect(tallDeck(height, catcher, est(scale))).deep.equals({
+      top: deckTop,
+      lines
+    })
+    const shown = document.querySelector<HTMLElement>(
+      '[data-testid="replay-play-card"]'
+    )
+    if (lines === 0) {
+      // Not one line fits: no card, only the sound and the field, the play
+      // at the plate left in view.
+      expect(shown).equals(null)
+      expect(deckTop).equals(Math.min(below, height))
+      return
+    }
+    expect(shown).not.equals(null)
+    expect(deck.contains(shown)).equals(false)
+    expect(px(cardStyle()?.top)).equals(below)
+    expect(cardStyle()?.position).equals('absolute')
+    expect(node('replay-play-card-words').style.height).equals(
+      `${lines * ANNOUNCER_LINE_HEIGHT * scale}px`
+    )
+    const cardBottom = below + cardHeightOf(lines, est(scale))
+    expect(deckTop).equals(cardBottom + 8)
+    expect(height - deckTop).gte(DECK_MIN)
+    expect(cardBottom).lte(buttonsTop(height) - 8)
+    // The count is the window's: more words do not change it.
+    now = 30000
+    await wait(250)
+    expect(node('replay-play-card-words').style.height).equals(
+      `${lines * ANNOUNCER_LINE_HEIGHT * scale}px`
+    )
+    expect(px(node('replay-deck').style.top)).equals(deckTop)
+  }
+
+  it('keeps the deck its least height, with no card, until the catcher is measured', async function () {
+    resize(402, 874)
+    await show(gameOf(), finalGame())
+    expect(px(node('replay-deck').style.top)).equals(874 - DECK_MIN)
     expect(document.querySelector('[data-testid="replay-play-card"]')).equals(
       null
     )
-    const deck = node('replay-deck')
-    expect(px(deck.style.top)).equals(below)
-    expect(1000 - below).gte(DECK_MIN)
-    expect(tallDeck(1000, catcher, 96)).deep.equals({ top: below, card: false })
-    // Lower still, the deck keeps DECK_MIN over the nameplate's foot.
-    expect(tallDeck(1000, { ...catcher, y: 820 }, 96)).deep.equals({
-      top: 1000 - DECK_MIN,
-      card: false
+    expect(tallDeck(874, null, est(1))).deep.equals({
+      top: 874 - DECK_MIN,
+      lines: 0
     })
+  })
+
+  it('hangs a three-line card below the catcher at 402 × 874, the box score below it', async function () {
+    await tallWindow(402, 874, CATCHER, 3)
+  })
+
+  // Below the nameplate at 362, three lines need 628 of window, two 608 and
+  // one 588.
+  it('shows two lines where three do not fit', async function () {
+    await tallWindow(402, 610, CATCHER, 2)
+  })
+
+  it('shows one line where two do not fit', async function () {
+    await tallWindow(402, 590, CATCHER, 1)
+  })
+
+  it('draws no card where not one line fits, the deck below the nameplate', async function () {
+    await tallWindow(402, 579, CATCHER, 0)
+    // The deck starts just below the nameplate.
+    expect(px(node('replay-deck').style.top)).equals(
+      CATCHER.y + CATCHER.height + BELOW_NAMEPLATE
+    )
+  })
+
+  // The catcher where the scoring framing draws it in a phone's browser with
+  // its toolbars.
+  for (const [width, height, catcher] of [
+    [375, 667, { x: 176, y: 462, width: 22, height: 30 }],
+    [393, 660, { x: 185, y: 489, width: 22, height: 30 }]
+  ] as const)
+    it(`draws no card and leaves the plate in view at ${width} × ${height}`, async function () {
+      const deck = tallDeck(height, catcher, est(1))
+      await tallWindow(width, height, catcher, deck.lines)
+      // So low a catcher leaves no line: the deck starts below its
+      // nameplate, under DECK_MIN, so it covers neither the catcher nor
+      // home plate.
+      const below = catcher.y + catcher.height + BELOW_NAMEPLATE
+      expect(deck).deep.equals({ top: below, lines: 0 })
+      expect(height - below).lessThan(DECK_MIN)
+    })
+
+  for (const scale of [1, 1.5, 2])
+    it(`never lets the card or the deck's detail reach the buttons, nor the deck cover the catcher, nor a card leave the deck under DECK_MIN, at ${scale}× text`, function () {
+      for (let height = 500; height <= 1000; height += 7)
+        for (let y = 100; y <= height - 30; y += 11) {
+          const catcher = { x: 100, y, width: 22, height: 30 }
+          const { top, lines } = tallDeck(height, catcher, est(scale))
+          const at = `${height} ${y}`
+          expect(lines).within(0, 3)
+          expect(top, at).gte(Math.min(y + 30 + BELOW_NAMEPLATE, height))
+          if (lines > 0) expect(height - top, at).gte(DECK_MIN)
+          if (lines > 0)
+            expect(
+              y + 30 + BELOW_NAMEPLATE + cardHeightOf(lines, est(scale))
+            ).lte(Math.min(top - 8, buttonsTop(height) - 8))
+          // With no card, the detail strip at the deck's top clears the
+          // buttons, the deck rising over the field only where it must.
+          const stripTop = deckDetailTop(top, height, 0, est(scale))
+          expect(stripTop, at).lte(top)
+          expect(stripTop + detailStripHeight(est(scale)), at).lte(
+            buttonsTop(height) - 8
+          )
+          if (top + detailStripHeight(est(scale)) <= buttonsTop(height) - 8)
+            expect(stripTop, at).equals(top)
+        }
+    })
+
+  describe('at a larger text size', function () {
+    // The system's text size, put back after each case.
+    const getFontScale = Object.getOwnPropertyDescriptor(
+      PixelRatio,
+      'getFontScale'
+    )!
+    beforeEach(function () {
+      PixelRatio.getFontScale = () => 1.5
+    })
+    afterEach(function () {
+      Object.defineProperty(PixelRatio, 'getFontScale', getFontScale)
+    })
+
+    it('draws each line 1.5 times as tall, and fits fewer of them', async function () {
+      // At 1× two lines fit at 610 below a nameplate at 362; at 1.5× each
+      // line and the detail are half again as tall, and only one does.
+      expect(tallDeck(610, CATCHER, est(1)).lines).equals(2)
+      expect(tallDeck(874, CATCHER, est(1.5)).lines).equals(3)
+      expect(tallDeck(610, CATCHER, est(1.5)).lines).equals(1)
+      for (let height = 500; height <= 1000; height += 7)
+        expect(tallDeck(height, CATCHER, est(1.5)).lines).lte(
+          tallDeck(height, CATCHER, est(1)).lines
+        )
+      await tallWindow(402, 610, CATCHER, 1, 1.5)
+      expect(node('replay-play-card-words').style.height).equals(
+        `${1 * 20 * 1.5}px`
+      )
+    })
+
+    it('fits the lines the probes measure, not the scale’s estimate', async function () {
+      // Android 14 draws a 20 line about 23.6 tall at 1.3×, not 26. At 648
+      // the estimate fits two lines below the nameplate at 362; the measured
+      // heights fit three, and the card and the deck use them.
+      PixelRatio.getFontScale = () => 1.3
+      const measured = { words: 23.6, detail: 19.2 }
+      expect(tallDeck(648, CATCHER, est(1.3)).lines).equals(2)
+      expect(tallDeck(648, CATCHER, measured).lines).equals(3)
+      resize(402, 648)
+      await show(gameOf(), finalGame())
+      await act(async () => {
+        field().onCatcherBounds?.(CATCHER)
+      })
+      await firstPitch()
+      // Before the probes are laid out, the estimate.
+      expect(px(node('replay-play-card-words').style.height)).closeTo(
+        2 * 26,
+        1e-9
+      )
+      expect(px(node('replay-deck').style.top)).closeTo(
+        tallDeck(648, CATCHER, est(1.3)).top,
+        1e-9
+      )
+      const layout = (part: string, height: number): void => {
+        const onLayout = propsOf(`replay-line-probe-${part}`).onLayout as (
+          event: unknown
+        ) => void
+        onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 20, height } } })
+      }
+      await act(async () => {
+        layout('words', measured.words)
+        layout('detail', measured.detail)
+      })
+      expect(px(node('replay-play-card-words').style.height)).closeTo(
+        3 * 23.6,
+        1e-9
+      )
+      const deck = tallDeck(648, CATCHER, measured)
+      expect(px(node('replay-deck').style.top)).closeTo(deck.top, 1e-9)
+      expect(deck.top).closeTo(362 + cardHeightOf(3, measured) + 8, 1e-9)
+      expect(px(cardStyle()?.top)).equals(362)
+    })
+
+    it('keeps a three-line card clear of the buttons at 402 × 874', async function () {
+      await tallWindow(402, 874, CATCHER, 3, 1.5)
+      const top = px(cardStyle()?.top)
+      expect(top + cardHeightOf(3, est(1.5))).lte(buttonsTop(874) - 8)
+      expect(node('replay-play-card-words').style.height).equals(
+        `${3 * 20 * 1.5}px`
+      )
+    })
+  })
+
+  /** What the deck's detail strip says, if it is drawn. */
+  const deckDetail = (): string | null =>
+    document.querySelector('[data-testid="replay-deck-detail"]') == null
+      ? null
+      : textOf('replay-deck-detail-text')
+
+  /** The catcher where the scoring framing draws it at 393 × 660. */
+  const LOW_CATCHER: ScreenRect = { x: 185, y: 489, width: 22, height: 30 }
+
+  /** A 393 × 660 window, a phone's browser with toolbars: no card. */
+  async function shortWindow(): Promise<void> {
+    resize(393, 660)
+    await show(gameOf(), finalGame())
+    await act(async () => {
+      field().onCatcherBounds?.(LOW_CATCHER)
+    })
+    now = 100
+    await wait(250)
+    now = 2200
+    await wait(250)
+    expect(document.querySelector('[data-testid="replay-play-card"]')).equals(
+      null
+    )
+  }
+
+  it('writes "Announcer unavailable" at the deck’s top where no card fits', async function () {
+    announcer.audio = 'fails'
+    await shortWindow()
+    // While the announcer works, the deck's top writes nothing: the
+    // situation is the field's and the box score's.
+    expect(deckDetail()).equals(null)
+    await press(UNMUTE)
+    for (let i = 0; i < 20 && deckDetail() == null; i++) {
+      now += 5000
+      await wait(150)
+    }
+    expect(announcer.asked.length).greaterThanOrEqual(3)
+    expect(deckDetail()).equals('Announcer unavailable')
+    // At the deck's top, below the nameplate, the box score below it, clear
+    // of the buttons.
+    const deck = node('replay-deck')
+    const strip = node('replay-deck-detail')
+    expect(deck.firstElementChild).equals(strip)
+    const below = LOW_CATCHER.y + LOW_CATCHER.height + BELOW_NAMEPLATE
+    expect(px(deck.style.top)).equals(below)
+    expect(below + detailStripHeight(est(1))).lte(buttonsTop(660) - 8)
+    // Off and on again tries the announcer again, and the strip goes.
+    announcer.audio = 'ok'
+    await press(MUTE)
+    await press(UNMUTE)
+    expect(deckDetail()).equals(null)
+  })
+
+  it('writes "Paused" at the deck’s top where no card fits', async function () {
+    await shortWindow()
+    expect(deckDetail()).equals(null)
+    await press('Pause replay')
+    expect(deckDetail()).equals('Paused')
+    await press('Play replay')
+    expect(deckDetail()).equals(null)
+  })
+
+  it('writes the detail on the card alone where a card fits, at 402 × 874', async function () {
+    resize(402, 874)
+    announcer.audio = 'fails'
+    await show(gameOf(), finalGame())
+    await showCatcher()
+    await firstPitch()
+    await press('Pause replay')
+    expect(card()).includes('Paused')
+    expect(deckDetail()).equals(null)
+    await press('Play replay')
+    await press(UNMUTE)
+    for (let i = 0; i < 20 && !card().includes('Announcer unavailable'); i++) {
+      now += 5000
+      await wait(150)
+    }
+    expect(card()).includes('Announcer unavailable')
+    expect(deckDetail()).equals(null)
   })
 
   it('puts the card at the top of the side column on a wide window, the box score below it', async function () {
@@ -1036,6 +1280,79 @@ describe('the replay screen', function () {
       expect(line()?.textContent).includes('steps in')
     })
 
+    it('keeps the sentences said in the card’s words, and clears them for the rewind’s', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      const words = (): string[] =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="replay-play-card-words"] [dir="auto"]'
+          )
+        ].map(item => item.textContent ?? '')
+      now = 100
+      await wait(250)
+      expect(words()).deep.equals(['Play ball!'])
+      await firstPitch()
+      // Two pitches on, each held five seconds.
+      now = 2200 + 5400
+      await wait(250)
+      now = 2200 + 10400
+      await wait(250)
+      // Each step's sentence under the last, the newest marked.
+      const said = words()
+      expect(said.length).greaterThan(2)
+      expect(said[0]).equals('Play ball!')
+      expect(new Set(said).size).equals(said.length)
+      expect(said.at(-1)).equals(line()?.textContent)
+      expect(card()).equals(
+        `${said.at(-1)}${textOf('replay-play-card-detail')}`
+      )
+      await press(REWIND)
+      expect(words()).deep.equals(['Rewind to top of first'])
+      now += 2000
+      await wait(250)
+      expect(words()).length(1)
+      expect(words()[0]).includes('steps in')
+    })
+
+    it('writes the same sentence again for a second pitch that says it: two fouls with two strikes', async function () {
+      this.timeout(60000)
+      resize(402, 874)
+      announcer.health = false
+      await show(
+        gameOf(),
+        await scored([
+          { type: 'pitch', call: 'S' },
+          { type: 'pitch', call: 'S' },
+          { type: 'pitch', call: 'F' },
+          { type: 'pitch', call: 'F' },
+          { type: 'pitch', call: 'B' }
+        ])
+      )
+      await showCatcher()
+      const words = (): string[] =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="replay-play-card-words"] [dir="auto"]'
+          )
+        ].map(item => item.textContent ?? '')
+      const fouls = (): string[] =>
+        words().filter(said => said.startsWith('Fouled off'))
+      for (
+        let i = 0;
+        i < 60 && !words().some(said => said.startsWith('Ball'));
+        i++
+      ) {
+        now += 2000
+        await wait(40)
+      }
+      // Each foul its own line, the same words; nothing drawn twice.
+      expect(fouls()).length(2)
+      expect(fouls()[0]).equals(fouls()[1])
+      expect(fouls()[0]).match(/still/)
+    })
+
     it('holds the words, then fades them, and starts again on the next tap', async function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
@@ -1074,12 +1391,14 @@ describe('the replay screen', function () {
       await show(gameOf(), finalGame())
       await showCatcher()
       await press(UNMUTE)
-      await firstPitch()
+      // Watched from before the first pitch: its sentence ends 20 ms after
+      // it starts, which may be before the pitch's wait is over.
       const freed: string[] = []
       Object.defineProperty(URL, 'revokeObjectURL', {
         configurable: true,
         value: (url: string) => freed.push(url)
       })
+      await firstPitch()
       // The first sentence read to its end and its clip freed.
       for (let i = 0; i < 40 && !freed.includes('blob:0-0'); i++) await wait(50)
       expect(announcer.played).includes('0-0')
