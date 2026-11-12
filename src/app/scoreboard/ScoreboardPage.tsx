@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 
 import {
   SAMPLE_SCOREBOARD,
+  SCOREBOARD_BOARD_SIZE,
   type ScoreboardState
 } from '../../common/scoreboard'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -69,9 +70,20 @@ export function ScoreboardPage(props: ScoreboardPageProps): React.ReactElement {
     }
   }, [gameId, apiBaseUrl, protocol, host, WebSocketImpl, schedule])
 
+  // Never narrower than B, the box a broadcast's scene was laid out for: the
+  // app's fonts set a board's ordinary names a few points narrower than
+  // 1.0's did. A longer name still widens it, as the overlay's does.
   if (page.kind === 'sample')
-    return <ScoreboardBoard state={SAMPLE_SCOREBOARD} />
-  if (!closed) return <ScoreboardBoard state={state} />
+    return (
+      <ScoreboardBoard
+        state={SAMPLE_SCOREBOARD}
+        minWidth={SCOREBOARD_BOARD_SIZE.width}
+      />
+    )
+  if (!closed)
+    return (
+      <ScoreboardBoard state={state} minWidth={SCOREBOARD_BOARD_SIZE.width} />
+    )
   if (page.quiet) return <ScoreboardBoard />
   return (
     <ThemeProvider>

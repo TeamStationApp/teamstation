@@ -1291,10 +1291,20 @@ async function e7(run: Run): Promise<void> {
             )
       return title == null ? null : title.innerText
     })
-  const firstStuck = await stuck()
+  // As one week's end pushes its head up, for about a head's height, none
+  // sits at the rows' bottom until the next arrives: scroll on in short steps.
+  const stuckSoon = async (): Promise<string | null> => {
+    for (let step = 0; step < 6; step++) {
+      const title = await stuck()
+      if (title !== null) return title
+      await wheel(admin, 30)
+    }
+    return await stuck()
+  }
+  const firstStuck = await stuckSoon()
   expect(firstStuck).matches(/^Week \d+ · /)
   await wheel(admin, 900)
-  const laterStuck = await stuck()
+  const laterStuck = await stuckSoon()
   expect(laterStuck).matches(/^Week \d+ · /)
   expect(Number(/\d+/.exec(laterStuck!)![0])).greaterThan(
     Number(/\d+/.exec(firstStuck!)![0])
@@ -1808,8 +1818,10 @@ async function e11(run: Run): Promise<void> {
     id: string
     options: Array<{ games: Array<{ key: string }> }>
   }>(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
+    // E10 published the league's games: working around them leaves nothing
+    // to place, so this preview plans the season afresh. It is never published.
     mode: 'full',
-    existing: 'workAround'
+    existing: 'replace'
   })
   const count = built.options[0].games.length
   expect(count).greaterThan(1)

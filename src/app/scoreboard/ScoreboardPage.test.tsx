@@ -3,7 +3,10 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import { SAMPLE_SCOREBOARD } from '../../common/scoreboard'
+import {
+  SAMPLE_SCOREBOARD,
+  SCOREBOARD_BOARD_SIZE
+} from '../../common/scoreboard'
 import { fakeClock, fakeSockets } from '../../test/fakeScoreboardSocket'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { ScoreboardNotFound } from './ScoreboardNotFound'
@@ -83,6 +86,23 @@ describe('ScoreboardPage', function () {
     expect(
       document.querySelector('[data-scoreboard="awayTeam"]')?.textContent
     ).equals('VISITORS')
+  })
+
+  it('never draws a board narrower than B, the sample or a live one', async function () {
+    await render(
+      <ScoreboardPage page={{ kind: 'sample' }} apiBaseUrl="/api/v1" />
+    )
+    expect(board()?.style.minWidth).equals(`${SCOREBOARD_BOARD_SIZE.width}px`)
+    await act(async () => {
+      root?.unmount()
+    })
+    const { sockets, element } = live()
+    await render(element)
+    await act(async () => {
+      sockets.latest().open()
+      sockets.latest().receive(SAMPLE_SCOREBOARD)
+    })
+    expect(board()?.style.minWidth).equals(`${SCOREBOARD_BOARD_SIZE.width}px`)
   })
 
   it('connects at once and paints nothing until the first state, then the board', async function () {
