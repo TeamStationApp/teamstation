@@ -558,6 +558,63 @@ describe('TV game playback entry', () => {
       Date.now = originalNow
     }
   })
+  it('realigns a live follower within 250 ms when a refresh changes its wall mapping', async () => {
+    live = true
+    count = 2
+    const originalInterval = globalThis.setInterval
+    let poll: (() => void) | undefined
+    globalThis.setInterval = ((callback: () => void, delay: number) => {
+      if (delay === 10000) poll = callback
+      return originalInterval(callback, delay)
+    }) as typeof setInterval
+    try {
+      await render()
+      const videos = [...document.querySelectorAll('video')]
+      await act(async () => {
+        for (const video of videos) {
+          Object.defineProperty(video, 'duration', {
+            value: 100,
+            configurable: true
+          })
+          video.dispatchEvent(new window.Event('durationchange'))
+        }
+        await pause()
+        for (const video of videos) {
+          video.currentTime = 2
+          video.dispatchEvent(new window.Event('timeupdate'))
+        }
+        await pause()
+      })
+      expect(videos[1].currentTime).equals(2)
+      // The server now places the second camera's frames half a second
+      // earlier: at the shared moment it should show 0.5 s further on.
+      const start = Date.parse('2026-10-01T00:00:00Z')
+      timelineOf = async id =>
+        id === '1'
+          ? {
+              ...timelineFor('2026-10-01T00:00:00Z'),
+              anchors: [[0, start - 500]],
+              live: true
+            }
+          : undefined
+      await act(async () => {
+        poll!()
+        await pause()
+        await pause()
+      })
+      await act(async () => {
+        videos[0].currentTime = 2.1
+        videos[0].dispatchEvent(new window.Event('timeupdate'))
+        await pause()
+      })
+      expect(videos[1].currentTime, 'within 250 ms of the moment').closeTo(
+        2.6,
+        0.25
+      )
+    } finally {
+      globalThis.setInterval = originalInterval
+    }
+  })
   it('keeps a paused live remount that is waiting for its seekable bounds', async () => {
     live = true
     count = 2
