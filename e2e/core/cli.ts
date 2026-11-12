@@ -7,6 +7,15 @@ import { parseArgs } from 'node:util'
 import { PNG } from 'pngjs'
 
 import {
+  attachStack,
+  listStacks,
+  readStack,
+  refuseAttachedForFaults,
+  removeStack,
+  type StackEntry,
+  stackHandleFor
+} from './attach'
+import {
   addToCorpus,
   type CorpusItem,
   logItem,
@@ -49,15 +58,8 @@ import { openWebSession } from './web'
 
 const STACKS = join(tmpdir(), 'teamstation-e2e-stacks')
 
-function stackState(id: string): {
-  id: string
-  origin: string
-  webDir?: string
-  pid: number
-} {
-  const file = join(STACKS, `${id}.json`)
-  if (!existsSync(file)) throw new Error(`No stack "${id}"`)
-  return JSON.parse(readFileSync(file, 'utf8'))
+function stackState(id: string): StackEntry {
+  return readStack(STACKS, id)
 }
 
 function roleMap(values: string[] | undefined): Record<string, string> {
@@ -281,15 +283,24 @@ export async function main(argv: string[]): Promise<number> {
         return 0
       }
       if (subcommand === 'down') {
-        const id = positionals[2]
-        const state = stackState(id)
-        process.kill(state.pid, 'SIGTERM')
-        const { rmSync } = await import('node:fs')
-        rmSync(join(STACKS, `${id}.json`))
-        print({ id, stopped: true })
+        print(
+          removeStack(STACKS, positionals[2], pid => {
+            process.kill(pid, 'SIGTERM')
+          })
+        )
         return 0
       }
-      throw new Error('stack wants up, down or serve')
+      if (subcommand === 'attach') {
+        const file = positionals[2]
+        if (file == null) throw new Error('stack attach wants <handle.json>')
+        print(attachStack(STACKS, file))
+        return 0
+      }
+      if (subcommand === 'list') {
+        print(listStacks(STACKS))
+        return 0
+      }
+      throw new Error('stack wants up, down, serve, attach or list')
     }
 
     case 'prepare': {
@@ -315,17 +326,10 @@ export async function main(argv: string[]): Promise<number> {
       if (id == null || values.surface == null) {
         throw new Error('run wants <scenario-id> --surface <s>')
       }
-      let stack: StackHandle | undefined
-      if (values.stack != null) {
-        const state = stackState(values.stack)
-        stack = {
-          kind: 'isolated',
-          origin: state.origin,
-          webDir: state.webDir,
-          adopt: async origin => origin,
-          serverErrors: async () => undefined
-        }
-      }
+      const stack: StackHandle | undefined =
+        values.stack == null
+          ? undefined
+          : stackHandleFor(stackState(values.stack))
       const outcome = await runScenario({
         id,
         surface: values.surface,
@@ -362,6 +366,8 @@ export async function main(argv: string[]): Promise<number> {
           'detect wants <scenario-id> --fault <fault> --surface <s>'
         )
       }
+      if (values.stack != null)
+        refuseAttachedForFaults(stackState(values.stack))
       const outcome = await detectFault(
         {
           id,

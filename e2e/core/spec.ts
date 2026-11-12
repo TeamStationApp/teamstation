@@ -1,3 +1,4 @@
+import type { AttachedHandle } from './attach'
 import type { BrowserPage, Emulation } from './browserCdp'
 import type { CheckpointSpec } from './checkpoint'
 import type { FixtureAccount, FixtureManifest } from './fixtures'
@@ -108,6 +109,8 @@ export interface StackHandle {
   seedWorld?: (name: string) => Promise<FixtureManifest>
   /** The API's 5xx since a time, or undefined when nothing can see them. */
   serverErrors: (since: number) => Promise<ServerError[] | undefined>
+  /** The handle of a stack the suite attached rather than started. */
+  attached?: AttachedHandle
 }
 
 export interface WebSession {
