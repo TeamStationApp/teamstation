@@ -634,9 +634,10 @@ async function main(): Promise<void> {
     await visit(admin, `/seasons/${f.seasonA}?tab=people`)
     // The league's administrator, inherited and pilled, and the child only
     // as a player of the season's Demo Comets: an administrator may read
-    // both names in full.
+    // both names in full. Each name has its affiliation line under it
+    // (develop 5b39d4395), before the role's pill.
     await contains(admin.page, 'ADMINS')
-    await contains(admin.page, 'Demo League Admin\nLeague admin')
+    await contains(admin.page, 'Demo League Admin\nDemo Hawks\nLeague admin')
     await contains(admin.page, 'PLAYERS')
     await contains(admin.page, 'Demo Child Player\nDemo Comets')
     await capture(admin.m, artifacts, 'people-after.png')

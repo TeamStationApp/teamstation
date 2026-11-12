@@ -13,9 +13,15 @@ import {
   tapFielder
 } from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, asRosterEntry } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
-import { ScoringSession, type StoredGame } from '../../common/scoring/session'
+import { sameScoringMutation } from '../../common/scoring/scoringMutation'
+import {
+  type SaveChange,
+  ScoringSession,
+  type StoredGame
+} from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
@@ -346,17 +352,44 @@ async function open(fixture: Fixture = {}): Promise<{
       false
     )
   }
-  const save = (change: {
-    plays?: StoredGame['plays']
-    remove?: number[]
-    currentPlay?: StoredGame['currentPlay']
-  }): StoredGame => {
+  // The server's arbitration (`postPlays.ts`): a save built on a scoring base
+  // somebody else has moved on is refused as stale when it carries no scoring
+  // of its own, and answered with what is held, superseded, when it does.
+  const save = (
+    change: Pick<
+      SaveChange,
+      'plays' | 'remove' | 'currentPlay' | 'scoringBase' | 'scoringMutation'
+    >
+  ): StoredGame => {
+    const prior = held.scoringMutation
+    if (
+      change.scoringBase !== undefined &&
+      !sameScoringMutation(change.scoringBase, prior)
+    ) {
+      if (change.scoringMutation == null)
+        throw new HttpError(
+          'conflict',
+          'Somebody else changed the scoring since this lineup was read',
+          { stale: true }
+        )
+      return {
+        ...held,
+        superseded: !sameScoringMutation(change.scoringMutation, prior)
+      }
+    }
+    if (
+      change.scoringMutation != null &&
+      sameScoringMutation(change.scoringMutation, prior)
+    )
+      return { ...held, superseded: false }
     const kept = new Map(held.plays.map(play => [play.about.atBatIndex, play]))
     for (const index of change.remove ?? []) kept.delete(index)
     for (const play of change.plays ?? []) kept.set(play.about.atBatIndex, play)
     held.plays = [...kept.values()]
     if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
-    return held
+    if (change.scoringMutation != null)
+      held.scoringMutation = change.scoringMutation
+    return { ...held, superseded: false }
   }
   const peer = async (
     actions: ScoringAction[]
@@ -446,20 +479,37 @@ async function open(fixture: Fixture = {}): Promise<{
       else if (u.pathname === '/api/v1/games/g1/plans')
         body = { away: null, home: null }
       else if (u.pathname.endsWith('/events')) {
+        let superseded: boolean | undefined
+        let refused: HttpError | undefined
         if (request.method === 'POST') {
           let bytes = ''
           for await (const chunk of request) bytes += String(chunk)
-          save(JSON.parse(bytes === '' ? '{}' : bytes))
+          try {
+            superseded = save(
+              JSON.parse(bytes === '' ? '{}' : bytes) as SaveChange
+            ).superseded
+          } catch (error) {
+            if (!(error instanceof HttpError)) throw error
+            refused = error
+          }
         }
         const read = named()
-        body = {
-          plays: read.plays.map(play => ({
-            id: `evt_${play.about.atBatIndex}`,
-            gameId: 'g1',
-            gumbo: play
-          })),
-          currentPlay: read.currentPlay
-        }
+        if (refused != null) {
+          response.statusCode = refused.status
+          body = refused.toApiError()
+        } else
+          body = {
+            plays: read.plays.map(play => ({
+              id: `evt_${play.about.atBatIndex}`,
+              gameId: 'g1',
+              gumbo: play
+            })),
+            currentPlay: read.currentPlay,
+            ...(held.scoringMutation == null
+              ? {}
+              : { scoringMutation: held.scoringMutation }),
+            ...(superseded == null ? {} : { superseded })
+          }
       } else if (u.pathname.endsWith('/roster'))
         body = sideRoster(u.pathname.includes('/away/') ? 'away' : 'home')
       else if (u.pathname.endsWith('/default-lineup')) {
