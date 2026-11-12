@@ -6,6 +6,7 @@ import express from 'express'
 import { after, before, describe, it } from 'mocha'
 
 import { forbidden } from '../../common/errors'
+import { RequestAbandoned } from '../db/checkouts'
 import { errorHandler, sparingly } from './withErrors'
 
 describe('sparingly', function () {
@@ -42,6 +43,7 @@ describe('errorHandler', function () {
       code: '53300'
     }),
     other: new Error('relation "secrets" does not exist'),
+    abandoned: new RequestAbandoned(),
     planned: forbidden('No')
   }
   const quiet = console.error
@@ -99,6 +101,18 @@ describe('errorHandler', function () {
     expect(response.status).equals(500)
     expect(response.headers.get('retry-after')).equals(null)
     expect(await response.text()).not.contains('secrets')
+  })
+
+  it('says nothing of a read stopped because its caller went away', async function () {
+    const said: unknown[] = []
+    console.error = (...args: unknown[]) => said.push(args)
+    try {
+      const response = await fetch(`${base}/fail/abandoned`)
+      expect(await response.text()).equals('')
+      expect(said).deep.equals([])
+    } finally {
+      console.error = () => undefined
+    }
   })
 
   it('keeps a planned error as itself', async function () {
