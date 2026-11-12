@@ -3850,7 +3850,7 @@ describe('scoring browser', function () {
                 let seen = false
                 const run = (): void => {
                   const ball = scene.getObjectByName('animated-baseball')
-                  const fielder = scene.getObjectByName('player-defense-10')
+                  const fielder = scene.getObjectByName('player-defense-201')
                   if (ball != null && ball.visible && fielder != null) {
                     seen = true
                     out.push({
@@ -4870,15 +4870,15 @@ describe('scoring browser', function () {
             return {
               offense: color(
                 'player-offense-' +
-                  (scene.getObjectByName('player-offense-1') == null
-                    ? '10'
-                    : '1')
+                  (scene.getObjectByName('player-offense-101') == null
+                    ? '201'
+                    : '101')
               ),
               defense: color(
                 'player-defense-' +
-                  (scene.getObjectByName('player-defense-10') == null
-                    ? '1'
-                    : '10')
+                  (scene.getObjectByName('player-defense-201') == null
+                    ? '101'
+                    : '201')
               ),
               heads: heads.length,
               logos: ['away', 'home'].filter(
@@ -5499,7 +5499,7 @@ describe('scoring browser', function () {
             let completed = false
             while (performance.now() - start < 12000) {
               await new Promise(requestAnimationFrame)
-              const player = scene.getObjectByName('player-offense-1')
+              const player = scene.getObjectByName('player-offense-101')
               const rig =
                 player == null
                   ? undefined
@@ -5525,7 +5525,7 @@ describe('scoring browser', function () {
             await page.waitForFunction(
               () => {
                 const scene = (window as unknown as SceneProbeWindow).qaScene!
-                const player = scene.getObjectByName('player-offense-1')
+                const player = scene.getObjectByName('player-offense-101')
                 const rig =
                   player == null
                     ? undefined
@@ -6306,7 +6306,7 @@ describe('scoring browser', function () {
           const host = window as unknown as SceneProbeWindow
           return {
             player: host
-              .qaScene!.getObjectByName('player-defense-10')!
+              .qaScene!.getObjectByName('player-defense-201')!
               .position.toArray(),
             camera: host.qaCamera!.position.toArray()
           }
@@ -6336,7 +6336,7 @@ describe('scoring browser', function () {
           curve.geometry.computeBoundingBox()
           return {
             player: host
-              .qaScene!.getObjectByName('player-defense-10')!
+              .qaScene!.getObjectByName('player-defense-201')!
               .position.toArray(),
             camera: host.qaCamera!.position.toArray(),
             apex: curve.geometry.boundingBox!.max.y
@@ -6359,7 +6359,7 @@ describe('scoring browser', function () {
           while (performance.now() - start < 2300) {
             await new Promise(requestAnimationFrame)
             samples.push(
-              scene.getObjectByName('player-defense-10')!.position.toArray()
+              scene.getObjectByName('player-defense-201')!.position.toArray()
             )
           }
           return samples
