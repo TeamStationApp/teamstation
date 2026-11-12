@@ -275,7 +275,7 @@ async function main(): Promise<void> {
               reason: invocation.blocked
             }
           }
-          invocation.prepare?.()
+          await invocation.prepare?.()
           // `{legacy:<name>}` in a value is that script's artifact directory, for
           // a script that reads what an earlier one left (chat.e2e's profiles);
           // `{stack:apiLog}` is the stack API's log, for a sign-in code.
@@ -289,22 +289,26 @@ async function main(): Promise<void> {
                 .replaceAll('{stack:apiLog}', stack.apiLog)
             ])
           )
-          return await runLegacy(
-            path,
-            cwd,
-            { ...process.env, ...device },
-            timeoutMs,
-            {
-              stack: stack.env,
-              args: invocation.args,
-              env: {
-                TS_CHAT_API_LOG: stack.apiLog,
-                ...shared,
-                ...env
-              },
-              label: invocation.label
-            }
-          )
+          try {
+            return await runLegacy(
+              path,
+              cwd,
+              { ...process.env, ...device },
+              timeoutMs,
+              {
+                stack: stack.env,
+                args: invocation.args,
+                env: {
+                  TS_CHAT_API_LOG: stack.apiLog,
+                  ...shared,
+                  ...env
+                },
+                label: invocation.label
+              }
+            )
+          } finally {
+            await invocation.done?.()
+          }
         }
         const source = readFileSync(join(cwd, file), 'utf8')
         // A script that continues from another's run (`{legacy:…}`) keeps that

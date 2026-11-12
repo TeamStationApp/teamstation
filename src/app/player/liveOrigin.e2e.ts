@@ -139,7 +139,7 @@ export async function runOrigin(options: {
         '-r',
         join(root, 'node_modules/sucrase/register'),
         ...(name === 'viewer'
-          ? ['-r', join(__dirname, 'liveOriginRequests.e2e.ts')]
+          ? ['-r', join(__dirname, '../../../e2e/rigs/liveOriginRequests.ts')]
           : []),
         join(root, entry)
       ],

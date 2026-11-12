@@ -18,7 +18,7 @@ import {
 import { createServer, request, type Server } from 'node:http'
 import { connect } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { stackServers } from './legacyServers'
 import { loadSettings, readSecret } from './settings'
@@ -221,9 +221,13 @@ function toApi(url: string | undefined): boolean {
   return API_ROOTS.some(root => path === root || path.startsWith(root))
 }
 
-function proxy(): Server {
+/**
+ * A front on one port, as a deployment has: `/api/` and its sockets to the
+ * API on `apiPort`, everything else to the web app on `webPort`.
+ */
+export function frontProxy(apiPort: number, webPort: number): Server {
   const server = createServer((req, res) => {
-    const port = toApi(req.url) ? STACK_API_PORT : STACK_WEB_PORT
+    const port = toApi(req.url) ? apiPort : webPort
     const forward = request(
       {
         host: '127.0.0.1',
@@ -244,7 +248,7 @@ function proxy(): Server {
     req.pipe(forward)
   })
   server.on('upgrade', (req, socket, head) => {
-    const port = toApi(req.url) ? STACK_API_PORT : STACK_WEB_PORT
+    const port = toApi(req.url) ? apiPort : webPort
     const upstream = connect(port, '127.0.0.1', () => {
       const lines = [`${req.method} ${req.url} HTTP/${req.httpVersion}`]
       for (let i = 0; i < req.rawHeaders.length; i += 2) {
@@ -497,7 +501,7 @@ export async function startLegacyStack(
       }
     }
 
-    const front = proxy()
+    const front = frontProxy(STACK_API_PORT, STACK_WEB_PORT)
     await new Promise<void>((resolve, reject) => {
       front.once('error', reject)
       front.listen(STACK_PROXY_PORT, '0.0.0.0', resolve)
@@ -522,6 +526,12 @@ export async function startLegacyStack(
       REPLAY_API: STACK_API,
       REPLAY_SERVER_LOG: apiLog,
       ...passwords
+    }
+    // The scripts encode with the FFmpeg the stack's server runs, as a run on
+    // a server names its pinned one: Homebrew's own has no drawtext.
+    if (process.env.TS_FFMPEG == null && existsSync(FFMPEG_FULL)) {
+      env.TS_FFMPEG = FFMPEG_FULL
+      env.PATH = `${dirname(FFMPEG_FULL)}:${process.env.PATH ?? ''}`
     }
     if (anthropic !== '') {
       env.TS_DICTATION_CONFIG = dictationConfig
