@@ -544,6 +544,14 @@ export async function seekReads(
     console.log(
       `    seek ${iso(wall)}  marker ${marker == null ? '-' : iso(marker)}  frame ${frameWall == null ? '-' : iso(frameWall)}  board ${at == null ? '-' : iso(at)}  ${ok ? 'in step' : `expected ${expected == null ? '-' : iso(expected)}`}`
     )
+    // A board the steps do not hold: say what they start with, and where.
+    if (marker != null && expected === null)
+      console.log(
+        `      no step at or before the marker; the first of ${steps.length}: ${steps
+          .slice(0, 3)
+          .map(step => iso(step.at))
+          .join(', ')}`
+      )
     out.push({
       wall,
       marker,

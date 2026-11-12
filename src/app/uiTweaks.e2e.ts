@@ -580,9 +580,21 @@ async function main(): Promise<void> {
       ]) {
         // Creating placeholders, or a player, closes the sheet: the roster's
         // row opens it again (not the closed sheet's own Create Player).
-        await s.m.tapOn({
-          css: '[data-testid="Edit roster players"] [aria-label="Create Player"]'
-        })
+        // After a save the editor remounts as the saved game comes back; a
+        // tap in that moment opens nothing, so it is tapped again.
+        for (let tries = 0; ; tries++) {
+          await s.m.tapOn({
+            css: '[data-testid="Edit roster players"] [aria-label="Create Player"]'
+          })
+          const opened = await s.page
+            .waitForSelector('[aria-label="First Name"]', { timeout: 5000 })
+            .then(
+              () => true,
+              () => false
+            )
+          if (opened) break
+          if (tries === 1) throw new Error('Create Player opened no sheet')
+        }
         await fill(s.m, 'First Name', firstName)
         await fill(s.m, 'Last Name', lastName)
         await s.m.tapOn({ css: '[role="dialog"] [aria-label="Create Player"]' })

@@ -2252,7 +2252,7 @@
         "--device",
         "chrome"
       ],
-      "needs": "web"
+      "needs": "hevc"
     },
     {
       "label": "iphone-safari",
@@ -2275,7 +2275,7 @@
       "args": [
         "--outage"
       ],
-      "needs": "web"
+      "needs": "hevc"
     }
   ],
   "src/app/player/playerLayoutsDevices.e2e.ts": [

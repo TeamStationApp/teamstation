@@ -171,7 +171,7 @@ async function main(): Promise<void> {
     }
     await page.setViewport({ width: 1440, height: 900 })
     await open(base + '/umpires', 'Manage Umpires')
-    await tap(m, 'Uma L, majors, 1st')
+    await tap(m, 'Uma Lee, majors, 1st')
     const saving = page.waitForResponse(
       r => r.request().method() === 'PUT' && r.url().endsWith('/umpires')
     )

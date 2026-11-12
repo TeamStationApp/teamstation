@@ -616,6 +616,12 @@ describe('E8: the board over the web players, at the frame’s wall time', funct
 
   it("1. recorded, single picture: every change ± 0.2 s, where the node's default puts it", async function () {
     const { steps, timeline } = await programmeTimelines()
+    const whole = (await api().scoreboardTimeline(gameG)).steps
+    print('the first steps, windowed and whole', {
+      windowed: steps.slice(0, 3).map(step => iso(step.at)),
+      whole: whole.slice(0, 3).map(step => iso(step.at)),
+      programmeStarts: iso(wallAt(timeline.anchors, 0)!)
+    })
     // Every change made while the programme was recording, which is case 4's
     // schedule: each must be in the recording either side, so a seek that
     // lands outside it fails. The live runs after it change G's board too,
@@ -757,10 +763,12 @@ describe('E8: the board over the web players, at the frame’s wall time', funct
         check(
           state.boards.length === 1 &&
             over != null &&
+            // The node's default landscape setting (since 7606229a7): 1%
+            // in from the top-left tile's corner, at most 15% of its height.
             over.h <= 0.15 * corner.h + 1 &&
-            Math.abs(over.x - (corner.x + 8)) <= 1 &&
-            Math.abs(over.y - (corner.y + 8)) <= 1,
-          `${size} at +${sec} s: one board over the top-left tile, ${over?.h.toFixed(1)} px for a ${corner.h.toFixed(1)} px tile`
+            Math.abs(over.x - (corner.x + 0.01 * corner.w)) <= 1 &&
+            Math.abs(over.y - (corner.y + 0.01 * corner.h)) <= 1,
+          `${size} at +${sec} s: one board over the top-left tile, ${over?.h.toFixed(1)} px for a ${corner.h.toFixed(1)} px tile, at ${over?.x.toFixed(1)},${over?.y.toFixed(1)} for one at ${corner.x.toFixed(1)},${corner.y.toFixed(1)} (${state.boards.length} boards)`
         )
         await namesShow(page, `${size} at +${sec} s`)
         const shown = steps.find(step => step.at === over?.at)

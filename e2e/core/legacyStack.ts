@@ -79,6 +79,15 @@ function speechKey(): string {
   }
 }
 
+/** Google Places (New), for the address lookups' live checks. */
+function placesKey(): string {
+  try {
+    return readSecret(loadSettings(), 'googlePlaces')
+  } catch {
+    return ''
+  }
+}
+
 function writePrivate(file: string, value: unknown): void {
   writeFileSync(file, JSON.stringify(value, null, 2), { mode: 0o600 })
 }
@@ -213,7 +222,10 @@ const API_ROOTS = [
   '/.well-known/',
   '/away',
   '/plain',
-  '/turn'
+  '/turn',
+  // A local upload's media: the API serves it from disk (`devMedia.ts`), as
+  // the deployed proxy does, where the Space's come from the Space.
+  '/media/'
 ]
 
 function toApi(url: string | undefined): boolean {
@@ -222,8 +234,8 @@ function toApi(url: string | undefined): boolean {
 }
 
 /**
- * A front on one port, as a deployment has: `/api/` and its sockets to the
- * API on `apiPort`, everything else to the web app on `webPort`.
+ * A front on one port, as a deployment has: `/api/`, its sockets and local
+ * media to the API on `apiPort`, everything else to the web app on `webPort`.
  */
 export function frontProxy(apiPort: number, webPort: number): Server {
   const server = createServer((req, res) => {
@@ -289,7 +301,14 @@ export async function startLegacyStack(
   const configFile = join(cwd, 'serverConfig.json')
   const original = join(scratch, 'serverConfig.original.json')
   const hadConfig = existsSync(configFile)
-  if (hadConfig) copyFileSync(configFile, original)
+  // A run stopped before it could restore (its machine restarted) leaves the
+  // stack's config in place: keep the backup it made, never back that up.
+  const leftByAStoppedRun =
+    hadConfig &&
+    existsSync(original) &&
+    (JSON.parse(readFileSync(configFile, 'utf8')) as Json).databaseUrl ===
+      STACK_DATABASE_URL
+  if (hadConfig && !leftByAStoppedRun) copyFileSync(configFile, original)
   const base: Json = hadConfig
     ? (JSON.parse(readFileSync(original, 'utf8')) as Json)
     : {}
@@ -340,10 +359,17 @@ export async function startLegacyStack(
     }
     delete next.speech
     delete next.dictation
-    if (withSpeech && anthropic !== '') {
-      next.dictation = { apiKey: '', anthropic: { apiKey: anthropic } }
+    // The xAI key is dictation's and the announcer's: speech to text and the
+    // tool calls, and the replay's voice.
+    if (withSpeech && (speech !== '' || anthropic !== '')) {
+      next.dictation = {
+        apiKey: speech,
+        ...(anthropic === '' ? {} : { anthropic: { apiKey: anthropic } })
+      }
     }
     if (withSpeech && speech !== '') next.speech = { apiKey: speech }
+    const places = placesKey()
+    if (places !== '') next.googlePlaces = { apiKey: places }
     return next
   }
   writePrivate(configFile, config(true))

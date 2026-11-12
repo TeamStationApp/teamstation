@@ -614,7 +614,9 @@ async function main(): Promise<void> {
       events,
       TEAMMATE
     )
-    expect(teammate).match(/^\{"plays":/)
+    // The teammate is answered the events (develop aa70c77db puts the
+    // attributed scoring updates beside the plays), never a refusal.
+    expect(JSON.parse(teammate)).to.have.property('plays').that.is.an('array')
     expect(teammate).not.include('modelNames')
     expect(teammate).not.include('firstName')
     expect(teammate).not.include('lastName')
