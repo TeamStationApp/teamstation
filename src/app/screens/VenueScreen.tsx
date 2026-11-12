@@ -9,6 +9,7 @@ import {
   type VenueClaim,
   type VenueDetail
 } from '../../common/venues'
+import { weeklyWindow } from '../../common/windowPeriods'
 import {
   Badge,
   Button,
@@ -29,11 +30,8 @@ import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
 import { useSceneReveals } from '../components/sceneShown'
+import { TimeWindowsEditor } from '../components/TimeWindowsEditor'
 import { useConfirmedAction } from '../components/useConfirmedAction'
-import {
-  VENUE_OPEN_DEFAULT,
-  WeeklyHoursEditor
-} from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { openEventDirections } from '../platform/eventDirections'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
@@ -488,19 +486,18 @@ export function VenueScreen({
                 />
               </ListCard>
             </CardThemeScope>
-            <Text style={styles.subhead}>Default hours</Text>
+            <Text style={styles.subhead}>Time Windows</Text>
             <Text style={styles.sentence}>
               Fields use these hours unless they set their own.
             </Text>
-            <WeeklyHoursEditor
+            <TimeWindowsEditor
               label="Default hours"
-              value={detail.defaultHours.map(entry => ({ ...entry }))}
+              value={detail.defaultWindows ?? weeklyWindow(detail.defaultHours)}
               disabled={busy}
-              openDefault={VENUE_OPEN_DEFAULT}
-              onChange={hours => {
+              onChange={windows => {
                 run(
                   async () =>
-                    await client.updateVenue(id, { defaultHours: hours }),
+                    await client.updateVenue(id, { defaultWindows: windows }),
                   'Hours saved.'
                 ).catch(() => undefined)
               }}
