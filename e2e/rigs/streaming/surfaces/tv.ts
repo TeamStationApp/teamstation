@@ -68,22 +68,36 @@ export function parseTvDump(dump: string): TvElement[] {
   return out
 }
 
-/** The dump as a hierarchy the shared reader understands. */
+/** A player tile: button `tv-angle-<n>`, labelled `Camera <angle>`, its value the tile's position. */
+const TV_TILE = /^Camera (.+)$/
+
+/**
+ * The dump as a hierarchy the shared reader understands. A player tile is
+ * named `<angle> angle`, as the phones and the web name theirs.
+ */
 export function tvHierarchy(elements: TvElement[]): HierarchyNode {
   return {
     children: elements
       .filter(element => element.bounds != null)
-      .map(element => ({
-        type: element.type,
-        id: element.identifier ?? undefined,
-        text:
-          element.label == null
-            ? (element.value ?? undefined)
-            : element.value == null
-              ? element.label
-              : `${element.label}, ${element.value}`,
-        bounds: element.bounds!
-      }))
+      .map(element => {
+        const tile =
+          element.identifier?.startsWith('tv-angle-') === true
+            ? TV_TILE.exec(element.label ?? '')
+            : null
+        return {
+          type: element.type,
+          id: element.identifier ?? undefined,
+          text:
+            tile != null
+              ? `${tile[1]}${LABELS.tileSuffix}`
+              : element.label == null
+                ? (element.value ?? undefined)
+                : element.value == null
+                  ? element.label
+                  : `${element.label}, ${element.value}`,
+          bounds: element.bounds!
+        }
+      })
   }
 }
 
@@ -224,29 +238,9 @@ export class TvSurface implements SoakSurfaceDriver {
   }
 
   async probe(): Promise<SurfaceProbe> {
+    let elements: TvElement[]
     try {
-      const elements = await this.dump()
-      const first = await this.options.capture()
-      await this.sleep(this.options.frameGapMs ?? 2000)
-      const second = await this.options.capture()
-      const app = elements.find(element => element.type === 'Application')
-      const foreground = app == null ? null : app.label === this.options.appName
-      const read = readScreen(tvHierarchy(elements))
-      if (read.screen == null) {
-        return { tiles: null, bar: null, foreground, reason: 'tv: empty dump' }
-      }
-      const a = decodePng(first)
-      const b = decodePng(second)
-      const scale = a.width / (read.screen.x + read.screen.width)
-      return {
-        tiles: read.tiles.map(tile => ({
-          angle: tile.angle,
-          advancing: regionAdvancing(a, b, tile.bounds, scale),
-          notice: tile.notice
-        })),
-        bar: read.bar?.fraction ?? null,
-        foreground
-      }
+      elements = await this.dump()
     } catch (error) {
       return {
         tiles: null,
@@ -254,6 +248,45 @@ export class TvSurface implements SoakSurfaceDriver {
         foreground: null,
         reason: `tv: ${(error as Error).message}`
       }
+    }
+    const app = elements.find(element => element.type === 'Application')
+    const foreground = app == null ? null : app.label === this.options.appName
+    const read = readScreen(tvHierarchy(elements))
+    if (read.screen == null) {
+      return { tiles: null, bar: null, foreground, reason: 'tv: empty dump' }
+    }
+    const bar = read.bar?.fraction ?? null
+    // Without a picture the dump still says which angles are up, their
+    // notices and the bar; only whether each one moves is unknown.
+    let a: ReturnType<typeof decodePng>
+    let b: ReturnType<typeof decodePng>
+    try {
+      const first = await this.options.capture()
+      await this.sleep(this.options.frameGapMs ?? 2000)
+      const second = await this.options.capture()
+      a = decodePng(first)
+      b = decodePng(second)
+    } catch (error) {
+      return {
+        tiles: read.tiles.map(tile => ({
+          angle: tile.angle,
+          advancing: null,
+          notice: tile.notice
+        })),
+        bar,
+        foreground,
+        reason: `tv: no picture: ${(error as Error).message}`
+      }
+    }
+    const scale = a.width / (read.screen.x + read.screen.width)
+    return {
+      tiles: read.tiles.map(tile => ({
+        angle: tile.angle,
+        advancing: regionAdvancing(a, b, tile.bounds, scale),
+        notice: tile.notice
+      })),
+      bar,
+      foreground
     }
   }
 }

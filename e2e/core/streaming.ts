@@ -72,6 +72,17 @@ const GAME_WITH_VIDEOS = new Set([
  * whose walk-up song. Only the names the script uses are returned, so a
  * script's own value wins over nothing it did not ask for.
  */
+/**
+ * Every value the streaming world fills. A script may read one through a
+ * helper its header never names (twoDevices reads TS_STREAM_EMAIL so).
+ */
+export const STREAMING_FIXTURE_NAMES = [
+  'TS_STREAM_EMAIL',
+  'TS_STREAM_VIEWER_EMAIL',
+  'TS_STREAM_GAME',
+  'TS_STREAM_WALKUP_PLAYER'
+] as const
+
 export function streamingKnown(
   file: string,
   names: readonly string[],

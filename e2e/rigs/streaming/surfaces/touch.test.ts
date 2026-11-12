@@ -7,7 +7,11 @@ import {
   centre,
   findBounds,
   type HierarchyNode,
-  readScreen
+  playerBlock,
+  readScreen,
+  type ScreenRead,
+  type TileNode,
+  videoBlockOf
 } from './hierarchy'
 import { MobileSafariSurface, SAFARI } from './mobileSafari'
 import { NativeAppSurface } from './nativeApp'
@@ -66,6 +70,54 @@ describe('reading a hierarchy', function () {
       x: 15,
       y: 16
     })
+  })
+})
+
+describe('the block of videos', function () {
+  const tile = (
+    x: number,
+    y: number,
+    width: number,
+    height: number
+  ): TileNode => ({
+    angle: `${x},${y}`,
+    bounds: { x, y, width, height },
+    notice: null
+  })
+
+  it("is the app's videoBlock: the widest row, from the top tile to the bottom one", function () {
+    // One video above two: the bottom pair is the widest row.
+    expect(
+      videoBlockOf([
+        tile(300, 0, 400, 300),
+        tile(100, 300, 400, 300),
+        tile(500, 300, 400, 300),
+        tile(0, 0, 0, 0)
+      ])
+    ).deep.equals({ x: 100, y: 0, width: 800, height: 600 })
+    expect(videoBlockOf([])).equals(null)
+  })
+
+  it('is the player only when it covers enough of the screen', function () {
+    const screen = { x: 0, y: 0, width: 1000, height: 1000 }
+    const read = (tiles: TileNode[]): ScreenRead => ({
+      screen,
+      tiles,
+      bar: null,
+      texts: []
+    })
+    expect(playerBlock(read([tile(0, 0, 1000, 600)]))).deep.equals({
+      x: 0,
+      y: 0,
+      width: 1000,
+      height: 600
+    })
+    // The game page's card.
+    expect(playerBlock(read([tile(0, 100, 1000, 250)]))).equals(null)
+    expect(playerBlock(read([]))).equals(null)
+    expect(playerBlock({ ...read([tile(0, 0, 10, 10)]), screen: null })).equals(
+      null
+    )
   })
 })
 
@@ -131,13 +183,9 @@ describe('the native app surface', function () {
   it('joins by the game link, then opens every angle', async function () {
     const { surface, calls } = appSurface()
     await surface.join()
-    expect(calls.map(call => call[0])).deep.equals([
-      'launchApp',
-      'openLink',
-      'tapOn',
-      'tapOn',
-      'tapOn'
-    ])
+    expect(
+      calls.map(call => call[0]).filter(name => name !== 'assertVisible')
+    ).deep.equals(['launchApp', 'openLink', 'tapOn', 'tapOn', 'tapOn'])
     expect(calls[0][1]).deep.equals({
       appId: 'app.example.develop',
       stopApp: false
@@ -173,11 +221,12 @@ describe('the native app surface', function () {
     const taps = calls
       .filter(call => call[0] === 'tapOnPoint')
       .map(call => call[1])
-    // The press grid's back and forward squares, in the second row of four.
-    const screen = readScreen(native).screen!
+    // The press grid's back and forward squares, in the second row of four
+    // over the block of videos, which ends above the controls.
+    const block = { x: 0, y: 0, width: 1024, height: 700 }
     const square = (column: number): { x: number; y: number } => ({
-      x: Math.round(screen.x + (screen.width * (column + 0.5)) / 4),
-      y: Math.round(screen.y + (screen.height * 1.5) / 4)
+      x: Math.round(block.x + (block.width * (column + 0.5)) / 4),
+      y: Math.round(block.y + (block.height * 1.5) / 4)
     })
     expect(taps).deep.equals([
       ...DEFAULT_SKIPS.slice(0, 3).map(() => square(0)),
@@ -197,19 +246,33 @@ describe('the native app surface', function () {
     const hidden: HierarchyNode = {
       bounds: { x: 0, y: 0, width: 1024, height: 768 }
     }
+    // The first read finds the player up; the controls are hidden by the next.
     const { surface, calls } = appSurface({
-      hierarchy: () => (reads++ === 0 ? hidden : native)
+      hierarchy: () => (reads++ === 1 ? hidden : native)
     })
     await surface.jumpToPresent()
     expect(
       calls.filter(call => call[0] === 'tapOnPoint').map(call => call[1])
     ).deep.equals([
-      { x: 512, y: 384 },
+      // The grid's top-centre square over the block of videos, never its
+      // centre, which would pause the picture.
+      { x: 384, y: 88 },
       { x: 930, y: 662 }
     ])
     const never = appSurface({ hierarchy: {} })
     expect(
       await never.surface.jumpToPresent().then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).match(/the full-screen player is not up/)
+    // The player is up, but its controls never come back.
+    let bareReads = 0
+    const bare = appSurface({
+      hierarchy: () => (bareReads++ === 0 ? native : hidden)
+    })
+    expect(
+      await bare.surface.jumpToPresent().then(
         () => '',
         (e: unknown) => (e as Error).message
       )
@@ -219,7 +282,7 @@ describe('the native app surface', function () {
         () => '',
         (e: unknown) => (e as Error).message
       )
-    ).match(/no screen size/)
+    ).match(/the full-screen player is not up/)
   })
 
   it('cuts by tapping the angle, exits and re-enters, and relaunches', async function () {
@@ -228,7 +291,10 @@ describe('the native app surface', function () {
     expect(calls[0]).deep.equals(['tapOn', { text: 'PhoneB angle' }])
     calls.length = 0
     await surface.exitAndReenter(10000)
-    expect(calls.map(call => call[0])).deep.equals([
+    expect(
+      calls.map(call => call[0]).filter(name => name !== 'assertVisible')
+    ).deep.equals([
+      'hierarchy',
       'hierarchy',
       'tapOnPoint',
       'tapOn',
@@ -244,6 +310,100 @@ describe('the native app surface', function () {
     expect(calls).deep.equals([
       ['launchApp', { appId: 'app.example.develop', stopApp: false }]
     ])
+  })
+
+  it('rejoins a player it finds closed before a press-grid action, and notes it once', async function () {
+    // The game page: a camera list, no angle tiles.
+    const gamePage: HierarchyNode = {
+      bounds: { x: 0, y: 0, width: 1024, height: 768 },
+      children: [
+        { text: 'CAMERAS', bounds: { x: 0, y: 400, width: 200, height: 30 } },
+        { text: 'End', bounds: { x: 900, y: 700, width: 60, height: 40 } }
+      ]
+    }
+    let reads = 0
+    const { surface, calls } = appSurface({
+      hierarchy: () => (reads++ === 0 ? gamePage : native)
+    })
+    await surface.skip([10])
+    const names = calls.map(call => call[0])
+    expect(names.indexOf('openLink')).lessThan(names.indexOf('tapOnPoint'))
+    expect(calls.filter(call => call[0] === 'tapOnPoint')).length(1)
+    expect(surface.takeNotes()).deep.equals([
+      'rejoined: the full-screen player was not up'
+    ])
+    expect(surface.takeNotes()).deep.equals([])
+    calls.length = 0
+    await surface.slowMotion(1000)
+    expect(calls.some(call => call[0] === 'openLink')).equals(false)
+    expect(surface.takeNotes()).deep.equals([])
+  })
+
+  it('holds no longer than the driver can, and notes the shortened hold', async function () {
+    const { device, calls } = fakeDevice({ hierarchy: native })
+    const surface = new NativeAppSurface({
+      name: 'android',
+      device,
+      appId: 'app.example.develop',
+      gameLink: 'teamstation://games/game_0000',
+      sleep: noSleep,
+      maxHoldMs: 7000
+    })
+    await surface.slowMotion(8000)
+    expect(
+      (calls.find(call => call[0] === 'tapOnPoint')![1] as { duration: number })
+        .duration
+    ).equals(7000)
+    expect(surface.takeNotes()).deep.equals(['held 7000 ms of 8000'])
+    await surface.slowMotion(5000)
+    expect(surface.takeNotes()).deep.equals([])
+  })
+
+  it('scrubs along the block of videos with no bar, never from a screen edge', async function () {
+    // An Android phone on its side: three angles, one row of two above one.
+    const tile = (angle: string, x: number, y: number): HierarchyNode => ({
+      text: `${angle} angle`,
+      bounds: { x, y, width: 960, height: 540 }
+    })
+    const sideways: HierarchyNode = {
+      bounds: { x: 0, y: 0, width: 2400, height: 1080 },
+      children: [
+        tile('PhoneA', 240, 0),
+        tile('PhoneB', 1200, 0),
+        tile('Synthetic', 240, 540)
+      ]
+    }
+    const { surface, calls } = appSurface({ hierarchy: sideways })
+    await surface.scrub(0)
+    expect(calls.find(call => call[0] === 'tapOnPoint')![1]).deep.equals({
+      x: 480,
+      y: 945
+    })
+    expect(calls.find(call => call[0] === 'swipe')![1]).deep.equals({
+      startX: 1200,
+      startY: 945,
+      endX: 278,
+      endY: 945,
+      duration: 800
+    })
+    // A block as wide as the screen: the swipe still stops short of the edge.
+    const wide: HierarchyNode = {
+      bounds: { x: 0, y: 0, width: 2400, height: 1080 },
+      children: [
+        {
+          text: 'PhoneA angle',
+          bounds: { x: 0, y: 0, width: 2400, height: 1080 }
+        }
+      ]
+    }
+    const full = appSurface({ hierarchy: wide })
+    await full.surface.scrub(0)
+    await full.surface.scrub(1)
+    const swipes = full.calls
+      .filter(call => call[0] === 'swipe')
+      .map(call => call[1] as Record<string, number>)
+    expect(swipes[0].endX).equals(120)
+    expect(swipes[1].endX).equals(2280)
   })
 
   it('probes each tile from two screenshots, with notices, bar and foreground', async function () {
@@ -343,10 +503,7 @@ describe('the iPhone Safari surface', function () {
     )
     expect(calls.find(call => call[0] === 'pressKey')![1]).equals('Enter')
     expect(calls.some(call => call[0] === 'openLink')).equals(false)
-    expect(calls.at(-1)).deep.equals([
-      'tapOn',
-      { text: 'Tap for sound', optional: true, timeout: 2000 }
-    ])
+    expect(calls.at(-1)).deep.equals(['tapOn', { text: 'Tap for sound' }])
   })
 
   it('relaunches by closing the tab and opening the address again', async function () {
@@ -355,7 +512,7 @@ describe('the iPhone Safari surface', function () {
     const ids = calls
       .map(call => (call[1] as { id?: string } | undefined)?.id)
       .filter(id => id != null)
-    expect(ids).includes('closeTabButton')
+    expect(ids).includes('Close')
     expect(calls.some(call => call[0] === 'inputText')).equals(true)
     calls.length = 0
     await surface.resume()

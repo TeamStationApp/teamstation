@@ -1,3 +1,4 @@
+import { tapIfShown } from './surface'
 import { type TouchOptions, TouchSurface } from './touch'
 
 export const SAFARI = 'com.apple.mobilesafari'
@@ -22,12 +23,8 @@ export class MobileSafariSurface extends TouchSurface {
   }
 
   private async typeAddress(): Promise<void> {
-    await this.device.tapOn({
-      id: 'TabBarItemTitle',
-      optional: true,
-      timeout: 3000
-    })
-    await this.device.tapOn({ id: 'URL', optional: true, timeout: 3000 })
+    await tapIfShown(this.device, { id: 'TabBarItemTitle' }, 3000)
+    await tapIfShown(this.device, { id: 'URL' }, 3000)
     await this.device.inputText(this.safari.gameUrl)
     await this.device.pressKey('Enter')
   }
@@ -35,16 +32,8 @@ export class MobileSafariSurface extends TouchSurface {
   /** A new tab with the game in it. */
   protected async openGame(): Promise<void> {
     await this.device.launchApp({ appId: this.options.appId, stopApp: false })
-    await this.device.tapOn({
-      id: 'TabOverviewButton',
-      optional: true,
-      timeout: 3000
-    })
-    await this.device.tapOn({
-      id: 'NewTabButton',
-      optional: true,
-      timeout: 3000
-    })
+    await tapIfShown(this.device, { id: 'TabOverviewButton' }, 3000)
+    await tapIfShown(this.device, { id: 'NewTabButton' }, 3000)
     await this.typeAddress()
     this.opened = true
   }
@@ -60,21 +49,9 @@ export class MobileSafariSurface extends TouchSurface {
 
   async relaunch(): Promise<void> {
     await this.device.launchApp({ appId: this.options.appId, stopApp: false })
-    await this.device.tapOn({
-      id: 'TabOverviewButton',
-      optional: true,
-      timeout: 3000
-    })
-    await this.device.tapOn({
-      id: 'closeTabButton',
-      optional: true,
-      timeout: 3000
-    })
-    await this.device.tapOn({
-      id: 'NewTabButton',
-      optional: true,
-      timeout: 3000
-    })
+    await tapIfShown(this.device, { id: 'TabOverviewButton' }, 3000)
+    await tapIfShown(this.device, { id: 'Close' }, 3000)
+    await tapIfShown(this.device, { id: 'NewTabButton' }, 3000)
     await this.typeAddress()
     await this.openAngles()
   }

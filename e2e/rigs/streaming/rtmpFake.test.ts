@@ -20,6 +20,8 @@ import {
 export interface FakeServerOptions {
   refuseConnect?: boolean
   publishCode?: string
+  /** The ingest's words with a refused publish. */
+  publishDescription?: string
   /** Sent right after the handshake, before anything else. */
   greet?: RtmpMessage[]
   /** Hold the handshake reply back until `answer()`. */
@@ -123,7 +125,12 @@ export class FakeRtmpServer {
             'onStatus',
             0,
             null,
-            { code: this.options.publishCode ?? 'NetStream.Publish.Start' }
+            {
+              code: this.options.publishCode ?? 'NetStream.Publish.Start',
+              ...(this.options.publishDescription == null
+                ? {}
+                : { description: this.options.publishDescription })
+            }
           ],
           1
         )

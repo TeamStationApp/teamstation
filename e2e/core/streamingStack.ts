@@ -8,6 +8,8 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 
+import { Client } from 'pg'
+
 import type { AttachedHandle } from './attach'
 import type { LegacyStack } from './legacyStack'
 import { BlockedError, HarnessError } from './result'
@@ -40,6 +42,46 @@ export function requireStreamingHandle(
   return handle as StreamingHandle
 }
 
+/**
+ * The handle's database URL for node's `pg`, which reads `sslmode=require` as
+ * full certificate verification. The droplet's Postgres has a self-signed
+ * certificate, so the URL gets libpq's meaning of `require`: encrypted,
+ * unverified. psql and other libpq clients take the handle's URL as it is.
+ */
+export function nodeDatabaseUrl(url: string): string {
+  if (!/[?&]sslmode=require\b/.test(url) || /[?&]uselibpqcompat=/.test(url))
+    return url
+  return `${url}&uselibpqcompat=true`
+}
+
+/**
+ * Readies a throwaway stack for the next script: clears the sign-in code
+ * limits (five codes an address may ask for in fifteen minutes, and the
+ * scripts ask for the same fixture accounts), and ends every session but the
+ * TV's, so an app or page a script finds signed in as an earlier one's
+ * account signs in again as its own. TeamStation TV hangs on a revoked session.
+ */
+export async function clearCodeLimits(
+  handle: StreamingHandle,
+  connect: (url: string) => {
+    connect: () => Promise<unknown>
+    query: (sql: string) => Promise<unknown>
+    end: () => Promise<unknown>
+  } = url =>
+    new Client({ connectionString: url, connectionTimeoutMillis: 15_000 })
+): Promise<void> {
+  const client = connect(nodeDatabaseUrl(handle.databaseUrl))
+  await client.connect()
+  try {
+    await client.query("delete from rate_events where scope like 'emailCode.%'")
+    await client.query(
+      "update auth_sessions set revoked_at = now() where revoked_at is null and device_name is distinct from 'Apple TV'"
+    )
+  } finally {
+    await client.end()
+  }
+}
+
 /** Where the droplet's files are mirrored on this Mac. */
 export interface Mirrors {
   serverLog: string
@@ -63,8 +105,8 @@ export function streamingStackEnv(
   return {
     TS_E2E_HOST: host,
     TS_E2E_WEB: handle.origin,
-    TS_E2E_DATABASE_URL: handle.databaseUrl,
-    TS_DATABASE: handle.databaseUrl,
+    TS_E2E_DATABASE_URL: nodeDatabaseUrl(handle.databaseUrl),
+    TS_DATABASE: nodeDatabaseUrl(handle.databaseUrl),
     TS_E2E_SERVER_LOG: mirrors.serverLog,
     TS_STREAM_API: api,
     TS_STREAM_WEB: handle.origin,
@@ -73,6 +115,9 @@ export function streamingStackEnv(
     REPLAY_WEB_URL: handle.origin,
     REPLAY_API: api,
     REPLAY_SERVER_LOG: mirrors.serverLog,
+    // The scripts launch the production app unless told otherwise; the
+    // stack's builds are TeamStation Develop.
+    TS_STREAM_APP_ID: 'app.teamstation.develop',
     ...(typeof handle.rtmp === 'string' ? { TS_STREAM_RTMP: handle.rtmp } : {})
   }
 }
@@ -95,9 +140,11 @@ export function mirrorCommands(
   mirrors: Mirrors
 ): { tail: [string, string[]]; rsync: [string, string[]] } {
   return {
+    // New lines only: a script looking for its own sign-in code must not
+    // find an earlier run's for the same address.
     tail: [
       'ssh',
-      [...SSH_OPTIONS, handle.ssh, 'tail', '-n', '+1', '-F', handle.serverLog]
+      [...SSH_OPTIONS, handle.ssh, 'tail', '-n', '0', '-F', handle.serverLog]
     ],
     rsync: [
       'rsync',
@@ -191,37 +238,38 @@ export function attachedLegacyStack(
 }
 
 /**
- * Seeds the streaming world on the attached stack's database, from a scratch
- * directory whose server config names that database and allows fixtures.
+ * Runs a fixture script of this checkout against the attached stack's
+ * database, from a scratch directory whose server config names that database,
+ * allows fixtures, and adds `config`. Returns the JSON the script prints.
  */
-export async function seedStreamingFixture(
-  cwd: string,
-  handle: StreamingHandle,
-  mailbox: string,
+export async function runOnStack(options: {
+  cwd: string
+  handle: StreamingHandle
+  script: string
+  args: string[]
   scratch: string
-): Promise<StreamingFixture> {
+  config?: Record<string, unknown>
+}): Promise<unknown> {
+  const { cwd, handle, script, args, scratch } = options
   mkdirSync(scratch, { recursive: true })
   const config = join(scratch, 'serverConfig.json')
   writeFileSync(
     config,
-    JSON.stringify({ testSettings: true, databaseUrl: handle.databaseUrl }),
+    JSON.stringify({
+      ...options.config,
+      testSettings: true,
+      databaseUrl: nodeDatabaseUrl(handle.databaseUrl)
+    }),
     { mode: 0o600 }
   )
   const register = join(cwd, 'node_modules/sucrase/register')
   if (!existsSync(dirname(register))) {
+    rmSync(config, { force: true })
     throw new HarnessError(`no sucrase under ${cwd}: run npm install there`)
   }
   const child = spawn(
     process.execPath,
-    [
-      '-r',
-      register,
-      join(cwd, 'src/server/dev/fixtures/cli.ts'),
-      'streaming',
-      '--json',
-      '--mailbox',
-      mailbox
-    ],
+    ['-r', register, join(cwd, script), ...args],
     { cwd: scratch, stdio: ['ignore', 'pipe', 'pipe'] }
   )
   let stdout = ''
@@ -234,7 +282,23 @@ export async function seedStreamingFixture(
   // It names the database's password: gone as soon as the seed is.
   rmSync(config, { force: true })
   if (status !== 0) {
-    throw new HarnessError(`streaming fixture failed: ${stderr.slice(-2000)}`)
+    throw new HarnessError(`${script} failed: ${stderr.slice(-2000)}`)
   }
-  return JSON.parse(stdout) as StreamingFixture
+  return JSON.parse(stdout)
+}
+
+/** Seeds the streaming world on the attached stack's database. */
+export async function seedStreamingFixture(
+  cwd: string,
+  handle: StreamingHandle,
+  mailbox: string,
+  scratch: string
+): Promise<StreamingFixture> {
+  return (await runOnStack({
+    cwd,
+    handle,
+    script: 'src/server/dev/fixtures/cli.ts',
+    args: ['streaming', '--json', '--mailbox', mailbox],
+    scratch
+  })) as StreamingFixture
 }

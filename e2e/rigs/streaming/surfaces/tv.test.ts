@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { fixture, noSleep, png } from './fakes.test'
+import { readScreen } from './hierarchy'
 import {
   ndiCapture,
   parseTvDump,
@@ -54,6 +55,22 @@ describe('the TV surface', function () {
       'Position in the game, 25%'
     )
     expect(hierarchy.children!.at(-1)!.text).equals('7')
+  })
+
+  it('reads the player grid’s tiles, named for their camera, as angles', function () {
+    const grid = parseTvDump(
+      [
+        "Other, 0x1, {{0.0, 0.0}, {1920.0, 1080.0}}, identifier: 'tv-player'",
+        "Button, 0x2, {{0.0, 0.0}, {960.0, 540.0}}, identifier: 'tv-angle-0', label: 'Camera SynthA', value: 348.0 seconds, Focused",
+        "Button, 0x3, {{960.0, 0.0}, {960.0, 540.0}}, identifier: 'tv-angle-1', label: 'Camera SynthB', value: 348.0 seconds",
+        "Button, 0x4, {{0.0, 540.0}, {960.0, 540.0}}, identifier: 'tv-zoom', label: 'Camera menu'"
+      ].join('\n')
+    )
+    const read = readScreen(tvHierarchy(grid))
+    expect(read.tiles.map(tile => [tile.angle, tile.bounds.x])).deep.equals([
+      ['SynthA', 0],
+      ['SynthB', 960]
+    ])
   })
 
   function tv(options: { dump?: () => string; captures?: Uint8Array[] } = {}): {
@@ -117,8 +134,33 @@ describe('the TV surface', function () {
       foreground: null,
       reason: 'tv: empty dump'
     })
+    // No picture: the dump's tiles, notices and bar, with movement unknown.
     const broken = tv({ captures: [new Uint8Array([1, 2, 3])] })
-    expect((await broken.surface.probe()).reason).match(/^tv: /)
+    const blind = await broken.surface.probe()
+    expect(blind.reason).match(/^tv: no picture: /)
+    expect(blind.tiles).deep.equals([
+      { angle: 'PhoneA', advancing: null, notice: null },
+      { angle: 'PhoneB', advancing: null, notice: null },
+      { angle: 'Synthetic', advancing: null, notice: 'Camera catching up…' }
+    ])
+    expect(blind.bar).equals(0.25)
+    expect(blind.foreground).equals(true)
+    const gone = new TvSurface({
+      remote: async () => {
+        throw new Error('helper failed')
+      },
+      capture: async () => png(1, 1),
+      bundleId: 'app.example.tv',
+      appName: 'TeamStation TV',
+      joinSteps: [],
+      sleep: noSleep
+    })
+    expect(await gone.probe()).deep.equals({
+      tiles: null,
+      bar: null,
+      foreground: null,
+      reason: 'tv: helper failed'
+    })
   })
 
   it('cuts by moving the focus to the angle in the camera panel and selecting it', async function () {

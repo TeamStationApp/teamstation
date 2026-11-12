@@ -17,7 +17,7 @@ import { join } from 'node:path'
 import { readStack, STACKS } from './attach'
 import { chatFixtureEnv } from './chatFixture'
 import { daemonNames } from './daemons'
-import { headerNames, legacyCommand } from './legacyCommand'
+import { legacyCommand } from './legacyCommand'
 import {
   BLOCKED,
   chatReset,
@@ -41,11 +41,18 @@ import { auditListeners, describeListeners } from './listeners'
 import { BlockedError } from './result'
 import { type LegacyRun, runLegacy } from './runLegacy'
 import { loadSettings } from './settings'
-import { disabledFor, type StreamingFixture, streamingKnown } from './streaming'
+import {
+  disabledFor,
+  STREAMING_FIXTURE_NAMES,
+  type StreamingFixture,
+  streamingKnown
+} from './streaming'
 import {
   attachedLegacyStack,
+  clearCodeLimits,
   requireStreamingHandle,
-  seedStreamingFixture
+  seedStreamingFixture,
+  type StreamingHandle
 } from './streamingStack'
 
 /**
@@ -273,7 +280,11 @@ export function attachedBlocker(
         ? 'its player games'
         : needsChatSeed(source)
           ? 'its chat seed'
-          : undefined
+          : /dev\('seed'|run --silent seed|src\/server\/dev\/seed\.ts/.test(
+                source
+              )
+            ? "its seed, which reads the worktree's server config,"
+            : undefined
   return local == null
     ? undefined
     : `attached stack: ${local} needs the sweep's own stack; the droplet sweep runs it`
@@ -301,6 +312,8 @@ async function main(): Promise<void> {
   const bin = maestroBin()
   let stack: LegacyStack
   let fixture: StreamingFixture | undefined
+  let uploadFile: string | undefined
+  let stackHandle: StreamingHandle | undefined
   if (stackId == null) {
     // The loopback harnesses serve `dist` and put their media on a port of
     // their own, so this build's policy lets in any loopback port.
@@ -323,6 +336,7 @@ async function main(): Promise<void> {
       )
     }
     const handle = requireStreamingHandle(entry.handle)
+    stackHandle = handle
     const mailbox = loadSettings().mailbox
     if (mailbox == null) throw new Error('local settings name no mailbox')
     const artifacts = join(stackArtifacts(), 'attached', stackId)
@@ -333,6 +347,35 @@ async function main(): Promise<void> {
       join(artifacts, 'fixture')
     )
     stack = attachedLegacyStack(handle, join(artifacts, 'mirror'))
+    // A short clip for the scripts that upload a recording.
+    uploadFile = join(artifacts, 'upload.mp4')
+    const made = spawnSync(
+      process.env.TS_FFMPEG ?? 'ffmpeg',
+      [
+        '-y',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc2=size=1280x720:rate=30',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=frequency=440:sample_rate=48000',
+        '-t',
+        '12',
+        '-c:v',
+        'libx264',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        uploadFile
+      ],
+      { encoding: 'utf8' }
+    )
+    if (made.status !== 0) throw new Error(`the upload clip: ${made.stderr}`)
   }
   // Once, so the phones' daemons carry this sweep's environment.
   for (const name of DAEMONS.slice(1)) restartDaemon(bin, name)
@@ -347,6 +390,9 @@ async function main(): Promise<void> {
       }
       // A script may shut the shared web daemon down when it finishes.
       restartDaemon(bin, DAEMON.web)
+      // Each script asks for its own sign-in codes, for the same fixture
+      // accounts: on a throwaway stack the limit starts over per script.
+      if (stackHandle != null) await clearCodeLimits(stackHandle)
       for (const name of DAEMONS.slice(1)) ensureDaemon(bin, name)
       const timeoutMs = LONG[file] ?? defaultTimeout
       const started = Date.now()
@@ -444,11 +490,16 @@ async function main(): Promise<void> {
                   TS_CHAT_API_LOG: stack.apiLog,
                   ...(fixture == null
                     ? {}
-                    : streamingKnown(
-                        path,
-                        headerNames(readFileSync(join(cwd, path), 'utf8')),
-                        fixture
-                      )),
+                    : {
+                        ...streamingKnown(
+                          path,
+                          STREAMING_FIXTURE_NAMES,
+                          fixture
+                        ),
+                        ...(uploadFile == null
+                          ? {}
+                          : { TS_STREAM_UPLOAD_FILE: uploadFile })
+                      }),
                   ...shared,
                   ...made,
                   ...env

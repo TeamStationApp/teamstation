@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import {
   ChromeSurface,
   compareReads,
+  pageBlock,
   type PageRead,
   parsePageRead,
   READ_SCRIPT
@@ -26,6 +27,12 @@ function read(
     seeking: false,
     frames,
     notice: null as string | null,
+    rect: {
+      x: angle === 'PhoneB' ? 720 : 0,
+      y: angle === 'Synthetic' ? 405 : 0,
+      width: 720,
+      height: 405
+    },
     ...overrides[angle]
   })
   return {
@@ -34,6 +41,7 @@ function read(
       tile('PhoneB', 10, 300),
       tile('Synthetic', 10, 300)
     ],
+    viewport: { width: 1440, height: 900 },
     bar: {
       now: 30,
       max: 120,
@@ -88,6 +96,10 @@ describe('the Chrome surface', function () {
 
   it('parses what the page script returns, as a string or an object', function () {
     expect(parsePageRead(JSON.stringify(read())).tiles).length(3)
+    expect(parsePageRead(JSON.stringify(read())).viewport).deep.equals({
+      width: 1440,
+      height: 900
+    })
     expect(parsePageRead({ visible: false, signIn: true })).deep.equals({
       tiles: [],
       bar: null,
@@ -165,12 +177,15 @@ describe('the Chrome surface', function () {
     expect(calls).length(2)
     calls.length = 0
     await surface.skip()
-    expect(calls.map(call => (call[1] as { text: string }).text)).deep.equals([
-      'Back ten seconds',
-      'Back ten seconds',
-      'Back ten seconds',
-      'Forward ten seconds',
-      'Forward ten seconds'
+    // The grid's back and forward squares over the 1440 × 810 block of videos.
+    const back = { x: 180, y: 304 }
+    const forward = { x: 1260, y: 304 }
+    expect(calls.map(call => call[1])).deep.equals([
+      back,
+      back,
+      back,
+      forward,
+      forward
     ])
     calls.length = 0
     await surface.slowMotion(8000)
@@ -185,16 +200,26 @@ describe('the Chrome surface', function () {
     await surface.jumpToPresent()
     await surface.exitAndReenter(1)
     await surface.relaunch()
-    expect(calls.map(call => call[0])).deep.equals([
-      'tapOn',
-      'tapOn',
-      'tapOn',
-      'tapOn',
-      'tapOn',
-      'evalBrowserScript',
-      'tapOn',
-      'tapOn'
+    // Controls that take a tap get it with no press on the grid.
+    expect(
+      calls
+        .filter(call => call[0] !== 'assertVisible')
+        .map(call =>
+          call[0] === 'tapOnPoint'
+            ? call[1]
+            : [call[0], (call[1] as { text?: string }).text]
+        )
+    ).deep.equals([
+      ['tapOn', 'Synthetic angle'],
+      ['tapOn', 'Jump to present'],
+      ['tapOn', 'Close'],
+      ['tapOn', 'All angles'],
+      ['tapOn', 'Watch'],
+      ['openLink', undefined],
+      ['tapOn', 'All angles'],
+      ['tapOn', 'Watch']
     ])
+    expect(surface.takeNotes()).deep.equals([])
     const flat = chrome([
       read(
         {},
@@ -212,5 +237,94 @@ describe('the Chrome surface', function () {
         (e: unknown) => (e as Error).message
       )
     ).match(/no bar/)
+  })
+
+  it('brings hidden controls up with the grid only when a control takes no pointer', async function () {
+    let refusals = 1
+    const { device, calls } = fakeDevice({
+      tapOn: () => {
+        if (refusals-- > 0)
+          throw new Error(
+            'tapOn: text="Jump to present": Element not actionable (last rejection: pointer-events-none)'
+          )
+        return { status: 'passed' }
+      }
+    })
+    const surface = new ChromeSurface({
+      device,
+      page: { evaluate: async () => JSON.stringify(read()) },
+      gameUrl: 'https://app.example.test/games/game_0000',
+      sleep: noSleep
+    })
+    await surface.jumpToPresent()
+    expect(calls.map(call => call[0])).deep.equals([
+      'tapOn',
+      'tapOnPoint',
+      'tapOn'
+    ])
+    expect(calls[1][1]).deep.equals({ x: 540, y: 101 })
+    refusals = 5
+    expect(
+      await surface.jumpToPresent().then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).match(/not actionable/)
+    const missing = new ChromeSurface({
+      device: fakeDevice({
+        tapOn: () => {
+          throw new Error('Element not found')
+        }
+      }).device,
+      page: { evaluate: async () => JSON.stringify(read()) },
+      gameUrl: 'https://app.example.test/games/game_0000',
+      sleep: noSleep
+    })
+    expect(
+      await missing.jumpToPresent().then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).equals('Element not found')
+  })
+
+  it('rejoins a player it finds closed, notes it, and says when it stays closed', async function () {
+    // The game page: no angle tiles, then the player once rejoined.
+    const { surface, calls } = chrome([read({}, { tiles: [] }), read()])
+    await surface.skip([10])
+    expect(calls.map(call => call[0]).slice(0, 2)).deep.equals([
+      'openLink',
+      'tapOn'
+    ])
+    expect(calls.filter(call => call[0] === 'tapOnPoint')).length(1)
+    expect(surface.takeNotes()).deep.equals([
+      'rejoined: the full-screen player was not up'
+    ])
+    const closed = chrome([read({}, { tiles: [] })])
+    expect(
+      await closed.surface.jumpToPresent().then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).equals('chrome: the full-screen player is not up')
+  })
+
+  it('finds the block of videos only on a page that says its size', function () {
+    expect(pageBlock(read())).deep.equals({
+      x: 0,
+      y: 0,
+      width: 1440,
+      height: 810
+    })
+    expect(pageBlock({ ...read(), viewport: undefined })).equals(null)
+    expect(
+      pageBlock(
+        read({
+          PhoneA: { rect: undefined },
+          PhoneB: { rect: undefined },
+          Synthetic: { rect: undefined }
+        })
+      )
+    ).equals(null)
   })
 })
