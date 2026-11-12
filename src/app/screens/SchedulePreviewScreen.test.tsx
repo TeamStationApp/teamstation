@@ -818,6 +818,23 @@ describe('a schedule preview', () => {
     expect(text()).includes('Game rejected. It is listed for rescheduling.')
   })
 
+  it('offers an added game only the fields its season selected', async () => {
+    const base = previewOf()
+    const fake = fakeClient(
+      previewOf({
+        seasons: [{ ...base.seasons[0], fieldIds: ['fld_one'] }],
+        fields: [
+          ...base.fields,
+          { ...base.fields[0], id: 'fld_two', name: 'Field 2' }
+        ]
+      })
+    )
+    await show(fake.client)
+    await tapText('Add game')
+    await tapLabel('Field: Choose')
+    expect(hasLabel('Field 1, Example Park')).equals(true)
+    expect(hasLabel('Field 2, Example Park')).equals(false)
+  })
   it('adds a game by hand, and says when it breaks a rule', async () => {
     const fake = fakeClient(previewOf(), { failEdit: true })
     await show(fake.client)

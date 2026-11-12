@@ -6,11 +6,17 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString
+  asString,
+  asUnknown
 } from 'cleaners'
 
 import { asLiteral } from './asLiteral'
-import type { PlannedGame, ScheduleOption } from './autoScheduler/types'
+import type {
+  EngineInput,
+  EngineResult,
+  PlannedGame,
+  ScheduleOption
+} from './autoScheduler/types'
 import { isRecord } from './groupCreation'
 import { asFieldSize, type FieldSize } from './venues'
 
@@ -201,7 +207,7 @@ export const asSchedulePreview = asObject({
   leagueId: asString,
   mode: asLiteral('full', 'partial'),
   existing: asEither(asNull, asLiteral('replace', 'workAround')),
-  status: asLiteral('open', 'published', 'discarded'),
+  status: asLiteral('building', 'open', 'published', 'discarded'),
   createdAt: asString,
   options: asArray(asWireOption),
   blocking: asEither(asNull, asString),
@@ -245,7 +251,12 @@ export const asSchedulePreview = asObject({
        */
       startsOn: asOptional(asString),
       participants: asArray(asString),
-      exhibitionTeams: asArray(asString)
+      exhibitionTeams: asArray(asString),
+      /**
+       * The fields the season selected. Optional, so an answer from a server
+       * that does not send it yet still reads; every field is offered then.
+       */
+      fieldIds: asOptional(asArray(asString))
     })
   ),
   fields: asArray(
@@ -259,7 +270,11 @@ export const asSchedulePreview = asObject({
     })
   )
 })
-export type SchedulePreview = ReturnType<typeof asSchedulePreview>
+type WireSchedulePreview = ReturnType<typeof asSchedulePreview>
+type WirePreviewSeason = WireSchedulePreview['seasons'][number]
+export type SchedulePreview = Omit<WireSchedulePreview, 'seasons'> & {
+  seasons: Array<Omit<WirePreviewSeason, 'fieldIds'> & { fieldIds?: string[] }>
+}
 
 /**
  * An option's games as they stand after its edits: its own games less the
@@ -295,7 +310,9 @@ export const asPublication = asObject({
   /** Upcoming games the build replaced. */
   removed: asNumber
 })
-export type Publication = ReturnType<typeof asPublication>
+export type Publication = Omit<ReturnType<typeof asPublication>, 'preview'> & {
+  preview: SchedulePreview
+}
 
 /** Why a published game is listed for rescheduling. */
 export type RescheduleReason =
@@ -344,4 +361,72 @@ export function rescheduleReasonLabel(reason: RescheduleReason): string {
           : reason === 'teamWithdrew'
             ? 'A team withdrew'
             : 'Rejected'
+}
+
+/** Authorized input prepared by the server for this device. */
+export const asPreparedPreview = asObject({
+  id: asString,
+  input: (raw: unknown): EngineInput => asUnknown(raw) as EngineInput
+})
+export type PreparedPreview = ReturnType<typeof asPreparedPreview>
+
+/** ISO 8601 date-times that name their offset, so they mean one instant. */
+const ZONED_INSTANT =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
+
+/**
+ * A device's game time as the server stores it, the form it generates
+ * itself: `toISOString()`. A time with no offset could be read in either
+ * zone, so it is refused.
+ */
+function asZonedInstant(raw: string): string {
+  const ms = ZONED_INSTANT.test(raw) ? Date.parse(raw) : NaN
+  if (!Number.isFinite(ms))
+    throw new TypeError('Give each game’s times as instants with their zone')
+  return new Date(ms).toISOString()
+}
+
+/** Bound untrusted result arrays before interpreting individual games. */
+export function asPreviewResult(raw: unknown): EngineResult {
+  if (!isRecord(raw) || !Array.isArray(raw.options) || raw.options.length > 3)
+    throw new TypeError('Submit at most three schedule options')
+  if (
+    raw.options.some(
+      option =>
+        !isRecord(option) ||
+        !Array.isArray(option.games) ||
+        option.games.length > 20000
+    )
+  )
+    throw new TypeError('Submit a bounded list of scheduled games')
+  // The device's summaries are kept as it sent them, bounded: they describe
+  // its own league's schedule, which the league reads.
+  const options = raw.options.map(option => {
+    const cleaned = asWireOption(option)
+    if (
+      cleaned.fairness.length > 20000 ||
+      cleaned.reasons.length > 20 ||
+      cleaned.unmet.length > 1000 ||
+      cleaned.score.length > 20 ||
+      [
+        ...cleaned.reasons,
+        ...cleaned.unmet.flatMap(line => [line.message, line.cause])
+      ].some(text => text.length > 2000)
+    )
+      throw new TypeError('Submit bounded schedule summaries')
+    return {
+      ...cleaned,
+      games: cleaned.games.map(game => ({
+        ...game,
+        startAt: asZonedInstant(game.startAt),
+        endAt: asZonedInstant(game.endAt)
+      }))
+    }
+  })
+  const blocking = raw.blocking === null ? null : asString(raw.blocking)
+  if (blocking !== null && (blocking.length > 1000 || options.length !== 0))
+    throw new TypeError('A blocked schedule cannot contain options')
+  if (options.length === 0 && (blocking == null || blocking === ''))
+    throw new TypeError('Explain why the schedule has no options')
+  return { options, blocking }
 }

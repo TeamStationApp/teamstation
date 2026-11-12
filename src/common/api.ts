@@ -125,6 +125,7 @@ import {
 } from './publicGroups'
 import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
@@ -5643,14 +5644,45 @@ export class TeamStationClient {
   /** Builds a preview of the league's schedule. See `PreviewRequest`. */
   async buildSchedulePreview(
     leagueId: string,
-    request: PreviewRequest
+    request: PreviewRequest,
+    /**
+     * The waits before each retry while the device is offline or the server
+     * fails, about a minute and a half in all.
+     */
+    retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000, 30000, 30000]
   ): Promise<SchedulePreview> {
-    return await this.request(
+    const prepared = await this.request(
       'POST',
-      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
-      asSchedulePreview,
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/preparations`,
+      asPreparedPreview,
       request
     )
+    const { buildOptionsAsync } = await import('./autoScheduler')
+    // The options are stored as built, summaries and all.
+    const result = await buildOptionsAsync(prepared.input)
+    // A search can take minutes, so while the device is offline or the
+    // server fails (a deploy, a proxy, a fault) the same result is sent
+    // again, which the server accepts once. A refusal of the result itself
+    // is final.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.request(
+          'PUT',
+          `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
+          asSchedulePreview,
+          result
+        )
+      } catch (error) {
+        const wait = retryDelaysMs[attempt]
+        if (
+          wait == null ||
+          !(error instanceof HttpError) ||
+          !['offline', 'unavailable', 'internal'].includes(error.code)
+        )
+          throw error
+        await new Promise(resolve => setTimeout(resolve, wait))
+      }
+    }
   }
 
   async schedulePreview(previewId: string): Promise<SchedulePreview> {
@@ -5703,8 +5735,10 @@ export class TeamStationClient {
 
   /** Chooses the seasons and fields of the league's next schedule. */
   /**
-   * Chooses a run's seasons and fields. With `addedFieldIds`, it replaces
-   * the fields added from other venues, which stay listed, chosen or not.
+   * Chooses a run's seasons and fields. The fields added from other venues
+   * stay listed, chosen or not: with `removedFieldIds`, `addedFieldIds`
+   * adds to that list and `removedFieldIds` takes off it; without, the
+   * list is replaced by `addedFieldIds`.
    */
   async saveScheduleSetup(
     leagueId: string,

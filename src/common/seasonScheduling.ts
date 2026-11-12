@@ -149,6 +149,47 @@ export function copyWindowPeriods(
   })
 }
 
+/**
+ * A season's time windows, each with an end date. Every window a season
+ * schedules in has one. Windows without, saved before that or sent by an
+ * older client with the season's dates around them, mean what they always
+ * did: each ends when the next starts, and all of them lie within the
+ * dates, so they are cut to them.
+ */
+export function boundedSeasonWindows(
+  windows: readonly WindowPeriod[],
+  startsOn: string,
+  endsOn: string
+): WindowPeriod[] {
+  if (windows.every(period => period.until != null)) return [...windows]
+  const sorted = [...windows].sort((a, b) => a.from.localeCompare(b.from))
+  return sorted.flatMap((period, index): WindowPeriod[] => {
+    const next = sorted[index + 1]
+    const end = period.until ?? (next == null ? endsOn : addDays(next.from, -1))
+    const from = period.from < startsOn ? startsOn : period.from
+    const until = end > endsOn ? endsOn : end
+    return from > until ? [] : [{ ...period, from, until }]
+  })
+}
+
+/**
+ * The dates a season schedules in: its first window's start to its last
+ * window's end; null with no windows.
+ */
+export function windowRange(
+  windows: readonly WindowPeriod[]
+): { startsOn: string; endsOn: string } | null {
+  if (windows.length === 0) return null
+  let startsOn = windows[0].from
+  let endsOn = windows[0].until ?? windows[0].from
+  for (const period of windows) {
+    if (period.from < startsOn) startsOn = period.from
+    const end = period.until ?? period.from
+    if (end > endsOn) endsOn = end
+  }
+  return { startsOn, endsOn }
+}
+
 /** A whole set of settings, as a season admin saves it. */
 export function asScheduleSettings(raw: unknown): ScheduleSettings {
   if (!isRecord(raw)) throw new TypeError('Choose the schedule settings')
@@ -273,7 +314,7 @@ export const asSeasonScheduleSettings = asObject({
 export type SeasonScheduleSettings = ReturnType<typeof asSeasonScheduleSettings>
 
 /** One of the league's seasons, as the setup lists them. */
-export const asSetupSeason = asObject({
+const asWireSetupSeason = asObject({
   id: asString,
   name: asString,
   year: asNumber,
@@ -286,9 +327,24 @@ export const asSetupSeason = asObject({
     asObject({ id: asString, name: asString, exhibition: asBoolean })
   ),
   saved: asBoolean,
-  settings: asWireSettings
+  settings: asWireSettings,
+  /**
+   * The season's own first and last days, or its year's, which bound game
+   * windows copied into it. Its settings' dates are the range its windows
+   * cover.
+   */
+  seasonDates: asOptional(asObject({ startsOn: asString, endsOn: asString }))
 })
-export type SetupSeason = ReturnType<typeof asSetupSeason>
+export type SetupSeason = Omit<
+  ReturnType<typeof asWireSetupSeason>,
+  'seasonDates'
+> & { seasonDates?: { startsOn: string; endsOn: string } }
+
+/** A season of the setup; one from a server without its own dates has none. */
+export function asSetupSeason(raw: unknown): SetupSeason {
+  const { seasonDates, ...season } = asWireSetupSeason(raw)
+  return seasonDates == null ? season : { ...season, seasonDates }
+}
 
 /** A field in the registry the run may use, and whose venue it is. */
 export const asSetupField = asObject({
@@ -334,8 +390,8 @@ export const asScheduleSetup = asObject({
 })
 export type ScheduleSetup = Omit<
   ReturnType<typeof asScheduleSetup>,
-  'avoidHeadCoachConflicts'
-> & { avoidHeadCoachConflicts?: boolean }
+  'avoidHeadCoachConflicts' | 'seasons'
+> & { avoidHeadCoachConflicts?: boolean; seasons: SetupSeason[] }
 
 function asIdList(what: string, max: number): Cleaner<string[]> {
   return raw => {

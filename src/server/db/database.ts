@@ -1190,11 +1190,13 @@ export interface SchedulePreviewsTable {
   blocking: string | null
   /** Rejected and added games (`src/common/schedulePreviews.ts`). */
   edits: ColumnType<unknown, string | undefined, string>
-  status: Generated<'open' | 'published' | 'discarded'>
+  status: Generated<'building' | 'open' | 'published' | 'discarded'>
   published_option: number | null
   published_at: Timestamp | null
   /** How many upcoming games its publication replaced. */
   removed_games: number | null
+  /** The completed device result's hash, so a retry of it is recognized. */
+  result_hash: string | null
 }
 
 /** A game a publication proposed. */

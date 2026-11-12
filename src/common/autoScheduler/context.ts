@@ -7,11 +7,12 @@ import {
   type GamePoint,
   LocalClock,
   MINUTE,
-  seasonSlots,
+  seasonSlotsSteps,
   type SeasonWindow,
   type Slot,
   type Supply
 } from './slots'
+import { finishSteps } from './steps'
 import type { EngineField, EngineInput, EngineSeason, FixedGame } from './types'
 
 /**
@@ -90,16 +91,27 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
 
 /** Reads the input into the slots, groups and starting occupancy of the run. */
 export function buildContext(input: EngineInput): RunContext {
+  return finishSteps(buildContextSteps(input))
+}
+
+export function* buildContextSteps(
+  input: EngineInput
+): Generator<void, RunContext> {
   const fieldZones = new Map(
     input.fields.map(field => [field.id, field.availability.timezone])
   )
   const clock = new LocalClock()
-  const seasons = input.seasons.map((season, index): SeasonContext => {
-    const { slots, windows, supply } = seasonSlots(input, season, clock)
+  const seasons: SeasonContext[] = []
+  for (const [index, season] of input.seasons.entries()) {
+    const { slots, windows, supply } = yield* seasonSlotsSteps(
+      input,
+      season,
+      clock
+    )
     const zones = seasonZones(input.fields, season.settings)
     const zoneOf = (fieldId: string | null): string =>
       (fieldId == null ? undefined : fieldZones.get(fieldId)) ?? zones[0]
-    return {
+    seasons.push({
       index,
       season,
       teams: seasonTeams(season),
@@ -137,8 +149,8 @@ export function buildContext(input: EngineInput): RunContext {
         })),
       fieldFree: new Uint8Array(slots.length),
       teamFree: new Map()
-    }
-  })
+    })
+  }
   const context: RunContext = {
     input,
     seasons,
@@ -152,9 +164,10 @@ export function buildContext(input: EngineInput): RunContext {
   }
   const occupancy = new Occupancy(context)
   for (const season of seasons) {
-    season.slots.forEach((slot, i) => {
+    for (const [i, slot] of season.slots.entries()) {
+      if (i % 128 === 0) yield
       season.fieldFree[i] = occupancy.fieldFits(season, slot) ? 1 : 0
-    })
+    }
     // A required matchup may name a team outside the season's lists.
     const teams = new Set(season.teams)
     for (const matchup of context.required ?? [])
@@ -164,9 +177,10 @@ export function buildContext(input: EngineInput): RunContext {
       }
     for (const team of teams) {
       const free = new Uint8Array(season.slots.length)
-      season.slots.forEach((slot, i) => {
+      for (const [i, slot] of season.slots.entries()) {
+        if (i % 128 === 0) yield
         free[i] = occupancy.teamAvailability(season, team, slot)
-      })
+      }
       season.teamFree.set(team, free)
     }
   }

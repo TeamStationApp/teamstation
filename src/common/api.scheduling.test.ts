@@ -2,6 +2,8 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { TeamStationClient } from './api'
+import { buildOptions } from './autoScheduler'
+import { input } from './autoScheduler/fixtures.test'
 import type { GameToReschedule, SchedulePreview } from './schedulePreviews'
 import type { ScheduleSettings, ScheduleSetup } from './seasonScheduling'
 
@@ -81,7 +83,10 @@ function client(answers: unknown[]): {
         String(url),
         init?.body == null ? undefined : JSON.parse(init.body)
       ])
-      return new Response(JSON.stringify(answers.shift()), { status: 200 })
+      const answer = answers.shift()
+      return answer instanceof Response
+        ? answer
+        : new Response(JSON.stringify(answer), { status: 200 })
     }) as unknown as typeof fetch
   })
   return { api, calls }
@@ -226,7 +231,9 @@ describe('api client scheduling setup', () => {
       startAt: '2027-04-17T14:00:00.000Z',
       endAt: '2027-04-17T15:30:00.000Z'
     }
+    const engine = input({ seasons: [], fields: [] })
     const { api, calls } = client([
+      { id: 'spv/1', input: engine },
       preview,
       preview,
       preview,
@@ -246,9 +253,10 @@ describe('api client scheduling setup', () => {
     expect(calls).deep.equals([
       [
         'POST',
-        '/api/v1/leagues/lea%2Fa/schedule-previews',
+        '/api/v1/leagues/lea%2Fa/schedule-previews/preparations',
         { mode: 'full', existing: 'workAround' }
       ],
+      ['PUT', '/api/v1/schedule-previews/spv%2F1/result', buildOptions(engine)],
       ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
       [
         'PUT',
@@ -258,6 +266,57 @@ describe('api client scheduling setup', () => {
       ['POST', '/api/v1/schedule-previews/spv%2F1/publications', { option: 0 }],
       ['GET', '/api/v1/leagues/lea%2Fa/games-to-reschedule', undefined]
     ])
+  })
+
+  it('sends the same result again while offline or the server fails, and stops at a refusal of the result', async () => {
+    const engine = input({ seasons: [], fields: [] })
+    const refusal = (code: string, status: number): Response =>
+      new Response(JSON.stringify({ code, message: 'Refused.' }), { status })
+    const preview = { id: 'spv/1' }
+    let dropped = false
+    let offlinePuts = 0
+    const offline = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async (_url: unknown, init?: { method?: string }) => {
+        if (init?.method === 'PUT') offlinePuts++
+        if (init?.method === 'PUT' && !dropped) {
+          dropped = true
+          throw new TypeError('Network request failed')
+        }
+        return new Response(
+          JSON.stringify(
+            init?.method === 'POST' ? { id: 'spv/1', input: engine } : preview
+          ),
+          { status: 200 }
+        )
+      }
+    })
+    await offline
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch(() => undefined)
+    expect(dropped).equals(true)
+    expect(offlinePuts).equals(2)
+    // A failing server is asked again too, and a gateway's bare 502.
+    const failing = client([
+      { id: 'spv/1', input: engine },
+      refusal('unavailable', 503),
+      new Response('Bad gateway', { status: 502 }),
+      preview
+    ])
+    await failing.api
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch(() => undefined)
+    expect(failing.calls.filter(([method]) => method === 'PUT')).has.length(3)
+    // A refusal of the result itself is final.
+    const final = client([
+      { id: 'spv/1', input: engine },
+      refusal('badRequest', 400)
+    ])
+    const error = await final.api
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch((caught: unknown) => caught)
+    expect(String(error)).includes('Refused.')
+    expect(final.calls.filter(([method]) => method === 'PUT')).has.length(1)
   })
 
   it('reads each preview season’s first day, and a season without one', async () => {

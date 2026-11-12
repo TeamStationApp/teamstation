@@ -1,3 +1,4 @@
+import { seasonFields } from './autoScheduler/seasonZones'
 import { monthDay as shortDate } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import type { ScheduleSettings } from './seasonScheduling'
@@ -153,11 +154,7 @@ export function schedulingChecks(
         )
       }
     }
-    const sized = usable.filter(
-      field =>
-        (s.fieldIds ?? []).includes(field.id) &&
-        field.sizes.includes(s.fieldSize)
-    )
+    const sized = seasonFields(usable, s)
     if (sized.length === 0)
       add(
         'noField',

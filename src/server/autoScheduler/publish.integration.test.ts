@@ -2,9 +2,12 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import type {
-  Publication,
-  SchedulePreview
+import { buildOptions } from '../../common/autoScheduler'
+import {
+  asPreparedPreview,
+  asSchedulePreview,
+  type Publication,
+  type SchedulePreview
 } from '../../common/schedulePreviews'
 import { userIdOfGumbo } from '../../common/userId'
 import {
@@ -28,7 +31,7 @@ describe('publishing a schedule preview', function () {
     await w.call<SchedulePreview>(
       user,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       body
     )
   const publish = async (
@@ -51,6 +54,120 @@ describe('publishing a schedule preview', function () {
   })
   afterEach(async () => {
     await w?.close()
+  })
+
+  it('places again, rather than keeps, a game on a field its season has since deselected', async () => {
+    const { f } = w.fx
+    const harbor = await seedHarborField(w.fx)
+    const settingsPath = `/seasons/${f.seasonA}/schedule-settings`
+    expect(
+      (
+        await w.call(101, 'PUT', `/leagues/${f.leagueA}/schedule-setup`, {
+          seasonIds: [f.seasonA],
+          fieldIds: [w.fieldId],
+          addedFieldIds: [harbor]
+        })
+      ).status
+    ).equals(200)
+    const choose = async (fieldIds: string[]): Promise<void> => {
+      const current = await w.call<{ settings: Record<string, unknown> }>(
+        101,
+        'GET',
+        settingsPath
+      )
+      expect(
+        (
+          await w.call(101, 'PUT', settingsPath, {
+            ...current.body.settings,
+            fieldIds
+          })
+        ).status
+      ).equals(200)
+    }
+    await choose([w.fieldId, harbor])
+    const built = await build({ mode: 'full', existing: 'workAround' })
+    expect(built.status).equals(201)
+    const onHarbor = built.body.options[0].games.filter(
+      game => game.fieldId === harbor
+    )
+    expect(onHarbor.length).greaterThan(0)
+    await choose([w.fieldId])
+    const recalculated = await build({
+      mode: 'partial',
+      fromPreviewId: built.body.id,
+      option: 0
+    })
+    expect(recalculated.status).equals(201)
+    for (const option of recalculated.body.options)
+      expect(option.games.some(game => game.fieldId === harbor)).equals(false)
+  })
+
+  it('stores games under its own keys, so a device key naming a later booking collides with nothing, and the booking’s time still blocks', async () => {
+    const { f, teams } = w.fx
+    const response = await f.h.request(
+      'POST',
+      `/leagues/${f.leagueA}/schedule-previews/preparations`,
+      { mode: 'full', existing: 'workAround' },
+      101
+    )
+    expect(response.status).equals(201)
+    const prepared = asPreparedPreview(await response.json())
+    const result = buildOptions(prepared.input)
+    const game = result.options[0].games[0]
+    game.key = 'live_after_prepare'
+    await f.h.db
+      .insertInto('games')
+      .values({
+        id: game.key,
+        season_id: f.seasonB,
+        home_team_id: teams.Owls,
+        away_team_id: 'tem_account',
+        field_id: game.fieldId,
+        field_size: game.size,
+        status: 'scheduled',
+        start_at: new Date(game.startAt),
+        end_at: new Date(game.endAt)
+      })
+      .execute()
+    const completed = await f.h.request(
+      'PUT',
+      `/schedule-previews/${prepared.id}/result`,
+      result,
+      101
+    )
+    expect(completed.status, await completed.clone().text()).equals(200)
+    const stored = asSchedulePreview(await completed.json())
+    expect(stored.options[0].games.some(each => each.key === game.key)).equals(
+      false
+    )
+    // The booking holds the game's time and team, which publishing checks.
+    const rejected = await publish(prepared.id)
+    expect(rejected.status).equals(409)
+    expect(JSON.stringify(rejected.body)).not.includes('identifier now matches')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('games')
+          .select('status')
+          .where('id', '=', game.key)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('scheduled')
+    expect(
+      (
+        await f.h.db
+          .selectFrom('schedule_previews')
+          .select('status')
+          .where('id', '=', prepared.id)
+          .executeTakeFirstOrThrow()
+      ).status
+    ).equals('open')
+    await f.h.db
+      .updateTable('games')
+      .set({ status: 'cancelled' })
+      .where('id', '=', game.key)
+      .execute()
+    expect((await publish(prepared.id)).status).equals(200)
   })
 
   for (const moving of [false, true]) {
@@ -564,13 +681,16 @@ describe('publishing a schedule preview', function () {
     await f.h.db
       .updateTable('venue_fields')
       .set({
-        hours: JSON.stringify(
-          Array.from({ length: 7 }, (_, weekday) => ({
-            weekday,
-            start: '00:00',
-            end: '23:55'
-          }))
-        )
+        windows: JSON.stringify([
+          {
+            from: '0001-01-01',
+            hours: Array.from({ length: 7 }, (_, weekday) => ({
+              weekday,
+              start: '00:00',
+              end: '23:55'
+            }))
+          }
+        ])
       })
       .where('id', '=', fieldId)
       .execute()
@@ -592,20 +712,23 @@ describe('publishing a schedule preview', function () {
       )
       .onConflict(oc => oc.columns(['team_id', 'season_id']).doNothing())
       .execute()
+    // League B lists League A's field before its season chooses it.
     expect(
       (
-        await w.call(102, 'PUT', `/seasons/${f.seasonB}/schedule-settings`, {
-          ...SEASON_A_SETTINGS,
-          regularGames: 1,
-          exhibitionGames: 0
+        await w.call(102, 'PUT', `/leagues/${f.leagueB}/schedule-setup`, {
+          seasonIds: [f.seasonB],
+          fieldIds: [fieldId],
+          addedFieldIds: [fieldId]
         })
       ).status
     ).equals(200)
     expect(
       (
-        await w.call(102, 'PUT', `/leagues/${f.leagueB}/schedule-setup`, {
-          seasonIds: [f.seasonB],
-          fieldIds: [fieldId]
+        await w.call(102, 'PUT', `/seasons/${f.seasonB}/schedule-settings`, {
+          ...SEASON_A_SETTINGS,
+          fieldIds: [fieldId],
+          regularGames: 1,
+          exhibitionGames: 0
         })
       ).status
     ).equals(200)
@@ -613,7 +736,7 @@ describe('publishing a schedule preview', function () {
       await w.call<SchedulePreview>(
         102,
         'POST',
-        `/leagues/${f.leagueB}/schedule-previews`,
+        `/leagues/${f.leagueB}/schedule-previews/preparations`,
         { mode: 'full', existing: 'workAround' }
       )
     ).body

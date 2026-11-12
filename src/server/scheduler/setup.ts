@@ -1,17 +1,24 @@
-import type { Kysely } from 'kysely'
+import { isDeepStrictEqual } from 'node:util'
+
+import { type Kysely, sql } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
+import type { WindowPeriod } from '../../common/fieldAvailability'
 import { calendarDateText } from '../../common/groupCreation'
 import {
   asWindowPeriods,
+  boundedSeasonWindows,
   defaultScheduleSettings,
   type ScheduleSettings,
   type ScheduleSetup,
   type ScheduleSetupChoice,
   type SeasonScheduleSettings,
-  type SetupField
+  type SetupField,
+  windowRange
 } from '../../common/seasonScheduling'
 import { asFieldSize } from '../../common/venues'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
 import { seasonParticipants } from '../stats/seasonTeams'
@@ -77,6 +84,54 @@ export async function seasonLeagueId(
   return season.league_id
 }
 
+/**
+ * A season's windows with the dates it schedules in: those its windows
+ * cover, or the saved dates while it has none.
+ */
+function seasonDates(
+  windows: WindowPeriod[],
+  startsOn: string,
+  endsOn: string
+): Pick<ScheduleSettings, 'startsOn' | 'endsOn' | 'windows'> {
+  return { ...(windowRange(windows) ?? { startsOn, endsOn }), windows }
+}
+
+/**
+ * The live fields each league chose for its runs before seasons chose
+ * their own, by league, in id order as migration 119 gave saved seasons.
+ */
+async function legacyFieldsOf(
+  db: Db,
+  seasons: SeasonRow[]
+): Promise<Map<string, Array<{ id: string; sizes: string[] }>>> {
+  const leagueIds = [
+    ...new Set(seasons.flatMap(season => season.league_id ?? []))
+  ]
+  if (leagueIds.length === 0) return new Map()
+  const setups = await db
+    .selectFrom('league_schedule_setups')
+    .select(['league_id', 'field_ids'])
+    .where('league_id', 'in', leagueIds)
+    .execute()
+  const ids = [...new Set(setups.flatMap(setup => setup.field_ids))]
+  const fields =
+    ids.length === 0
+      ? []
+      : await db
+          .selectFrom('venue_fields')
+          .select(['id', 'sizes'])
+          .where('id', 'in', ids)
+          .where('deleted_at', 'is', null)
+          .orderBy('id')
+          .execute()
+  return new Map(
+    setups.map(setup => [
+      setup.league_id,
+      fields.filter(field => setup.field_ids.includes(field.id))
+    ])
+  )
+}
+
 /** The settings of seasons, saved or their defaults. */
 export async function settingsOf(
   db: Db,
@@ -94,22 +149,31 @@ export async function settingsOf(
             seasons.map(season => season.id)
           )
           .execute()
+  const legacy = await legacyFieldsOf(
+    db,
+    seasons.filter(season => !rows.some(row => row.season_id === season.id))
+  )
   return new Map(
     seasons.map(
       (season): [string, { saved: boolean; settings: ScheduleSettings }] => {
         const row = rows.find(item => item.season_id === season.id)
-        if (row == null)
+        if (row == null) {
+          const settings = defaultScheduleSettings({
+            startsOn: calendarDateText(season.starts_on),
+            endsOn: calendarDateText(season.ends_on),
+            year: season.year
+          })
+          // A season never saved keeps the fields its league chose for runs
+          // before seasons chose their own, as a saved one was migrated to.
+          const fieldIds = (legacy.get(season.league_id ?? '') ?? []).flatMap(
+            field =>
+              field.sizes.includes(settings.fieldSize) ? [field.id] : []
+          )
           return [
             season.id,
-            {
-              saved: false,
-              settings: defaultScheduleSettings({
-                startsOn: calendarDateText(season.starts_on),
-                endsOn: calendarDateText(season.ends_on),
-                year: season.year
-              })
-            }
+            { saved: false, settings: { ...settings, fieldIds } }
           ]
+        }
         return [
           season.id,
           {
@@ -125,10 +189,16 @@ export async function settingsOf(
               maxGamesOnWeekdays: row.max_games_on_weekdays,
               maxGamesOnWeekend: row.max_games_on_weekend,
               preferGameOn: row.prefer_game_on,
-              startsOn: calendarDateText(row.starts_on)!,
-              endsOn: calendarDateText(row.ends_on)!,
-              blackouts: datesOf(row.blackouts),
-              windows: asWindowPeriods(row.windows)
+              ...seasonDates(
+                boundedSeasonWindows(
+                  asWindowPeriods(row.windows),
+                  calendarDateText(row.starts_on)!,
+                  calendarDateText(row.ends_on)!
+                ),
+                calendarDateText(row.starts_on)!,
+                calendarDateText(row.ends_on)!
+              ),
+              blackouts: datesOf(row.blackouts)
             }
           }
         ]
@@ -146,10 +216,38 @@ export async function seasonScheduleSettings(
   return { seasonId, ...found }
 }
 
+/** The lock a league's schedule setup and its seasons' settings are written under. */
+function setupLock(leagueId: string | null, seasonId: string): string {
+  return leagueId == null
+    ? `schedule-settings:${seasonId}`
+    : `schedule-setup:${leagueId}`
+}
+
 export async function saveSeasonScheduleSettings(
   db: Db,
   seasonId: string,
-  settings: ScheduleSettings
+  settings: ScheduleSettings,
+  clock: Clock = realClock
+): Promise<SeasonScheduleSettings> {
+  const season = await seasonRow(db, seasonId)
+  return await atomic(db, async trx => {
+    await lockKeys(trx, [setupLock(season.league_id, seasonId)])
+    return await writeSeasonScheduleSettings(
+      trx,
+      seasonId,
+      season.league_id,
+      settings,
+      clock
+    )
+  })
+}
+
+async function writeSeasonScheduleSettings(
+  db: Db,
+  seasonId: string,
+  leagueId: string | null,
+  settings: ScheduleSettings,
+  clock: Clock
 ): Promise<SeasonScheduleSettings> {
   const previous = await seasonScheduleSettings(db, seasonId)
   const chosen = settings.fieldIds ?? previous.settings.fieldIds ?? []
@@ -158,23 +256,81 @@ export async function saveSeasonScheduleSettings(
       ? []
       : await db
           .selectFrom('venue_fields')
-          .select(['id', 'sizes', 'deleted_at'])
+          .select(['id', 'venue_id', 'sizes', 'deleted_at'])
           .where('id', 'in', chosen)
           .execute()
+  // A stored field deleted or changed since is dropped quietly, so other
+  // edits still save; only a field added in this request must be usable.
+  const stored = new Set(previous.settings.fieldIds ?? [])
+  const live = fields.filter(field => field.deleted_at == null)
   if (
-    fields.length !== chosen.length ||
-    fields.some(field => field.deleted_at != null)
+    chosen.some(id => !stored.has(id) && !live.some(field => field.id === id))
   )
     throw badRequest('Choose available fields for this season')
+  // A league's season chooses among the fields its setup lists: its own
+  // venues' and those added to the list, so the list can take one away.
+  const added = live.filter(field => !stored.has(field.id))
+  if (leagueId != null && added.length > 0) {
+    const setup = await db
+      .selectFrom('league_schedule_setups')
+      .select(['field_ids', 'added_field_ids'])
+      .where('league_id', '=', leagueId)
+      .executeTakeFirst()
+    const listed = new Set([
+      ...(setup?.field_ids ?? []),
+      ...(setup?.added_field_ids ?? [])
+    ])
+    const owned = await ownedVenueIds(db, leagueId, clock)
+    if (
+      added.some(
+        field => !listed.has(field.id) && !owned.includes(field.venue_id)
+      )
+    )
+      throw badRequest('Add the field to the league’s list first')
+  }
   const changedSize = previous.settings.fieldSize !== settings.fieldSize
   if (
     !changedSize &&
-    fields.some(field => !field.sizes.includes(settings.fieldSize))
+    live.some(
+      field =>
+        !stored.has(field.id) && !field.sizes.includes(settings.fieldSize)
+    )
   )
     throw badRequest('Choose fields matching the required size')
-  const fieldIds = fields
+  const fieldIds = live
     .filter(field => field.sizes.includes(settings.fieldSize))
     .map(field => field.id)
+  // Open windows are cut to the dates sent with them. Sent beside ended
+  // ones, as an older app sends one it adds to the windows it read, an open
+  // window starting after those dates would vanish, so it is refused.
+  if (
+    settings.windows.some(period => period.until != null) &&
+    settings.windows.some(
+      period => period.until == null && period.from > settings.endsOn
+    )
+  )
+    throw badRequest(
+      'Give each time window an end date within the season. Update the app to add windows after the last one.'
+    )
+  const windows = boundedSeasonWindows(
+    settings.windows,
+    settings.startsOn,
+    settings.endsOn
+  )
+  // The windows set the season's dates. An older app that moves only the
+  // dates would see its change undone, so that is refused.
+  const range = windowRange(windows)
+  if (
+    range != null &&
+    settings.windows.every(period => period.until != null) &&
+    (settings.startsOn !== range.startsOn ||
+      settings.endsOn !== range.endsOn) &&
+    isDeepStrictEqual(settings.windows, previous.settings.windows)
+  )
+    throw badRequest(
+      'The season’s time windows set its dates. Update the app to change them.'
+    )
+  const dates = range ?? settings
   const values = {
     field_ids: fieldIds,
     field_size: settings.fieldSize,
@@ -192,10 +348,11 @@ export async function saveSeasonScheduleSettings(
     ...(settings.preferGameOn === undefined
       ? {}
       : { prefer_game_on: settings.preferGameOn }),
-    starts_on: settings.startsOn,
-    ends_on: settings.endsOn,
+    // A season schedules only within its time windows, so they set its dates.
+    starts_on: dates.startsOn,
+    ends_on: dates.endsOn,
     blackouts: settings.blackouts,
-    windows: JSON.stringify(settings.windows),
+    windows: JSON.stringify(windows),
     updated_at: new Date()
   }
   await db
@@ -484,7 +641,12 @@ export async function scheduleSetup(
           exhibitionTeams: teams.filter(team => team.exhibition).length,
           teams,
           saved: found.saved,
-          settings: found.settings
+          settings: found.settings,
+          seasonDates: {
+            startsOn:
+              calendarDateText(season.starts_on) ?? `${season.year}-01-01`,
+            endsOn: calendarDateText(season.ends_on) ?? `${season.year}-12-31`
+          }
         }
       })
     ),
@@ -506,6 +668,20 @@ export async function saveScheduleSetup(
   choice: ScheduleSetupChoice,
   clock: Clock = realClock
 ): Promise<ScheduleSetup> {
+  // One transaction under the league's lock: the seasons lose a dropped
+  // field together with the setup row, and no other save lands in between.
+  return await atomic(db, async trx => {
+    await lockKeys(trx, [setupLock(leagueId, '')])
+    return await writeScheduleSetup(trx, leagueId, choice, clock)
+  })
+}
+
+async function writeScheduleSetup(
+  db: Db,
+  leagueId: string,
+  choice: ScheduleSetupChoice,
+  clock: Clock
+): Promise<ScheduleSetup> {
   if (choice.seasonIds != null && choice.seasonIds.length > 0) {
     const own = await db
       .selectFrom('seasons')
@@ -516,12 +692,28 @@ export async function saveScheduleSetup(
     if (own.length !== choice.seasonIds.length)
       throw badRequest('Choose seasons of this league')
   }
+  // The fields added from other venues. A client that names what it
+  // removes changes only those, so a list it read before another admin's
+  // change can't drop that admin's field; an older one sends the whole list.
+  const before = await db
+    .selectFrom('league_schedule_setups')
+    .select('added_field_ids')
+    .where('league_id', '=', leagueId)
+    .executeTakeFirst()
+  const removed = choice.removedFieldIds ?? []
+  const added =
+    choice.removedFieldIds != null
+      ? [
+          ...new Set([
+            ...(before?.added_field_ids ?? []),
+            ...(choice.addedFieldIds ?? [])
+          ])
+        ].filter(id => !removed.includes(id))
+      : choice.addedFieldIds
   // The chosen fields must exist. The added ones are remembered rows, not a
   // choice: their owners can delete them while the setup is open, and every
   // save resends the list, so a deleted or unknown one is dropped instead.
-  const listed = [
-    ...new Set([...(choice.fieldIds ?? []), ...(choice.addedFieldIds ?? [])])
-  ]
+  const listed = [...new Set([...(choice.fieldIds ?? []), ...(added ?? [])])]
   const live = new Set(
     listed.length === 0
       ? []
@@ -536,6 +728,38 @@ export async function saveScheduleSetup(
   )
   if (choice.fieldIds?.some(id => !live.has(id)) === true)
     throw badRequest('Choose fields that exist')
+  // A field named as taken off the list is no season's any more, so no
+  // other season keeps scheduling on a field the setup no longer shows. A
+  // field of the league's own venues stays listed, and stays chosen.
+  if (removed.length > 0) {
+    const owned = await ownedVenueIds(db, leagueId, clock)
+    const dropped = (
+      await db
+        .selectFrom('venue_fields')
+        .select(['id', 'venue_id'])
+        .where('id', 'in', removed)
+        .execute()
+    )
+      .filter(field => !owned.includes(field.venue_id))
+      .map(field => field.id)
+    if (dropped.length > 0)
+      await db
+        .updateTable('season_schedule_settings')
+        .set({
+          field_ids: sql<
+            string[]
+          >`array(select id from unnest(field_ids) as id where id <> all(${dropped}::text[]))`
+        })
+        .where(
+          'season_id',
+          'in',
+          db
+            .selectFrom('seasons')
+            .select('id')
+            .where('league_id', '=', leagueId)
+        )
+        .execute()
+  }
   const values = {
     ...(choice.seasonIds == null
       ? {}
@@ -543,12 +767,10 @@ export async function saveScheduleSetup(
     ...(choice.avoidHeadCoachConflicts == null
       ? {}
       : { avoid_head_coach_conflicts: choice.avoidHeadCoachConflicts }),
-    ...(choice.addedFieldIds == null
+    ...(added == null
       ? {}
       : {
-          added_field_ids: [...new Set(choice.addedFieldIds)].filter(id =>
-            live.has(id)
-          )
+          added_field_ids: [...new Set(added)].filter(id => live.has(id))
         }),
     updated_at: new Date()
   }

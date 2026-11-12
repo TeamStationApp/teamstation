@@ -11,6 +11,8 @@ import { gameCalendarDay } from '../gameTime'
 import { MINUTE_STEP } from '../seasonScheduling'
 import type { FieldSize } from '../venues'
 import { firstNonZero } from './score'
+import { seasonFields } from './seasonZones'
+import { finishSteps } from './steps'
 import type { EngineInput, EngineSeason } from './types'
 
 export const MINUTE = 60_000
@@ -156,15 +158,19 @@ export function seasonSlots(
   season: EngineSeason,
   clock: LocalClock
 ): SeasonSlots {
+  return finishSteps(seasonSlotsSteps(input, season, clock))
+}
+
+export function* seasonSlotsSteps(
+  input: EngineInput,
+  season: EngineSeason,
+  clock: LocalClock
+): Generator<void, SeasonSlots> {
   const { settings } = season
   const gameMs = settings.gameMinutes * MINUTE
   const stride = gameMs + settings.bufferMinutes * MINUTE
   const blackouts = new Set(settings.blackouts)
-  const fields = input.fields.filter(
-    field =>
-      (settings.fieldIds ?? []).includes(field.id) &&
-      field.sizes.includes(settings.fieldSize)
-  )
+  const fields = seasonFields(input.fields, settings)
 
   const slots: Slot[] = []
   const windows: SeasonWindow[] = []
@@ -173,12 +179,11 @@ export function seasonSlots(
     timeOfDay: [0, 0, 0],
     weekdays: [0, 0, 0, 0, 0, 0, 0]
   }
-  fields.forEach(field => {
+  for (const field of fields) {
     const scarcity = input.seasons.filter(
       other =>
         other.id !== season.id &&
-        (other.settings.fieldIds ?? []).includes(field.id) &&
-        field.sizes.includes(other.settings.fieldSize)
+        seasonFields([field], other.settings).length > 0
     ).length
     const { timezone } = field.availability
     for (
@@ -186,6 +191,7 @@ export function seasonSlots(
       date <= settings.endsOn;
       date = addDays(date, 1)
     ) {
+      yield
       if (blackouts.has(date)) continue
       const open = seasonWindows(settings.windows, timezone, date)
       if (open.length === 0) continue
@@ -206,7 +212,7 @@ export function seasonSlots(
           supply.weekdays[weekday]++
         }
         const first = alignUp(start)
-        for (let at = first; at + gameMs <= interval.end; at += STEP)
+        const addSlot = (at: number): void => {
           slots.push({
             ...clock.pointOn(date, at, timezone),
             index: 0,
@@ -218,9 +224,12 @@ export function seasonSlots(
             scarcity,
             onGrid: (at - first) % stride === 0
           })
+        }
+        for (let at = first; at + gameMs <= interval.end; at += STEP)
+          addSlot(at)
       }
     }
-  })
+  }
 
   const fieldOrder = new Map(fields.map((field, i) => [field.id, i]))
   slots.sort((a, b) =>

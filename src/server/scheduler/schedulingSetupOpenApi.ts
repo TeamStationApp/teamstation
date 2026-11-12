@@ -171,7 +171,7 @@ export function schedulingSetupPaths(
         summary: 'Choose the seasons and fields of the league’s next schedule',
         security: [{ bearer: [] }],
         description:
-          'For a league admin. Seasons must belong to the league; chosen fields must exist and not be deleted, at any venue, claimed or not. With addedFieldIds, the fields added from other venues are replaced, less any deleted or unknown one, which is dropped; they stay listed in the setup whether chosen or not. Left out, they are kept.',
+          'For a league admin. Seasons must belong to the league; chosen fields must exist and not be deleted, at any venue, claimed or not. With removedFieldIds, addedFieldIds adds to the fields added from other venues and removedFieldIds takes fields off that list and off every season of the league (a field of the league’s own venues stays chosen), so a list read before another admin’s change cannot undo it. With addedFieldIds alone, as older clients send it, the list is replaced. Deleted or unknown added fields are dropped; listed fields stay in the setup whether chosen or not. Left out, they are kept.',
         parameters: [pathId('leagueId')],
         requestBody: jsonBody({
           type: 'object',
@@ -183,7 +183,8 @@ export function schedulingSetupPaths(
                 anyOf: [
                   { required: ['seasonIds'] },
                   { required: ['fieldIds'] },
-                  { required: ['addedFieldIds'] }
+                  { required: ['addedFieldIds'] },
+                  { required: ['removedFieldIds'] }
                 ]
               }
             }
@@ -209,7 +210,14 @@ export function schedulingSetupPaths(
               maxItems: 100,
               items: { type: 'string' },
               description:
-                'Every field added from another venue, chosen or not, which the setup lists until it is removed from here'
+                'With removedFieldIds, fields to add to the list; without, every field added from another venue, chosen or not, which the setup lists until it is removed'
+            },
+            removedFieldIds: {
+              type: 'array',
+              maxItems: 100,
+              items: { type: 'string' },
+              description:
+                'Added fields to take off the list and off the league’s seasons. Given, addedFieldIds only adds.'
             }
           }
         }),

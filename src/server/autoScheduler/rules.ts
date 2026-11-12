@@ -39,6 +39,8 @@ export interface RuleContext {
       doubleheaders: Doubleheaders
       maxGamesOnWeekdays?: number
       maxGamesOnWeekend?: number
+      /** The zone of a retained game outside the run for a game of this size, worked out ahead. */
+      fallback?: { size: string; zone: string }
     }
   >
   /** Everything else holding the run's fields and teams. */
@@ -46,6 +48,9 @@ export interface RuleContext {
   /** Live season games for weekly caps while other rules use preview holdings. */
   weeklyOthers?: Holding[]
 }
+
+// A holding's local day by zone and start: checking many games reads the same holdings again.
+const holdingDays = new WeakMap<Holding, Map<string, string>>()
 
 type ManagerBooking = Pick<Holding, 'key' | 'start' | 'end' | 'teamIds'>
 
@@ -97,18 +102,31 @@ export function ruleProblem(
     return 'Choose one of this season’s selected fields.'
   const bufferMs = (season?.bufferMinutes ?? 0) * 60 * 1000
   // A retained game outside the run uses this season's selected-field zone.
-  const fallbackZone = seasonZones(
-    [...context.fields].map(([id, each]) => ({ id, ...each })),
-    { fieldIds: season?.fieldIds, fieldSize: game.size }
-  )[0]
-  const day = (holding: Holding): string =>
-    gameCalendarDay(
-      new Date(holding.start).toISOString(),
+  const fallbackZone =
+    (season?.fallback?.size === game.size ? season.fallback.zone : undefined) ??
+    seasonZones(
+      [...context.fields].map(([id, each]) => ({ id, ...each })),
+      { fieldIds: season?.fieldIds, fieldSize: game.size }
+    )[0]
+  const day = (holding: Holding): string => {
+    const zone =
       (holding.fieldId == null
         ? undefined
         : context.fields.get(holding.fieldId)?.availability.timezone) ??
-        fallbackZone
-    )
+      fallbackZone
+    let byZone = holdingDays.get(holding)
+    if (byZone == null) {
+      byZone = new Map()
+      holdingDays.set(holding, byZone)
+    }
+    const key = `${zone}|${holding.start}`
+    let found = byZone.get(key)
+    if (found == null) {
+      found = gameCalendarDay(new Date(holding.start).toISOString(), zone)
+      byZone.set(key, found)
+    }
+    return found
+  }
   const partOf = (holding: Holding): ReturnType<typeof gameWeekPart> =>
     gameWeekPart(Math.round(Date.parse(`${day(holding)}T00:00:00Z`) / 86400000))
   const portion = partOf(game)
