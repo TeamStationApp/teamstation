@@ -444,6 +444,37 @@ describe('useMultiCam', function () {
     expect(tiles.A.currentTime).closeTo(110.8, 1e-6)
   })
 
+  it('keeps a rewind, a seek and a drag inside the take', async function () {
+    const { mc, tiles } = await grid({ atMs: T0 + 5000 })
+    await act(async () => {
+      mc().skip(-10)
+      mc().skip(-10)
+    })
+    // At the first picture, not twenty seconds before it under a notice.
+    expect(mc().atWallMs).equals(T0)
+    expect(tiles.A.currentTime).equals(0)
+    expect(mc().tiles.A?.parked ?? null).equals(null)
+    expect(tiles.A.paused).equals(false)
+    // B starts a minute in: that gap is real and stays one.
+    expect(mc().tiles.B?.parked).equals('beforeStart')
+    await act(async () => {
+      mc().goTo(T0 - 30_000)
+    })
+    expect(mc().atWallMs).equals(T0)
+    await act(async () => {
+      mc().scrub(T0 - 90_000)
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 300))
+    })
+    expect(mc().atWallMs).equals(T0)
+    // A finished take ends at its last picture, B's at 660 s.
+    await act(async () => {
+      mc().goTo(T0 + 9_000_000)
+    })
+    expect(mc().atWallMs).equals(T0 + 660_000)
+  })
+
   it('holds the heard tile’s sound for a tap when its player was left playing silent, and no other’s', async function () {
     const { mc } = await grid()
     expect(mc().heardId).equals('A')
