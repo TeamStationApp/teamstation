@@ -241,6 +241,15 @@ function playAt(seconds: number): void {
   }
 }
 
+/** Every tile's player has opened its source, and been put on the moment. */
+async function opened(): Promise<void> {
+  await act(async () => {
+    for (const video of document.querySelectorAll('video'))
+      video.dispatchEvent(new window.Event('loadedmetadata'))
+    await settle(50)
+  })
+}
+
 /** Sets every tile's player playing, or not. */
 function playingIs(playing: boolean): void {
   for (const video of document.querySelectorAll('video'))
@@ -444,12 +453,15 @@ describe('the grid coming and going', function () {
       height: 720,
       gameId: 'g1',
       playable: true,
-      // The heard angle, b, 20 s in is 110 s on the wall by its own timeline.
+      // The heard angle, b, 20 s in is 110 s on the wall by its own timeline:
+      // the moment the grid is at.
+      atMs: OVERLAY_T0 + 110_000,
       endAtMs: OVERLAY_T0 + 115_000,
       onEndReached: () => {
         ends += 1
       }
     })
+    await opened()
     for (const video of document.querySelectorAll('video'))
       video.pause = () => {
         paused.push(video.src)
@@ -473,8 +485,10 @@ describe('the grid coming and going', function () {
       height: 720,
       gameId: 'g1',
       playable: true,
+      atMs: OVERLAY_T0 + 109_000,
       onGone: atWallMs => gone.push(atWallMs)
     })
+    await opened()
     playAt(20)
     playingIs(true)
     await unmount()
