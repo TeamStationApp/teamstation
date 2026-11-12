@@ -304,7 +304,20 @@ async function open(
   })
   await page.goto(`${APP}/games/${gameId}`)
   // The game page's Score pill, then its screen's Full game scoring.
-  await (await page.waitForSelector('[aria-label="Score"]'))!.click()
+  const score = await page
+    .waitForSelector('[aria-label="Score"]')
+    .catch(async (error: unknown) => {
+      // Where the page is and what it says, when it offers no Score.
+      console.log(
+        'no Score pill',
+        await page.evaluate(() => ({
+          url: location.href,
+          text: document.body.innerText.slice(0, 600)
+        }))
+      )
+      throw error
+    })
+  await score!.click()
   await page.waitForFunction(() => location.pathname.endsWith('/score-game'))
   await (await page.waitForSelector(
     '[aria-label="Full game scoring"]'
