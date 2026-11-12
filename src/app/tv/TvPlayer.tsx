@@ -42,6 +42,7 @@ import { useMotionPreference } from '../components/useMotionPreference'
 import type { Rect as TileRect } from '../player/multiCam/layout'
 import { angleLabels } from '../player/multiCam/takes'
 import type { NativeProgressData } from '../player/nativeProgress'
+import { playerTrace } from '../player/playerTrace'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
@@ -482,10 +483,13 @@ export function TvPlayer({
             updates.forEach((timeline, i) => {
               if (timeline === null || loaded[i].revision !== revisions[i])
                 return
-              clock.current.ports[i].timeline = timeline
+              // A moved mapping puts every playable camera on one moment.
+              clock.current.remap(i, timeline)
               if (!timeline.live && loaded[i].video.status === 'live')
                 refreshAngle.current?.(i, 'finished').catch(() => undefined)
             })
+            const moment = clock.current.wall
+            if (moment !== null) setWall(moment)
           }
         }
       }
@@ -520,6 +524,26 @@ export function TvPlayer({
       for (const [index, watch] of recovery.current) {
         const port = clock.current.ports[index]
         if (port == null) continue
+        // Opt-in evidence of where each camera is against the moment, so a
+        // device run can tell a stuck seek from a mapping or edge problem.
+        playerTrace('tv.port', {
+          index,
+          master: clock.current.master,
+          wall: clock.current.wall,
+          decodedWall: wallAt(port.timeline.anchors, port.position * 1000),
+          position: port.position,
+          target: port.target,
+          settling: port.settling,
+          pendingWall: port.pendingWall,
+          seekableStart: port.seekableStart,
+          seekableEnd: port.seekableEnd,
+          available: clock.current.available(index),
+          failed: port.failed,
+          ended: port.ended,
+          buffering: bufferingRef.current.includes(index),
+          seekPending: seekQueues.current[index]?.pending ?? false,
+          paused: current.current.paused
+        })
         if (seekQueues.current[index]?.timedOut()) {
           clock.current.fail(index)
           watch.error(Date.now())
@@ -1205,6 +1229,11 @@ export function TvPlayer({
                   }}
                   onSeek={event => {
                     if (anglesRef.current?.[index] !== angle) return
+                    playerTrace('tv.seek.landed', {
+                      index,
+                      requested: event.seekTime,
+                      actual: event.currentTime
+                    })
                     seekQueues.current[index]?.complete(event.seekTime)
                   }}
                   onProgress={(event: NativeProgressData) => {
