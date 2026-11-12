@@ -685,12 +685,19 @@ const onSide = (
  *    case and accents.
  * 3. One fit is the player. None refuses the sentence. Two or more ask which,
  *    about the first player said who fits more than one.
+ *
+ * A sentence of two kinds of change (roster, lineup, defense) is refused
+ * before any of this, as `rosterCommandScope` would refuse it.
  */
 export function resolveRosterCommands(
   state: GameState,
   said: readonly ChosenRosterCommand[],
   situation: RosterResolving
 ): RosterResolution {
+  // A sentence of two kinds of change is refused whoever it names: a name
+  // the recogniser misheard must not hide that it mixed them.
+  if (new Set(said.map(command => ROSTER_CATEGORY[command.type])).size > 1)
+    return { problem: ONE_CATEGORY_AT_A_TIME }
   const { live, battingSide: batting, fixedSide } = situation
   // A pinch hitter or runner is the side at bat's even before the game,
   // when he is refused: there is nobody to ask about.
