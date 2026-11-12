@@ -1,8 +1,10 @@
 /**
  * Runs legacy scripts one after another over the shared stack:
  *
- *   node -r sucrase/register e2e/core/legacySweep.ts <results file> [path…]
+ *   node -r sucrase/register e2e/core/legacySweep.ts [--stack <id>] <results file> [path…]
  *
+ * `--stack` names a stack `e2e stack attach` registered: the sweep then starts
+ * no server of its own and runs each script against that stack.
  * With no paths it runs every path in `e2e/legacy.json` `modules`. Each line
  * of the results file is status, exit, path and reason, tab separated.
  */
@@ -12,8 +14,10 @@ import { appendFileSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
+import { readStack, STACKS } from './attach'
 import { chatFixtureEnv } from './chatFixture'
-import { legacyCommand } from './legacyCommand'
+import { daemonNames } from './daemons'
+import { headerNames, legacyCommand } from './legacyCommand'
 import {
   BLOCKED,
   chatReset,
@@ -33,8 +37,16 @@ import {
   stackArtifacts,
   startLegacyStack
 } from './legacyStack'
+import { auditListeners, describeListeners } from './listeners'
+import { BlockedError } from './result'
 import { type LegacyRun, runLegacy } from './runLegacy'
-import { disabledFor } from './streaming'
+import { loadSettings } from './settings'
+import { disabledFor, type StreamingFixture, streamingKnown } from './streaming'
+import {
+  attachedLegacyStack,
+  requireStreamingHandle,
+  seedStreamingFixture
+} from './streamingStack'
 
 /**
  * The device variables for a run that needs `needs`, or undefined when this
@@ -158,7 +170,8 @@ const LONG: Record<string, number> = {
   'src/app/screens/eventInfo2.e2e.ts': 60 * 60 * 1000
 }
 
-const DAEMONS = ['e2eSuite', 'e2eSuite-ios', 'e2eSuite-android']
+const DAEMON = daemonNames()
+const DAEMONS = [DAEMON.web, DAEMON.ios, DAEMON.android]
 
 function maestroBin(): string {
   try {
@@ -230,9 +243,48 @@ function ensureDaemon(bin: string, name: string): void {
   if (daemonPid(bin, name) == null) restartDaemon(bin, name)
 }
 
+/** `--stack <id>` and the rest of the arguments, in order. */
+export function sweepArgs(argv: string[]): {
+  stackId: string | undefined
+  rest: string[]
+} {
+  const at = argv.indexOf('--stack')
+  if (at < 0) return { stackId: undefined, rest: argv }
+  const stackId = argv[at + 1]
+  if (stackId == null || stackId.startsWith('-')) {
+    throw new Error('--stack wants the id of an attached stack')
+  }
+  return { stackId, rest: [...argv.slice(0, at), ...argv.slice(at + 2)] }
+}
+
+/**
+ * Why a script cannot run against an attached stack, or undefined when it can.
+ * Its recipe, player games and chat seed serve from or reach this Mac's own
+ * stack, which an attached sweep does not start; the droplet sweep runs those.
+ */
+export function attachedBlocker(
+  file: string,
+  source: string
+): string | undefined {
+  const local =
+    RECIPES[file] != null
+      ? 'its recipe'
+      : needsPlayerFixture(source)
+        ? 'its player games'
+        : needsChatSeed(source)
+          ? 'its chat seed'
+          : undefined
+  return local == null
+    ? undefined
+    : `attached stack: ${local} needs the sweep's own stack; the droplet sweep runs it`
+}
+
 async function main(): Promise<void> {
-  const [results, ...given] = process.argv.slice(2)
-  if (results == null) throw new Error('usage: legacySweep <results> [path…]')
+  const { stackId, rest } = sweepArgs(process.argv.slice(2))
+  const [results, ...given] = rest
+  if (results == null) {
+    throw new Error('usage: legacySweep [--stack <id>] <results> [path…]')
+  }
   const cwd = process.cwd()
   const listed =
     given.length > 0
@@ -247,19 +299,41 @@ async function main(): Promise<void> {
   const files = continuingAfter(listed, file => tableRecipe(cwd, file))
   const defaultTimeout = Number(process.env.LEGACY_TIMEOUT_MS ?? 20 * 60 * 1000)
   const bin = maestroBin()
-  // The loopback harnesses serve `dist` and put their media on a port of
-  // their own, so this build's policy lets in any loopback port.
-  const built = spawnSync(process.execPath, ['src/build.mjs'], {
-    cwd,
-    encoding: 'utf8',
-    env: {
-      ...process.env,
-      TS_API_BASE_URL: '/api/v1',
-      TS_MEDIA_ORIGINS: STACK_MEDIA_ORIGINS
+  let stack: LegacyStack
+  let fixture: StreamingFixture | undefined
+  if (stackId == null) {
+    // The loopback harnesses serve `dist` and put their media on a port of
+    // their own, so this build's policy lets in any loopback port.
+    const built = spawnSync(process.execPath, ['src/build.mjs'], {
+      cwd,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        TS_API_BASE_URL: '/api/v1',
+        TS_MEDIA_ORIGINS: STACK_MEDIA_ORIGINS
+      }
+    })
+    if (built.status !== 0) throw new Error(`web build failed: ${built.stderr}`)
+    stack = await startLegacyStack(cwd, stackArtifacts())
+  } else {
+    const entry = readStack(STACKS, stackId)
+    if (entry.handle == null) {
+      throw new Error(
+        `stack "${stackId}" was not attached: e2e stack attach it`
+      )
     }
-  })
-  if (built.status !== 0) throw new Error(`web build failed: ${built.stderr}`)
-  const stack: LegacyStack = await startLegacyStack(cwd, stackArtifacts())
+    const handle = requireStreamingHandle(entry.handle)
+    const mailbox = loadSettings().mailbox
+    if (mailbox == null) throw new Error('local settings name no mailbox')
+    const artifacts = join(stackArtifacts(), 'attached', stackId)
+    fixture = await seedStreamingFixture(
+      cwd,
+      handle,
+      mailbox,
+      join(artifacts, 'fixture')
+    )
+    stack = attachedLegacyStack(handle, join(artifacts, 'mirror'))
+  }
   // Once, so the phones' daemons carry this sweep's environment.
   for (const name of DAEMONS.slice(1)) restartDaemon(bin, name)
   try {
@@ -272,7 +346,7 @@ async function main(): Promise<void> {
         continue
       }
       // A script may shut the shared web daemon down when it finishes.
-      restartDaemon(bin, 'e2eSuite')
+      restartDaemon(bin, DAEMON.web)
       for (const name of DAEMONS.slice(1)) ensureDaemon(bin, name)
       const timeoutMs = LONG[file] ?? defaultTimeout
       const started = Date.now()
@@ -299,6 +373,20 @@ async function main(): Promise<void> {
               status: 'blocked',
               exit: 2,
               reason: invocation.blocked
+            }
+          }
+          const attachedOff =
+            stackId == null
+              ? undefined
+              : invocation.fixture != null
+                ? "attached stack: its chat fixture needs the sweep's own stack; the droplet sweep runs it"
+                : attachedBlocker(path, readFileSync(join(cwd, path), 'utf8'))
+          if (attachedOff != null) {
+            return {
+              file: path,
+              status: 'blocked',
+              exit: 2,
+              reason: attachedOff
             }
           }
           await invocation.prepare?.()
@@ -354,6 +442,13 @@ async function main(): Promise<void> {
                 args: invocation.args,
                 env: {
                   TS_CHAT_API_LOG: stack.apiLog,
+                  ...(fixture == null
+                    ? {}
+                    : streamingKnown(
+                        path,
+                        headerNames(readFileSync(join(cwd, path), 'utf8')),
+                        fixture
+                      )),
                   ...shared,
                   ...made,
                   ...env
@@ -371,14 +466,19 @@ async function main(): Promise<void> {
         const continues = JSON.stringify(tableRecipe(cwd, file) ?? []).includes(
           '{legacy:'
         )
-        if (needsChatSeed(source) && !continues && BLOCKED[file] == null) {
+        if (
+          stackId == null &&
+          needsChatSeed(source) &&
+          !continues &&
+          BLOCKED[file] == null
+        ) {
           chatReset(cwd, legacyArtifacts(file))
           stack.reseed()
           // The database was dropped under the running API: its pools, feeds
           // and listeners start again on the new one.
           await stack.restartApi({ speech: stack.speech })
         }
-        const recipe = RECIPES[file]
+        const recipe = stackId == null ? RECIPES[file] : undefined
         const listed: Invocation[] =
           BLOCKED[file] != null
             ? [{ blocked: BLOCKED[file] }]
@@ -412,7 +512,7 @@ async function main(): Promise<void> {
             invocation.blocked == null &&
             deviceFor(invocation.needs, stack) != null
         )
-        if (runnable && needsPlayerFixture(source))
+        if (runnable && stackId == null && needsPlayerFixture(source))
           shared = await playerFixtureEnv(cwd)
         const runs: LegacyRun[] = []
         for (const invocation of invocations) {
@@ -443,7 +543,14 @@ async function main(): Promise<void> {
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
-        line = `error\t-\t${file}\t${message.replace(/\s+/g, ' ').slice(0, 400)}`
+        const what = error instanceof BlockedError ? 'blocked\t2' : 'error\t-'
+        line = `${what}\t${file}\t${message.replace(/\s+/g, ' ').slice(0, 400)}`
+      }
+      // Against an attached stack nothing this run starts may listen, apart
+      // from what the shared-Mac rule allows; the sweep's own stack listens by design.
+      const listening = stackId == null ? [] : auditListeners()
+      if (listening.length > 0) {
+        line = `failed\t1\t${file}\tlistens on this Mac: ${describeListeners(listening)}`
       }
       const seconds = Math.round((Date.now() - started) / 1000)
       appendFileSync(results, `${line}\t${seconds}s\n`)

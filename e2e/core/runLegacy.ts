@@ -14,6 +14,7 @@ import {
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
+import { daemonNames } from './daemons'
 import { concreteEnv, headerNames, legacyCommand } from './legacyCommand'
 import { STACK_API, STACK_ORIGIN } from './legacyStack'
 
@@ -155,9 +156,9 @@ function settingsKnown(settings: {
   maestroBin?: string
 }): Record<string, string> {
   const known: Record<string, string> = {
-    MAESTRO_D: 'e2eSuite',
-    MAESTRO_D_IOS: 'e2eSuite-ios',
-    MAESTRO_D_ANDROID: 'e2eSuite-android',
+    MAESTRO_D: daemonNames().web,
+    MAESTRO_D_IOS: daemonNames().ios,
+    MAESTRO_D_ANDROID: daemonNames().android,
     TS_GUARDIAN_STAGE: 'all'
   }
   if (settings.maestroClientRoot != null) {
@@ -345,7 +346,7 @@ export async function runLegacy(
     ...browserKnown(named),
     ...concrete.env,
     ...(options.env ?? {}),
-    MAESTRO_D: options.env?.MAESTRO_D ?? 'e2eSuite'
+    MAESTRO_D: options.env?.MAESTRO_D ?? daemonNames().web
   }
   // For the rigs, which ask Maestro D for `chrome` (refinementsMaestro).
   childEnv.TS_CHROME_PATH ??= testChrome()

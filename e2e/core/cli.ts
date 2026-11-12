@@ -1,6 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -13,7 +12,8 @@ import {
   refuseAttachedForFaults,
   removeStack,
   type StackEntry,
-  stackHandleFor
+  stackHandleFor,
+  STACKS
 } from './attach'
 import {
   addToCorpus,
@@ -55,8 +55,6 @@ import type { StackHandle } from './spec'
 import { startStack } from './stack'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
-
-const STACKS = join(tmpdir(), 'teamstation-e2e-stacks')
 
 function stackState(id: string): StackEntry {
   return readStack(STACKS, id)
