@@ -208,8 +208,11 @@ async function open(
     const saving =
       request.method() === 'POST' && url.pathname.endsWith('/events')
     if (saving && holdSaves) return
+    // Placeholders are made for this game only, as guests.
     const creatingPlayer =
-      request.method() === 'POST' && url.pathname.endsWith('/roster-players')
+      request.method() === 'POST' &&
+      (url.pathname.endsWith('/roster-players') ||
+        url.pathname.endsWith('/guest-players'))
     if (request.method() !== 'GET' && !saving && !creatingPlayer)
       unexpected.push(`${request.method()} ${url.pathname}`)
     if (uiAnimations && url.pathname.endsWith('/playback')) {
@@ -343,7 +346,14 @@ async function open(
         let nextStatus = 201
         let nextBody: unknown
         try {
-          const input = JSON.parse((await request.fetchPostData()) ?? '{}')
+          const {
+            side: _side,
+            teamId: _teamId,
+            ...input
+          } = JSON.parse((await request.fetchPostData()) ?? '{}') as Record<
+            string,
+            unknown
+          >
           const entry = rosterEntryFromBody(input)
           nextBody = entry
           ;(createdRoster[url.pathname.split('/')[4]] ??= []).push(entry)
@@ -533,7 +543,10 @@ async function addPlaceholders(page: Page, count: 1 | 16): Promise<void> {
     hidden: true
   })
   await new Promise(resolve => setTimeout(resolve, 400))
-  await page.keyboard.press('Escape')
+  // Making placeholders closes the player sheet; Escape is only for one
+  // still open, since on the roster it would close the editor.
+  if ((await page.$('[aria-label="First Name"]')) != null)
+    await page.keyboard.press('Escape')
   await page.waitForSelector('[aria-label="First Name"]', { hidden: true })
 }
 async function click(page: Page, label: string): Promise<void> {
@@ -2268,6 +2281,9 @@ describe('scoring browser', function () {
       // Players are made on the roster.
       await click(page, 'Roster')
       await click(page, 'Create Player')
+      // A new player's sheet opens with nothing focused: the scorer taps
+      // First Name, and Enter takes him through the rest.
+      await page.click('[aria-label="First Name"]')
       await page.waitForFunction(
         () =>
           document.activeElement!.getAttribute('aria-label') === 'First Name'
@@ -2489,10 +2505,6 @@ describe('scoring browser', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       await click(page, 'Create Player')
-      await page.waitForFunction(
-        () =>
-          document.activeElement!.getAttribute('aria-label') === 'First Name'
-      )
       await page.locator('[aria-label="First Name"]').fill('Mookie')
       await page.locator('[aria-label="Last Name"]').fill('Betts')
       await page.locator('[aria-label="Jersey Number"]').fill('07')
@@ -2527,8 +2539,13 @@ describe('scoring browser', function () {
       await click(page, 'Undo Set team roster')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      // Undo removes the game-roster entry; the team player remains persisted.
-      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).equals(null)
+      // Undo takes him out of the game's order; the team player remains
+      // persisted, on the bench.
+      await click(page, 'Lineup')
+      expect(await page.$('[aria-label="Reorder Mookie B"]')).equals(null)
+      expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).not.equals(
+        null
+      )
       await click(page, 'Cancel')
       expect(unexpected).deep.equals([])
     } finally {
@@ -2555,27 +2572,31 @@ describe('scoring browser', function () {
         { hidden: true }
       )
       await new Promise(resolve => setTimeout(resolve, 400))
+      // Players are made on the roster; the bench is on the lineup.
       const add = async (count: 1 | 16): Promise<void> => {
+        await click(page, 'Roster')
         await addPlaceholders(page, count)
+        await click(page, 'Lineup')
       }
       await add(1)
       await add(16)
-      expect(await page.$('[aria-label="Add Owls Q to Lineup"]')).not.equals(
+      expect(await page.$('[aria-label="Add OWLS Q to Lineup"]')).not.equals(
         null
       )
       expect(
         await page.$$('[data-roster-target="roster"] [data-roster-player]')
       ).length(17)
       await click(page, 'Home Team')
-      expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
+      expect(await page.$('[aria-label="Add OWLS A to Lineup"]')).equals(null)
       await add(1)
-      expect(await page.$('[aria-label="Add Hawks A to Lineup"]')).not.equals(
+      expect(await page.$('[aria-label="Add HAWKS A to Lineup"]')).not.equals(
         null
       )
       await click(page, 'Save Rosters')
       await click(page, 'Undo Set team roster')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
+      await click(page, 'Lineup')
       expect(
         await page.$$('[data-roster-target="roster"] [data-roster-player]')
       ).length(0)
@@ -2583,7 +2604,8 @@ describe('scoring browser', function () {
       await click(page, 'Cancel')
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
-      expect(await page.$('[aria-label="Add Owls A to Lineup"]')).equals(null)
+      await click(page, 'Lineup')
+      expect(await page.$('[aria-label="Add OWLS A to Lineup"]')).equals(null)
       await click(page, 'Cancel')
       expect(unexpected).deep.equals([])
     } finally {
