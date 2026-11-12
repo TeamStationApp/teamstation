@@ -27,6 +27,7 @@ import {
   WORLDS
 } from './cli'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
+import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
 const MAILBOX = 'testmailbox@example.test'
@@ -94,6 +95,7 @@ describe('the fixtures script', function () {
       parseFixtureArgs(['baseline', '--json', '--mailbox', MAILBOX])
     ).deep.equals({ world: 'baseline', mailbox: MAILBOX })
     expect(Object.keys(WORLDS)).includes('team-with-roster')
+    expect(Object.keys(WORLDS)).includes('streaming')
   })
 })
 
@@ -202,6 +204,37 @@ describe('fixture worlds', function () {
       .where('id', '=', a.ids.team)
       .executeTakeFirstOrThrow()
     expect(team.name).includes(a.nonce)
+  })
+
+  it('streaming gives the coach the home team, an empty game and one with two videos', async function () {
+    const world = await runStreaming({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const roles = await the()
+      .selectFrom('memberships')
+      .select(['user_id', 'role', 'is_player'])
+      .where('team_id', '=', world.ids.homeTeam)
+      .execute()
+    const of = (name: string): (typeof roles)[number] | undefined =>
+      roles.find(row => row.user_id === world.accounts[name].userId)
+    expect(of('coach')?.role).equals('admin')
+    expect(of('viewer')?.role).equals('member')
+    expect(of('player')?.is_player).equals(true)
+    const videos = await the()
+      .selectFrom('videos')
+      .select(['game_id', 'title'])
+      .where('game_id', 'in', [world.ids.game, world.ids.gameWithVideos])
+      .execute()
+    expect(videos.map(video => video.game_id)).deep.equals([
+      world.ids.gameWithVideos,
+      world.ids.gameWithVideos
+    ])
+    expect(videos.map(video => video.title).sort()).deep.equals([
+      'First Base',
+      'Home Plate'
+    ])
   })
 
   it('creates accounts with no role by default and distinct passwords', async function () {
