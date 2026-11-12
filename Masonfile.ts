@@ -174,6 +174,12 @@ export function setup(m: Setup): void {
   m.workflow(
     'build',
     {
+      // A push of master or develop starts this workflow. A request starts
+      // it on any branch the project allows.
+      triggers: [
+        { push: true, branches: ['master', 'develop'] },
+        { request: true }
+      ],
       params: {
         seat: {
           type: 'choice',

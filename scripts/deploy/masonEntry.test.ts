@@ -392,6 +392,10 @@ describe('TeamStation pipeline Masonfile', () => {
       'distributor'
     ])
     assert.deepEqual(workflows.build?.options, {
+      triggers: [
+        { push: true, branches: ['master', 'develop'] },
+        { request: true }
+      ],
       params: {
         seat: {
           type: 'choice',
@@ -1117,7 +1121,7 @@ describe('TeamStation pipeline Masonfile', () => {
 
 describe('request-only Apple TV workflow', () => {
   for (const branch of ['master', 'develop']) {
-    it(`only accepts requests on ${branch}`, () => {
+    it(`builds ${branch} on push and leaves the other workflows to a request`, () => {
       setup({
         branch,
         apiVersion() {},
@@ -1127,7 +1131,10 @@ describe('request-only Apple TV workflow', () => {
         },
         workflow(name, options, declare) {
           if (name === 'build') {
-            assert.equal(options.triggers, undefined)
+            assert.deepEqual(options.triggers, [
+              { push: true, branches: ['master', 'develop'] },
+              { request: true }
+            ])
             return
           }
           if (

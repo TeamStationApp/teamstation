@@ -141,8 +141,15 @@ declare module '@mason/types' {
     choices: string[]
     default?: string
   }
+  export interface PushTrigger {
+    push: true
+    branches?: string[]
+  }
+  export interface RequestTrigger {
+    request: true
+  }
   export interface WorkflowOptions {
-    triggers?: Array<{ request: true }>
+    triggers?: Array<PushTrigger | RequestTrigger>
     params?: Record<string, ChoiceParam>
     timeout?: string
   }
