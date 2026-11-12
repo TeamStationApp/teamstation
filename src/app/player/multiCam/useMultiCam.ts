@@ -978,6 +978,7 @@ export function useMultiCam(
    */
   const gameNow = (except: string): number | null => {
     const ids = [heardRef.current, ...chosenRef.current.map(video => video.id)]
+    const readings: Array<{ id: string; there: number }> = []
     for (const id of ids) {
       if (
         id == null ||
@@ -996,9 +997,10 @@ export function useMultiCam(
       )
         continue
       const there = wallAt(video, element.currentTime)
-      if (there != null) return there
+      if (there != null && !readings.some(one => one.id === id))
+        readings.push({ id, there })
     }
-    return null
+    return trusted(readings, atWallRef.current)[0]?.there ?? null
   }
   /** `gameNow`, for callbacks made once and kept. */
   const gameNowRef = useRef(gameNow)
@@ -1362,15 +1364,18 @@ export function useMultiCam(
     // heard, which is never moved, or failing that any tile still playing.
     // The watchdog last set it up to a second ago, and starting again from
     // there put every tile back by however far it had played since.
-    const running = chosen.filter(
-      video => elements.current.get(video.id)?.paused === false
+    // Only a picture that can be believed (`trusted`), as for `gameNow`.
+    const running = trusted(
+      chosen.flatMap(video => {
+        const element = elements.current.get(video.id)
+        if (element == null || element.paused) return []
+        const there = wallAt(video, element.currentTime)
+        return there == null ? [] : [{ id: video.id, there }]
+      }),
+      atWallRef.current
     )
-    const from = running.find(video => video.id === heardId) ?? running[0]
-    const fromElement = from == null ? null : elements.current.get(from.id)
-    const stoppedAt =
-      from == null || fromElement == null
-        ? null
-        : wallAt(from, fromElement.currentTime)
+    const stoppedAt = (running.find(one => one.id === heardId) ?? running[0])
+      ?.there
     if (stoppedAt != null) {
       atWallRef.current = stoppedAt
       setAtWallMs(stoppedAt)
@@ -2685,6 +2690,41 @@ export function useMultiCam(
           holdExpired(Date.now() - (tiles[id]?.stalledSince ?? 0)))),
     bufferFor
   }
+}
+
+/**
+ * How far a playing tile's picture may be from the grid's clock and still be
+ * read as where the game is. The clock trails a playing tile by a second,
+ * and by a few more while a stuck master is handed over.
+ */
+const MOMENT_SLACK_MS = 30_000
+
+/** How close two tiles' pictures must be to vouch for each other. */
+const AGREE_MS = 3000
+
+/**
+ * The playing tiles' pictures, in the order given, that can be believed as
+ * where the game is: near the clock, or with another tile showing the same
+ * moment, or any before there is a clock.
+ *
+ * A player handed its stream again after an outage opens playing at its own
+ * first frame. Taken as the game, it sent every tile back to where the
+ * recording began, or hours behind a live game, while the viewer had not
+ * touched a thing.
+ */
+function trusted<T extends { id: string; there: number }>(
+  readings: T[],
+  clock: number | null
+): T[] {
+  return readings.filter(
+    one =>
+      clock == null ||
+      Math.abs(one.there - clock) < MOMENT_SLACK_MS ||
+      readings.some(
+        other =>
+          other.id !== one.id && Math.abs(other.there - one.there) < AGREE_MS
+      )
+  )
 }
 
 /**

@@ -693,6 +693,33 @@ describe('useMultiCam', function () {
     expect(mc().ended).equals(true)
   })
 
+  it('never takes the moment from a tile that has reloaded at its own start', async function () {
+    this.timeout(10_000)
+    const { mc, tiles } = await grid({}, {}, tiles => {
+      fill(tiles.A, [100, 160])
+      fill(tiles.B, [40, 100])
+    })
+    await ticks(1)
+    const before = mc().atWallMs ?? 0
+    expect(before).closeTo(T0 + 120_000, 1500)
+    // The heard tile's player is handed its stream again after an outage:
+    // it opens playing, at its own first frame, holding little.
+    tiles.A.currentTime = 0
+    tiles.A.paused = false
+    fill(tiles.A, [0, 0.2])
+    // The grid stops for it, where the game is, not where it reopened.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 400))
+    })
+    expect(mc().atWallMs ?? 0).closeTo(before, 2000)
+    // And a step from there is a step from the game.
+    await act(async () => {
+      mc().skip(10)
+    })
+    expect(mc().atWallMs ?? 0).closeTo(before + 10_000, 2000)
+    expect(tiles.B.currentTime).closeTo(70, 2)
+  })
+
   it('sends a follower whose seek landed in a hole on to the footage after it', async function () {
     this.timeout(10_000)
     // B's place at this moment, 346.68 s, is in that hole.
