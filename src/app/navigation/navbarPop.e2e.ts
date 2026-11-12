@@ -22,6 +22,13 @@ const daemonName = process.env.TS_NAVBAR_DAEMON ?? 'navbarPop'
 async function main(): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
   const f = await groupFixture(resolve('dist'))
+  // The account harness also has a Hawks team; give it a distinct label so
+  // Home opens the team whose game and player this scenario creates.
+  await f.h.db
+    .updateTable('teams')
+    .set({ name: 'Demo Falcons' })
+    .where('id', '=', 'tem_account')
+    .execute()
   const daemon = await maestro(daemonName)
   const { m, page, browser } = await browserSession(
     daemon,
