@@ -227,7 +227,7 @@ async function main(): Promise<void> {
   }
 }
 
-if ((process.argv[1] ?? '').endsWith('/seedScoreboardGames.e2e.ts')) {
+if ((process.argv[1] ?? '').endsWith('/seedScoreboardGames.ts')) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : error)
     process.exit(1)
