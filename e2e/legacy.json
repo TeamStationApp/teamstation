@@ -200,7 +200,8 @@
     "src/app/screens/coachPlan.native.e2e.ts",
     "src/app/screens/playingTimeRules.e2e.ts",
     "src/app/stream/focus.e2e.ts",
-    "src/test/buttonIcons.e2e.ts"
+    "src/test/buttonIcons.e2e.ts",
+    "src/test/buttonIcons.gallery.e2e.ts"
   ],
   "helpers": [
     "src/test/stackTransitionsFixture.e2e.ts",
@@ -218,8 +219,7 @@
     "src/test/chat2FixtureControl.e2e.ts",
     "src/test/chat2FixtureProxyServe.e2e.ts",
     "src/test/chatBrowserLegacyActions.e2e.ts",
-    "src/test/longListsFixture.e2e.ts",
-    "src/test/buttonIcons.gallery.e2e.ts"
+    "src/test/longListsFixture.e2e.ts"
   ],
   "parked": [
     "appletv/e2e/auth.e2e.ts",
@@ -464,6 +464,7 @@
     "src/app/screens/coachPlan.native.e2e.ts": "scoring",
     "src/app/screens/playingTimeRules.e2e.ts": "platform",
     "src/app/stream/focus.e2e.ts": "streaming",
-    "src/test/buttonIcons.e2e.ts": "platform"
+    "src/test/buttonIcons.e2e.ts": "platform",
+    "src/test/buttonIcons.gallery.e2e.ts": "platform"
   }
 }

@@ -34,7 +34,7 @@ import { makeDatabase } from '../../server/db/database'
  *
  *   TS_SCOREBOARD_WEB_URL=http://127.0.0.1:8080 \
  *   TS_API_TEST_URL=http://127.0.0.1:9100/api/v1 \
- *   TS_E2E_DATABASE=AppDb_nativeScoreboard \
+ *   TS_E2E_DATABASE=teamstation_e2eStack \
  *   TS_E2E_SERVER_LOG=server.log \
  *     node_modules/.bin/mocha -r sucrase/register --extension ts \
  *     --timeout 120000 src/app/scoreboard/scoreboard.e2e.ts
@@ -62,7 +62,7 @@ const API = (
   process.env.TS_API_TEST_URL ?? 'http://127.0.0.1:9100/api/v1'
 ).replace(/\/+$/, '')
 const HOST = new URL(API).origin
-const DATABASE = process.env.TS_E2E_DATABASE ?? 'AppDb_nativeScoreboard'
+const DATABASE = process.env.TS_E2E_DATABASE ?? 'teamstation_e2eStack'
 const DATABASE_URL = DATABASE.includes('://')
   ? DATABASE
   : `postgres://localhost:5433/${DATABASE}`

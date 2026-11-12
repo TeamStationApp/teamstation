@@ -44,7 +44,7 @@ const HOST = process.env.TS_E2E_HOST ?? 'http://127.0.0.1:9100'
 const WEB = process.env.TS_E2E_WEB ?? 'http://127.0.0.1:8080'
 const DATABASE_URL =
   process.env.TS_E2E_DATABASE_URL ??
-  'postgres://localhost:5433/AppDb_nativeScoreboard'
+  'postgres://localhost:5433/teamstation_e2eStack'
 const SERVER_LOG = process.env.TS_E2E_SERVER_LOG ?? 'server.log'
 const STATE = process.env.TS_E2E_STATE ?? 'scoreboardE2E.json'
 const PREFIX =
