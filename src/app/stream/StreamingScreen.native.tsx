@@ -412,31 +412,61 @@ function StreamingOverlay(
       cameraHeld.current = false
     }
   }, [])
+  // Whether the engine opened. An open the camera or the microphone refused
+  // leaves it shut, with the refusal's guidance on screen; Record asks again
+  // rather than for a take the engine cannot start.
+  const [opened, setOpened] = useState(false)
+  /** True from the screen's first effect until it goes. */
+  const screenLive = useRef(false)
+  /** The open running now, which Record joins rather than starting another. */
+  const opening = useRef<Promise<boolean> | null>(null)
+  /** The last open, which the close on leaving waits for. */
+  const lastOpen = useRef<Promise<unknown>>(Promise.resolve())
+  const openWith = useRef({ angleName, audioEnabled })
+  openWith.current = { angleName, audioEnabled }
+  /** Opens the engine; true once it is open. A refusal says why. */
+  const open = useCallback(async (): Promise<boolean> => {
+    if (opening.current != null) return await opening.current
+    const attempt = closing
+      .then(async () => {
+        if (!screenLive.current) return false
+        const { angleName: name, audioEnabled: audio } = openWith.current
+        try {
+          await phone.open(name, { audioEnabled: audio })
+        } catch (error: unknown) {
+          analytics?.('recording_failed', { ec: 'internal' })
+          if (screenLive.current) setProblem(describeRefusal(error, name))
+          return false
+        }
+        if (!screenLive.current) return false
+        setOpened(true)
+        setProblem(undefined)
+        readScale()
+        return true
+      })
+      .finally(() => {
+        opening.current = null
+      })
+    opening.current = attempt
+    lastOpen.current = attempt
+    return await attempt
+  }, [phone, analytics, readScale])
   // The engine is open while the screen is up, and the phone held sideways.
   // Entry always opens a preview. Only the Record button starts or resumes a take.
   useEffect(() => {
-    let live = true
+    screenLive.current = true
     rotation.lockLandscape()
     cameraOrientation.landscape()
-    const opened = closing.then(async () => {
-      if (!live) return
-      await phone.open(session.angleName)
-      if (!live) return
-      readScale()
-    })
-    opened
-      .catch((error: unknown) => {
-        analytics?.('recording_failed', { ec: 'internal' })
-        if (live) setProblem(describeRefusal(error, session.angleName))
-      })
+    open()
+      .catch(() => {})
       .finally(() => {
-        if (live) setBusy(false)
+        if (screenLive.current) setBusy(false)
       })
     return () => {
-      live = false
-      // After the open, never before it: a screen gone before the engine
+      screenLive.current = false
+      // After the last open, never before it: a screen gone before the engine
       // finished opening must not leave the camera running behind it.
-      closing = opened
+      closing = lastOpen.current
         .catch(() => {})
         .then(async () => {
           await phone.close()
@@ -536,6 +566,23 @@ function StreamingOverlay(
     }
     if (cameraLost) return
     setBusy(true)
+    if (!opened) {
+      // Refused at entry: ask for the camera again, which keeps the guidance
+      // while it is still refused and records once it is allowed.
+      open()
+        .then(ok => {
+          if (ok) startRecording()
+          else setBusy(false)
+        })
+        .catch(() => {
+          setBusy(false)
+        })
+      return
+    }
+    startRecording()
+  }
+
+  const startRecording = (): void => {
     setProblem(undefined)
     analytics?.('recording_requested', {})
     phone
@@ -599,6 +646,14 @@ function StreamingOverlay(
   }
 
   const top = insets.top + EDGE_INSET
+  // A banner under the top row. The bounded box lays its text out at the
+  // box's width, so a long message wraps; a text placed and bounded itself
+  // measured one line and was cut off.
+  const bannerPlace = {
+    top: top + BUTTON_SIZE + ROW_SPACING,
+    left: insets.left + EDGE_INSET,
+    maxWidth: window.width / 2
+  }
   return (
     <View style={styles.screen}>
       <PhoneStreamPreview style={StyleSheet.absoluteFill} mirrored={front} />
@@ -694,35 +749,27 @@ function StreamingOverlay(
       ) : null}
 
       {streamingOnly && problem == null ? (
-        <Text
-          testID="streaming-only"
-          style={[
-            styles.notice,
-            {
-              top: top + BUTTON_SIZE + ROW_SPACING,
-              left: insets.left + EDGE_INSET,
-              maxWidth: window.width / 2
-            }
-          ]}
+        <View
+          testID="streaming-only-box"
+          pointerEvents="none"
+          style={[styles.banner, styles.notice, bannerPlace]}
         >
-          {lstrings.stream_streaming_only}
-        </Text>
+          <Text testID="streaming-only" style={styles.bannerText}>
+            {lstrings.stream_streaming_only}
+          </Text>
+        </View>
       ) : null}
 
       {problem != null ? (
-        <Text
-          testID="stream-problem"
-          style={[
-            styles.problem,
-            {
-              top: top + BUTTON_SIZE + ROW_SPACING,
-              left: insets.left + EDGE_INSET,
-              maxWidth: window.width / 2
-            }
-          ]}
+        <View
+          testID="stream-problem-box"
+          pointerEvents="none"
+          style={[styles.banner, styles.problem, bannerPlace]}
         >
-          {problem}
-        </Text>
+          <Text testID="stream-problem" style={styles.bannerText}>
+            {problem}
+          </Text>
+        </View>
       ) : null}
 
       <View
@@ -858,28 +905,19 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: ROW_SPACING
   },
-  problem: {
+  banner: {
     position: 'absolute',
-    color: WHITE,
-    fontSize: 15,
-    fontWeight: '600',
-    backgroundColor: ENDED_RED,
     borderRadius: 10,
-    overflow: 'hidden',
     paddingHorizontal: 12,
     paddingVertical: 8
   },
-  notice: {
-    position: 'absolute',
+  bannerText: {
     color: WHITE,
     fontSize: 15,
-    fontWeight: '600',
-    backgroundColor: 'rgba(0, 0, 0, 0.55)',
-    borderRadius: 10,
-    overflow: 'hidden',
-    paddingHorizontal: 12,
-    paddingVertical: 8
+    fontWeight: '600'
   },
+  problem: { backgroundColor: ENDED_RED },
+  notice: { backgroundColor: 'rgba(0, 0, 0, 0.55)' },
   right: {
     position: 'absolute',
     flexDirection: 'row',
