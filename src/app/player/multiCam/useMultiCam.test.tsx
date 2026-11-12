@@ -693,6 +693,30 @@ describe('useMultiCam', function () {
     expect(mc().ended).equals(true)
   })
 
+  it('says nothing of catching up over a recording standing on its last frame', async function () {
+    this.timeout(15000)
+    // A phone's player at the end of a recording a little longer than its
+    // row says: still "playing", stopped short of its last frame, drawing
+    // nothing more and never saying it has ended.
+    const { mc, tiles } = await grid({ atMs: T0 + 659_000 }, {}, tiles => {
+      tiles.B.duration = 600.3
+    })
+    tiles.B.currentTime = 600.14
+    tiles.B.paused = false
+    await ticks(4)
+    expect(mc().tiles.B?.stalledSince ?? null).equals(null)
+    expect(mc().tileWaiting('B')).equals(false)
+    expect(mc().ended).equals(true)
+    // A rewind brings it back, and a later stall is still reported.
+    await act(async () => {
+      mc().skip(-30)
+    })
+    expect(mc().ended).equals(false)
+    expect(tiles.B.currentTime).closeTo(570, 1.5)
+    await ticks(4)
+    expect(mc().tileWaiting('B')).equals(true)
+  })
+
   it('draws a strip on the bar for each angle, where it was recording', async function () {
     const { mc } = await grid()
     const take = mc().take
