@@ -5,7 +5,11 @@ import { join } from 'node:path'
 
 import express from 'express'
 
-import { browserSession, capture, maestro } from './refinementsMaestro.e2e'
+import {
+  browserSession,
+  capture,
+  maestro
+} from '../../e2e/rigs/refinementsMaestro'
 
 async function main(): Promise<void> {
   const directory = process.env.TS_ICON_ARTIFACTS
