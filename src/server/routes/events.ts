@@ -33,7 +33,6 @@ import {
   SCORING_FEATURE_HEADER,
   SCORING_FEATURES
 } from '../../common/scoring/teamRecord'
-import type { ScoringUpdate } from '../../common/scoring/updates'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -63,7 +62,6 @@ import {
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
 import { namedScoringAuthorship } from '../events/scoringAuthorship'
-import { namedScoringUpdates } from '../events/scoringUpdates'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
 import { swapOrReset } from '../games/resetSwap'
@@ -657,7 +655,6 @@ interface LivePostDigests {
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */
 interface StoredGameAnswer {
-  scoringUpdates?: ScoringUpdate[]
   scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
   plays: unknown[]
@@ -732,18 +729,12 @@ async function storedGameRead(
     { halves: lineups, gameId, listFullNamesFor: reader }
   )
   const teams = teamsOfRow(game)
-  const scoringUpdates = await namedScoringUpdates(
-    db,
-    game.scoring_mutation,
-    reader
-  )
   const scoringAuthorship = await namedScoringAuthorship(
     db,
     game.scoring_authorship,
     reader
   )
   const answer: StoredGameAnswer = {
-    ...(scoringUpdates.length === 0 ? {} : { scoringUpdates }),
     ...(scoringAuthorship == null ? {} : { scoringAuthorship }),
     plays: stored.map((row, index) => ({
       ...playJson(row),

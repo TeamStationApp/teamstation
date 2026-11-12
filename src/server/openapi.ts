@@ -892,25 +892,6 @@ const scoringMutationSchema = {
   }
 }
 
-/** Bounded server-authenticated stream; not an input to conflict arbitration. */
-const scoringUpdatesSchema = {
-  type: 'array',
-  maxItems: 100,
-  description:
-    'Recent accepted scoring changes in server acceptance order, including Undo. Initial reads establish a baseline; clients deduplicate by id and suppress their own userId. Older history may fall outside this bounded stream.',
-  items: {
-    type: 'object',
-    required: ['id', 'sequence', 'userId', 'name', 'lines'],
-    properties: {
-      id: { type: 'string' },
-      sequence: { type: 'integer' },
-      userId: { type: 'string' },
-      name: { type: 'string' },
-      lines: { type: 'array', maxItems: 100, items: { type: 'string' } }
-    }
-  }
-}
-
 /** Who authored each stored action and who removed which; no text. */
 const scoringAuthorshipSchema = {
   type: 'object',
@@ -956,7 +937,6 @@ const scoringAuthorshipSchema = {
 /** What every answer of a post says of the game it leaves. */
 const postedDigests = {
   scoringMutation: scoringMutationSchema,
-  scoringUpdates: scoringUpdatesSchema,
   scoringAuthorship: scoringAuthorshipSchema,
   superseded: {
     type: 'boolean',
@@ -5638,7 +5618,6 @@ export function openApiDocument(version: string): OpenApiDocument {
                       playsDigest: { type: 'string' },
                       namesDigest: { type: 'string' },
                       scoringMutation: scoringMutationSchema,
-                      scoringUpdates: scoringUpdatesSchema,
                       scoringAuthorship: scoringAuthorshipSchema,
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },

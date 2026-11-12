@@ -41,12 +41,6 @@ import {
 import type { StoredGame } from '../../common/scoring/session'
 import { pregameRecord } from '../../common/scoring/sideSwap'
 import { withoutNames } from '../../common/scoring/storedNames'
-import {
-  SCORING_UPDATE_LIMIT,
-  type ScoringUpdate,
-  scoringUpdateLines,
-  storedScoringUpdates
-} from '../../common/scoring/updates'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
@@ -88,7 +82,6 @@ import {
 } from './eventWrite'
 import { radarReadings, scheduleRadarRefresh } from './radarSpeeds'
 import { namedScoringAuthorship } from './scoringAuthorship'
-import { namedScoringUpdates } from './scoringUpdates'
 import {
   keepLineups,
   storedLineupGame,
@@ -116,7 +109,6 @@ export type PostAnswer = 'edits' | 'all'
 
 /** What every post's answer says of the game it leaves. */
 export interface PostedDigests {
-  scoringUpdates?: ScoringUpdate[]
   scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
   superseded?: boolean
@@ -451,9 +443,9 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         lineupsDigest: lineupsBefore,
         generation: game.play_generation,
         scoringMutation: priorMutation,
-        scoringUpdates: await namedScoringUpdates(
+        scoringAuthorship: await namedScoringAuthorship(
           trx,
-          game.scoring_mutation,
+          game.scoring_authorship,
           options.answer === 'edits' ? undefined : options.listFullNamesFor
         ),
         superseded: !equal
@@ -863,36 +855,6 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     const status = live
       ? statusAfterLivePost(game.status, stored, hasStarted)
       : statusAfterPost(game.status, posted, hasStarted)
-    const scoringUpdates = storedScoringUpdates(game.scoring_mutation)
-    if (
-      live &&
-      system === 'teamstation' &&
-      options.scoringUserId != null &&
-      acceptedMutation != null
-    ) {
-      const lines = scoringUpdateLines(
-        [
-          ...priorRows.map(row => row.gumbo as GumboPlay),
-          priorCurrent as CurrentPlay | null
-        ],
-        [
-          ...stored.map(row => row.gumbo as GumboPlay),
-          currentPlay as CurrentPlay | null
-        ]
-      )
-      if (lines.length > 0) {
-        scoringUpdates.push({
-          id: randomUUID(),
-          sequence: (scoringUpdates.at(-1)?.sequence ?? 0) + 1,
-          userId: options.scoringUserId,
-          lines
-        })
-        scoringUpdates.splice(
-          0,
-          Math.max(0, scoringUpdates.length - SCORING_UPDATE_LIMIT)
-        )
-      }
-    }
     // Who added each stored action, kept beside the records with every write.
     const recordsByAtBat = (
       plays: readonly unknown[]
@@ -937,7 +899,6 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
           : {
               scoring_mutation: {
                 ...acceptedMutation,
-                updates: scoringUpdates,
                 fingerprint:
                   mutation != null || authorsScoring
                     ? fingerprint
@@ -1043,15 +1004,6 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       ...(answeredAuthorship == null
         ? {}
         : { scoringAuthorship: answeredAuthorship }),
-      ...(scoringUpdates.length === 0
-        ? {}
-        : {
-            scoringUpdates: await namedScoringUpdates(
-              trx,
-              { updates: scoringUpdates },
-              options.answer === 'edits' ? undefined : options.listFullNamesFor
-            )
-          }),
       ...(acceptedMutation == null
         ? {}
         : { scoringMutation: acceptedMutation }),
