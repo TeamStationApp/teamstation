@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Platform, Pressable, Text, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -136,7 +136,7 @@ export function ChangeBatch({
           style={styles.requestsToggle}
         >
           <View style={requestsOpen && styles.open}>
-            <Icon
+            <ButtonIcon
               name="chevron_right"
               size={1}
               color={theme.secondaryTextColor}
@@ -187,7 +187,7 @@ export function ChangeBatch({
                 pressed && styles.pressed
               ]}
             >
-              <Icon
+              <ButtonIcon
                 name="fullscreen"
                 size={1}
                 color={theme.secondaryTextColor}

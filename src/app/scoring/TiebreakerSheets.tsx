@@ -1,6 +1,7 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import type { BaseProjection } from '../field/fieldTypes'
 import { defensiveRosterLabel, defensiveRosterName } from './currentSetup'
 import { RosterSelector } from './RosterSelector'
@@ -47,9 +48,11 @@ export function TiebreakerSetupSheet({
         style={row}
       >
         <Text style={{ ...text, flex: 1 }}>Place runner on base</Text>
-        <Text style={{ ...text, color: theme.scoringSurface.chevronActive }}>
-          ›
-        </Text>
+        <ButtonIcon name="chevron_right">
+          <Text style={{ ...text, color: theme.scoringSurface.chevronActive }}>
+            ›
+          </Text>
+        </ButtonIcon>
       </Pressable>
       <View style={row}>
         <View style={{ width: 192 }}>
