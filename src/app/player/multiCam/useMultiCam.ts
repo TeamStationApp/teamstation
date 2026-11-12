@@ -203,6 +203,13 @@ export const DRY_CHECK_MS = 250
  */
 export const LEFT_OUT_RETRY_MS = 30_000
 
+/**
+ * How long a tile may be nudged by speed before a gap that has not closed to
+ * `NUDGE_PROGRESS` of where it began is closed by a join instead.
+ */
+export const NUDGE_GIVE_UP_MS = 6000
+export const NUDGE_PROGRESS = 0.6
+
 /** How often a crawl draws the grid and holds its tiles to the clock. */
 export const CRAWL_REFRESH_MS = 100
 
@@ -580,6 +587,8 @@ export function useMultiCam(
     const element = elements.current.get(id)
     return element == null ? null : seekableEndOf(element)
   }
+  /** When each tile began to be nudged by speed, and how far out it was. */
+  const nudged = useRef(new Map<string, { at: number; errorSec: number }>())
   /** When the watchdog first saw each tile seeking, until it is not. */
   const seekingSince = useRef(new Map<string, number>())
   /** The hole each tile was last sent across (`acrossHole`), once each. */
@@ -1255,8 +1264,32 @@ export function useMultiCam(
           crawlRate.current === 0 &&
           target != null &&
           Math.abs(errorSec) <= NUDGE_MAX_SEC
+        const rate = nudging ? nudgeRate(errorSec) : 1
+        // A gap speed has not closed is closed the way a far one is. A
+        // phone's player that does not honour a small change of speed was
+        // nudged for good, half a second out of step with the other phone.
+        const since = rate === 1 ? null : nudged.current.get(video.id)
+        if (rate === 1) nudged.current.delete(video.id)
+        else if (since == null)
+          nudged.current.set(video.id, {
+            at: Date.now(),
+            errorSec: Math.abs(errorSec)
+          })
+        else if (
+          Date.now() - since.at >= NUDGE_GIVE_UP_MS &&
+          Math.abs(errorSec) > since.errorSec * NUDGE_PROGRESS
+        ) {
+          nudged.current.delete(video.id)
+          playerTrace('grid.nudge.unclosed', {
+            tile: chosen.indexOf(video),
+            fromSec: since.errorSec,
+            nowSec: errorSec
+          })
+          if (element.playbackRate !== 1) element.playbackRate = 1
+          joinAheadRef.current(video, element, JOIN_LEAD_SEC)
+          continue
+        }
         if (nudging) {
-          const rate = nudgeRate(errorSec)
           if (element.playbackRate !== rate) element.playbackRate = rate
         } else if (crawlRate.current === 0 && element.playbackRate !== 1) {
           element.playbackRate = 1
