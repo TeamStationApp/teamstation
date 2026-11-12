@@ -3,6 +3,7 @@ import { type Kysely, sql } from 'kysely'
 import type {
   EngineBooking,
   EngineInput,
+  EngineResult,
   FixedGame,
   PlannedGame
 } from '../../common/autoScheduler/types'
@@ -32,7 +33,7 @@ export interface Snapshot {
   preparation?: {
     keep?: PlannedGame[]
     earlier?: { id: string; edits: unknown }
-    result?: import('../../common/autoScheduler/types').EngineResult
+    result?: EngineResult
   }
 
   avoidHeadCoachConflicts?: boolean
