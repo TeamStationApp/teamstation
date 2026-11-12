@@ -333,6 +333,11 @@ async function main(): Promise<void> {
                   cwd,
                   speech: stack.speech,
                   restartApi: stack.restartApi,
+                  chatSeed: async artifacts => {
+                    chatReset(cwd, artifacts)
+                    stack.reseed()
+                    await stack.restartApi({ speech: stack.speech })
+                  },
                   run: async (path, invocation) =>
                     (await run(path, invocation)).exit
                 })
@@ -343,7 +348,7 @@ async function main(): Promise<void> {
             deviceFor(invocation.needs, stack) != null
         )
         if (runnable && needsPlayerFixture(source))
-          shared = playerFixtureEnv(cwd)
+          shared = await playerFixtureEnv(cwd)
         const runs: LegacyRun[] = []
         for (const invocation of invocations) {
           runs.push(await run(file, invocation))

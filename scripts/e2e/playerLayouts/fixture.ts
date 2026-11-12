@@ -355,12 +355,11 @@ async function record(
 /**
  * V's angles, publishing for `--live-seconds` (twenty minutes) from once they
  * are encoded. Every angle encodes at once, so the lead grows with them: four
- * twenty-minute encodes ran past the broadcaster's own lead and it gave up,
- * and so did two in a quarter of their length, on a Mac and on a server.
+ * twenty-minute encodes ran past the broadcaster's own lead and it gave up.
  */
 export function liveLead(seconds: number, angles: number): number {
   // Measured: four encodes at once take more than twice as long as two.
-  return Math.ceil(10 + (seconds / 2) * Math.max(1, angles / 2) ** 2)
+  return Math.ceil(10 + (seconds / 4) * Math.max(1, angles / 2) ** 2)
 }
 
 function publishLive(url: string, angles = 2): number {
