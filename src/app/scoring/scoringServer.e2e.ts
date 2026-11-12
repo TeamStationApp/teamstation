@@ -183,7 +183,8 @@ async function openAs(
     domain: '127.0.0.1',
     path: '/'
   })
-  await page.goto(`${APP}${path}`)
+  // A page holding its game's connection open may never fire load.
+  await page.goto(`${APP}${path}`, { waitUntil: 'domcontentloaded' })
   return page
 }
 async function click(page: Page, label: string): Promise<void> {
@@ -239,12 +240,17 @@ async function waitReady(page: Page): Promise<void> {
  * session after it paints, so a quiet network comes first: until then the
  * status line can read saved for a play not yet sent.
  */
+/**
+ * Every save has been answered: the screen shows no save status for half a
+ * second. Network idle is no measure, since a worker keeps a request open.
+ */
 async function waitSaved(page: Page): Promise<void> {
-  await page.waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
-  await page.waitForFunction(
-    () => document.querySelector('[aria-label="Save status"]') == null,
-    { timeout: 30000 }
-  )
+  const end = Date.now() + 30000
+  for (let quiet = 0; quiet < 5;) {
+    if (Date.now() > end) throw new Error('Saves outstanding after 30 s')
+    await new Promise(resolve => setTimeout(resolve, 100))
+    quiet = (await page.$('[aria-label="Save status"]')) == null ? quiet + 1 : 0
+  }
 }
 async function summary(page: Page): Promise<string> {
   return await page.evaluate(() => {
@@ -739,7 +745,9 @@ describe('scoring into the server', function () {
       page = await openAs(scorer, `/games/${gameId}`)
       await page.waitForSelector('[aria-label="Score"]')
       expect(await page.$('[aria-label="Continue Scoring"]')).equals(null)
-      await page.reload()
+      // The game page keeps a connection open, so its load event can wait
+      // for ever: the reload is done once the document is.
+      await page.reload({ waitUntil: 'domcontentloaded' })
       await openScoring(page)
       await page.waitForFunction(
         text => document.querySelector(`[aria-label*="${text}"]`) != null,
@@ -974,6 +982,8 @@ describe('scoring into the server', function () {
       await waitReady(page)
       await dropRunner(page, 2, 'Safe')
       await click(page, 'Wild Pitch')
+      // The ball just pitched was the wild pitch.
+      await click(page, 'Use previous pitch as wild pitch')
       await waitReady(page)
       await pitch(page, 'Called Strike')
       await pitch(page, 'Swing and Miss')
@@ -1046,9 +1056,9 @@ describe('scoring into the server', function () {
         await new Promise(resolve => setTimeout(resolve, 1000))
     }
     expect(status).equals('built')
-    const figures = (userId: number): string =>
+    const figures = (gumboId: number): string =>
       sql(
-        `select concat_ws(' ', pa, ab, h, doubles, r, rbi, sb, k, pitch_bf, pitch_outs, pitch_k, pitch_r, pitch_er) from game_player_stats where game_id='${gameId}' and user_id=${userId}`
+        `select concat_ws(' ', pa, ab, h, doubles, r, rbi, sb, k, pitch_bf, pitch_outs, pitch_k, pitch_r, pitch_er) from game_player_stats where game_id='${gameId}' and gumbo_id=${gumboId}`
       )
     // pa ab h 2b r rbi sb k | bf outs k r er
     expect(figures(b1)).equals('1 1 1 0 1 0 1 0 0 0 0 0 0')
@@ -1258,13 +1268,26 @@ describe('scoring into the server', function () {
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')
       pinchPlayer = await createPlayer('Mookie', 'Betts')
-      await click(page, `Add ${pinchPlayer.shortName} to Lineup`)
-      const order = await page.$$('[aria-label^="Reorder "]')
-      await page.focus(`[aria-label="Reorder ${pinchPlayer.shortName}"]`)
-      await page.keyboard.press('Enter')
-      for (let i = 1; i < order.length; i++)
-        await page.keyboard.press('ArrowUp')
-      await page.keyboard.press('Enter')
+      // After the first pitch a bench player dropped on a lineup row
+      // replaces the man there: held, then dropped on the batter due.
+      await click(page, 'Lineup')
+      const bench = (await (await page.waitForSelector(
+        `[aria-label="Add ${pinchPlayer.shortName} to Lineup"]`
+      ))!.boundingBox())!
+      const due = (await (await page.waitForSelector(
+        `[aria-label="Reorder ${dueBatter}"]`
+      ))!.boundingBox())!
+      await page.mouse.move(
+        bench.x + bench.width / 2,
+        bench.y + bench.height / 2
+      )
+      await page.mouse.down()
+      await new Promise(resolve => setTimeout(resolve, 700))
+      await page.mouse.move(due.x + due.width / 2, due.y + due.height / 2, {
+        steps: 20
+      })
+      await new Promise(resolve => setTimeout(resolve, 200))
+      await page.mouse.up()
       // In the browser, so no optional chaining: the test's compiler would
       // call a helper the page does not have.
       await page.waitForFunction(
@@ -1277,10 +1300,11 @@ describe('scoring into the server', function () {
         {},
         pinchPlayer.shortName
       )
-      await click(page, `Remove ${dueBatter}`)
       await click(page, 'Home Team')
-      await click(page, 'Defense')
+      // Players are made on the roster, and pitch from the defense.
+      await click(page, 'Roster')
       reliefPlayer = await createPlayer('Mariano', 'Rivera')
+      await click(page, 'Defense')
       // Held, then dragged onto the mound.
       const from = await page.waitForSelector(
         `[aria-label="${reliefPlayer.shortName}"]`
@@ -1353,11 +1377,12 @@ describe('scoring into the server', function () {
       battingOrder?: string
       replacedPlayer?: { id?: number; fullName: string }
     }
-    const play = JSON.parse(
-      sql(
-        `select gumbo from events where "gameId"='${gameId}' and "atBatIndex"=0`
-      )
-    ) as {
+    // As a reader is served it: kept without names, named from the
+    // accounts by their public labels.
+    const play = (await stored(scorer, gameId)).plays.find(
+      row =>
+        (row.gumbo as { about: { atBatIndex: number } }).about.atBatIndex === 0
+    )!.gumbo as {
       playEvents: Event[]
       matchup: Record<string, unknown>
       actionIndex: number[]
@@ -1377,13 +1402,13 @@ describe('scoring into the server', function () {
     ])
     expect(play.actionIndex).deep.equals([1, 2])
     const [pitching, pinch] = play.playEvents.slice(1, 3)
-    // A stored play names its players by the public label: the roster entry
-    // reads the scorer their full name, and that label beside it.
+    // A served play names its players by gumbo id and public label: the
+    // roster entry reads the scorer their full name, and that label beside it.
     const publicLabel = (entry: RosterEntry): string =>
       entry.compactName ?? entry.shortName
     expect(pitching).deep.include({
       isSubstitution: true,
-      player: { id: reliefPlayer.userId, fullName: publicLabel(reliefPlayer) },
+      player: { id: reliefPlayer.gumboId, fullName: publicLabel(reliefPlayer) },
       position: {
         code: '1',
         name: 'Pitcher',
@@ -1399,7 +1424,7 @@ describe('scoring into the server', function () {
     })
     expect(pinch).deep.include({
       isSubstitution: true,
-      player: { id: pinchPlayer.userId, fullName: publicLabel(pinchPlayer) },
+      player: { id: pinchPlayer.gumboId, fullName: publicLabel(pinchPlayer) },
       battingOrder: '101'
     })
     expect(pinch.position).deep.include({ code: '11', abbreviation: 'PH' })
@@ -1411,8 +1436,11 @@ describe('scoring into the server', function () {
     })
     // The reliever was created with a right arm, so the hand is known.
     expect(play.matchup).deep.include({
-      batter: { id: pinchPlayer.userId, fullName: publicLabel(pinchPlayer) },
-      pitcher: { id: reliefPlayer.userId, fullName: publicLabel(reliefPlayer) },
+      batter: { id: pinchPlayer.gumboId, fullName: publicLabel(pinchPlayer) },
+      pitcher: {
+        id: reliefPlayer.gumboId,
+        fullName: publicLabel(reliefPlayer)
+      },
       pitchHand: { code: 'R', description: 'Right' }
     })
     console.log(`      pitching: ${String(pitching.details.description)}`)
