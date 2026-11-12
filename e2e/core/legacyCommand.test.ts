@@ -137,14 +137,6 @@ const device = process.env[key]
     expect(headerNames(source)).includes('SCORING_ARTIFACT_DIR')
   })
 
-  it('records the native settings flow as blocked', function () {
-    const command = legacyCommand(
-      'async function main() {}',
-      'src/app/settingsCleanup3Native.e2e.ts'
-    )
-    expect(command.blocked).includes('TS_SETTINGS3_NATIVE_FLOW')
-  })
-
   it('takes the first command that names the file, without its optional parts', function () {
     const source = `
 /**

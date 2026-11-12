@@ -11,10 +11,10 @@ import {
   readFileSync,
   writeFileSync
 } from 'node:fs'
-import type { Server } from 'node:http'
+import { createServer, type Server } from 'node:http'
 import { createServer as createNetServer } from 'node:net'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { extname, join, normalize } from 'node:path'
 
 import {
   frontProxy,
@@ -311,6 +311,71 @@ async function freePort(): Promise<number> {
 }
 
 /**
+ * A scoring fixture script's runs: each Safari run starts the script's own
+ * fixture API on a port of its own, which takes the app's files from the
+ * stack's web server, and opens it there. A native run needs the app built
+ * and installed on the simulator, which the sweep does not do yet.
+ */
+function scoringFixture(file: string): Recipe {
+  return async context =>
+    await Promise.all(
+      (tableRecipe(context.cwd, file) ?? [{}]).map(async run => {
+        if (run.blocked != null) return run
+        const safari = (run.label ?? '').startsWith('safari')
+        if (!safari && run.needs !== 'ios-sim') return run
+        if (!safari)
+          return {
+            label: run.label,
+            blocked:
+              'needs the TeamStation app built and installed on the simulator, which the sweep does not do yet'
+          }
+        const port = await freePort()
+        return {
+          ...run,
+          env: {
+            ...run.env,
+            SCORING_ASSET_URL: `http://127.0.0.1:${STACK_WEB_PORT}`,
+            SCORING_FIXTURE_PORT: String(port),
+            SCORING_TEST_URL: `http://127.0.0.1:${port}`
+          }
+        }
+      })
+    )
+}
+
+/** A built fixture served on `port`: its files, and index.html for any other address. */
+async function serveDirectory(
+  directory: string,
+  port: number
+): Promise<Server> {
+  const types: Record<string, string> = {
+    '.html': 'text/html',
+    '.js': 'text/javascript',
+    '.map': 'application/json',
+    '.ttf': 'font/ttf',
+    '.otf': 'font/otf',
+    '.woff2': 'font/woff2'
+  }
+  const server = createServer((request, response) => {
+    const path = normalize(new URL(request.url ?? '/', 'http://x').pathname)
+    const file = join(directory, path)
+    const asked =
+      file.startsWith(directory) && extname(path) !== '' && existsSync(file)
+        ? file
+        : join(directory, 'index.html')
+    response.setHeader(
+      'Content-Type',
+      types[extname(asked)] ?? 'application/octet-stream'
+    )
+    response.end(readFileSync(asked))
+  })
+  await new Promise<void>(resolve => {
+    server.listen(port, '127.0.0.1', resolve)
+  })
+  return server
+}
+
+/**
  * The scenarios that use the announcer: its speaker is offered only by a
  * server with speech (`narration` in its health), as noAnnouncer checks.
  */
@@ -336,8 +401,6 @@ function seedReplay(cwd: string): void {
 
 const NO_PREVIEW =
   'the scoring fixture preview SCORING_TEST_URL names is not in the repository: nothing serves a scoring screen that opens with no sign-in'
-const NO_HOST =
-  'the offline native host this script launches is not in the repository: index.js registers only Root'
 
 /** Paths that need a seat or something the repository does not contain. */
 export const BLOCKED: Record<string, string> = {
@@ -351,16 +414,12 @@ export const BLOCKED: Record<string, string> = {
   'scripts/scoring-safari.mjs': NO_PREVIEW,
   'scripts/scoring-teams-bunts-safari.mjs': NO_PREVIEW,
   'scripts/scoring-ui-updates-safari.mjs': NO_PREVIEW,
-  'scripts/scoring-player-setup-native.mjs': NO_HOST,
-  'scripts/scoring-roster-hold-native.mjs': NO_HOST,
   'mobile/test/teamStationAppSignInLink.e2e.ts':
     'needs a seat: its TS_API_BASE_URL is a seat reached through a Mason build',
   'src/app/quietStreamNative.e2e.ts':
     'the bundle app.teamstation.app.quietqa it launches has no build recipe in the repository',
   'src/app/chat/chat2.e2e.ts':
     'CHAT2_FIXTURE_FILE needs CHAT_RECOVERY_OWNER_FILE, private server settings nothing in the repository writes',
-  'src/app/components/cardSpacing.e2e.ts':
-    'the synthetic preview it opens (cardSpacingPreview.tsx) is not an entry of any build in the repository',
   'src/app/uiFixes.e2e.ts':
     'needs a copy of production in the database (game gam_demo000000000001), which this task does not have',
   'src/app/passwordForm.e2e.ts':
@@ -369,8 +428,6 @@ export const BLOCKED: Record<string, string> = {
     'the benchmark app PASSWORD_BENCHMARK_APP names has no build recipe in the repository',
   'scripts/e2e/observability/run.ts':
     'checks what reaches a deployed log collector: OBSERVABILITY_LOG_URL is that https collector and OBSERVABILITY_SECRETS its credentials, neither of which a local stack has',
-  'src/app/settingsPillSweep.e2e.ts':
-    'compares against support/pill-sweep-before.json and before-fixture.json, captured once for an earlier task; nothing in the repository makes them',
   'scripts/e2e/playbackReliability/playbackReliability.e2e.ts':
     'needs a real source game with uploads and a 1Password test account on a deployed server'
 }
@@ -628,6 +685,85 @@ export const RECIPES: Record<string, Recipe> = {
         PLAYER_NAMES_API_LOG: '{stack:apiLog}'
       }
     }))
+  },
+  'src/app/scoring/scoringModals.e2e.ts': scoringFixture(
+    'src/app/scoring/scoringModals.e2e.ts'
+  ),
+  'src/app/scoring/scoringOverrides.e2e.ts': scoringFixture(
+    'src/app/scoring/scoringOverrides.e2e.ts'
+  ),
+  'src/app/scoring/scoringRosterEdit.e2e.ts': scoringFixture(
+    'src/app/scoring/scoringRosterEdit.e2e.ts'
+  ),
+  'src/app/scoring/scoringUiPolish.e2e.ts': scoringFixture(
+    'src/app/scoring/scoringUiPolish.e2e.ts'
+  ),
+  'src/app/scoring/lineupQr.e2e.ts': scoringFixture(
+    'src/app/scoring/lineupQr.e2e.ts'
+  ),
+  // Built into a directory of its own, then measured in the simulator's Safari.
+  'src/test/gameHeroActions.e2e.ts': async context => {
+    const fixture = mkdtempSync(join(tmpdir(), 'tsGameHero-'))
+    const built = spawnSync(
+      process.execPath,
+      ['scripts/build-game-hero-fixture.mjs'],
+      {
+        cwd: context.cwd,
+        encoding: 'utf8',
+        env: { ...process.env, TS_HERO_FIXTURE_DIR: fixture }
+      }
+    )
+    if (built.status !== 0)
+      return [{ blocked: `game hero fixture build failed: ${built.stderr}` }]
+    return (
+      tableRecipe(context.cwd, 'src/test/gameHeroActions.e2e.ts') ?? [{}]
+    ).map(run => ({
+      ...run,
+      env: { ...run.env, TS_HERO_FIXTURE_DIR: fixture }
+    }))
+  },
+  // The synthetic preview, built from the production components and served on
+  // a port of its own for the web run.
+  'src/app/components/cardSpacing.e2e.ts': async context => {
+    const fixture = mkdtempSync(join(tmpdir(), 'tsCardSpacing-'))
+    const built = spawnSync(
+      process.execPath,
+      [
+        'scripts/build-web-fixture.mjs',
+        'src/app/components/cardSpacingPreview.tsx',
+        fixture
+      ],
+      { cwd: context.cwd, encoding: 'utf8' }
+    )
+    if (built.status !== 0)
+      return [{ blocked: `card spacing fixture build failed: ${built.stderr}` }]
+    const port = await freePort()
+    let server: Server | undefined
+    return [
+      {
+        label: 'web',
+        needs: 'web',
+        env: {
+          CARD_SPACING_PLATFORM: 'web',
+          CARD_SPACING_DEVICE: 'card-spacing-web',
+          CARD_SPACING_URL: `http://127.0.0.1:${port}/`
+        },
+        prepare: async () => {
+          server = await serveDirectory(fixture, port)
+        },
+        done: async () => {
+          const running = server
+          server = undefined
+          if (running == null) return
+          running.closeAllConnections()
+          await new Promise<void>(resolve => {
+            running.close(() => {
+              resolve()
+            })
+          })
+        }
+      }
+    ]
   },
   // Its page talks to its own viewer node, not the stack's API: a front of
   // its own, on a port of its own, sends `/api/` there and the rest to the

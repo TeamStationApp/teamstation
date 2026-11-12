@@ -213,15 +213,6 @@ export function legacyCommand(
   file: string,
   settings: LegacySettings = {}
 ): LegacyCommand {
-  if (file === 'src/app/settingsCleanup3Native.e2e.ts') {
-    return {
-      argv: [],
-      env: {},
-      setup: [],
-      blocked:
-        'TS_SETTINGS3_NATIVE_FLOW: the repository has no flow JSON for this script'
-    }
-  }
   const lines = logicalLines(commentText(source))
   const setup: LegacySetup[] = []
   let chosen: { env: Record<string, string>; argv: string[] } | undefined
