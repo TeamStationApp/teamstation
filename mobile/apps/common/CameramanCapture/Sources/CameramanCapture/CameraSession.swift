@@ -25,6 +25,8 @@ public final class CameraSession: @unchecked Sendable {
     case horizon
     /// The interface supplies one landscape angle for both preview and encoded buffers.
     /// Capture waits until the first 0° or 180° arrives; portrait readings keep that last angle.
+    /// The angle is the back camera's; the front camera takes the opposite one
+    /// (`LandscapeRotation`).
     case preview
   }
 
@@ -81,7 +83,8 @@ public final class CameraSession: @unchecked Sendable {
   /// would swap 1920×1080 into portrait; those are ignored and this is used instead.
   private var lastLandscapeCaptureAngle: CGFloat = 180
   private let rotationSource: RotationSource
-  private var previewCaptureAngle: CGFloat?
+  /// The interface's landscape and the camera it applies to, for `.preview`.
+  private var interfaceRotation = LandscapeRotation()
   private var startRequested = false
   private var sessionObservers: [any NSObjectProtocol] = []
   /// The preview layers drawing this session, with the angle and mirroring each was asked for.
@@ -134,10 +137,10 @@ public final class CameraSession: @unchecked Sendable {
       if previews[key] == nil { previewOrder.append(key) }
       previews[key] = target
       if rotationSource == .preview {
-        if rotationAngle == 0 || rotationAngle == 180 { previewCaptureAngle = rotationAngle }
-        guard let angle = previewCaptureAngle else { return }
-        lastLandscapeCaptureAngle = angle
-        applyCaptureAngle(angle)
+        interfaceRotation.report(interfaceAngle: Double(rotationAngle))
+        guard let angle = interfaceRotation.captureAngle else { return }
+        lastLandscapeCaptureAngle = CGFloat(angle)
+        applyCaptureAngle(lastLandscapeCaptureAngle)
       }
       Self.withoutAnimation {
         if layer.session !== session { layer.session = session }
@@ -182,7 +185,7 @@ public final class CameraSession: @unchecked Sendable {
   }
 
   private func startIfReady() {
-    guard rotationSource != .preview || previewCaptureAngle != nil else { return }
+    guard rotationSource != .preview || interfaceRotation.captureAngle != nil else { return }
     guard !session.isRunning else { return }
     session.startRunning()
     state.isRunning = session.isRunning
@@ -363,8 +366,16 @@ public final class CameraSession: @unchecked Sendable {
     // Position is recorded before the new input's rotation is applied so a flip publishes the
     // matching camera and angle together.
     state.position = position
+    let previousCaptureAngle = lastLandscapeCaptureAngle
+    if rotationSource == .preview {
+      interfaceRotation.position = position
+      if let angle = interfaceRotation.captureAngle { lastLandscapeCaptureAngle = CGFloat(angle) }
+    }
     attachOutputs()
     session.commitConfiguration()
+    if rotationSource == .preview, lastLandscapeCaptureAngle != previousCaptureAngle {
+      onCaptureRotationChange?()
+    }
     if rotationSource == .horizon { attachRotationCoordinator(for: selected) }
 
     applyFormat(to: selected)
@@ -530,7 +541,9 @@ public final class CameraSession: @unchecked Sendable {
   /// for nothing.
   private func applyPreview(_ target: PreviewHold) {
     guard let connection = target.layer?.connection else { return }
-    let angle = rotationSource == .preview ? previewCaptureAngle : target.rotationAngle
+    let angle = rotationSource == .preview
+      ? interfaceRotation.captureAngle.map { CGFloat($0) }
+      : target.rotationAngle
     if let angle, connection.videoRotationAngle != angle,
        connection.isVideoRotationAngleSupported(angle) {
       connection.videoRotationAngle = angle
