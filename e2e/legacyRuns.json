@@ -2009,7 +2009,7 @@
         "--seconds",
         "60"
       ],
-      "needs": "web"
+      "needs": "hevc"
     }
   ],
   "scripts/e2e/playbackReliability/playbackReliability.e2e.ts": [
@@ -2229,6 +2229,20 @@
         "shown"
       ],
       "needs": "web"
+    }
+  ],
+  "src/app/player/scoreboardOverlay/overlay.e2e.ts": [
+    {
+      "label": "chrome",
+      "args": [],
+      "needs": "hevc"
+    }
+  ],
+  "src/app/player/scoreboardOverlay/overlayPhone.e2e.ts": [
+    {
+      "label": "chrome",
+      "args": [],
+      "needs": "hevc"
     }
   ],
   "src/app/player/liveOrigin.e2e.ts": [

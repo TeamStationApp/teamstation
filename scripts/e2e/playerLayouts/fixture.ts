@@ -355,12 +355,17 @@ async function record(
 /**
  * V's angles, publishing for `--live-seconds` (twenty minutes) from once they
  * are encoded. Every angle encodes at once, so the lead grows with them: four
- * twenty-minute encodes ran past the broadcaster's own lead and it gave up.
+ * twenty-minute encodes ran past the broadcaster's own lead and it gave up,
+ * and so did two in a quarter of their length, on a Mac and on a server.
  */
+export function liveLead(seconds: number, angles: number): number {
+  // Measured: four encodes at once take more than twice as long as two.
+  return Math.ceil(10 + (seconds / 2) * Math.max(1, angles / 2) ** 2)
+}
+
 function publishLive(url: string, angles = 2): number {
   const seconds = Number(values['live-seconds'])
-  // Measured: four encodes at once take more than twice as long as two.
-  const lead = Math.ceil(10 + (seconds / 4) * Math.max(1, angles / 2) ** 2)
+  const lead = liveLead(seconds, angles)
   return broadcast(
     url,
     ['--stamped', '--duration', String(seconds), '--lead', String(lead)],
@@ -375,8 +380,7 @@ function publishLive(url: string, angles = 2): number {
  * segment is written, playback answers with no address.
  */
 async function connected(videoIds: string[]): Promise<void> {
-  const seconds = Number(values['live-seconds'])
-  const lead = 10 + (seconds / 4) * Math.max(1, videoIds.length / 2) ** 2
+  const lead = liveLead(Number(values['live-seconds']), videoIds.length)
   const end = Date.now() + (lead + 300) * 1000
   for (const videoId of videoIds) {
     for (;;) {

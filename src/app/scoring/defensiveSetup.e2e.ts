@@ -16,6 +16,7 @@ import { asGameDetail, asRosterEntry } from '../../common/api'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
 import { ScoringSession, type StoredGame } from '../../common/scoring/session'
+import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -299,6 +300,36 @@ async function open(fixture: Fixture = {}): Promise<{
 }> {
   const unexpected: string[] = []
   const held: StoredGame = { plays: [], currentPlay: null }
+  // The players this page created, on its side's roster from then on, as
+  // the API keeps them.
+  const created: Record<
+    'away' | 'home',
+    Array<ReturnType<typeof rosterEntryFromBody>>
+  > = {
+    away: [],
+    home: []
+  }
+  const sideRoster = (
+    side: 'away' | 'home'
+  ): Array<{ gumboId: number | null; shortName: string }> => [
+    ...roster(
+      side,
+      side === 'home' ? (fixture.homeRoster ?? 10) : (fixture.awayRoster ?? 10),
+      fixture.collisionNames
+    ),
+    ...created[side]
+  ]
+  /** The game as the API reads it back: every player named from his account. */
+  const named = (): StoredGame => {
+    const names = new Map<number, string>()
+    for (const entry of [...sideRoster('away'), ...sideRoster('home')])
+      if (entry.gumboId != null) names.set(entry.gumboId, entry.shortName)
+    return {
+      ...held,
+      plays: held.plays.map(play => withNames(play, names)),
+      currentPlay: withNames(held.currentPlay, names)
+    }
+  }
   const fixtureGame = asGameDetail(game)
   const context = {
     gamePk: 'g1',
@@ -420,22 +451,17 @@ async function open(fixture: Fixture = {}): Promise<{
           for await (const chunk of request) bytes += String(chunk)
           save(JSON.parse(bytes === '' ? '{}' : bytes))
         }
+        const read = named()
         body = {
-          plays: held.plays.map(play => ({
+          plays: read.plays.map(play => ({
             id: `evt_${play.about.atBatIndex}`,
             gameId: 'g1',
             gumbo: play
           })),
-          currentPlay: held.currentPlay
+          currentPlay: read.currentPlay
         }
       } else if (u.pathname.endsWith('/roster'))
-        body = roster(
-          u.pathname.includes('/away/') ? 'away' : 'home',
-          u.pathname.includes('/home/')
-            ? (fixture.homeRoster ?? 10)
-            : (fixture.awayRoster ?? 10),
-          fixture.collisionNames
-        )
+        body = sideRoster(u.pathname.includes('/away/') ? 'away' : 'home')
       else if (u.pathname.endsWith('/default-lineup')) {
         const side = u.pathname.includes('/away/') ? 'away' : 'home'
         body =
@@ -465,11 +491,24 @@ async function open(fixture: Fixture = {}): Promise<{
         body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
       else if (
         request.method === 'POST' &&
-        u.pathname.endsWith('/roster-players')
+        (u.pathname.endsWith('/roster-players') ||
+          // Placeholders are made for this game only, as guests.
+          u.pathname.endsWith('/guest-players'))
       ) {
         let bytes = ''
         for await (const chunk of request) bytes += String(chunk)
-        body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        const {
+          side,
+          teamId: _teamId,
+          ...input
+        } = JSON.parse(bytes === '' ? '{}' : bytes) as Record<string, unknown>
+        const entry = rosterEntryFromBody(input)
+        created[
+          side === 'away' || u.pathname.includes('/teams/away/')
+            ? 'away'
+            : 'home'
+        ].push(entry)
+        body = entry
         response.statusCode = 201
       } else {
         unexpected.push(`${request.method} ${u.pathname}`)
@@ -541,10 +580,43 @@ async function click(page: Page, label: string): Promise<void> {
     label === 'Create Player' &&
     (await page.$('[aria-label="First Name"]')) == null
   await page.waitForSelector(selector)
-  const point = await page.evaluate(s => {
-    const nodes = document.querySelectorAll(s)
-    const box = nodes[nodes.length - 1].getBoundingClientRect()
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  // Where it comes to rest: a sheet slides up into place, and a tap at its
+  // first position lands below the screen.
+  const centre = async (): Promise<{ x: number; y: number }> =>
+    await page.evaluate(s => {
+      const nodes = document.querySelectorAll(s)
+      const box = nodes[nodes.length - 1].getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }, selector)
+  let point = await centre()
+  for (let tries = 0; tries < 30; tries++) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const next = await centre()
+    const settled = next.x === point.x && next.y === point.y
+    point = next
+    if (settled) break
+  }
+  // Then into view, as a scorer scrolls a short sheet to it; and of the
+  // copies a sheet kept mounted under another may hold, the one a tap there
+  // reaches.
+  point = await page.evaluate(s => {
+    const nodes = [...document.querySelectorAll(s)]
+    nodes[nodes.length - 1].scrollIntoView({
+      block: 'nearest',
+      behavior: 'instant'
+    })
+    const centre = (node: Element): { x: number; y: number } => {
+      const box = node.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    const reached = nodes.filter(node => {
+      const { x, y } = centre(node)
+      const hit = document.elementFromPoint(x, y)
+      return hit !== null && (hit === node || node.contains(hit))
+    })
+    return centre(
+      reached.length > 0 ? reached[reached.length - 1] : nodes[nodes.length - 1]
+    )
   }, selector)
   await page.mouse.click(point.x, point.y)
   if (opening) await page.waitForSelector('[aria-label="First Name"]')

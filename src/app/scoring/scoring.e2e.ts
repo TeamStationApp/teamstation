@@ -28,7 +28,7 @@ import {
 } from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, type RosterEntry } from '../../common/api'
 import { defaultScoreboardSettings } from '../../common/nodeSettings'
-import { withNames } from '../../common/scoring/storedNames'
+import { withNames, withoutNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -4593,8 +4593,11 @@ describe('scoring browser', function () {
             gumbo: { teamStation: { detail: { fieldingRoute: typeof route } } }
           }>
         }
+        // Read back named, as the API names every player from his account:
+        // in its stored form it is the route that was saved.
         expect(
-          loaded.plays.at(-1)!.gumbo.teamStation.detail.fieldingRoute
+          withoutNames(loaded.plays.at(-1)!.gumbo).teamStation.detail
+            .fieldingRoute
         ).deep.equals(route)
         await page.waitForSelector('[aria-label*="Batter Player 2"]', {
           timeout: 30000
