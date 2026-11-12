@@ -14,7 +14,7 @@ import {
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { STACK_API, STACK_ORIGIN } from './legacyStack'
+import { STACK_API, STACK_DATABASE, STACK_ORIGIN } from './legacyStack'
 
 export interface Invocation {
   label?: string
@@ -324,12 +324,142 @@ export function tableRecipe(
   return table[file]
 }
 
+/**
+ * Concurrent scoring in Chromium against the stack, a freshly seeded game for
+ * each run as its README asks. The fixture holds the fake accounts'
+ * passwords, so it is written to a private temporary file, never to the
+ * synced artifacts. Network recovery shapes two phones' links.
+ */
+const concurrentScoring: Recipe = async context => {
+  const runs: Array<{
+    label: string
+    args: string[]
+    env?: Record<string, string>
+  }> = [
+    ...['updates', 'follow', 'lineups', 'four-innings', 'stale-tail'].map(
+      scenario => ({ label: scenario, args: ['--scenario', scenario] })
+    ),
+    ...['0', '1'].flatMap(older =>
+      ['0', '1'].map(first => ({
+        label: `conflicts-older${older}-first${first}`,
+        args: ['--scenario', 'conflicts'],
+        env: {
+          TS_CONCURRENT_OLDER_AUTHOR: older,
+          TS_CONCURRENT_FIRST_AUTHOR: first
+        }
+      }))
+    )
+  ]
+  const fixtures = mkdtempSync(join(tmpdir(), 'concurrentScoring-'))
+  const invocations: Invocation[] = []
+  for (const run of runs) {
+    const fixture = join(fixtures, `${run.label}.json`)
+    const seeded = spawnSync(
+      process.execPath,
+      ['-r', 'sucrase/register', 'src/test/concurrentScoring/seed.ts'],
+      {
+        cwd: context.cwd,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          TS_CONCURRENT_DATABASE_NAME: STACK_DATABASE,
+          TS_CONCURRENT_FIXTURE: fixture
+        }
+      }
+    )
+    invocations.push(
+      seeded.status === 0
+        ? {
+            label: run.label,
+            needs: 'web',
+            args: [...run.args, '--surface', 'chromium'],
+            env: {
+              ...run.env,
+              TS_CONCURRENT_ORIGIN: STACK_ORIGIN,
+              TS_CONCURRENT_FIXTURE: fixture,
+              TS_CONCURRENT_ARTIFACTS: dir(`concurrentScoring.e2e/${run.label}`)
+            }
+          }
+        : {
+            label: run.label,
+            blocked: `the concurrent scoring seed failed: ${seeded.stderr.slice(-300)}`
+          }
+    )
+  }
+  invocations.push({
+    label: 'network-recovery',
+    blocked:
+      'shapes two phones through the bench network shaper (TS_NETWORK_SHAPING_URL, TS_CONCURRENT_IP_A/B)'
+  })
+  return invocations
+}
+
+/**
+ * The button icons on the web from their own fixture page, built here. The
+ * native surfaces need the fixture apps scripts/build-button-icons-native.mjs
+ * builds, installed on a leased device.
+ */
+const buttonIcons: Recipe = async context => {
+  const fixture = dir('buttonIcons.e2e/fixture')
+  const built = spawnSync(
+    process.execPath,
+    ['scripts/build-button-icons-fixture.mjs'],
+    {
+      cwd: context.cwd,
+      encoding: 'utf8',
+      env: { ...process.env, TS_ICON_FIXTURE_DIR: fixture }
+    }
+  )
+  const native =
+    'needs the native fixture app built and installed on a leased device'
+  return [
+    built.status === 0
+      ? {
+          label: 'web',
+          needs: 'web',
+          env: { TS_ICON_FIXTURE_DIR: fixture, TS_ICON_SURFACE: 'web' }
+        }
+      : {
+          label: 'web',
+          blocked: `the button icon fixture did not build: ${built.stderr.slice(-300)}`
+        },
+    { label: 'ios', blocked: native },
+    { label: 'android', blocked: native }
+  ]
+}
+
 export const RECIPES: Record<string, Recipe> = {
+  'src/app/scoring/concurrentScoring.e2e.ts': concurrentScoring,
+  'src/test/buttonIcons.e2e.ts': buttonIcons,
+  'src/test/buttonIcons.gallery.e2e.ts': async () => [
+    {
+      label: 'ios',
+      blocked:
+        'needs the native gallery fixture app built and installed on a leased device'
+    },
+    {
+      label: 'android',
+      blocked:
+        'needs the native gallery fixture app built and installed on a leased device'
+    }
+  ],
   'src/app/chat/chat.e2e.ts': async context => [
     ...(tableRecipe(context.cwd, 'src/app/chat/chat.e2e.ts') ?? [{}]).map(
       run => ({ ...run, env: { ...run.env, TS_CHAT_FIXTURES: chatMedia() } })
     )
   ],
+  // It reads the browser profiles chat.e2e signed in with: chat.e2e runs
+  // first when this sweep has not run it.
+  'src/app/chat/chatHistory.e2e.ts': async context => {
+    const file = 'src/app/chat/chat.e2e.ts'
+    const profiles = join(dir('chat.e2e'), 'profiles')
+    if (!existsSync(profiles))
+      for (const run of await RECIPES[file](context))
+        await context.run(file, run)
+    if (!existsSync(profiles))
+      return [{ blocked: 'chat.e2e left no browser profiles to read' }]
+    return tableRecipe(context.cwd, 'src/app/chat/chatHistory.e2e.ts') ?? [{}]
+  },
   'src/test/scoreboardServer.e2e.ts': async () => {
     const state = join(dir('scoreboardServer.e2e'), 'state.json')
     return ['seed', 'e1', 'e2', 'e3', 'e4', 'e5'].map(step => ({
@@ -391,6 +521,36 @@ export const RECIPES: Record<string, Recipe> = {
     'src/app/screens/teamPlayers.e2e.ts'
   ),
   'src/app/scoring/gameRosterLayout.e2e.ts': gameRosterLayout,
+  // The names fixture in the stack's database, kept out of the synced
+  // artifacts; the scorer signs in with the code the stack API logs.
+  'src/app/scoring/playerNames.e2e.ts': async context => {
+    const made = spawnSync(
+      process.execPath,
+      ['-r', 'sucrase/register', 'src/server/dev/namesFixture.ts'],
+      { cwd: context.cwd, encoding: 'utf8' }
+    )
+    if (made.status !== 0)
+      return [
+        { blocked: `the names fixture failed: ${made.stderr.slice(-300)}` }
+      ]
+    const fixture = join(
+      mkdtempSync(join(tmpdir(), 'playerNames-')),
+      'fixture.json'
+    )
+    writeFileSync(fixture, made.stdout, { mode: 0o600 })
+    return (
+      tableRecipe(context.cwd, 'src/app/scoring/playerNames.e2e.ts') ?? [
+        { needs: 'web' }
+      ]
+    ).map(run => ({
+      ...run,
+      env: {
+        ...run.env,
+        PLAYER_NAMES_FIXTURE: fixture,
+        PLAYER_NAMES_API_LOG: '{stack:apiLog}'
+      }
+    }))
+  },
   'src/app/replay/replay.e2e.ts': async context => {
     seedReplay(context.cwd)
     const runs: Invocation[] = []

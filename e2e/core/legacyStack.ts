@@ -24,7 +24,7 @@ import { stackServers } from './legacyServers'
 import { loadSettings, readSecret } from './settings'
 import { lanAddress } from './stack'
 
-export const STACK_DATABASE = 'AppDb_nativeScoreboard'
+export const STACK_DATABASE = 'teamstation_e2eStack'
 /** The stack's database and store, from TS_TEST_DATABASE_URL and TS_TEST_REDIS_URL. */
 export const STACK_SERVERS = stackServers(STACK_DATABASE)
 export const STACK_DATABASE_URL = STACK_SERVERS.databaseUrl
@@ -187,7 +187,7 @@ async function stopChild(child: ChildProcess | undefined): Promise<void> {
   })
 }
 
-/** A fresh `AppDb_nativeScoreboard`: fixtures with fixed ids refuse a second run. */
+/** A fresh `teamstation_e2eStack`: fixtures with fixed ids refuse a second run. */
 function freshDatabase(): void {
   const { clusterArgs, password } = STACK_SERVERS
   const env =
