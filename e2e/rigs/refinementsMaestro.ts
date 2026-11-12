@@ -61,7 +61,9 @@ export async function browserSession(
   const profile = join(artifacts, 'support', 'browser-profiles', device)
   await mkdir(profile, { recursive: true })
   const m = await daemon.attach({
-    device,
+    // A device name is the machine's, across daemons: another run of the same
+    // script elsewhere on it holds the bare name.
+    device: `${device}-${process.pid}`,
     platform: 'web',
     url: `about:blank#${device}`,
     appId: `about:blank#${device}`,

@@ -50,6 +50,42 @@ const BANNER =
   'Another user has edited the roster. Your pending changes may overwrite theirs. Hit Cancel to revert to their changes.'
 
 /** A new game, its rosters and the people who use it. */
+/** Each page's requests in flight, and when each was sent. */
+const inFlight = new WeakMap<Page, Map<HTTPRequest, number>>()
+
+/** Keeps the page's requests in flight, for `settled` to name. */
+function track(page: Page): void {
+  const open = new Map<HTTPRequest, number>()
+  inFlight.set(page, open)
+  page.on('request', request => {
+    open.set(request, Date.now())
+  })
+  for (const event of ['requestfinished', 'requestfailed'] as const)
+    page.on(event, request => {
+      open.delete(request)
+    })
+}
+
+/**
+ * Waits until the page has had no request in flight for half a second; when
+ * it never does, says which requests stayed open, so the run's log shows what
+ * held the page busy.
+ */
+async function settled(page: Page): Promise<void> {
+  try {
+    await page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+  } catch (error) {
+    const now = Date.now()
+    const busy = [...(inFlight.get(page) ?? [])].map(
+      ([request, at]) =>
+        `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
+    )
+    throw new Error(`The page never settled; still open: ${busy.join(', ')}`, {
+      cause: error
+    })
+  }
+}
+
 function lineupFixture(): LineupFixture {
   const out = execFileSync(
     'npm',
@@ -64,7 +100,9 @@ class Scorer {
   constructor(
     readonly session: BrowserSession,
     readonly page: Page
-  ) {}
+  ) {
+    track(page)
+  }
 
   async tap(label: string, role?: string): Promise<void> {
     const css =
@@ -383,7 +421,7 @@ describe('two scorekeepers on one game', function () {
     await a.scoreGame(fixture.gameId)
     await b.scoreGame(fixture.gameId)
     expect(await a.scoreboard()).includes('0 balls 0 strikes')
-    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    await settled(a.page)
     await b.tapEnabled('Ball')
     const tapped = Date.now()
     await a.waitScoreboard('1 balls 0 strikes', 3000)
@@ -411,7 +449,7 @@ describe('two scorekeepers on one game', function () {
   it('L4: shows lineup, roster and defense changes at once with every request held, then offline', async function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
-    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    await settled(a.page)
     // Every API request from here is held open: none is answered.
     const held: Array<{ url: string }> = []
     await a.page.setRequestInterception(true)
@@ -466,7 +504,7 @@ describe('two scorekeepers on one game', function () {
     }
     // Offline: the same, with nothing to reach.
     await a.scoreGame(fixture.gameId)
-    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    await settled(a.page)
     await a.page.setOfflineMode(true)
     try {
       const opened = await a.editorShownWithin(3000)
@@ -497,7 +535,7 @@ describe('two scorekeepers on one game', function () {
     const fixture = lineupFixture()
     await a.scoreGame(fixture.gameId)
     await b.scoreGame(fixture.gameId)
-    await a.page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
+    await settled(a.page)
     // A makes his change first, with no signal: it waits on his phone.
     await a.page.setOfflineMode(true)
     await a.openRosters()

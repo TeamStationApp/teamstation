@@ -9,7 +9,8 @@ import {
   frameText,
   freezeBrowserClock,
   press,
-  text
+  text,
+  textInList
 } from '../../e2e/rigs/creationBrowserActions'
 import { asParentActions } from '../common/groupLinks'
 import { makeId } from '../common/ids'
@@ -301,17 +302,24 @@ async function main(): Promise<void> {
         node => node.textContent === 'Teams'
       )
     )
+    // Exit ends the team's membership. Its scheduled games here still make
+    // it one of the season's committed participants, which the Teams list
+    // shows beside members (`seasonParticipants`, src/server/stats/seasonTeams.ts).
+    expect(
+      await f.h.db
+        .selectFrom('season_teams')
+        .select('active')
+        .where('season_id', '=', f.seasonB)
+        .where('team_id', '=', f.teamA)
+        .execute()
+    ).deep.equals([{ active: false }])
     await press(host, 'Teams', 'tab')
     await host.waitForFunction(
       () =>
         document.body.textContent != null &&
         !document.body.textContent.includes('Loading')
     )
-    await host.waitForFunction(
-      () =>
-        document.body.textContent != null &&
-        !document.body.textContent.includes('Demo Hawks')
-    )
+    await text(host, 'Demo Hawks')
     await press(host, 'Schedule', 'tab')
     await press(host, 'All', 'tab')
     await text(host, 'Demo Hawks')
@@ -325,7 +333,7 @@ async function main(): Promise<void> {
     await press(direct, 'Accept invitation')
     await text(direct, 'Accepted')
     lines.push(
-      'E19 PASS: competition entry/exit preserves every game and grants no private access to another host matchup or spectator roster; current season Teams removes the guest after exit while Schedule retains its games; a new raw guest invite remains available after exit'
+      'E19 PASS: competition entry/exit preserves every game and grants no private access to another host matchup or spectator roster; exit ends the season membership while Teams keeps the team as a committed participant and Schedule retains its games; a new raw guest invite remains available after exit'
     )
 
     const pending = await sendGame(stub, f.teamA)
@@ -468,9 +476,10 @@ async function main(): Promise<void> {
     await direct.goto(f.h.origin + `/teams/${f.teamA}?tab=schedule`, {
       waitUntil: 'domcontentloaded'
     })
-    await text(direct, 'Regular fixture')
-    await text(direct, 'Playoff fixture')
-    await text(direct, 'Outside classic')
+    // The schedule loads a page at a time; these are past its first page.
+    await textInList(direct, 'Regular fixture')
+    await textInList(direct, 'Playoff fixture')
+    await textInList(direct, 'Outside classic')
     await frameText(direct, 'Outside classic', 'end')
     await direct.screenshot({
       path: join(artifacts!, 'team-season-and-external-games.png')
@@ -501,14 +510,46 @@ async function main(): Promise<void> {
     })
     await press(direct, 'Accept invitation')
     await text(direct, 'Pending')
-    const replacementHost = await pageFor(102)
-    await replacementHost.goto(f.h.origin + `/notifications/${lostAuthority}`, {
+    // A current host administrator cannot revive the stale proposal by
+    // accepting it: hosting is authorized by whoever sends, so they send a
+    // new one (`hostingAuthorized`, src/server/schedule/gameApprovals.ts).
+    const stale = await f.h.request(
+      'POST',
+      `/game-requests/${lostAuthority}/accept`,
+      {},
+      102
+    )
+    expect(stale.status).equals(409)
+    expect(((await stale.json()) as { message: string }).message).equals(
+      'The hosting season authorization changed. A current host administrator must send a new proposal.'
+    )
+    const resent = await f.h.request(
+      'POST',
+      '/game-requests',
+      {
+        sender: { kind: 'season', id: f.seasonB },
+        game: {
+          homeTeamId: f.teamB,
+          awayTeamId: f.teamA,
+          seasonId: f.seasonB,
+          startAt: new Date(Date.UTC(2029, 6, ++sequence, 19)).toISOString(),
+          venue: 'Demo Corner Field',
+          outsideTournament: null,
+          status: 'scheduled'
+        },
+        idempotencyKey: `corner-game-${sequence}`
+      },
+      102
+    )
+    expect(resent.status, await resent.clone().text()).equals(201)
+    const resentId = ((await resent.json()) as { id: string }).id
+    await direct.goto(f.h.origin + `/notifications/${resentId}`, {
       waitUntil: 'domcontentloaded'
     })
-    await press(replacementHost, 'Accept invitation')
-    await text(replacementHost, 'Accepted')
+    await press(direct, 'Accept invitation')
+    await text(direct, 'Accepted')
     lines.push(
-      'E21 PASS: revoked season-only proposer loses pending details; team consent alone cannot publish; a current host administrator replaces the stale host/opponent consent before one publication'
+      'E21 PASS: revoked season-only proposer loses pending details; team consent alone cannot publish; a current host administrator cannot accept the stale proposal and sends a new one, which the team publishes'
     )
     await applyParents(
       f.h.db,
@@ -535,14 +576,21 @@ async function main(): Promise<void> {
         )
       ).status
     ).equals(200)
+    // A team's page opens on its videos, a season's on its upcoming games:
+    // the canceled game is under Schedule, and the season's All.
     await direct.goto(f.h.origin + `/groups/team/${f.teamA}`, {
       waitUntil: 'domcontentloaded'
     })
-    await text(direct, 'Canceled — Demo Hawks withdrew')
+    await press(direct, 'Schedule', 'tab')
+    await textInList(direct, 'Withdrawal — Demo Hawks withdrew')
+    await text(direct, 'Canceled')
     await host.goto(f.h.origin + `/groups/season/${f.seasonB}`, {
       waitUntil: 'domcontentloaded'
     })
-    await text(host, 'Canceled — Demo Hawks withdrew')
+    await press(host, 'Schedule', 'tab')
+    await press(host, 'All', 'tab')
+    await textInList(host, 'Withdrawal — Demo Hawks withdrew')
+    await text(host, 'Canceled')
     lines.push(
       'E17/E19 PASS: a direct-only team administrator withdraws after both competition exit and all inherited parent links are removed; the same canceled game remains on team and host schedules'
     )

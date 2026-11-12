@@ -273,6 +273,7 @@ async function main(): Promise<void> {
               reason: invocation.blocked
             }
           }
+          invocation.prepare?.()
           // `{legacy:<name>}` in a value is that script's artifact directory, for
           // a script that reads what an earlier one left (chat.e2e's profiles);
           // `{stack:apiLog}` is the stack API's log, for a sign-in code.

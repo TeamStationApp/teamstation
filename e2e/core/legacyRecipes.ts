@@ -24,6 +24,8 @@ export interface Invocation {
   env?: Record<string, string>
   /** Recorded blocked with this reason instead of being run. */
   blocked?: string
+  /** Done just before it runs: a fixture it must find as it was made. */
+  prepare?: () => void
 }
 
 export interface RecipeContext {
@@ -260,6 +262,19 @@ const REPLAY_ONCE = [
   'rewindAnnouncer',
   'scorers'
 ]
+
+/**
+ * The scenarios that use the announcer: its speaker is offered only by a
+ * server with speech (`narration` in its health), as noAnnouncer checks.
+ */
+const REPLAY_SPEECH = new Set([
+  'replay',
+  'announcer',
+  'liveAnnouncer',
+  'finalAnnouncer',
+  'rewindAnnouncer',
+  'scorers'
+])
 
 function seedReplay(cwd: string): void {
   const seeded = spawnSync(
@@ -561,8 +576,12 @@ export const RECIPES: Record<string, Recipe> = {
       }
     }))
   },
+  // Each scenario finds the seed's games as the seed made them: one that
+  // scores on the game in progress leaves its play there for the next.
   'src/app/replay/replay.e2e.ts': async context => {
-    seedReplay(context.cwd)
+    const prepare = (): void => {
+      seedReplay(context.cwd)
+    }
     const runs: Invocation[] = []
     // `before` was the proof on the build without these controls, which
     // expects them absent: on this build only `after` is a test.
@@ -570,13 +589,12 @@ export const RECIPES: Record<string, Recipe> = {
       runs.push({
         label: scenario,
         args: [],
-        env: { REPLAY_SCENARIO: scenario, REPLAY_PHASE: 'after' }
+        env: { REPLAY_SCENARIO: scenario, REPLAY_PHASE: 'after' },
+        prepare
       })
     for (const scenario of REPLAY_ONCE) {
-      const announcer =
-        scenario.endsWith('nnouncer') && scenario !== 'noAnnouncer'
       runs.push(
-        announcer && !context.speech
+        REPLAY_SPEECH.has(scenario) && !context.speech
           ? {
               label: scenario,
               blocked: 'no xAI speech key in the secrets file or the vault'
@@ -584,7 +602,8 @@ export const RECIPES: Record<string, Recipe> = {
           : {
               label: scenario,
               args: [],
-              env: { REPLAY_SCENARIO: scenario }
+              env: { REPLAY_SCENARIO: scenario },
+              prepare
             }
       )
     }
