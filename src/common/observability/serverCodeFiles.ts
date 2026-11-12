@@ -139,6 +139,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/events/playedTogether.js',
   'server/events/playerRsvps.js',
   'server/events/postPlays.js',
+  'server/events/scoringAuthorship.js',
   'server/events/scoringUpdates.js',
   'server/events/radarSpeeds.js',
   'server/events/requireVisibleGame.js',

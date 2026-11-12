@@ -14,6 +14,12 @@ import type {
   GumboPlay,
   PostEventsBody
 } from '../../common/gumboPlay'
+import type { ScoringAction } from '../../common/scoring/actions'
+import {
+  type ScoringAuthorship,
+  stampAuthorship,
+  storedAuthorship
+} from '../../common/scoring/authorship'
 import {
   FINAL_INDEX,
   recordOf,
@@ -81,6 +87,7 @@ import {
   upsertGameEvents
 } from './eventWrite'
 import { radarReadings, scheduleRadarRefresh } from './radarSpeeds'
+import { namedScoringAuthorship } from './scoringAuthorship'
 import { namedScoringUpdates } from './scoringUpdates'
 import {
   keepLineups,
@@ -110,6 +117,7 @@ export type PostAnswer = 'edits' | 'all'
 /** What every post's answer says of the game it leaves. */
 export interface PostedDigests {
   scoringUpdates?: ScoringUpdate[]
+  scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
   superseded?: boolean
   /**
@@ -304,6 +312,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         'lineups_digest',
         'play_generation',
         'scoring_mutation',
+        'scoring_authorship',
         // The rest of what a list shows of the game (`listFieldsChanged`).
         'linescore',
         'start_at',
@@ -884,9 +893,45 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         )
       }
     }
+    // Who added each stored action, kept beside the records with every write.
+    const recordsByAtBat = (
+      plays: readonly unknown[]
+    ): Map<number, ScoringAction[]> => {
+      const out = new Map<number, ScoringAction[]>()
+      for (const play of plays) {
+        const index = (play as Partial<GumboPlay> | null)?.about?.atBatIndex
+        const record = storedRecordOf(play)
+        if (typeof index === 'number' && record != null)
+          out.set(index, [...record.actions])
+      }
+      return out
+    }
+    const priorAuthorship = storedAuthorship(game.scoring_authorship)
+    // The at-bat in progress as readers see it, before the first pitch the
+    // stored pregame lineups, so their authors carry over like any other.
+    const scoringAuthorship = stampAuthorship(
+      priorAuthorship,
+      recordsByAtBat([
+        ...priorRows.map(row => row.gumbo),
+        atBatOf(game, priorRows.length > 0)
+      ]),
+      recordsByAtBat([
+        ...stored.map(row => row.gumbo),
+        live && body.currentPlay !== undefined
+          ? currentPlay
+          : atBatOf(game, stored.length > 0)
+      ]),
+      live && system === 'teamstation' ? options.scoringUserId : undefined,
+      randomUUID
+    )
+    const authorshipMoved =
+      JSON.stringify(scoringAuthorship) !== JSON.stringify(priorAuthorship)
     await trx
       .updateTable('games')
       .set({
+        ...(authorshipMoved
+          ? { scoring_authorship: { ...scoringAuthorship } }
+          : {}),
         ...(acceptedMutation == null
           ? {}
           : {
@@ -989,7 +1034,15 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     )
     const editsOf = (named: NamedPlays): PlayEdit[] =>
       playEditsOf(taggedStored, named, removed, sides)
+    const answeredAuthorship = await namedScoringAuthorship(
+      trx,
+      scoringAuthorship,
+      options.answer === 'edits' ? undefined : options.listFullNamesFor
+    )
     const digests: PostedDigests = {
+      ...(answeredAuthorship == null
+        ? {}
+        : { scoringAuthorship: answeredAuthorship }),
       ...(scoringUpdates.length === 0
         ? {}
         : {

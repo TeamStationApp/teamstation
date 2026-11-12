@@ -220,6 +220,17 @@ async function open(
 }
 
 describe('a scoring session', function () {
+  it('reads a store with no authorship as an unattributed confirmed history', async () => {
+    const { session: writer, store } = await open()
+    for (const action of [ball, strike]) writer.apply(action)
+    await writer.flush()
+    const { session } = await open(store)
+    expect(session.accepted!.actions).lengthOf(2)
+    expect(session.accepted!.authors).deep.equals([null, null])
+    expect(session.accepted!.removals).deep.equals([])
+    expect(session.accepted!.names).deep.equals({})
+    expect(session.accepted!.state).equals(session.state)
+  })
   it('orders later local inputs after an observed version despite downward clock calibration', async () => {
     let now = 2000
     const clock = new Clock()

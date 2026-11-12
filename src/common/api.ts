@@ -141,6 +141,7 @@ import {
   type Problem,
   type ScoringAction
 } from './scoring/actions'
+import { asScoringAuthorship } from './scoring/authorship'
 import type { BoardLine } from './scoring/boardLineTypes'
 import {
   asDefaultLineup,
@@ -1588,6 +1589,7 @@ export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
   scoringUpdates: asOptional(asScoringUpdates),
+  scoringAuthorship: asOptional(asScoringAuthorship),
   scoringMutation: asOptional(asNullable(asScoringMutation)),
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
@@ -1622,6 +1624,9 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.scoringUpdates == null
       ? {}
       : { scoringUpdates: stored.scoringUpdates }),
+    ...(stored.scoringAuthorship == null
+      ? {}
+      : { scoringAuthorship: stored.scoringAuthorship }),
     ...(stored.scoringMutation == null
       ? {}
       : { scoringMutation: stored.scoringMutation }),

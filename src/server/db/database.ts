@@ -348,6 +348,11 @@ export interface GamesTable {
   lineups_digest: string | null
   /** Accepted scoring identity and recent attributed updates. */
   scoring_mutation: Json | null
+  /**
+   * Server-owned: who scored each stored action, per at-bat, and the latest
+   * removal records. Outside the scoring fingerprint.
+   */
+  scoring_authorship: Json | null
   /** Which set of plays the game holds: one more after each reset. */
   play_generation: Generated<number>
   created_at: Timestamp

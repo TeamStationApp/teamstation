@@ -911,10 +911,53 @@ const scoringUpdatesSchema = {
   }
 }
 
+/** Who authored each stored action and who removed which; no text. */
+const scoringAuthorshipSchema = {
+  type: 'object',
+  description:
+    'Server-stamped authorship of the stored scoring actions. Clients word the scoring log themselves from the plays; this carries only who did what.',
+  required: ['plays', 'removals', 'names'],
+  properties: {
+    plays: {
+      type: 'object',
+      description:
+        "At-bat index to one author user id per action of that play's record, null where no scorer is credited.",
+      additionalProperties: {
+        type: 'array',
+        items: { type: ['string', 'null'] }
+      }
+    },
+    removals: {
+      type: 'array',
+      maxItems: 100,
+      description:
+        'The most recent removals of stored actions by a scorer, oldest first.',
+      items: {
+        type: 'object',
+        required: ['id', 'sequence', 'userId', 'atBatIndex', 'actions'],
+        properties: {
+          id: { type: 'string' },
+          sequence: { type: 'integer' },
+          userId: { type: 'string' },
+          atBatIndex: { type: 'integer' },
+          actions: { type: 'array', items: { type: 'object' } }
+        }
+      }
+    },
+    names: {
+      type: 'object',
+      description:
+        'Author user id to short display name; empty when the reader may not read it.',
+      additionalProperties: { type: 'string' }
+    }
+  }
+}
+
 /** What every answer of a post says of the game it leaves. */
 const postedDigests = {
   scoringMutation: scoringMutationSchema,
   scoringUpdates: scoringUpdatesSchema,
+  scoringAuthorship: scoringAuthorshipSchema,
   superseded: {
     type: 'boolean',
     description:
@@ -5596,6 +5639,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                       namesDigest: { type: 'string' },
                       scoringMutation: scoringMutationSchema,
                       scoringUpdates: scoringUpdatesSchema,
+                      scoringAuthorship: scoringAuthorshipSchema,
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },
                       swap: {

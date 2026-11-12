@@ -119,8 +119,18 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    const columns = async (): Promise<string[]> =>
+      (
+        await pool.query(
+          "select column_name from information_schema.columns where table_name = 'games' and column_name in ('scoring_mutation', 'scoring_authorship') order by column_name"
+        )
+      ).rows.map(row => row.column_name)
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '117scoringAuthorship'
+    ])
+    expect(await columns()).deep.equals(['scoring_mutation'])
     expect(await migrateDown(pool, migrations)).deep.equals([
       '116pitchingStrikes'
     ])
@@ -131,14 +141,12 @@ describe('migrations', function () {
       (await pool.query("select to_regclass('game_plans') as name")).rows[0]
         .name
     ).equals('game_plans')
-    expect(
-      (
-        await pool.query(
-          "select column_name from information_schema.columns where table_name = 'games' and column_name = 'scoring_mutation'"
-        )
-      ).rows
-    ).deep.equals([])
+    expect(await columns()).deep.equals([])
     await migrateUp(pool, migrations)
+    expect(await columns()).deep.equals([
+      'scoring_authorship',
+      'scoring_mutation'
+    ])
   })
 
   it('upgrades and rolls back the two coach migrations without touching master’s camera data', async () => {
@@ -625,7 +633,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '113playingTimeRules',
           '114gamePlans',
           '115scoringMutation',
-          '116pitchingStrikes'
+          '116pitchingStrikes',
+          '117scoringAuthorship'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
