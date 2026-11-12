@@ -13,10 +13,10 @@
 //    overrides again, then resets the game.
 // 3. A scoring session posts one pitch through POST /games/<G>/events.
 //
-// It then reads the game's rows from the server's own database (the
-// `databaseUrl` in serverConfig.json, which must be on this machine) and
-// checks they are publisher, publisher, publisher, speedHold, dashboard and
-// reset, in that order and nothing else. It prints each step, each board a
+// It then reads the rows it made in the game's log from the server's own
+// database (the `databaseUrl` in serverConfig.json, which must be on this
+// machine) and checks they are publisher, publisher, publisher, speedHold,
+// dashboard and reset, in that order and nothing else. It prints each step, each board a
 // viewer socket heard, and the rows, and exits 1 when the rows are wrong.
 import { createRequire } from 'node:module'
 import { parseArgs } from 'node:util'
@@ -155,7 +155,9 @@ async function main() {
   await pause(1100)
   dashboard.close(1000)
 
-  // 3. A scoring post.
+  // 3. A scoring post: one ball more than the board the reset drew, which
+  // holds any balls an earlier run scored.
+  const before = boards.at(-1)
   print('scorer posts a ball')
   await scorePitch()
   await pause(1500)
@@ -164,10 +166,11 @@ async function main() {
   attachInt8Parser()
   const pool = new pg.Pool({ connectionString: serverConfig.databaseUrl })
   try {
+    // This run's rows: an earlier run, or e3's, may have logged the game too.
     const { rows } = await pool.query(
       `select version, at, cause, actor_id, publisher, overrides
-        from scoreboard_log where game_id = $1 order by version`,
-      [gameId]
+        from scoreboard_log where game_id = $1 and at >= $2 order by version`,
+      [gameId, new Date(started)]
     )
     print(`${rows.length} rows in scoreboard_log`)
     for (const row of rows)
@@ -190,7 +193,7 @@ async function main() {
       rows[2].publisher.receivedAt === receivedAt[1] &&
       rows[3].actor_id === null &&
       rows[5].publisher === null &&
-      boards.at(-1)?.balls === 1
+      boards.at(-1)?.balls === (before?.balls ?? 0) + 1
     console.log(
       ok
         ? 'PASS: publisher, publisher (the repeat moved receivedAt), publisher (speed), speedHold, dashboard, reset; no row for the unchanged overrides or the scoring post'

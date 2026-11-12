@@ -36,7 +36,7 @@ import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
-import type { ScreenRect } from './catcherBounds'
+import { coversCatcher, type ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import {
   bandedSafe,
@@ -295,6 +295,10 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   }, [props.historyLabel, closeHistory])
   const [catcher, setCatcher] = useState<ScreenRect | null>(null)
   const [undoSize, setUndoSize] = useState({ width: 96, y: 0 })
+  // The Done pill's row, in the window, and the pill's own size.
+  const doneRow = useRef<React.ComponentRef<typeof View>>(null)
+  const [doneRowRect, setDoneRowRect] = useState<ScreenRect | null>(null)
+  const [doneSize, setDoneSize] = useState({ width: 0, height: 0 })
   const surface = useFieldSurface()
   const theme = useTheme()
   const band = props.topBand ?? 0
@@ -329,6 +333,21 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
     ? compactToastBounds(header, props.sound != null)
     : bounds
   const button = { ...controlFrame, flex: 1 } as const
+  // Centred over its column the pill can sit on the catcher, whom a relay
+  // throws to: then it moves to the start of the column.
+  const doneAside =
+    catcher != null &&
+    doneRowRect != null &&
+    doneSize.width > 0 &&
+    coversCatcher(
+      {
+        x: doneRowRect.x + (doneRowRect.width - doneSize.width) / 2,
+        y: doneRowRect.y,
+        width: doneSize.width,
+        height: doneSize.height
+      },
+      { ...catcher, y: catcher.y + band }
+    )
   return (
     <View
       style={[surface.root, { backgroundColor: theme.backgroundColor }]}
@@ -509,24 +528,41 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                   {(props.instruction != null || props.remainingMs != null) &&
                     (props.onFinish != null || props.remainingMs != null) && (
                       <View
+                        ref={doneRow}
                         pointerEvents="box-none"
+                        onLayout={() => {
+                          doneRow.current?.measureInWindow(
+                            (x, y, width, height) => {
+                              setDoneRowRect({ x, y, width, height })
+                            }
+                          )
+                        }}
                         style={{
                           position: 'absolute',
                           bottom: '100%',
                           left: 0,
                           right: 0,
-                          alignItems: 'center'
+                          alignItems: doneAside ? 'flex-start' : 'center'
                         }}
                       >
-                        <PillButton
-                          label={lstrings.common_done}
-                          accessibilityLabel={sprintf(
-                            lstrings.scoring_bottom_action,
-                            props.finishLabel ?? lstrings.scoring_finish_at_bat
-                          )}
-                          disabled={props.canFinish !== true}
-                          onPress={props.onFinish}
-                        />
+                        <View
+                          pointerEvents="box-none"
+                          onLayout={event => {
+                            const { width, height } = event.nativeEvent.layout
+                            setDoneSize({ width, height })
+                          }}
+                        >
+                          <PillButton
+                            label={lstrings.common_done}
+                            accessibilityLabel={sprintf(
+                              lstrings.scoring_bottom_action,
+                              props.finishLabel ??
+                                lstrings.scoring_finish_at_bat
+                            )}
+                            disabled={props.canFinish !== true}
+                            onPress={props.onFinish}
+                          />
+                        </View>
                       </View>
                     )}
                   <Pressable

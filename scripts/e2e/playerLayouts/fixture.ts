@@ -54,6 +54,7 @@ import {
   teamsOf
 } from '../../../src/app/scoring/developmentSession'
 import { TeamStationClient } from '../../../src/common/api'
+import { HttpError } from '../../../src/common/errors'
 import { NO_OVERRIDES } from '../../../src/common/scoreboard'
 import type { ScoringAction } from '../../../src/common/scoring/actions'
 import { ScoringSession } from '../../../src/common/scoring/session'
@@ -367,6 +368,31 @@ function publishLive(url: string, angles = 2): number {
   ).pid
 }
 
+/**
+ * Waits for V's angles to be publishing. Until its publisher connects, a live
+ * camera's video is a hidden placeholder, which playback answers as not
+ * found, and each publisher first encodes for its lead; until its first
+ * segment is written, playback answers with no address.
+ */
+async function connected(videoIds: string[]): Promise<void> {
+  const seconds = Number(values['live-seconds'])
+  const lead = 10 + (seconds / 4) * Math.max(1, videoIds.length / 2) ** 2
+  const end = Date.now() + (lead + 300) * 1000
+  for (const videoId of videoIds) {
+    for (;;) {
+      try {
+        if ((await client.playback(videoId)).url != null) break
+      } catch (error: unknown) {
+        if (!(error instanceof HttpError) || error.code !== 'notFound')
+          throw error
+      }
+      if (Date.now() > end) throw new Error(`${videoId} never began publishing`)
+      await pause(2000)
+    }
+  }
+  say('the live angles are publishing', videoIds)
+}
+
 async function startLive(): Promise<void> {
   if (!existsSync(OUT)) throw new Error(`no fixture at ${OUT}`)
   const fixture = JSON.parse(readFileSync(OUT, 'utf8')) as Fixture
@@ -374,6 +400,9 @@ async function startLive(): Promise<void> {
     fixture.live.length > 0
       ? fixture.live.map(one => ({ ...one, pid: publishLive(one.url) }))
       : await freshLive(fixture)
+  if (token === '') token = await signInTestAccount(API, fixture.admin)
+  client = new TeamStationClient({ baseUrl: API, token })
+  await connected(live.map(one => one.videoId))
   const games = {
     ...fixture.games,
     V: { ...fixture.games.V, videos: live.map(one => one.videoId) }
@@ -541,6 +570,8 @@ async function main(): Promise<void> {
         url: one.url
       })
     }
+
+    await connected(live.map(one => one.videoId))
 
     const fixture: Fixture = {
       api: API,
