@@ -389,166 +389,176 @@ async function main(): Promise<void> {
         })
         .where('id', '=', 'gam_settings3_final')
         .execute()
-      await open('/games/gam_settings3_final?tab=watch', 'Highlights')
-      await s.page.waitForSelector('video')
-      await s.page
-        .waitForFunction(
-          () => {
-            const v = document.querySelector('video')
-            return v !== null && v.readyState >= 2
-          },
-          { timeout: 15000 }
-        )
-        .catch(async (error: unknown) => {
-          console.log(
-            'Video readiness',
-            await s.page.$eval('video', v => ({
-              ready: v.readyState,
-              error: v.error == null ? undefined : v.error.message,
-              duration: v.duration
-            }))
+      // The watch tab's playback: recordings are HEVC, and a browser that
+      // cannot decode it shows no player (playable.ts). TS_UI_SCOPE=ui leaves
+      // it out where there is none, as on the sweep's droplets; the playback
+      // scope runs it on its own where there is.
+      if (process.env.TS_UI_SCOPE === 'ui')
+        console.log('UI tweaks playback left out: TS_UI_SCOPE=ui')
+      else {
+        await open('/games/gam_settings3_final?tab=watch', 'Highlights')
+        await s.page.waitForSelector('video')
+        await s.page
+          .waitForFunction(
+            () => {
+              const v = document.querySelector('video')
+              return v !== null && v.readyState >= 2
+            },
+            { timeout: 15000 }
           )
-          throw error
+          .catch(async (error: unknown) => {
+            console.log(
+              'Video readiness',
+              await s.page.$eval('video', v => ({
+                ready: v.readyState,
+                error: v.error == null ? undefined : v.error.message,
+                duration: v.duration
+              }))
+            )
+            throw error
+          })
+        const recorder = await s.page.screencast({
+          path: join(out, 'member-playback.mp4') as `${string}.mp4`,
+          format: 'mp4'
         })
-      const recorder = await s.page.screencast({
-        path: join(out, 'member-playback.mp4') as `${string}.mp4`,
-        format: 'mp4'
-      })
-      try {
-        if (await s.page.$eval('video', video => video.paused))
-          await s.m.tapOn({ css: '[data-testid="gameVideoZones"]' })
-        await s.page.waitForFunction(
-          () => {
-            const v = document.querySelector('video')
-            return v !== null && v.currentTime > 2 && !v.paused
-          },
-          { timeout: 30000 }
-        )
-        console.log('Member playback advancing')
-        for (const { paused, browserBack } of [
-          { paused: false, browserBack: false },
-          { paused: true, browserBack: false },
-          { paused: false, browserBack: true },
-          { paused: true, browserBack: true }
-        ]) {
-          if ((await s.page.$eval('video', video => video.paused)) !== paused)
+        try {
+          if (await s.page.$eval('video', video => video.paused))
             await s.m.tapOn({ css: '[data-testid="gameVideoZones"]' })
           await s.page.waitForFunction(
-            expected => {
-              const video = document.querySelector('video')
-              if (video == null) return false
-              return video.paused === expected
+            () => {
+              const v = document.querySelector('video')
+              return v !== null && v.currentTime > 2 && !v.paused
             },
-            {},
-            paused
+            { timeout: 30000 }
           )
-          const time = await s.page.$eval('video', video => video.currentTime)
+          console.log('Member playback advancing')
+          for (const { paused, browserBack } of [
+            { paused: false, browserBack: false },
+            { paused: true, browserBack: false },
+            { paused: false, browserBack: true },
+            { paused: true, browserBack: true }
+          ]) {
+            if ((await s.page.$eval('video', video => video.paused)) !== paused)
+              await s.m.tapOn({ css: '[data-testid="gameVideoZones"]' })
+            await s.page.waitForFunction(
+              expected => {
+                const video = document.querySelector('video')
+                if (video == null) return false
+                return video.paused === expected
+              },
+              {},
+              paused
+            )
+            const time = await s.page.$eval('video', video => video.currentTime)
+            await s.m.tapOn({ text: 'Score', role: 'button' })
+            await contains(s.page, 'Full game scoring')
+            await s.page.waitForFunction(() => {
+              const tabs = document.querySelector(
+                '[aria-label="Game sections"]'
+              )
+              if (tabs === null) return true
+              return tabs.closest('[aria-hidden="true"]') !== null
+            })
+            await shot('scoring-choices')
+            if (browserBack) await s.page.goBack()
+            else await s.m.tapOn({ text: 'Back', role: 'button' })
+            await s.page.waitForFunction(
+              ({ time, paused }) => {
+                const video = document.querySelector('video')
+                return (
+                  video != null &&
+                  video.readyState >= 2 &&
+                  video.currentTime >= time - 0.5 &&
+                  video.paused === paused
+                )
+              },
+              { timeout: 30000 },
+              { time, paused }
+            )
+            if (paused)
+              expect(
+                await s.page.$eval('video', video => video.currentTime)
+              ).closeTo(time, 0.5)
+          }
+          console.log(
+            'Score transition restored playing and paused video positions'
+          )
+          await cp(videoDir, join(mediaRoot, 'work/videos/vid_ui_alternate'), {
+            recursive: true
+          })
+          await f.h.db
+            .insertInto('videos')
+            .values({
+              id: 'vid_ui_alternate',
+              game_id: 'gam_settings3_final',
+              title: 'Alternate camera',
+              kind: 'program',
+              status: 'ready',
+              storage: 'local',
+              duration_sec: 90
+            })
+            .execute()
+          await s.page.setViewport({ width: 844, height: 390 })
+          await open('/games/gam_settings3_final?tab=watch', 'Alternate camera')
+          for (const label of ['Score', 'Coach']) {
+            await s.page.waitForFunction(
+              label =>
+                Array.from(
+                  document.querySelectorAll(
+                    `[aria-label="${label}"][role="button"]`
+                  )
+                ).some(node => {
+                  const box = node.getBoundingClientRect()
+                  return (
+                    box.width > 0 &&
+                    box.height > 0 &&
+                    box.top >= 0 &&
+                    box.bottom <= innerHeight
+                  )
+                }),
+              {},
+              label
+            )
+          }
+          const landscapeHeights: number[] = []
+          for (let sample = 0; sample < 12; ++sample) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            landscapeHeights.push(
+              await s.page.$eval(
+                '[data-testid="event-pill-band"]',
+                node => node.getBoundingClientRect().height
+              )
+            )
+          }
+          expect(new Set(landscapeHeights).size).equals(1)
+          expect(landscapeHeights[0]).greaterThan(100)
+          console.log(
+            'Multi-camera landscape band remains stable',
+            landscapeHeights
+          )
+          await shot('landscape-game-actions')
           await s.m.tapOn({ text: 'Score', role: 'button' })
           await contains(s.page, 'Full game scoring')
-          await s.page.waitForFunction(() => {
-            const tabs = document.querySelector('[aria-label="Game sections"]')
-            if (tabs === null) return true
-            return tabs.closest('[aria-hidden="true"]') !== null
-          })
-          await shot('scoring-choices')
-          if (browserBack) await s.page.goBack()
-          else await s.m.tapOn({ text: 'Back', role: 'button' })
-          await s.page.waitForFunction(
-            ({ time, paused }) => {
-              const video = document.querySelector('video')
-              return (
-                video != null &&
-                video.readyState >= 2 &&
-                video.currentTime >= time - 0.5 &&
-                video.paused === paused
-              )
-            },
-            { timeout: 30000 },
-            { time, paused }
-          )
-          if (paused)
-            expect(
-              await s.page.$eval('video', video => video.currentTime)
-            ).closeTo(time, 0.5)
-        }
-        console.log(
-          'Score transition restored playing and paused video positions'
-        )
-        await cp(videoDir, join(mediaRoot, 'work/videos/vid_ui_alternate'), {
-          recursive: true
-        })
-        await f.h.db
-          .insertInto('videos')
-          .values({
-            id: 'vid_ui_alternate',
-            game_id: 'gam_settings3_final',
-            title: 'Alternate camera',
-            kind: 'program',
-            status: 'ready',
-            storage: 'local',
-            duration_sec: 90
-          })
-          .execute()
-        await s.page.setViewport({ width: 844, height: 390 })
-        await open('/games/gam_settings3_final?tab=watch', 'Alternate camera')
-        for (const label of ['Score', 'Coach']) {
-          await s.page.waitForFunction(
-            label =>
-              Array.from(
-                document.querySelectorAll(
-                  `[aria-label="${label}"][role="button"]`
-                )
-              ).some(node => {
-                const box = node.getBoundingClientRect()
-                return (
-                  box.width > 0 &&
-                  box.height > 0 &&
-                  box.top >= 0 &&
-                  box.bottom <= innerHeight
-                )
-              }),
-            {},
-            label
-          )
-        }
-        const landscapeHeights: number[] = []
-        for (let sample = 0; sample < 12; ++sample) {
-          await new Promise(resolve => setTimeout(resolve, 100))
-          landscapeHeights.push(
-            await s.page.$eval(
-              '[data-testid="event-pill-band"]',
-              node => node.getBoundingClientRect().height
-            )
-          )
-        }
-        expect(new Set(landscapeHeights).size).equals(1)
-        expect(landscapeHeights[0]).greaterThan(100)
-        console.log(
-          'Multi-camera landscape band remains stable',
-          landscapeHeights
-        )
-        await shot('landscape-game-actions')
-        await s.m.tapOn({ text: 'Score', role: 'button' })
-        await contains(s.page, 'Full game scoring')
-        await s.m.tapOn({ text: 'Back', role: 'button' })
-        await s.page.setViewport({ width: 390, height: 844 })
+          await s.m.tapOn({ text: 'Back', role: 'button' })
+          await s.page.setViewport({ width: 390, height: 844 })
 
-        logs.push(
-          'Member video currentTime advanced beyond 2 seconds through authorized media route.'
-        )
-      } finally {
-        await recorder.stop()
-      }
-      expect(
-        (
-          await f.h.request(
-            'GET',
-            '/videos/vid_ui_tweaks/playback',
-            undefined,
-            101
+          logs.push(
+            'Member video currentTime advanced beyond 2 seconds through authorized media route.'
           )
-        ).status
-      ).equals(200)
+        } finally {
+          await recorder.stop()
+        }
+        expect(
+          (
+            await f.h.request(
+              'GET',
+              '/videos/vid_ui_tweaks/playback',
+              undefined,
+              101
+            )
+          ).status
+        ).equals(200)
+      }
     }
     if (!before && process.env.TS_UI_SCOPE === 'playback') {
       await writeFile(join(out, 'public-access.log'), logs.join('\n') + '\n')
