@@ -21,6 +21,7 @@ import { SeekFlashView, SlowMoBadge } from './GestureFeedback'
 import type { ParkReason } from './multiCam/align'
 import { ExitButton, exitClearance, gridControls } from './multiCam/barParts'
 import { TILE_BUFFER } from './multiCam/buffering'
+import { liftWasLost } from './multiCam/heldTouch'
 import { edgeToEdge, type Rect } from './multiCam/layout'
 import {
   gridRotation,
@@ -299,7 +300,21 @@ function MultiCamGrid(
 
   // The grid's own press does the rest — a tap's square, a scrub, a crawl,
   // a tile picked up — from the same points the browser hands it.
+  const onTerminate = (): void => {
+    const held = touch.current
+    if (held == null) return
+    touch.current = null
+    pressCancel(held.id)
+    if (held.tile != null) dropTile(held.tile, 0, 0)
+  }
+  /** Ends the press being followed if its finger lifted unseen (`liftWasLost`). */
+  const dropLostLift = (event: GestureResponderEvent): void => {
+    if (liftWasLost(touch.current?.id ?? null, event.nativeEvent.touches))
+      onTerminate()
+  }
+
   const onGrant = (event: GestureResponderEvent): void => {
+    dropLostLift(event)
     const { identifier, locationX, locationY, pageX, pageY } = event.nativeEvent
     const id = Number(identifier)
     const tile = tileAt(mc.rects, locationX, locationY)
@@ -316,6 +331,7 @@ function MultiCamGrid(
   }
 
   const onMove = (event: GestureResponderEvent): void => {
+    dropLostLift(event)
     const held = touch.current
     if (held == null) return
     const x = event.nativeEvent.pageX - held.pageX
@@ -338,14 +354,6 @@ function MultiCamGrid(
       const carried = mode === 'reorder'
       dropTile(held.tile, carried ? x : 0, carried ? y : 0)
     }
-  }
-
-  const onTerminate = (): void => {
-    const held = touch.current
-    if (held == null) return
-    touch.current = null
-    pressCancel(held.id)
-    if (held.tile != null) dropTile(held.tile, 0, 0)
   }
 
   const notice = mc.ended
@@ -422,6 +430,9 @@ function MultiCamGrid(
             touch.current == null || pressYields(touch.current.id)
           }
           onResponderGrant={onGrant}
+          // Another finger on the glass: the grid still follows the first,
+          // unless that one has lifted without saying so.
+          onResponderStart={dropLostLift}
           onResponderMove={onMove}
           onResponderRelease={onRelease}
           onResponderTerminate={onTerminate}
