@@ -178,6 +178,8 @@ export interface MultiCamOptions {
    * address yet, after so many asks; undefined to stop. Tests shorten it.
    */
   liveRetryDelay?: (asks: number) => number | undefined
+  /** How long an angle's address may go unanswered (`ADDRESS_TIMEOUT_MS`). */
+  addressTimeoutMs?: number
   /**
    * A tile's mapping onto the wall clock when its player has none of its own:
    * the server's wall timeline for the video (`GridScoreboard`). Without
@@ -195,6 +197,12 @@ export interface MultiCamOptions {
  * left has usually frozen by the next look.
  */
 export const DRY_CHECK_MS = 250
+
+/**
+ * How long an ask for an angle's address may go unanswered before it counts as
+ * failed, and a live angle is asked again.
+ */
+export const ADDRESS_TIMEOUT_MS = 10_000
 
 /**
  * How long a tile left out of the grid may go without filling where the game
@@ -442,6 +450,7 @@ export function useMultiCam(
     debug = false,
     beforeShuffle,
     liveRetryDelay = livePlaybackRetryDelay,
+    addressTimeoutMs = ADDRESS_TIMEOUT_MS,
     fallbackMapping
   } = options
   const block = options.block ?? { x: 0, y: 0, w: width, h: height }
@@ -814,17 +823,26 @@ export function useMultiCam(
         if (pending != null)
           setPendingUrls(current => ({ ...current, [id]: pending }))
       }
+      // Bounded: a request lost to a dead connection is never answered, and
+      // while it hangs nothing asks again. After a receiver outage both tiles
+      // said "not available" for minutes with the network long back.
+      const abort = new AbortController()
+      const timer = setTimeout(() => {
+        abort.abort()
+      }, addressTimeoutMs)
       client
-        .playback(id)
+        .playback(id, { signal: abort.signal })
         .then(async found => {
+          clearTimeout(timer)
           await timelineAnswered(id)
           answer(found.url, found.pending ?? false)
         })
         .catch(() => {
+          clearTimeout(timer)
           answer(null)
         })
     }
-  }, [chosen, client, timelineAnswered, urls])
+  }, [addressTimeoutMs, chosen, client, timelineAnswered, urls])
 
   // A live angle is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then `playback`
