@@ -1,0 +1,40 @@
+import { expect } from 'chai'
+import { describe, it } from 'mocha'
+
+import { asPreviewResult } from '../schedulePreviews'
+import { input, season } from './fixtures.test'
+import { buildOptions } from './index'
+import { summarizeResult } from './validateResult'
+
+describe('device result summaries', () => {
+  it('derives fairness from placements and rejects games outside time windows', () => {
+    const run = input({
+      seasons: [season({ regularGames: 1, exhibitionGames: 0 })]
+    })
+    const result = buildOptions(run)
+    const clean = asPreviewResult(result)
+    const summary = summarizeResult(run, clean)
+    expect(summary.options[0].fairness).deep.equals(result.options[0].fairness)
+    expect(summary.options[0].reasons).deep.equals([])
+    clean.options[0].games[0].startAt = '2027-01-01T00:00:00Z'
+    expect(() => summarizeResult(run, clean)).throws('time windows')
+  })
+  it('accepts bounded blocked results and refuses malformed or contradictory payloads', () => {
+    const blocked = { options: [], blocking: 'No selected fields' }
+    expect(summarizeResult(input(), asPreviewResult(blocked))).deep.equals(
+      blocked
+    )
+    for (const bad of [
+      null,
+      {},
+      { options: [1, 2, 3, 4] },
+      { options: [{}], blocking: null },
+      { options: [], blocking: null },
+      { options: [], blocking: '' },
+      { options: [], blocking: 'x'.repeat(1001) },
+      { options: [{ games: [] }], blocking: 'blocked' },
+      { options: [{ games: Array(20001).fill({}) }], blocking: null }
+    ])
+      expect(() => asPreviewResult(bad)).throws()
+  })
+})

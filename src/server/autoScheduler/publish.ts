@@ -262,6 +262,8 @@ export async function publishPreview(
       }
     }
     if (row.status === 'published') return await counts()
+    if (row.status === 'building')
+      throw conflict('The device has not finished this schedule')
     if (row.status === 'discarded')
       throw conflict('This preview was replaced by a newer one')
     const option = optionsOf(row)[optionIndex]

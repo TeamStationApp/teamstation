@@ -176,7 +176,9 @@ export function seasonSlots(
   fields.forEach(field => {
     const scarcity = input.seasons.filter(
       other =>
-        other.id !== season.id && (other.settings.fieldIds ?? []).includes(field.id) && field.sizes.includes(other.settings.fieldSize)
+        other.id !== season.id &&
+        (other.settings.fieldIds ?? []).includes(field.id) &&
+        field.sizes.includes(other.settings.fieldSize)
     ).length
     const { timezone } = field.availability
     for (
