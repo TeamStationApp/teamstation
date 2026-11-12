@@ -237,6 +237,11 @@ export class PlaybackClock {
         // gap, is not one of them: it stays covered until its footage reaches
         // the moment rather than pulling the others back to its last picture
         // (`rejoinSeekable` refuses both, and leaves covered cameras out).
+        // A decoder ahead of the moment, in the same unbroken stretch of
+        // footage, is as stuck as one behind it: the moment is past its safe
+        // edge, so the seek that would restore it is never made, and both
+        // play on at 1×. One ahead across a discontinuity is post-gap
+        // footage, not this moment, and stays covered.
         if (
           playing &&
           !Number.isFinite(port.duration) &&
@@ -244,7 +249,13 @@ export class PlaybackClock {
           target?.available === true &&
           target.seconds >= port.seekableEnd &&
           decodedWall !== null &&
-          decodedWall < port.pendingWall - 500 &&
+          (decodedWall < port.pendingWall - 500 ||
+            (decodedWall > port.pendingWall + 500 &&
+              Math.abs(
+                decodedWall -
+                  port.pendingWall -
+                  (seconds - target.seconds) * 1000
+              ) <= 1)) &&
           this.available(this.master) &&
           this.rejoinSeekable(port)
         )
@@ -258,10 +269,26 @@ export class PlaybackClock {
     if (port.target !== null && Math.abs(seconds - port.target) > 1)
       return this.wall
     port.target = null
+    const advanced = seconds > port.position
     port.position = seconds
     if (!this.available(this.master) && this.available(index))
       this.master = index
     if (!this.available(index)) {
+      // A healthy live camera playing on behind a master that moved past its
+      // safe seek edge (a refreshed mapping, or the master held it while its
+      // own feed restarted) can never be sought to the master's moment, and
+      // at 1× never reaches it. Rejoin both in the newest footage they can
+      // all seek. A camera that is not advancing (its feed stopped) does not
+      // pull the others back; `rejoinSeekable` refuses one missing footage.
+      if (
+        playing &&
+        advanced &&
+        index !== this.master &&
+        this.beyondSafeEdge(port) &&
+        this.available(this.master) &&
+        this.rejoinSeekable(port)
+      )
+        return this.wall
       // With no camera covering this gap, no other master can advance the wall.
       // Playing rejoins at a decoded post-gap moment; a paused selection stays
       // covered, and any camera that still covers it keeps ownership of the clock.
@@ -344,6 +371,27 @@ export class PlaybackClock {
       return false
     this.seek(shared)
     return true
+  }
+
+  /**
+   * A live camera whose footage at the shared moment lies past its safe seek
+   * edge and ahead of the frame it decodes: a seek there is refused, and
+   * playing on never closes the distance.
+   */
+  private beyondSafeEdge(port: ClockPort): boolean {
+    if (
+      this.wall === null ||
+      Number.isFinite(port.duration) ||
+      port.seekableEnd === null ||
+      port.pendingWall !== null
+    )
+      return false
+    const target = targetTime(port.timeline, this.wall, port.duration)
+    return (
+      target?.available === true &&
+      target.seconds >= port.seekableEnd &&
+      target.seconds > port.position + 0.75
+    )
   }
 
   /** A failed master must never hand the clock back to an exhausted camera. */
