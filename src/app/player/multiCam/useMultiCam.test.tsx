@@ -2225,6 +2225,86 @@ describe('useMultiCam bounded recovery', () => {
     })
 })
 
+describe('useMultiCam asking again for a tile left out too long', () => {
+  it('asks for its address afresh, at longer and longer intervals, until it fills', async () => {
+    const realNow = Date.now
+    const realSet = globalThis.setInterval
+    const realClear = globalThis.clearInterval
+    let now = T0
+    const intervals = new Map<unknown, () => void>()
+    Date.now = () => now
+    globalThis.setInterval = ((callback: () => void) => {
+      const id = {}
+      intervals.set(id, callback)
+      return id
+    }) as unknown as typeof setInterval
+    globalThis.clearInterval = (id: unknown) => {
+      if (!intervals.delete(id))
+        realClear(id as Parameters<typeof clearInterval>[0])
+    }
+    try {
+      const client = new TeamStationClient({ baseUrl: '/api/v1' })
+      const requests: Record<string, number> = {}
+      client.playback = async (id: string) => {
+        requests[id] = (requests[id] ?? 0) + 1
+        return {
+          videoId: id,
+          storage: 'spaces',
+          url: `https://media/${id}-${requests[id]}.m3u8`,
+          expiresAt: null,
+          durationSec: null,
+          unavailable: false
+        }
+      }
+      const { mc, tiles } = await grid({ client }, {}, tiles => {
+        fill(tiles.A, [120, 400])
+        fill(tiles.B, [60, 340])
+      })
+      const at = async (seconds: number): Promise<void> => {
+        now = T0 + seconds * 1000
+        tiles.A.currentTime = 120 + seconds
+        await act(async () => {
+          for (const callback of [...intervals.values()]) callback()
+        })
+      }
+      await at(1)
+      // B's player is handed its source again while A plays: it is left out
+      // until it fills, and its stream never gives it anything.
+      const stale = new FakeTile()
+      fill(stale)
+      await act(async () => {
+        mc().takeElement('B')(stale)
+        mc().attached('B', stale, mc().attaching('B'))
+      })
+      expect(mc().tileWaiting('B')).equals(true)
+      for (let second = 2; second <= 31; second++) await at(second)
+      expect(requests.B, 'not yet').equals(1)
+      await at(33)
+      expect(requests.B).equals(2)
+      expect(mc().urls.B).contains('B-2')
+      // Then twice as long.
+      for (let second = 34; second <= 90; second++) await at(second)
+      expect(requests.B).equals(2)
+      await at(94)
+      expect(requests.B).equals(3)
+      // Filled, it joins, and is asked for no more.
+      fill(stale, [60, 340])
+      stale.currentTime = 154
+      await at(95)
+      expect(mc().tileWaiting('B')).equals(false)
+      for (let second = 96; second <= 400; second += 5) await at(second)
+      expect(requests.B).equals(3)
+      expect(requests.A).equals(1)
+    } finally {
+      await act(async () => root?.unmount())
+      root = undefined
+      Date.now = realNow
+      globalThis.setInterval = realSet
+      globalThis.clearInterval = realClear
+    }
+  })
+})
+
 describe('useMultiCam on each tile’s own dates (U22)', function () {
   it('parks missing footage without showing a future frame and resumes after the gap', async function () {
     const { mc, tiles } = await grid({
