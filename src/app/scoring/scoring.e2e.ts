@@ -27,6 +27,7 @@ import {
   tapOffered
 } from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, type RosterEntry } from '../../common/api'
+import { defaultScoreboardSettings } from '../../common/nodeSettings'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -227,6 +228,24 @@ async function open(
       }
     } else if (uiAnimations && url.pathname.endsWith('/highlights')) {
       body = { withheld: null, droppedCount: 0, highlights: [] }
+    } else if (uiAnimations && url.pathname.endsWith('/wall-timeline')) {
+      body = {
+        anchors: [],
+        source: 'start',
+        confidence: 'approximate',
+        live: true,
+        startAt: null
+      }
+    } else if (url.pathname === '/api/v1/games/g1/scoreboard-overlay') {
+      const { single, landscape, portraitHeight } = defaultScoreboardSettings
+      body = { show: false, single, landscape, portraitHeight }
+    } else if (url.pathname === '/api/v1/games/g1/stream-access') {
+      body = {
+        canFilm: false,
+        canRequest: false,
+        requested: false,
+        teamId: 'away'
+      }
     } else if (url.pathname === '/api/v1/auth/me')
       body = {
         id: userIdOfGumbo(100),
@@ -2747,7 +2766,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-2"]')!
-            .getAttribute('data-roster-player') === '1',
+            .getAttribute('data-roster-player') === '101',
         { timeout: 20000 }
       )
       expect(
@@ -2973,6 +2992,8 @@ describe('scoring browser', function () {
       await click(page, 'Remove Player 2')
       await addPlaceholders(page, 16)
       await page.waitForSelector('[role="dialog"]')
+      // Placeholders are made on Roster; the rows to scroll are on Lineup.
+      await click(page, 'Lineup')
       const order = async (): Promise<string[]> =>
         await page.$$eval(
           '[data-roster-target^="lineup-"][data-roster-player]',
@@ -2986,9 +3007,10 @@ describe('scoring browser', function () {
         ],
         ['Batting lineup', '[data-roster-target="lineup-1"]']
       ]) {
+        // On the row's body: its grip at the start picks the card up.
         const from = await page.$eval(selector, n => {
           const r = n.getBoundingClientRect()
-          return { x: r.x + 20, y: r.y + r.height / 2 }
+          return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
         })
         // Browser-timed touch input stays below the 500ms hold threshold even
         // when Node/CDP round trips are slow during a complete test batch.
@@ -3039,7 +3061,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-1"]')!
-            .getAttribute('data-roster-player') === '2'
+            .getAttribute('data-roster-player') === '102'
       )
       expect(await order()).length(before.length + 1)
     } finally {
@@ -5694,7 +5716,7 @@ describe('scoring browser', function () {
           await page.close()
         }
       })
-  it('animates the live badge with live reduced-motion changes', async () => {
+  it('holds the browser live badge still, with or without reduced motion', async () => {
     const { page, unexpected } = await open(
       '/games/g1',
       false,
@@ -5706,6 +5728,10 @@ describe('scoring browser', function () {
       true
     )
     try {
+      // A game not yet started opens on Info; its camera is under Videos.
+      await page
+        .locator('[aria-label="Game sections"] [aria-label="Videos"]')
+        .click()
       await page.waitForSelector('[aria-label="Live now"]')
       const sample = async (
         selector: string,
@@ -5730,24 +5756,16 @@ describe('scoring browser', function () {
           selector,
           transform
         )
-      const pulse = await sample('[aria-label="Live now"]')
-      expect(Math.min(...pulse)).within(0.71, 0.76)
-      expect(Math.max(...pulse)).within(0.96, 1)
-      await page.emulateMediaFeatures([
-        { name: 'prefers-reduced-motion', value: 'reduce' }
-      ])
-      await page.waitForFunction(
-        () =>
-          getComputedStyle(document.querySelector('[aria-label="Live now"]')!)
-            .opacity === '1'
-      )
+      // Movement over a live picture costs the browser frames, so the pill
+      // the web draws holds still whatever the viewer's motion setting.
       const still = await sample('[aria-label="Live now"]')
       expect(still.every(value => value === 1)).equals(true)
       await page.emulateMediaFeatures([
-        { name: 'prefers-reduced-motion', value: 'no-preference' }
+        { name: 'prefers-reduced-motion', value: 'reduce' }
       ])
-      const resumed = await sample('[aria-label="Live now"]')
-      expect(Math.min(...resumed)).within(0.71, 0.76)
+      expect(
+        (await sample('[aria-label="Live now"]')).every(value => value === 1)
+      ).equals(true)
       await page.screenshot({
         path: join(
           process.env.TS_SCORING_ARTIFACT_DIR ?? '/tmp',
@@ -6279,7 +6297,7 @@ describe('scoring browser', function () {
         () =>
           document
             .querySelector('[data-roster-target="lineup-1"]')!
-            .getAttribute('data-roster-player') === '2'
+            .getAttribute('data-roster-player') === '102'
       )
       expect(await page.$(ghost)).equals(null)
       await page.waitForFunction(
@@ -6287,10 +6305,10 @@ describe('scoring browser', function () {
         {},
         source
       )
-      // The dropped card lands in the gap the drag held open: full height,
-      // one gap from each neighbour, drawn over neither.
+      // The dropped card lands in the gap the drag held open: a lineup card's
+      // full height, one gap from each neighbour, drawn over neither.
       const landed = await rect('[data-roster-target="lineup-1"]')
-      expect(landed.height).closeTo(a.height, 1)
+      expect(landed.height).closeTo(destination.height, 1)
       expect(
         landed.y - (await rect('[data-roster-target="lineup-0"]')).bottom
       ).closeTo(ROSTER_CARD_GAP, 0.5)
