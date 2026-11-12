@@ -32,6 +32,7 @@ import { sessionToken } from '../auth/tokens'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
+import { runCheckoutsAs } from '../db/checkouts'
 import { type Database, isConnectionUnavailable } from '../db/database'
 import {
   ChatFanout,
@@ -395,7 +396,9 @@ export function attachGameSocket(
     ...options.screenScopes,
     feed,
     deliver: async payload => {
-      await announce(payload)
+      await runCheckoutsAs('game socket screen notice', async () => {
+        await announce(payload)
+      })
     },
     onResync: () => {
       resyncScreens([...connections])
@@ -1052,7 +1055,9 @@ export function attachGameSocket(
       connection.missed = 0
     })
     ws.on('message', (data, isBinary) => {
-      received(connection, data, isBinary).catch((error: unknown) => {
+      runCheckoutsAs('game socket message', async () => {
+        await received(connection, data, isBinary)
+      }).catch((error: unknown) => {
         console.error(`game socket: ${String(error)}`)
       })
     })
