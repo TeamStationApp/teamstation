@@ -32,6 +32,7 @@ export type PlaybackAction =
   | { type: 'open'; panel: Exclude<SidePanel, null> }
   | { type: 'box' }
   | { type: 'toggle'; index: number }
+  | { type: 'show'; index: number }
   | { type: 'enlarge'; index: number }
   | { type: 'activity' }
   | { type: 'cameraTimeout' }
@@ -88,6 +89,17 @@ export function playbackReducer(
         activity: state.activity + 1
       }
     }
+    case 'show':
+      // A camera just given a player is shown, alongside those already shown.
+      return {
+        ...state,
+        visible: state.visible.includes(action.index)
+          ? state.visible
+          : [...state.visible, action.index].sort((a, b) => a - b),
+        full: null,
+        preview: false,
+        activity: state.activity + 1
+      }
     case 'enlarge':
       return state.visible.length > 1 ? { ...state, full: action.index } : state
     case 'activity':
