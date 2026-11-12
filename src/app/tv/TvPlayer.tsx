@@ -43,6 +43,12 @@ import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
 import {
+  MOUNTED_CAMERAS,
+  openingCameras,
+  replacedSlot,
+  selectableCamera
+} from './cameraChoice'
+import {
   focusMagnification,
   NativeGradient,
   PlaybackBoundary,
@@ -93,6 +99,11 @@ interface Angle {
   timeline: WallTimeline
   revision: number
 }
+/** A camera the viewer can choose, whether or not a player holds it now. */
+interface CameraChoice {
+  video: VideoSummary
+  name: string
+}
 interface Statistics extends ReplayStatistics {
   board: BoardTimelineWindow | null
 }
@@ -114,6 +125,15 @@ export function TvPlayer({
   const [angles, setAngles] = useState<Angle[] | null>(null)
   const anglesRef = useRef<Angle[] | null>(null)
   anglesRef.current = angles
+  /**
+   * Every camera of the game that can play, in the game's order. At most
+   * `MOUNTED_CAMERAS` of them hold a player (`angles`); choosing another in
+   * the panel brings it into one.
+   */
+  const [cameras, setCameras] = useState<CameraChoice[]>([])
+  const mountCamera = useRef<((video: VideoSummary) => Promise<void>) | null>(
+    null
+  )
   const recovery = useRef(new Map<number, PlaybackRecovery>())
   const refreshing = useRef(new Set<number>())
   /** `finished`: a live camera swapped on purpose for its recording. */
@@ -301,45 +321,37 @@ export function TvPlayer({
     clock.current = new PlaybackClock()
     setError(null)
     setAngles(null)
+    setCameras([])
     setFailures([])
     recovery.current.clear()
     refreshing.current.clear()
     setStats(EMPTY_STATS)
     const load = async (): Promise<void> => {
       const game = await client.game(request.game.id)
-      const videos = game.videos
-        .filter(
-          video =>
-            video.numCameras <= 1 &&
-            video.durationSec !== 0 &&
-            (video.status === 'ready' || video.status === 'live')
-        )
-        .slice(0, 4)
-      if (videos.length === 0)
+      // Every camera stays selectable; only the players are limited.
+      const selectable = game.videos.filter(selectableCamera)
+      if (selectable.length === 0)
         throw new Error('No camera angles are available for this game.')
-      const names = new Map(
+      let names = new Map(
         angleLabels(game.videos).map(label => [label.id, label.name])
       )
+      const choiceOf = (video: VideoSummary): CameraChoice => ({
+        video,
+        name: names.get(video.id) ?? video.title
+      })
+      const open = async (video: VideoSummary): Promise<Angle> => {
+        const [playback, timeline] = await Promise.all([
+          client.playback(video.id),
+          client.wallTimeline(video.id).catch(() => timelineFor(video.startAt))
+        ])
+        if (playback.url === null)
+          throw new Error(
+            'This game is still preparing its video. Please try again.'
+          )
+        return { ...choiceOf(video), uri: playback.url, timeline, revision: 0 }
+      }
       const results = await Promise.allSettled(
-        videos.map(async video => {
-          const [playback, timeline] = await Promise.all([
-            client.playback(video.id),
-            client
-              .wallTimeline(video.id)
-              .catch(() => timelineFor(video.startAt))
-          ])
-          if (playback.url === null)
-            throw new Error(
-              'This game is still preparing its video. Please try again.'
-            )
-          return {
-            video,
-            name: names.get(video.id) ?? video.title,
-            uri: playback.url,
-            timeline,
-            revision: 0
-          }
-        })
+        openingCameras(selectable).map(open)
       )
       const loaded = results.flatMap(result =>
         result.status === 'fulfilled' ? [result.value] : []
@@ -378,7 +390,9 @@ export function TvPlayer({
         })
       })
       dispatch({ type: 'reset', count: loaded.length })
-      // State gets copies: `loaded` is rewritten in place by `refreshAngle`.
+      setCameras(selectable.map(choiceOf))
+      // State gets copies: `loaded` is rewritten in place by `refreshAngle`
+      // and `mountCamera`.
       setAngles([...loaded])
       // The periodic refresh's swap to a recording, asked for while another
       // refresh of that camera runs, is kept and run after it. A recovery asked
@@ -406,7 +420,9 @@ export function TvPlayer({
           // As at load: a camera plays without a fresh timeline, on the one
           // it had.
           const timeline = fetched ?? held
-          if (!active || playback.url === null) return
+          // The player was given to another camera meanwhile.
+          if (!active || playback.url === null || loaded[index] !== previous)
+            return
           const updated = {
             ...previous,
             uri: playback.url,
@@ -441,18 +457,72 @@ export function TvPlayer({
           }
         }
       }
+      const mounting = new Set<string>()
+      mountCamera.current = async video => {
+        if (mounting.has(video.id) || loaded.some(a => a.video.id === video.id))
+          return
+        mounting.add(video.id)
+        try {
+          const angle = await open(video).catch(() => null)
+          if (!active || angle === null) return
+          const held = current.current
+          const slot =
+            loaded.length < MOUNTED_CAMERAS
+              ? loaded.length
+              : replacedSlot({
+                  count: loaded.length,
+                  visible: held.visible,
+                  full: held.full,
+                  showing: i => clock.current.available(i)
+                })
+          loaded[slot] = angle
+          // Rejects the replaced camera's callbacks now, not at the next render.
+          const next = [...loaded]
+          anglesRef.current = next
+          const watch = new PlaybackRecovery(Date.now())
+          watch.opening(Date.now())
+          recovery.current.set(slot, watch)
+          seekQueues.current[slot] = seekQueue(slot)
+          clock.current.register(slot, angle.timeline, seconds => {
+            seekQueues.current[slot]?.request(seconds)
+          })
+          restoring.add(slot)
+          queuedSwap.delete(slot)
+          setFailures(without(slot))
+          setBuffering(previous => previous.filter(i => i !== slot))
+          setAngles(next)
+          dispatch({ type: 'show', index: slot })
+        } finally {
+          mounting.delete(video.id)
+        }
+      }
       let refreshSequence = 0
       let appliedStatisticsSequence = 0
       let appliedTimelineSequence = 0
       const refresh = async (): Promise<void> => {
         const sequence = ++refreshSequence
-        const [replay, highlights] = await Promise.all([
+        const [replay, highlights, latest] = await Promise.all([
           readTvStatistics(client, request.game.id),
-          client.tvHighlights(loaded[0].video.id).catch(() => null)
+          client.tvHighlights(loaded[0].video.id).catch(() => null),
+          sequence === 1 ? null : client.game(request.game.id).catch(() => null)
         ])
         if (!active) return
         if (sequence > appliedStatisticsSequence) {
           appliedStatisticsSequence = sequence
+          if (latest !== null) {
+            // A camera that has started since is offered. One the game no
+            // longer lists stays offered while a player still holds it.
+            names = new Map(
+              angleLabels(latest.videos).map(label => [label.id, label.name])
+            )
+            const offered = latest.videos.filter(selectableCamera)
+            setCameras([
+              ...offered.map(choiceOf),
+              ...loaded
+                .filter(a => !offered.some(v => v.id === a.video.id))
+                .map(a => choiceOf(a.video))
+            ])
+          }
           setStats({
             ...replay,
             board: replay.board ?? null
@@ -461,18 +531,18 @@ export function TvPlayer({
           if (highlights !== null) setClips(highlights)
         }
         if (loaded.some(a => a.video.status === 'live')) {
-          // A camera refreshed meanwhile already holds a newer timeline.
-          const revisions = loaded.map(a => a.revision)
+          // A camera refreshed or replaced meanwhile already holds a newer
+          // timeline.
+          const mounts = [...loaded]
           const updates = await Promise.all(
-            loaded.map(
+            mounts.map(
               async a => await client.wallTimeline(a.video.id).catch(() => null)
             )
           )
           if (active && sequence > appliedTimelineSequence) {
             appliedTimelineSequence = sequence
             updates.forEach((timeline, i) => {
-              if (timeline === null || loaded[i].revision !== revisions[i])
-                return
+              if (timeline === null || loaded[i] !== mounts[i]) return
               // A moved mapping puts every playable camera on one moment.
               clock.current.remap(i, timeline)
               if (!timeline.live && loaded[i].video.status === 'live')
@@ -505,6 +575,7 @@ export function TvPlayer({
       active = false
       statisticsRefresh.current = null
       refreshAngle.current = null
+      mountCamera.current = null
       generation.current = activeGeneration + 1
       clearInterval(timer)
     }
@@ -601,10 +672,14 @@ export function TvPlayer({
   )
   const open = useCallback(
     (panel: Exclude<SidePanel, null>): void => {
-      if (panel === 'cameras' && (angles?.length ?? 0) < 2) return
+      if (
+        panel === 'cameras' &&
+        Math.max(angles?.length ?? 0, cameras.length) < 2
+      )
+        return
       dispatch({ type: 'open', panel })
     },
-    [angles]
+    [angles, cameras]
   )
   const changeLayout = useCallback(
     (
@@ -1375,96 +1450,125 @@ export function TvPlayer({
             <Text style={styles.heading}>Highlights</Text>
           )}
           {renderedSide === 'cameras' ? (
-            angles?.map((angle, index) => (
-              <Pressable
-                key={angle.video.id}
-                testID={`tv-toggle-${index}`}
-                accessibilityRole="checkbox"
-                accessibilityState={{ checked: state.visible.includes(index) }}
-                accessibilityLabel={`Toggle ${angle.name}`}
-                {...{
-                  hasTVPreferredFocus:
-                    state.side === 'cameras' &&
-                    !state.preview &&
-                    index === (focus ?? state.visible[0]),
-                  tvParallaxProperties: {
-                    enabled: true,
-                    magnification: focusMagnification,
-                    shiftDistanceX: 10,
-                    shiftDistanceY: 10,
-                    tiltAngle: 0.08,
-                    pressMagnification: 1.08
-                  }
-                }}
-                onFocus={() => {
-                  setCameraFocus(index)
-                  dispatch({ type: 'activity' })
-                }}
-                onBlur={() => {
-                  setCameraFocus(null)
-                }}
-                onPress={() => {
-                  changeLayout({ type: 'toggle', index })
-                }}
-                style={[
-                  styles.angleOption,
-                  {
-                    shadowOpacity: cameraFocus === index ? 0.5 : 0,
-                    shadowRadius: 12,
-                    shadowColor: '#fff',
-                    shadowOffset: { width: 0, height: 0 }
-                  }
-                ]}
-              >
-                <View style={styles.cameraThumbnail}>
-                  {angle.video.posterUrl !== null && (
-                    <TvPoster uri={angle.video.posterUrl} focused={false} />
-                  )}
-                  {!state.visible.includes(index) && (
-                    <View
-                      testID={`tv-camera-dim-${index}`}
-                      pointerEvents="none"
-                      style={[
-                        StyleSheet.absoluteFill,
-                        { backgroundColor: 'rgba(0,0,0,0.6)' }
-                      ]}
-                    />
-                  )}
-                  <View pointerEvents="none" style={styles.cameraCaption}>
-                    <Svg
-                      style={StyleSheet.absoluteFill}
-                      width="100%"
-                      height="100%"
-                    >
-                      <Defs>
-                        <LinearGradient
-                          id={`camera-${index}`}
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="1"
+            // Every camera of the game; those beyond the players scroll.
+            <ScrollView
+              style={{ overflow: 'visible' }}
+              contentContainerStyle={{ paddingBottom: 24 }}
+              showsVerticalScrollIndicator={false}
+            >
+              {(cameras.length > 0
+                ? cameras
+                : (angles ?? []).map(({ video, name }) => ({ video, name }))
+              ).map((camera, index) => {
+                // The player holding this camera, or -1 when none does.
+                const slot =
+                  angles?.findIndex(a => a.video.id === camera.video.id) ?? -1
+                const shown = slot >= 0 && state.visible.includes(slot)
+                return (
+                  <Pressable
+                    key={camera.video.id}
+                    testID={`tv-toggle-${index}`}
+                    accessibilityRole="checkbox"
+                    accessibilityState={{ checked: shown }}
+                    accessibilityLabel={`Toggle ${camera.name}`}
+                    {...{
+                      hasTVPreferredFocus:
+                        state.side === 'cameras' &&
+                        !state.preview &&
+                        slot >= 0 &&
+                        slot === (focus ?? state.visible[0]),
+                      tvParallaxProperties: {
+                        enabled: true,
+                        magnification: focusMagnification,
+                        shiftDistanceX: 10,
+                        shiftDistanceY: 10,
+                        tiltAngle: 0.08,
+                        pressMagnification: 1.08
+                      }
+                    }}
+                    onFocus={() => {
+                      setCameraFocus(index)
+                      dispatch({ type: 'activity' })
+                    }}
+                    onBlur={() => {
+                      setCameraFocus(null)
+                    }}
+                    onPress={() => {
+                      if (slot >= 0)
+                        changeLayout({ type: 'toggle', index: slot })
+                      else
+                        mountCamera
+                          .current?.(camera.video)
+                          .catch(() => undefined)
+                    }}
+                    style={[
+                      styles.angleOption,
+                      {
+                        shadowOpacity: cameraFocus === index ? 0.5 : 0,
+                        shadowRadius: 12,
+                        shadowColor: '#fff',
+                        shadowOffset: { width: 0, height: 0 }
+                      }
+                    ]}
+                  >
+                    <View style={styles.cameraThumbnail}>
+                      {camera.video.posterUrl !== null && (
+                        <TvPoster
+                          uri={camera.video.posterUrl}
+                          focused={false}
+                        />
+                      )}
+                      {!shown && (
+                        <View
+                          testID={`tv-camera-dim-${index}`}
+                          pointerEvents="none"
+                          style={[
+                            StyleSheet.absoluteFill,
+                            { backgroundColor: 'rgba(0,0,0,0.6)' }
+                          ]}
+                        />
+                      )}
+                      <View pointerEvents="none" style={styles.cameraCaption}>
+                        <Svg
+                          style={StyleSheet.absoluteFill}
+                          width="100%"
+                          height="100%"
                         >
-                          <Stop offset="0" stopColor="#000" stopOpacity={0} />
-                          <Stop
-                            offset="1"
-                            stopColor="#000"
-                            stopOpacity={0.75}
+                          <Defs>
+                            <LinearGradient
+                              id={`camera-${index}`}
+                              x1="0"
+                              y1="0"
+                              x2="0"
+                              y2="1"
+                            >
+                              <Stop
+                                offset="0"
+                                stopColor="#000"
+                                stopOpacity={0}
+                              />
+                              <Stop
+                                offset="1"
+                                stopColor="#000"
+                                stopOpacity={0.75}
+                              />
+                            </LinearGradient>
+                          </Defs>
+                          <Rect
+                            width="100%"
+                            height="100%"
+                            fill={`url(#camera-${index})`}
                           />
-                        </LinearGradient>
-                      </Defs>
-                      <Rect
-                        width="100%"
-                        height="100%"
-                        fill={`url(#camera-${index})`}
-                      />
-                    </Svg>
-                    <Text numberOfLines={1} style={styles.cameraName}>
-                      {angle.name}
-                    </Text>
-                  </View>
-                </View>
-              </Pressable>
-            ))
+                        </Svg>
+                        <Text numberOfLines={1} style={styles.cameraName}>
+                          {camera.name}
+                        </Text>
+                      </View>
+                    </View>
+                  </Pressable>
+                )
+              })}
+            </ScrollView>
           ) : (
             <ScrollView
               ref={highlightScroll}
