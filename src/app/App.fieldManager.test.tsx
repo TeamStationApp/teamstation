@@ -192,12 +192,14 @@ describe('the Auto-Scheduler and Field Manager in the app', () => {
     await press('Auto-Scheduler, Fields, season settings and schedules')
     await settle()
     expect(window.location.pathname).equals('/groups/league/lea_a/scheduler')
-    await press('Open Demo Regular')
+    await press('Demo Regular: Change constraints')
     await settle(200)
     expect(window.location.pathname).equals(
       '/groups/league/lea_a/scheduler/seasons/sea_a'
     )
-    expect(document.body.textContent).includes('No game windows yet.')
+    expect(document.body.textContent).includes(
+      'No time windows. No games can be scheduled.'
+    )
     window.history.back()
     await settle(300)
     expect(window.location.pathname).equals('/groups/league/lea_a/scheduler')

@@ -334,7 +334,8 @@ export function validatePlacements(
         game.key.length === 0 ||
         game.key.length > 300 ||
         keys.has(game.key) ||
-        engine.fixed.some(fixed => fixed.key === game.key)
+        engine.fixed.some(fixed => fixed.key === game.key) ||
+        engine.bookings.some(booking => booking.key === game.key)
       )
         throw badRequest('Submit unique games with valid seasons and times')
       keys.add(game.key)
@@ -404,7 +405,7 @@ export function validatePlacements(
         game,
         holdings,
         new Date(engine.notBefore - 1),
-        undefined,
+        engine.headCoaches,
         weekly
       )
       holdings.push(holdingOf(game))

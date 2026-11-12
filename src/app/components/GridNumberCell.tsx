@@ -129,7 +129,7 @@ export function revealAboveKeyboard(
 }
 
 /** Selects the whole text of a focused input: the DOM's or the native one. */
-function selectAll(input: Input | null, length: number): void {
+export function selectAll(input: Input | null, length: number): void {
   const node = input as unknown as {
     select?: () => void
     setSelection?: (start: number, end: number) => void
