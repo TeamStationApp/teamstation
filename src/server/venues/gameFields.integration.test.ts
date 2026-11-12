@@ -128,6 +128,9 @@ describe('games on registry fields', function () {
         longitude: -75.22,
         timezone: 'America/New_York',
         size_switch_minutes: 30,
+        default_windows: JSON.stringify([
+          { from: '0001-01-01', hours: ALL_DAY }
+        ]),
         default_hours: JSON.stringify(ALL_DAY)
       })
       .execute()

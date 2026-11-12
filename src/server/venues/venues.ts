@@ -19,6 +19,11 @@ import {
   type VenueSummary,
   type WeekdayHours
 } from '../../common/venues'
+import {
+  asWindowPeriods,
+  weeklyWindow,
+  type WindowPeriod
+} from '../../common/windowPeriods'
 import { adminScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -92,6 +97,7 @@ export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
     startsOn: calendarDateText(row.starts_on),
     endsOn: calendarDateText(row.ends_on),
     hours: row.hours == null ? null : hoursOf(row.hours),
+    windows: row.windows == null ? null : asWindowPeriods(row.windows),
     blackouts: datesOf(row.blackouts),
     photoUrl: imageUrl(media.space, row.photo_path, 640),
     photoLargeUrl: imageUrl(media.space, row.photo_path, 1280)
@@ -100,12 +106,14 @@ export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
 
 /** A venue's defaults, for availability and the API. */
 export function venueDefaults(row: VenueRow): {
+  defaultWindows: WindowPeriod[]
   defaultHours: WeekdayHours[]
   defaultBlackouts: string[]
   timezone: string
 } {
   return {
     defaultHours: hoursOf(row.default_hours),
+    defaultWindows: asWindowPeriods(row.default_windows),
     defaultBlackouts: datesOf(row.default_blackouts),
     timezone: row.timezone
   }
@@ -234,6 +242,7 @@ export async function placeDetail(
     timezone: place.timezone,
     sizeSwitchMinutes: 0,
     defaultHours: [],
+    defaultWindows: [],
     defaultBlackouts: [],
     photoUrl: null,
     photoLargeUrl: null,
@@ -627,9 +636,17 @@ export async function updateVenue(
         ...(changes.sizeSwitchMinutes == null
           ? {}
           : { size_switch_minutes: changes.sizeSwitchMinutes }),
+        ...(changes.defaultWindows === undefined
+          ? {}
+          : { default_windows: JSON.stringify(changes.defaultWindows) }),
         ...(changes.defaultHours == null
           ? {}
-          : { default_hours: JSON.stringify(changes.defaultHours) }),
+          : {
+              default_hours: JSON.stringify(changes.defaultHours),
+              default_windows: JSON.stringify(
+                weeklyWindow(changes.defaultHours)
+              )
+            }),
         ...(changes.defaultBlackouts == null
           ? {}
           : { default_blackouts: changes.defaultBlackouts }),
@@ -660,6 +677,7 @@ export async function updateVenue(
     if (
       fieldsChanged != null &&
       (changes.sizeSwitchMinutes != null ||
+        changes.defaultWindows !== undefined ||
         changes.defaultHours != null ||
         changes.defaultBlackouts != null)
     )
@@ -684,6 +702,7 @@ function fieldValues(changes: FieldChanges): Partial<{
   pin_longitude: number | null
   starts_on: string | null
   ends_on: string | null
+  windows: string | null
   hours: string | null
   blackouts: string[]
 }> {
@@ -702,10 +721,20 @@ function fieldValues(changes: FieldChanges): Partial<{
           starts_on: changes.dates?.startsOn ?? null,
           ends_on: changes.dates?.endsOn ?? null
         }),
+    ...(changes.windows === undefined
+      ? {}
+      : {
+          windows:
+            changes.windows === null ? null : JSON.stringify(changes.windows)
+        }),
     ...(changes.hours === undefined
       ? {}
       : {
-          hours: changes.hours == null ? null : JSON.stringify(changes.hours)
+          hours: changes.hours == null ? null : JSON.stringify(changes.hours),
+          windows:
+            changes.hours == null
+              ? null
+              : JSON.stringify(weeklyWindow(changes.hours))
         }),
     ...(changes.blackouts == null ? {} : { blackouts: changes.blackouts })
   }
@@ -811,6 +840,7 @@ export async function updateField(
       (changes.sizes != null ||
         changes.dates !== undefined ||
         changes.hours !== undefined ||
+        changes.windows !== undefined ||
         changes.blackouts != null)
     )
       await fieldsChanged(trx, [fieldId])

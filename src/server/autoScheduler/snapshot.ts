@@ -261,8 +261,11 @@ export async function snapshot(
   const seasons = setup.seasons.filter(season =>
     setup.seasonIds.includes(season.id)
   )
-  const facts = await fieldFacts(db, setup.fieldIds)
-  const fields = setup.fieldIds
+  const selectedFieldIds = [
+    ...new Set(seasons.flatMap(season => season.settings.fieldIds ?? []))
+  ]
+  const facts = await fieldFacts(db, selectedFieldIds)
+  const fields = selectedFieldIds
     .map(id => facts.get(id))
     .filter((field): field is NonNullable<typeof field> => field != null)
     .filter(field => !field.deleted)
@@ -526,6 +529,7 @@ export function ruleContext(
       snap.engine.seasons.map(season => [
         season.id,
         {
+          fieldIds: season.settings.fieldIds ?? [],
           bufferMinutes: season.settings.bufferMinutes,
           doubleheaders: season.settings.doubleheaders,
           maxGamesOnWeekdays: season.settings.maxGamesOnWeekdays,

@@ -14,6 +14,7 @@ import { chosenSeasonIds, scheduleSetup } from '../scheduler/setup'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 
 const SETTINGS: ScheduleSettings = {
+  fieldIds: [],
   fieldSize: '50/70',
   gameMinutes: 90,
   bufferMinutes: 10,
@@ -234,6 +235,7 @@ describe('scheduling setup routes', function () {
       seasonId: f.seasonA,
       saved: false,
       settings: {
+        fieldIds: [],
         fieldSize: '60/90',
         gameMinutes: 120,
         bufferMinutes: 15,

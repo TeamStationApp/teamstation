@@ -12,6 +12,7 @@ const detail: VenueDetail = {
   timezone: 'America/New_York',
   sizeSwitchMinutes: 0,
   defaultHours: [],
+  defaultWindows: [],
   defaultBlackouts: [],
   photoUrl: null,
   photoLargeUrl: null,
