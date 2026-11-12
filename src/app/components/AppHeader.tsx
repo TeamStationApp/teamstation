@@ -24,6 +24,8 @@ export interface AppHeaderProps {
    * else the screen says what it is.
    */
   showMark?: boolean
+  /** About and Tess are in the wide sidebar; the mark has no action. */
+  sidebar?: boolean
   onBack?: () => void
   /**
    * What has scrolled out of view, handed up to the header.
@@ -222,7 +224,13 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           {showMark &&
             // A menu wherever the header has a picture or Tess, however short.
             // Otherwise there is nothing else to offer, so it opens About.
-            (account != null || props.tess != null ? (
+            (props.sidebar === true ? (
+              <View style={markStyle} testID="sidebar-header-mark">
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
+              </View>
+            ) : account != null || props.tess != null ? (
               <HeaderMenu
                 label={lstrings.header_menu_teamstation}
                 align="left"

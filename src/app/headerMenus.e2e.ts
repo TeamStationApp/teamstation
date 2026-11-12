@@ -21,7 +21,8 @@ import { recordBrowserCoverage } from './browserCoverage.e2e'
  */
 
 const PHONE = { width: 390, height: 844 }
-const DESKTOP = { width: 1280, height: 900 }
+// The legacy header menu remains below the 1216px sidebar boundary.
+const DESKTOP = { width: 1200, height: 900 }
 const ZONE = 'America/New_York'
 const SUMMARY = '/api/v1/me/notifications/summary'
 const picture = '[role="button"][aria-label^="Account, "]'

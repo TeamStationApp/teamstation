@@ -15,6 +15,7 @@ import { devMediaRoutes } from '../server/routes/devMedia'
 import { mediaRoutes } from '../server/routes/media'
 import { tessRoutes } from '../server/routes/tess'
 import { umpireRoutes } from '../server/routes/umpires'
+import type { MountExtra } from './accountHarness'
 import { dictatingHealth } from './dictationFakes'
 import {
   type FakeAnthropic,
@@ -62,6 +63,8 @@ export interface TessFixtureOptions {
   videos?: boolean
   /** How often a streamed turn keeps its connection open; the route's own by default. */
   keepAliveMs?: number
+  /** Additional real routes needed by a browser regression scenario. */
+  mountExtra?: MountExtra
 }
 
 export interface TessFixture {
@@ -514,6 +517,7 @@ export async function tessFixture(
       options.webRoot,
       options.bindHost,
       (app, { db, media }) => {
+        options.mountExtra?.(app, { db, media })
         // Before the harness's own health stub, so this one answers.
         app.get('/api/v1/health', (_req, res, next) => {
           dictatingHealth()
