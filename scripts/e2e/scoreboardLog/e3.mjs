@@ -148,7 +148,7 @@ async function printSteps(pool, steps) {
  */
 function worker() {
   const agent = new http.Agent({ keepAlive: true, maxSockets: 1 })
-  const request = async (method, path, body) =>
+  const request = async (method, path, body, sent = {}) =>
     await new Promise((resolve, reject) => {
       const url = new URL(`${values.api}${path}`)
       const req = http.request(
@@ -157,6 +157,7 @@ function worker() {
           method,
           agent,
           headers: {
+            ...sent,
             authorization: `Bearer ${token}`,
             ...(body == null ? {} : { 'content-type': 'application/json' })
           }
@@ -179,10 +180,16 @@ function worker() {
   return {
     agent,
     pid: async () => JSON.parse((await request('GET', '/health')).text).pid,
-    // What TeamStationClient calls, over this one connection.
+    // What TeamStationClient calls, over this one connection, with the
+    // headers it sends: a save of plays names the app's protocol.
     fetch: async (url, init = {}) => {
       const path = new URL(url).pathname.replace(api.pathname, '')
-      const answer = await request(init.method ?? 'GET', path, init.body)
+      const answer = await request(
+        init.method ?? 'GET',
+        path,
+        init.body,
+        init.headers
+      )
       return new Response(answer.text, {
         status: answer.status,
         headers: { 'content-type': answer.headers['content-type'] ?? '' }

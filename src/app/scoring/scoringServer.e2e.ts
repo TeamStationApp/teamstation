@@ -1287,7 +1287,7 @@ describe('scoring into the server', function () {
       await waitReady(page)
       const board = await summary(page)
       dueBatter = /Batter (.+?) (left|right) handed/.exec(board)![1]
-      starter = / · Pitcher (.+)$/.exec(board)![1]
+      starter = / · Pitcher (.+?)(?: · |$)/.exec(board)![1]
       // A pinch hitter for him, and a new pitcher, saved together.
       await click(page, 'Open scoring menu')
       await click(page, 'Set Team Rosters')

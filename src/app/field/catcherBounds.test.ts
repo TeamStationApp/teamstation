@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import { PerspectiveCamera } from 'three'
 
-import { catcherBounds, movedRect } from './catcherBounds'
+import { catcherBounds, coversCatcher, movedRect } from './catcherBounds'
 
 /** A camera behind the plate, looking out to center field. */
 function behindThePlate(): PerspectiveCamera {
@@ -39,5 +39,29 @@ describe('where the catcher is on screen', function () {
     expect(movedRect(rect, { ...rect, x: 10.5, height: 40.9 })).equals(false)
     for (const key of ['x', 'y', 'width', 'height'] as const)
       expect(movedRect(rect, { ...rect, [key]: rect[key] + 2 })).equals(true)
+  })
+})
+
+describe('whether a control covers the catcher', function () {
+  const catcher = { x: 580, y: 700, width: 40, height: 46 }
+
+  it('covers him when it sits over his figure or the nameplate under his feet', function () {
+    // The Done pill above Undo at 1200 x 900, over the catcher's plate.
+    expect(
+      coversCatcher({ x: 565, y: 724, width: 70, height: 48 }, catcher)
+    ).equals(true)
+    // Below his feet, where only the nameplate is.
+    expect(
+      coversCatcher({ x: 565, y: 770, width: 70, height: 20 }, catcher)
+    ).equals(true)
+  })
+
+  it('clears him off to the side, or well below the nameplate', function () {
+    expect(
+      coversCatcher({ x: 250, y: 724, width: 70, height: 48 }, catcher)
+    ).equals(false)
+    expect(
+      coversCatcher({ x: 565, y: 820, width: 70, height: 48 }, catcher)
+    ).equals(false)
   })
 })
