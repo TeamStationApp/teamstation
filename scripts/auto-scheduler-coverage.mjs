@@ -134,6 +134,8 @@ const appSuites = [
   'src/app/components/PinMap.test.tsx',
   'src/app/components/MapFrame.test.tsx',
   'src/app/components/WeeklyHoursEditor.test.tsx',
+  'src/app/components/TimeWindowsEditor.test.tsx',
+  'src/app/components/SpreadsheetNumber.test.tsx',
   'src/app/platform/currentPosition.native.test.tsx',
   // M4: the game form's Field row and the Info tab's warnings.
   'src/app/screens/GameFormScreen.fieldPicker.test.tsx',
