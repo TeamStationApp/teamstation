@@ -9,6 +9,7 @@ import type { GameScope } from '../access'
 import type { ValkeyCache } from '../cache/valkeyCache'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { atomic } from '../db/atomic'
+import { runCheckoutsAs } from '../db/checkouts'
 import {
   type Database,
   type GamesTable,
@@ -208,7 +209,9 @@ export class GameFanout {
       key,
       setTimeout(() => {
         this.waiting.delete(key)
-        this.deliverChange(change, payload).catch((error: unknown) => {
+        runCheckoutsAs('game socket fanout', async () => {
+          await this.deliverChange(change, payload)
+        }).catch((error: unknown) => {
           this.log(`sending ${payload}: ${String(error)}`)
         })
       }, this.coalesceMs)

@@ -11,6 +11,7 @@ import { Client, Pool } from 'pg'
 
 import { testDatabaseUrl } from '../../migrate/testDatabase'
 import { serverConfig } from '../serverConfig'
+import { runCheckoutsAs } from './checkouts'
 import { isConnectionUnavailable, makeDatabase, makePool } from './database'
 
 describe('the database pool', () => {
@@ -127,6 +128,25 @@ describe('a pool with a role', () => {
     ;(await waiting).release()
     await pool.end()
   })
+
+  it('says whose checkout held its client too long', async function () {
+    this.timeout(8000)
+    const logged: string[] = []
+    const pool = makePool(testDatabaseUrl, message => logged.push(message), {
+      role: 'worker'
+    })
+    const client = await runCheckoutsAs('GET /held', async () => {
+      return await pool.connect()
+    })
+    await new Promise(resolve => setTimeout(resolve, 2100))
+    client.release()
+    await waitFor(() => logged.some(line => line.startsWith('db-checkout ')))
+    const line = logged.find(line => line.startsWith('db-checkout '))!
+    expect(
+      JSON.parse(line.slice('db-checkout '.length)).longHolds[0]
+    ).deep.include({ route: 'GET /held', n: 1 })
+    await pool.end()
+  })
 })
 
 describe('isConnectionUnavailable', () => {
@@ -211,8 +231,9 @@ describe('a pool that logs its wait', () => {
         logWait,
         now: clock.now
       })
+      // Its statements are still timed for the checkout watch, on a clock of
+      // its own; the wait log's is never read.
       const client = await pool.connect()
-      expect(Object.hasOwn(client, 'query')).equals(false)
       await client.query('select 1')
       client.release()
       await pool.query('select 1')
