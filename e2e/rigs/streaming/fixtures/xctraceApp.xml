@@ -1,0 +1,17 @@
+<?xml version="1.0"?>
+<trace-query-result>
+<node xpath='//trace-toc[1]/run[1]/data[1]/table[4]'>
+<schema name="activity-monitor-process-live">
+<col><mnemonic>start</mnemonic><name>Start</name><engineering-type>start-time</engineering-type></col>
+<col><mnemonic>process</mnemonic><name>Process</name><engineering-type>process</engineering-type></col>
+<col><mnemonic>cpu-percent</mnemonic><name>% CPU</name><engineering-type>percent</engineering-type></col>
+<col><mnemonic>memory-physical-footprint</mnemonic><name>Memory</name><engineering-type>size-in-bytes</engineering-type></col>
+</schema>
+<row><start-time id="1" fmt="00:01.000.000">1000000000</start-time><process id="2" fmt="TeamStation Develop (812)"><pid id="3" fmt="812">812</pid></process><percent id="4" fmt="12.0%">12.0</percent><size-in-bytes id="5" fmt="180.00 MiB">188743680</size-in-bytes></row>
+<row><start-time id="6" fmt="00:31.000.000">31000000000</start-time><process ref="2"/><percent ref="4"/><size-in-bytes id="7" fmt="190.00 MiB">199229440</size-in-bytes></row>
+<row><start-time id="8" fmt="00:45.000.000">45000000000</start-time><process ref="2"/><percent ref="4"/><size-in-bytes id="9" fmt="200.00 MiB">209715200</size-in-bytes></row>
+<row><start-time id="10" fmt="01:05.000.000">65000000000</start-time><process ref="2"/><percent ref="4"/><size-in-bytes ref="9"/></row>
+<row><start-time id="11" fmt="01:06.000.000">66000000000</start-time><sentinel/><percent ref="4"/><size-in-bytes ref="9"/></row>
+<row><start-time id="12" fmt="01:07.000.000">67000000000</start-time><process id="13" fmt="kernel_task &amp; co (0)"><pid id="14" fmt="0">0</pid></process><percent ref="4"/><size-in-bytes ref="5"/></row>
+</node>
+</trace-query-result>
