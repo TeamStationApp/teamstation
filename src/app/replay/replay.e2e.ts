@@ -93,7 +93,7 @@ import { stepHalfEnds } from './replayGaps'
  *     the box score back at the start) and playing, one sentence into the
  *     bottom of the 1st, two into the top of the 2nd and again within the
  *     words, paused, and after the end; the buttons' margins and the box
- *     score centred at both sizes and with the imported-innings note.
+ *     score centred at both sizes, with the imported innings counted.
  *     Writes rewind-notice.png, rewind-fade.mp4 and rewind-e2e.log.
  *
  *   REPLAY_SCENARIO=rewindLive
@@ -2192,7 +2192,8 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
   }
 
   // R13 at a tablet's size, on the final game and on the game with
-  // imported innings and its note.
+  // imported innings. Its box score counts the imported innings too, so it
+  // carries no note that they were left out (10309c460).
   const tablet = await attachWeb(daemon, '1024x1366', 'rewindTablet')
   try {
     await signInWeb(tablet, LEAGUE)
@@ -2204,11 +2205,7 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       note(
         `${gameId} at 1024: left gap ${measured.left}, right gap ${measured.right}, note ${JSON.stringify(measured.note)}`
       )
-      if (gameId === MIXED) {
-        assert.ok(measured.note != null, 'no imported-innings note')
-        assert.equal(measured.note.inColumn, false)
-        assert.equal(measured.note.align, 'center')
-      }
+      assert.equal(measured.note, null, `${gameId}: an imported-innings note`)
       const geometry = await evalJson<Geometry>(tablet, GEOMETRY)
       assert.deepEqual(geometry.rewind, geometry.pause)
     }

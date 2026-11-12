@@ -175,6 +175,31 @@ export async function text(page: Page, value: string): Promise<void> {
     })
 }
 
+/**
+ * Waits for text a list loads a page at a time: while it is not on the page,
+ * scrolls each scrolled list to its end, as a person scrolling for more does.
+ */
+export async function textInList(page: Page, value: string): Promise<void> {
+  for (let tries = 0; tries < 20; tries++) {
+    const found = await page.evaluate((value: string) => {
+      const content = document.body.textContent
+      if (content === null) return false
+      return content.toLowerCase().includes(value.toLowerCase())
+    }, value)
+    if (found) return
+    await page.evaluate(() => {
+      for (const node of [
+        document.scrollingElement,
+        ...document.querySelectorAll<HTMLElement>('div')
+      ])
+        if (node != null && node.scrollHeight > node.clientHeight + 1)
+          node.scrollTop = node.scrollHeight
+    })
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  await text(page, value)
+}
+
 /** Frame the asserted state in the actual scrollable screen before capturing proof. */
 export async function frameText(
   page: Page,
