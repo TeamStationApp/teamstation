@@ -334,24 +334,56 @@ export async function offeredIds(field: FieldDriver): Promise<string[]> {
 }
 
 /**
- * Where the player with field id `id` draws: his nameplate, or, for the
- * pitcher and runners, who wear none, his figure through the scene probe.
+ * The `index`-th player the field offers, once it offers him: a step that
+ * has just begun may not have drawn its choices yet.
+ */
+async function offered(field: FieldDriver, index: number): Promise<string> {
+  const end = Date.now() + 10000
+  for (;;) {
+    await atRest(field)
+    const id = (await offeredIds(field))[index]
+    if (id != null) return id
+    if (Date.now() > end) throw new Error(`The field offers no player ${index}`)
+    await pause(100)
+  }
+}
+
+/**
+ * Where the player with field id `id` draws and a scorer can press him: his
+ * nameplate, or his figure through the scene probe when he wears none (the
+ * pitcher, runners) or a control covers the plate. A player both covered
+ * fails, naming the control on top, rather than pressing it.
  */
 export async function pointOf(field: FieldDriver, id: string): Promise<Point> {
-  const at = await field.evaluate<Point | null>(`(() => {
+  const at = await field.evaluate<Point | string | null>(`(() => {
+    const field = document.querySelector('[aria-label="Baseball field"]')
     const plate = document.querySelector(${JSON.stringify(`[data-nameplate="${id}"]`)})
+    // What is on top at a point, when it is not the field or this plate.
+    const cover = (x, y) => {
+      const top = document.elementFromPoint(x, y)
+      if (top == null || field.contains(top) || (plate != null && plate.contains(top))) return null
+      const named = top.closest('[aria-label]')
+      return named == null ? top.tagName : named.getAttribute('aria-label')
+    }
+    let covered = null
     if (plate != null && getComputedStyle(plate).visibility === 'visible') {
       const r = plate.getBoundingClientRect()
-      return [r.x + r.width / 2, r.y + r.height / 2]
+      const centre = [r.x + r.width / 2, r.y + r.height / 2]
+      covered = cover(...centre)
+      if (covered == null) return centre
     }
     ${THREE_STATE}
-    if (three == null) return null
+    if (three == null) return covered
     const figure = three.scene.getObjectByName(${JSON.stringify(`player-${id}`)})
-    if (figure == null) return null
+    if (figure == null) return covered
     const world = figure.getWorldPosition(three.camera.position.clone())
-    return project(world.x, 1, world.z)
+    const point = project(world.x, 1, world.z)
+    const over = cover(...point)
+    return over == null ? point : over
   })()`)
   if (at == null) throw new Error(`Player ${id} is not on the field`)
+  if (typeof at === 'string')
+    throw new Error(`Player ${id} is covered by "${at}"`)
   return at
 }
 
@@ -365,18 +397,14 @@ export async function placeOffered(
   up = 12,
   right = 0
 ): Promise<void> {
-  await atRest(field)
-  const id = (await offeredIds(field))[index]
-  if (id == null) throw new Error(`The field offers no player ${index}`)
+  const id = await offered(field, index)
   const from = await pointOf(field, id)
   await field.drag(from, [from[0] + right, from[1] - up])
 }
 
 /** Taps the `index`-th player the field offers, where he stands. */
 export async function tapOffered(field: FieldDriver, index = 0): Promise<void> {
-  await atRest(field)
-  const id = (await offeredIds(field))[index]
-  if (id == null) throw new Error(`The field offers no player ${index}`)
+  const id = await offered(field, index)
   await field.tap(await pointOf(field, id))
 }
 
