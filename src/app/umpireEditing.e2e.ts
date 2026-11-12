@@ -112,40 +112,41 @@ async function main(): Promise<void> {
       )
     }
     await open(base, 'Select rows')
-    // The admin reads herself (Ada) and her team's player (Billy) in full,
-    // and Uma and Bobby, whom she may not read in full, short.
-    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
+    // The admin reads herself (Ada), her team's player (Billy) and her
+    // league's umpire (Uma) in full: a league administrator reads its umpires
+    // in full since develop 69e5c472a.
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     expect(await checked()).length(3)
-    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     expect(await checked()).length(0)
     await click('Ada Lee')
-    await click('Uma L', 'Shift')
+    await click('Uma Lee', 'Shift')
     expect(await checked()).length(3)
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control'
     await click('Billy Lee', modifier)
-    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma L'])
+    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma Lee'])
     await click('Ada Lee', modifier)
-    expect(await checked()).deep.equals(['Select Uma L'])
+    expect(await checked()).deep.equals(['Select Uma Lee'])
     await click('Billy Lee', 'Shift')
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Billy Lee'])
     await click('Ada Lee')
     await click('Billy Lee')
-    await page.focus('[aria-label="Select Uma L"]')
+    await page.focus('[aria-label="Select Uma Lee"]')
     await page.keyboard.press('Space')
-    expect(await checked()).deep.equals(['Select Uma L'])
+    expect(await checked()).deep.equals(['Select Uma Lee'])
     await page.keyboard.press('Space')
     expect(await checked()).length(0)
     await click('Ada Lee')
-    await page.focus('[aria-label="Select Uma L"]')
+    await page.focus('[aria-label="Select Uma Lee"]')
     await page.keyboard.down('Shift')
     await page.keyboard.press('Enter')
     await page.keyboard.up('Shift')
     expect(await checked()).deep.equals([
       'Select Ada Lee',
       'Select Billy Lee',
-      'Select Uma L'
+      'Select Uma Lee'
     ])
-    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     const cdp = await page.createCDPSession()
     await cdp.send('Emulation.setTouchEmulationEnabled', {
       enabled: true,
@@ -173,19 +174,19 @@ async function main(): Promise<void> {
     await drag([160])
     expect(await checked()).length(3)
     await click('Billy Lee')
-    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma L'])
+    expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma Lee'])
     await click('Ada Lee')
-    await click('Uma L')
+    await click('Uma Lee')
     await drag([160, 80])
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Billy Lee'])
     await click('Ada Lee')
     await click('Billy Lee')
     await drag([113], { ...point, y: point.y + 23 })
     expect(await checked()).length(3)
-    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     await drag([-113], { ...point, y: point.y + 136 })
     expect(await checked()).length(3)
-    for (const name of ['Ada Lee', 'Billy Lee', 'Uma L']) await click(name)
+    for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     await drag([])
     expect(await checked()).deep.equals(['Select Ada Lee'])
     await click('Ada Lee')
@@ -242,7 +243,7 @@ async function main(): Promise<void> {
       )
     ).equals('true')
     await click('Ada Lee')
-    await click('Uma L', 'Shift')
+    await click('Uma Lee', 'Shift')
     await tap(m, 'Ada Lee, AAA, Field')
     await saved()
     expect(
@@ -256,7 +257,7 @@ async function main(): Promise<void> {
     ).length(3)
     await click('Ada Lee')
     await click('Billy Lee')
-    await click('Uma L')
+    await click('Uma Lee')
     await tap(m, 'Ada Lee, AA, Field')
     await f.h.db
       .updateTable('umpire_certifications')
@@ -288,11 +289,13 @@ async function main(): Promise<void> {
     await page.waitForFunction(() => location.pathname.includes('/people/'))
     await contains(page, 'Bobby')
     await open(base, 'Select rows')
-    await click('Bobby L')
-    await m.tapOn({ css: '[aria-label="Revoke Bobby L"]' })
+    // An umpire now, Bobby is on the league's people list and reads in full
+    // to its administrator (develop 69e5c472a).
+    await click('Bobby Lee')
+    await m.tapOn({ css: '[aria-label="Revoke Bobby Lee"]' })
     await tap(m, 'Revoke umpire')
-    await click('Uma L', 'Shift')
-    expect(await checked()).deep.equals(['Select Uma L'])
+    await click('Uma Lee', 'Shift')
+    expect(await checked()).deep.equals(['Select Uma Lee'])
     await saved()
     expect(
       await f.h.db
@@ -310,9 +313,10 @@ async function main(): Promise<void> {
       .deleteFrom('user_links')
       .where('related_user_id', '=', userIdOfGumbo(104))
       .execute()
-    // Off the admin's team, Billy reads short to her again.
+    // Off the admin's team, Billy is still one of her league's umpires, so on
+    // its people list: she reads him in full (develop 69e5c472a).
     await open(base, 'Select rows')
-    await m.tapOn({ css: '[aria-label="Open profile for Billy L"]' })
+    await m.tapOn({ css: '[aria-label="Open profile for Billy Lee"]' })
     await page.waitForFunction(() => location.pathname.includes('/people/'))
     await contains(page, 'Billy')
     console.log(

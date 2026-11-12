@@ -87,7 +87,10 @@ async function main(): Promise<void> {
         row => row.textContent
       )
       assert.ok(identity?.includes('MB') === true)
-      assert.equal(identity?.includes('Demo Eagles'), true)
+      // The row's affiliation line names only teams the searcher may see
+      // (develop e7d1d943f): the Mookies play for Demo Eagles, in league B,
+      // which this Demo Hawks member does not see.
+      assert.equal(identity?.includes('Demo Eagles'), false)
       await writeFile(
         join(artifacts, 'account-results.png'),
         await m.screenshot()
