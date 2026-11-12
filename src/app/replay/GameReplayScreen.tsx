@@ -7,6 +7,7 @@ import React, {
   useState
 } from 'react'
 import {
+  Platform,
   Pressable,
   StatusBar,
   Text,
@@ -33,11 +34,23 @@ import {
 import type { SessionContext } from '../../common/scoring/session'
 import { ButtonIcon } from '../components/ButtonIcon'
 import { GlassView } from '../components/GlassView'
-import { SCORING_CAMERA } from '../field/BaseballScreen'
+import {
+  fieldHolderStyle,
+  SCORING_BOTTOM_EXTENSION,
+  SCORING_CAMERA
+} from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
 import { FieldCanvas } from '../field/FieldCanvas'
 import type { FieldPlayer } from '../field/fieldModel'
-import { useFieldSurface } from '../field/useFieldSurface'
+import {
+  FIELD_EDGE_GAP,
+  FLOATING_MARGIN,
+  FLOATING_SIZE,
+  floatingBottom,
+  liftedSafePadding,
+  topLift
+} from '../field/fieldSafeArea'
+import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
 import { VolumeButton } from '../field/VolumeButton'
 import { lstrings } from '../locales/strings'
 import { scoringAudio } from '../scoring/scoringAudio'
@@ -61,14 +74,45 @@ import {
   SLOT_MS,
   startReplay
 } from './replayMachine'
-import { ReplayPlayCard, type ReplayPlayCardProps } from './ReplayPlayCard'
+import {
+  BELOW_NAMEPLATE,
+  ReplayPlayCard,
+  type ReplayPlayCardProps
+} from './ReplayPlayCard'
 
 /** The box score's column beside the field on a wide window. */
 export const SIDE_DECK_WIDTH = 360
-/** Of a tall window's height, what the field leaves below for the box score. */
-export const DECK_SHARE = 0.45
-/** On a wide window, what the field leaves below the catcher for the card. */
-export const SIDE_CARD_ROOM = 150
+/** The least of a tall window the box score keeps below the play card. */
+export const DECK_MIN = 160
+/** The gap between the play card and the box score below it. */
+const DECK_GAP = 8
+
+/** A tall window's deck, and whether the play card is drawn. */
+export interface TallDeck {
+  top: number
+  card: boolean
+}
+/**
+ * Where a tall window's deck starts. The play card hangs below the catcher's
+ * nameplate when that leaves the box score DECK_MIN below it, and the deck
+ * starts DECK_GAP below the card. Otherwise no card is drawn, and the deck
+ * starts below the nameplate, keeping DECK_MIN. Until the catcher and the
+ * card are measured, the card hangs to be measured and the deck keeps
+ * DECK_MIN.
+ */
+export function tallDeck(
+  height: number,
+  catcher: ScreenRect | null,
+  cardHeight: number
+): TallDeck {
+  if (catcher == null || cardHeight <= 0)
+    return { top: height - DECK_MIN, card: true }
+  const below = catcher.y + catcher.height + BELOW_NAMEPLATE
+  const hungBottom = below + cardHeight + DECK_GAP
+  return height - hungBottom >= DECK_MIN
+    ? { top: hungBottom, card: true }
+    : { top: Math.min(below, height - DECK_MIN), card: false }
+}
 const TICK_MS = 100
 /** How often a fading rewind notice is drawn. */
 const FADE_FRAME_MS = 33
@@ -107,16 +151,15 @@ export interface GameReplayScreenProps {
   clock?: () => number
 }
 
-/** How far the rewind and pause buttons sit from the bottom and their side. */
-export const FLOATING_MARGIN = 16
-
-/** Rewind at the bottom left and pause at the bottom right: one look. */
+/**
+ * Rewind at the bottom left and pause at the bottom right: one look. Each
+ * sits `floatingBottom` from the window's bottom.
+ */
 export const FLOATING_BUTTON = {
   position: 'absolute',
-  bottom: FLOATING_MARGIN,
-  width: 56,
-  height: 56,
-  borderRadius: 28,
+  width: FLOATING_SIZE,
+  height: FLOATING_SIZE,
+  borderRadius: FLOATING_SIZE / 2,
   alignItems: 'center',
   justifyContent: 'center',
   backgroundColor: surface.active,
@@ -129,45 +172,28 @@ export const FLOATING_BUTTON = {
   elevation: 6
 } as const
 
-/** What the speaker takes across, upper left, from the window's left edge. */
-export const SPEAKER_RESERVE = 16 + 44 + 8
-
-/** What Exit takes across, upper right, from the field column's right edge. */
-export const EXIT_RESERVE = 16 + 76 + 8
-
-/** The row Exit and the speaker sit in, under the safe area. */
-export const CONTROLS_ROW = 56
-
 /**
- * Where the field starts, from the window's top. When the 3D scoreboard
- * leaves room for the speaker on its left (when there is one) and for Exit
- * on its right, at the top; when it runs under either (a phone), under their
- * row, so they cover neither the board nor a fielder.
+ * The narrowest window that puts the box score beside the field even when it
+ * is taller than wide: a tablet in portrait, whose scoring framing leaves too
+ * little room below the catcher for the card and a box score.
  */
-export function fieldTop(
-  board: ScreenRect | null,
-  safeTop: number,
-  /** The field column's right edge, inside its safe padding, where Exit ends. */
-  width: number,
-  /** The speaker is drawn: the announcer is offered. */
-  speaker: boolean
-): number {
-  if (board == null) return 0
-  const underSpeaker = speaker && board.x < SPEAKER_RESERVE
-  const underExit = board.x + board.width > width - EXIT_RESERVE
-  return underSpeaker || underExit ? safeTop + CONTROLS_ROW : 0
+export const SIDE_MIN_WIDTH = 768
+
+/** A wide window, or a tablet's, puts the box score and the play card beside the field. */
+export function replayLayout(width: number, height: number): { side: boolean } {
+  return { side: width > height || width >= SIDE_MIN_WIDTH }
 }
 
-/** The field's framing for a window: the box score's share below it. */
-export function replayLayout(
-  width: number,
-  height: number
-): { side: boolean; bottomExtension: number; deckTop: number } {
-  const side = width > height
-  const bottomExtension = side
-    ? SIDE_CARD_ROOM
-    : Math.round(DECK_SHARE * height)
-  return { side, bottomExtension, deckTop: height - bottomExtension }
+/**
+ * The box score's bottom padding: its last row scrolls to 8 points above the
+ * floating buttons' tops, from a container that ends `containerBottom` above
+ * the window's bottom.
+ */
+export function boxScoreInset(
+  insetBottom: number,
+  containerBottom: number
+): number {
+  return floatingBottom(insetBottom) + FLOATING_SIZE + 8 - containerBottom
 }
 
 /**
@@ -446,34 +472,16 @@ function ReplayView(props: {
   }
   const { width, height } = useWindowDimensions()
   const layout = replayLayout(width, height)
-  const [catcher, setCatcher] = useState<ScreenRect | null>(null)
   const surfaceStyle = useFieldSurface()
-  const [scoreboardRect, setScoreboardRect] = useState<ScreenRect | null>(null)
-  // Settled once for a window width: moving the field changes the board's
-  // measure, which must not move the field again.
-  const [offset, setOffset] = useState(0)
-  const safeTop =
-    typeof surfaceStyle.safe.paddingTop === 'number'
-      ? surfaceStyle.safe.paddingTop
-      : 0
-  const safeRight =
-    typeof surfaceStyle.safe.paddingRight === 'number'
-      ? surfaceStyle.safe.paddingRight
-      : 0
+  const insets = useFieldInsets()
+  // The scoring screen's picture: the top controls and the whole scene rise
+  // half a button into the top inset (not on Android).
+  const lift = topLift(insets.top, Platform.OS)
+  // The top controls' padding: the scoring screen's rule for its header row.
+  const topPadding = liftedSafePadding(insets, lift)
+  const [catcher, setCatcher] = useState<ScreenRect | null>(null)
   const fieldWidth = layout.side ? width - SIDE_DECK_WIDTH : width
-  // Exit sits in the field's column, inside its safe padding, and the board
-  // is measured across that column, not the window.
-  const exitEdge = fieldWidth - safeRight
-  useEffect(() => {
-    setOffset(0)
-  }, [width])
-  useEffect(() => {
-    if (offset === 0) {
-      const top = fieldTop(scoreboardRect, safeTop, exitEdge, props.narration)
-      if (top > 0) setOffset(top)
-    }
-  }, [scoreboardRect, offset, safeTop, exitEdge, props.narration])
-  const [cardBottom, setCardBottom] = useState(0)
+  const [cardHeight, setCardHeight] = useState(0)
 
   const session = state.scoring.session
   // Everyone is named as the card and the box score name them: first name
@@ -538,7 +546,7 @@ function ReplayView(props: {
   const field = (
     <FieldCanvas
       {...SCORING_CAMERA}
-      bottomExtension={layout.bottomExtension}
+      bottomExtension={SCORING_BOTTOM_EXTENSION}
       view="home"
       selected=""
       onSelect={() => undefined}
@@ -566,7 +574,6 @@ function ReplayView(props: {
         })
       }}
       onCatcherBounds={setCatcher}
-      onScoreboardBounds={setScoreboardRect}
       interaction={{
         generation: state.scoring.generation,
         selectableIds: [],
@@ -625,7 +632,13 @@ function ReplayView(props: {
       onPress={() => {
         dispatch({ type: state.paused ? 'PLAY' : 'PAUSE', now: clock() })
       }}
-      style={[FLOATING_BUTTON, { right: FLOATING_MARGIN }]}
+      style={[
+        FLOATING_BUTTON,
+        {
+          right: FLOATING_MARGIN + insets.right,
+          bottom: floatingBottom(insets.bottom)
+        }
+      ]}
     >
       <ButtonIcon
         name={state.paused ? 'play_arrow' : 'pause'}
@@ -650,7 +663,13 @@ function ReplayView(props: {
             }
           })
         }}
-        style={[FLOATING_BUTTON, { left: FLOATING_MARGIN }]}
+        style={[
+          FLOATING_BUTTON,
+          {
+            left: FLOATING_MARGIN + insets.left,
+            bottom: floatingBottom(insets.bottom)
+          }
+        ]}
       >
         <ButtonIcon
           name="skip_previous"
@@ -659,19 +678,30 @@ function ReplayView(props: {
         />
       </Pressable>
     )
-  const playCard = (
-    <FadingPlayCard
-      notice={state.notice}
-      clock={clock}
-      line={card.line}
-      detail={unavailable ? lstrings.replay_announcer_unavailable : card.detail}
-      catcher={catcher == null ? null : { ...catcher, y: catcher.y + offset }}
-      width={fieldWidth}
-      height={height}
-      onBottom={setCardBottom}
-    />
-  )
-  const deckTop = Math.max(layout.deckTop, cardBottom + 8)
+  const cardProps = {
+    notice: state.notice,
+    clock,
+    line: card.line,
+    detail: unavailable ? lstrings.replay_announcer_unavailable : card.detail,
+    width: fieldWidth,
+    height
+  }
+  // A tall window: the card below the catcher, the canvas's report moved up
+  // with the lifted scene, or no card when hanging there would leave the box
+  // score less than DECK_MIN.
+  const lifted = catcher == null ? null : { ...catcher, y: catcher.y - lift }
+  const deck = tallDeck(height, lifted, cardHeight)
+  const boxScore = (containerBottom: number): React.ReactElement =>
+    box === null ? (
+      <Text>Statistics are unavailable for this recorded play.</Text>
+    ) : (
+      <ReplayBoxScore
+        box={box}
+        players={openable}
+        onOpenPlayer={onOpenPlayer}
+        bottomInset={boxScoreInset(insets.bottom, containerBottom)}
+      />
+    )
   return (
     <View
       testID="game-replay"
@@ -685,13 +715,25 @@ function ReplayView(props: {
     >
       <View style={{ flex: 1 }}>
         {player.element}
-        <View testID="replay-field" style={{ flex: 1, marginTop: offset }}>
+        <View testID="replay-field" style={fieldHolderStyle(-lift)}>
           {field}
         </View>
-        {playCard}
+        {!layout.side && deck.card && (
+          <FadingPlayCard
+            {...cardProps}
+            catcher={lifted}
+            onHeight={setCardHeight}
+          />
+        )}
         <View
           pointerEvents="box-none"
-          style={[{ position: 'absolute', inset: 0 }, surfaceStyle.safe]}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            paddingTop: topPadding.paddingTop,
+            paddingLeft: topPadding.paddingLeft,
+            paddingRight: layout.side ? FIELD_EDGE_GAP : topPadding.paddingRight
+          }}
         >
           <View pointerEvents="box-none" style={{ flex: 1 }}>
             {topControls}
@@ -699,47 +741,33 @@ function ReplayView(props: {
         </View>
         {!layout.side && (
           <View
+            testID="replay-deck"
             style={{
               position: 'absolute',
-              top: deckTop,
+              top: deck.top,
               left: 0,
               right: 0,
               bottom: 0
             }}
           >
-            {box === null ? (
-              <Text>Statistics are unavailable for this recorded play.</Text>
-            ) : (
-              <ReplayBoxScore
-                box={box}
-                players={openable}
-                onOpenPlayer={onOpenPlayer}
-              />
-            )}
+            {boxScore(0)}
           </View>
         )}
       </View>
       {layout.side && (
-        <View style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}>
-          {box === null ? (
-            <Text>Statistics are unavailable for this recorded play.</Text>
-          ) : (
-            <ReplayBoxScore
-              box={box}
-              players={openable}
-              onOpenPlayer={onOpenPlayer}
-            />
-          )}
+        <View
+          testID="replay-side"
+          style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}
+        >
+          <FadingPlayCard {...cardProps} catcher={null} placement="column" />
+          <View style={{ flex: 1, marginTop: DECK_GAP }}>
+            {boxScore(insets.bottom + FIELD_EDGE_GAP)}
+          </View>
         </View>
       )}
-      <View
-        pointerEvents="box-none"
-        style={[{ position: 'absolute', inset: 0 }, surfaceStyle.safe]}
-      >
-        <View pointerEvents="box-none" style={{ flex: 1 }}>
-          {rewindButton}
-          {pauseButton}
-        </View>
+      <View pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
+        {rewindButton}
+        {pauseButton}
       </View>
     </View>
   )

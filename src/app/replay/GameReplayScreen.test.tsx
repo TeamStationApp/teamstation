@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import {
   asGameDetail,
@@ -16,6 +17,7 @@ import {
 import { replayTimelineOf } from '../../common/replay/replayTimeline'
 import type { StoredGame } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
+import { stubFieldInsets } from '../../test/fieldInsetsStub'
 import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import {
   finalGame,
@@ -27,24 +29,33 @@ import {
   replaySetup,
   scored
 } from '../../test/replayGameFixture'
+import {
+  SCORING_BOTTOM_EXTENSION,
+  SCORING_CAMERA
+} from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
 import type { FieldCanvas } from '../field/FieldCanvas'
+import {
+  FIELD_EDGE_GAP,
+  FLOATING_MARGIN,
+  FLOATING_SIZE,
+  floatingBottom,
+  topLift
+} from '../field/fieldSafeArea'
+import type { Insets } from '../platform/insets'
 import { scoringAudio } from '../scoring/scoringAudio'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import {
-  CONTROLS_ROW,
-  DECK_SHARE,
-  EXIT_RESERVE,
-  fieldTop,
+  boxScoreInset,
+  DECK_MIN,
   FLOATING_BUTTON,
-  FLOATING_MARGIN,
   GameReplayScreen,
   type ReplayClient,
   replayLayout,
   type ReplaySocket,
-  SIDE_CARD_ROOM,
-  SPEAKER_RESERVE
+  SIDE_DECK_WIDTH,
+  tallDeck
 } from './GameReplayScreen'
 
 type FieldProps = Parameters<typeof FieldCanvas>[0]
@@ -318,6 +329,15 @@ async function showCatcher(): Promise<void> {
   })
 }
 
+/**
+ * The safe area the page's inset probe reads (`useFieldInsets`): jsdom has
+ * none, so a test says what a phone's browser would. Null: none.
+ */
+let safeArea: Insets | null = null
+let unstubSafeArea = (): void => undefined
+/** An iPhone held upright: the island and the home indicator. */
+const IPHONE: Insets = { top: 59, bottom: 34, left: 0, right: 0 }
+
 /** What the replay asked of the field cues, in order. */
 const cues: string[] = []
 const setCues = scoringAudio.setEnabled
@@ -334,6 +354,8 @@ describe('the replay screen', function () {
     announcer.readied = 0
     announcer.played = []
     cues.length = 0
+    safeArea = null
+    unstubSafeArea = stubFieldInsets(() => safeArea)
     scoringAudio.setEnabled = value => {
       cues.push(value ? 'on' : 'off')
       setCues(value)
@@ -367,6 +389,7 @@ describe('the replay screen', function () {
   })
 
   afterEach(async function () {
+    unstubSafeArea()
     scoringAudio.setEnabled = setCues
     scoringAudio.unlock = unlockCues
     for (const [target, name] of swaps()) {
@@ -382,17 +405,11 @@ describe('the replay screen', function () {
     root = undefined
   })
 
-  it('lays the box score below the field on a phone and beside it on a wide window', function () {
-    expect(replayLayout(402, 874)).deep.equals({
-      side: false,
-      bottomExtension: Math.round(DECK_SHARE * 874),
-      deckTop: 874 - Math.round(DECK_SHARE * 874)
-    })
-    expect(replayLayout(1440, 900)).deep.equals({
-      side: true,
-      bottomExtension: SIDE_CARD_ROOM,
-      deckTop: 900 - SIDE_CARD_ROOM
-    })
+  it('lays the box score below the field on a tall window and beside it on a wide one', function () {
+    expect(replayLayout(402, 874)).deep.equals({ side: false })
+    expect(replayLayout(1440, 900)).deep.equals({ side: true })
+    expect(replayLayout(1024, 1366)).deep.equals({ side: true })
+    expect(replayLayout(767, 1024)).deep.equals({ side: false })
   })
 
   it('opens a finished game on the field, with the X, the sound off, pause, and the box score', async function () {
@@ -599,69 +616,236 @@ describe('the replay screen', function () {
       expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
     })
 
-  it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {
-    expect(SPEAKER_RESERVE).equals(68)
-    expect(EXIT_RESERVE).equals(100)
-    // Clear of both: the field starts at the top.
-    expect(
-      fieldTop(
-        { x: SPEAKER_RESERVE, y: 20, width: 1200 - 100 - 68, height: 120 },
-        47,
-        1200,
-        true
+  const fieldBox = (): HTMLElement =>
+    document.querySelector<HTMLElement>('[data-testid="replay-field"]')!
+  const cardStyle = (): CSSStyleDeclaration | undefined =>
+    document.querySelector<HTMLElement>('[data-testid="replay-play-card"]')
+      ?.style
+  const px = (value: string | undefined): number =>
+    Number.parseFloat(value ?? 'NaN')
+
+  for (const inset of [null, IPHONE])
+    it(`frames the field as the scoring screen does, lifted ${topLift(inset?.top ?? 0, 'web')} points under a ${inset?.top ?? 0} point inset`, async function () {
+      resize(402, 874)
+      safeArea = inset
+      await show(gameOf(), finalGame())
+      const lift = topLift(inset?.top ?? 0, 'web')
+      const { zoom, cameraTilt, cameraHeight, bottomExtension } = field()
+      expect({ zoom, cameraTilt, cameraHeight }).deep.equals(SCORING_CAMERA)
+      expect(bottomExtension).equals(SCORING_BOTTOM_EXTENSION)
+      expect(bottomExtension).equals(112)
+      // The canvas fills the column from the window's top, raised by the lift.
+      expect(fieldBox().style.marginTop).equals('')
+      expect(fieldBox().style.transform).equals(
+        lift === 0 ? '' : `translateY(-${lift}px)`
       )
-    ).equals(0)
-    expect(fieldTop(null, 47, 402, true)).equals(0)
-    // Under the speaker only while there is one.
-    const left = { x: 30, y: 20, width: 300, height: 120 }
-    expect(fieldTop(left, 47, 1200, true)).equals(47 + CONTROLS_ROW)
-    expect(fieldTop(left, 47, 1200, false)).equals(0)
-    // Under Exit.
+      // And as much taller, so its bottom stays on the column's.
+      expect(fieldBox().style.marginBottom).equals(
+        lift === 0 ? '' : `-${lift}px`
+      )
+      // The top controls sit the lift higher into the inset, never above
+      // the edge gap.
+      const overlay = document.querySelector('[data-testid="replay-speaker"]')
+        ?.parentElement?.parentElement?.parentElement
+      expect(px(overlay?.style.paddingTop)).equals(
+        Math.max(FIELD_EDGE_GAP, (inset?.top ?? 0) - lift)
+      )
+      // The card hangs below the catcher where the lifted canvas draws it.
+      await showCatcher()
+      expect(px(cardStyle()?.top)).equals(
+        CATCHER.y + CATCHER.height + 24 - lift
+      )
+    })
+
+  it('keeps the lifted field down to the bottom of its column beside the box score', async function () {
+    // An iPad held sideways: a 24 point top inset, a lift of 16, and
+    // nothing over the field column's bottom.
+    resize(1366, 1024)
+    safeArea = { top: 24, bottom: 20, left: 0, right: 0 }
+    await show(gameOf(), finalGame())
+    expect(node('replay-side')).not.equals(null)
+    const lift = topLift(24, 'web')
+    expect(lift).equals(16)
+    expect(fieldBox().style.transform).equals(`translateY(-${lift}px)`)
+    expect(fieldBox().style.marginBottom).equals(`-${lift}px`)
+    expect(fieldBox().style.flexGrow).equals('1')
+  })
+
+  it('lifts nothing on Android: the top buttons and the scene stay below the status bar', async function () {
+    const os = Platform.OS
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      value: 'android'
+    })
+    try {
+      resize(402, 874)
+      safeArea = IPHONE
+      await show(gameOf(), finalGame())
+      expect(fieldBox().style.transform).equals('')
+      const overlay = document.querySelector('[data-testid="replay-speaker"]')
+        ?.parentElement?.parentElement?.parentElement
+      expect(px(overlay?.style.paddingTop)).equals(
+        Math.max(FIELD_EDGE_GAP, IPHONE.top)
+      )
+      await showCatcher()
+      expect(px(cardStyle()?.top)).equals(CATCHER.y + CATCHER.height + 24)
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
+    }
+  })
+
+  for (const bottom of [0, 24, 34])
+    it(`seats rewind left and pause right on a ${bottom} point bottom inset`, async function () {
+      resize(402, 874)
+      safeArea = { top: 0, bottom, left: 0, right: 0 }
+      await show(gameOf(), finalGame())
+      expect(flat(propsOf('replay-rewind').style)).deep.include({
+        left: FLOATING_MARGIN,
+        bottom: floatingBottom(bottom)
+      })
+      expect(flat(propsOf('replay-pause').style)).deep.include({
+        right: FLOATING_MARGIN,
+        bottom: floatingBottom(bottom)
+      })
+      // Measured from the window's edges: no safe padding around them.
+      const holder = node('replay-rewind').parentElement
+      expect(holder?.style.paddingBottom).equals('')
+      expect(holder?.style).deep.include({ position: 'absolute' })
+    })
+
+  it('keeps rewind and pause beside a notch, held sideways', async function () {
+    resize(874, 402)
+    safeArea = { top: 0, bottom: 21, left: 59, right: 47 }
+    await show(gameOf(), finalGame())
+    expect(flat(propsOf('replay-rewind').style)).deep.include({
+      left: FLOATING_MARGIN + 59,
+      bottom: floatingBottom(21)
+    })
+    expect(flat(propsOf('replay-pause').style)).deep.include({
+      right: FLOATING_MARGIN + 47
+    })
+  })
+
+  it('scrolls the box score’s last row clear of the buttons', async function () {
+    // The tall deck runs to the window's bottom.
+    expect(boxScoreInset(0, 0)).equals(16 + FLOATING_SIZE + 8)
+    expect(boxScoreInset(34, 0)).equals(6 + FLOATING_SIZE + 8)
+    // The side column ends its safe padding above the window's bottom.
+    expect(boxScoreInset(21, 21 + FIELD_EDGE_GAP)).equals(
+      floatingBottom(21) + FLOATING_SIZE + 8 - 29
+    )
+    resize(402, 874)
+    safeArea = IPHONE
+    await show(gameOf(), finalGame())
     expect(
-      fieldTop({ x: 800, y: 20, width: 350, height: 120 }, 47, 1200, false)
-    ).equals(47 + CONTROLS_ROW)
-    // A phone's board spans the width: the field starts under the controls.
+      flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
+    ).equals(boxScoreInset(34, 0))
+    await act(async () => {
+      root?.unmount()
+    })
+    resize(874, 402)
+    safeArea = { top: 0, bottom: 21, left: 59, right: 47 }
+    await show(gameOf(), finalGame())
     expect(
-      fieldTop({ x: 30, y: 50, width: 340, height: 120 }, 47, 402, true)
-    ).equals(47 + CONTROLS_ROW)
+      flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
+    ).equals(boxScoreInset(21, 21 + FIELD_EDGE_GAP))
+  })
+
+  /** The play card's layout event, as the browser would send it. */
+  async function measureCard(height: number): Promise<void> {
+    await act(async () => {
+      ;(
+        propsOf('replay-play-card') as {
+          onLayout: (event: unknown) => void
+        }
+      ).onLayout({
+        nativeEvent: { layout: { x: 0, y: 0, width: 320, height } }
+      })
+    })
+  }
+
+  it('keeps the deck its least height until the card is measured', async function () {
+    resize(402, 874)
+    await show(gameOf(), finalGame())
+    expect(px(node('replay-deck').style.top)).equals(874 - DECK_MIN)
+    expect(tallDeck(874, null, 96)).deep.equals({
+      top: 874 - DECK_MIN,
+      card: true
+    })
+    expect(tallDeck(874, CATCHER, 0)).deep.equals({
+      top: 874 - DECK_MIN,
+      card: true
+    })
+  })
+
+  it('hangs the card below the catcher at 402 × 874, the box score below it', async function () {
     resize(402, 874)
     await show(gameOf(), finalGame())
     await showCatcher()
-    const fieldBox = (): HTMLElement | null =>
-      document.querySelector<HTMLElement>('[data-testid="replay-field"]')
-    expect(['', '0px']).includes(fieldBox()?.style.marginTop ?? '')
-    await act(async () => {
-      field().onScoreboardBounds?.({ x: 30, y: 50, width: 340, height: 120 })
+    await measureCard(96)
+    const below = CATCHER.y + CATCHER.height + 24
+    expect(px(cardStyle()?.top)).equals(below)
+    expect(cardStyle()?.position).equals('absolute')
+    const deck = node('replay-deck')
+    expect(px(deck.style.top)).equals(below + 96 + 8)
+    expect(deck.contains(node('replay-play-card'))).equals(false)
+    expect(874 - (below + 96 + 8)).gte(DECK_MIN)
+    expect(tallDeck(874, CATCHER, 96)).deep.equals({
+      top: below + 96 + 8,
+      card: true
     })
-    const moved = Number.parseFloat(fieldBox()?.style.marginTop ?? '0')
-    expect(moved).greaterThanOrEqual(CONTROLS_ROW)
-    // Measured again under the controls, the board does not move it twice.
-    await act(async () => {
-      field().onScoreboardBounds?.({ x: 30, y: 10, width: 340, height: 120 })
-    })
-    expect(Number.parseFloat(fieldBox()?.style.marginTop ?? '0')).equals(moved)
-    // The card still hangs below the catcher, where the field now is.
-    const cardTop = Number.parseFloat(
-      document.querySelector<HTMLElement>('[data-testid="replay-play-card"]')
-        ?.style.top ?? '0'
-    )
-    expect(cardTop).greaterThan(CATCHER.y + CATCHER.height + moved)
   })
 
-  it('moves the field under Exit when the board reaches the field column’s edge beside the box score', async function () {
-    // A phone on its side: the field's column is 874 - 360 = 514 wide.
+  it('draws no card on a tall window whose catcher sits too low for it, the deck below the nameplate', async function () {
+    resize(600, 1000)
+    await show(gameOf(), finalGame())
+    // A catcher this low: hung below it, the card would leave the
+    // box score less than DECK_MIN.
+    const catcher = { x: 285, y: 760, width: 30, height: 40 }
+    await act(async () => {
+      field().onCatcherBounds?.(catcher)
+    })
+    await measureCard(96)
+    const below = catcher.y + catcher.height + 24
+    expect(1000 - (below + 96 + 8)).lessThan(DECK_MIN)
+    expect(document.querySelector('[data-testid="replay-play-card"]')).equals(
+      null
+    )
+    const deck = node('replay-deck')
+    expect(px(deck.style.top)).equals(below)
+    expect(1000 - below).gte(DECK_MIN)
+    expect(tallDeck(1000, catcher, 96)).deep.equals({ top: below, card: false })
+    // Lower still, the deck keeps DECK_MIN over the nameplate's foot.
+    expect(tallDeck(1000, { ...catcher, y: 820 }, 96)).deep.equals({
+      top: 1000 - DECK_MIN,
+      card: false
+    })
+  })
+
+  it('puts the card at the top of the side column on a wide window, the box score below it', async function () {
     resize(874, 402)
     await show(gameOf(), finalGame())
     await showCatcher()
-    const fieldBox = (): HTMLElement | null =>
-      document.querySelector<HTMLElement>('[data-testid="replay-field"]')
-    expect(['', '0px']).includes(fieldBox()?.style.marginTop ?? '')
-    await act(async () => {
-      field().onScoreboardBounds?.({ x: 200, y: 20, width: 300, height: 100 })
-    })
+    const side = node('replay-side')
+    expect(side.style.width).equals(`${SIDE_DECK_WIDTH}px`)
+    const cards = document.querySelectorAll<HTMLElement>(
+      '[data-testid="replay-play-card"]'
+    )
+    expect(cards).length(1)
+    const [card] = cards
+    expect(side.firstElementChild).equals(card)
+    expect(card.style.position).not.equals('absolute')
+    expect(card.style.marginLeft).equals('12px')
+    expect(card.style.marginRight).equals('12px')
+    expect(card.textContent).includes('Play ball!')
+    expect(card.nextElementSibling?.contains(node('replay-box-score'))).equals(
+      true
+    )
     expect(
-      Number.parseFloat(fieldBox()?.style.marginTop ?? '0')
-    ).greaterThanOrEqual(CONTROLS_ROW)
+      (card.nextElementSibling as HTMLElement | null)?.style.marginTop
+    ).equals('8px')
+    expect(document.querySelector('[data-testid="replay-deck"]')).equals(null)
+    expect(fieldBox().parentElement?.contains(card)).equals(false)
   })
 
   it('turns the cues and the announcer on, and off again, with the volume button', async function () {
@@ -687,7 +871,8 @@ describe('the replay screen', function () {
       '[data-testid="replay-box-score"]'
     )
     expect(deck).not.equals(null)
-    expect(deck?.parentElement?.style.width).equals('360px')
+    expect(node('replay-side').contains(deck)).equals(true)
+    expect(node('replay-side').style.width).equals('360px')
   })
 
   it('follows a game in progress from where it stands', async function () {
@@ -775,10 +960,17 @@ describe('the replay screen', function () {
       expect(rewind?.textContent).equals('skip_previous')
       const rewindStyle = flat(propsOf('replay-rewind').style)
       const pauseStyle = flat(propsOf('replay-pause').style)
-      expect(rewindStyle).deep.equals({ ...FLOATING_BUTTON, left: 16 })
-      expect(pauseStyle).deep.equals({ ...FLOATING_BUTTON, right: 16 })
+      expect(rewindStyle).deep.equals({
+        ...FLOATING_BUTTON,
+        left: 16,
+        bottom: 16
+      })
+      expect(pauseStyle).deep.equals({
+        ...FLOATING_BUTTON,
+        right: 16,
+        bottom: 16
+      })
       expect(FLOATING_MARGIN).equals(16)
-      expect(FLOATING_BUTTON.bottom).equals(FLOATING_MARGIN)
     })
 
     it('stays after the end, when pause has gone', async function () {
@@ -1178,7 +1370,7 @@ describe('the replay screen', function () {
       }
     }
 
-    it('subscribes on opening, plays what the scorer adds, and lets go on Exit', async function () {
+    it('subscribes on opening, plays what the scorer adds, and lets go on closing', async function () {
       resize(402, 874)
       const socket = new FakeSocket()
       const game = await following(socket)

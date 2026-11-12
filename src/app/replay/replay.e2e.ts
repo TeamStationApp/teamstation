@@ -67,8 +67,12 @@ import { stepHalfEnds } from './replayGaps'
  *
  *   REPLAY_SCENARIO=controls REPLAY_PHASE=before|after
  *     The replay paused at its first pitch at 402 x 874 and 1024 x 1366:
- *     replay-controls-<phase>.png and box-score-centred-<phase>.png. `after`
- *     expects the rewind button.
+ *     replay-controls-<phase>.png and box-score-centred-<phase>.png, and at
+ *     402 x 874 the box score scrolled to its end, box-score-end-<phase>.png.
+ *     `after` expects the volume button at the top left and the X at the top
+ *     right, 48 square; rewind and pause 16 from the bottom and their sides;
+ *     the canvas from the window's top; and the box score's last row above
+ *     both buttons.
  *
  *   REPLAY_SCENARIO=rewind
  *     Rewind in the final game's replay: from "Play ball!", after two
@@ -1311,11 +1315,115 @@ async function controls(
         m,
         `return document.querySelector('[data-testid="replay-rewind"]') != null`
       )
-      assert.equal(has, phase === 'after', `rewind button on ${phase}`)
+      assert.ok(has, `rewind button on ${phase}`)
+      if (phase === 'after') await controlPlaces(m, size)
+      if (size === '402x874') await boxScoreEnd(m, phase)
     } finally {
       await m.detach()
     }
   }
+}
+
+/**
+ * Where `after` puts the replay's controls, in a browser with no insets: the
+ * volume button at the top left and the X at the top right, both 48 square;
+ * rewind at the bottom left and pause at the bottom right, 16 from the
+ * bottom and their sides; and the field's canvas from the window's top.
+ * The play card's and the deck's places are logged with them.
+ */
+async function controlPlaces(m: Device, size: string): Promise<void> {
+  const places = await evalJson<{
+    width: number
+    height: number
+    rects: Record<
+      string,
+      { left: number; top: number; right: number; bottom: number } | null
+    >
+  }>(
+    m,
+    `const rect = selector => {
+      const node = document.querySelector(selector)
+      if (node == null) return null
+      const { left, top, right, bottom } = node.getBoundingClientRect()
+      return { left, top, right, bottom }
+    }
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      rects: {
+        speaker: rect('[data-testid="replay-speaker"]'),
+        exit: rect('[data-testid="replay-exit"]'),
+        rewind: rect('[data-testid="replay-rewind"]'),
+        pause: rect('[data-testid="replay-pause"]'),
+        canvas: rect('[data-testid="replay-field"] canvas') ??
+          rect('[data-testid="replay-field"]'),
+        card: rect('[data-testid="replay-play-card"]'),
+        deck: rect('[data-testid="replay-deck"]')
+      }
+    }`
+  )
+  console.log(`controls ${size}: ${JSON.stringify(places)}`)
+  const { width, height, rects } = places
+  const at = (name: string): NonNullable<(typeof rects)[string]> => {
+    const found = rects[name]
+    assert.ok(found != null, `no ${name} at ${size}`)
+    return found
+  }
+  const near = (actual: number, expected: number, what: string): void => {
+    assert.ok(
+      Math.abs(actual - expected) <= 1,
+      `${what} at ${size}: ${actual}, not ${expected}`
+    )
+  }
+  const speaker = at('speaker')
+  const exit = at('exit')
+  for (const [name, button] of [
+    ['the volume button', speaker],
+    ['the X', exit]
+  ] as const) {
+    near(button.right - button.left, 48, `${name}'s width`)
+    near(button.bottom - button.top, 48, `${name}'s height`)
+    near(button.top, 8, `${name}'s top`)
+  }
+  near(speaker.left, 8, "the volume button's left")
+  // The X ends the field's column: the window, or the window less the box
+  // score's column on a wide window or a tablet.
+  near(at('canvas').right - exit.right, 8, "the X's right")
+  const rewind = at('rewind')
+  const pause = at('pause')
+  near(rewind.left, 16, "rewind's left")
+  near(width - pause.right, 16, "pause's right")
+  near(height - rewind.bottom, 16, "rewind's bottom")
+  near(height - pause.bottom, 16, "pause's bottom")
+  near(at('canvas').top, 0, "the canvas's top")
+}
+
+/**
+ * The box score scrolled to its end: box-score-end-<phase>.png, and the last
+ * row's bottom against the tops of rewind and pause, which `after` requires
+ * it to clear.
+ */
+async function boxScoreEnd(m: Device, phase: string): Promise<void> {
+  const edges = await evalJson<{ last: number; buttons: number }>(
+    m,
+    `const box = document.querySelector('[data-testid="replay-box-score"]')
+    box.scrollTop = box.scrollHeight
+    const content = box.firstElementChild
+    const padding = parseFloat(getComputedStyle(content).paddingBottom)
+    const tops = ['replay-rewind', 'replay-pause'].map(id =>
+      document.querySelector('[data-testid="' + id + '"]').getBoundingClientRect().top)
+    return {
+      last: content.getBoundingClientRect().bottom - padding,
+      buttons: Math.min(...tops)
+    }`
+  )
+  await wait(500)
+  await shot(m, `box-score-end-${phase}`)
+  console.log(
+    `box score end ${phase}: last row bottom ${edges.last}, buttons top ${edges.buttons}`
+  )
+  if (phase === 'after')
+    assert.ok(edges.last <= edges.buttons, 'the last row clears the buttons')
 }
 
 async function board(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {

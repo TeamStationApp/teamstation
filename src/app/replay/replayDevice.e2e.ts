@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { FLOATING_SIZE, floatingBottom, topLift } from '../field/fieldSafeArea'
 import {
   artifactsDir,
   attachWeb,
@@ -24,6 +25,8 @@ import {
  *
  *   REPLAY_PLATFORM=ios|android REPLAY_DEVICE=<udid or serial>
  *   REPLAY_WEBCAM=<the bench camera's RTSPS URL> [REPLAY_TEAM_ID=<iOS team>]
+ *   [REPLAY_APP_ID=<the build's app id: app.teamstation.develop for a
+ *   development build, app.teamstation.app by default>]
  *   REPLAY_API, REPLAY_SERVER_LOG, REPLAY_WEB_URL, REPLAY_ARTIFACTS, MAESTRO_D
  *   node -r sucrase/register src/app/replay/replayDevice.e2e.ts
  *
@@ -34,10 +37,21 @@ import {
  * The live view: open the game in progress while a web scorer throws three
  * pitches; each shows on the phone. live-<phone>-webcam.mp4.
  *
+ * The layout (REPLAY_PARTS=layout, run alone): the scoring screen of the
+ * game in progress, then the final game's replay paused with its box score
+ * scrolled to the end, read from the hierarchy: the white volume button at
+ * the upper left of both, its top half a button into the top inset; the X at
+ * the replay's upper right; the box score's last row above rewind and pause;
+ * and the buttons centred on the bottom safe edge (`floatingBottom`). The
+ * insets are the phone's, in points: REPLAY_TOP_INSET and REPLAY_BOTTOM_INSET, an
+ * iPhone's 59 and 34 by default; on Android, without them, only the order of
+ * things is checked. On Android, REPLAY_DENSITY turns the hierarchy's pixels
+ * into points. scoring-volume-<kind>.png and replay-layout-<kind>.png.
+ *
  * The device is never named in this file; it comes from REPLAY_DEVICE.
  */
 
-const APP_ID = 'app.teamstation.app'
+const APP_ID = process.env.REPLAY_APP_ID ?? 'app.teamstation.app'
 const FINAL = process.env.REPLAY_FINAL ?? 'gam_replaySeedFinal'
 const LIVE = process.env.REPLAY_LIVE ?? 'gam_replaySeedLive'
 const VIEWER = 'replay-scorer@example.test'
@@ -101,6 +115,165 @@ async function replay(m: Device, name: string): Promise<void> {
   await m.tapOn({ id: 'replay-exit' })
   assert.ok(await visible(m, 'Box score', 10000), 'the X did not show the game')
   console.log(`replay on ${name}: camera at ${video}`)
+}
+
+interface Node {
+  id?: string
+  text?: string
+  accessibilityText?: string
+  bounds?: { x: number; y: number; width: number; height: number }
+  children?: Node[]
+}
+type Bounds = NonNullable<Node['bounds']>
+const flatten = (node: Node): Node[] => [
+  node,
+  ...(node.children ?? []).flatMap(flatten)
+]
+
+/**
+ * Pixels to the layout's points: Android's hierarchy is in pixels, so
+ * REPLAY_DENSITY (`adb shell wm density` / 160) turns it into the dp the
+ * layout is written in. iOS reports points already.
+ */
+const DENSITY = Number(process.env.REPLAY_DENSITY ?? 1)
+const inPoints = (node: Node): Node =>
+  node.bounds == null
+    ? node
+    : {
+        ...node,
+        bounds: {
+          x: node.bounds.x / DENSITY,
+          y: node.bounds.y / DENSITY,
+          width: node.bounds.width / DENSITY,
+          height: node.bounds.height / DENSITY
+        }
+      }
+
+/** What the phone shows, flattened, in points, with the screen's own size first. */
+async function nodes(m: Device): Promise<Node[]> {
+  return flatten((await m.hierarchy()) as Node).map(inPoints)
+}
+function boundsOf(all: Node[], match: (node: Node) => boolean): Bounds {
+  const found = all.find(node => node.bounds != null && match(node))?.bounds
+  assert.ok(found != null, 'not on the screen')
+  return found
+}
+const labelled =
+  (...labels: string[]) =>
+  (node: Node): boolean =>
+    labels.some(
+      label => node.accessibilityText === label || node.text === label
+    )
+
+async function layout(m: Device, platform: string): Promise<void> {
+  const kind = platform === 'ios' ? 'iphone' : 'android'
+  const inset = (key: string, ios: number): number | undefined => {
+    const value = process.env[key]
+    return value != null ? Number(value) : platform === 'ios' ? ios : undefined
+  }
+  const top = inset('REPLAY_TOP_INSET', 59)
+  const bottom = inset('REPLAY_BOTTOM_INSET', 34)
+  const near = (actual: number, expected: number, what: string): void => {
+    assert.ok(
+      Math.abs(actual - expected) <= 1,
+      `${what}: ${actual}, not ${expected}`
+    )
+  }
+  const sound = labelled('Mute game sounds', 'Unmute game sounds')
+  const volumeTop = (button: Bounds, where: string): void => {
+    assert.ok(button.x < 60, `the volume button is not at the left ${where}`)
+    near(button.width, 48, `the volume button's width ${where}`)
+    // Lifted half a button into the inset on an iPhone; just below the
+    // status bar, max(8, inset), on Android.
+    if (top != null)
+      near(
+        button.y,
+        Math.max(8, top - topLift(top, platform)),
+        `its top ${where}`
+      )
+  }
+
+  await m.openLink({ link: `teamstation://games/${LIVE}/score` })
+  await m.assertVisible({ text: 'Ball', timeout: 30000 })
+  await wait(3000)
+  await shot(m, `scoring-volume-${kind}`)
+  const scoring = await nodes(m)
+  volumeTop(boundsOf(scoring, sound), 'on the scoring screen')
+
+  await m.openLink({ link: `teamstation://games/${FINAL}/replay` })
+  await m.assertVisible({ id: 'replay-pause', timeout: 30000 })
+  await m.tapOn({ id: 'replay-pause' })
+  await m.assertVisible({ text: 'Paused', timeout: 5000 })
+  for (let i = 0; i < 12; i++)
+    await m.swipe({ start: '50%, 90%', end: '50%, 62%' })
+  await wait(1000)
+  await shot(m, `replay-layout-${kind}`)
+  const replayed = await nodes(m)
+  // The largest node is the screen: Android's root has no bounds, and the
+  // app's window can stop above the navigation bar the buttons sit on.
+  const screen = replayed
+    .flatMap(node => (node.bounds == null ? [] : [node.bounds]))
+    .reduce<Bounds | undefined>(
+      (largest, bounds) =>
+        largest == null ||
+        bounds.width * bounds.height > largest.width * largest.height
+          ? bounds
+          : largest,
+      undefined
+    )
+  assert.ok(screen != null, 'the screen has no size')
+  const byId = (id: string) => (node: Node) => node.id === id
+  const speaker = boundsOf(replayed, byId('replay-speaker'))
+  volumeTop(speaker, 'on the replay')
+  const exit = boundsOf(replayed, byId('replay-exit'))
+  assert.ok(
+    exit.x + exit.width > screen.width - 60,
+    'the X is not at the right'
+  )
+  near(exit.y, speaker.y, "the X's top")
+  const rewind = boundsOf(replayed, byId('replay-rewind'))
+  const pause = boundsOf(replayed, byId('replay-pause'))
+  assert.ok(rewind.x < screen.width / 2, 'rewind is not at the left')
+  assert.ok(pause.x > screen.width / 2, 'pause is not at the right')
+  for (const [name, button] of [
+    ['rewind', rewind],
+    ['pause', pause]
+  ] as const) {
+    near(button.height, FLOATING_SIZE, `${name}'s size`)
+    assert.ok(
+      button.y + button.height <= screen.height,
+      `${name} runs off the screen`
+    )
+    if (bottom != null)
+      near(
+        screen.height - (button.y + button.height),
+        floatingBottom(bottom),
+        `${name}'s distance from the bottom`
+      )
+  }
+  // The box score's last row: the lowest text inside it, not counting the
+  // glyphs of the buttons drawn over it.
+  const box = boundsOf(replayed, byId('replay-box-score'))
+  const within = (inner: Bounds, outer: Bounds): boolean =>
+    inner.y >= outer.y && inner.y + inner.height <= outer.y + outer.height
+  const rows = replayed.filter(
+    node =>
+      node.bounds != null &&
+      (node.text ?? '') !== '' &&
+      within(node.bounds, box) &&
+      !within(node.bounds, rewind) &&
+      !within(node.bounds, pause)
+  )
+  const last = Math.max(
+    ...rows.map(node => node.bounds!.y + node.bounds!.height)
+  )
+  console.log(
+    `layout on ${kind}: volume ${JSON.stringify(speaker)}, X ${JSON.stringify(exit)}, last row ${last}, buttons ${Math.min(rewind.y, pause.y)}`
+  )
+  assert.ok(
+    last <= Math.min(rewind.y, pause.y),
+    'the box score’s last row runs under the buttons'
+  )
 }
 
 async function live(
@@ -181,6 +354,7 @@ async function main(): Promise<void> {
     await m.launchApp({ appId: APP_ID })
     await signInPhone(m, VIEWER)
     const parts = (process.env.REPLAY_PARTS ?? 'replay,live').split(',')
+    if (parts.includes('layout')) await layout(m, platform)
     if (parts.includes('replay')) await replay(m, name)
     if (parts.includes('live')) await live(m, name, daemon)
     console.log(`PASS: ${name}`)

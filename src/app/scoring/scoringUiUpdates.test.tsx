@@ -3,11 +3,13 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { stubFieldInsets } from '../../test/fieldInsetsStub'
 import { PillTabs } from '../components/PillTabs'
 import {
   BaseballScreen,
   type BaseballScreenProps
 } from '../field/BaseballScreen'
+import { topLift } from '../field/fieldSafeArea'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
@@ -160,5 +162,60 @@ describe('scoring UI updates', () => {
     expect(node('Bottom Finish at-bat')).equals(null)
     await render({ instruction: 'Trajectory' })
     expect(node('Bottom Finish at-bat')).equals(null)
+  })
+
+  it('lifts the header and the field into a phone browser’s top inset, and leaves the deck where it was', async () => {
+    const restore = stubFieldInsets(() => ({
+      top: 59,
+      bottom: 34,
+      left: 0,
+      right: 0
+    }))
+    try {
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      let finishes = 0
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <BaseballScreen
+              field={{
+                players: [],
+                selected: '',
+                onSelect: () => undefined,
+                view: 'home',
+                zoom: 1
+              }}
+              onMenu={() => undefined}
+              onUndo={() => undefined}
+              onPitch={() => undefined}
+              canPitch
+              summary="Game"
+              instruction="Tap a fielder"
+              canFinish
+              onFinish={() => {
+                finishes++
+              }}
+            />
+          </ThemeProvider>
+        )
+      })
+      const lifted = [...host.querySelectorAll<HTMLElement>('div')]
+        .map(div => div.style.transform)
+        .filter(transform => transform.startsWith('translateY('))
+      expect(lifted).deep.equals([`translateY(-${topLift(59, 'web')}px)`])
+      // The deck's bottom padding, and so the deck and Done, are unmoved.
+      const menu = node('Open scoring menu')
+      const overlay = menu?.parentElement?.parentElement?.parentElement
+      const deck = overlay?.lastElementChild
+      expect(deck?.contains(node('Ball'))).equals(true)
+      await act(async () => {
+        node('Bottom Finish at-bat')!.click()
+      })
+      expect(finishes).equals(1)
+    } finally {
+      restore()
+    }
   })
 })

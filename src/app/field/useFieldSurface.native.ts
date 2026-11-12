@@ -1,6 +1,7 @@
 import type { ViewStyle } from 'react-native'
 
-import { useInsets } from '../platform/safeArea'
+import type { Insets } from '../platform/insets'
+import { useInsets } from '../platform/safeArea.native'
 import { fieldSafePadding } from './fieldSafeArea'
 
 // Translucent fallback until the native renderer chooses its blur host.
@@ -11,4 +12,9 @@ export function useFieldSurface(): { root: ViewStyle; safe: ViewStyle } {
     root: { flex: 1, overflow: 'hidden' },
     safe: fieldSafePadding(insets)
   }
+}
+
+/** The hardware insets in points: the safe area's own numbers. */
+export function useFieldInsets(): Insets {
+  return useInsets()
 }
