@@ -82,6 +82,45 @@ afterEach(async function () {
 })
 
 describe('expanded statistics screens', function () {
+  it('keeps player split counts and their keys aligned with the total', async function () {
+    const split = {
+      teamId: team.id,
+      teamName: team.name,
+      seasonName: null,
+      gameId: null,
+      startAt: null,
+      opponentName: null,
+      home: null
+    }
+    await render(
+      <PlayerScreen
+        client={client({
+          playerStats: async () => ({
+            ...stats,
+            splits: {
+              by: 'team',
+              batting: [{ split, line: battingFixture }],
+              pitching: [{ split, line: pitchingFixture }]
+            }
+          })
+        })}
+        userId={userIdOfGumbo(101)}
+        initialTab="stats"
+      />
+    )
+    expect(text()).includes(team.name)
+    expect(leaves().filter(value => value === '82')).has.length(2)
+    expect(leaves().filter(value => value === '53')).has.length(2)
+    expect(text())
+      .includes('#P - Number of pitches')
+      .and.includes('S - Strikes')
+    expect(host.querySelector('[data-testid="batting-stats-key"]')).not.equals(
+      null
+    )
+    expect(host.querySelector('[data-testid="pitching-stats-key"]')).not.equals(
+      null
+    )
+  })
   it('keeps authorized team statistics usable when optional host standings are absent or private', async function () {
     await render(
       <TeamScreen
@@ -164,10 +203,14 @@ describe('expanded statistics screens', function () {
     expect(figures, 'figures').not.equals(null)
     expect(figures!.contains(heading)).equals(false)
     expect(figures!.contains(value)).equals(true)
-    expect(header.previousElementSibling).equals(null)
+    const firstHeader = header.previousElementSibling as HTMLElement
+    expect(firstHeader.textContent).equals('GP')
+    expect(firstHeader.previousElementSibling).equals(null)
     expect(getComputedStyle(header).width).equals(getComputedStyle(value).width)
-    expect(getComputedStyle(header).paddingLeft).equals('0px')
-    expect(getComputedStyle(value).paddingLeft).equals('0px')
+    expect(getComputedStyle(firstHeader).paddingLeft).equals('0px')
+    expect(getComputedStyle(header).paddingLeft).equals(
+      getComputedStyle(value).paddingLeft
+    )
     expect(parseFloat(getComputedStyle(second).paddingLeft)).at.most(8)
     expect(getComputedStyle(header.parentElement!).columnGap).not.equals('4px')
     expect(getComputedStyle(value).whiteSpace).equals('nowrap')

@@ -74,6 +74,8 @@ export function startingBox(
           bb: 0,
           k: 0,
           pc: 0,
+          hbp: 0,
+          strikes: 0,
           current: false
         }
       ]

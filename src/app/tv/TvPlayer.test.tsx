@@ -641,6 +641,98 @@ describe('TV game playback entry', () => {
     await key('swipeUp')
     expect(document.querySelector('[data-testid="tv-box-panel"]')).equals(null)
   })
+  it('shows batting totals, a blank row, pitching totals and one bottom stats key', async () => {
+    wide = true
+    const statistics = client.gameStatistics.bind(client)
+    try {
+      client.gameStatistics = async () => {
+        const data = await statistics('game')
+        for (const [index, side] of (['away', 'home'] as const).entries()) {
+          data.initial![side].batting = [
+            {
+              id: 101,
+              name: 'Babe Ruth',
+              ab: 2,
+              r: 1,
+              h: 1,
+              rbi: 0,
+              bb: 1,
+              k: 1,
+              sub: false,
+              current: false
+            },
+            {
+              id: 102,
+              name: 'Hank Aaron',
+              ab: 3 + index,
+              r: 2,
+              h: 2,
+              rbi: 3,
+              bb: 2,
+              k: 0,
+              sub: true,
+              current: false
+            }
+          ]
+        }
+        data.boxes = [
+          { at: 0, position: null, box: data.initial, message: null }
+        ]
+        return data
+      }
+      await render()
+      await act(async () => {
+        const video = document.querySelector('video')!
+        video.currentTime = 1
+        video.dispatchEvent(new window.Event('timeupdate', { bubbles: true }))
+        await pause()
+      })
+      await press('Close panel')
+      await press('Box score')
+      await press('Team and player statistics')
+      const panel = document.querySelector('[data-testid="tv-stats-scroll"]')!
+      expect(panel.textContent).includes('SOHBP#PS')
+      expect(panel.textContent).includes('Totals')
+      for (const [index, side] of (['away', 'home'] as const).entries()) {
+        const team = panel.querySelector(`[data-testid="tv-stats-${side}"]`)!
+        const spacer = team.querySelector(
+          '[data-testid="tv-batting-pitching-spacer"]'
+        )!
+        const total = spacer.previousElementSibling!
+        expect(
+          Array.from(total.children, cell => cell.textContent)
+        ).deep.equals(['Totals', String(5 + index), '3', '3', '3', '3', '1'])
+        expect(spacer.textContent).equals('')
+        expect(getComputedStyle(spacer).height).equals('44px')
+        expect(spacer.nextElementSibling!.textContent).matches(/^Pitching/)
+        expect(team.textContent!.match(/Totals/g)).has.length(2)
+      }
+      expect(
+        panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+      ).includes('#P - Number of pitchesS - Strikes')
+      expect(
+        panel.querySelectorAll('[data-testid="box-stats-key"]')
+      ).has.length(1)
+      expect(
+        panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+      ).includes('AB - At bats')
+      expect(
+        panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+      ).includes('ER - Earned runs')
+      for (const absent of ['HR - ', 'AVG - ', 'BF - '])
+        expect(
+          panel.querySelector('[data-testid="box-stats-key"]')!.textContent
+        ).not.includes(absent)
+      expect(
+        getComputedStyle(
+          panel.querySelector('[data-testid="box-stats-key"]')!
+            .firstElementChild!.firstElementChild!.firstElementChild!
+        ).fontSize
+      ).equals('28px')
+    } finally {
+      client.gameStatistics = statistics
+    }
+  })
   it('scrolls expanded stats at half speed on drag, directional clicks and release', async () => {
     await render()
     await press('Close panel')

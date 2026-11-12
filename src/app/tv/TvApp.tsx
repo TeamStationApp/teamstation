@@ -15,6 +15,7 @@ import {
 import { Path, Rect, Svg } from 'react-native-svg'
 
 import { TeamStationClient } from '../../common/api'
+import { type BuildInfo, buildInfo } from '../../common/distribution'
 import { ScopedThemeProvider } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
 import { PlaybackProbe } from './PlaybackProbe'
@@ -26,6 +27,15 @@ import { TvPlayer } from './TvPlayer'
 
 const loginWidth = 1600
 const loginHeight = 940
+export function tvLoginServer(apiBaseUrl: string, branch: string): string {
+  if (['master', 'develop'].includes(branch.replace(/^refs\/heads\//, '')))
+    return ''
+  try {
+    return new URL(apiBaseUrl).hostname.split('.')[0]
+  } catch {
+    return ''
+  }
+}
 export function tvLoginScale(width: number, height: number): number {
   return Math.max(
     0,
@@ -67,11 +77,13 @@ export function TvQr({ value }: { value: string }): React.ReactElement {
 export function TvApp({
   apiBaseUrl = 'https://app.teamstation.app/api/v1',
   appOrigin,
-  probeUrls
+  probeUrls,
+  info = buildInfo
 }: {
   apiBaseUrl?: string
   appOrigin?: string
   probeUrls?: string
+  info?: BuildInfo
 }): React.ReactElement {
   const { width, height } = useWindowDimensions()
   const client = useMemo(
@@ -191,11 +203,31 @@ export function TvApp({
             )}
           </View>
         )}
+        {state.phase !== 'ready' && (
+          <View testID="tv-login-build" style={styles.build}>
+            <Text style={styles.buildText}>
+              v{info.version} ({info.buildNumber})
+            </Text>
+            {tvLoginServer(apiBaseUrl, info.branch) !== '' && (
+              <Text testID="tv-login-server" style={styles.buildText}>
+                {tvLoginServer(apiBaseUrl, info.branch)}
+              </Text>
+            )}
+          </View>
+        )}
       </View>
     </ScopedThemeProvider>
   )
 }
 const styles = StyleSheet.create({
+  build: {
+    position: 'absolute',
+    bottom: 24,
+    right: 70,
+    flexDirection: 'row',
+    gap: 20
+  },
+  buildText: { fontSize: 24, lineHeight: 32, color: '#aaa' },
   qrCard: {
     width: 620,
     height: 620,

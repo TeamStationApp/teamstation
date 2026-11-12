@@ -15,6 +15,13 @@ import {
 } from '../../common/replay/replayBoxScore'
 import { ordinal } from '../../common/scoring/lineup'
 import { scaledSize } from '../components/FrozenNameTable'
+import { useInsets } from '../platform/safeArea'
+import {
+  replayBattingLabels,
+  replayBoxLabels,
+  replayPitchingLabels
+} from '../screens/boxScoreLabels'
+import { StatsKey } from '../screens/StatsKey'
 import { scoringSurface as surface } from '../theme/scoringSurface'
 import { useTheme } from '../theme/ThemeContext'
 
@@ -39,6 +46,7 @@ const COLUMN = 30
 export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
   const { box } = props
   const theme = useTheme()
+  const insets = useInsets()
   const { fontScale } = useWindowDimensions()
   const figures = React.useRef<React.ComponentRef<typeof ScrollView>>(null)
   const text = (
@@ -181,14 +189,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
     const throwing = pitchingTotals(side.pitching)
     return (
       <View key={side.name}>
-        {heading(`${side.name} batting`, 'Batter', [
-          'AB',
-          'R',
-          'H',
-          'RBI',
-          'BB',
-          'K'
-        ])}
+        {heading(`${side.name} batting`, 'Batter', replayBattingLabels)}
         {side.batting.map(line =>
           row(`b${line.id}`, line.current, [
             nameCell(line.id, line.name, `${line.sub ? '  ' : ''}${line.name}`),
@@ -209,15 +210,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             hitting.bb,
             hitting.k
           ])}
-        {heading(`${side.name} pitching`, 'Pitcher', [
-          'IP',
-          'H',
-          'R',
-          'ER',
-          'BB',
-          'K',
-          'PC'
-        ])}
+        {heading(`${side.name} pitching`, 'Pitcher', replayPitchingLabels)}
         {side.pitching.map(line =>
           row(`p${line.id}`, line.current, [
             nameCell(line.id, line.name),
@@ -227,7 +220,9 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             text(line.er),
             text(line.bb),
             text(line.k),
-            text(line.pc ?? '—')
+            text(line.hbp ?? '—'),
+            text(line.pc ?? '—'),
+            text(line.strikes ?? '—')
           ])
         )}
         {side.pitching.length > 0 &&
@@ -238,7 +233,9 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
             throwing.er,
             throwing.bb,
             throwing.k,
-            throwing.pc ?? '—'
+            throwing.hbp ?? '—',
+            throwing.pc ?? '—',
+            throwing.strikes ?? '—'
           ])}
       </View>
     )
@@ -250,7 +247,7 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
       contentContainerStyle={{
         paddingHorizontal: 12,
         paddingTop: 8,
-        paddingBottom: props.bottomInset ?? 88,
+        paddingBottom: props.bottomInset ?? 96 + insets.bottom,
         alignItems: 'center'
       }}
     >
@@ -320,13 +317,17 @@ export function ReplayBoxScore(props: ReplayBoxScoreProps): React.ReactElement {
           </View>
         </ScrollView>
       </View>
-      <View
-        testID="replay-box-score-column"
+      <ScrollView
+        horizontal
+        testID="replay-box-score-tables"
         style={{ alignSelf: 'center', maxWidth: '100%' }}
       >
-        {team(box.away)}
-        {team(box.home)}
-      </View>
+        <View testID="replay-box-score-column">
+          {team(box.away)}
+          {team(box.home)}
+        </View>
+      </ScrollView>
+      <StatsKey kind="box" columns={replayBoxLabels} color={surface.text} />
     </ScrollView>
   )
 }

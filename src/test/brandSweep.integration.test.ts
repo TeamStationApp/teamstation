@@ -41,6 +41,10 @@ const KEEP: Array<{ path: RegExp; line?: RegExp }> = [
   // The baseball statistic GS means games started.
   { path: /^src\/app\/screens\/statColumns\.ts$/, line: /label: 'GS'/ },
   { path: /^src\/app\/screens\/statColumns\.test\.ts$/, line: /'IP GP GS BF/ },
+  {
+    path: /^src\/app\/screens\/StatsKey\.tsx$/,
+    line: /^ {2}GS: 'Games started',$/
+  },
   // A player tag never uses the letters of a statistic, GS among them.
   { path: /^src\/common\/scoring\/playerTags\.ts$/, line: /'SV', 'GS'/ },
   {

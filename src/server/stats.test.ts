@@ -199,6 +199,8 @@ describe('expanded totals', function () {
       appeared: true,
       gs: 1,
       pitches: 12,
+      strikes: 8,
+      battingKl: 1,
       kl: 2,
       pitchAb: 4,
       lob: 1,
@@ -221,13 +223,14 @@ describe('expanded totals', function () {
       })
     ]
     const bat = battingLines(rows)[0]
-    expect(bat).includes({ roe: 2, fc: 2, pik: 2, firstPa: 2 })
+    expect(bat).includes({ roe: 2, fc: 2, pik: 2, firstPa: 2, kl: 2 })
     expect(battingRates(bat).sbPct).equals(0.667)
     const pitcher = pitchingLines(rows)[0]
     expect(pitcher).includes({
       g: 2,
       gs: 2,
       pitches: 24,
+      strikes: 16,
       kl: 4,
       pitchAb: 10,
       lob: 2,
@@ -245,9 +248,11 @@ describe('expanded totals', function () {
       game({ pa: 2, pitchBf: 1, extra: emptyStatExtras() })
     ]
     expect(battingLines(rows)[0].roe).equals(null)
+    expect(battingLines(rows)[0].kl).equals(null)
     expect(pitchingLines(rows)[0]).includes({
       gs: null,
       pitches: null,
+      strikes: null,
       pitchAb: null
     })
     expect(

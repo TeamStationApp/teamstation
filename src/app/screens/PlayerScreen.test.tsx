@@ -2779,9 +2779,9 @@ describe('a player’s stats tables', function () {
       'Ravens',
       'Total'
     ])
-    expect(battingTable.figures[0].startsWith('PAABHAVG')).equals(true)
-    expect(battingTable.figures[1].startsWith('653.600')).equals(true)
-    expect(battingTable.figures[3].startsWith('1094.444')).equals(true)
+    expect(battingTable.figures[0].startsWith('GPPAABAVG')).equals(true)
+    expect(battingTable.figures[1].startsWith('065.600')).equals(true)
+    expect(battingTable.figures[3].startsWith('0109.444')).equals(true)
     expect(table(1).names).deep.equals(['Team', 'Hawks · Fall 2025', 'Total'])
     // No block of labelled numbers any more.
     expect(text()).not.includes('OBP.')

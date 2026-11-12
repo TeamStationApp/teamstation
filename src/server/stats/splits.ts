@@ -155,6 +155,7 @@ const ratio = (part: number, whole: number): number | null =>
  */
 export function splitRates(c: SplitCounts): SplitRates {
   const batting = battingRates({
+    kl: null,
     roe: null,
     fc: null,
     pik: null,
@@ -182,6 +183,7 @@ export function splitRates(c: SplitCounts): SplitRates {
   const pitching = pitchingRates({
     gs: null,
     pitches: null,
+    strikes: null,
     kl: null,
     pitchAb: null,
     wp: null,

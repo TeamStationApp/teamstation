@@ -1165,6 +1165,7 @@ describe('request-only Apple TV workflow', () => {
   for (const [branch, seat, host] of [
     ['master', 'production', 'app'],
     ['develop', 'production', 'develop'],
+    ['feature', '5', 'develop5'],
     ['master', '2', 'develop2']
   ]) {
     it(`archives a standalone TV app for ${branch}/${seat}`, async () => {
@@ -1207,6 +1208,11 @@ describe('request-only Apple TV workflow', () => {
             assert.equal(options.scheme, 'TeamStationTV')
             assert.equal(options.configuration, 'Release')
             assert.equal(options.buildNumber, '26110601')
+            const info = JSON.parse(options.env!.TS_BUILD_INFO)
+            assert.equal(info.branch, branch)
+            assert.equal(info.commit, '0'.repeat(40))
+            assert.equal(info.version, options.version)
+            assert.equal(info.buildNumber, options.buildNumber)
             assert.match(options.version ?? '', /^\d+(\.\d+){0,2}$/)
             assert.deepEqual(options.xcargs, [
               'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
@@ -1243,6 +1249,23 @@ describe('request-only Apple TV workflow', () => {
       assert.ok(published)
     })
   }
+
+  it('rejects missing TV provenance before installing dependencies', async () => {
+    for (const run of [
+      { branch: '', commit: '0'.repeat(40) },
+      { branch: 'master', commit: '' }
+    ]) {
+      const context = {
+        run,
+        getBuildNumber: () => '1',
+        sh: async () => assert.fail('must validate before installing')
+      }
+      await assert.rejects(
+        buildTv(context as Parameters<typeof buildTv>[0]),
+        /branch|commit/
+      )
+    }
+  })
 
   it('does not publish when tvOS export fails', async () => {
     await assert.rejects(

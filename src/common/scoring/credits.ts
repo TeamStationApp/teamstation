@@ -1,3 +1,5 @@
+import { isRecordedPitch, pitchStrike } from '../pitchStrike'
+import { addStatCount } from '../statExtras'
 import type { ErrorKind } from './actions'
 import { storedEventType } from './document'
 import { playerRef } from './lineup'
@@ -153,6 +155,8 @@ export interface BattingLine {
   hbp: number
 }
 export interface PitchingLine {
+  hbp: number
+  strikes: number | null
   pitches: number
   outs: number
   h: number
@@ -165,7 +169,7 @@ function blankBatting(): BattingLine {
   return { pa: 0, ab: 0, r: 0, h: 0, rbi: 0, bb: 0, k: 0, hbp: 0 }
 }
 function blankPitching(): PitchingLine {
-  return { pitches: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0 }
+  return { pitches: 0, outs: 0, h: 0, r: 0, bb: 0, k: 0, hbp: 0, strikes: 0 }
 }
 
 /**
@@ -247,8 +251,10 @@ export function statLines(plays: readonly GamePlay[]): {
   batting: Record<number, BattingLine>
   pitching: Record<number, PitchingLine>
 } {
-  const batting: Record<number, BattingLine> = {}
-  const pitching: Record<number, PitchingLine> = {}
+  // Keyed by ids read from stored plays: without a prototype, no id can reach
+  // Object.prototype.
+  const batting: Record<number, BattingLine> = Object.create(null)
+  const pitching: Record<number, PitchingLine> = Object.create(null)
   const bat = (id: number): BattingLine => (batting[id] ??= blankBatting())
   const pitch = (id: number): PitchingLine => (pitching[id] ??= blankPitching())
   for (const play of plays) {
@@ -258,7 +264,12 @@ export function statLines(plays: readonly GamePlay[]): {
     )
     const batter = play.matchup.batter.id
     const pitcher = pitch(play.matchup.pitcher.id)
-    pitcher.pitches += play.playEvents.filter(event => event.isPitch).length
+    for (const event of play.playEvents) {
+      if (!event.isPitch || !isRecordedPitch(event.details)) continue
+      const owner = pitch(event.player?.id ?? play.matchup.pitcher.id)
+      owner.pitches++
+      owner.strikes = addStatCount(owner.strikes, pitchStrike(event.details))
+    }
     for (const runner of play.runners) {
       if (runner.movement.isOut) pitcher.outs++
       if (runner.movement.runScored === true && !runner.movement.isOut) {
@@ -283,7 +294,10 @@ export function statLines(plays: readonly GamePlay[]): {
       line.bb++
       pitcher.bb++
     }
-    if (type === 'hit_by_pitch') line.hbp++
+    if (type === 'hit_by_pitch') {
+      line.hbp++
+      pitcher.hbp++
+    }
     if (play.result.rbi > 0) bat(batter).rbi += play.result.rbi
   }
   return { batting, pitching }
