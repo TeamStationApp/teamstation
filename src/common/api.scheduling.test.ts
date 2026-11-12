@@ -2,6 +2,8 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { TeamStationClient } from './api'
+import { buildOptions } from './autoScheduler'
+import { input } from './autoScheduler/fixtures.test'
 import type { GameToReschedule, SchedulePreview } from './schedulePreviews'
 import type { ScheduleSettings, ScheduleSetup } from './seasonScheduling'
 
@@ -226,7 +228,9 @@ describe('api client scheduling setup', () => {
       startAt: '2027-04-17T14:00:00.000Z',
       endAt: '2027-04-17T15:30:00.000Z'
     }
+    const engine = input({ seasons: [], fields: [] })
     const { api, calls } = client([
+      { id: 'spv/1', input: engine },
       preview,
       preview,
       preview,
@@ -249,6 +253,7 @@ describe('api client scheduling setup', () => {
         '/api/v1/leagues/lea%2Fa/schedule-previews',
         { mode: 'full', existing: 'workAround' }
       ],
+      ['PUT', '/api/v1/schedule-previews/spv%2F1/result', buildOptions(engine)],
       ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
       [
         'PUT',

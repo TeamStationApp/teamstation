@@ -14,9 +14,10 @@ import {
   type Targets
 } from './matchups'
 import { SEEDS } from './options'
-import { place, type Placement } from './placement'
+import { type Placement, placeSteps } from './placement'
 import { nthSeed } from './random'
 import { firstNonZero, UNPLACED } from './score'
+import { finishSteps } from './steps'
 import type { UnmetConstraint } from './types'
 
 /**
@@ -165,6 +166,14 @@ export function settleTargets(
   seed: number,
   order?: readonly number[]
 ): Settled {
+  return finishSteps(settleTargetsSteps(context, seed, order))
+}
+
+export function* settleTargetsSteps(
+  context: RunContext,
+  seed: number,
+  order?: readonly number[]
+): Generator<void, Settled> {
   const reducedManagerCauses = new Map<string, string>()
   // Required matchups are placed as they are, with no lowering.
   if (context.required != null)
@@ -176,7 +185,7 @@ export function settleTargets(
         ])
       ),
       reducedManagerCauses,
-      placement: place(context, context.required, seed, order)
+      placement: yield* placeSteps(context, context.required, seed, order)
     }
   const targets = new Map(
     context.seasons.map(season => [
@@ -187,13 +196,19 @@ export function settleTargets(
   const managers = Object.values(context.input.headCoaches ?? {})
   const sharesManager = new Set(managers).size < managers.length
   for (;;) {
-    const attempt = (candidate: number): Placement =>
-      place(context, runMatchups(context, targets, candidate), candidate, order)
-    let placement = attempt(seed)
+    const attempt = function* (candidate: number): Generator<void, Placement> {
+      return yield* placeSteps(
+        context,
+        runMatchups(context, targets, candidate),
+        candidate,
+        order
+      )
+    }
+    let placement = yield* attempt(seed)
     // Opponents who share a manager can play each other in the same slot.
     const attempts = sharesManager ? SEEDS : 1
     for (let k = 1; k < attempts && placement.score[UNPLACED] > 0; k++) {
-      const alternative = attempt(nthSeed(seed, k))
+      const alternative = yield* attempt(nthSeed(seed, k))
       if (alternative.score[UNPLACED] < placement.score[UNPLACED])
         placement = alternative
     }

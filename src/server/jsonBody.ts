@@ -6,6 +6,16 @@ import { badRequest, unauthorized } from '../common/errors'
 const smallBody = express.json({ limit: '1mb' })
 const analyticsBody = express.json({ limit: '64kb' })
 
+// Up to three bounded device-generated schedule options with their game IDs.
+const scheduleResultParser = express.json({ limit: '64mb' })
+const scheduleResultBody: RequestHandler = (req, res, next) => {
+  if (req.actor == null) {
+    next(unauthorized())
+    return
+  }
+  scheduleResultParser(req, res, next)
+}
+
 /** One post of a game's plays is the whole game. */
 const gameBody = express.json({ limit: '32mb' })
 
@@ -55,6 +65,11 @@ const LARGE_BODIES: ReadonlyArray<{
   path: RegExp
   parser: RequestHandler
 }> = [
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/schedule-previews\/[^/]+\/result$/,
+    parser: scheduleResultBody
+  },
   {
     method: 'POST',
     path: /^\/api\/v1\/analytics\/events$/,
