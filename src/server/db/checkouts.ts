@@ -10,6 +10,71 @@ import type { Pool, PoolClient } from 'pg'
  */
 export interface CheckoutOwner {
   label: () => string
+  /**
+   * Aborted once nobody is waiting for this work's answer: a read whose caller
+   * went away. Its later checkouts are refused (`refuseAbandonedCheckouts`).
+   */
+  abandoned?: AbortSignal
+}
+
+/** A checkout refused because the read it was for has no caller left. */
+export class RequestAbandoned extends Error {
+  constructor() {
+    super('The caller went away before the database was reached')
+    this.name = 'RequestAbandoned'
+  }
+}
+
+export function isRequestAbandoned(error: unknown): boolean {
+  return error instanceof RequestAbandoned
+}
+
+/**
+ * Refuses the checkouts of work whose owner is abandoned: at once, for a
+ * checkout asked for after, and the moment it is abandoned, for one still
+ * waiting for a client. A client that is handed over after its checkout was
+ * refused goes straight back. A checkout already holding a client, and so a
+ * statement or transaction under way, is never interrupted.
+ *
+ * Without this a read whose caller had given up kept its place in the queue
+ * and went on to make each of its later checkouts, while the caller, told to
+ * try again, queued the same read behind it: under starvation the queue held
+ * the work of callers long gone, and grew with every retry.
+ */
+export function refuseAbandonedCheckouts(pool: Pool): void {
+  const connect = pool.connect.bind(pool) as (
+    ...args: unknown[]
+  ) => Promise<PoolClient> | undefined
+  ;(pool as { connect: unknown }).connect = (
+    ...args: unknown[]
+  ): Promise<PoolClient> | undefined => {
+    const abandoned = owners.getStore()?.abandoned
+    if (abandoned == null || args.length > 0) return connect(...args)
+    if (abandoned.aborted) return Promise.reject(new RequestAbandoned())
+    const asked = connect()!
+    return new Promise<PoolClient>((resolve, reject) => {
+      const refuse = (): void => {
+        reject(new RequestAbandoned())
+        asked.then(
+          client => {
+            client.release()
+          },
+          () => undefined
+        )
+      }
+      abandoned.addEventListener('abort', refuse, { once: true })
+      asked.then(
+        client => {
+          abandoned.removeEventListener('abort', refuse)
+          resolve(client)
+        },
+        (error: unknown) => {
+          abandoned.removeEventListener('abort', refuse)
+          reject(error)
+        }
+      )
+    })
+  }
 }
 
 const owners = new AsyncLocalStorage<CheckoutOwner>()

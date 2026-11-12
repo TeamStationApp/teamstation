@@ -9,7 +9,7 @@ import { Pool, type PoolConfig } from 'pg'
 
 import type { Role } from '../../common/roles'
 import type * as Config from '../serverConfig'
-import { watchCheckouts } from './checkouts'
+import { refuseAbandonedCheckouts, watchCheckouts } from './checkouts'
 import { attachInt8Parser } from './int8'
 
 /** `timestamptz`: read as a Date, written as a Date or an ISO string. */
@@ -2031,7 +2031,8 @@ function unrefTimer(timer: number | NodeJS.Timeout): void {
  *
  * A role's pool also says, in its `db-checkout` line, whose checkouts waited
  * or held a client too long and whose hold the clients while others wait
- * (`watchCheckouts`).
+ * (`watchCheckouts`). Any pool refuses the checkouts of a read whose caller
+ * has gone (`refuseAbandonedCheckouts`).
  */
 export function makePool(
   connectionString: string,
@@ -2078,6 +2079,7 @@ export function makePool(
     }, STARVATION_SAMPLE_MS)
     unrefTimer(sampling)
   }
+  refuseAbandonedCheckouts(pool)
   return pool
 }
 

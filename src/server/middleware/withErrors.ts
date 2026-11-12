@@ -10,6 +10,7 @@ import {
   tooLarge,
   unavailable
 } from '../../common/errors'
+import { isRequestAbandoned } from '../db/checkouts'
 import { isConnectionUnavailable } from '../db/database'
 
 /** Writes the one error shape, and nothing else, to a response. */
@@ -77,6 +78,12 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
   // rather than as a 500 that hides which end to fix.
   if (isTooLarge(error)) {
     sendError(res, tooLarge('That request body is too large'))
+    return
+  }
+  // A read whose caller went away was stopped short of the database: there
+  // is nobody to answer and nothing went wrong.
+  if (isRequestAbandoned(error)) {
+    if (!res.headersSent) res.end()
     return
   }
   // No database connection for the moment: nothing is wrong with the request,
