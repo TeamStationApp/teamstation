@@ -90,7 +90,9 @@ const tsSuites = [
   'src/server/autoScheduler/reschedule.integration.test.ts',
   'src/server/autoScheduler/rules.test.ts',
   'src/server/autoScheduler/managerPreview.unit.test.ts',
-  'src/server/autoScheduler/buildOffThread.test.ts',
+  'src/common/deviceScheduling.test.ts',
+  'src/server/routes/deviceScheduling.integration.test.ts',
+  'src/server/routes/devicePreviews.integration.test.ts',
   // Fixes M2: a season is dates, scheduled in each field’s local time.
   'src/common/eventTime.test.ts',
   'src/common/seasonScheduling.test.ts',
@@ -108,6 +110,11 @@ const tsSuites = [
   // Preview calendar M3: filters, field labels and the weeks.
   'src/app/screens/schedulePreviewCalendar.test.ts'
 ]
+
+if (unitOnly) {
+  const unitSuites = tsSuites.filter(path => !path.includes('.integration.'))
+  tsSuites.splice(0, tsSuites.length, ...unitSuites)
+}
 
 /** The `.test.tsx` suites, each bundled alone. */
 const appSuites = [
@@ -179,7 +186,9 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/server/events/eventInfo.integration.test.ts',
     'src/server/routes/schedulingSetup.integration.test.ts',
     'src/server/routes/schedulePreviews.integration.test.ts',
-    'src/server/autoScheduler/buildOffThread.test.ts',
+    'src/common/deviceScheduling.test.ts',
+    'src/server/routes/deviceScheduling.integration.test.ts',
+    'src/server/routes/devicePreviews.integration.test.ts',
     'src/server/autoScheduler/publish.integration.test.ts',
     'src/server/autoScheduler/reschedule.integration.test.ts',
     'src/server/venues/gameFields.integration.test.ts'

@@ -564,13 +564,16 @@ describe('publishing a schedule preview', function () {
     await f.h.db
       .updateTable('venue_fields')
       .set({
-        hours: JSON.stringify(
-          Array.from({ length: 7 }, (_, weekday) => ({
-            weekday,
-            start: '00:00',
-            end: '23:55'
-          }))
-        )
+        windows: JSON.stringify([
+          {
+            from: '0001-01-01',
+            hours: Array.from({ length: 7 }, (_, weekday) => ({
+              weekday,
+              start: '00:00',
+              end: '23:55'
+            }))
+          }
+        ])
       })
       .where('id', '=', fieldId)
       .execute()
@@ -596,6 +599,7 @@ describe('publishing a schedule preview', function () {
       (
         await w.call(102, 'PUT', `/seasons/${f.seasonB}/schedule-settings`, {
           ...SEASON_A_SETTINGS,
+          fieldIds: [fieldId],
           regularGames: 1,
           exhibitionGames: 0
         })

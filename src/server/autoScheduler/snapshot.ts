@@ -29,6 +29,12 @@ export interface RescheduleRef {
 
 /** What a preview stores beside the engine's input. */
 export interface Snapshot {
+  preparation?: {
+    keep?: PlannedGame[]
+    earlier?: { id: string; edits: unknown }
+    result?: import('../../common/autoScheduler/types').EngineResult
+  }
+
   avoidHeadCoachConflicts?: boolean
   engine: EngineInput
   existing: ExistingGames
