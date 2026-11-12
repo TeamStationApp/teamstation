@@ -6,6 +6,7 @@ import {
   rmSync,
   writeFileSync
 } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
 import { BlockedError, HarnessError } from './result'
@@ -37,6 +38,9 @@ export interface StackEntry {
   handle?: AttachedHandle
   handleFile?: string
 }
+
+/** Where `stack up` and `stack attach` register stacks. */
+export const STACKS = join(tmpdir(), 'teamstation-e2e-stacks')
 
 const ID = /^[a-z0-9][a-z0-9-]{0,62}$/
 
