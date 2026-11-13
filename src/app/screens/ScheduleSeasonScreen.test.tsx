@@ -219,7 +219,7 @@ describe('a season of the next schedule', () => {
     expect(record.saves.at(-1)?.fieldIds).deep.equals(['fld_two'])
   })
 
-  it('adds a registry field to the list and selects it only when its size matches', async () => {
+  it('adds a registry field to the list, selects it only when its size matches and removes it without deleted fields', async () => {
     const record = fakeClient(SEASON)
     const chosen = venueField({
       id: 'fld_harbor',
@@ -239,12 +239,25 @@ describe('a season of the next schedule', () => {
     ]
     record.client.venue = async () => venue
     let added: string[] = []
+    let listed: string[] | undefined
     record.client.saveScheduleSetup = async (_id, choice) => {
       added = choice.addedFieldIds ?? []
+      listed = choice.fieldIds
       return {
         ...(await record.client.scheduleSetup('lea_a')),
+        fieldIds: ['fld_gone'],
         addedFieldIds: added,
         fields: [
+          {
+            ...chosen,
+            id: 'fld_gone',
+            name: 'Gone Field',
+            venueId: venue.id!,
+            venueName: venue.name,
+            deleted: true,
+            ours: true,
+            ownerNames: []
+          },
           {
             ...chosen,
             venueId: venue.id!,
@@ -268,6 +281,7 @@ describe('a season of the next schedule', () => {
     await tapLabel(`Remove Harbor Diamond, ${venue.name} from the list`)
     await settle()
     expect(added).deep.equals([])
+    expect(listed).deep.equals([])
     expect(record.saves.at(-1)?.fieldIds).deep.equals([])
   })
 

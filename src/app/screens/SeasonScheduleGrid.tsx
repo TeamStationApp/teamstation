@@ -34,19 +34,6 @@ interface Column {
   value: (season: SetupSeason) => string
 }
 
-/**
- * The games a season's settings come to: half the participants' regular
- * games, since each game has two of them, and every exhibition game, which
- * has one.
- */
-export function seasonGameTotal(season: SetupSeason): number {
-  const s = season.settings
-  return (
-    Math.floor((season.participants * s.regularGames) / 2) +
-    (season.exhibitionTeams === 0 ? 0 : season.participants * s.exhibitionGames)
-  )
-}
-
 /** What a screen reader hears for a season's teams. */
 export function teamsLabel(season: SetupSeason): string {
   const teams = `${season.participants} ${season.participants === 1 ? 'team' : 'teams'}`
@@ -267,11 +254,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   nameCell: { width: theme.rem(12) },
   name: { width: theme.rem(12), paddingHorizontal: theme.rem(0.75) },
-  nameText: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375),
-    color: theme.primaryTextColor
-  },
   cell: {
     paddingHorizontal: theme.rem(0.375),
     paddingVertical: theme.rem(0.5),
