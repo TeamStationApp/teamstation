@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import { spawn } from 'node:child_process'
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -20,11 +21,13 @@ import {
   CAMERAMAN_APP,
   CAMERAMAN_DEVELOP_APP,
   compileAndroid,
+  copyGoogleServices,
   DEVELOP_APP,
   DIRECTOR_APP,
   DIRECTOR_DEVELOP_APP,
   DISTRIBUTOR_APP,
   DISTRIBUTOR_DEVELOP_APP,
+  GOOGLE_SERVICES,
   provenanceEnvironment,
   releaseIos,
   seatEnvironment,
@@ -639,6 +642,10 @@ describe('TeamStation pipeline Masonfile', () => {
         }
       }
     }
+    // The builder's Firebase configuration, as Mason holds it.
+    const secret = path.join(workspace, 'builder-google-services.json')
+    writeFileSync(secret, '{"project_info":{"project_id":"example"}}')
+    process.env.TS_GOOGLE_SERVICES_JSON = secret
     try {
       await buildIos(ctx)
       await compileAndroid(ctx)
@@ -651,8 +658,30 @@ describe('TeamStation pipeline Masonfile', () => {
         readFileSync(path.join(workspace, 'android/app/build.gradle'), 'utf8'),
         /applicationId "app\.teamstation\.develop"/
       )
+      assert.equal(
+        readFileSync(path.join(workspace, GOOGLE_SERVICES), 'utf8'),
+        '{"project_info":{"project_id":"example"}}'
+      )
     } finally {
+      delete process.env.TS_GOOGLE_SERVICES_JSON
       rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('builds Android without push when the builder holds no Firebase configuration', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'google-services-'))
+    try {
+      mkdirSync(path.join(root, 'android/app'), { recursive: true })
+      assert.equal(copyGoogleServices(root, undefined), false)
+      assert.equal(copyGoogleServices(root, ''), false)
+      assert.equal(existsSync(path.join(root, GOOGLE_SERVICES)), false)
+      // Named but not there is a builder set up wrong, not a build without push.
+      assert.throws(
+        () => copyGoogleServices(root, path.join(root, 'gone.json')),
+        /ENOENT/
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 

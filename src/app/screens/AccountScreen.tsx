@@ -817,7 +817,9 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               {lstrings.account_notifications_blocked}
             </Text>
           )}
-          {wanted && permission === 'prompt' && (
+          {/* A phone asks by itself (App's askWhenWanted); a browser asks
+              only from a tap. */}
+          {wanted && permission === 'prompt' && Platform.OS === 'web' && (
             <Button
               label={lstrings.account_notifications_allow}
               kind="secondary"

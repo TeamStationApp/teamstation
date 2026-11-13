@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
 import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
@@ -616,6 +616,24 @@ export async function releaseIos(ctx: Stage): Promise<void> {
 }
 
 const APK_GLOB = 'android/app/build/outputs/apk/release/*.apk'
+/** Firebase's configuration for both application ids, which no commit holds. */
+export const GOOGLE_SERVICES = 'android/app/google-services.json'
+
+/**
+ * Copies the builder's Firebase configuration, a file it holds as it holds
+ * its signing keys (`TS_GOOGLE_SERVICES_JSON`), into the Android app, where
+ * `android/app/build.gradle` applies the google-services plugin when it is
+ * there. A builder without one copies nothing, and the app builds without
+ * push. True when it copied.
+ */
+export function copyGoogleServices(
+  root: string,
+  secret: string | undefined = process.env.TS_GOOGLE_SERVICES_JSON
+): boolean {
+  if (secret == null || secret === '') return false
+  copyFileSync(secret, path.join(root, GOOGLE_SERVICES))
+  return true
+}
 const AAB_GLOB = 'android/app/build/outputs/bundle/release/*.aab'
 const PLAY_ARCHITECTURES = 'arm64-v8a,armeabi-v7a'
 
@@ -623,6 +641,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const app = runApp(ctx)
   if (app === DEVELOP_APP) applyDevelopIdentity(developRoot(ctx))
+  copyGoogleServices(ctx.workspace ?? process.cwd())
   const build = ctx.getBuildNumber(app)
   const version = appVersion(ctx)
   await ctx.sh(

@@ -1,0 +1,17 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+      <!--
+        The emulator tests' stand-in for FCM (push/PushDebugReceiver.kt),
+        reached with `am broadcast -p app.teamstation.app`. Debug builds only.
+      -->
+      <receiver
+        android:name=".push.PushDebugReceiver"
+        android:exported="true">
+        <intent-filter>
+          <action android:name="app.teamstation.app.PUSH_DEBUG" />
+          <action android:name="app.teamstation.app.PUSH_DEBUG_TOKEN" />
+          <action android:name="app.teamstation.app.PUSH_DEBUG_DUMP" />
+        </intent-filter>
+      </receiver>
+    </application>
+</manifest>

@@ -321,6 +321,9 @@ function device(
     asked: 0,
     state: async () => now,
     sync: async () => now,
+    release: async () => undefined,
+    setActiveConversation: () => undefined,
+    clearConversation: async () => undefined,
     enable: async client => {
       fake.asked++
       fake.through = client
@@ -609,6 +612,47 @@ describe('Account settings screen', () => {
       />
     )
     expect(text()).includes(BLOCKED)
+  })
+  it('leaves asking to a phone itself, which shows no Allow button', async () => {
+    const web = Platform.OS
+    try {
+      for (const os of ['ios', 'android'] as const) {
+        Platform.OS = os
+        const f = fixture()
+        f.elsewhere({ messages: true, rsvpEvents: false })
+        const phone = device('prompt', 'granted')
+        await render(
+          <AccountScreen
+            {...f}
+            onSignOut={() => undefined}
+            pushDevice={phone}
+          />
+        )
+        expect(toggle(MESSAGES)?.checked).equals(true)
+        expect(button(ALLOW)).equals(undefined)
+        expect(text()).not.includes(BLOCKED)
+        expect(phone.asked).equals(0)
+        await act(async () => {
+          root?.unmount()
+          root = undefined
+        })
+        // Refused, the phone says so.
+        await render(
+          <AccountScreen
+            {...f}
+            onSignOut={() => undefined}
+            pushDevice={device('denied')}
+          />
+        )
+        expect(text()).includes(BLOCKED)
+        await act(async () => {
+          root?.unmount()
+          root = undefined
+        })
+      }
+    } finally {
+      Platform.OS = web
+    }
   })
   it('opens the Apple Music settings walkthrough from Walk-up songs, on an iPhone only', async () => {
     const web = Platform.OS

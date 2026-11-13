@@ -482,7 +482,7 @@ describe('api client', function () {
     ])
   })
 
-  it('reads the Web Push key, none while the server sends none, and registers a device', async function () {
+  it('reads the Web Push key, none while the server sends none, and registers a device and deletes it', async function () {
     const client = (answer: ReturnType<typeof stubFetch>): TeamStationClient =>
       new TeamStationClient({
         baseUrl: 'http://example.com/api/v1',
@@ -520,6 +520,12 @@ describe('api client', function () {
         'http://example.com/api/v1/me/push-registrations',
         JSON.stringify(registration)
       ]
+    ])
+    // Sign-out deletes it again, by its id.
+    const deleted = stubFetch(200, {})
+    await client(deleted).unregisterPush('psh/1')
+    expect(deleted.calls.map(call => [call.method, call.url])).deep.equals([
+      ['DELETE', 'http://example.com/api/v1/me/push-registrations/psh%2F1']
     ])
   })
 

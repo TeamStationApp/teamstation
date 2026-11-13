@@ -4344,6 +4344,18 @@ export class TeamStationClient {
     ).id
   }
 
+  /**
+   * Deletes one of the caller's push registrations (`registerPush`'s id): at
+   * sign-out, while the session is still there to say whose it is.
+   */
+  async unregisterPush(id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asUnknownOk
+    )
+  }
+
   /** Whether this account has unlocked chat, and how. */
   async chatAge(): Promise<ChatAge> {
     return await this.request('GET', '/me/account/chat-age', asChatAge)

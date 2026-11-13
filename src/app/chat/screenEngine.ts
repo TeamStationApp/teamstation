@@ -21,7 +21,6 @@ export type ChatScreenEngine = Pick<
   | 'deleteMessage'
   | 'moderatorDelete'
   | 'report'
-  | 'markRead'
   | 'typing'
   | 'openAttachment'
   | 'approvals'
@@ -38,4 +37,13 @@ export type ChatScreenEngine = Pick<
       | 'setBlocked'
       | 'isBlocked'
     >
-  >
+  > & {
+    /**
+     * `ChatEngine.markRead`: true when the read cursor moved. A stand-in
+     * may answer nothing.
+     */
+    markRead: (
+      conversationId: string,
+      clearManualUnreadRevision?: number
+    ) => Promise<unknown>
+  }

@@ -1304,11 +1304,14 @@ export class ChatEngine {
     })
   }
 
-  /** Moves the person's read cursor to the newest message read. */
+  /**
+   * Moves the person's read cursor to the newest message read; answers
+   * whether it moved.
+   */
   async markRead(
     conversationId: string,
     clearManualUnreadRevision?: number
-  ): Promise<void> {
+  ): Promise<boolean> {
     const ctx = this.ctx
     const moved = await this.serial(conversationId, async () => {
       const state = await stateOf(ctx, conversationId)
@@ -1347,9 +1350,10 @@ export class ChatEngine {
       }
       return true
     })
-    if (!moved) return
+    if (!moved) return false
     this.memory.emit({ type: 'conversation', conversationId })
     this.memory.emit({ type: 'conversations' })
+    return true
   }
 
   /** Tells the others the person is typing; false when it was not sent. */

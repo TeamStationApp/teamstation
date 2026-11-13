@@ -91,6 +91,8 @@ export default [
       'tools/**',
       // Rust: the chat crypto core and its build products.
       'crates/**',
+      // Gradle's outputs: test and coverage reports carry their own scripts.
+      'android/**/build/**',
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that
       // diverge from the Node server's standard-kit config. It has its

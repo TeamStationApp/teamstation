@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">TeamStation</string>
+    <!-- Notification channels, as Settings lists them, and what a DM says when it cannot be opened in time. -->
+    <string name="push_channel_messages">Messages</string>
+    <string name="push_channel_events">Events</string>
+    <string name="push_new_message_from">New message from %s</string>
 </resources>
