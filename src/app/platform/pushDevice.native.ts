@@ -45,8 +45,9 @@ let registered: string | undefined
 /**
  * Registers `address`, this phone's push token, for the signed-in session,
  * and keeps the registration's id for sign-out. The platform is the
- * phone's; the environment is which APNs a token is for, and always
- * `production` on Android.
+ * phone's. The environment is which APNs a token is for: on an iPhone the
+ * build's `TSApsEnvironment`, as its entitlement says (`development` but for
+ * a Mason archive), and always `production` on Android.
  */
 export async function registerAddress(
   client: Pick<PushClient, 'registerPush'>,
@@ -63,8 +64,9 @@ export async function registerAddress(
 
 /**
  * A phone's notifications, through `TSPush`. A build without the module
- * cannot show any; one whose module has no token (Android without Firebase)
- * shows the permission the same way and registers nothing.
+ * cannot show any; one whose module has no token (Android without Firebase,
+ * an iPhone whose APNs registration failed) shows the permission the same
+ * way and registers nothing, until the next start or sign-in.
  */
 export function phonePushDevice(
   module: () => PushModule | null = () =>

@@ -12,5 +12,16 @@
 	-->
 	<key>com.apple.developer.declared-age-range</key>
 	<true/>
+	<!--
+	  Pushes: development APNs unless the build says otherwise (a Mason archive
+	  passes production). The keychain group is the app's own default group,
+	  named so the notification extension can read the session and chat keys.
+	-->
+	<key>aps-environment</key>
+	<string>$(TS_APS_ENVIRONMENT)</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(TS_APP_BUNDLE_ID)</string>
+	</array>
 </dict>
 </plist>

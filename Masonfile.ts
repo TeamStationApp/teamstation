@@ -46,6 +46,13 @@ export const DISTRIBUTOR_APP = 'app.teamstation.distributor'
 export const DISTRIBUTOR_DEVELOP_APP = 'app.teamstation.distributor-develop'
 export const DISTRIBUTOR_NAME = 'TS Distributor'
 export const DISTRIBUTOR_DEVELOP_NAME = 'Distributor Develop'
+// The iOS app's Notification Service Extension, `<app id>.notifications`,
+// signed with the app (ios/TeamStationNotifications).
+export const NOTIFICATIONS_SUFFIX = '.notifications'
+// Which entitlements the extension is signed with. Apple's notification
+// filtering entitlement (TeamStationNotifications.filtering.entitlements)
+// replaces this once it is granted, with the server's push.iosFiltering on.
+export const NSE_ENTITLEMENTS = 'TeamStationNotifications.entitlements'
 // The team of the field apps' Mason app records. The xcconfig carries it:
 // -xcconfig overrides even Mason's own DEVELOPMENT_TEAM on the command line.
 export const FIELD_TEAM = 'V4AK4X7A2V'
@@ -95,6 +102,11 @@ function rewriteOnce(
   writeFileSync(full, text.replaceAll(from, to))
 }
 
+/** Every bundle an app's archive signs: the app and its notification extension. */
+export function bundleIdsOf(app: string): string[] {
+  return [app, `${app}${NOTIFICATIONS_SUFFIX}`]
+}
+
 /** Which app id this run publishes. Master stays stable; every other branch and every seat does not. */
 export function appIdOf(
   input: { branch?: string; seat?: string } = {}
@@ -142,10 +154,12 @@ export function applyDevelopIdentity(root: string): void {
     '<string name="app_name">TeamStation</string>',
     `<string name="app_name">${DEVELOP_DISPLAY_NAME}</string>`
   )
+  // The project's one bundle id, which the app, its extension and its tests
+  // are named from.
   rewrite(
     'ios/TeamStation.xcodeproj/project.pbxproj',
-    'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;',
-    `PRODUCT_BUNDLE_IDENTIFIER = ${DEVELOP_APP};`
+    'TS_APP_BUNDLE_ID = app.teamstation.app;',
+    `TS_APP_BUNDLE_ID = ${DEVELOP_APP};`
   )
   rewrite(
     'ios/TeamStation.xcodeproj/project.pbxproj',
@@ -353,7 +367,7 @@ function buildStages(w: WorkflowBuilder, app: string): void {
             rust: '1.98.0'
           },
           timeout: '6h',
-          apple: { distribution: 'adHoc', app },
+          apple: { distribution: 'adHoc', app, bundleIds: bundleIdsOf(app) },
           publishes: [app],
           buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
@@ -367,7 +381,11 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           // this stage re-signs the stashed IPA and does not compile.
           checkout: { depth: 1 },
           when: { branch: ['master'], params: { seat: 'production' } },
-          apple: { distribution: 'appStore', app: STABLE_APP },
+          apple: {
+            distribution: 'appStore',
+            app: STABLE_APP,
+            bundleIds: bundleIdsOf(STABLE_APP)
+          },
           run: releaseIos
         }
       ],
@@ -564,7 +582,10 @@ export async function buildIos(ctx: Stage): Promise<void> {
     xcargs: [
       'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
       `TS_APP_LINK_HOST=${new URL(seatEnvironment(ctx).TS_APP_ORIGIN).host}`,
-      'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements'
+      'TS_APP_ENTITLEMENTS=TeamStation/TeamStation.entitlements',
+      // An ad hoc or App Store build's tokens are production APNs's.
+      'TS_APS_ENVIRONMENT=production',
+      `TS_NSE_ENTITLEMENTS=${NSE_ENTITLEMENTS}`
     ],
     env: {
       CARGO_HOME: `${rustRoot}/cargo`,

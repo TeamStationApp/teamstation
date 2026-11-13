@@ -8,6 +8,17 @@
 
 /* Begin PBXBuildFile section */
 		A26200000000000000000001 /* GlassViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26200000000000000000002 /* GlassViewTests.swift */; };
+		B7A0C0DE0000000000000B01 /* ChatWakeDecryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */; };
+		B7A0C0DE0000000000000B02 /* ChatWakeDecryptor.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */; };
+		B7A0C0DE0000000000000B03 /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F02 /* NotificationService.swift */; };
+		B7A0C0DE0000000000000B0B /* NotificationService.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F02 /* NotificationService.swift */; };
+		B7A0C0DE0000000000000B04 /* Push.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F07 /* Push.swift */; };
+		B7A0C0DE0000000000000B05 /* RCTPush.mm in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F08 /* RCTPush.mm */; };
+		B7A0C0DE0000000000000B06 /* Coverage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F09 /* Coverage.swift */; };
+		B7A0C0DE0000000000000B07 /* Coverage.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F09 /* Coverage.swift */; };
+		B7A0C0DE0000000000000B08 /* TeamStationNotifications.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F0A /* TeamStationNotifications.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		B7A0C0DE0000000000000B09 /* ChatWakeDecryptorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F0B /* ChatWakeDecryptorTests.swift */; };
+		B7A0C0DE0000000000000B0A /* PushTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7A0C0DE0000000000000F0C /* PushTests.swift */; };
 		5CE4E0A10000000000000002 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE4E0A10000000000000001 /* SceneDelegate.swift */; };
 		5CE4E0A10000000000000004 /* LinkLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE4E0A10000000000000003 /* LinkLaunchOptions.swift */; };
 		5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */; };
@@ -57,6 +68,13 @@
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
+		B7A0C0DE0000000000000C01 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = B7A0C0DE0000000000000T01;
+			remoteInfo = TeamStationNotifications;
+		};
 		5CE4E0A1000000000000000D /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 83CBB9F71A601CBA00E9B192 /* Project object */;
@@ -66,8 +84,34 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		B7A0C0DE0000000000000P05 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				B7A0C0DE0000000000000B08 /* TeamStationNotifications.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		A26200000000000000000002 /* GlassViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassViewTests.swift; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatWakeDecryptor.swift; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F02 /* NotificationService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationService.swift; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F03 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F04 /* TeamStationNotifications.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TeamStationNotifications.entitlements; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F05 /* TeamStationNotifications.filtering.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = TeamStationNotifications.filtering.entitlements; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F06 /* TeamStationNotifications-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "TeamStationNotifications-Bridging-Header.h"; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F07 /* Push.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Push.swift; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F08 /* RCTPush.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = RCTPush.mm; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F09 /* Coverage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Coverage.swift; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F0A /* TeamStationNotifications.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = TeamStationNotifications.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		B7A0C0DE0000000000000F0B /* ChatWakeDecryptorTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatWakeDecryptorTests.swift; sourceTree = "<group>"; };
+		B7A0C0DE0000000000000F0C /* PushTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PushTests.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000001 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SceneDelegate.swift; path = TeamStation/SceneDelegate.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000003 /* LinkLaunchOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LinkLaunchOptions.swift; path = TeamStation/LinkLaunchOptions.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneLifecycleTests.swift; sourceTree = "<group>"; };
@@ -124,6 +168,13 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		B7A0C0DE0000000000000P02 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5CE4E0A1000000000000000C /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -143,6 +194,30 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		B7A0C0DE0000000000000G01 /* TeamStationNotifications */ = {
+			isa = PBXGroup;
+			children = (
+				B7A0C0DE0000000000000F02 /* NotificationService.swift */,
+				B7A0C0DE0000000000000F01 /* ChatWakeDecryptor.swift */,
+				B7A0C0DE0000000000000F06 /* TeamStationNotifications-Bridging-Header.h */,
+				B7A0C0DE0000000000000F03 /* Info.plist */,
+				B7A0C0DE0000000000000F04 /* TeamStationNotifications.entitlements */,
+				B7A0C0DE0000000000000F05 /* TeamStationNotifications.filtering.entitlements */,
+			);
+			path = TeamStationNotifications;
+			sourceTree = "<group>";
+		};
+		B7A0C0DE0000000000000G02 /* Push */ = {
+			isa = PBXGroup;
+			children = (
+				B7A0C0DE0000000000000F08 /* RCTPush.mm */,
+				B7A0C0DE0000000000000F07 /* Push.swift */,
+				B7A0C0DE0000000000000F09 /* Coverage.swift */,
+			);
+			name = Push;
+			path = TeamStation/Push;
+			sourceTree = SOURCE_ROOT;
+		};
 		079C0F7B05299D6A392E2536 /* ChatCrypto */ = {
 			isa = PBXGroup;
 			children = (
@@ -174,6 +249,7 @@
 				B5E0A1C10000000000000007 /* PhoneStream */,
 				C9B2E4F10000000000000003 /* QrScanner */,
 				079C0F7B05299D6A392E2536 /* ChatCrypto */,
+				B7A0C0DE0000000000000G02 /* Push */,
 			);
 			name = TeamStation;
 			sourceTree = "<group>";
@@ -207,6 +283,7 @@
 			children = (
 				13B07FAE1A68108700A75B9A /* TeamStation */,
 				5CE4E0A1000000000000000A /* TeamStationTests */,
+				B7A0C0DE0000000000000G01 /* TeamStationNotifications */,
 				832341AE1AAA6A7D00B99B32 /* Libraries */,
 				83CBBA001A601CBA00E9B192 /* Products */,
 				2D16E6871FA4F8E400B85C8A /* Frameworks */,
@@ -243,6 +320,8 @@
 				5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */,
 				A26200000000000000000002 /* GlassViewTests.swift */,
 				D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */,
+				B7A0C0DE0000000000000F0B /* ChatWakeDecryptorTests.swift */,
+				B7A0C0DE0000000000000F0C /* PushTests.swift */,
 			);
 			path = TeamStationTests;
 			sourceTree = "<group>";
@@ -252,6 +331,7 @@
 			children = (
 				5CE4E0A10000000000000009 /* TeamStationTests.xctest */,
 				13B07F961A680F5B00A75B9A /* TeamStation.app */,
+				B7A0C0DE0000000000000F0A /* TeamStationNotifications.appex */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -327,6 +407,23 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		B7A0C0DE0000000000000T01 /* TeamStationNotifications */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B7A0C0DE0000000000000L01 /* Build configuration list for PBXNativeTarget "TeamStationNotifications" */;
+			buildPhases = (
+				B7A0C0DE0000000000000P03 /* Build chat crypto */,
+				B7A0C0DE0000000000000P01 /* Sources */,
+				B7A0C0DE0000000000000P02 /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TeamStationNotifications;
+			productName = TeamStationNotifications;
+			productReference = B7A0C0DE0000000000000F0A /* TeamStationNotifications.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
 		13B07F861A680F5B00A75B9A /* TeamStation */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 13B07F931A680F5B00A75B9A /* Build configuration list for PBXNativeTarget "TeamStation" */;
@@ -340,10 +437,12 @@
 				00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */,
 				00EEFC60759A1932668264C0 /* [CP] Embed Pods Frameworks */,
 				E235C05ADACE081382539298 /* [CP] Copy Pods Resources */,
+				B7A0C0DE0000000000000P05 /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				B7A0C0DE0000000000000D01 /* PBXTargetDependency */,
 			);
 			name = TeamStation;
 			packageProductDependencies = (
@@ -404,6 +503,7 @@
 			targets = (
 				13B07F861A680F5B00A75B9A /* TeamStation */,
 				00E356ED1AD99517003FC87E /* TeamStationTests */,
+				B7A0C0DE0000000000000T01 /* TeamStationNotifications */,
 			);
 		};
 /* End PBXProject section */
@@ -435,6 +535,25 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		B7A0C0DE0000000000000P03 /* Build chat crypto */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build chat crypto";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "# The extension is built before the app that embeds it, so it builds the\n# library it links itself (src/MOBILE.md). Neither phase names it as an\n# output, which would make the app's phase a step of the extension's link.\n\"${SRCROOT}/../scripts/chatCryptoNative.sh\" ios\n";
+		};
 		00DD1BFF1BD5951E006B06BC /* Bundle React Native code and images */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -482,7 +601,6 @@
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)/libchat_crypto.a",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
@@ -554,6 +672,16 @@
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		B7A0C0DE0000000000000P01 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B7A0C0DE0000000000000B03 /* NotificationService.swift in Sources */,
+				B7A0C0DE0000000000000B02 /* ChatWakeDecryptor.swift in Sources */,
+				B7A0C0DE0000000000000B07 /* Coverage.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		5CE4E0A1000000000000000B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -562,6 +690,8 @@
 				5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */,
 				A26200000000000000000001 /* GlassViewTests.swift in Sources */,
 				D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */,
+				B7A0C0DE0000000000000B09 /* ChatWakeDecryptorTests.swift in Sources */,
+				B7A0C0DE0000000000000B0A /* PushTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -594,12 +724,22 @@
 				C9B2E4F10000000000000002 /* TSQrScannerComponentView.mm in Sources */,
 				E5877E23843C3DB5EB6E0DB1 /* ChatCryptoProvider.mm in Sources */,
 				AF107DC2F99C16BDC99E1EAC /* NativeChatCrypto.cpp in Sources */,
+				B7A0C0DE0000000000000B05 /* RCTPush.mm in Sources */,
+				B7A0C0DE0000000000000B04 /* Push.swift in Sources */,
+				B7A0C0DE0000000000000B06 /* Coverage.swift in Sources */,
+				B7A0C0DE0000000000000B01 /* ChatWakeDecryptor.swift in Sources */,
+				B7A0C0DE0000000000000B0B /* NotificationService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
+		B7A0C0DE0000000000000D01 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = B7A0C0DE0000000000000T01 /* TeamStationNotifications */;
+			targetProxy = B7A0C0DE0000000000000C01 /* PBXContainerItemProxy */;
+		};
 		5CE4E0A1000000000000000E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = 13B07F861A680F5B00A75B9A /* TeamStation */;
@@ -608,6 +748,83 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		B7A0C0DE0000000000000X01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = "TeamStationNotifications/$(TS_NSE_ENTITLEMENTS)";
+				CURRENT_PROJECT_VERSION = 1;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../crates/chat-crypto/include",
+				);
+				INFOPLIST_FILE = TeamStationNotifications/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lchat_crypto",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID).notifications";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OBJC_BRIDGING_HEADER = "TeamStationNotifications/TeamStationNotifications-Bridging-Header.h";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TS_NSE_ENTITLEMENTS = TeamStationNotifications.entitlements;
+			};
+			name = Debug;
+		};
+		B7A0C0DE0000000000000X02 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				APPLICATION_EXTENSION_API_ONLY = YES;
+				CLANG_ENABLE_MODULES = YES;
+				CODE_SIGN_ENTITLEMENTS = "TeamStationNotifications/$(TS_NSE_ENTITLEMENTS)";
+				CURRENT_PROJECT_VERSION = 1;
+				HEADER_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/../crates/chat-crypto/include",
+				);
+				INFOPLIST_FILE = TeamStationNotifications/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(SRCROOT)/build/chatCrypto/$(PLATFORM_NAME)",
+				);
+				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lchat_crypto",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID).notifications";
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_OBJC_BRIDGING_HEADER = "TeamStationNotifications/TeamStationNotifications-Bridging-Header.h";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TS_NSE_ENTITLEMENTS = TeamStationNotifications.entitlements;
+			};
+			name = Release;
+		};
 		5CE4E0A10000000000000010 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -617,7 +834,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID).tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -635,7 +852,7 @@
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 18.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app.tests;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID).tests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_VERSION = 5.0;
@@ -679,7 +896,7 @@
 					DeclaredAgeRange,
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_DEBUG";
-				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID)";
 				PRODUCT_NAME = TeamStation;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(PODS_ROOT)/Argon2Swift/Sources/Modules";
@@ -726,7 +943,7 @@
 					DeclaredAgeRange,
 				);
 				OTHER_SWIFT_FLAGS = "$(inherited) -D EXPO_CONFIGURATION_RELEASE";
-				PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;
+				PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID)";
 				PRODUCT_NAME = TeamStation;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
 				SWIFT_INCLUDE_PATHS = "$(inherited) $(PODS_ROOT)/Argon2Swift/Sources/Modules";
@@ -816,6 +1033,8 @@
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) DEBUG";
+				TS_APP_BUNDLE_ID = app.teamstation.app;
+				TS_APS_ENVIRONMENT = development;
 				USE_HERMES = true;
 			};
 			name = Debug;
@@ -889,6 +1108,8 @@
 				PODFILE_DIR = "$(SRCROOT)";
 				REACT_NATIVE_PATH = "${PODS_ROOT}/../../node_modules/react-native";
 				SDKROOT = iphoneos;
+				TS_APP_BUNDLE_ID = app.teamstation.app;
+				TS_APS_ENVIRONMENT = development;
 				USE_HERMES = true;
 				VALIDATE_PRODUCT = YES;
 			};
@@ -897,6 +1118,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		B7A0C0DE0000000000000L01 /* Build configuration list for PBXNativeTarget "TeamStationNotifications" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B7A0C0DE0000000000000X01 /* Debug */,
+				B7A0C0DE0000000000000X02 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		5CE4E0A1000000000000000F /* Build configuration list for PBXNativeTarget "TeamStationTests" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  The app's keychain group, where it keeps the session token and the chat
+	  keys the extension opens a wake with. The target takes this file from
+	  TS_NSE_ENTITLEMENTS; TeamStationNotifications.filtering.entitlements
+	  adds the filtering entitlement once Apple grants it.
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(TS_APP_BUNDLE_ID)</string>
+	</array>
+</dict>
+</plist>

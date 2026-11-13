@@ -113,6 +113,8 @@ declare module '@mason/types' {
       distribution: string
       app: string
       platform?: 'ios' | 'macos' | 'tvos'
+      /** Every bundle the stage signs, each the app or one of its extensions. */
+      bundleIds?: string[]
     }
     checkout?: boolean | { depth?: number }
     /**

@@ -210,7 +210,8 @@ describe('Native build and signing adapters', () => {
       source: path.join(root, 'source'),
       output: path.join(root, 'output'),
       settings,
-      target: target(app, 'ios'),
+      // The app alone: its notification extension has cases of its own.
+      target: { ...target(app, 'ios'), extensions: undefined },
       branch: 'master',
       commit: 'a'.repeat(40),
       version: '1.2.3',
@@ -873,6 +874,148 @@ describe('Native build and signing adapters', () => {
     await assert.rejects(ruby(context, 'project', {}, root))
     assert(!existsSync(path.join(root, 'project.json')))
   })
+  it("signs the TeamStation app's notification extension with a profile of its own, and checks it in the IPA", async () => {
+    const extension = `${app}.notifications`
+    context.target = target(app, 'ios')
+    assert.deepEqual(context.target.extensions, [extension])
+    const home = path.join(root, 'home')
+    // Without the extension's profile, nothing is signed.
+    await assert.rejects(
+      ios(context, home),
+      /Every extension needs a signing profile/
+    )
+    assert.equal(matches.length, 0)
+    const apple = context.settings.apps[app].ios!.apple!
+    apple.profileNames[extension] = 'Fixture Notifications'
+    const extensionProfile: Profile = {
+      ...profile,
+      uuid: '00000000-0000-4000-8000-000000000003',
+      name: 'Fixture Notifications',
+      entitlements: {
+        ...profile.entitlements,
+        'application-identifier': `${team}.${extension}`
+      }
+    }
+    let extensionInfo: object = {
+      ...info(),
+      CFBundleIdentifier: extension,
+      CFBundleExecutable: 'TeamStationNotifications'
+    }
+    let extensionEntitlements: object = extensionProfile.entitlements
+    /** Whether the profile or entitlements read last are the extension's. */
+    let forExtension = false
+    const plugIns = (appPath: string): string =>
+      path.join(appPath, 'PlugIns/TeamStationNotifications.appex')
+    dispatch = async c => {
+      const last = c.args.at(-1) ?? ''
+      if (c.file === 'bundle' && c.args[3] === 'match') {
+        const value = request(c)
+        matches.push(value)
+        for (const id of value.appIds as string[])
+          file(path.join(value.profilesDirectory, `${id}.mobileprovision`))
+        return ''
+      }
+      if (c.file === 'security' && c.args[0] === 'cms') {
+        forExtension = /notifications\.mobileprovision$|\.appex\//.test(last)
+        return '<plist/>'
+      }
+      if (c.file === 'bundle' && c.args[3] === 'profile')
+        return JSON.stringify(forExtension ? extensionProfile : profile)
+      if (c.file === 'codesign' && c.args.includes('--entitlements')) {
+        forExtension = last.endsWith('.appex')
+        return ''
+      }
+      if (c.file === 'plutil')
+        return JSON.stringify(
+          last.endsWith('entitlements.plist')
+            ? forExtension
+              ? extensionEntitlements
+              : profile.entitlements
+            : last.includes('.appex/')
+              ? extensionInfo
+              : info()
+        )
+      if (c.file === 'ditto') {
+        const appPath = path.join(last, 'Payload/Example.app')
+        appTree(appPath)
+        file(path.join(plugIns(appPath), 'Info.plist'))
+        return ''
+      }
+      return await fake(c)
+    }
+    await ios(context, home)
+    assert.deepEqual(
+      matches.map(m => m.appIds),
+      [[app, extension]]
+    )
+    const archived = calls.find(
+      c => c.file === 'xcodebuild' && c.args[0] === 'archive'
+    )!
+    for (const setting of [
+      'TS_APS_ENVIRONMENT=production',
+      'TS_NSE_ENTITLEMENTS=TeamStationNotifications.entitlements'
+    ])
+      assert(archived.args.includes(setting), setting)
+    // The extension in the exported IPA was checked as the app was.
+    assert(
+      calls.some(
+        c =>
+          c.file === 'codesign' &&
+          c.args.includes('--entitlements') &&
+          c.args.at(-1)!.endsWith('TeamStationNotifications.appex')
+      )
+    )
+
+    const signing = {
+      directory: root,
+      keychain: 'fixture',
+      profiles: new Map<string, Profile>()
+    }
+    const appPath = appTree(path.join(root, 'Checked.app'))
+    // Missing from the IPA.
+    await assert.rejects(
+      verifyApp(context, appPath, signing),
+      /Extensions in the IPA do not match/
+    )
+    file(path.join(plugIns(appPath), 'Info.plist'))
+    await verifyApp(context, appPath, signing)
+    // Another one beside it, or one with another id.
+    file(path.join(appPath, 'PlugIns/Other.appex/Info.plist'))
+    await assert.rejects(
+      verifyApp(context, appPath, signing),
+      /Extensions in the IPA do not match/
+    )
+    rmSync(path.join(appPath, 'PlugIns/Other.appex'), { recursive: true })
+    extensionInfo = { ...extensionInfo, CFBundleIdentifier: `${app}.other` }
+    await assert.rejects(
+      verifyApp(context, appPath, signing),
+      /Extensions in the IPA do not match/
+    )
+    extensionInfo = { ...extensionInfo, CFBundleIdentifier: extension }
+    // Built with another version, or signed for debugging.
+    extensionInfo = { ...extensionInfo, CFBundleVersion: '2' }
+    await assert.rejects(
+      verifyApp(context, appPath, signing),
+      /Extension version or build/
+    )
+    extensionInfo = { ...extensionInfo, CFBundleVersion: '26093004' }
+    extensionEntitlements = {
+      ...extensionProfile.entitlements,
+      'get-task-allow': true
+    }
+    await assert.rejects(
+      verifyApp(context, appPath, signing),
+      /Release entitlements did not match/
+    )
+    extensionEntitlements = extensionProfile.entitlements
+    await verifyApp(context, appPath, signing)
+    // A TestFlight build wants the extension's App Store profile as well.
+    testflight()
+    await assert.rejects(
+      ios(context, home),
+      /Every extension needs a signing profile/
+    )
+  })
   it('uses pinned Ruby libraries to parse real profile XML and modify a generated Xcode project', async () => {
     Processes.prototype.run = original
     context.settings.tools.bundle = process.env.DEPLOY_TEST_BUNDLE ?? 'bundle'
@@ -924,6 +1067,74 @@ describe('Native build and signing adapters', () => {
       ).certificates[0],
       profile.certificates[0]
     )
+  })
+  it('expands the build settings a bundle id names, from the target or the project, and signs an extension by it', async () => {
+    Processes.prototype.run = original
+    context.settings.tools.bundle = process.env.DEPLOY_TEST_BUNDLE ?? 'bundle'
+    const env = { ...process.env, ...bundleEnvironment() }
+    const extension = `${app}.notifications`
+    const make = (project: string, appSetting: string): void => {
+      execFileSync(
+        context.settings.tools.bundle,
+        [
+          'exec',
+          'ruby',
+          '-e',
+          `require 'xcodeproj'; p=Xcodeproj::Project.new(ARGV[0]);p.build_configurations.each{|c|c.build_settings['TS_APP_BUNDLE_ID']=ARGV[1]};t=p.new_target(:application,'Example',:ios,'18.0');t.build_configurations.each{|c|c.build_settings['PRODUCT_BUNDLE_IDENTIFIER']=ARGV[2]};e=p.new_target(:app_extension,'ExampleNotifications',:ios,'18.0');e.build_configurations.each{|c|c.build_settings['NSE_SUFFIX']='notifications';c.build_settings['PRODUCT_BUNDLE_IDENTIFIER']='\${TS_APP_BUNDLE_ID}.$(NSE_SUFFIX)'};p.save`,
+          project,
+          app,
+          appSetting
+        ],
+        { env, stdio: 'pipe' }
+      )
+    }
+    const request = (project: string): object => ({
+      project,
+      platform: 'ios',
+      appId: app,
+      teamId: team,
+      identity: 'Fixture Distribution',
+      keychain: path.join(root, 'keychain'),
+      profiles: { [app]: 'Fixture', [extension]: 'Fixture Notifications' },
+      number: '26093004',
+      version: '1.2.3'
+    })
+    // The app's id from the project's setting, the extension's from its own
+    // target's and the project's.
+    const project = path.join(root, 'Expanded.xcodeproj')
+    make(project, '$(TS_APP_BUNDLE_ID)')
+    await ruby(context, 'project', request(project), root)
+    const written = readFileSync(path.join(project, 'project.pbxproj'), 'utf8')
+    assert(written.includes('PROVISIONING_PROFILE_SPECIFIER = Fixture;'))
+    assert(
+      written.includes(
+        'PROVISIONING_PROFILE_SPECIFIER = "Fixture Notifications";'
+      )
+    )
+    // The setting itself is left as it was: only the signing is added.
+    assert(
+      written.includes('PRODUCT_BUNDLE_IDENTIFIER = "$(TS_APP_BUNDLE_ID)";')
+    )
+    // A setting nothing defines, and settings that name each other, fail.
+    for (const appSetting of ['$(TS_NO_SUCH_SETTING)', '$(TS_LOOP)']) {
+      const broken = path.join(root, `Broken${appSetting.length}.xcodeproj`)
+      make(broken, appSetting)
+      if (appSetting === '$(TS_LOOP)')
+        execFileSync(
+          context.settings.tools.bundle,
+          [
+            'exec',
+            'ruby',
+            '-e',
+            `require 'xcodeproj'; p=Xcodeproj::Project.open(ARGV[0]);p.build_configurations.each{|c|c.build_settings['TS_LOOP']='$(TS_LOOP)'};p.save`,
+            broken
+          ],
+          { env, stdio: 'pipe' }
+        )
+      const before = readFileSync(path.join(broken, 'project.pbxproj'))
+      await assert.rejects(ruby(context, 'project', request(broken), root))
+      assert(readFileSync(path.join(broken, 'project.pbxproj')).equals(before))
+    }
   })
   it('reads a real application plist with the macOS system utility', async function () {
     if (process.platform !== 'darwin') this.skip()

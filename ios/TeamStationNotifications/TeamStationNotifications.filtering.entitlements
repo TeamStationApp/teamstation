@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  TeamStationNotifications.entitlements and Apple's filtering entitlement,
+	  which lets the extension hide a group message that does not mention the
+	  reader. Chosen with TS_NSE_ENTITLEMENTS once Apple has granted it, with
+	  the server's push.iosFiltering on; a simulator build is signed without a
+	  profile, so it has the entitlement as written.
+	-->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)$(TS_APP_BUNDLE_ID)</string>
+	</array>
+	<key>com.apple.developer.usernotifications.filtering</key>
+	<true/>
+</dict>
+</plist>

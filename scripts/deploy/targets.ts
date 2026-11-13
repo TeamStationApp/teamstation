@@ -19,6 +19,14 @@ export interface Target {
    * what `TS_APP_ENTITLEMENTS` names when the build has an app link host.
    */
   entitlements?: string
+  /**
+   * The bundle ids of the app's extensions. Each is signed with a profile of
+   * its own, named in `profileNames` as the app's is, and checked in the
+   * exported IPA as the app is; any other extension fails the build.
+   */
+  extensions?: string[]
+  /** Build settings the archive passes to xcodebuild, as `NAME=value`. */
+  buildSettings?: string[]
 }
 const targets: Target[] = [
   {
@@ -28,7 +36,15 @@ const targets: Target[] = [
     kind: 'react-native',
     scheme: 'TeamStation',
     workspace: 'ios/TeamStation.xcworkspace',
-    entitlements: 'TeamStation/TeamStation.entitlements'
+    entitlements: 'TeamStation/TeamStation.entitlements',
+    // The Notification Service Extension (ios/TeamStationNotifications),
+    // signed as `Masonfile.ts` signs it: production APNs, and the
+    // entitlements without Apple's notification filtering.
+    extensions: ['app.teamstation.app.notifications'],
+    buildSettings: [
+      'TS_APS_ENVIRONMENT=production',
+      'TS_NSE_ENTITLEMENTS=TeamStationNotifications.entitlements'
+    ]
   },
   {
     app: 'app.teamstation.app',

@@ -22,7 +22,8 @@
         "TSHaptics": "RCTHaptics",
         "TSPhoneStream": "RCTPhoneStream",
         "CueSounds": "RCTCueSounds",
-        "NativeChatCrypto": "ChatCryptoProvider"
+        "NativeChatCrypto": "ChatCryptoProvider",
+        "TSPush": "RCTPush"
       },
       "componentProvider": {
         "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",

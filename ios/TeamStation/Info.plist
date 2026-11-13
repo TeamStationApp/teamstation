@@ -43,6 +43,10 @@
 	     value inlined by babel.config.js as TS_APP_ORIGIN. -->
 	<key>TSAppLinkHost</key>
 	<string>$(TS_APP_LINK_HOST)</string>
+	<!-- Which APNs this build's device tokens belong to, as its entitlement says;
+	     the app registers its token with it (Push/Push.swift). -->
+	<key>TSApsEnvironment</key>
+	<string>$(TS_APS_ENVIRONMENT)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>NSAppTransportSecurity</key>
@@ -90,6 +94,7 @@
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>audio</string>
+		<string>remote-notification</string>
 	</array>
 	<key>UIAppFonts</key>
 	<array>
