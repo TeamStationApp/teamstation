@@ -150,6 +150,9 @@ const LONG: Record<string, number> = {
   // Its dictated scenarios each wait on the real recogniser and model: just
   // under twenty minutes on a droplet.
   'src/app/scoring/dictationPipeline.e2e.ts': 40 * 60 * 1000,
+  // It reads every chat as each of chat.e2e's profiles, twice when a first
+  // pass finds history locked: past twenty minutes a run on a droplet.
+  'src/app/chat/chatHistory.e2e.ts': 60 * 60 * 1000,
   // Its time-zone, settings and schedule checks run past forty minutes on a
   // busy droplet.
   'src/app/screens/eventInfo2.e2e.ts': 60 * 60 * 1000

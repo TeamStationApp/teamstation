@@ -7,8 +7,7 @@
       ],
       "needs": "web",
       "env": {
-        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}",
-        "CHAT_HISTORY_DUMPIO": "1"
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
       }
     },
     {
