@@ -52,6 +52,8 @@ export function SpreadsheetNumber({
           ref={input}
           accessibilityLabel={label}
           value={draft}
+          // As in GridNumberCell: iOS ignores selectTextOnFocus for a field
+          // focused as it mounts, so the number is selected again a tick later.
           onFocus={() => {
             const target = input.current
             setTimeout(() => {
