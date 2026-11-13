@@ -48,10 +48,11 @@ import {
  *   1. With the API stopped, Stream goes live on the address Director holds.
  *   2. That camera is ended on TeamStation: the redial stops with the ended
  *      sentence, and nothing new is made.
- *   3. Six cameras on the game: Stream shows the game's sentence, and nothing
- *      dials.
- *   4. Four of the director's own: Stream shows the person's sentence, and
- *      nothing dials.
+ *   3. Four cameras on the game, two of each account: Stream shows the game's
+ *      sentence, and nothing dials.
+ *   4. Four of the director's own: the game is full with one person's
+ *      cameras alone, and Stream still shows the game's sentence, not a
+ *      person's, and nothing dials.
  *   5. One of them ended: Stream goes live on a fresh camera.
  *
  * "Nothing dials" is read three ways: the game's rows (no new one, none
@@ -65,9 +66,7 @@ const APP_ID = 'app.teamstation.director'
 const MARGIN = '1%'
 const CAMERA = 'Slot Full'
 const ENDED = 'This camera was ended. Start streaming again to go live.'
-const GAME_FULL = 'This game already has 6 cameras. End one to add another.'
-const PERSON_FULL =
-  'You already have 4 cameras on this game. End one to add another.'
+const GAME_FULL = 'This game already has 4 cameras. End one to add another.'
 
 interface Box {
   x: number
@@ -541,7 +540,7 @@ async function main(): Promise<void> {
     await step(
       '3. a full game shows its sentence and dials nothing',
       async () => {
-        for (const label of ['Other 1', 'Other 2', 'Other 3', 'Other 4']) {
+        for (const label of ['Other 1', 'Other 2']) {
           others.push(await addCamera(env.other, label))
         }
         for (const label of ['Extra 1', 'Extra 2']) {
@@ -552,14 +551,14 @@ async function main(): Promise<void> {
     )
 
     await step(
-      '4. a person at four shows their sentence and dials nothing',
+      '4. a person at four shows the game sentence and dials nothing',
       async () => {
         await endCamera(env.other, others[0])
         await endCamera(env.other, others[1])
         for (const label of ['Extra 3', 'Extra 4']) {
           mine.push(await addCamera(env.token, label))
         }
-        await streamOnAFullGame(m, PERSON_FULL, 'slot-full-person')
+        await streamOnAFullGame(m, GAME_FULL, 'slot-full-own-four')
       }
     )
 

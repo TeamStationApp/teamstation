@@ -30,6 +30,7 @@ import { gamePlanPaths } from './games/gamePlansOpenApi'
 import { MAX_READS } from './graphql/restReader'
 import { MAX_DEPTH } from './graphql/schema'
 import { creationPaths } from './groups/openApi'
+import { MAX_CAMERAS, MAX_GAME_CAMERAS } from './live/streamKeys'
 import { MAX_QUERY_LENGTH } from './routes/graphql'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 import { schedulingSetupPaths } from './scheduler/schedulingSetupOpenApi'
@@ -9917,7 +9918,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'Another camera of my own on this game',
           description:
-            'Up to four active per person and six active per game; an ended ' +
+            `Up to ${MAX_CAMERAS} active per person and ${MAX_GAME_CAMERAS} active per game; an ended ` +
             'camera counts against neither, and a Director\u2019s counts. The ' +
             'slot is the lowest I do not already hold, so ending one and ' +
             'asking again gives that number back rather than counting ' +

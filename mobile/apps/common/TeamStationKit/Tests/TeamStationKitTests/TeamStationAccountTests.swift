@@ -310,7 +310,7 @@ struct ChooseTests {
   }
 
   @Test(arguments: [
-    "This game already has 6 cameras. End one to add another.",
+    "This game already has 4 cameras. End one to add another.",
     "You already have 4 cameras on this game. End one to add another."
   ])
   func aStartOnAFullGameThrowsTheServersSentence(sentence: String) async throws {
@@ -331,7 +331,7 @@ struct ChooseTests {
   }
 
   @Test func aClaimOfAFullGameThrowsTheServersSentence() async throws {
-    let sentence = "This game already has 6 cameras. End one to add another."
+    let sentence = "This game already has 4 cameras. End one to add another."
     let account = makeAccount()
     await account.choose(event: event("g1"), claim: false)
     StreamServer.full = sentence
@@ -347,7 +347,7 @@ struct ChooseTests {
     let account = makeAccount()
     #expect(await account.choose(event: event("g1")))
     StreamServer.renamed = true
-    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    StreamServer.full = "This game already has 4 cameras. End one to add another."
     try await account.refreshChosen(cameraName: "Center Field", reason: .start)
     #expect(StreamServer.bodies.last?["heldStreamId"] == "lst_1")
     #expect(account.lastError == nil)
@@ -360,7 +360,7 @@ struct ChooseTests {
     let account = makeAccount()
     #expect(await account.choose(event: event("g1")))
     StreamServer.renamed = true
-    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    StreamServer.full = "This game already has 4 cameras. End one to add another."
     let gate = DispatchSemaphore(value: 0)
     StreamServer.gate = gate
     let refresh = Task { try await account.refreshChosen(cameraName: "Center Field", reason: .start) }
@@ -381,7 +381,7 @@ struct ChooseTests {
     let account = makeAccount()
     #expect(await account.choose(event: event("g1")))
     StreamServer.renamed = true
-    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    StreamServer.full = "This game already has 4 cameras. End one to add another."
     let gate = DispatchSemaphore(value: 0)
     StreamServer.gate = gate
     let refresh = Task { try await account.refreshChosen(cameraName: "Center Field", reason: .start) }
@@ -401,7 +401,7 @@ struct ChooseTests {
     let account = makeAccount()
     #expect(await account.choose(event: event("g1")))
     StreamServer.ended = [ "lst_1" ]
-    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    StreamServer.full = "This game already has 4 cameras. End one to add another."
     let gate = DispatchSemaphore(value: 0)
     StreamServer.gate = gate
     let refresh = Task { try await account.refreshChosen(cameraName: "Center Field", reason: .start) }
@@ -416,7 +416,7 @@ struct ChooseTests {
   @Test func aClaimRefusedAfterAnotherGameWasPickedIsDropped() async throws {
     let account = makeAccount()
     await account.choose(event: event("g1"), claim: false)
-    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    StreamServer.full = "This game already has 4 cameras. End one to add another."
     let gate = DispatchSemaphore(value: 0)
     StreamServer.gate = gate
     let claim = Task { try await account.claimChosen(cameraName: "Center Field") }
@@ -448,7 +448,7 @@ struct ChooseTests {
       streamURL: "rtmp://ingest/live/old"
     ))
     let account = makeAccount(keychain: keychain)
-    StreamServer.full = "This game already has 6 cameras. End one to add another."
+    StreamServer.full = "This game already has 4 cameras. End one to add another."
     try await account.refreshChosen(cameraName: "Center Field", reason: .redial)
     #expect(StreamServer.bodies.last?["heldStreamId"] == nil)
     #expect(account.lastError == nil)

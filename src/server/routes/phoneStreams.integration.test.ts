@@ -2696,23 +2696,21 @@ describe('phones and Directors asking for their streams by device', function () 
   })
 
   describe('S8 limits, and ended cameras that stay', function () {
-    const SEVENTH = 'This game already has 6 cameras. End one to add another.'
-    const FIFTH =
-      'You already have 4 cameras on this game. End one to add another.'
+    const GAME_FULL = 'This game already has 4 cameras. End one to add another.'
     const list = async (gameId: string, token = OWNER): Promise<Body> => {
       const listed = await call('GET', `/games/${gameId}/live-streams`, token)
       expect(listed.status).equals(200)
       return listed.body
     }
-    /** Four of the owner's and two of the other manager's. */
+    /** Two of the owner's and two of the other manager's. */
     const fullGame = async (gameId: string): Promise<string[]> => {
       const made: string[] = []
-      for (const label of ['One', 'Two', 'Three', 'Four']) {
+      for (const label of ['One', 'Two']) {
         const answer = await ask(gameId, { label })
         expect(answer.status).equals(201)
         made.push(answer.body.id)
       }
-      for (const label of ['Five', 'Six']) {
+      for (const label of ['Three', 'Four']) {
         const answer = await ask(gameId, { label }, OTHER)
         expect(answer.status).equals(201)
         made.push(answer.body.id)
@@ -2839,73 +2837,113 @@ describe('phones and Directors asking for their streams by device', function () 
       expect(await streamsOn(gameId)).equals(2)
     })
 
-    it('refuses a fifth concurrent camera on every create path', async function () {
+    it('refuses one person’s fifth on every create path with the game’s sentence', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
+      // Phones, so a Director's claim has no camera of theirs to take over and
+      // asks for a fifth.
       for (const label of ['One', 'Two', 'Three', 'Four']) {
-        expect((await ask(gameId, { label })).status).equals(201)
+        expect((await ask(gameId, phone(label))).status).equals(201)
       }
       for (const refused of [
         await ask(gameId, { label: 'Five' }),
         await ask(gameId, phone('Five')),
-        await ask(gameId, { label: 'Five', source: 'gopro' })
+        await ask(gameId, { label: 'Five', source: 'gopro' }),
+        await claim(gameId, 'Five')
       ]) {
         expect(refused.status).equals(400)
-        expect(refused.body.message).equals(FIFTH)
+        expect(refused.body.message).equals(GAME_FULL)
         expect(refused.body.details).deep.equals({ reason: 'cameraLimit' })
       }
       expect(await streamsOn(gameId)).equals(4)
     })
 
-    it('refuses a seventh on the game for each create path, and counts a Director', async function () {
+    it('names the real count on a game left above four from the old limit', async function () {
       if (db == null) this.skip()
       const gameId = await newGame()
-      for (const label of ['One', 'Two', 'Three']) {
+      const made: string[] = []
+      for (const label of ['One', 'Two', 'Three', 'Four']) {
+        const answer = await ask(gameId, { label })
+        expect(answer.status).equals(201)
+        made.push(answer.body.id)
+      }
+      // Six active, as a game could hold under the old limit: two of the
+      // owner's step aside while the other manager adds two, then come back.
+      const aside = async (state: 'ended' | 'idle'): Promise<void> => {
+        await db!
+          .updateTable('live_streams')
+          .set({ state, ended_at: state === 'ended' ? new Date() : null })
+          .where('id', 'in', made.slice(0, 2))
+          .execute()
+      }
+      await aside('ended')
+      for (const label of ['Five', 'Six']) {
+        expect((await ask(gameId, { label }, OTHER)).status).equals(201)
+      }
+      await aside('idle')
+      expect(await list(gameId)).includes({ gameCanAdd: 0, maxGameCameras: 4 })
+
+      const refused = await ask(gameId, { label: 'Seven' }, OTHER)
+      expect(refused.status).equals(400)
+      expect(refused.body.message).equals(
+        'This game already has 6 cameras. End one to add another.'
+      )
+      expect(refused.body.details).deep.equals({ reason: 'cameraLimit' })
+      await end(gameId, made[0])
+      expect(
+        (await ask(gameId, { label: 'Seven' }, OTHER)).body.message
+      ).equals('This game already has 5 cameras. End one to add another.')
+      await end(gameId, made[1])
+      await end(gameId, made[2])
+      expect((await ask(gameId, { label: 'Seven' }, OTHER)).status).equals(201)
+    })
+
+    it('refuses a fifth on the game for each create path, and counts a Director', async function () {
+      if (db == null) this.skip()
+      const gameId = await newGame()
+      for (const label of ['One', 'Two']) {
         expect((await ask(gameId, phone(label))).status).equals(201)
       }
       expect((await claim(gameId, 'Director')).status).equals(200)
-      const fifth = await ask(gameId, phone('Five', PIXEL), OTHER)
-      expect(fifth.status).equals(201)
-      const sixth = await ask(gameId, phone('Six', PIXEL), OTHER)
-      expect(sixth.status).equals(201)
-      expect(await streamsOn(gameId)).equals(6)
+      const fourth = await ask(gameId, phone('Four', PIXEL), OTHER)
+      expect(fourth.status).equals(201)
+      expect(await streamsOn(gameId)).equals(4)
 
       for (const refused of [
-        await ask(gameId, { label: 'Seven' }, OTHER),
-        await ask(gameId, phone('Seven', PIXEL), OTHER),
-        await claim(gameId, 'Seven', OTHER)
+        await ask(gameId, { label: 'Five' }, OTHER),
+        await ask(gameId, phone('Five', PIXEL), OTHER),
+        await ask(gameId, { label: 'Five', source: 'gopro' }, OTHER),
+        await claim(gameId, 'Five', OTHER)
       ]) {
         expect(refused.status).equals(400)
-        expect(refused.body.message).equals(SEVENTH)
+        expect(refused.body.message).equals(GAME_FULL)
         expect(refused.body.details).deep.equals({ reason: 'cameraLimit' })
       }
-      expect(await streamsOn(gameId)).equals(6)
+      expect(await streamsOn(gameId)).equals(4)
 
       await call(
         'POST',
-        `/games/${gameId}/live-streams/${fifth.body.id}/end`,
+        `/games/${gameId}/live-streams/${fourth.body.id}/end`,
         OTHER
       )
-      expect((await ask(gameId, { label: 'Seven' }, OTHER)).status).equals(201)
+      expect((await ask(gameId, { label: 'Five' }, OTHER)).status).equals(201)
     })
 
     it('never lets two creates at once pass the limit', async function () {
       if (db == null) this.skip()
       for (let round = 0; round < 4; round += 1) {
         const gameId = await newGame()
-        for (const label of ['One', 'Two', 'Three', 'Four']) {
+        for (const label of ['One', 'Two', 'Three']) {
           expect((await ask(gameId, phone(label))).status).equals(201)
         }
-        const fifth = await ask(gameId, phone('Five', PIXEL), OTHER)
-        expect(fifth.status).equals(201)
         const answers = await Promise.all([
-          ask(gameId, { label: 'Six' }, OTHER),
-          ask(gameId, phone('Seven', PIXEL), OTHER),
-          ask(gameId, phone('Eight', IPAD), OTHER)
+          ask(gameId, { label: 'Four' }, OTHER),
+          ask(gameId, phone('Five', PIXEL), OTHER),
+          ask(gameId, phone('Six', IPAD), OTHER)
         ])
         expect(answers.filter(one => one.status === 201)).has.lengthOf(1)
         expect(answers.filter(one => one.status === 400)).has.lengthOf(2)
-        expect(await streamsOn(gameId)).equals(6)
+        expect(await streamsOn(gameId)).equals(4)
       }
     })
 
@@ -2949,15 +2987,19 @@ describe('phones and Directors asking for their streams by device', function () 
       const gameId = await newGame()
       expect(await list(gameId)).includes({
         canAdd: 4,
-        gameCanAdd: 6,
-        maxGameCameras: 6
+        gameCanAdd: 4,
+        maxGameCameras: 4
       })
       const made = await fullGame(gameId)
       expect(await list(gameId)).includes({ canAdd: 0, gameCanAdd: 0 })
       expect(await list(gameId, OTHER)).includes({ canAdd: 0, gameCanAdd: 0 })
       await end(gameId, made[0])
-      expect(await list(gameId)).includes({ canAdd: 1, gameCanAdd: 1 })
+      const listed = await list(gameId)
+      expect(listed).includes({ canAdd: 1, gameCanAdd: 1, maxGameCameras: 4 })
       expect(await list(gameId, OTHER)).includes({ canAdd: 1, gameCanAdd: 1 })
+      const ended = listed.mine.find((row: Body) => row.id === made[0])
+      expect(ended, 'the ended camera is still listed').not.equals(undefined)
+      expect(ended.closesAt).not.equals(null)
     })
 
     it('says each list item’s row data, for a device stream and an external camera', async function () {

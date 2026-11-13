@@ -1140,7 +1140,7 @@ describe('api client', function () {
       others: [],
       canAdd: 4,
       maxCameras: 4,
-      gameCanAdd: 6,
+      gameCanAdd: 4,
       discarded: ['liv_1']
     })
     const left = await new TeamStationClient({

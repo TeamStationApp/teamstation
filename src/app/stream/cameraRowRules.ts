@@ -21,7 +21,10 @@ export type CameraTap = 'details' | 'play' | 'rtmp' | 'camera' | 'none'
  * notice. A closing camera keeps `publishing` until then, and is over all the
  * same, since nothing can bring it back.
  */
-export function isEnded(stream: LiveStream): boolean {
+export function isEnded(stream: {
+  state: string
+  closesAt?: string | null
+}): boolean {
   return stream.state === 'ended' || stream.closesAt != null
 }
 
@@ -133,6 +136,27 @@ export function orderAngles(streams: GameLiveStreams | undefined): {
     active: all.filter(({ stream }) => !isEnded(stream)),
     ended: all.filter(({ stream }) => isEnded(stream))
   }
+}
+
+/**
+ * Why Record Video is off, or `undefined` while a camera can be added. A game
+ * left above its limit, from when it was higher, says how many it really
+ * holds.
+ */
+export function cameraLimit(
+  streams: GameLiveStreams | undefined
+): string | undefined {
+  if (streams == null) return undefined
+  if (streams.gameCanAdd === 0) {
+    const active = orderAngles(streams).active.length
+    return sprintf(
+      lstrings.stream_limit_game,
+      Math.max(streams.maxGameCameras ?? 0, active)
+    )
+  }
+  if (streams.canAdd === 0)
+    return sprintf(lstrings.stream_limit_person, streams.maxCameras)
+  return undefined
 }
 
 /** Video is arriving and nobody has ended it. */
