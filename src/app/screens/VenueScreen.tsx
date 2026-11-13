@@ -6,6 +6,7 @@ import {
   FIELD_SIZES,
   type FieldSize,
   fieldSizeLabel,
+  sizesLabel,
   type VenueClaim,
   type VenueDetail
 } from '../../common/venues'
@@ -37,6 +38,8 @@ import { openEventDirections } from '../platform/eventDirections'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
+export { sizesLabel }
+
 /**
  * When a pending claim is approved by itself: its date, which reads the same
  * whatever the viewer's clock says.
@@ -50,9 +53,6 @@ export function approvalLabel(approvesAt: string): string {
 }
 
 /** A field's sizes as a row's detail line. */
-export function sizesLabel(sizes: readonly FieldSize[]): string {
-  return sizes.map(fieldSizeLabel).join(' · ')
-}
 
 /** Approve, in the success colour of the card it sits on. */
 function ApproveButton(

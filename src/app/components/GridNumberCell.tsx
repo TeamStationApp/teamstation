@@ -129,6 +129,21 @@ export function revealAboveKeyboard(
 }
 
 /** Selects the whole text of a focused input: the DOM's or the native one. */
+/**
+ * Selects the whole number a tick after focus lands. iOS ignores
+ * selectTextOnFocus for a field focused as it mounts and puts the caret
+ * after the number, replacing a selection made as focus lands.
+ */
+export function selectAllAfterFocus(
+  input: Input | null,
+  length: () => number | undefined
+): void {
+  setTimeout(() => {
+    const chars = length()
+    if (chars != null) selectAll(input, chars)
+  }, 0)
+}
+
 export function selectAll(input: Input | null, length: number): void {
   const node = input as unknown as {
     select?: () => void
@@ -426,16 +441,13 @@ export function useGridNumberEditor({
                       setError('')
                     }
                   },
-                  // iOS ignores selectTextOnFocus for a field that is focused
-                  // as it mounts, and puts the caret after the number; a
-                  // selection made as the focus lands is replaced by that
-                  // caret too. Select the whole number a tick later, so
-                  // typing replaces it on every platform.
+                  // Selected a tick later too, so typing replaces the number
+                  // on every platform.
                   onFocus: () => {
-                    setTimeout(() => {
-                      if (active.current != null)
-                        selectAll(input.current, active.current.value.length)
-                    }, 0)
+                    selectAllAfterFocus(
+                      input.current,
+                      () => active.current?.value.length
+                    )
                   },
                   onBlur: () => {
                     if (error === '') save()

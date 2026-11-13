@@ -11,6 +11,7 @@ import {
   MAX_GAMES,
   type ScheduleSettings,
   type ScheduleSetup,
+  setupFieldDetail,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
@@ -35,7 +36,6 @@ import { TimeWindowsEditor } from '../components/TimeWindowsEditor'
 import { WINDOW_OPEN_DEFAULT } from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { setupFieldDetail } from './AutoSchedulerScreen'
 import { FieldPickerScene } from './FieldPickerScene'
 
 function plural(count: number, one: string): string {
@@ -177,7 +177,12 @@ export function ScheduleSeasonScreen({
       </Screen>
     )
   const settings = season.settings
-  const persist = async (changes: Partial<ScheduleSettings>): Promise<void> => {
+  // A change worked out from the settings as they are when it is written,
+  // so one that waited behind another write builds on that write.
+  type Changes =
+    | Partial<ScheduleSettings>
+    | ((current: ScheduleSettings) => Partial<ScheduleSettings>)
+  const persist = async (changes: Changes): Promise<void> => {
     const pending = writes.current
       .catch(() => undefined)
       .then(async () => {
@@ -186,7 +191,9 @@ export function ScheduleSeasonScreen({
         if (before?.id !== seasonId) return
         const saved = await client.saveScheduleSettings(before.id, {
           ...before.settings,
-          ...changes
+          ...(typeof changes === 'function'
+            ? changes(before.settings)
+            : changes)
         })
         if (active.current && currentKey.current === screenKey) {
           const next = { ...before, saved: true, settings: saved.settings }
@@ -197,7 +204,7 @@ export function ScheduleSeasonScreen({
     writes.current = pending
     await pending
   }
-  const save = (changes: Partial<ScheduleSettings>, done: string): void => {
+  const save = (changes: Changes, done: string): void => {
     run(async () => {
       await persist(changes)
     }, done).catch(() => undefined)
@@ -323,7 +330,8 @@ export function ScheduleSeasonScreen({
           openDefault={WINDOW_OPEN_DEFAULT}
           value={settings.windows}
           today={settings.startsOn}
-          endDate={settings.endsOn}
+          // The season's own last day: its settings' dates are its windows'.
+          endDate={season.seasonDates?.endsOn ?? settings.endsOn}
           requireEnd
           disabled={busy}
           onChange={windows => {
@@ -367,9 +375,9 @@ export function ScheduleSeasonScreen({
                   onValueChange={() => {
                     if (settings.fieldSize !== size)
                       save(
-                        {
+                        current => ({
                           fieldSize: size,
-                          fieldIds: (settings.fieldIds ?? []).filter(
+                          fieldIds: (current.fieldIds ?? []).filter(
                             id =>
                               setup?.fields.some(
                                 field =>
@@ -378,7 +386,7 @@ export function ScheduleSeasonScreen({
                                   field.sizes.includes(size)
                               ) === true
                           )
-                        },
+                        }),
                         'Field size saved.'
                       )
                   }}
@@ -414,13 +422,21 @@ export function ScheduleSeasonScreen({
                   checked={settings.fieldIds?.includes(field.id) ?? false}
                   disabled={busy || !compatible}
                   onToggle={() => {
+                    const selecting =
+                      settings.fieldIds?.includes(field.id) !== true
                     save(
-                      {
-                        fieldIds:
-                          settings.fieldIds?.includes(field.id) === true
-                            ? settings.fieldIds.filter(id => id !== field.id)
-                            : [...(settings.fieldIds ?? []), field.id]
-                      },
+                      current => ({
+                        fieldIds: selecting
+                          ? [
+                              ...new Set([
+                                ...(current.fieldIds ?? []),
+                                field.id
+                              ])
+                            ]
+                          : (current.fieldIds ?? []).filter(
+                              id => id !== field.id
+                            )
+                      }),
                       'Fields saved.'
                     )
                   }}
@@ -433,16 +449,16 @@ export function ScheduleSeasonScreen({
                       disabled={busy}
                       onPress={() => {
                         save(
-                          {
-                            fieldIds: settings.fieldIds!.filter(id =>
+                          current => ({
+                            fieldIds: (current.fieldIds ?? []).filter(id =>
                               seasonFields(
                                 setup.fields.filter(
                                   available => !available.deleted
                                 ),
-                                settings
+                                current
                               ).some(available => available.id === id)
                             )
-                          },
+                          }),
                           'Fields saved.'
                         )
                       }}
@@ -455,11 +471,11 @@ export function ScheduleSeasonScreen({
                     disabled={busy}
                     onPress={() => {
                       run(async () => {
-                        await persist({
-                          fieldIds: (
-                            currentSeason.current?.settings.fieldIds ?? []
-                          ).filter(id => id !== field.id)
-                        })
+                        await persist(current => ({
+                          fieldIds: (current.fieldIds ?? []).filter(
+                            id => id !== field.id
+                          )
+                        }))
                         const next = await client.saveScheduleSetup(leagueId, {
                           seasonIds: setup.seasonIds,
                           fieldIds: liveFieldIds(setup).filter(
@@ -542,12 +558,15 @@ export function ScheduleSeasonScreen({
               })
               if (active.current && currentKey.current === screenKey)
                 setSetup(next)
-              if (chosen.sizes.includes(settings.fieldSize))
-                await persist({
-                  fieldIds: [
-                    ...new Set([...(settings.fieldIds ?? []), chosen.id])
-                  ]
-                })
+              await persist(current =>
+                chosen.sizes.includes(current.fieldSize)
+                  ? {
+                      fieldIds: [
+                        ...new Set([...(current.fieldIds ?? []), chosen.id])
+                      ]
+                    }
+                  : {}
+              )
             }, 'Field added.').catch(() => undefined)
           }}
         />
