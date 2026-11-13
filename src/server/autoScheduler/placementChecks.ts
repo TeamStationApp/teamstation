@@ -57,18 +57,36 @@ export function ruleContext(
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
+/** Keys the server makes, and acts on, for games it holds or places. */
+const RESERVED_KEY = /^(kept|replaced|listed|rejected|added|busy|weekly):/
+
 /**
- * Holdings by the UTC day they start, so a game's rules read only those
- * near it: every rule looks at most a week either side. Long holdings are
- * always near. Their order only decides which of several problems a game
- * is refused for, so they are read in day order, not sorted.
+ * Holdings by what they hold, a field, a team or a team's Manager/Head
+ * Coach, and by the UTC day they start, so a game's rules read only those
+ * that can conflict with it: on its field, with one of its teams or their
+ * Manager/Head Coach, at most a week either side. Long holdings are always
+ * read. Their order only decides which of several problems a game is
+ * refused for.
  */
 class NearHoldings {
-  private readonly byDay = new Map<number, Holding[]>()
+  private readonly byKey = new Map<string, Map<number, Holding[]>>()
   private readonly long: Holding[] = []
 
-  constructor(holdings: readonly Holding[]) {
+  constructor(
+    holdings: readonly Holding[],
+    private readonly headCoaches: Record<string, string> = {}
+  ) {
     for (const holding of holdings) this.add(holding)
+  }
+
+  private keys(fieldId: string | null, teamIds: readonly string[]): string[] {
+    const keys = fieldId == null ? [] : [`field:${fieldId}`]
+    for (const team of teamIds) {
+      keys.push(`team:${team}`)
+      const manager = this.headCoaches[team]
+      if (manager != null) keys.push(`manager:${manager}`)
+    }
+    return keys
   }
 
   add(holding: Holding): void {
@@ -77,19 +95,28 @@ class NearHoldings {
       return
     }
     const day = Math.floor(holding.start / DAY_MS)
-    const list = this.byDay.get(day) ?? []
-    list.push(holding)
-    this.byDay.set(day, list)
+    for (const key of this.keys(holding.fieldId, holding.teamIds)) {
+      let days = this.byKey.get(key)
+      if (days == null) {
+        days = new Map()
+        this.byKey.set(key, days)
+      }
+      const list = days.get(day) ?? []
+      list.push(holding)
+      days.set(day, list)
+    }
   }
 
-  near(start: number): Holding[] {
-    const day = Math.floor(start / DAY_MS)
-    const found = [...this.long]
-    for (let d = day - 9; d <= day + 9; d++) {
-      const list = this.byDay.get(d)
-      if (list != null) for (const holding of list) found.push(holding)
+  near(game: Pick<Holding, 'start' | 'fieldId' | 'teamIds'>): Holding[] {
+    const day = Math.floor(game.start / DAY_MS)
+    const found = new Set(this.long)
+    for (const key of this.keys(game.fieldId, game.teamIds)) {
+      const days = this.byKey.get(key)
+      if (days == null) continue
+      for (let d = day - 9; d <= day + 9; d++)
+        for (const holding of days.get(d) ?? []) found.add(holding)
     }
-    return found
+    return [...found]
   }
 }
 
@@ -133,7 +160,8 @@ export function validatePlacements(snap: Snapshot, result: EngineResult): void {
         teamIds: [game.homeTeamId, game.awayTeamId]
       }))
     ]
-    const holdings = new NearHoldings(starting)
+    const managers = engine.headCoaches ?? {}
+    const holdings = new NearHoldings(starting, managers)
     // Without live weekly games, the weekly caps count the same holdings.
     const weekly =
       engine.weeklyGames == null
@@ -144,7 +172,8 @@ export function validatePlacements(snap: Snapshot, result: EngineResult): void {
               key: `weekly:${index}`,
               size: null,
               end: game.start
-            }))
+            })),
+            managers
           )
     for (const game of option.games) {
       const start = Date.parse(game.startAt)
@@ -158,7 +187,10 @@ export function validatePlacements(snap: Snapshot, result: EngineResult): void {
         game.key.length === 0 ||
         game.key.length > 300 ||
         keys.has(game.key) ||
-        taken.has(game.key)
+        taken.has(game.key) ||
+        // The server's own key prefixes mean something to it; only a game
+        // the run requires carries one.
+        (RESERVED_KEY.test(game.key) && required?.get(game.key) == null)
       )
         throw badRequest('Submit unique games with valid seasons and times')
       keys.add(game.key)
@@ -215,8 +247,8 @@ export function validatePlacements(snap: Snapshot, result: EngineResult): void {
       }
       requireKeepsRulesIn(snap, game, now, wanted, {
         ...base,
-        others: holdings.near(start),
-        weeklyOthers: weekly.near(start)
+        others: holdings.near(holdingOf(game)),
+        weeklyOthers: weekly.near(holdingOf(game))
       })
       holdings.add(holdingOf(game))
       if (weekly !== holdings) weekly.add(holdingOf(game))

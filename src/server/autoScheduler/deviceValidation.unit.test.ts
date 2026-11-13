@@ -177,6 +177,23 @@ describe('untrusted device placements', () => {
       )
     }).throws('Manager')
   })
+  it('refuses the server’s own key prefixes on a game the run does not require', () => {
+    for (const prefix of ['kept', 'replaced', 'listed', 'rejected', 'added'])
+      expect(() => {
+        validatePlacements(snap(), result({ ...game, key: `${prefix}:one` }))
+      }).throws('unique games')
+    const required = snap()
+    required.engine.required = [
+      {
+        key: 'replaced:gam_one',
+        seasonId: game.seasonId,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        exhibition: false
+      }
+    ]
+    validatePlacements(required, result({ ...game, key: 'replaced:gam_one' }))
+  })
   it('sends the device tokens for other games, outside teams and coaches, and validates its result against the real input', () => {
     const held = snap()
     const engine = {
