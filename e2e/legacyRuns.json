@@ -3340,5 +3340,17 @@
       "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing"],
       "needs": "gpu"
     }
+  ],
+  "src/app/scoring/scoringServer.e2e.ts": [
+    {
+      "label": "default",
+      "args": ["--grep", "scenario 6:", "--invert"],
+      "needs": "web"
+    },
+    {
+      "label": "fieldDrags",
+      "args": ["--grep", "scenario 6:"],
+      "needs": "gpu"
+    }
   ]
 }
