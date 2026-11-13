@@ -1,3 +1,5 @@
+import { mock } from 'node:test'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { useState } from 'react'
@@ -47,6 +49,27 @@ describe('dated time window editing', () => {
     expect(periodOn(saved, '2027-03-20')?.hours).deep.equals(hours)
     await tapLabel('Remove Time Windows from Thursday, April 1, 2027')
     expect(saved).deep.equals(weeklyWindow(hours))
+  })
+  it('defaults today to the viewer’s local date, not the UTC one', async () => {
+    const zone = process.env.TZ
+    process.env.TZ = 'America/Los_Angeles'
+    // 9 PM on March 1 in Los Angeles is already March 2 in UTC.
+    mock.timers.enable({
+      apis: ['Date'],
+      now: Date.parse('2027-03-02T05:00:00Z')
+    })
+    try {
+      const changes: WindowPeriod[][] = []
+      await mount(
+        <TimeWindowsEditor value={[]} onChange={next => changes.push(next)} />
+      )
+      await tapText('Add another time window')
+      expect(changes).deep.equals([[{ from: '2027-03-01', hours: [] }]])
+    } finally {
+      mock.timers.reset()
+      if (zone == null) delete process.env.TZ
+      else process.env.TZ = zone
+    }
   })
   it('starts a closed editor at today and prevents changes to inherited windows', async () => {
     const changes: WindowPeriod[][] = []
