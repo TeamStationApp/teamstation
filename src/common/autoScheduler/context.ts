@@ -169,6 +169,14 @@ export function fullContextBytes(input: EngineInput): number {
 }
 
 /**
+ * The most field days a run's summary reads, a season's shared field once
+ * per season. Reading a field day's calendar takes about 0.2 ms, so this is
+ * under ten seconds of the validation worker's thirty, and over three times
+ * the largest runs leagues have built.
+ */
+export const MAX_FIELD_DAYS = 40000
+
+/**
  * Refuses a run whose seasons span too many field days to summarize.
  * Normal runs are a few fields over a few months; split larger runs by season.
  */
@@ -192,7 +200,7 @@ export function requireBoundedFieldDays(input: EngineInput): void {
           days--
     }
     fieldDays += days * seasonFields(input.fields, season.settings).length
-    if (!Number.isFinite(fieldDays) || fieldDays > 10000)
+    if (!Number.isFinite(fieldDays) || fieldDays > MAX_FIELD_DAYS)
       throw new InvalidSubmission(
         'This scheduling run spans too many field days; choose fewer seasons or fields, or shorter time windows'
       )

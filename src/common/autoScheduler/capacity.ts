@@ -223,6 +223,52 @@ export function managerCauseOfOption(
   }
 }
 
+/**
+ * The Manager/Head Coach that keeps an option's left-over matchups out, as
+ * the engine finds one while it lowers a season's counts: the option's games
+ * hold their times, each left-over matchup takes the first time free for its
+ * field and both teams, and the first that finds only times its teams'
+ * Manager/Head Coach is busy names that team. Undefined when none does.
+ */
+export function managerCauseOfLeftovers(
+  context: RunContext,
+  placement: Placement
+): (season: SeasonContext, leftovers: Matchup[]) => string | undefined {
+  return (season, leftovers) => {
+    if (context.input.headCoaches == null || leftovers.length === 0) return
+    const occupied = new Occupancy(context)
+    for (const [i, slot] of placement.slots.entries()) {
+      if (slot == null) continue
+      const game = placement.matchups[i]
+      const of = context.seasonById.get(game.seasonId)
+      if (of != null)
+        occupied.place(i, of, game.homeTeamId, game.awayTeamId, slot)
+    }
+    let id = placement.matchups.length
+    for (const matchup of leftovers) {
+      const cause = blockedByManager(context, season, [matchup], occupied)
+      if (cause != null) return cause
+      const free = season.slots.findIndex(
+        (slot, i) =>
+          season.fieldFree[i] === 1 &&
+          occupied.fieldFits(season, slot) &&
+          occupied.teamAvailability(season, matchup.homeTeamId, slot) ===
+            TeamAvailability.Free &&
+          occupied.teamAvailability(season, matchup.awayTeamId, slot) ===
+            TeamAvailability.Free
+      )
+      if (free >= 0)
+        occupied.place(
+          id++,
+          season,
+          matchup.homeTeamId,
+          matchup.awayTeamId,
+          season.slots[free]
+        )
+    }
+  }
+}
+
 /** Explain a binding weekly maximum without confusing it with field supply. */
 function weekPartCause(
   context: RunContext,

@@ -2,6 +2,7 @@ import {
   blockingCause,
   capacityCause,
   type GameKind,
+  managerCauseOfLeftovers,
   managerCauseOfOption,
   requestedTargets,
   requiredCause,
@@ -191,6 +192,17 @@ export function summarizeResult(
         manager ??= managerCauseOfOption(context, placement)
         return manager(fullSeason(context, season), unplaced)
       }
+      let leftovers: ReturnType<typeof managerCauseOfLeftovers> | undefined
+      const leftoverCause = (
+        season: SeasonContext,
+        unplaced: Matchup[]
+      ): string | undefined => {
+        if (input.headCoaches == null || unplaced.length === 0) return
+        const context = full()
+        if (context == null) return
+        leftovers ??= managerCauseOfLeftovers(context, placement)
+        return leftovers(fullSeason(context, season), unplaced)
+      }
       return {
         games: option.games,
         fairness: fairnessRows(context, placement),
@@ -200,7 +212,15 @@ export function summarizeResult(
                 context,
                 reachedTargets(context.seasons, placement, requestedMatchups),
                 placement,
-                (season, kind, requested) => causeOf(season, kind, requested)
+                (season, kind, requested) =>
+                  leftoverCause(
+                    season,
+                    leftOver(
+                      requestedMatchups.get(season.season.id) ?? [],
+                      option.games,
+                      kind === 'exhibition'
+                    )
+                  ) ?? causeOf(season, kind, requested)
               )
             : requiredLines(
                 context,
@@ -258,4 +278,29 @@ function reachedTargets(
     targets.set(id, target)
   }
   return targets
+}
+
+/**
+ * The requested matchups of a kind an option didn't place, pair by pair:
+ * the engine's unplaced games, as near as the server can tell without its
+ * search. A Manager/Head Coach the option's own games keep busy shows here.
+ */
+function leftOver(
+  requested: readonly Matchup[],
+  placed: readonly Matchup[],
+  exhibition: boolean
+): Matchup[] {
+  const pair = (game: Matchup): string =>
+    [game.homeTeamId, game.awayTeamId].sort().join('\u0000')
+  const counts = new Map<string, number>()
+  for (const game of placed)
+    if (game.exhibition === exhibition)
+      counts.set(pair(game), (counts.get(pair(game)) ?? 0) + 1)
+  return requested.filter(game => {
+    if (game.exhibition !== exhibition) return false
+    const left = counts.get(pair(game)) ?? 0
+    if (left === 0) return true
+    counts.set(pair(game), left - 1)
+    return false
+  })
 }

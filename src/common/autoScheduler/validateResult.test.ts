@@ -3,7 +3,12 @@ import { describe, it } from 'mocha'
 
 import { wallInstant } from '../fieldAvailability'
 import { asPreviewResult } from '../schedulePreviews'
-import { buildContext, fullContextBytes } from './context'
+import {
+  buildContext,
+  fullContextBytes,
+  MAX_FIELD_DAYS,
+  requireBoundedFieldDays
+} from './context'
 import { field, fixedGame, hoursOn, input, season, ZONE } from './fixtures.test'
 import { buildOptions } from './index'
 import { summarizeResult } from './validateResult'
@@ -81,7 +86,7 @@ describe('device result summaries', () => {
     ).throws('too many field days')
   })
   it('counts only the days a time window has hours on toward the field-day limit', () => {
-    const fields = Array.from({ length: 28 }, (_, i) =>
+    const fields = Array.from({ length: 120 }, (_, i) =>
       field({ id: `fld_${i}` })
     )
     const yearOf = (weekdays: number[]): ReturnType<typeof season> =>
@@ -99,17 +104,37 @@ describe('device result summaries', () => {
           }
         ]
       })
-    const empty = { games: [], fairness: [], reasons: [], unmet: [], score: [] }
-    const summarize = (each: ReturnType<typeof season>): unknown =>
-      summarizeResult(input({ seasons: [each], fields }), {
-        options: [empty],
-        blocking: null
-      })
-    // 52 Saturdays on 28 fields fit; the same year every day does not.
-    expect(() => summarize(yearOf([6]))).not.throws()
-    expect(() => summarize(yearOf([0, 1, 2, 3, 4, 5, 6]))).throws(
-      'shorter time windows'
+    const bounded = (each: ReturnType<typeof season>): void => {
+      requireBoundedFieldDays(input({ seasons: [each], fields }))
+    }
+    // 52 Saturdays on 120 fields fit; the same year every day does not.
+    expect(() => {
+      bounded(yearOf([6]))
+    }).not.throws()
+    expect(() => {
+      bounded(yearOf([0, 1, 2, 3, 4, 5, 6]))
+    }).throws('shorter time windows')
+  })
+  it('allows three seasons sharing 20 fields every day for six months, as servers built before', () => {
+    const fields = Array.from({ length: 20 }, (_, i) =>
+      field({ id: `fld_${i}` })
     )
+    const daily = hoursOn([0, 1, 2, 3, 4, 5, 6], '08:00', '20:00')
+    const seasons = ['a', 'b', 'c'].map(id =>
+      season(
+        {
+          fieldIds: fields.map(each => each.id),
+          startsOn: '2027-03-01',
+          endsOn: '2027-08-27',
+          windows: [{ from: '2027-03-01', until: '2027-08-27', hours: daily }]
+        },
+        { id: `sea_${id}` }
+      )
+    )
+    expect(() => {
+      requireBoundedFieldDays(input({ seasons, fields }))
+    }).not.throws()
+    expect(MAX_FIELD_DAYS).greaterThan(3 * 20 * 180)
   })
   it('names a plain cause for a shortfall when a full context would not fit the worker', () => {
     const fields = Array.from({ length: 28 }, (_, i) =>
@@ -286,6 +311,43 @@ describe('device result summaries', () => {
     const limited = buildOptions(weekly)
     expect(limited.options[0].unmet[0].cause).includes('field time')
     expect(summaryOf(weekly)).deep.equals(limited.options.map(o => o.unmet))
+  })
+  it('names a Manager/Head Coach the option’s own games keep busy, as the engine does', () => {
+    // capacity.test's scenario: one open hour and a half on two fields, and
+    // every team sharing one Manager/Head Coach.
+    const saturdays = hoursOn([6], '08:00', '18:00')
+    const open = {
+      ...field().availability,
+      startsOn: '2027-03-06',
+      endsOn: '2027-03-06',
+      hours: hoursOn([6], '08:00', '09:30')
+    }
+    const run = input({
+      seasons: [
+        season(
+          {
+            regularGames: 1,
+            exhibitionGames: 0,
+            endsOn: '2027-03-31',
+            windows: [{ from: '2027-03-01', hours: saturdays }],
+            fieldIds: ['fld_one', 'second']
+          },
+          { participants: ['tem_hawks', 'tem_owls', 'tem_foxes', 'tem_bears'] }
+        )
+      ],
+      fields: [
+        field({ availability: open }),
+        field({ id: 'second', availability: open })
+      ]
+    })
+    run.seed = 1
+    run.headCoaches = Object.fromEntries(
+      run.seasons[0].participants.map(team => [team, 'coach'])
+    )
+    const built = buildOptions(run)
+    expect(built.options[0].unmet[0].cause).includes('Manager/Head Coach')
+    const [summary] = summarizeResult(run, asPreviewResult(built)).options
+    expect(summary.unmet[0].cause).includes('Manager/Head Coach')
   })
   it('accepts bounded blocked results and refuses malformed or contradictory payloads', () => {
     // A blocked result keeps the engine's reason, not the device's text.
