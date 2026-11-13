@@ -16,6 +16,7 @@ import type {
   SetupField,
   SetupSeason
 } from '../../common/seasonScheduling'
+import { setupFieldDetail } from '../../common/seasonScheduling'
 import type { VenueSummary } from '../../common/venues'
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import {
@@ -33,11 +34,7 @@ import {
   venueDetail,
   venueField
 } from '../../test/venueDom'
-import {
-  AutoSchedulerScreen,
-  chosenSeasons,
-  setupFieldDetail
-} from './AutoSchedulerScreen'
+import { AutoSchedulerScreen, chosenSeasons } from './AutoSchedulerScreen'
 
 const SETTINGS: ScheduleSettings = {
   fieldSize: '50/70',

@@ -12,7 +12,7 @@ import { asLiteral } from './asLiteral'
 import { daysBetween } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import { asCalendarDate, isRecord } from './groupCreation'
-import { asBlackouts, asFieldSize, type FieldSize } from './venues'
+import { asBlackouts, asFieldSize, type FieldSize, sizesLabel } from './venues'
 import { asWindowPeriods } from './windowPeriods'
 
 /** Whether a team may play twice in a day. */
@@ -455,4 +455,19 @@ export function liveFieldIds(setup: ScheduleSetup): string[] {
   return setup.fieldIds.filter(id =>
     setup.fields.some(field => field.id === id && !field.deleted)
   )
+}
+
+/**
+ * A run field's detail: its sizes, and, for a field of a venue the league
+ * doesn't own, the venue and who owns it.
+ */
+export function setupFieldDetail(field: SetupField): string {
+  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
+  const sizes = sizesLabel(field.sizes)
+  if (field.ours) return sizes
+  const owners =
+    field.ownerNames.length === 0
+      ? 'unclaimed'
+      : `claimed by ${field.ownerNames.join(', ')}`
+  return `${sizes} · ${field.venueName} · ${owners}`
 }

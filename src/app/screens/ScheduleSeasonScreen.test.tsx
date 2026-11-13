@@ -581,6 +581,27 @@ describe('a season of the next schedule', () => {
     expect(fake.saves).length(1)
   })
 
+  it('runs a window added after the last one to the season’s own last day', async () => {
+    const fake = fakeClient({
+      ...SEASON,
+      seasonDates: { startsOn: '2027-03-01', endsOn: '2027-08-31' },
+      settings: {
+        ...SEASON.settings,
+        startsOn: '2027-03-01',
+        endsOn: '2027-05-31',
+        windows: [{ from: '2027-03-01', until: '2027-05-31', hours: EVENINGS }]
+      }
+    })
+    await show(fake.client)
+    await tapText('Add another time window')
+    await chooseCalendarDate('2027-06-15')
+    await settle(20)
+    expect(fake.saves.at(-1)?.windows.at(-1)).deep.includes({
+      from: '2027-06-15',
+      until: '2027-08-31'
+    })
+  })
+
   it('replaces a short window with a longer copy, bounded by the season’s own dates', async () => {
     const target = {
       ...SEASON,

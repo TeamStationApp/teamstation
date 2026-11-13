@@ -49,6 +49,11 @@ export function fieldSizeLabel(size: FieldSize): string {
   return size
 }
 
+/** A field's sizes, as one line. */
+export function sizesLabel(sizes: readonly FieldSize[]): string {
+  return sizes.map(fieldSizeLabel).join(' · ')
+}
+
 /** The longest a size switch may take, in minutes. */
 export const MAX_SIZE_SWITCH_MINUTES = 240
 

@@ -23,7 +23,6 @@ import {
   type ScheduleSettings,
   type ScheduleSetup,
   type ScheduleSetupChoice,
-  type SetupField,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
@@ -38,26 +37,10 @@ import {
   SeasonScheduleGrid,
   type SeasonScheduleGridHandle
 } from './SeasonScheduleGrid'
-import { sizesLabel } from './VenueScreen'
 
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
   return setup.seasons.filter(season => setup.seasonIds.includes(season.id))
-}
-
-/**
- * A run field's detail: its sizes, and, for a field of a venue the league
- * doesn't own, the venue and who owns it.
- */
-export function setupFieldDetail(field: SetupField): string {
-  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
-  const sizes = sizesLabel(field.sizes)
-  if (field.ours) return sizes
-  const owners =
-    field.ownerNames.length === 0
-      ? 'unclaimed'
-      : `claimed by ${field.ownerNames.join(', ')}`
-  return `${sizes} · ${field.venueName} · ${owners}`
 }
 
 /**

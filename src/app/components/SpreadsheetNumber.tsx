@@ -2,7 +2,7 @@ import React, { useRef, useState } from 'react'
 import { Pressable, Text, TextInput, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { selectAll } from './GridNumberCell'
+import { selectAllAfterFocus } from './GridNumberCell'
 
 /** A blue number becomes a selected, outlined cell while it is edited. */
 export function SpreadsheetNumber({
@@ -52,13 +52,10 @@ export function SpreadsheetNumber({
           ref={input}
           accessibilityLabel={label}
           value={draft}
-          // As in GridNumberCell: iOS ignores selectTextOnFocus for a field
-          // focused as it mounts, so the number is selected again a tick later.
+          // As in GridNumberCell: selected a tick later as well for iOS.
           onFocus={() => {
-            const target = input.current
-            setTimeout(() => {
-              selectAll(target, draft.length)
-            }, 0)
+            const chars = draft.length
+            selectAllAfterFocus(input.current, () => chars)
           }}
           onChangeText={setDraft}
           autoFocus
