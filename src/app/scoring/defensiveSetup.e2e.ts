@@ -308,8 +308,12 @@ async function open(fixture: Fixture = {}): Promise<{
     body: { firstName: string; lastName: string; jersey: string }
   ) => ReturnType<typeof rosterEntryFromBody>
   savedPlays: () => number
+  saves: string[]
 }> {
   const unexpected: string[] = []
+  // Each lineup or scoring save, who made it and what became of it, for a
+  // failing check to print.
+  const saves: string[] = []
   const held: StoredGame = { plays: [], currentPlay: null }
   // The players this page created, on its side's roster from then on, as
   // the API keeps them.
@@ -434,7 +438,11 @@ async function open(fixture: Fixture = {}): Promise<{
     const other = await ScoringSession.open(
       {
         load: async () => ({ ...held, lineupsDigest: lineupsDigest() }),
-        save: async (_id, change) => save(change)
+        save: async (_id, change) => {
+          const kept = save(change)
+          saves.push(`peer: ${actions.map(action => action.type).join(',')}`)
+          return kept
+        }
       },
       'g1',
       context,
@@ -521,13 +529,29 @@ async function open(fixture: Fixture = {}): Promise<{
         if (request.method === 'POST') {
           let bytes = ''
           for await (const chunk of request) bytes += String(chunk)
+          const change = JSON.parse(bytes === '' ? '{}' : bytes) as SaveChange
+          const actions = [...(change.plays ?? []), change.currentPlay]
+            .flatMap(
+              play =>
+                (
+                  play as {
+                    teamStation?: { actions?: Array<{ type?: string }> }
+                  } | null
+                )?.teamStation?.actions ?? []
+            )
+            .map(action => action.type)
+          const against = lineupsDigest()
           try {
-            superseded = save(
-              JSON.parse(bytes === '' ? '{}' : bytes) as SaveChange
-            ).superseded
+            superseded = save(change).superseded
+            saves.push(
+              `page: ${actions.join(',')} on ${change.lineupsBase ?? '-'} of ${against}: ${superseded === true ? 'superseded' : 'kept'}`
+            )
           } catch (error) {
             if (!(error instanceof HttpError)) throw error
             refused = error
+            saves.push(
+              `page: ${actions.join(',')} on ${change.lineupsBase ?? '-'} of ${against}: refused`
+            )
           }
         }
         const read = named()
@@ -669,7 +693,8 @@ async function open(fixture: Fixture = {}): Promise<{
         created[side].push(entry)
         return entry
       },
-      savedPlays: () => held.plays.length
+      savedPlays: () => held.plays.length,
+      saves
     }
   } catch (error) {
     if (page != null) await page.close()
@@ -1172,7 +1197,9 @@ describe('current defensive scoring setup browser', function () {
         await page.close()
       }
     }
-    const { page, peer, unexpected, created } = await open({ homeRoster: 8 })
+    const { page, peer, unexpected, created, saves } = await open({
+      homeRoster: 8
+    })
     try {
       await tapSlot(page, 'RF')
       await click(page, 'Create Player')
@@ -1213,7 +1240,10 @@ describe('current defensive scoring setup browser', function () {
       const choices = await page.$$eval('[aria-label^="Assign RF "]', nodes =>
         nodes.map(node => node.getAttribute('aria-label'))
       )
-      expect(choices, JSON.stringify(choices)).has.length(11)
+      expect(
+        choices,
+        JSON.stringify({ choices, saves }, undefined, 1)
+      ).has.length(11)
       expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
       expect(unexpected).deep.equals([])
     } finally {

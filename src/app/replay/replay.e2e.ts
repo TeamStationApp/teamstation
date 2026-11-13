@@ -177,7 +177,10 @@ function screenRecorder(m: Device): { stop: (path: string) => Promise<void> } {
   const frames: Array<{ file: string; at: number }> = []
   const state = { running: true }
   const dir = mkdtemp(join(tmpdir(), 'replay-frames-'))
-  const loop = (async () => {
+  // A screenshot that fails ends the recording, and the failure is the
+  // stop's: thrown here, it would end the run before the flow's own error,
+  // as when the flow fails and its device is detached.
+  const loop = (async (): Promise<void> => {
     const into = await dir
     while (state.running) {
       const file = join(
@@ -187,11 +190,18 @@ function screenRecorder(m: Device): { stop: (path: string) => Promise<void> } {
       await writeFile(file, await m.screenshot())
       frames.push({ file, at: Date.now() })
     }
-  })()
+  })().then(
+    () => undefined,
+    (error: unknown) => {
+      state.running = false
+      return error instanceof Error ? error : new Error(String(error))
+    }
+  )
   return {
     async stop(path) {
       state.running = false
-      await loop
+      const failed = await loop
+      if (failed != null) throw failed
       const end = Date.now()
       const list = frames
         .map(
@@ -1205,7 +1215,15 @@ async function tapButton(m: Device, name: string): Promise<void> {
     ? `[aria-label^=${JSON.stringify(name.slice(0, -1))}]`
     : `[aria-label=${JSON.stringify(name)}]`
   const css = `:is(button, [role="button"])${label}`
-  await m.tapOn({ css })
+  try {
+    await m.tapOn({ css })
+  } catch (error) {
+    // The scorer redraws its controls as the game moves: a button replaced
+    // as it was tapped is tapped again, once, as it is now.
+    if (!String(error).includes('detached')) throw error
+    await wait(500)
+    await m.tapOn({ css })
+  }
 }
 
 /** Whether a control the scorer can tap is on the page, and enabled. */
@@ -1460,6 +1478,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
           await tapButton(scorer, 'Called Strike')
       }
     }
+    if (!ended) await shot(scorer, 'scorer-could-not-end')
     assert.ok(ended, 'the scorer could not end the game')
     note('scorer: game ended')
     const final = await cardUntil(
@@ -1536,6 +1555,7 @@ async function liveAnnouncer(
       if (await hasControl(scorer, 'Swing and Miss'))
         await tapButton(scorer, 'Swing and Miss')
     }
+    if (!ended) await shot(scorer, 'scorer-could-not-end')
     assert.ok(ended, 'the scorer could not end the game')
     const halves = (
       await evalJson<Array<{ t: number; text: string }>>(
@@ -2053,17 +2073,28 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     note(`box score at 402: left gap ${phone.left}, right gap ${phone.right}`)
 
     // R4: at "Play ball!", a tap starts the game again from its first pitch.
-    // The replay plays on by itself from "Play ball!": opened again here, as
-    // the measurements above can outlast that card on a slower machine.
-    await openReplay(m, FINAL)
-    await evalJson<boolean>(m, CARD_LOG)
-    await cardUntil(
-      m,
-      'Play ball!',
-      text => text.startsWith('Play ball!'),
-      15000
-    )
-    let words = await tapRewind(m)
+    // The replay plays on by itself from "Play ball!", which it shows only for
+    // a moment: opened again and tapped at once, and the page's own log of
+    // the card says whether the tap came while it showed. A droplet can be
+    // slower than that moment, so a tap that came after it opens it again.
+    let words: Card | undefined
+    for (let attempt = 1; words == null; attempt++) {
+      assert.ok(attempt <= 4, 'R4: no tap came while the card said Play ball!')
+      await openReplay(m, FINAL)
+      await evalJson<boolean>(m, CARD_LOG)
+      const now = await evalJson<string>(m, `return ${CARD}`)
+      if (!now.startsWith('Play ball!')) {
+        note(`R4 attempt ${attempt}: opened at ${now}`)
+        continue
+      }
+      const tapped = await tapRewind(m)
+      const shown = (await cards(m)).filter(
+        card => card.t < tapped.t && !card.text.startsWith('Rewind to')
+      )
+      const before = shown.at(-1)?.text ?? ''
+      note(`R4 attempt ${attempt}: before the tap ${before}`)
+      if (before.startsWith('Play ball!')) words = tapped
+    }
     note(`R4 at Play ball!: ${words.text}`)
     assert.ok(words.text.startsWith('Rewind to top of first'))
 

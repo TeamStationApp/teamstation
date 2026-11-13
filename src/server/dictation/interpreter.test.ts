@@ -2781,6 +2781,19 @@ describe('dictation interpreter, player tags', function () {
     })
   })
 
+  it('leaves a ball’s call alone when a player is written as the same letter', async function () {
+    // A one-word name is written as its initial (develop 811093a96).
+    const game = `At bat: B #1 ${writtenTag(1)}.\nFielders: P F0 #0 ${writtenTag(10)}.`
+    const stub = provider([call('p', 'pitch', { call: 'B' })])
+    expect(
+      await new Interpretation(config(stub.fetch), game, 'Ball one').start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'pitch', call: 'B' }],
+      dropped: []
+    })
+  })
+
   it('names the players of what a model wrote in place of a call', async function () {
     const fetch = (async () =>
       new Response(

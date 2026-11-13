@@ -1045,6 +1045,27 @@ describe('scoring browser', function () {
         }, label)
         expect(measured.bottom).lessThan(measured.footerTop)
         expect(measured.hit).equals(label)
+        // The lower pill lays itself out over Undo a frame or more after the
+        // resize: on a droplet, which draws slowly, it can be read mid-move.
+        await page
+          .waitForFunction(
+            label => {
+              const pill = document.querySelector(
+                `[aria-label="Bottom ${label}"]`
+              )
+              const undo = document.querySelector('[aria-label^="Undo "]')
+              if (pill == null || undo == null) return false
+              const a = pill.getBoundingClientRect()
+              const b = undo.getBoundingClientRect()
+              return (
+                Math.abs(a.x + a.width / 2 - (b.x + b.width / 2)) < 0.1 &&
+                Math.abs(a.bottom - b.top) < 0.1
+              )
+            },
+            { timeout: 5000 },
+            label
+          )
+          .catch(() => undefined)
         const lower = await page.$eval(`[aria-label="Bottom ${label}"]`, n => {
           const r = n.getBoundingClientRect()
           const undo = document
