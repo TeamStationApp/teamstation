@@ -43,6 +43,7 @@ const NativeGlass =
         glassRadius?: number
         glassDark?: boolean
         glassBackdropBlur?: boolean
+        glassSubtleBlur?: boolean
       }>('TSGlassView')
     : null
 const NativeBlur =
@@ -67,6 +68,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     fallbackFill = true,
     androidBlur = false,
     backdropBlur = false,
+    subtleBlur = false,
     dark = false,
     ...rest
   } = props
@@ -81,9 +83,9 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
       <View {...rest} style={style}>
         <NativeBlur
           style={StyleSheet.absoluteFill}
-          blurRadius={blur}
-          blurTint={typeof tint === 'number' ? tint : 0}
-          blurSaturation={saturation}
+          blurRadius={subtleBlur ? 8 : blur}
+          blurTint={subtleBlur ? 0 : typeof tint === 'number' ? tint : 0}
+          blurSaturation={subtleBlur ? 1 : saturation}
           blurCornerRadius={radius}
         />
         {children}
@@ -123,6 +125,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
         glassClear={clear}
         glassRadius={radius}
         glassBackdropBlur={backdropBlur}
+        glassSubtleBlur={subtleBlur}
         // The app's theme, not the phone's Dark Mode: see `TSGlassView.mm`.
         glassDark={theme.isDark}
       />

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A26200000000000000000001 /* GlassViewTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26200000000000000000002 /* GlassViewTests.swift */; };
 		5CE4E0A10000000000000002 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE4E0A10000000000000001 /* SceneDelegate.swift */; };
 		5CE4E0A10000000000000004 /* LinkLaunchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE4E0A10000000000000003 /* LinkLaunchOptions.swift */; };
 		5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */; };
@@ -66,6 +67,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A26200000000000000000002 /* GlassViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GlassViewTests.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000001 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SceneDelegate.swift; path = TeamStation/SceneDelegate.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000003 /* LinkLaunchOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LinkLaunchOptions.swift; path = TeamStation/LinkLaunchOptions.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneLifecycleTests.swift; sourceTree = "<group>"; };
@@ -239,6 +241,7 @@
 			children = (
 				5CE4E0A10000000000000007 /* LinkLaunchOptionsTests.swift */,
 				5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */,
+				A26200000000000000000002 /* GlassViewTests.swift */,
 				D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */,
 			);
 			path = TeamStationTests;
@@ -557,6 +560,7 @@
 			files = (
 				5CE4E0A10000000000000008 /* LinkLaunchOptionsTests.swift in Sources */,
 				5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */,
+				A26200000000000000000001 /* GlassViewTests.swift in Sources */,
 				D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

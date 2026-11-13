@@ -63,6 +63,8 @@ export interface GlassViewProps extends ViewProps {
   androidBlur?: boolean
   /** Use a backdrop blur on iOS for a scene that obscures the content behind it. */
   backdropBlur?: boolean
+  /** A lightly blurred backdrop without an added colored fill. */
+  subtleBlur?: boolean
   /**
    * Draw the dark theme's glass whatever the app's theme.
    *

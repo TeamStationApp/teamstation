@@ -29,10 +29,12 @@
 @property (nonatomic, assign) CGFloat glassRadius;
 @property (nonatomic, assign) BOOL glassDark;
 @property (nonatomic, assign) BOOL glassBackdropBlur;
+@property (nonatomic, assign) BOOL glassSubtleBlur;
 @end
 
 @implementation TSGlassView {
   UIVisualEffectView *_effectView;
+  UIViewPropertyAnimator *_blurAnimator;
 }
 
 - (instancetype)initWithFrame:(CGRect)frame
@@ -43,6 +45,9 @@
     self.clipsToBounds = YES;
     self.userInteractionEnabled = NO;
     [self addSubview:_effectView];
+    [[NSNotificationCenter defaultCenter] addObserver:self
+        selector:@selector(restoreSubtleBlur:)
+        name:UIApplicationWillEnterForegroundNotification object:nil];
   }
   return self;
 }
@@ -108,7 +113,20 @@
 - (void)applyEffect
 {
   [self applyShape];
+  [_blurAnimator stopAnimation:YES];
+  _blurAnimator = nil;
   _effectView.backgroundColor = UIColor.clearColor;
+  if (_glassSubtleBlur) {
+    _effectView.effect = nil;
+    UIVisualEffectView *effectView = _effectView;
+    _blurAnimator = [[UIViewPropertyAnimator alloc] initWithDuration:1
+        curve:UIViewAnimationCurveLinear animations:^{
+          effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleRegular];
+        }];
+    _blurAnimator.fractionComplete = 0.18;
+    return;
+  }
+
 
   if (_glassBackdropBlur) {
     _effectView.effect = [UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemMaterial];
@@ -145,6 +163,23 @@
 {
   _glassRadius = value;
   [self applyShape];
+}
+
+- (void)setGlassSubtleBlur:(BOOL)value
+{
+  _glassSubtleBlur = value;
+  [self applyEffect];
+}
+
+- (void)restoreSubtleBlur:(NSNotification *)notification
+{
+  if (_glassSubtleBlur) [self applyEffect];
+}
+
+- (void)dealloc
+{
+  [[NSNotificationCenter defaultCenter] removeObserver:self];
+  [_blurAnimator stopAnimation:YES];
 }
 
 - (void)setGlassBackdropBlur:(BOOL)value
@@ -187,5 +222,6 @@ RCT_EXPORT_VIEW_PROPERTY(glassClear, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassRadius, CGFloat)
 RCT_EXPORT_VIEW_PROPERTY(glassDark, BOOL)
 RCT_EXPORT_VIEW_PROPERTY(glassBackdropBlur, BOOL)
+RCT_EXPORT_VIEW_PROPERTY(glassSubtleBlur, BOOL)
 
 @end
