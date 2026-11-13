@@ -1,7 +1,7 @@
 import React, { useState } from 'react'
 import { Text, View } from 'react-native'
 
-import { monthDay } from '../../common/calendarDates'
+import { daysBetween, monthDay } from '../../common/calendarDates'
 import { addDays } from '../../common/fieldAvailability'
 import { calendarDateText } from '../../common/groupCreation'
 import { addWindowPeriod } from '../../common/seasonScheduling'
@@ -59,13 +59,24 @@ export function TimeWindowsEditor({
       setError(`${(failure as Error).message}.`)
     }
   }
+  // A window without an end runs to the next one. The last runs to
+  // `endDate` when that is after its start; one added after it runs as long
+  // as the window before it, or to the end of its year.
   const ended = (windows: WindowPeriod[]): WindowPeriod[] =>
     windows.map((period, index) => {
       if (period.until != null) return period
       const next = windows[index + 1]
-      const last = endDate != null && endDate > today ? endDate : today
-      const until = next == null ? last : addDays(next.from, -1)
-      return { ...period, until: until < period.from ? period.from : until }
+      if (next != null) return { ...period, until: addDays(next.from, -1) }
+      if (endDate != null && endDate >= period.from)
+        return { ...period, until: endDate }
+      const before = windows[index - 1]
+      return {
+        ...period,
+        until:
+          before?.until != null
+            ? addDays(period.from, daysBetween(before.from, before.until))
+            : `${period.from.slice(0, 4)}-12-31`
+      }
     })
   const dateName = (day: string): string =>
     day === LEGACY_WINDOW_START ? 'Existing hours' : dateLabel(day)
