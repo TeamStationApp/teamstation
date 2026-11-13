@@ -245,7 +245,13 @@ describe('game plan model', function () {
     expect(addInning(full)).equals(full)
   })
 
-  it('deletes an added inning, and never one of the first six', function () {
+  it('opens with five innings', function () {
+    expect(DEFAULT_PLAN_INNINGS).equals(5)
+    const five = plan([[ruth, ['P', 'P', 'P', 'P', 'P']]])
+    expect(addInning(five).innings).equals(6)
+  })
+
+  it('deletes an added inning, and never one of the first five', function () {
     const nine = plan([
       [ruth, ['P', 'P', 'P', 'P', 'P', 'P', 'C', 'LF', 'RF']],
       [gehrig, ['C', 'C', 'C', 'C', 'C', 'C', 'P', '', 'DH']]
@@ -259,6 +265,17 @@ describe('game plan model', function () {
     expect(removeInning(removeInning(deleted, 7), 7).innings).equals(6)
     for (const inning of [0, 1, DEFAULT_PLAN_INNINGS, 10])
       expect(removeInning(nine, inning), String(inning)).equals(nine)
+    // A plan saved with six innings: its sixth is an added one now.
+    const six = plan([
+      [ruth, ['P', 'P', 'P', 'P', 'P', 'C']],
+      [gehrig, ['C', 'C', 'C', 'C', 'C', 'P']]
+    ])
+    const five = removeInning(six, 6)
+    expect(five.innings).equals(5)
+    expect(five.rows.map(row => row.cells)).deep.equals([
+      ['P', 'P', 'P', 'P', 'P'],
+      ['C', 'C', 'C', 'C', 'C']
+    ])
   })
 
   it('clears every cell, which turns it off, and keeps its innings and rows', function () {

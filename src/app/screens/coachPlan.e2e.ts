@@ -1379,7 +1379,7 @@ describe('Coach Plan', function () {
         headers: headers.map(node => String(node.textContent)),
         widths: [
           ...headers,
-          ...[1, 2, 3, 4, 5, 6].map(
+          ...[1, 2, 3, 4, 5].map(
             inning =>
               document.querySelector(`[data-testid="Plan cell 1-${inning}"]`)!
                 .parentElement!
@@ -1387,12 +1387,13 @@ describe('Coach Plan', function () {
         ].map(node => node.getBoundingClientRect().width)
       }
     })
-    expect(columns.headers).deep.equals(['1', '2', '3', '4', '5', '6'])
+    // A plan opens with five innings.
+    expect(columns.headers).deep.equals(['1', '2', '3', '4', '5'])
     expect(columns.twoCh).greaterThan(15)
     for (const width of columns.widths) expect(width).at.most(columns.twoCh + 9)
     await coach.tapCss('[data-testid="Plan add inning"]')
-    await coach.page.waitForSelector('[data-testid="Plan inning 7"]')
-    expect(await coach.cell(9, 7)).equals('')
+    await coach.page.waitForSelector('[data-testid="Plan inning 6"]')
+    expect(await coach.cell(9, 6)).equals('')
     const sheet = await coach.page.$eval(
       '[data-testid="Plan innings"]',
       node => {
@@ -2180,11 +2181,11 @@ describe('Coach Plan', function () {
     await coach.coachGame(fixture.gameId)
     await coach.plan()
     await coach.tapCss('[data-testid="Plan add inning"]')
-    await coach.page.waitForSelector('[data-testid="Plan inning 7"]')
+    await coach.page.waitForSelector('[data-testid="Plan inning 6"]')
     // Something in the added inning, which Cancel keeps.
-    await coach.click('[data-testid="Plan cell 1-7"]')
+    await coach.click('[data-testid="Plan cell 1-6"]')
     await coach.click('[data-testid="Plan pick SS"]')
-    expect(await coach.cell(1, 7)).equals('SS')
+    expect(await coach.cell(1, 6)).equals('SS')
     const headers = await coach.page.$$eval(
       '[data-testid^="Plan inning "]',
       nodes =>
@@ -2196,22 +2197,23 @@ describe('Coach Plan', function () {
     )
     console.log(`    P16 headers: ${JSON.stringify(headers)}`)
     expect(headers.map(header => header.id)).deep.equals(
-      [1, 2, 3, 4, 5, 6, 7].map(inning => `Plan inning ${inning}`)
+      [1, 2, 3, 4, 5, 6].map(inning => `Plan inning ${inning}`)
     )
-    for (const header of headers.slice(0, 6)) {
+    // A plan opens with five innings: the sixth is the added one.
+    for (const header of headers.slice(0, 5)) {
       expect(header.role, header.id).not.equals('button')
       expect(header.color, header.id).not.equals('rgb(168, 53, 53)')
     }
-    expect(headers[6].role).equals('button')
-    expect(headers[6].color).equals('rgb(168, 53, 53)')
-    const confirm = '[aria-label="Delete inning 7?"]'
+    expect(headers[5].role).equals('button')
+    expect(headers[5].color).equals('rgb(168, 53, 53)')
+    const confirm = '[aria-label="Delete inning 6?"]'
     // Inning 1's number does nothing.
     await coach.page.click('[data-testid="Plan inning 1"]')
     await new Promise(resolve => setTimeout(resolve, 400))
-    for (const sheet of ['Delete inning 1?', 'Delete inning 7?'])
+    for (const sheet of ['Delete inning 1?', 'Delete inning 6?'])
       expect(await coach.page.$(`[aria-label="${sheet}"]`)).equals(null)
     // Cancel keeps the inning.
-    await coach.tapCss('[data-testid="Plan inning 7"]')
+    await coach.tapCss('[data-testid="Plan inning 6"]')
     await coach.page.waitForSelector(confirm, { visible: true })
     const actions = await coach.page.$$eval(
       `${confirm} [role="button"]`,
@@ -2234,15 +2236,15 @@ describe('Coach Plan', function () {
       {},
       confirm
     )
-    expect(await coach.cell(1, 7)).equals('SS')
+    expect(await coach.cell(1, 6)).equals('SS')
     // Delete removes it.
-    await coach.tapCss('[data-testid="Plan inning 7"]')
+    await coach.tapCss('[data-testid="Plan inning 6"]')
     await coach.tapCss('[data-testid="Plan delete inning confirm"]')
     await coach.page.waitForFunction(
-      () => document.querySelector('[data-testid="Plan inning 7"]') == null
+      () => document.querySelector('[data-testid="Plan inning 6"]') == null
     )
-    expect(await coach.page.$('[data-testid="Plan cell 1-7"]')).equals(null)
-    expect((await coach.cells())[0]).has.length(6)
+    expect(await coach.page.$('[data-testid="Plan cell 1-6"]')).equals(null)
+    expect((await coach.cells())[0]).has.length(5)
   })
 
   it('P17 draws a picker 15% narrower, P on the mound, the infielders slid along their base paths, and closes it on a click outside', async function () {

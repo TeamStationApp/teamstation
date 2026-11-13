@@ -27,6 +27,7 @@ import {
 import { type PlanSameDay, planWarnings } from '../../../common/planWarnings'
 import type { PlayingTimeRules } from '../../../common/playingTimeRules'
 import { ButtonIcon } from '../../components/ButtonIcon'
+import { TickerText } from '../../components/TickerText'
 import { useConfirmedAction } from '../../components/useConfirmedAction'
 import { lstrings, sprintf } from '../../locales/strings'
 import { HelpSheet } from '../HelpSheet'
@@ -866,9 +867,9 @@ function PlanSheet({
                                   : undefined
                             }}
                           >
-                            <Text
+                            {/* A name wider than the column pans. */}
+                            <TickerText
                               selectable={false}
-                              numberOfLines={1}
                               style={{
                                 color: surface.text,
                                 fontFamily: theme.regularTextFont,
@@ -876,7 +877,7 @@ function PlanSheet({
                               }}
                             >
                               {planBatterLabel(batter)}
-                            </Text>
+                            </TickerText>
                           </View>
                         </RosterDrag>
                       </View>

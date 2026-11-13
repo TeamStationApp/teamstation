@@ -1809,13 +1809,14 @@ describe('the coach’s game plan', function () {
     await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
     expect(held.writes).deep.equals(['plan'])
     const sent = held.savedPlans[0]
-    expect(sent.innings).equals(6)
+    // A side with no plan opens with five innings.
+    expect(sent.innings).equals(5)
     // A plan holding a position is on.
     expect(sent.enabled).equals(true)
     expect(sent.rows.map(row => row.player.gumboId)).deep.equals([
       201, 202, 203, 204, 205, 206, 207, 208, 209
     ])
-    expect(sent.rows[0].cells).deep.equals(['CF', '', '', '', '', ''])
+    expect(sent.rows[0].cells).deep.equals(['CF', '', '', '', ''])
     await waitFor(() => saveDisabled(), 'a clean plan')
     // Both changed: the lineup is saved, then the plan.
     await type(2, 2, ['p'])
