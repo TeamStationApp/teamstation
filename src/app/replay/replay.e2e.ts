@@ -2697,6 +2697,8 @@ async function main(): Promise<void> {
     else if (scenario === 'replay') {
       await replay((m = await attachWeb(daemon)))
       await m.detach()
+      // Detached: a failure from here is the desktop's, not a second detach.
+      m = undefined
       await desktop((m = await attachWeb(daemon, '1440x900')))
     } else if (scenario === 'announcer')
       await announcer((m = await attachWeb(daemon)))
