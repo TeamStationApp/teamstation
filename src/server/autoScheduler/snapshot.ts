@@ -1,6 +1,5 @@
 import { type Kysely, sql } from 'kysely'
 
-import { seasonZones } from '../../common/autoScheduler/seasonZones'
 import type {
   EngineBooking,
   EngineInput,
@@ -18,7 +17,9 @@ import { scheduleSetup } from '../scheduler/setup'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
 import { fieldFacts } from '../venues/fieldWarnings'
 import { occupancy } from '../venues/occupancy'
-import { managerConflict, type RuleContext } from './rules'
+import { managerConflict } from './rules'
+
+export { ruleContext } from './placementChecks'
 
 type Db = Kysely<Database>
 
@@ -513,51 +514,12 @@ export async function snapshot(
   }
 }
 
-/** The hard rules' context for a snapshot's fields and seasons. */
-export function ruleContext(
-  snap: Snapshot,
-  others: RuleContext['others'],
-  headCoaches?: Record<string, string>
-): RuleContext {
-  return {
-    headCoaches,
-    fields: new Map(
-      snap.engine.fields.map(field => [
-        field.id,
-        {
-          name: field.name,
-          venueName: field.venueName,
-          sizes: field.sizes,
-          availability: field.availability,
-          switchMs: field.switchMinutes * 60000
-        }
-      ])
-    ),
-    seasons: new Map(
-      snap.engine.seasons.map(season => [
-        season.id,
-        {
-          fieldIds: season.settings.fieldIds ?? [],
-          bufferMinutes: season.settings.bufferMinutes,
-          doubleheaders: season.settings.doubleheaders,
-          maxGamesOnWeekdays: season.settings.maxGamesOnWeekdays,
-          maxGamesOnWeekend: season.settings.maxGamesOnWeekend,
-          fallback: {
-            size: season.settings.fieldSize,
-            zone: seasonZones(snap.engine.fields, season.settings)[0]
-          }
-        }
-      ])
-    ),
-    others
-  }
-}
-
 /**
  * The input a device searches: the server's copy, with what the league's
  * admins may not read swapped for tokens that hold only within this
  * snapshot. Those are other games' ids, teams outside the run's seasons and
- * games, and the user ids of Managers/Head Coaches. The search needs only to
+ * games, other leagues' seasons, the user ids of Managers/Head Coaches, and
+ * fields outside the run, which go. The search needs only to
  * tell them apart; validation and summaries use the server's copy.
  */
 export function deviceInput(engine: EngineInput): EngineInput {
@@ -588,6 +550,10 @@ export function deviceInput(engine: EngineInput): EngineInput {
   const team = (id: string): string => (own.has(id) ? id : outside(id))
   const coach = tokens('coach:')
   const busy = tokens('busy:')
+  // Another league's seasons and fields appear only on its weekly games.
+  const seasons = new Set(engine.seasons.map(each => each.id))
+  const fields = new Set(engine.fields.map(each => each.id))
+  const season = tokens('season:')
   return {
     ...engine,
     ...(engine.headCoaches == null
@@ -610,6 +576,13 @@ export function deviceInput(engine: EngineInput): EngineInput {
       : {
           weeklyGames: engine.weeklyGames.map(game => ({
             ...game,
+            seasonId: seasons.has(game.seasonId)
+              ? game.seasonId
+              : season(game.seasonId),
+            fieldId:
+              game.fieldId != null && fields.has(game.fieldId)
+                ? game.fieldId
+                : null,
             teamIds: game.teamIds.map(team)
           }))
         })
