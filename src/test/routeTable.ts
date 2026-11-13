@@ -35,6 +35,7 @@ import { onboardingRoutes } from '../server/routes/onboarding'
 import { peopleRoutes } from '../server/routes/people'
 import { pictureRoutes } from '../server/routes/pictures'
 import { playerRoutes } from '../server/routes/players'
+import { pushRoutes } from '../server/routes/push'
 import { scheduleRoutes } from '../server/routes/schedule'
 import { schedulePreviewRoutes } from '../server/routes/schedulePreviews'
 import { schedulingSetupRoutes } from '../server/routes/schedulingSetup'
@@ -125,6 +126,7 @@ export function apiRoutes(): string[] {
     ...routesOf(authRoutes(db, { sendCode })),
     ...routesOf(accountRoutes(db, { ...media, sendCode })),
     ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
+    ...routesOf(pushRoutes(db, { webPushKey: null })),
     ...routesOf(graphqlRoutes({ db, origin: () => 'http://127.0.0.1' })),
     ...routesOf(seasonRoutes(db, media)),
     ...routesOf(eventInfoRoutes(db, media)),

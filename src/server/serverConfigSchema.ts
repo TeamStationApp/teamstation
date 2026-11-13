@@ -405,6 +405,47 @@ export const asServerConfig = asObject({
     })
   ),
 
+  /**
+   * Notifications on phones and browsers (`src/server/push/config.ts`).
+   *
+   * Each service is off until its keys are here, and the devices registered
+   * for it are kept and skipped. `apns.p8Key` is the auth key's PEM, `fcm`
+   * the service account's email and PEM, `webPush` the VAPID pair in
+   * base64url with its `mailto:` or `https:` subject. `iosFiltering` is on
+   * once Apple has granted the notification-filtering entitlement: group
+   * messages then go to iPhones as alerts the app may hide, rather than as
+   * background pushes. `logFile` also writes every message, one JSON line
+   * each, for a development seat or an end-to-end test to replay.
+   */
+  push: asOptional(
+    asObject({
+      apns: asOptional(
+        asObject({
+          keyId: asString,
+          teamId: asString,
+          p8Key: asString,
+          topic: asString
+        })
+      ),
+      fcm: asOptional(
+        asObject({
+          projectId: asString,
+          clientEmail: asString,
+          privateKey: asString
+        })
+      ),
+      webPush: asOptional(
+        asObject({
+          publicKey: asString,
+          privateKey: asString,
+          subject: asString
+        })
+      ),
+      iosFiltering: asOptional(asBoolean, false),
+      logFile: asOptional(asString, '')
+    })
+  ),
+
   /** Log every request. Noisy, but useful while the server is still new. */
   logRequests: asOptional(asBoolean, true),
 

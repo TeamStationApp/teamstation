@@ -53,6 +53,7 @@ import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
+import { pushRoutes } from './routes/push'
 import { scheduleRoutes } from './routes/schedule'
 import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
@@ -173,6 +174,7 @@ describe('the API document', function () {
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
       ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
+      ...routesOf(pushRoutes(db, { webPushKey: null })),
       ...routesOf(graphqlRoutes({ db, origin: () => 'http://127.0.0.1' })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventInfoRoutes(db, media)),
@@ -246,6 +248,7 @@ describe('the API document', function () {
         accountRoutes(db, { ...media, sendCode: async () => undefined })
       ),
       ...routesOf(apiKeyRoutes(db, { sessionSecret: 'secret' })),
+      ...routesOf(pushRoutes(db, { webPushKey: null })),
       ...routesOf(graphqlRoutes({ db, origin: () => 'http://127.0.0.1' })),
       ...routesOf(seasonRoutes(db, media)),
       ...routesOf(eventInfoRoutes(db, media)),

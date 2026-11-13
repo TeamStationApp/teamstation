@@ -426,6 +426,97 @@ const apiKeyPaths = {
     }
   }
 }
+const pushSessionOnly = {
+  401: { description: 'Not signed in' },
+  403: { description: 'An API key, a machine token or Tess: a session only' }
+}
+const pushPaths = {
+  '/push/web-key': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'The VAPID public key a browser subscribes to Web Push with',
+      responses: {
+        200: {
+          description: 'The key, base64url',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['publicKey'],
+                properties: { publicKey: { type: 'string' } }
+              }
+            }
+          }
+        },
+        404: { description: 'Web Push is off on this server' },
+        ...pushSessionOnly
+      }
+    }
+  },
+  '/me/push-registrations': {
+    post: {
+      security: [{ bearer: [] }],
+      summary: "Register this device's push address (signed-in sessions only)",
+      description:
+        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address, and is sent to again if a push service had refused it for good. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted.",
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['platform', 'address'],
+              properties: {
+                platform: { type: 'string', enum: ['ios', 'android', 'web'] },
+                address: {
+                  description:
+                    'The token, or for the web the subscription: { endpoint, keys: { p256dh, auth } }',
+                  oneOf: [{ type: 'string' }, { type: 'object' }]
+                },
+                environment: {
+                  type: 'string',
+                  enum: ['production', 'development'],
+                  default: 'production',
+                  description: "The APNs environment of the app's build"
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: {
+          description: 'The registration',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['id'],
+                properties: { id: { type: 'string' } }
+              }
+            }
+          }
+        },
+        400: { description: 'An unknown platform or a malformed address' },
+        ...pushSessionOnly
+      }
+    }
+  },
+  '/me/push-registrations/{id}': {
+    delete: {
+      security: [{ bearer: [] }],
+      summary: 'Stop pushes to one of your registrations',
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string' } }
+      ],
+      responses: {
+        204: { description: 'Deleted' },
+        404: { description: 'None of yours has this id' },
+        ...pushSessionOnly
+      }
+    }
+  }
+}
 const graphqlPaths = {
   '/graphql': {
     post: {
@@ -3360,6 +3451,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...gamePlanPaths(errorResponse),
       ...accountPaths,
       ...apiKeyPaths,
+      ...pushPaths,
       ...graphqlPaths,
       '/me/builds': {
         get: {

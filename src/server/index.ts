@@ -56,6 +56,7 @@ import { oauthInteractionRoutes } from './oauth/routes'
 import { requestLogs, startServerLogging } from './observability/logging'
 import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
+import { pushSettings } from './push/config'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
@@ -96,6 +97,7 @@ import { onboardingRoutes } from './routes/onboarding'
 import { peopleRoutes } from './routes/people'
 import { pictureRoutes } from './routes/pictures'
 import { playerRoutes } from './routes/players'
+import { pushRoutes } from './routes/push'
 import { scheduleRoutes } from './routes/schedule'
 import { schedulePreviewRoutes } from './routes/schedulePreviews'
 import { schedulingSetupRoutes } from './routes/schedulingSetup'
@@ -892,6 +894,12 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     apiKeyRoutes(db, { sessionSecret: serverConfig.sessionSecret })
+  )
+  app.use(
+    '/api/v1',
+    pushRoutes(db, {
+      webPushKey: pushSettings(serverConfig).webPush?.publicKey ?? null
+    })
   )
   app.use('/api/v1', mediaRoutes(db, mediaContext))
   app.use('/api/v1', liveRoutes(db, liveRouteOptions()))
