@@ -6,6 +6,7 @@ import type { GameFieldSummary } from '../../common/gameApprovals'
 import {
   type FieldSize,
   fieldSizeLabel,
+  sizesLabel,
   type VenueDetail,
   type VenueField,
   type VenueSummary
@@ -14,7 +15,6 @@ import { Button, ListCard, ListRow, TextField } from '../components'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { sizesLabel } from './VenueScreen'
 
 /**
  * What the picker returns. In game mode, the field a game is on, with the

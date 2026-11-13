@@ -127,7 +127,12 @@ export function ScheduleSeasonScreen({
     )
   }, [client, leagueId, seasonId, revision, begin])
   const run = useCallback(
-    async (work: () => Promise<void>, done: string): Promise<void> => {
+    async (
+      work: () => Promise<void>,
+      done: string,
+      /** Throw a failure on to the caller, which shows it, instead. */
+      options: { rethrow?: boolean } = {}
+    ): Promise<void> => {
       const key = currentKey.current
       const current = (): boolean =>
         active.current && currentKey.current === key
@@ -138,6 +143,7 @@ export function ScheduleSeasonScreen({
         await work()
         if (current()) setNotice(done)
       } catch (failure) {
+        if (options.rethrow === true) throw failure
         if (current())
           setError(
             failure instanceof Error && failure.message !== ''
@@ -273,20 +279,15 @@ export function ScheduleSeasonScreen({
                   value={settings[key] ?? 1}
                   maximum={MAX_GAMES}
                   disabled={busy}
+                  // The cell shows its own error, so a failure goes to it.
                   onSave={async value => {
-                    // The cell shows its own error, so a failure is thrown on
-                    // to it; the screen still says when the save worked.
-                    setBusy(true)
-                    setError('')
-                    setNotice('')
-                    try {
-                      await persist({ [key]: value })
-                      if (active.current && currentKey.current === screenKey)
-                        setNotice('Game maximum saved.')
-                    } finally {
-                      if (active.current && currentKey.current === screenKey)
-                        setBusy(false)
-                    }
+                    await run(
+                      async () => {
+                        await persist({ [key]: value })
+                      },
+                      'Game maximum saved.',
+                      { rethrow: true }
+                    )
                   }}
                 />
               }
