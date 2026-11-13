@@ -1176,11 +1176,10 @@ describe('current defensive scoring setup browser', function () {
       await page.waitForSelector('[aria-label*="2 balls"]')
       // The eight on the roster, the two placeholders made here and the
       // peer's Julio Rodriguez.
-      expect(
-        await page.$$eval('[aria-label^="Assign RF "]', nodes =>
-          nodes.map(node => node.getAttribute('aria-label'))
-        )
-      ).has.length(11)
+      const choices = await page.$$eval('[aria-label^="Assign RF "]', nodes =>
+        nodes.map(node => node.getAttribute('aria-label'))
+      )
+      expect(choices, JSON.stringify(choices)).has.length(11)
       expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
       expect(unexpected).deep.equals([])
     } finally {
