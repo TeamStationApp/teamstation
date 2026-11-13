@@ -20,8 +20,15 @@ function signedInOnly(parser: RequestHandler): RequestHandler {
   }
 }
 
-// Up to three bounded device-generated schedule options with their game IDs.
-const scheduleResultBody = signedInOnly(express.json({ limit: '64mb' }))
+/**
+ * Up to three bounded device-generated schedule options with their game
+ * IDs. The result route reads it itself, once it knows the actor administers
+ * the preview's league, so no other account can make the server parse it.
+ */
+export const scheduleResultBody = express.json({ limit: '64mb' })
+const parsedByRoute: RequestHandler = (_req, _res, next) => {
+  next()
+}
 
 /** One post of a game's plays is the whole game. */
 const gameBody = express.json({ limit: '32mb' })
@@ -62,7 +69,7 @@ const LARGE_BODIES: ReadonlyArray<{
   {
     method: 'PUT',
     path: /^\/api\/v1\/schedule-previews\/[^/]+\/result$/,
-    parser: scheduleResultBody
+    parser: parsedByRoute
   },
   {
     method: 'POST',

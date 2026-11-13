@@ -21,6 +21,7 @@ import { gamesToReschedule } from '../autoScheduler/reschedule'
 import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
 import { requireGroupAdmin } from '../groups/rights'
+import { scheduleResultBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -67,6 +68,12 @@ export function schedulePreviewRoutes(
   router.put(
     '/schedule-previews/:previewId/result',
     requireActor,
+    // Only an admin of the preview's league gets the large body read.
+    withAsync(async (req, _res, next) => {
+      await previewFor(db, actor(req), param(req.params.previewId))
+      next()
+    }),
+    scheduleResultBody,
     withAsync(async (req, res) => {
       const result = clean(asPreviewResult, req.body)
       res.json(

@@ -6,7 +6,7 @@ import express from 'express'
 import { after, before, describe, it } from 'mocha'
 
 import { userIdOfGumbo } from '../common/userId'
-import { jsonBody } from './jsonBody'
+import { jsonBody, scheduleResultBody } from './jsonBody'
 
 describe('device schedule result body boundary', function () {
   this.timeout(15000)
@@ -19,6 +19,8 @@ describe('device schedule result body boundary', function () {
         req.actor = { userId: userIdOfGumbo(1), isAdmin: false, scopes: [] }
       next()
     })
+    // As the result route reads its body, once the actor may complete it.
+    app.put('/direct/result', scheduleResultBody)
     app.use(jsonBody)
     app.use((req, res) => {
       res.json({ parsed: req.body != null })
@@ -40,23 +42,23 @@ describe('device schedule result body boundary', function () {
   after(() => {
     server.close()
   })
-  const request = async (
+  const send = async (
     path: string,
     body: string,
     signedIn = true,
     method = 'PUT'
-  ): Promise<number> =>
-    (
-      await fetch(base + path, {
-        method,
-        headers: {
-          'content-type': 'application/json',
-          ...(signedIn ? { 'x-signed-in': '1' } : {})
-        },
-        body
-      })
-    ).status
-  it('accepts a multi-option result over 1 MiB only on the authenticated result route', async () => {
+  ): Promise<Response> =>
+    await fetch(base + path, {
+      method,
+      headers: {
+        'content-type': 'application/json',
+        ...(signedIn ? { 'x-signed-in': '1' } : {})
+      },
+      body
+    })
+  const request = async (...args: Parameters<typeof send>): Promise<number> =>
+    (await send(...args)).status
+  it('leaves the result body to its route, which reads a multi-option result over 1 MiB', async () => {
     const game = {
       key: 'schedule:'.padEnd(80, 'x'),
       seasonId: 'sea_demo'.padEnd(40, 's'),
@@ -75,19 +77,19 @@ describe('device schedule result body boundary', function () {
       blocking: null
     })
     expect(Buffer.byteLength(body)).greaterThan(1024 * 1024)
+    // The shared parser leaves the result route's body to the route, read
+    // for nobody before the route has checked who is asking.
+    for (const path of [
+      '/api/v1/schedule-previews/preview/result',
+      '/API/V1/SCHEDULE-PREVIEWS/preview/RESULT/'
+    ])
+      for (const signedIn of [true, false])
+        expect(await (await send(path, body, signedIn)).json()).deep.equals({
+          parsed: false
+        })
     expect(
-      await request('/api/v1/schedule-previews/preview/result', body)
+      await request('/api/v1/schedule-previews/preview/result', '{invalid')
     ).equals(200)
-    expect(
-      await request('/API/V1/SCHEDULE-PREVIEWS/preview/RESULT/', body)
-    ).equals(200)
-    expect(
-      await request(
-        '/api/v1/schedule-previews/preview/result',
-        '{invalid',
-        false
-      )
-    ).equals(401)
     expect(
       await request('/api/v1/schedule-previews/preview/result/extra', body)
     ).equals(413)
@@ -99,9 +101,13 @@ describe('device schedule result body boundary', function () {
         'POST'
       )
     ).equals(413)
+    // The route's own parser takes the multi-option result and no more than 64 MiB.
+    expect(await (await send('/direct/result', body)).json()).deep.equals({
+      parsed: true
+    })
     expect(
       await request(
-        '/api/v1/schedule-previews/preview/result',
+        '/direct/result',
         JSON.stringify({ data: 'x'.repeat(64 * 1024 * 1024) })
       )
     ).equals(413)

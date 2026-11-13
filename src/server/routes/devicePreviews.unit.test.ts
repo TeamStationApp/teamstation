@@ -5,7 +5,7 @@ import { expect } from 'chai'
 import type { Request, Response } from 'express'
 import { afterEach, describe, it } from 'mocha'
 
-import { conflict } from '../../common/errors'
+import { conflict, forbidden } from '../../common/errors'
 import { withQueryReplies } from '../../test/queryReplies'
 import * as previews from '../autoScheduler/previews'
 import { schedulePreviewRoutes } from './schedulePreviews'
@@ -24,6 +24,11 @@ describe('device preview HTTP boundary', () => {
       async () => prepared
     )
     let failure: Error | undefined
+    let admin = true
+    mock.method(previews, 'previewFor', async () => {
+      if (!admin) throw forbidden()
+      return {}
+    })
     const complete = mock.method(previews, 'completePreview', async () => {
       if (failure != null) throw failure
       return { id: 'preview', status: 'open' }
@@ -51,6 +56,7 @@ describe('device preview HTTP boundary', () => {
               url,
               method,
               body,
+              headers: {},
               actor: signedIn ? actor : undefined
             } as unknown as Request,
             response as unknown as Response,
@@ -88,6 +94,13 @@ describe('device preview HTTP boundary', () => {
       await assert.rejects(
         request('/schedule-previews/preview/result', 'PUT', blocked, false),
         { status: 401 }
+      )
+      // Somebody who does not administer the league is refused before the
+      // body is read.
+      admin = false
+      await assert.rejects(
+        request('/schedule-previews/preview/result', 'PUT', blocked),
+        { status: 403 }
       )
       expect(complete.mock.callCount()).equals(3)
     })
