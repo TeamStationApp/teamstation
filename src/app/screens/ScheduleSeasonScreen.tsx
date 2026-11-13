@@ -215,7 +215,13 @@ export function ScheduleSeasonScreen({
     save({ windows }, done)
   }
   const copyFrom = (source: SetupSeason): void => {
-    const windows = copyWindowPeriods(source.settings, settings)
+    // The copy keeps its place after this season's first window day, and is
+    // cut only at the season's own last day: the windows it replaces don't
+    // bound it.
+    const windows = copyWindowPeriods(source.settings, {
+      startsOn: settings.startsOn,
+      endsOn: season.seasonDates?.endsOn ?? settings.endsOn
+    })
     if (windows.length === 0) {
       setNotice('')
       setError(`${source.name}’s windows all fall after this season ends.`)
