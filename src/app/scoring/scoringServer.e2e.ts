@@ -194,6 +194,24 @@ async function click(page: Page, label: string): Promise<void> {
   const opening =
     label === 'Create Player' &&
     (await page.$('[aria-label="First Name"]')) == null
+  // A control that remounts while it settles (the roster editor does, as a
+  // save comes back) leaves no box: it is looked up again.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await pressOnce(page, label, selector)
+      break
+    } catch (error) {
+      if (attempt === 3 || !String(error).includes('has no box')) throw error
+    }
+  }
+  if (opening) await page.waitForSelector('[aria-label="First Name"]')
+}
+
+async function pressOnce(
+  page: Page,
+  label: string,
+  selector: string
+): Promise<void> {
   await page.waitForFunction(
     selector =>
       Array.from(document.querySelectorAll(selector)).some(node =>
@@ -225,7 +243,6 @@ async function click(page: Page, label: string): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 350))
     break
   }
-  if (opening) await page.waitForSelector('[aria-label="First Name"]')
 }
 
 async function waitReady(page: Page): Promise<void> {
