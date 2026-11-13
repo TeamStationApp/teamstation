@@ -161,18 +161,24 @@ export async function saveSeasonScheduleSettings(
           .select(['id', 'sizes', 'deleted_at'])
           .where('id', 'in', chosen)
           .execute()
+  // A stored field deleted or changed since is dropped quietly, so other
+  // edits still save; only a field added in this request must be usable.
+  const stored = new Set(previous.settings.fieldIds ?? [])
+  const live = fields.filter(field => field.deleted_at == null)
   if (
-    fields.length !== chosen.length ||
-    fields.some(field => field.deleted_at != null)
+    chosen.some(id => !stored.has(id) && !live.some(field => field.id === id))
   )
     throw badRequest('Choose available fields for this season')
   const changedSize = previous.settings.fieldSize !== settings.fieldSize
   if (
     !changedSize &&
-    fields.some(field => !field.sizes.includes(settings.fieldSize))
+    live.some(
+      field =>
+        !stored.has(field.id) && !field.sizes.includes(settings.fieldSize)
+    )
   )
     throw badRequest('Choose fields matching the required size')
-  const fieldIds = fields
+  const fieldIds = live
     .filter(field => field.sizes.includes(settings.fieldSize))
     .map(field => field.id)
   const values = {

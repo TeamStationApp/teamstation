@@ -104,7 +104,7 @@ describe('device scheduling persistence boundaries', () => {
       )
     }
   })
-  it('writes selected fields, preserves omitted choices, prunes a changed size and refuses unavailable selections', async () => {
+  it('writes selected fields, preserves omitted choices, drops stale stored fields and refuses unavailable added ones', async () => {
     const settings = season().settings
     const row = {
       season_id: 'sea_demo',
@@ -130,9 +130,14 @@ describe('device scheduling persistence boundaries', () => {
       'size',
       'missing',
       'deleted',
-      'incompatible'
+      'incompatible',
+      'addedMissing',
+      'addedDeleted',
+      'addedIncompatible'
     ]) {
       let wrote = false
+      const added = mode.startsWith('added')
+      const stored = { ...row, field_ids: added ? [] : row.field_ids }
       const wanted = {
         ...settings,
         fieldIds:
@@ -144,12 +149,12 @@ describe('device scheduling persistence boundaries', () => {
           if (query.sql.startsWith('insert into "season_schedule_settings"')) {
             wrote = true
             expect(query.parameters).deep.includes(
-              mode === 'empty' || mode === 'size' ? [] : ['fld_one']
+              mode === 'chosen' || mode === 'omitted' ? ['fld_one'] : []
             )
             return []
           }
           if (query.sql.includes('from "season_schedule_settings"'))
-            return [row]
+            return [stored]
           if (query.sql.includes('from "seasons"'))
             return [
               {
@@ -161,19 +166,19 @@ describe('device scheduling persistence boundaries', () => {
               }
             ]
           if (query.sql.includes('from "venue_fields"'))
-            return mode === 'missing'
+            return /missing/i.test(mode)
               ? []
               : [
                   {
                     id: field.id,
-                    sizes: mode === 'incompatible' ? ['60/90'] : ['50/70'],
-                    deleted_at: mode === 'deleted' ? new Date() : null
+                    sizes: /incompatible/i.test(mode) ? ['60/90'] : ['50/70'],
+                    deleted_at: /deleted/i.test(mode) ? new Date() : null
                   }
                 ]
           throw new Error(query.sql)
         },
         async db => {
-          if (['missing', 'deleted', 'incompatible'].includes(mode)) {
+          if (added) {
             const error = await saveSeasonScheduleSettings(
               db,
               'sea_demo',
