@@ -76,6 +76,7 @@ async function main(): Promise<void> {
       throw error
     })
   interface Node {
+    id?: string
     text?: string
     type?: string
     enabled?: boolean
@@ -190,8 +191,12 @@ async function main(): Promise<void> {
     const web = !native
       ? flat(hierarchy).find(node => node.type === 'WebView')
       : undefined
+    // Safari's own toolbar also has a "More" button. Keep app targets
+    // separate when the driver flattens the WebView into the window tree.
+    const appNode = (node: Node): boolean => node.id !== 'MoreMenuButton'
     const nodes = flat(web ?? hierarchy).filter(
       node =>
+        appNode(node) &&
         (node.text === text ||
           (text.startsWith('Undo ') && node.text?.startsWith(text) === true)) &&
         node.bounds != null
@@ -199,7 +204,9 @@ async function main(): Promise<void> {
     const node =
       nodes.at(-1) ??
       flat(hierarchy)
-        .filter(node => node.text === text && node.bounds != null)
+        .filter(
+          node => appNode(node) && node.text === text && node.bounds != null
+        )
         .at(-1)
     if (node?.bounds == null)
       await m.tapOn({
@@ -673,8 +680,8 @@ async function main(): Promise<void> {
     assert(second != null)
     const persisted = JSON.stringify(fixture.stored())
     await open(false, game)
-    await shown('Bobby Witt')
-    await shown('Juan Soto')
+    await shown('^Bobby W$')
+    await shown('^Juan S$')
     await dismissDevelopmentWarnings()
     if (native) await new Promise(resolve => setTimeout(resolve, 3000))
     await capture('history-reopened')
