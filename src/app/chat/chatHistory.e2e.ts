@@ -183,8 +183,12 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
     executablePath: process.env.TS_CHROME_PATH
   })
   try {
-    const page = await browser.newPage()
-    await page.setViewport({ width: 1280, height: 900 })
+    const freshPage = async (): Promise<Page> => {
+      const opened = await browser.newPage()
+      await opened.setViewport({ width: 1280, height: 900 })
+      return opened
+    }
+    let page = await freshPage()
     await visit(page, `${WEB}/chat`)
     const chats = (await apiGet(page, '/chat/conversations')) as
       Array<{ id: string; title: string; kind: string }> | undefined
@@ -218,6 +222,10 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
           lines = await readChat()
         } catch (error) {
           if (attempt === 3 || !String(error).includes('detached')) throw error
+          // A page whose frame the reload replaced can stay unusable: the
+          // chat is read again on a new page of the same profile.
+          await page.close().catch(() => undefined)
+          page = await freshPage()
         }
       }
       read[`${chat.kind} ${chat.title}`] = lines

@@ -1471,7 +1471,7 @@
         "CHAT_RECOVERY_SURFACE": "web"
       },
       "needs": "web",
-      "fixture": {"runner": "web", "scenario": "E5"}
+      "blocked": "needs the recovery relay (CHAT_RECOVERY_RELAY, scripts/chat-history-recovery-relay.ts): 'E5 requires the owned relay settings'"
     },
     {
       "label": "E6",
