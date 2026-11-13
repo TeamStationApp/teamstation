@@ -145,9 +145,10 @@ export function deckDetailTop(
   deckTop: number,
   height: number,
   insetBottom: number,
-  heights: CardLineHeights
+  heights: CardLineHeights,
+  os: string
 ): number {
-  const buttonsTop = height - floatingBottom(insetBottom) - FLOATING_SIZE
+  const buttonsTop = height - floatingBottom(insetBottom, os) - FLOATING_SIZE
   return Math.max(
     0,
     Math.min(deckTop, buttonsTop - DECK_GAP - detailStripHeight(heights))
@@ -231,9 +232,10 @@ export function replayLayout(width: number, height: number): { side: boolean } {
  */
 export function boxScoreInset(
   insetBottom: number,
-  containerBottom: number
+  containerBottom: number,
+  os: string
 ): number {
-  return floatingBottom(insetBottom) + FLOATING_SIZE + 8 - containerBottom
+  return floatingBottom(insetBottom, os) + FLOATING_SIZE + 8 - containerBottom
 }
 
 /**
@@ -732,7 +734,7 @@ function ReplayView(props: {
         FLOATING_BUTTON,
         {
           right: FLOATING_MARGIN + insets.right,
-          bottom: floatingBottom(insets.bottom)
+          bottom: floatingBottom(insets.bottom, Platform.OS)
         }
       ]}
     >
@@ -763,7 +765,7 @@ function ReplayView(props: {
           FLOATING_BUTTON,
           {
             left: FLOATING_MARGIN + insets.left,
-            bottom: floatingBottom(insets.bottom)
+            bottom: floatingBottom(insets.bottom, Platform.OS)
           }
         ]}
       >
@@ -799,7 +801,7 @@ function ReplayView(props: {
   const deckTop =
     deckDetail == null
       ? deck.top
-      : deckDetailTop(deck.top, height, insets.bottom, lineHeights)
+      : deckDetailTop(deck.top, height, insets.bottom, lineHeights, Platform.OS)
   const boxScore = (containerBottom: number): React.ReactElement =>
     box === null ? (
       <Text>Statistics are unavailable for this recorded play.</Text>
@@ -808,7 +810,7 @@ function ReplayView(props: {
         box={box}
         players={openable}
         onOpenPlayer={onOpenPlayer}
-        bottomInset={boxScoreInset(insets.bottom, containerBottom)}
+        bottomInset={boxScoreInset(insets.bottom, containerBottom, Platform.OS)}
       />
     )
   return (

@@ -321,7 +321,7 @@ async function layout(m: Device, platform: string): Promise<void> {
     if (bottom != null)
       near(
         screen.height - (button.y + button.height),
-        floatingBottom(bottom),
+        floatingBottom(bottom, platform),
         `${name}'s distance from the bottom`
       )
   }

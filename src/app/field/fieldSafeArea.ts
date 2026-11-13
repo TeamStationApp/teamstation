@@ -115,13 +115,18 @@ export const FLOATING_SIZE = 56
 export const FLOATING_MARGIN = 16
 /** The least a floating button keeps from the window's bottom edge. */
 export const FLOATING_FLOOR = 4
+/** How much higher the floating buttons sit in the iOS and Android apps: a rem. */
+export const FLOATING_MOBILE_RAISE = 16
 /**
- * The floating buttons' distance from the window's bottom for a bottom inset:
- * centred on the safe area's top edge, half inside it, but never closer than
- * FLOATING_FLOOR to the window's edge; with no inset, FLOATING_MARGIN.
+ * The floating buttons' distance from the window's bottom for a bottom inset
+ * on a platform (`Platform.OS`): centred on the safe area's top edge, half
+ * inside it, but never closer than FLOATING_FLOOR to the window's edge; with
+ * no inset, FLOATING_MARGIN. The apps raise them FLOATING_MOBILE_RAISE more.
  */
-export function floatingBottom(insetBottom: number): number {
-  return insetBottom === 0
-    ? FLOATING_MARGIN
-    : Math.max(FLOATING_FLOOR, insetBottom - FLOATING_SIZE / 2)
+export function floatingBottom(insetBottom: number, os: string): number {
+  const bottom =
+    insetBottom === 0
+      ? FLOATING_MARGIN
+      : Math.max(FLOATING_FLOOR, insetBottom - FLOATING_SIZE / 2)
+  return os === 'web' ? bottom : bottom + FLOATING_MOBILE_RAISE
 }

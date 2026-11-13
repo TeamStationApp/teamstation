@@ -749,11 +749,11 @@ describe('the replay screen', function () {
       await show(gameOf(), finalGame())
       expect(flat(propsOf('replay-rewind').style)).deep.include({
         left: FLOATING_MARGIN,
-        bottom: floatingBottom(bottom)
+        bottom: floatingBottom(bottom, 'web')
       })
       expect(flat(propsOf('replay-pause').style)).deep.include({
         right: FLOATING_MARGIN,
-        bottom: floatingBottom(bottom)
+        bottom: floatingBottom(bottom, 'web')
       })
       // Measured from the window's edges: no safe padding around them.
       const holder = node('replay-rewind').parentElement
@@ -761,13 +761,34 @@ describe('the replay screen', function () {
       expect(holder?.style).deep.include({ position: 'absolute' })
     })
 
+  it('raises rewind and pause a rem in the apps, the box score with them', async function () {
+    const os = Platform.OS
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      value: 'android'
+    })
+    try {
+      resize(402, 874)
+      safeArea = { top: 0, bottom: 24, left: 0, right: 0 }
+      await show(gameOf(), finalGame())
+      const bottom = floatingBottom(24, 'web') + 16
+      expect(flat(propsOf('replay-rewind').style)).deep.include({ bottom })
+      expect(flat(propsOf('replay-pause').style)).deep.include({ bottom })
+      expect(
+        flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
+      ).equals(bottom + FLOATING_SIZE + 8)
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
+    }
+  })
+
   it('keeps rewind and pause beside a notch, held sideways', async function () {
     resize(874, 402)
     safeArea = { top: 0, bottom: 21, left: 59, right: 47 }
     await show(gameOf(), finalGame())
     expect(flat(propsOf('replay-rewind').style)).deep.include({
       left: FLOATING_MARGIN + 59,
-      bottom: floatingBottom(21)
+      bottom: floatingBottom(21, 'web')
     })
     expect(flat(propsOf('replay-pause').style)).deep.include({
       right: FLOATING_MARGIN + 47
@@ -776,18 +797,18 @@ describe('the replay screen', function () {
 
   it('scrolls the box score’s last row clear of the buttons', async function () {
     // The tall deck runs to the window's bottom.
-    expect(boxScoreInset(0, 0)).equals(16 + FLOATING_SIZE + 8)
-    expect(boxScoreInset(34, 0)).equals(6 + FLOATING_SIZE + 8)
+    expect(boxScoreInset(0, 0, 'web')).equals(16 + FLOATING_SIZE + 8)
+    expect(boxScoreInset(34, 0, 'web')).equals(6 + FLOATING_SIZE + 8)
     // The side column ends its safe padding above the window's bottom.
-    expect(boxScoreInset(21, 21 + FIELD_EDGE_GAP)).equals(
-      floatingBottom(21) + FLOATING_SIZE + 8 - 29
+    expect(boxScoreInset(21, 21 + FIELD_EDGE_GAP, 'web')).equals(
+      floatingBottom(21, 'web') + FLOATING_SIZE + 8 - 29
     )
     resize(402, 874)
     safeArea = IPHONE
     await show(gameOf(), finalGame())
     expect(
       flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
-    ).equals(boxScoreInset(34, 0))
+    ).equals(boxScoreInset(34, 0, 'web'))
     await act(async () => {
       root?.unmount()
     })
@@ -796,12 +817,12 @@ describe('the replay screen', function () {
     await show(gameOf(), finalGame())
     expect(
       flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
-    ).equals(boxScoreInset(21, 21 + FIELD_EDGE_GAP))
+    ).equals(boxScoreInset(21, 21 + FIELD_EDGE_GAP, 'web'))
   })
 
   /** The floating buttons' top, in a browser with no insets. */
   const buttonsTop = (height: number): number =>
-    height - floatingBottom(0) - FLOATING_SIZE
+    height - floatingBottom(0, 'web') - FLOATING_SIZE
 
   /**
    * A tall window with the catcher where the canvas reports it: the card
@@ -927,7 +948,7 @@ describe('the replay screen', function () {
             ).lte(Math.min(top - 8, buttonsTop(height) - 8))
           // With no card, the detail strip at the deck's top clears the
           // buttons, the deck rising over the field only where it must.
-          const stripTop = deckDetailTop(top, height, 0, est(scale))
+          const stripTop = deckDetailTop(top, height, 0, est(scale), 'web')
           expect(stripTop, at).lte(top)
           expect(stripTop + detailStripHeight(est(scale)), at).lte(
             buttonsTop(height) - 8

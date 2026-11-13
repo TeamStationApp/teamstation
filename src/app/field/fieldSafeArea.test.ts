@@ -6,6 +6,7 @@ import {
   FIELD_EDGE_GAP,
   fieldSafePadding,
   FLOATING_MARGIN,
+  FLOATING_MOBILE_RAISE,
   FLOATING_SIZE,
   floatingBottom,
   liftedSafePadding,
@@ -123,11 +124,20 @@ describe('field safe area', function () {
 
   it('centres the floating buttons on the bottom safe edge, kept on the screen', function () {
     expect(FLOATING_SIZE).equals(56)
-    expect(floatingBottom(0)).equals(FLOATING_MARGIN)
-    expect(floatingBottom(0)).equals(16)
+    expect(floatingBottom(0, 'web')).equals(FLOATING_MARGIN)
+    expect(floatingBottom(0, 'web')).equals(16)
     // A gesture bar's small inset keeps the button 4 points off the edge.
-    expect(floatingBottom(24)).equals(4)
-    expect(floatingBottom(34)).equals(6)
-    expect(floatingBottom(48)).equals(20)
+    expect(floatingBottom(24, 'web')).equals(4)
+    expect(floatingBottom(34, 'web')).equals(6)
+    expect(floatingBottom(48, 'web')).equals(20)
+  })
+
+  it('raises the floating buttons a rem in the iOS and Android apps', function () {
+    expect(FLOATING_MOBILE_RAISE).equals(16)
+    for (const os of ['ios', 'android'])
+      for (const inset of [0, 24, 34, 48])
+        expect(floatingBottom(inset, os), `${os} ${inset}`).equals(
+          floatingBottom(inset, 'web') + 16
+        )
   })
 })
