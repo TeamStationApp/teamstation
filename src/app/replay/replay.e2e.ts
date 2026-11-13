@@ -1381,7 +1381,12 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     let words: Card | undefined
     for (let attempt = 1; words == null; attempt++) {
       assert.ok(attempt <= 4, 'R4: no tap came while the card said Play ball!')
-      await openReplay(m, FINAL)
+      // From the game page's pill, as a reader comes to it: the replay starts
+      // as it mounts, where a load of its own address spends the moment on
+      // loading the app.
+      await openGame(m, FINAL)
+      await m.tapOn({ text: 'Replay' })
+      await m.assertVisible({ id: 'game-replay', timeout: 20000 })
       await evalJson<boolean>(m, CARD_LOG)
       const [now, box] = await evalJson<[string, string]>(
         m,

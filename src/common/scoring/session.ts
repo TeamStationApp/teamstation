@@ -297,6 +297,27 @@ function held(list: readonly string[], digest: string): string[] {
 }
 
 /** A save refused because the lineups it was built on have moved on. */
+/**
+ * A side of a roster saved over the game as it is now, `setup` holding that
+ * copy: a player on the side now whom the saved roster never knew (another
+ * device added him after this one read the game) stays on it, on the bench.
+ * The roster takes off only players it knew; one made since is not its to
+ * take off.
+ */
+function keepPlayersAddedSince(
+  setup: GameSetup,
+  now: GameState,
+  saved: GameSetup,
+  side: Side
+): void {
+  for (const id of now.liveData.boxscore.teams[side].players) {
+    if (saved.players[id] != null || setup.sides[side].players.includes(id))
+      continue
+    setup.sides[side].players.push(id)
+    if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
+  }
+}
+
 function stale(error: unknown): boolean {
   return (
     error instanceof HttpError &&
@@ -1861,6 +1882,7 @@ export class ScoringSession {
               setup.players[id] = copyState(action.setup.players[id])
             if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
           }
+          keepPlayersAddedSince(setup, state, action.setup, side)
         }
         action = {
           ...action,
@@ -1915,6 +1937,7 @@ export class ScoringSession {
               setup.players[id] = copyState(action.setup.players[id])
             if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
           }
+          keepPlayersAddedSince(setup, state, action.setup, side)
         }
         action = {
           ...action,
