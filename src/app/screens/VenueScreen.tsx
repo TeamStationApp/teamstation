@@ -38,8 +38,6 @@ import { openEventDirections } from '../platform/eventDirections'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
-export { sizesLabel }
-
 /**
  * When a pending claim is approved by itself: its date, which reads the same
  * whatever the viewer's clock says.
@@ -51,8 +49,6 @@ export function approvalLabel(approvesAt: string): string {
     year: 'numeric'
   }).format(new Date(approvesAt))}`
 }
-
-/** A field's sizes as a row's detail line. */
 
 /** Approve, in the success colour of the card it sits on. */
 function ApproveButton(

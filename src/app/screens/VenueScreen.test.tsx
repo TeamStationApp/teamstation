@@ -4,6 +4,7 @@ import React from 'react'
 
 import type { TeamStationClient } from '../../common/api'
 import { rangeDates, type VenueDetail } from '../../common/venues'
+import { sizesLabel } from '../../common/venues'
 import { CoverableScene, coverAndReveal } from '../../test/coverableScene'
 import {
   fill,
@@ -25,7 +26,7 @@ import {
 } from '../../test/venueDom'
 import { ScopedThemeProvider } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
-import { approvalLabel, sizesLabel, VenueScreen } from './VenueScreen'
+import { approvalLabel, VenueScreen } from './VenueScreen'
 
 type Calls = Record<string, unknown[][]>
 
