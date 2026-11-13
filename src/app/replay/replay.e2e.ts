@@ -272,28 +272,38 @@ const CARD = CARD_TEXT
  * here can miss on a slow machine. Answers at once when the card has words,
  * and waits up to 15 s for them.
  */
-const FIRST_CARD = `
+const FIRST_CARD = (press = false): string => `
   return JSON.stringify(await new Promise(resolve => {
     const read = () => ${CARD};
     const box = () => document.querySelector('[data-testid="replay-box-score"]')?.textContent ?? '';
-    if (read() !== '') return resolve({ card: read(), box: box() });
+    // With \`press\`, the rewind is pressed in the same moment, at "Play ball!".
+    const answer = () => {
+      const card = read(), at = Date.now();
+      if (${press} && card.startsWith('Play ball!'))
+        document.querySelector('[data-testid="replay-rewind"]').click();
+      return { card, box: box(), at };
+    };
+    if (read() !== '') return resolve(answer());
     const observer = new MutationObserver(() => {
       if (read() === '') return;
       observer.disconnect();
-      resolve({ card: read(), box: box() });
+      resolve(answer());
     });
     observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    setTimeout(() => { observer.disconnect(); resolve({ card: read(), box: box() }); }, 15000);
+    setTimeout(() => { observer.disconnect(); resolve(answer()); }, 15000);
   }));
 `
 
-async function firstCard(m: Device): Promise<{ card: string; box: string }> {
-  const result = (await m.evalBrowserScript({ script: FIRST_CARD })) as {
+async function firstCard(
+  m: Device,
+  press = false
+): Promise<{ card: string; box: string; at: number }> {
+  const result = (await m.evalBrowserScript({ script: FIRST_CARD(press) })) as {
     data?: unknown
   }
   return typeof result.data === 'string'
-    ? (JSON.parse(result.data) as { card: string; box: string })
-    : { card: '', box: '' }
+    ? (JSON.parse(result.data) as { card: string; box: string; at: number })
+    : { card: '', box: '', at: 0 }
 }
 
 async function openGame(m: Device, gameId: string): Promise<void> {
@@ -2133,21 +2143,22 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       await m.tapOn({ text: 'Replay' })
       await m.assertVisible({ id: 'game-replay', timeout: 20000 })
       await evalJson<boolean>(m, CARD_LOG)
-      const { card: now, box } = await firstCard(m)
-      if (!now.startsWith('Play ball!')) {
-        note(`R4 attempt ${attempt}: opened at ${now}`)
-        continue
+      // Pressed from the page as the card first says "Play ball!": its two
+      // seconds are shorter than a driver's tap on a droplet. What a tap at
+      // "Play ball!" does is the check; the rewinds after it are tapped.
+      const { card: now, box, at } = await firstCard(m, true)
+      note(`R4 attempt ${attempt}: opened at ${now}`)
+      if (!now.startsWith('Play ball!')) continue
+      const deadline = Date.now() + 5000
+      for (;;) {
+        words = (await cards(m)).find(
+          card => card.t >= at && card.text.startsWith('Rewind to')
+        )
+        if (words != null) break
+        assert.ok(Date.now() < deadline, 'the card never said where it went')
+        await wait(100)
       }
-      const tapped = await tapRewind(m)
-      const shown = (await cards(m)).filter(
-        card => card.t < tapped.t && !card.text.startsWith('Rewind to')
-      )
-      const before = shown.at(-1)?.text ?? ''
-      note(`R4 attempt ${attempt}: before the tap ${before}`)
-      if (before.startsWith('Play ball!')) {
-        words = tapped
-        boxAtStart = box
-      }
+      boxAtStart = box
     }
     note(`R4 at Play ball!: ${words.text}`)
     assert.ok(words.text.startsWith('Rewind to top of first'))

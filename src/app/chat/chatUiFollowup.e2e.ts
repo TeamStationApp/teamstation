@@ -742,11 +742,15 @@ async function s4Full(daemon: Daemon): Promise<void> {
     // composer and scroller (develop f6d21316d): the draft and document are
     // checked by their text, and the reading position by staying up in the
     // history rather than on the latest message.
+    // The reply's and the file's controls are inside the window, where a
+    // reader can press them; otherwise it says where each pane drew.
+    const onScreen = (when: string): string =>
+      `{const rect=n=>{const r=n.getBoundingClientRect();return [Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height)]};const out=[...document.querySelectorAll('[aria-label="Cancel reply"],[aria-label="Remove notes.txt"]')].filter(n=>{const r=n.getBoundingClientRect();return r.width>0&&(r.right>innerWidth+1||r.left<-1||r.bottom>innerHeight+1||r.top<-1)});if(out.length>0)throw new Error(${JSON.stringify(when)}+': draft controls outside the '+innerWidth+'x'+innerHeight+' window: '+JSON.stringify({controls:out.map(n=>[n.getAttribute('aria-label'),rect(n)]),scrollWidth:document.documentElement.scrollWidth,list:[...document.querySelectorAll('[data-testid="chat-list-pane"]')].map(rect),messages:[...document.querySelectorAll('[data-testid="chat-message-pane"]')].map(rect),composers:[...document.querySelectorAll('[data-testid="chat-composer"]')].map(rect)}))}`
     for (const orientation of ['LANDSCAPE', 'PORTRAIT']) {
       await m.setOrientation({ orientation })
       console.log(
         await m.evalBrowserScript({
-          script: `await new Promise(r=>setTimeout(r,500));const input=document.querySelector('[data-testid="chat-composer"]');if(!window.chatUiResizeDocument||input==null||input.value!==${JSON.stringify(draft)})throw new Error('Draft or document lost');if(!document.querySelector('[aria-label="Cancel reply"]')||!document.querySelector('[aria-label="Remove notes.txt"]'))throw new Error('Reply/file context lost');const readingPane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const reading=readingPane&&[...readingPane.querySelectorAll('div')].find(x=>/auto|scroll/.test(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!reading||reading.scrollTop+reading.clientHeight>=reading.scrollHeight-2)throw new Error('Reading position lost');return JSON.stringify({width:innerWidth,draftReplyFilePositionPreserved:true})`
+          script: `await new Promise(r=>setTimeout(r,500));${onScreen(`after ${orientation}`)};const input=document.querySelector('[data-testid="chat-composer"]');if(!window.chatUiResizeDocument||input==null||input.value!==${JSON.stringify(draft)})throw new Error('Draft or document lost');if(!document.querySelector('[aria-label="Cancel reply"]')||!document.querySelector('[aria-label="Remove notes.txt"]'))throw new Error('Reply/file context lost');const readingPane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const reading=readingPane&&[...readingPane.querySelectorAll('div')].find(x=>/auto|scroll/.test(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!reading||reading.scrollTop+reading.clientHeight>=reading.scrollHeight-2)throw new Error('Reading position lost');return JSON.stringify({width:innerWidth,draftReplyFilePositionPreserved:true})`
         })
       )
     }
@@ -758,7 +762,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Remove notes.txt' })
     console.log(
       await m.evalBrowserScript({
-        script: `if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(draft)}||!document.querySelector('[aria-label="Cancel reply"]'))throw new Error('Back/reopen lost full draft');const readingPane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const reading=readingPane&&[...readingPane.querySelectorAll('div')].find(x=>/auto|scroll/.test(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!reading||reading.scrollTop+reading.clientHeight>=reading.scrollHeight-2)throw new Error('Back/reopen lost reading position');return JSON.stringify({backReopenFullDraft:true})`
+        script: `${onScreen('after Back and reopening')};if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(draft)}||!document.querySelector('[aria-label="Cancel reply"]'))throw new Error('Back/reopen lost full draft');const readingPane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const reading=readingPane&&[...readingPane.querySelectorAll('div')].find(x=>/auto|scroll/.test(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!reading||reading.scrollTop+reading.clientHeight>=reading.scrollHeight-2)throw new Error('Back/reopen lost reading position');return JSON.stringify({backReopenFullDraft:true})`
       })
     )
     writeFileSync(
