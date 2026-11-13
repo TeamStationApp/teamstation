@@ -48,6 +48,7 @@ import {
   ruleProblem
 } from './rules'
 import {
+  deviceInput,
   headCoachesOf,
   type RescheduleRef,
   ruleContext,
@@ -322,7 +323,7 @@ export async function preparePreview(
       status: 'building'
     })
     .execute()
-  return { id, input: snap.engine }
+  return { id, input: deviceInput(snap.engine) }
 }
 
 const DAY_MS = 24 * 60 * 60 * 1000

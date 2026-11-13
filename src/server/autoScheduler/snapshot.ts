@@ -552,3 +552,66 @@ export function ruleContext(
     others
   }
 }
+
+/**
+ * The input a device searches: the server's copy, with what the league's
+ * admins may not read swapped for tokens that hold only within this
+ * snapshot. Those are other games' ids, teams outside the run's seasons and
+ * games, and the user ids of Managers/Head Coaches. The search needs only to
+ * tell them apart; validation and summaries use the server's copy.
+ */
+export function deviceInput(engine: EngineInput): EngineInput {
+  const own = new Set<string>([
+    ...engine.seasons.flatMap(season => [
+      ...season.participants,
+      ...season.exhibitionTeams
+    ]),
+    ...engine.fixed.flatMap(game => [game.homeTeamId, game.awayTeamId]),
+    ...(engine.required ?? []).flatMap(game => [
+      game.homeTeamId,
+      game.awayTeamId
+    ]),
+    ...Object.keys(engine.teamNames)
+  ])
+  const tokens = (prefix: string): ((value: string) => string) => {
+    const seen = new Map<string, string>()
+    return value => {
+      let token = seen.get(value)
+      if (token == null) {
+        token = `${prefix}${seen.size + 1}`
+        seen.set(value, token)
+      }
+      return token
+    }
+  }
+  const outside = tokens('team:')
+  const team = (id: string): string => (own.has(id) ? id : outside(id))
+  const coach = tokens('coach:')
+  const busy = tokens('busy:')
+  return {
+    ...engine,
+    ...(engine.headCoaches == null
+      ? {}
+      : {
+          headCoaches: Object.fromEntries(
+            Object.entries(engine.headCoaches).map(([id, user]) => [
+              team(id),
+              coach(user)
+            ])
+          )
+        }),
+    bookings: engine.bookings.map(booking => ({
+      ...booking,
+      key: busy(booking.key),
+      teamIds: booking.teamIds.map(team)
+    })),
+    ...(engine.weeklyGames == null
+      ? {}
+      : {
+          weeklyGames: engine.weeklyGames.map(game => ({
+            ...game,
+            teamIds: game.teamIds.map(team)
+          }))
+        })
+  }
+}

@@ -1,13 +1,14 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { buildOptions } from '../../common/autoScheduler'
 import { field, input, season } from '../../common/autoScheduler/fixtures.test'
 import type {
   EngineResult,
   PlannedGame
 } from '../../common/autoScheduler/types'
 import { validatePlacements } from './previews'
-import type { Snapshot } from './snapshot'
+import { deviceInput, type Snapshot } from './snapshot'
 
 const game: PlannedGame = {
   key: 'one',
@@ -175,5 +176,36 @@ describe('untrusted device placements', () => {
         result(game, { ...overlap, fieldId: 'fld_two' })
       )
     }).throws('Manager')
+  })
+  it('sends the device tokens for other games, outside teams and coaches, and validates its result against the real input', () => {
+    const held = snap()
+    const engine = {
+      ...held.engine,
+      seasons: [season({ regularGames: 1, exhibitionGames: 0 })],
+      headCoaches: { tem_hawks: 'usr_coach', tem_outside: 'usr_coach' },
+      bookings: [
+        {
+          key: 'gam_other_league',
+          fieldId: null,
+          size: null,
+          teamIds: ['tem_outside'],
+          start: Date.parse('2027-03-06T13:00:00Z'),
+          end: Date.parse('2027-03-06T15:00:00Z')
+        }
+      ]
+    }
+    held.engine = engine
+    const sent = deviceInput(engine)
+    const text = JSON.stringify(sent)
+    for (const secret of ['gam_other_league', 'tem_outside', 'usr_coach'])
+      expect(text).not.includes(secret)
+    expect(sent.headCoaches).deep.equals({
+      tem_hawks: 'coach:1',
+      'team:1': 'coach:1'
+    })
+    expect(sent.bookings[0]).includes({ key: 'busy:1' })
+    expect(sent.bookings[0].teamIds).deep.equals(['team:1'])
+    expect(sent.seasons).deep.equals(engine.seasons)
+    validatePlacements(held, buildOptions(sent))
   })
 })
