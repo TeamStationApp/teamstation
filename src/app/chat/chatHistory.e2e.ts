@@ -180,7 +180,9 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
   const browser = await puppeteer.launch({
     headless: true,
     userDataDir: join(ARTIFACTS, 'profiles', profile),
-    executablePath: process.env.TS_CHROME_PATH
+    executablePath: process.env.TS_CHROME_PATH,
+    // Chrome's own output, for a browser that goes away mid-read.
+    dumpio: process.env.CHAT_HISTORY_DUMPIO === '1'
   })
   try {
     const freshPage = async (): Promise<Page> => {
@@ -196,6 +198,8 @@ async function readProfile(profile: string): Promise<Record<string, string[]>> {
     const read: Record<string, string[]> = {}
     for (const chat of [...chats].sort((a, b) => a.id.localeCompare(b.id))) {
       const started = Date.now()
+      if (process.env.CHAT_HISTORY_DUMPIO === '1')
+        console.log(`  ${profile} / ${chat.kind} ${chat.title}: reading`)
       // The app reloads itself when a device's chat keys change, which can
       // land in the middle of a read: the whole chat is read again then.
       const readChat = async (): Promise<string[]> => {
