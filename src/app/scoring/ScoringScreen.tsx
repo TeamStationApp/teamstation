@@ -1761,6 +1761,12 @@ function ScoringPanel(props: {
     !outcomeMenu &&
     !moreOpen &&
     !tiebreaker.active
+  // A game that can no longer change its defense here, as when another
+  // device ends it, closes the defensive roster this screen has open.
+  const defenseEditable = setupEditable(state)
+  useEffect(() => {
+    if (!defenseEditable && defensiveSlot != null) setDefensiveSlot(undefined)
+  }, [defenseEditable, defensiveSlot])
   const { client } = props
   const health = useCallback(async () => await client.health(), [client])
   const socketUrl = useMemo(() => dictationUrl(client.baseUrl), [client])

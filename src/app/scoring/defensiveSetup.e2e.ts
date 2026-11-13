@@ -625,7 +625,13 @@ async function open(fixture: Fixture = {}): Promise<{
         side: 'away' | 'home',
         body: { firstName: string; lastName: string; jersey: string }
       ) => {
-        const entry = rosterEntryFromBody(body)
+        // As the app's Create Player sends him: no positions, bats right.
+        const entry = rosterEntryFromBody({
+          ...body,
+          positions: [],
+          bats: 'right',
+          throws: 'right'
+        })
         created[side].push(entry)
         return entry
       },
