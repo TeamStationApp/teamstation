@@ -426,7 +426,17 @@ async function main(): Promise<void> {
       process.stdout.write(`${line}\t${seconds}s\n`)
     }
   } finally {
-    await stack.stop()
+    // Every script has its line by now: a stop that waits on a connection
+    // nobody closes (droplets' sweeps sat for hours) is given a minute.
+    await Promise.race([
+      stack.stop(),
+      new Promise<void>(resolve => {
+        setTimeout(() => {
+          console.error('the stack did not stop within a minute')
+          resolve()
+        }, 60_000)
+      })
+    ])
   }
 }
 
