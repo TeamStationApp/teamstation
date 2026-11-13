@@ -1,6 +1,6 @@
 import { Occupancy } from './feasibility'
 import { type Matchup, seasonTeams } from './matchups'
-import { seasonZones } from './seasonZones'
+import { seasonFields, seasonZones } from './seasonZones'
 import {
   dayNumber,
   firstOpenDate,
@@ -116,11 +116,7 @@ export function requireBoundedFieldDays(input: EngineInput): void {
         dayNumber(season.settings.startsOn) +
         1
     )
-    const fields = input.fields.filter(
-      field =>
-        (season.settings.fieldIds ?? []).includes(field.id) &&
-        field.sizes.includes(season.settings.fieldSize)
-    ).length
+    const fields = seasonFields(input.fields, season.settings).length
     fieldDays += days * fields
     if (!Number.isFinite(fieldDays) || fieldDays > 10000)
       throw new InvalidSubmission(

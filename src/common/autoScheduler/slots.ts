@@ -11,6 +11,7 @@ import { gameCalendarDay } from '../gameTime'
 import { MINUTE_STEP } from '../seasonScheduling'
 import type { FieldSize } from '../venues'
 import { firstNonZero } from './score'
+import { seasonFields } from './seasonZones'
 import { finishSteps } from './steps'
 import type { EngineInput, EngineSeason, PlannedGame } from './types'
 
@@ -171,11 +172,7 @@ export function* seasonSlotsSteps(
   const gameMs = settings.gameMinutes * MINUTE
   const stride = gameMs + settings.bufferMinutes * MINUTE
   const blackouts = new Set(settings.blackouts)
-  const fields = input.fields.filter(
-    field =>
-      (settings.fieldIds ?? []).includes(field.id) &&
-      field.sizes.includes(settings.fieldSize)
-  )
+  const fields = seasonFields(input.fields, settings)
 
   // Summary validation indexes only submitted starts, never the search grid.
   const proposed =
@@ -203,8 +200,7 @@ export function* seasonSlotsSteps(
     const scarcity = input.seasons.filter(
       other =>
         other.id !== season.id &&
-        (other.settings.fieldIds ?? []).includes(field.id) &&
-        field.sizes.includes(other.settings.fieldSize)
+        seasonFields([field], other.settings).length > 0
     ).length
     const { timezone } = field.availability
     for (
