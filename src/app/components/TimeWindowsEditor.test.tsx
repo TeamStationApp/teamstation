@@ -102,6 +102,33 @@ describe('dated time window editing', () => {
     await tapLabel('Change the end of Time Windows from Saturday, May 1, 2027')
     expect(text()).not.includes('No end date')
   })
+  it('runs a window added after the last one as long as the one before it', async () => {
+    let saved: WindowPeriod[] = []
+    function Editor(): React.ReactElement {
+      const [value, setValue] = useState<WindowPeriod[]>([
+        { from: '2027-03-01', until: '2027-06-30', hours }
+      ])
+      return (
+        <TimeWindowsEditor
+          value={value}
+          today="2027-03-01"
+          endDate="2027-06-30"
+          requireEnd
+          onChange={next => {
+            saved = next
+            setValue(next)
+          }}
+        />
+      )
+    }
+    await mount(<Editor />)
+    await tapText('Add another time window')
+    await chooseCalendarDate('2027-08-01')
+    expect(saved.map(period => [period.from, period.until])).deep.equals([
+      ['2027-03-01', '2027-06-30'],
+      ['2027-08-01', '2027-11-30']
+    ])
+  })
   it('starts a closed editor at today and prevents changes to inherited windows', async () => {
     const changes: WindowPeriod[][] = []
     await mount(
