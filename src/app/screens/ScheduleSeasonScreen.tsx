@@ -2,10 +2,12 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ActivityIndicator, Switch, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
+import { seasonFields } from '../../common/autoScheduler/seasonZones'
 import type { WindowPeriod } from '../../common/fieldAvailability'
 import {
   asWindowPeriods,
   copyWindowPeriods,
+  liveFieldIds,
   MAX_GAMES,
   type ScheduleSettings,
   type ScheduleSetup,
@@ -30,17 +32,11 @@ import { DangerText } from '../components/DangerText'
 import { SegmentedPill } from '../components/SegmentedPill'
 import { SpreadsheetNumber } from '../components/SpreadsheetNumber'
 import { TimeWindowsEditor } from '../components/TimeWindowsEditor'
+import { WINDOW_OPEN_DEFAULT } from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { setupFieldDetail } from './AutoSchedulerScreen'
 import { FieldPickerScene } from './FieldPickerScene'
-
-/** The setup's chosen fields that still exist, as the server accepts them. */
-function liveFieldIds(setup: ScheduleSetup): string[] {
-  return setup.fieldIds.filter(id =>
-    setup.fields.some(field => field.id === id && !field.deleted)
-  )
-}
 
 function plural(count: number, one: string): string {
   return `${count} ${count === 1 ? one : `${one}s`}`
@@ -265,9 +261,15 @@ export function ScheduleSeasonScreen({
                   maximum={MAX_GAMES}
                   disabled={busy}
                   onSave={async value => {
+                    // The cell shows its own error, so a failure is thrown on
+                    // to it; the screen still says when the save worked.
                     setBusy(true)
+                    setError('')
+                    setNotice('')
                     try {
                       await persist({ [key]: value })
+                      if (active.current && currentKey.current === screenKey)
+                        setNotice('Game maximum saved.')
                     } finally {
                       if (active.current && currentKey.current === screenKey)
                         setBusy(false)
@@ -312,7 +314,7 @@ export function ScheduleSeasonScreen({
         </Text>
         <TimeWindowsEditor
           label="Windows"
-          openDefault={{ start: '17:00', end: '21:00' }}
+          openDefault={WINDOW_OPEN_DEFAULT}
           value={settings.windows}
           today={settings.startsOn}
           endDate={settings.endsOn}
@@ -426,12 +428,12 @@ export function ScheduleSeasonScreen({
                         save(
                           {
                             fieldIds: settings.fieldIds!.filter(id =>
-                              setup.fields.some(
-                                available =>
-                                  available.id === id &&
-                                  !available.deleted &&
-                                  available.sizes.includes(settings.fieldSize)
-                              )
+                              seasonFields(
+                                setup.fields.filter(
+                                  available => !available.deleted
+                                ),
+                                settings
+                              ).some(available => available.id === id)
                             )
                           },
                           'Fields saved.'

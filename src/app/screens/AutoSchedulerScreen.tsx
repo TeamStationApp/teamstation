@@ -19,6 +19,7 @@ import { buildable, schedulingChecks } from '../../common/schedulingChecks'
 import {
   DOUBLEHEADERS,
   doubleheadersLabel,
+  liveFieldIds,
   type ScheduleSettings,
   type ScheduleSetup,
   type ScheduleSetupChoice,
@@ -427,9 +428,7 @@ export function AutoSchedulerScreen({
             disabled={busy}
             onToggle={seasonId => {
               choose({
-                fieldIds: setup.fieldIds.filter(id =>
-                  setup.fields.some(field => field.id === id && !field.deleted)
-                ),
+                fieldIds: liveFieldIds(setup),
                 addedFieldIds: setup.addedFieldIds,
                 seasonIds: setup.seasonIds.includes(seasonId)
                   ? setup.seasonIds.filter(id => id !== seasonId)
