@@ -276,6 +276,10 @@ describe('device scheduling persistence boundaries', () => {
             expect(query.sql).includes(
               kind === 'venue' ? '"default_windows"' : '"windows"'
             )
+            // Legacy readers of the hours columns see the hours in use.
+            expect(query.sql).includes(
+              kind === 'venue' ? '"default_hours"' : '"hours"'
+            )
             return []
           }
           if (query.sql.includes('from "venue_fields"')) return [field]

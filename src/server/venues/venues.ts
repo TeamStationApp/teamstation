@@ -6,6 +6,7 @@ import {
   unavailable,
   unsupportedMedia
 } from '../../common/errors'
+import { periodOn } from '../../common/fieldAvailability'
 import { calendarDateText } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import {
@@ -73,6 +74,14 @@ const GROUPS = ['yours', 'claimed', 'unclaimed'] as const
 
 type VenueRow = Selectable<VenuesTable>
 type FieldRow = Selectable<VenueFieldsTable>
+
+/**
+ * The weekly hours in effect on a date, for readers of the legacy hours
+ * columns, which hold one week: none on a date no window covers.
+ */
+function hoursIn(windows: WindowPeriod[], today: string): WeekdayHours[] {
+  return periodOn(windows, today)?.hours ?? []
+}
 
 function hoursOf(raw: unknown): WeekdayHours[] {
   return asWeeklyHours(raw)
@@ -636,9 +645,14 @@ export async function updateVenue(
         ...(changes.sizeSwitchMinutes == null
           ? {}
           : { size_switch_minutes: changes.sizeSwitchMinutes }),
-        ...(changes.defaultWindows === undefined
+        ...(changes.defaultWindows == null
           ? {}
-          : { default_windows: JSON.stringify(changes.defaultWindows) }),
+          : {
+              default_windows: JSON.stringify(changes.defaultWindows),
+              default_hours: JSON.stringify(
+                hoursIn(changes.defaultWindows, calendarDateText(clock.now())!)
+              )
+            }),
         ...(changes.defaultHours == null
           ? {}
           : {
@@ -695,7 +709,10 @@ export async function updateVenue(
   return await venueDetail(db, actor, venueId, services)
 }
 
-function fieldValues(changes: FieldChanges): Partial<{
+function fieldValues(
+  changes: FieldChanges,
+  today: string
+): Partial<{
   name: string
   sizes: string[]
   pin_latitude: number | null
@@ -723,10 +740,12 @@ function fieldValues(changes: FieldChanges): Partial<{
         }),
     ...(changes.windows === undefined
       ? {}
-      : {
-          windows:
-            changes.windows === null ? null : JSON.stringify(changes.windows)
-        }),
+      : changes.windows === null
+        ? { windows: null, hours: null }
+        : {
+            windows: JSON.stringify(changes.windows),
+            hours: JSON.stringify(hoursIn(changes.windows, today))
+          }),
     ...(changes.hours === undefined
       ? {}
       : {
@@ -765,7 +784,7 @@ export async function createField(
         venue_id: venueId,
         name: changes.name!,
         sizes: [...changes.sizes!],
-        ...fieldValues(changes),
+        ...fieldValues(changes, calendarDateText(clock.now())!),
         ...(photo == null
           ? {}
           : {
@@ -816,7 +835,7 @@ export async function updateField(
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
     await liveField(trx, venueId, fieldId)
-    const values = fieldValues(changes)
+    const values = fieldValues(changes, calendarDateText(clock.now())!)
     if (Object.keys(values).length === 0 && photo == null) return
     await trx
       .updateTable('venue_fields')
