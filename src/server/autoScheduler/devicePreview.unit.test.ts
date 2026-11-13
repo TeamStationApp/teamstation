@@ -19,6 +19,7 @@ import {
 import * as reschedules from './reschedule'
 import type { Snapshot } from './snapshot'
 import * as snapshotModule from './snapshot'
+import * as offThread from './validateOffThread'
 
 const actor = { userId: 'admin', scopes: [], isAdmin: true }
 const clock = { now: () => new Date('2027-01-01') }
@@ -67,9 +68,11 @@ const pending = (id: string): PreviewRow => ({
 /** A storage-boundary stub; transactions and query generation still run through Kysely. */
 async function stored(
   rows: Map<string, PreviewRow>,
-  work: Parameters<typeof withQueryReplies>[1]
+  work: Parameters<typeof withQueryReplies>[1],
+  seen: string[] = []
 ): Promise<void> {
   await withQueryReplies(query => {
+    seen.push(query.sql)
     if (query.sql.startsWith('select'))
       return [rows.get(String(query.parameters[0]))].filter(row => row != null)
     if (query.sql.startsWith('insert')) {
@@ -105,6 +108,17 @@ async function stored(
       }
       return []
     }
+    if (query.sql.startsWith('delete from "schedule_previews"')) {
+      const [league, status, before] = query.parameters
+      for (const [id, row] of rows)
+        if (
+          row.league_id === league &&
+          row.status === status &&
+          row.created_at < (before as Date)
+        )
+          rows.delete(id)
+      return []
+    }
     throw new Error(query.sql)
   }, work)
 }
@@ -120,38 +134,70 @@ describe('device preview state transitions without a database', () => {
     authorize()
     mock.method(reschedules, 'gamesToReschedule', async () => [])
     mock.method(snapshotModule, 'snapshot', async () => snapshot())
-    const rows = new Map<string, PreviewRow>()
-    await stored(rows, async db => {
-      const prepared = await preparePreview(
-        db,
-        actor,
-        'league',
-        { mode: 'full', existing: 'workAround' },
-        clock
-      )
-      expect(rows.get(prepared.id)?.status).equals('building')
-      expect(rows.get(prepared.id)?.options).deep.equals([])
-      const complete = await completePreview(
-        db,
-        actor,
-        prepared.id,
-        result,
-        clock
-      )
-      expect(complete.options[0].games).deep.equals([game])
-      expect(complete.status).equals('open')
-      expect(
-        await completePreview(db, actor, prepared.id, result, clock)
-      ).deep.equals(complete)
-      const refused = await completePreview(
-        db,
-        actor,
-        prepared.id,
-        { options: [], blocking: 'different' },
-        clock
-      ).catch((error: unknown) => error)
-      expect(refused).instanceOf(Error)
-    })
+    const rows = new Map<string, PreviewRow>([
+      [
+        'abandoned',
+        { ...pending('abandoned'), created_at: new Date('2026-12-30') }
+      ],
+      [
+        'recent',
+        { ...pending('recent'), created_at: new Date('2026-12-31T12:00:00Z') }
+      ]
+    ])
+    const seen: string[] = []
+    const validate = offThread.validateOffThread
+    let lockedWhileValidating = false
+    mock.method(
+      offThread,
+      'validateOffThread',
+      async (...args: Parameters<typeof validate>) => {
+        lockedWhileValidating = seen.some(sql =>
+          sql.includes('for no key update')
+        )
+        return await validate(...args)
+      }
+    )
+    await stored(
+      rows,
+      async db => {
+        const prepared = await preparePreview(
+          db,
+          actor,
+          'league',
+          { mode: 'full', existing: 'workAround' },
+          clock
+        )
+        // A build left waiting over a day is dropped; a newer one is kept.
+        expect(rows.has('abandoned')).equals(false)
+        expect(rows.has('recent')).equals(true)
+        expect(rows.get(prepared.id)?.status).equals('building')
+        expect(rows.get(prepared.id)?.options).deep.equals([])
+        const complete = await completePreview(
+          db,
+          actor,
+          prepared.id,
+          result,
+          clock
+        )
+        expect(complete.options[0].games).deep.equals([game])
+        expect(complete.status).equals('open')
+        // The worker ran before any row was locked for the write.
+        expect(lockedWhileValidating).equals(false)
+        expect(seen.some(sql => sql.includes('for no key update'))).equals(true)
+        expect(
+          await completePreview(db, actor, prepared.id, result, clock)
+        ).deep.equals(complete)
+        const refused = await completePreview(
+          db,
+          actor,
+          prepared.id,
+          { options: [], blocking: 'different' },
+          clock
+        ).catch((error: unknown) => error)
+        expect(refused).instanceOf(Error)
+      },
+      seen
+    )
   })
   it('refuses editing a building preview, missing preparation and stale sources without changing the source', async () => {
     authorize()

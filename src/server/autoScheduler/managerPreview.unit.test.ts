@@ -266,6 +266,7 @@ describe('manager-aware preview decisions without a database', () => {
     await withQueryReplies(
       [
         ['from "schedule_previews"', [old]],
+        ['delete from "schedule_previews"', []],
         ['insert into "schedule_previews"', []]
       ],
       async db => {

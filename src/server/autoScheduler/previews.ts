@@ -1,7 +1,12 @@
+import { createHash } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
 import type { Kysely, Selectable, Transaction } from 'kysely'
 
+import {
+  InvalidSubmission,
+  requireBoundedFieldDays
+} from '../../common/autoScheduler/context'
 import type {
   EngineBooking,
   EngineInput,
@@ -36,7 +41,12 @@ import {
   publishedStates,
   rejectPublished
 } from './reschedule'
-import { type Holding, managerConflict, ruleProblem } from './rules'
+import {
+  type Holding,
+  managerConflict,
+  type RuleContext,
+  ruleProblem
+} from './rules'
 import {
   headCoachesOf,
   type RescheduleRef,
@@ -143,6 +153,9 @@ export async function previewView(
     }))
   }
 }
+
+/** How long a prepared build waits for its device's result. */
+const BUILD_EXPIRY_MS = 24 * 60 * 60 * 1000
 
 /** Prepare authorized input for the device; keep the snapshot for result validation. */
 export async function preparePreview(
@@ -269,6 +282,21 @@ export async function preparePreview(
     return { snap, keep, earlier }
   })
   const { snap, keep, earlier } = plan
+  // Refuse here what validation would refuse after the device's whole search.
+  try {
+    requireBoundedFieldDays(snap.engine)
+  } catch (error) {
+    if (error instanceof InvalidSubmission) throw badRequest(error.message)
+    throw error
+  }
+  // A build whose device never sent its result is dropped after a day, with
+  // the snapshot it held.
+  await db
+    .deleteFrom('schedule_previews')
+    .where('league_id', '=', leagueId)
+    .where('status', '=', 'building')
+    .where('created_at', '<', new Date(clock.now().getTime() - BUILD_EXPIRY_MS))
+    .execute()
   const id = makeId('schedulePreview')
   snap.preparation = {
     keep,
@@ -297,49 +325,115 @@ export async function preparePreview(
   return { id, input: snap.engine }
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Holdings by the UTC day they start, so a game's rules read only those
+ * near it: every rule looks at most a week either side. Long holdings are
+ * always near. Candidates keep the order they were added in.
+ */
+class NearHoldings {
+  private readonly byDay = new Map<number, Array<[number, Holding]>>()
+  private readonly long: Array<[number, Holding]> = []
+  private added = 0
+
+  constructor(holdings: readonly Holding[]) {
+    for (const holding of holdings) this.add(holding)
+  }
+
+  add(holding: Holding): void {
+    const entry: [number, Holding] = [this.added++, holding]
+    if (holding.end - holding.start > DAY_MS) {
+      this.long.push(entry)
+      return
+    }
+    const day = Math.floor(holding.start / DAY_MS)
+    const list = this.byDay.get(day) ?? []
+    list.push(entry)
+    this.byDay.set(day, list)
+  }
+
+  near(start: number): Holding[] {
+    const day = Math.floor(start / DAY_MS)
+    const found = [...this.long]
+    for (let d = day - 9; d <= day + 9; d++)
+      found.push(...(this.byDay.get(d) ?? []))
+    return found.sort((a, b) => a[0] - b[0]).map(([, holding]) => holding)
+  }
+}
+
 /** Validate device placements against the immutable server-held input. */
 export function validatePlacements(
   snap: Snapshot,
   result: ReturnType<typeof asPreviewResult>
 ): void {
   const { engine } = snap
+  const seasons = new Map(
+    engine.seasons.map(season => [
+      season.id,
+      {
+        season,
+        participants: new Set(season.participants),
+        exhibition: new Set(season.exhibitionTeams)
+      }
+    ])
+  )
+  const required =
+    engine.required == null
+      ? null
+      : new Map(engine.required.map(game => [game.key, game]))
+  const fixedCounts = new Map<string, number>()
+  for (const fixed of engine.fixed)
+    for (const team of [fixed.homeTeamId, fixed.awayTeamId]) {
+      const key = `${fixed.seasonId}:${team}:${fixed.exhibition}`
+      fixedCounts.set(key, (fixedCounts.get(key) ?? 0) + 1)
+    }
+  const taken = new Set([
+    ...engine.fixed.map(fixed => fixed.key),
+    ...engine.bookings.map(booking => booking.key)
+  ])
+  engine.weeklyGames?.forEach((_, index) => taken.add(`weekly:${index}`))
+  const base = ruleContext(snap, [], engine.headCoaches)
+  const now = new Date(engine.notBefore - 1)
   for (const option of result.options) {
     const keys = new Set<string>()
     const counts = new Map<string, number>()
-    const holdings: Holding[] = [
+    const starting: Holding[] = [
       ...engine.bookings.map(booking => ({ ...booking, seasonId: null })),
       ...engine.fixed.map(game => ({
         ...game,
         teamIds: [game.homeTeamId, game.awayTeamId]
       }))
     ]
-    const weekly: Holding[] =
+    const holdings = new NearHoldings(starting)
+    const weekly =
       engine.weeklyGames == null
-        ? [...holdings]
-        : engine.weeklyGames.map((game, index) => ({
-            ...game,
-            key: `weekly:${index}`,
-            size: null,
-            end: game.start
-          }))
+        ? new NearHoldings(starting)
+        : new NearHoldings(
+            engine.weeklyGames.map((game, index) => ({
+              ...game,
+              key: `weekly:${index}`,
+              size: null,
+              end: game.start
+            }))
+          )
     for (const game of option.games) {
       const start = Date.parse(game.startAt)
       const end = Date.parse(game.endAt)
-      const season = engine.seasons.find(season => season.id === game.seasonId)
+      const of = seasons.get(game.seasonId)
       if (
-        season == null ||
+        of == null ||
         !Number.isFinite(start) ||
         !Number.isFinite(end) ||
         end <= start ||
         game.key.length === 0 ||
         game.key.length > 300 ||
         keys.has(game.key) ||
-        weekly.some(holding => holding.key === game.key) ||
-        engine.fixed.some(fixed => fixed.key === game.key) ||
-        engine.bookings.some(booking => booking.key === game.key)
+        taken.has(game.key)
       )
         throw badRequest('Submit unique games with valid seasons and times')
       keys.add(game.key)
+      const { season, participants, exhibition } = of
       if (
         game.homeTeamId === game.awayTeamId ||
         end - start !== season.settings.gameMinutes * 60000
@@ -347,10 +441,8 @@ export function validatePlacements(
         throw badRequest(
           'Each game needs two different teams and the season’s game length'
         )
-      const participants = new Set(season.participants)
-      const exhibition = new Set(season.exhibitionTeams)
       if (
-        engine.required == null &&
+        required == null &&
         (game.exhibition
           ? !(
               (participants.has(game.homeTeamId) &&
@@ -362,16 +454,13 @@ export function validatePlacements(
             !participants.has(game.awayTeamId))
       )
         throw badRequest('Choose the season’s regular or exhibition matchups')
-      if (engine.required != null) {
+      const wanted = required?.get(game.key)
+      if (required != null) {
         if (
-          !engine.required.some(
-            required =>
-              required.key === game.key &&
-              required.seasonId === game.seasonId &&
-              required.homeTeamId === game.homeTeamId &&
-              required.awayTeamId === game.awayTeamId &&
-              required.exhibition === game.exhibition
-          )
+          wanted?.seasonId !== game.seasonId ||
+          wanted.homeTeamId !== game.homeTeamId ||
+          wanted.awayTeamId !== game.awayTeamId ||
+          wanted.exhibition !== game.exhibition
         )
           throw badRequest('Place only the requested games')
       } else {
@@ -384,16 +473,10 @@ export function validatePlacements(
         for (const team of [game.homeTeamId, game.awayTeamId]) {
           if (!participants.has(team)) continue
           const key = `${game.seasonId}:${team}:${game.exhibition}`
-          const fixed = engine.fixed.filter(
-            fixed =>
-              fixed.seasonId === game.seasonId &&
-              fixed.exhibition === game.exhibition &&
-              [fixed.homeTeamId, fixed.awayTeamId].includes(team)
-          ).length
           const count = (counts.get(key) ?? 0) + 1
           counts.set(key, count)
           if (
-            count + fixed >
+            count + (fixedCounts.get(key) ?? 0) >
             (game.exhibition
               ? season.settings.exhibitionGames
               : season.settings.regularGames)
@@ -401,18 +484,20 @@ export function validatePlacements(
             throw badRequest('Do not exceed the season’s requested game counts')
         }
       }
-      requireKeepsRules(
-        snap,
-        game,
-        holdings,
-        new Date(engine.notBefore - 1),
-        engine.headCoaches,
-        weekly
-      )
-      holdings.push(holdingOf(game))
-      weekly.push(holdingOf(game))
+      requireKeepsRulesIn(snap, game, now, wanted, {
+        ...base,
+        others: holdings.near(start),
+        weeklyOthers: weekly.near(start)
+      })
+      holdings.add(holdingOf(game))
+      weekly.add(holdingOf(game))
     }
   }
+}
+
+/** A device result's fingerprint, to recognise a retry of the same result. */
+function resultHash(result: ReturnType<typeof asPreviewResult>): string {
+  return createHash('sha256').update(JSON.stringify(result)).digest('hex')
 }
 
 /** Complete a prepared preview; a retry of the same result is idempotent. */
@@ -424,19 +509,26 @@ export async function completePreview(
   clock: Clock
 ): Promise<SchedulePreview> {
   const result = asPreviewResult(raw)
+  const hash = resultHash(result)
+  // Validation can take seconds, so it runs before the transaction: no
+  // lock or pooled connection waits on it. A building preview's input
+  // never changes, and the status is checked again under the lock.
+  const before = await previewFor(db, actor, previewId)
+  const summarized =
+    before.status === 'building' && snapshotOf(before).preparation != null
+      ? await validateOffThread(snapshotOf(before), result)
+      : undefined
   return await atomic(db, async trx => {
     const row = await previewFor(trx, actor, previewId, { forUpdate: true })
     const snap = snapshotOf(row)
     const preparation = snap.preparation
     if (row.status !== 'building') {
-      if (
-        row.status !== 'discarded' &&
-        isDeepStrictEqual(preparation?.result, result)
-      )
+      if (row.status !== 'discarded' && preparation?.resultHash === hash)
         return await previewView(trx, row, clock)
       throw conflict('This preview is no longer waiting for a device result')
     }
-    if (preparation == null) throw conflict('Prepare the schedule again')
+    if (preparation == null || summarized == null)
+      throw conflict('Prepare the schedule again')
     if (preparation.earlier != null) {
       const earlier = await previewFor(trx, actor, preparation.earlier.id, {
         forUpdate: true
@@ -449,7 +541,6 @@ export async function completePreview(
           'This preview changed while it was recalculated. Recalculate it again.'
         )
     }
-    const summarized = await validateOffThread(snap, result)
     const options =
       preparation.keep == null
         ? summarized.options
@@ -457,7 +548,7 @@ export async function completePreview(
             ...option,
             games: withKept(preparation.keep!, option.games)
           }))
-    preparation.result = result
+    preparation.resultHash = hash
     await trx
       .updateTable('schedule_previews')
       .set({
@@ -546,6 +637,33 @@ export function requireKeepsRules(
   headCoaches?: Record<string, string>,
   weeklyOthers?: Holding[]
 ): void {
+  const required = snap.engine.required?.find(
+    required =>
+      required.key === game.key &&
+      required.seasonId === game.seasonId &&
+      required.homeTeamId === game.homeTeamId &&
+      required.awayTeamId === game.awayTeamId &&
+      required.exhibition === game.exhibition
+  )
+  requireKeepsRulesIn(snap, game, now, required, {
+    ...ruleContext(snap, others, headCoaches),
+    weeklyOthers
+  })
+}
+
+type RequiredMatchup = NonNullable<EngineInput['required']>[number]
+
+/**
+ * The same checks in a rule context built once for many games; `required`
+ * is the run's required matchup the game places, when it places one.
+ */
+function requireKeepsRulesIn(
+  snap: Snapshot,
+  game: PlannedGame,
+  now: Date,
+  required: RequiredMatchup | undefined,
+  context: RuleContext
+): void {
   const season = snap.engine.seasons.find(each => each.id === game.seasonId)
   if (season == null) throw badRequest('Choose a season of this run')
   if (Date.parse(game.startAt) <= now.getTime())
@@ -562,14 +680,6 @@ export function requireKeepsRules(
       `${season.name} plays on ${fieldSizeLabel(season.settings.fieldSize)} fields`
     )
   const teams = new Set([...season.participants, ...season.exhibitionTeams])
-  const required = snap.engine.required?.find(
-    required =>
-      required.key === game.key &&
-      required.seasonId === game.seasonId &&
-      required.homeTeamId === game.homeTeamId &&
-      required.awayTeamId === game.awayTeamId &&
-      required.exhibition === game.exhibition
-  )
   if (required != null) {
     teams.add(required.homeTeamId)
     teams.add(required.awayTeamId)
@@ -583,7 +693,7 @@ export function requireKeepsRules(
       size: game.size,
       seasonId: game.seasonId
     },
-    { ...ruleContext(snap, others, headCoaches), weeklyOthers }
+    context
   )
   if (problem != null) throw badRequest(problem)
 }

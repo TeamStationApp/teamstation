@@ -47,6 +47,9 @@ export interface RuleContext {
   weeklyOthers?: Holding[]
 }
 
+// A holding's local day by zone and start: checking many games reads the same holdings again.
+const holdingDays = new WeakMap<Holding, Map<string, string>>()
+
 type ManagerBooking = Pick<Holding, 'key' | 'start' | 'end' | 'teamIds'>
 
 export function managerConflict(
@@ -101,14 +104,25 @@ export function ruleProblem(
     [...context.fields].map(([id, each]) => ({ id, ...each })),
     { fieldIds: season?.fieldIds, fieldSize: game.size }
   )[0]
-  const day = (holding: Holding): string =>
-    gameCalendarDay(
-      new Date(holding.start).toISOString(),
+  const day = (holding: Holding): string => {
+    const zone =
       (holding.fieldId == null
         ? undefined
         : context.fields.get(holding.fieldId)?.availability.timezone) ??
-        fallbackZone
-    )
+      fallbackZone
+    let byZone = holdingDays.get(holding)
+    if (byZone == null) {
+      byZone = new Map()
+      holdingDays.set(holding, byZone)
+    }
+    const key = `${zone}|${holding.start}`
+    let found = byZone.get(key)
+    if (found == null) {
+      found = gameCalendarDay(new Date(holding.start).toISOString(), zone)
+      byZone.set(key, found)
+    }
+    return found
+  }
   const partOf = (holding: Holding): ReturnType<typeof gameWeekPart> =>
     gameWeekPart(Math.round(Date.parse(`${day(holding)}T00:00:00Z`) / 86400000))
   const portion = partOf(game)

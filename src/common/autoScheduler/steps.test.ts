@@ -3,7 +3,7 @@ import { describe, it } from 'mocha'
 
 import { input, season } from './fixtures.test'
 import { buildOptions, buildOptionsAsync } from './index'
-import { finishSteps, finishStepsAsync } from './steps'
+import { finishSteps, finishStepsAsync, yieldTurn } from './steps'
 
 describe('cooperative device scheduling', function () {
   this.timeout(30000)
@@ -43,5 +43,16 @@ describe('cooperative device scheduling', function () {
       error = caught
     }
     expect(String(error)).includes('step failed')
+  })
+  it('yields through a message channel, or a timer where there is none', async () => {
+    await yieldTurn()
+    const channel = globalThis.MessageChannel
+    // React Native has no MessageChannel.
+    Reflect.deleteProperty(globalThis, 'MessageChannel')
+    try {
+      await yieldTurn()
+    } finally {
+      globalThis.MessageChannel = channel
+    }
   })
 })
