@@ -8,6 +8,7 @@ import {
 } from './capacity'
 import {
   buildContext,
+  fullContextBytes,
   InvalidSubmission,
   type RunContext,
   type SeasonContext
@@ -19,6 +20,13 @@ import type { Placement } from './placement'
 import { addScores, SeasonLedger, TERMS } from './score'
 import type { Slot } from './slots'
 import type { EngineInput, EngineResult, ScheduleOption } from './types'
+
+/** The most a full context for the causes may take in the validation worker. */
+const FULL_CONTEXT_BYTES = 64 * 1024 * 1024
+const UNPLACED_CAUSE =
+  'The selected fields, time windows and constraints leave too little room for these games.'
+const REQUIRED_CAUSE =
+  'The selected fields, time windows and constraints leave no room for these games.'
 
 /** Rebuild display summaries from accepted placements, without running a search. */
 export function summarizeResult(
@@ -118,11 +126,17 @@ export function summarizeResult(
     }
   })
   // The causes read the run's availability as the engine's search did: a
-  // context with occupancy and every slot, built only when a line needs one.
-  let fullContext: RunContext | undefined
-  const full = (): RunContext => (fullContext ??= buildContext(input))
-  const fullSeason = (season: SeasonContext): SeasonContext =>
-    full().seasonById.get(season.season.id)!
+  // context with occupancy and every slot, built only when a line needs one,
+  // and only when it fits the validation worker's memory. A run too large
+  // for that gets a plain cause instead.
+  let fullContext: RunContext | null | undefined
+  const full = (): RunContext | null =>
+    (fullContext ??=
+      fullContextBytes(input) > FULL_CONTEXT_BYTES ? null : buildContext(input))
+  const fullSeason = (
+    context: RunContext,
+    season: SeasonContext
+  ): SeasonContext => context.seasonById.get(season.season.id)!
   const causes = new Map<string, string>()
   const causeOf = (
     season: SeasonContext,
@@ -132,10 +146,23 @@ export function summarizeResult(
     const key = `${season.season.id}|${kind}`
     let cause = causes.get(key)
     if (cause == null) {
-      cause = capacityCause(full(), fullSeason(season), kind, requested)
+      const context = full()
+      cause =
+        context == null
+          ? UNPLACED_CAUSE
+          : capacityCause(context, fullSeason(context, season), kind, requested)
       causes.set(key, cause)
     }
     return cause
+  }
+  const requiredCauseOf = (
+    season: SeasonContext,
+    unplaced: Matchup[]
+  ): string => {
+    const context = full()
+    return context == null
+      ? REQUIRED_CAUSE
+      : requiredCause(context, fullSeason(context, season), unplaced)
   }
   return {
     blocking: null,
@@ -147,8 +174,10 @@ export function summarizeResult(
         unplaced: Matchup[]
       ): string | undefined => {
         if (input.headCoaches == null || unplaced.length === 0) return
-        manager ??= managerCauseOfOption(full(), placement)
-        return manager(fullSeason(season), unplaced)
+        const context = full()
+        if (context == null) return
+        manager ??= managerCauseOfOption(context, placement)
+        return manager(fullSeason(context, season), unplaced)
       }
       return {
         games: option.games,
@@ -166,7 +195,7 @@ export function summarizeResult(
                 placement,
                 (season, unplaced) =>
                   placedCause(season, unplaced) ??
-                  requiredCause(full(), fullSeason(season), unplaced)
+                  requiredCauseOf(season, unplaced)
               ),
         score: placement.score.map(value => Math.round(value * 1e6) / 1e6),
         reasons:

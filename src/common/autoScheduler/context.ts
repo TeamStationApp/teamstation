@@ -1,3 +1,4 @@
+import { wallMinutes } from '../weeklyHours'
 import { Occupancy } from './feasibility'
 import { type Matchup, seasonTeams } from './matchups'
 import { seasonFields, seasonZones } from './seasonZones'
@@ -103,6 +104,51 @@ export class InvalidSubmission extends Error {
   }
 }
 
+/** The weekday of a day number, 0 being Sunday: day 0 was a Thursday. */
+function weekdayNumber(day: number): number {
+  return (((day + 4) % 7) + 7) % 7
+}
+
+/** How many days from `from` to `until` fall on one of the weekdays. */
+function openDays(from: number, until: number, weekdays: Set<number>): number {
+  const total = until - from + 1
+  let count = Math.floor(total / 7) * weekdays.size
+  for (let day = from + total - (total % 7); day <= until; day++)
+    if (weekdays.has(weekdayNumber(day))) count++
+  return count
+}
+
+/**
+ * Roughly the bytes a full context of the run takes: a slot for every
+ * 5-minute start in its windows on every field, about 160 bytes each, and a
+ * byte per slot for each team's availability.
+ */
+export function fullContextBytes(input: EngineInput): number {
+  let bytes = 0
+  for (const season of input.seasons) {
+    const { startsOn, endsOn, windows } = season.settings
+    const fields = seasonFields(input.fields, season.settings).length
+    const teams = seasonTeams(season).length
+    for (const period of windows) {
+      const from = dayNumber(period.from > startsOn ? period.from : startsOn)
+      const until = dayNumber(
+        period.until != null && period.until < endsOn ? period.until : endsOn
+      )
+      if (until < from) continue
+      for (const day of period.hours) {
+        const starts =
+          Math.max(0, wallMinutes(day.end) - wallMinutes(day.start)) / 5
+        bytes +=
+          starts *
+          openDays(from, until, new Set([day.weekday])) *
+          fields *
+          (160 + teams)
+      }
+    }
+  }
+  return bytes
+}
+
 /**
  * Refuses a run whose seasons span too many field days to summarize.
  * Normal runs are a few fields over a few months; split larger runs by season.
@@ -111,14 +157,22 @@ export function requireBoundedFieldDays(input: EngineInput): void {
   let fieldDays = 0
   for (const season of input.seasons) {
     const { startsOn, endsOn, windows } = season.settings
-    // Only days a time window with hours covers can hold a game.
+    // Only the days a time window has hours on, and no blackout, can hold
+    // a game.
+    const blackouts = [...new Set(season.settings.blackouts)].map(dayNumber)
     let days = 0
     for (const period of windows) {
-      if (period.hours.length === 0) continue
-      const from = period.from > startsOn ? period.from : startsOn
-      const until =
+      const weekdays = new Set(period.hours.map(day => day.weekday))
+      if (weekdays.size === 0) continue
+      const from = dayNumber(period.from > startsOn ? period.from : startsOn)
+      const until = dayNumber(
         period.until != null && period.until < endsOn ? period.until : endsOn
-      days += Math.max(0, dayNumber(until) - dayNumber(from) + 1)
+      )
+      if (until < from) continue
+      days += openDays(from, until, weekdays)
+      for (const day of blackouts)
+        if (day >= from && day <= until && weekdays.has(weekdayNumber(day)))
+          days--
     }
     fieldDays += days * seasonFields(input.fields, season.settings).length
     if (!Number.isFinite(fieldDays) || fieldDays > 10000)

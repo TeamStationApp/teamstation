@@ -3,7 +3,7 @@ import { describe, it } from 'mocha'
 
 import { wallInstant } from '../fieldAvailability'
 import { asPreviewResult } from '../schedulePreviews'
-import { buildContext } from './context'
+import { buildContext, fullContextBytes } from './context'
 import { field, fixedGame, hoursOn, input, season, ZONE } from './fixtures.test'
 import { buildOptions } from './index'
 import { summarizeResult } from './validateResult'
@@ -80,45 +80,76 @@ describe('device result summaries', () => {
       })
     ).throws('too many field days')
   })
-  it('counts only the days a time window covers toward the field-day limit', () => {
+  it('counts only the days a time window has hours on toward the field-day limit', () => {
     const fields = Array.from({ length: 28 }, (_, i) =>
       field({ id: `fld_${i}` })
     )
-    const spring = season({
-      fieldIds: fields.map(each => each.id),
-      startsOn: '2027-01-01',
-      endsOn: '2027-12-31',
-      windows: [
-        {
-          from: '2027-04-01',
-          until: '2027-04-30',
-          hours: hoursOn([6], '08:00', '18:00')
-        }
-      ]
-    })
+    const yearOf = (weekdays: number[]): ReturnType<typeof season> =>
+      season({
+        regularGames: 0,
+        exhibitionGames: 0,
+        fieldIds: fields.map(each => each.id),
+        startsOn: '2027-01-01',
+        endsOn: '2027-12-31',
+        windows: [
+          {
+            from: '2027-01-01',
+            until: '2027-12-31',
+            hours: hoursOn(weekdays, '08:00', '18:00')
+          }
+        ]
+      })
     const empty = { games: [], fairness: [], reasons: [], unmet: [], score: [] }
-    expect(() =>
-      summarizeResult(input({ seasons: [spring], fields }), {
+    const summarize = (each: ReturnType<typeof season>): unknown =>
+      summarizeResult(input({ seasons: [each], fields }), {
         options: [empty],
         blocking: null
       })
-    ).not.throws()
-    const year = season({
-      ...spring.settings,
-      windows: [
-        {
-          ...spring.settings.windows[0],
-          from: '2027-01-01',
-          until: '2027-12-31'
+    // 52 Saturdays on 28 fields fit; the same year every day does not.
+    expect(() => summarize(yearOf([6]))).not.throws()
+    expect(() => summarize(yearOf([0, 1, 2, 3, 4, 5, 6]))).throws(
+      'shorter time windows'
+    )
+  })
+  it('names a plain cause for a shortfall when a full context would not fit the worker', () => {
+    const fields = Array.from({ length: 28 }, (_, i) =>
+      field({
+        id: `fld_${i}`,
+        availability: {
+          ...field().availability,
+          hours: hoursOn([6], '00:00', '23:55')
         }
-      ]
-    })
-    expect(() =>
-      summarizeResult(input({ seasons: [year], fields }), {
-        options: [empty],
-        blocking: null
       })
-    ).throws('shorter time windows')
+    )
+    const run = input({
+      seasons: [
+        season({
+          regularGames: 2,
+          exhibitionGames: 0,
+          fieldIds: fields.map(each => each.id),
+          startsOn: '2027-01-01',
+          endsOn: '2027-12-31',
+          windows: [
+            {
+              from: '2027-01-01',
+              until: '2027-12-31',
+              hours: hoursOn([6], '00:00', '23:55')
+            }
+          ]
+        })
+      ],
+      fields
+    })
+    expect(fullContextBytes(run)).greaterThan(64 * 1024 * 1024)
+    const empty = { games: [], fairness: [], reasons: [], unmet: [], score: [] }
+    const [option] = summarizeResult(run, {
+      options: [empty],
+      blocking: null
+    }).options
+    expect(option.unmet).has.length(1)
+    expect(option.unmet[0].cause).equals(
+      'The selected fields, time windows and constraints leave too little room for these games.'
+    )
   })
   it('derives fairness from placements and rejects games outside time windows', () => {
     const run = input({
