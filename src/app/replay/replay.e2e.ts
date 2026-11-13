@@ -1355,6 +1355,10 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     note(`box score at 402: left gap ${phone.left}, right gap ${phone.right}`)
 
     // R4: at "Play ball!", a tap starts the game again from its first pitch.
+    // The replay plays on by itself from "Play ball!": opened again here, as
+    // the measurements above can outlast that card on a slower machine.
+    await openReplay(m, FINAL)
+    await evalJson<boolean>(m, CARD_LOG)
     await cardUntil(
       m,
       'Play ball!',

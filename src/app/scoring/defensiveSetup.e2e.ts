@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -356,15 +357,46 @@ async function open(fixture: Fixture = {}): Promise<{
       false
     )
   }
+  // The lineups as held, as a digest: every lineup action of the game. A
+  // save naming an older one is refused, as the server refuses a post built
+  // on lineups somebody else has saved since.
+  const lineupsDigest = (): string =>
+    createHash('sha1')
+      .update(
+        JSON.stringify(
+          [...held.plays, held.currentPlay].flatMap(play =>
+            (
+              (play as { teamStation?: { actions?: unknown[] } } | null)
+                ?.teamStation?.actions ?? []
+            ).filter(action => (action as { type?: string }).type === 'lineup')
+          )
+        )
+      )
+      .digest('hex')
+      .slice(0, 16)
   // The server's arbitration (`postPlays.ts`): a save built on a scoring base
   // somebody else has moved on is refused as stale when it carries no scoring
   // of its own, and answered with what is held, superseded, when it does.
   const save = (
     change: Pick<
       SaveChange,
-      'plays' | 'remove' | 'currentPlay' | 'scoringBase' | 'scoringMutation'
+      | 'plays'
+      | 'remove'
+      | 'currentPlay'
+      | 'scoringBase'
+      | 'scoringMutation'
+      | 'lineupsBase'
     >
   ): StoredGame => {
+    if (
+      change.lineupsBase !== undefined &&
+      change.lineupsBase !== lineupsDigest()
+    )
+      throw new HttpError(
+        'conflict',
+        'Somebody else changed the lineups since this was read',
+        { stale: true }
+      )
     const prior = held.scoringMutation
     if (
       change.scoringBase !== undefined &&
@@ -378,6 +410,7 @@ async function open(fixture: Fixture = {}): Promise<{
         )
       return {
         ...held,
+        lineupsDigest: lineupsDigest(),
         superseded: !sameScoringMutation(change.scoringMutation, prior)
       }
     }
@@ -385,7 +418,7 @@ async function open(fixture: Fixture = {}): Promise<{
       change.scoringMutation != null &&
       sameScoringMutation(change.scoringMutation, prior)
     )
-      return { ...held, superseded: false }
+      return { ...held, lineupsDigest: lineupsDigest(), superseded: false }
     const kept = new Map(held.plays.map(play => [play.about.atBatIndex, play]))
     for (const index of change.remove ?? []) kept.delete(index)
     for (const play of change.plays ?? []) kept.set(play.about.atBatIndex, play)
@@ -393,14 +426,14 @@ async function open(fixture: Fixture = {}): Promise<{
     if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
     if (change.scoringMutation != null)
       held.scoringMutation = change.scoringMutation
-    return { ...held, superseded: false }
+    return { ...held, lineupsDigest: lineupsDigest(), superseded: false }
   }
   const peer = async (
     actions: ScoringAction[]
   ): Promise<ScoringSession['state']> => {
     const other = await ScoringSession.open(
       {
-        load: async () => held,
+        load: async () => ({ ...held, lineupsDigest: lineupsDigest() }),
         save: async (_id, change) => save(change)
       },
       'g1',
@@ -509,6 +542,7 @@ async function open(fixture: Fixture = {}): Promise<{
               gumbo: play
             })),
             currentPlay: read.currentPlay,
+            lineupsDigest: lineupsDigest(),
             ...(held.scoringMutation == null
               ? {}
               : { scoringMutation: held.scoringMutation }),
@@ -538,7 +572,7 @@ async function open(fixture: Fixture = {}): Promise<{
         body = {
           away: side('away', game.awayTeamName),
           home: side('home', game.homeTeamName),
-          digest: `d${held.plays.length}`
+          digest: lineupsDigest()
         }
       } else if (u.pathname === '/api/v1/teams') body = []
       else if (u.pathname.endsWith('/live-streams'))

@@ -511,6 +511,9 @@ describe('two scorekeepers on one game', function () {
         await request.continue().catch(() => undefined)
       await a.page.setRequestInterception(false)
       a.page.off('request', pass)
+      // The held phase's page goes: whatever it was still waiting on ends
+      // with it, and the offline phase, and L5, start from a fresh load.
+      await a.page.goto('about:blank')
     }
     // Offline: the same, with nothing to reach.
     await a.scoreGame(fixture.gameId)
