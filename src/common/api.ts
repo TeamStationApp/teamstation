@@ -5306,7 +5306,9 @@ export class TeamStationClient {
   /** Builds a preview of the league's schedule. See `PreviewRequest`. */
   async buildSchedulePreview(
     leagueId: string,
-    request: PreviewRequest
+    request: PreviewRequest,
+    /** The waits before each retry while the server's validation is busy. */
+    retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000]
   ): Promise<SchedulePreview> {
     const prepared = await this.request(
       'POST',
@@ -5315,13 +5317,35 @@ export class TeamStationClient {
       request
     )
     const { buildOptionsAsync } = await import('./autoScheduler')
-    const result = await buildOptionsAsync(prepared.input)
-    return await this.request(
-      'PUT',
-      `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
-      asSchedulePreview,
-      result
-    )
+    const built = await buildOptionsAsync(prepared.input)
+    // The server keeps only the games and works out the rest itself.
+    const result = {
+      options: built.options.map(option => ({ games: option.games })),
+      blocking: built.blocking
+    }
+    // A search can take minutes, so a busy server is asked again with the
+    // same result, which it accepts once; any other refusal is final.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.request(
+          'PUT',
+          `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
+          asSchedulePreview,
+          result
+        )
+      } catch (error) {
+        const wait = retryDelaysMs[attempt]
+        if (
+          wait == null ||
+          !(error instanceof HttpError) ||
+          error.code !== 'unavailable' ||
+          !isRecord(error.details) ||
+          error.details.retry !== true
+        )
+          throw error
+        await new Promise(resolve => setTimeout(resolve, wait))
+      }
+    }
   }
 
   async schedulePreview(previewId: string): Promise<SchedulePreview> {
