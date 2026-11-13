@@ -305,4 +305,36 @@ describe('device result summaries', () => {
     ])
       expect(() => asPreviewResult(bad)).throws()
   })
+  it('stores a device’s game times as instants in one form, and refuses a time with no zone', () => {
+    const game = {
+      key: 'one',
+      seasonId: 'sea_demo',
+      homeTeamId: 'tem_hawks',
+      awayTeamId: 'tem_owls',
+      exhibition: false,
+      fieldId: 'fld_one',
+      size: '50/70',
+      startAt: '2027-05-02T10:00:00+00:00',
+      endAt: '2027-05-02T06:30-05:00'
+    }
+    const [option] = asPreviewResult({
+      options: [{ games: [game] }],
+      blocking: null
+    }).options
+    expect(option.games[0]).includes({
+      startAt: '2027-05-02T10:00:00.000Z',
+      endAt: '2027-05-02T11:30:00.000Z'
+    })
+    for (const startAt of [
+      '2027-05-02T10:00',
+      '2027-05-02',
+      'May 2 2027 10:00 UTC'
+    ])
+      expect(() =>
+        asPreviewResult({
+          options: [{ games: [{ ...game, startAt }] }],
+          blocking: null
+        })
+      ).throws('instants with their zone')
+  })
 })

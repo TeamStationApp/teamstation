@@ -359,6 +359,22 @@ export const asPreparedPreview = asObject({
 })
 export type PreparedPreview = ReturnType<typeof asPreparedPreview>
 
+/** ISO 8601 date-times that name their offset, so they mean one instant. */
+const ZONED_INSTANT =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/
+
+/**
+ * A device's game time as the server stores it, the form it generates
+ * itself: `toISOString()`. A time with no offset could be read in either
+ * zone, so it is refused.
+ */
+function asZonedInstant(raw: string): string {
+  const ms = ZONED_INSTANT.test(raw) ? Date.parse(raw) : NaN
+  if (!Number.isFinite(ms))
+    throw new TypeError('Give each game’s times as instants with their zone')
+  return new Date(ms).toISOString()
+}
+
 /** Bound untrusted result arrays before interpreting individual games. */
 export function asPreviewResult(raw: unknown): EngineResult {
   if (!isRecord(raw) || !Array.isArray(raw.options) || raw.options.length > 3)
@@ -375,7 +391,11 @@ export function asPreviewResult(raw: unknown): EngineResult {
   const options = raw.options.map(option => ({
     games: asArray(asWirePlannedGame)(
       (option as Record<string, unknown>).games
-    ),
+    ).map(game => ({
+      ...game,
+      startAt: asZonedInstant(game.startAt),
+      endAt: asZonedInstant(game.endAt)
+    })),
     fairness: [],
     reasons: [],
     unmet: [],
