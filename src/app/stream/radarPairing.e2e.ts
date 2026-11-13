@@ -93,7 +93,7 @@ const teamId = process.env.TS_STREAM_TEAM_ID
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
 const pitchSeconds = Number(process.env.TS_RADAR_PITCH_SECONDS ?? '120')
 const offSeconds = Number(process.env.TS_RADAR_OFF_SECONDS ?? '120')
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 /** A Tag Sports radar advertises itself as `ADFA…`. */
 const RADAR_ROW = /^pair-device-(ADFA.*)$/
 
