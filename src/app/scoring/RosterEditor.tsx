@@ -7,7 +7,6 @@ import React, {
   useState
 } from 'react'
 import {
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -93,6 +92,7 @@ import {
 } from './RosterDrag'
 import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
 import { RosterConflictBanner } from './rosterLive'
+import { RosterName } from './RosterName'
 import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
@@ -197,23 +197,6 @@ export interface RosterEditorDraft {
    */
   base?: ScoringSessionState
 }
-/**
- * A roster, lineup or defence card's name, on one line. A phone scales text
- * by the reader's text size (the iPhone 13 Pro on the bench reads 12% larger
- * than the web), which wrapped "1. #27 Trey H" after "Trey" in a column
- * 159 points wide; the phone shrinks the line to fit instead, down to three
- * quarters. The web keeps its wrap, as a browser cannot shrink to fit.
- */
-export const rosterNameProps = (
-  os: string
-): {
-  numberOfLines?: number
-  adjustsFontSizeToFit?: boolean
-  minimumFontScale?: number
-} =>
-  os === 'web'
-    ? {}
-    : { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.75 }
 /** The complete field takes priority when a wrapping error leaves less list room. */
 export function defenseRosterMinimum(
   areaHeight: number,
@@ -913,7 +896,6 @@ export function RosterEditor({
     fontFamily: theme.regularTextFont,
     fontSize: 14
   }
-  const nameProps = rosterNameProps(Platform.OS)
   const row = scoringPlayerCardStyle(theme)
   const teamId = draft.gameData.teams[side].id
   const heldRoster = rosters?.[teamId] ?? []
@@ -1301,13 +1283,7 @@ export function RosterEditor({
                                 label={`Drag ${names[id].fullName}`}
                                 color={text.color}
                               />
-                              <Text
-                                selectable={false}
-                                {...nameProps}
-                                style={{ ...text, flex: 1 }}
-                              >
-                                {display(id)}
-                              </Text>
+                              <RosterName player={names[id]} style={text} />
                             </View>
                           </RosterDrag>
                         )
@@ -1411,13 +1387,11 @@ export function RosterEditor({
                             label={`Drag ${names[id].fullName}`}
                             color={text.color}
                           />
-                          <Text
-                            selectable={false}
-                            {...nameProps}
-                            style={{ ...text, flex: 1 }}
-                          >
-                            {index + 1}. {display(id)}
-                          </Text>
+                          <RosterName
+                            player={names[id]}
+                            prefix={`${index + 1}.`}
+                            style={text}
+                          />
                           {!locked ? (
                             <RosterRemoveButton
                               label={`Remove ${names[id].fullName}`}

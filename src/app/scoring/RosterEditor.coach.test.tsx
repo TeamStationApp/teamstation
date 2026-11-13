@@ -101,6 +101,54 @@ describe('the roster screen for a coach', function () {
     expect(node(`Remove ${name(home.battingOrder[0])}`)).not.equals(null)
   })
 
+  it('draws a long name as its first and last name, each a line of its own at full size', async function () {
+    const session = copyState(state.session)
+    // Every player of this game bats, so the second is taken out of the
+    // lineup to show a roster card.
+    const [batter, benched] = home.battingOrder
+    Object.assign(session.gameData.players[batter], {
+      fullName: 'Ke Bryan Hayes',
+      firstName: 'Ke Bryan',
+      lastName: 'Hayes',
+      jersey: '3'
+    })
+    Object.assign(session.gameData.players[benched], {
+      fullName: 'Christian Encarnacion-Strand',
+      firstName: 'Christian',
+      lastName: 'Encarnacion-Strand',
+      jersey: '4'
+    })
+    await mount({ state: initialScoringState(session) })
+    await click('Lineup')
+    await click('Remove Christian Encarnacion-Strand')
+    // A name's two lines: the slot, jersey and first name, then the last.
+    const linesOf = (card: Element): string[] =>
+      [
+        ...card.querySelectorAll<HTMLElement>(
+          '[data-testid="Roster name"] [dir="auto"]'
+        )
+      ].map(text => String(text.textContent))
+    const lineupCard = host.querySelector('[data-roster-target="lineup-0"]')!
+    expect(linesOf(lineupCard)).deep.equals(['1. #3 Ke Bryan ', 'Hayes'])
+    // Read whole, the card still says the name as it always did.
+    expect(lineupCard.textContent).includes('1. #3 Ke Bryan Hayes')
+    const rosterCard = host.querySelector(`[data-roster-player="${benched}"]`)!
+    expect(linesOf(rosterCard)).deep.equals([
+      '#4 Christian ',
+      'Encarnacion-Strand'
+    ])
+    for (const card of [lineupCard, rosterCard])
+      for (const text of card.querySelectorAll<HTMLElement>(
+        '[data-testid="Roster name"] [dir="auto"]'
+      )) {
+        const style = getComputedStyle(text)
+        // One line each, at the cards' own 14 points: nothing shrinks.
+        expect(style.whiteSpace).equals('nowrap')
+        expect(style.textOverflow).equals('ellipsis')
+        expect(style.fontSize).equals('14px')
+      }
+  })
+
   it('discards a tapped change on Cancel, reloads and is clean again', async function () {
     let reloads = 0
     let cancels = 0

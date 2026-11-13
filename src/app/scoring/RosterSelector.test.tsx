@@ -6,7 +6,6 @@ import { createRoot, type Root } from 'react-dom/client'
 import { changeTheme, ThemeProvider } from '../theme/ThemeContext'
 import { tsBallpark } from '../theme/tsBallpark'
 import { tsDark } from '../theme/tsDark'
-import { rosterNameProps } from './RosterEditor'
 import { RosterSelector, rosterThumbWidth } from './RosterSelector'
 let root: Root | undefined
 let host: HTMLDivElement
@@ -30,16 +29,6 @@ afterEach(async () => {
   root = undefined
 })
 describe('roster selector', function () {
-  it('keeps a phone roster name on one line, and leaves the web wrap alone', function () {
-    expect(rosterNameProps('web')).deep.equals({})
-    for (const os of ['ios', 'android'])
-      expect(rosterNameProps(os)).deep.equals({
-        numberOfLines: 1,
-        adjustsFontSizeToFit: true,
-        minimumFontScale: 0.75
-      })
-  })
-
   it('sizes the thumb from the measured pill, not a percentage a phone misreads', function () {
     // Lineup / Defense on a Pixel: the pill measures 214 dp while the
     // row offered it 378 dp, and Yoga drew a `50%` thumb 189 dp wide.
