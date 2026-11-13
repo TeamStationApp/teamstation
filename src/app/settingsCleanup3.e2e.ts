@@ -92,7 +92,11 @@ async function main(): Promise<void> {
   const go = async (path: string, text: string): Promise<void> => {
     await m.openLink({ link: f.h.origin + path })
     await contains(page, text)
-    await page.waitForNetworkIdle({ idleTime: 150, timeout: 10000 })
+    // Quiet is a courtesy for what follows: a page that keeps a live game
+    // or a feed polling may never be quiet, and its text is already there.
+    await page
+      .waitForNetworkIdle({ idleTime: 150, timeout: 10000 })
+      .catch(() => undefined)
   }
   const shot = async (name: string): Promise<void> => {
     // Live indicators animate continuously; each route's loaded state is
