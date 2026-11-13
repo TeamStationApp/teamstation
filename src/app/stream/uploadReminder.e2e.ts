@@ -96,7 +96,7 @@ const secondAngle = process.env.TS_STREAM_SECOND_ANGLE ?? 'First Base'
 const model = process.env.TS_STREAM_DEVICE_MODEL ?? 'iPhone 13 Pro'
 const teamId = process.env.TS_STREAM_TEAM_ID
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 /** The phone this script poses as. */
 const DEVICE_ID = '00000000-0000-4000-8000-0000000000e1'
 const TITLE = 'Upload your recording'

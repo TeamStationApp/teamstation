@@ -195,7 +195,7 @@ const wanted = (
 ).split(',')
 const holdSeconds = Number(process.env.TS_STREAM_HOLD_SECONDS ?? '45')
 const artifacts = process.env.TS_STREAM_ARTIFACT_DIR
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 /** Where the debug build's phone engine keeps its takes. */
 const ANDROID_TAKES = 'files/phoneStream'
 const START_FLOOR_PROPERTY = 'debug.ts.phone.start_floor'
