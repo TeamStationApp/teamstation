@@ -16,8 +16,7 @@ import {
   DefensiveField,
   FIELD_NAME_SCALE,
   fieldCardMetrics,
-  fieldRows,
-  SINGLE_LINE_FIT
+  fieldRows
 } from './DefensiveField'
 import { DefensiveFieldArt as NativeDefensiveFieldArt } from './DefensiveFieldArt.native'
 import { gameFixture } from './isUnscoredGame.test'
@@ -75,14 +74,14 @@ describe('compact defensive field', function () {
     })
     expect(fieldCardMetrics(200, false)).deep.includes({
       singleLine: true,
+      positionOnly: false,
       fontSize: 12.5,
       lineHeight: 15,
-      contentHeight: 21,
-      fit: 0.75
+      contentHeight: 21
     })
-    // Only "P · Name" on one line shrinks to fit.
-    expect(fieldCardMetrics(400, false).fit).equals(undefined)
-    expect(fieldCardMetrics(140, false).fit).equals(undefined)
+    // No card's name has a size it shrinks to.
+    for (const viewport of [140, 200, 400])
+      expect(fieldCardMetrics(viewport, false)).not.has.property('fit')
     // The smallest card the 60-point floor can squeeze to still holds its
     // position; below that the 5-point font is the floor.
     const smallest = fieldCardMetrics(50, false)
@@ -183,15 +182,15 @@ describe('compact defensive field', function () {
       host.remove()
     }
   })
-  it('shrinks a one-line card to fit its card whole, down to three quarters of its size, and keeps it 25% larger when it fits', async function () {
+  it('never shrinks a card’s name: a name too wide for its card is cut, at the card’s own size', async function () {
     const host = document.createElement('div')
     document.body.appendChild(host)
-    const root = createRoot(host)
-    const field = (name: string): React.ReactElement => (
+    let root = createRoot(host)
+    const field = (compact: boolean, name: string): React.ReactElement => (
       <ThemeProvider>
         <RosterDragGroup>
           <DefensiveField
-            compact
+            compact={compact}
             defense={{ P: 1 }}
             display={() => name}
             onPlace={() => undefined}
@@ -200,60 +199,54 @@ describe('compact defensive field', function () {
         </RosterDragGroup>
       </ThemeProvider>
     )
-    const line = (): HTMLElement =>
-      host
+    const lines = (): HTMLElement[] => [
+      ...host
         .querySelector('[data-testid="Defense P card"]')!
-        .querySelector<HTMLElement>('[dir="auto"]')!
-    const font = (): number => parseFloat(line().style.fontSize)
-    // The test page has no layout: the browser's widths on a 320-point
-    // screen, the card's 88 points of room and the line's drawn width.
-    const lay = async (room: number, drawn: number): Promise<void> => {
-      const box = line().parentElement!
-      Object.defineProperty(box, 'clientWidth', {
-        configurable: true,
-        value: room
-      })
-      Object.defineProperty(line(), 'scrollWidth', {
-        configurable: true,
-        value: drawn
-      })
-      await act(async () => {
-        ;(
-          box as unknown as { __reactLayoutHandler: (event: unknown) => void }
-        ).__reactLayoutHandler({
-          nativeEvent: { layout: { x: 0, y: 0, width: room, height: 15 } }
-        })
-      })
+        .querySelectorAll<HTMLElement>('[dir="auto"]')
+    ]
+    /** The props the `Text` drawing this node was given, a phone's too. */
+    const textProps = (node: HTMLElement): Record<string, unknown> => {
+      const key = Object.keys(node).find(name =>
+        name.startsWith('__reactFiber')
+      )!
+      let fiber = (node as unknown as Record<string, unknown>)[key] as {
+        memoizedProps: Record<string, unknown>
+        return: unknown
+      } | null
+      while (fiber != null && !('numberOfLines' in (fiber.memoizedProps ?? {})))
+        fiber = fiber.return as typeof fiber
+      return fiber!.memoizedProps
     }
     try {
-      expect(SINGLE_LINE_FIT).equals(0.75)
       await act(async () => {
-        root.render(field('#7 Escobar'))
+        root.render(field(false, 'Christian E.'))
       })
-      expect(line().textContent).equals('P · #7 Escobar')
-      expect(font()).equals(12.5)
-      // The line is drawn no wider than its content, nor than the card.
-      expect(line().style.maxWidth).equals('100%')
-      expect(line().style.width).equals('')
-      await lay(88, 98)
-      expect(font()).closeTo(12.5 * 0.88, 0.001)
-      expect(line().style.lineHeight).equals('15px')
-      // A card that fits it again: the full size, read from the shrunken width.
-      await lay(120, 98 * 0.88)
-      expect(font()).equals(12.5)
-      // No narrower than three quarters: past that the name's end is cut.
-      await lay(60, 98)
-      expect(font()).closeTo(12.5 * 0.75, 0.001)
-      // Another name is measured as it is drawn.
-      Object.defineProperty(line(), 'scrollWidth', {
-        configurable: true,
-        value: 40
-      })
+      const [position, name] = lines()
+      expect(position.textContent).equals('P')
+      expect(name.textContent).equals('Christian E.')
+      expect(name.style.fontSize).equals('13.75px')
+      const twoLine = textProps(name)
+      expect(twoLine.numberOfLines).equals(1)
+      expect(twoLine.adjustsFontSizeToFit).equals(undefined)
+      expect(twoLine.minimumFontScale).equals(undefined)
+      // A fresh field, so each node is read from the render that drew it.
       await act(async () => {
-        root.render(field('#9 Ruth'))
+        root.unmount()
       })
-      expect(line().textContent).equals('P · #9 Ruth')
-      expect(font()).equals(12.5)
+      root = createRoot(host)
+      await act(async () => {
+        root.render(field(true, 'Christian Encarnacion-Strand'))
+      })
+      const [line] = lines()
+      expect(line.textContent).equals('P · Christian Encarnacion-Strand')
+      // One line at the card's own 12.5 points, cut with an ellipsis.
+      expect(line.style.fontSize).equals('12.5px')
+      expect(line.style.lineHeight).equals('15px')
+      expect(getComputedStyle(line).textOverflow).equals('ellipsis')
+      const oneLine = textProps(line)
+      expect(oneLine.numberOfLines).equals(1)
+      expect(oneLine.adjustsFontSizeToFit).equals(undefined)
+      expect(oneLine.minimumFontScale).equals(undefined)
     } finally {
       await act(async () => {
         root.unmount()
@@ -261,6 +254,7 @@ describe('compact defensive field', function () {
       host.remove()
     }
   })
+
   it('reserves a roster row when possible and yields to the complete field for wrapping errors', function () {
     expect(defenseRosterMinimum(0, true)).equals(64)
     expect(defenseRosterMinimum(0, false)).equals(88)

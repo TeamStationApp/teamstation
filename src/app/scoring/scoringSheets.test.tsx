@@ -954,9 +954,13 @@ describe('scoring slide-up sheets', function () {
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')
     await click('Defense')
-    expect(
+    // The field names him by his short name, with no jersey, on one line or
+    // two as the sheet's height allows.
+    const pitcher = String(
       document.querySelector('[data-roster-target="defense-P"]')!.textContent
-    ).includes('P · #1 Player 1')
+    )
+    expect(pitcher).includes('Player 1')
+    expect(pitcher).not.includes('#1')
     expect(
       document.querySelector('[data-roster-target="roster"]')!.textContent
     ).not.includes('#1 Player 1')

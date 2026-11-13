@@ -149,6 +149,37 @@ describe('the roster screen for a coach', function () {
       }
   })
 
+  it('names each fielder on the Defense field by the scoring field’s short name', async function () {
+    const session = copyState(state.session)
+    const pitcher = home.defense.P!
+    Object.assign(session.gameData.players[pitcher], {
+      fullName: 'Christian Encarnacion-Strand',
+      firstName: 'Christian',
+      lastName: 'Encarnacion-Strand',
+      jersey: '4'
+    })
+    await mount({ state: initialScoringState(session) })
+    await click('Defense')
+    // How much the card shows follows the field's measured height; the name
+    // is the same in its text or, on a card too short for it, its label.
+    const said = [
+      ...host
+        .querySelector('[data-testid="Defense P card"]')!
+        .querySelectorAll<HTMLElement>('[dir="auto"]')
+    ].flatMap(text => [
+      String(text.textContent),
+      text.getAttribute('aria-label') ?? ''
+    ])
+    expect(said.some(text => text.endsWith('Christian E'))).equals(true)
+    expect(said.join(' ')).not.includes('Encarnacion')
+    // A screen reader hears him in full.
+    expect(
+      host
+        .querySelector('[data-roster-target="defense-P"]')!
+        .getAttribute('aria-description')
+    ).equals('#4 Christian Encarnacion-Strand')
+  })
+
   it('discards a tapped change on Cancel, reloads and is clean again', async function () {
     let reloads = 0
     let cancels = 0

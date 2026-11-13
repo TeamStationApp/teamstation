@@ -54,7 +54,7 @@ import type { Insets } from '../platform/insets'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { BatIcon } from './BatIcon'
-import { withRosterDetails } from './currentSetup'
+import { shortPlayerNames, withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { ExistingPlayerSheet } from './ExistingPlayerSheet'
@@ -757,8 +757,13 @@ export function RosterEditor({
         : withRosterDetails(readable, rosters).gameData.players,
     [readable, rosters]
   )
-  const display = (id: number): string =>
-    `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
+  // The field's cards name each player as the scoring screen's field does.
+  const fieldNames = useMemo(
+    () => shortPlayerNames(Object.values(names)),
+    [names]
+  )
+  const fieldName = (id: number): string =>
+    fieldNames.get(id) ?? names[id].fullName
   const assigned = defense ? Object.values(team.defense) : team.battingOrder
   // The plan's rows: his side's batting order, each batter by who he is.
   const planBatters = useMemo(() => {
@@ -1185,7 +1190,11 @@ export function RosterEditor({
               <DefensiveField
                 defense={team.defense}
                 compact={height < 500}
-                display={display}
+                display={fieldName}
+                // Short on the card, in full to a screen reader.
+                spoken={id =>
+                  `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
+                }
                 onPlace={(player, position) => {
                   if (!team.players.includes(player)) return
                   edit(next => {

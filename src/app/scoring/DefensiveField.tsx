@@ -1,7 +1,6 @@
 import React, { useState } from 'react'
-import { Platform, Pressable, Text, type TextStyle, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
-import { useFittedText } from '../components/fittedText'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { DefensiveFieldArt } from './DefensiveFieldArt'
@@ -34,11 +33,6 @@ const MAX_CARD_HEIGHT = 46
 export const FIELD_NAME_SCALE = 1.25
 const TWO_LINE_FONT = 11 * FIELD_NAME_SCALE
 const SINGLE_LINE_FONT = 10 * FIELD_NAME_SCALE
-/**
- * The smallest share of its size a one-line card's "P · Name" shrinks to,
- * so a narrow field draws it whole rather than cut.
- */
-export const SINGLE_LINE_FIT = 0.75
 const CARD_PADDING = 2
 const CARD_BORDER = 1
 const lineHeightOf = (fontSize: number): number => Math.round(fontSize * 1.2)
@@ -51,10 +45,7 @@ const SINGLE_LINE_CARD =
 
 export interface FieldCardMetrics {
   cardHeight: number
-  /**
-   * "P · Name" on one line, rather than the position above the name, shrunk
-   * to fit the card's width down to `fit` of `fontSize`.
-   */
+  /** "P · Name" on one line, rather than the position above the name. */
   singleLine: boolean
   /** Too short for a name: the position alone, with no vertical padding. */
   positionOnly: boolean
@@ -62,8 +53,6 @@ export interface FieldCardMetrics {
   lineHeight: number
   /** What the card's text, padding and border need, never above `cardHeight`. */
   contentHeight: number
-  /** The smallest share of `fontSize` a one-line name shrinks to. */
-  fit?: number
 }
 
 /** A position card's size and text for a field viewport of this height. */
@@ -93,8 +82,7 @@ export function fieldCardMetrics(
       positionOnly: false,
       fontSize: SINGLE_LINE_FONT,
       lineHeight: lineHeightOf(SINGLE_LINE_FONT),
-      contentHeight: SINGLE_LINE_CARD,
-      fit: SINGLE_LINE_FIT
+      contentHeight: SINGLE_LINE_CARD
     }
   return {
     cardHeight,
@@ -159,6 +147,7 @@ export function DefensiveField({
   defense,
   compact = false,
   display,
+  spoken = display,
   onPlace,
   onClear,
   onHelp,
@@ -167,6 +156,11 @@ export function DefensiveField({
   defense: Partial<Record<Position, number | null>>
   compact?: boolean
   display: (id: number) => string
+  /**
+   * What a screen reader says for a fielder; the drawn name by default. A
+   * short drawn name can be said in full.
+   */
+  spoken?: (id: number) => string
   onPlace: (id: number, position: Position) => void
   onClear: (position: Position) => void
   /** Help, at the field's top left, which opens the tab's help. */
@@ -176,7 +170,7 @@ export function DefensiveField({
 }): React.ReactElement {
   const { scoringSurface: surface } = useScoringSheetTheme()
   const [viewportHeight, setViewportHeight] = useState(0)
-  const { cardHeight, singleLine, positionOnly, fontSize, lineHeight, fit } =
+  const { cardHeight, singleLine, positionOnly, fontSize, lineHeight } =
     fieldCardMetrics(viewportHeight, compact)
   // Unmeasured, the field is taken to be tall enough for its corners.
   const corners =
@@ -241,6 +235,7 @@ export function DefensiveField({
             const [x, y] = DEFENSE_LOCATIONS[position]
             const assigned = id != null
             const name = assigned ? display(id) : 'Unassigned'
+            const said = assigned ? spoken(id) : 'Unassigned'
             const textColor = assigned
               ? surface.activeText
               : surface.badges.red.text
@@ -259,7 +254,7 @@ export function DefensiveField({
                   playerId={assigned ? id : undefined}
                   immediate
                   fixed
-                  value={assigned ? display(id) : undefined}
+                  value={assigned ? said : undefined}
                   label={assigned ? `Clear ${position}` : `Assign ${position}`}
                   onTap={
                     assigned
@@ -294,7 +289,7 @@ export function DefensiveField({
                     {positionOnly ? (
                       <Text
                         numberOfLines={1}
-                        accessibilityLabel={`${position} · ${name}`}
+                        accessibilityLabel={`${position} · ${said}`}
                         style={{
                           color: textColor,
                           fontSize,
@@ -307,11 +302,18 @@ export function DefensiveField({
                         {position}
                       </Text>
                     ) : singleLine ? (
-                      <FittedLine
-                        text={`${position} · ${name}`}
-                        fit={fit}
-                        style={{ color: textColor, fontSize, lineHeight }}
-                      />
+                      <Text
+                        numberOfLines={1}
+                        style={{
+                          color: textColor,
+                          fontSize,
+                          lineHeight,
+                          width: '100%',
+                          textAlign: 'center'
+                        }}
+                      >
+                        {`${position} · ${name}`}
+                      </Text>
                     ) : (
                       <>
                         <Text
@@ -326,8 +328,6 @@ export function DefensiveField({
                         </Text>
                         <Text
                           numberOfLines={1}
-                          adjustsFontSizeToFit
-                          minimumFontScale={0.91}
                           style={{
                             color: textColor,
                             fontSize,
@@ -402,45 +402,5 @@ function FieldControl({
         {label}
       </Text>
     </Pressable>
-  )
-}
-
-/**
- * One line across the card, shrunk to fit it whole down to `fit` of its
- * size; past that the end of the name is cut and the position stays.
- */
-function FittedLine({
-  text,
-  fit,
-  style
-}: {
-  text: string
-  fit: number | undefined
-  style: TextStyle & { fontSize: number }
-}): React.ReactElement {
-  const fitted = useFittedText(fit, text)
-  return (
-    <View
-      ref={fitted.box}
-      onLayout={fitted.handleLayout}
-      style={{ alignSelf: 'stretch', alignItems: 'center' }}
-    >
-      <Text
-        ref={fitted.text}
-        numberOfLines={1}
-        {...fitted.textProps}
-        style={[
-          style,
-          // The web measures the line at its own width; a phone fits the
-          // card's.
-          Platform.OS === 'web'
-            ? { maxWidth: '100%' }
-            : { width: '100%', textAlign: 'center' },
-          fitted.scale < 1 && { fontSize: style.fontSize * fitted.scale }
-        ]}
-      >
-        {text}
-      </Text>
-    </View>
   )
 }

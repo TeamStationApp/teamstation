@@ -1303,8 +1303,8 @@ describe('Coach Plan', function () {
       expect(card.nameFont).closeTo(13.75, 0.01)
     }
 
-    // A 320 × 568 screen draws "P · Name" on one line, shrunk to fit the
-    // card whole, never below three quarters of its 12.5 points.
+    // A 320 × 568 screen draws "P · Name" on one line, at its own 12.5
+    // points: the short names fit, and nothing shrinks.
     const [width, height] = [320, 568]
     const session = await browserSession(
       daemon,
@@ -1333,9 +1333,9 @@ describe('Coach Plan', function () {
       console.log(`    field at ${width} wide: ${JSON.stringify(texts)}`)
       expect(texts).has.length(9)
       for (const each of texts) {
-        expect(each.text).match(/^(P|C|1B|2B|3B|SS|LF|CF|RF) · #\d+ \S/)
+        expect(each.text).match(/^(P|C|1B|2B|3B|SS|LF|CF|RF) · [^#\s]\S*/)
         expect(each.scroll, each.text).at.most(each.client)
-        expect(each.size, each.text).within(12.5 * 0.75 - 0.01, 12.5)
+        expect(each.size, each.text).equals(12.5)
       }
       await narrow.shot(`defense-320-${PHASE}.png`)
     } finally {
