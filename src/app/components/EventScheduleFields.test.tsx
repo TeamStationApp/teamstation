@@ -324,3 +324,104 @@ describe('shared calendar, five-minute wheels and timezone autocomplete', () => 
     }
   })
 })
+
+describe('the Safari time wheel', () => {
+  const IPHONE =
+    'Mozilla/5.0 (iPhone; CPU iPhone OS 26_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Mobile/15E148 Safari/604.1'
+  const IPAD_DESKTOP =
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15'
+  /** Browses as `userAgent` on a touch screen until the returned undo runs. */
+  const browseAs = (userAgent: string): (() => void) => {
+    Object.defineProperty(window.navigator, 'userAgent', {
+      configurable: true,
+      get: () => userAgent
+    })
+    Object.defineProperty(window.navigator, 'maxTouchPoints', {
+      configurable: true,
+      get: () => 5
+    })
+    return () => {
+      delete (window.navigator as unknown as Record<string, unknown>).userAgent
+      delete (window.navigator as unknown as Record<string, unknown>)
+        .maxTouchPoints
+    }
+  }
+  const timeInput = (): HTMLInputElement =>
+    document.querySelector<HTMLInputElement>('input[aria-label="Time"]')!
+  /** What Safari's wheel does to the field: sets it and says so. */
+  const turn = async (value: string, type = 'input'): Promise<void> => {
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(timeInput(), value)
+      timeInput().dispatchEvent(new window.Event(type, { bubbles: true }))
+    })
+  }
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    document.body.replaceChildren()
+  })
+
+  for (const [name, agent] of [
+    ['an iPhone', IPHONE],
+    ['an iPad asking for the desktop site', IPAD_DESKTOP]
+  ] as const)
+    it(`is one time field on ${name}, saved rounded down to five minutes`, async () => {
+      const undo = browseAs(agent)
+      try {
+        await render()
+        await pressSchedule('[data-testid="event-schedule-time"]')
+        expect(timeInput().type).equals('time')
+        expect(timeInput().value).equals('23:30')
+        expect(
+          document.querySelector('[data-testid="event-time-hour-wheel"]')
+        ).equals(null)
+        await turn('19:33')
+        // The open wheel is left where Safari put it.
+        expect(timeInput().value).equals('19:33')
+        expect(document.body.textContent).includes('7:30 PM')
+        await act(async () => {
+          timeInput().dispatchEvent(
+            new window.FocusEvent('focusout', { bubbles: true })
+          )
+        })
+        expect(timeInput().value).equals('19:30')
+        await pressSchedule('Use time')
+        expect(draft.time).equals('19:30')
+      } finally {
+        undo()
+      }
+    })
+
+  it('keeps the time through Safari’s Reset and the morning hours', async () => {
+    const undo = browseAs(IPHONE)
+    try {
+      await render()
+      await pressSchedule('[data-testid="event-schedule-time"]')
+      await turn('', 'change')
+      expect(document.body.textContent).includes('11:30 PM')
+      await turn('00:02', 'change')
+      expect(document.body.textContent).includes('12:00 AM')
+      await turn('07:35')
+      expect(document.body.textContent).includes('7:35 AM')
+      await pressSchedule('Use time')
+      expect(draft.time).equals('07:35')
+    } finally {
+      undo()
+    }
+  })
+
+  it('keeps the three wheels in a desktop browser', async () => {
+    await render()
+    await pressSchedule('[data-testid="event-schedule-time"]')
+    expect(document.querySelector('input[type="time"]')).equals(null)
+    expect(
+      document.querySelector('[data-testid="event-time-hour-wheel"]')
+    ).not.equals(null)
+    await pressSchedule('Cancel time picker')
+  })
+})
