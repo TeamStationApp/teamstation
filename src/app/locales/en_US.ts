@@ -749,6 +749,8 @@ export const enUs = {
   chat_manual_unread_label: 'Marked unread',
   chat_new_message_announcement: 'New message in %s',
   chat_new_message: 'New message',
+  chat_push_mention_title: '%1$s in %2$s',
+  chat_push_new_message_from: 'New message from %s',
   chat_loading: 'Opening chat…',
   chat_cannot_load: 'Chat could not be opened.',
   chat_keys_unreadable:

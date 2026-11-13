@@ -18,7 +18,13 @@ import {
   verifyMessage
 } from '../../../common/chatCrypto/seal'
 import { HttpError } from '../../../common/errors'
-import { epochKeyOf, pinIdentity, unb64, withEpochKey } from '../keyRecord'
+import {
+  type ChatKeyRecord,
+  epochKeyOf,
+  pinIdentity,
+  unb64,
+  withEpochKey
+} from '../keyRecord'
 import type { ChatEngineClient, EngineContext } from './context'
 import type { ConversationState } from './store'
 
@@ -167,19 +173,21 @@ export async function takeEpochs(
 /**
  * Opens every epoch key this device's boxes give it, then walks each key it
  * holds down the chain (`previous_key_box`) as far as the chain goes. Keeps
- * what it opened in the key record. Answers `needKeys` when a box is for a
- * per-user key generation this device does not hold yet.
+ * nothing: `found` is each key it opened that `record` does not hold yet,
+ * by epoch. `needKeys` when a box is for a per-user key generation this
+ * device does not hold yet. A push handler opens one message's key with it
+ * and leaves the stored record as it is.
  */
-export async function openEpochKeys(
-  ctx: EngineContext,
+export function openEpochKey(
+  record: ChatKeyRecord,
+  userId: string,
   conversationId: string,
   state: ConversationState,
   boxes: ChatEpochs['boxes']
-): Promise<{ opened: number; needKeys: boolean }> {
-  const record = ctx.keys.record
-  const identity = record.identity
-  if (identity == null) return { opened: 0, needKeys: false }
+): { found: Map<number, Uint8Array>; needKeys: boolean } {
   const found = new Map<number, Uint8Array>()
+  const identity = record.identity
+  if (identity == null) return { found, needKeys: false }
   const have = (epoch: number): Uint8Array | undefined =>
     found.get(epoch) ?? epochKeyOf(record, conversationId, epoch)
   let needKeys = false
@@ -197,7 +205,7 @@ export async function openEpochKeys(
         epochAad({
           conversationId,
           epoch: box.epoch,
-          recipientUserId: ctx.userId,
+          recipientUserId: userId,
           identityId: identity.id,
           generation: box.pukGeneration
         }),
@@ -237,6 +245,27 @@ export async function openEpochKeys(
       // A broken link: what lies below it stays closed.
     }
   }
+  return { found, needKeys }
+}
+
+/**
+ * `openEpochKey`, keeping what it opened in the key record. Answers
+ * `needKeys` when a box is for a per-user key generation this device does
+ * not hold yet.
+ */
+export async function openEpochKeys(
+  ctx: EngineContext,
+  conversationId: string,
+  state: ConversationState,
+  boxes: ChatEpochs['boxes']
+): Promise<{ opened: number; needKeys: boolean }> {
+  const { found, needKeys } = openEpochKey(
+    ctx.keys.record,
+    ctx.userId,
+    conversationId,
+    state,
+    boxes
+  )
   if (found.size > 0) {
     await ctx.keys.update(start => {
       let next = start

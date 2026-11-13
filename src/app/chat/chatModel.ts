@@ -1,3 +1,4 @@
+import type { ChatContent } from '../../common/chatContent'
 import { lstrings } from '../locales/strings'
 import type { MessageView } from './engine/apply'
 import type {
@@ -12,6 +13,8 @@ import type {
  * grouped, who may start a conversation, what a message's ticks say, and
  * what a long press offers. Pure, so it is tested on its own.
  */
+
+type TextContent = Extract<ChatContent, { type: 'text' }>
 
 /** One heading of the chat list and its chats. */
 export interface ChatGroup {
@@ -97,10 +100,20 @@ export function messagePreview(message: MessageView | undefined): string {
       lost: lstrings.chat_lost_message,
       invalid: lstrings.chat_invalid_message
     }[message.status]
-  if (message.body !== '') return message.body
-  if (message.attachments.length > 1)
-    return `${message.attachments.length} ${lstrings.chat_attachments_label}`
-  const attachment = message.attachments[0]
+  return contentPreview(message)
+}
+
+/**
+ * A post's words, or what it holds when it has none: "Photo", "Video",
+ * "3 attachments", "File: name". For the list and for a push notification.
+ */
+export function contentPreview(
+  content: Pick<TextContent, 'body' | 'attachments'>
+): string {
+  if (content.body !== '') return content.body
+  if (content.attachments.length > 1)
+    return `${content.attachments.length} ${lstrings.chat_attachments_label}`
+  const attachment = content.attachments[0]
   if (attachment == null) return lstrings.chat_message_unavailable
   if (attachment.contentType.startsWith('image/'))
     return lstrings.chat_photo_label
