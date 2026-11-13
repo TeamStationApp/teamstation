@@ -539,7 +539,12 @@ export async function scheduleSetup(
           exhibitionTeams: teams.filter(team => team.exhibition).length,
           teams,
           saved: found.saved,
-          settings: found.settings
+          settings: found.settings,
+          seasonDates: {
+            startsOn:
+              calendarDateText(season.starts_on) ?? `${season.year}-01-01`,
+            endsOn: calendarDateText(season.ends_on) ?? `${season.year}-12-31`
+          }
         }
       })
     ),

@@ -310,6 +310,11 @@ describe('device scheduling persistence boundaries', () => {
           'legacy'
         ])
         expect(setup.seasons[0].settings.fieldIds).deep.equals(['fld_one'])
+        // The season's own dates, which bound windows copied into it.
+        expect(setup.seasons[0].seasonDates).deep.equals({
+          startsOn: '2027-03-01',
+          endsOn: '2027-06-30'
+        })
       }
     )
   })
