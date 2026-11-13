@@ -91,6 +91,7 @@ import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
 import { ChatBench } from './dev/chatBench'
 import { StandaloneField } from './field/StandaloneField'
+import { useForegroundEntry } from './hooks/useForegroundEntry'
 import { useForegroundRefresh } from './hooks/useForegroundRefresh'
 import { ScreenScopeProvider } from './hooks/useScreenScope'
 import { lstrings, sprintf } from './locales/strings'
@@ -158,7 +159,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
-import { pushDevice } from './platform/pushDevice'
+import { askWhenWanted, pushDevice } from './platform/pushDevice'
 import { useInsets } from './platform/safeArea'
 import { signInRequest } from './platform/signInRequest'
 import {
@@ -543,6 +544,11 @@ function Shell(props: AppProps): React.ReactElement {
   const initialUser = useRef(props.initialUser)
   /** The phone opened on its stored user, and the server has not yet agreed. */
   const sessionUnconfirmed = useRef(false)
+  /**
+   * Counts sign-ins and sign-outs (`rememberSession`), so a sign-out's late
+   * logout can tell that somebody has signed in since, and leaves them be.
+   */
+  const sessionTurn = useRef(0)
   const userSaved = useRef(onUser)
   userSaved.current = onUser
   const scoringSource = useMemo(() => new ServerScoringSource(client), [client])
@@ -570,6 +576,7 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const rememberSession = useCallback(
     (next: Session | undefined): void => {
+      sessionTurn.current++
       analytics?.identify(
         next?.user.id,
         next == null ? undefined : client.token
@@ -624,10 +631,28 @@ function Shell(props: AppProps): React.ReactElement {
     if (notificationUser == null) return
     pushDevice.sync(client, notificationUser).catch(() => undefined)
   }, [client, notificationUser])
+  // A phone not asked yet asks once either of its switches is on, at start,
+  // after a sign-in and each time it comes to the foreground; never on a
+  // timer, which would show the system's question twice a minute. A browser
+  // waits for the tap on Account's Allow notifications on this device. Either
+  // catches up at a foreground: allowed in its settings since the last look,
+  // with a register that failed, or with switches another tab changed, it
+  // registers again.
+  const askForNotifications = useCallback(async (): Promise<void> => {
+    if (notificationUser == null) return
+    await askWhenWanted(pushDevice, client, notificationUser)
+  }, [client, notificationUser])
+  useForegroundEntry(askForNotifications)
   // Until we have asked, we do not know whether anybody is signed in. Showing
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.
   const [askedAboutSession, setAskedAboutSession] = useState(false)
+  // Who is signed in, once that is known, and nobody after a sign-out or a
+  // refused session: what a phone posts on its own (a reminder, a DM it
+  // could not open in time) is shown only for them.
+  useEffect(() => {
+    if (askedAboutSession) pushDevice.signedIn(notificationUser)
+  }, [askedAboutSession, notificationUser])
   // Each list keeps its own filter. One value was how Videos, which opens on
   // Past, left Schedule on Past the next time it was opened.
   const [filters, setFilters] = useState<TabFilters>(() =>
@@ -709,12 +734,25 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /**
    * Sign Out, pressed: chat keeps this account's keys and the device stays
-   * linked. The server's session and the phone's queue file go.
+   * linked. The server's session and the phone's queue file go, and the
+   * device's push registration before the session, while it can still
+   * delete it; the device lets go of its push address whether or not the
+   * server hears, so no notification of this person's reaches it after.
+   * The delete and the letting go are given `RELEASE_TIMEOUT_MS` at most,
+   * together, so the logout is never held up for long. A logout that comes after somebody signed in
+   * again is not sent: it would end the new session, whose token or cookie
+   * the client now holds, and the old session expires on the server.
    */
   const signOutNow = (): void => {
     const finish = (): void => {
-      client.signOut().catch(() => undefined)
+      const releasing = pushDevice.release(client)
       leaveSession()
+      const left = sessionTurn.current
+      releasing
+        .finally(async () => {
+          if (sessionTurn.current === left) await client.signOut()
+        })
+        .catch(() => undefined)
     }
     releaseChat(keyStore)
       .finally(finish)
@@ -2385,6 +2423,7 @@ function Shell(props: AppProps): React.ReactElement {
               ? undefined
               : async () => {
                   await releaseChat(keyStore).catch(() => undefined)
+                  await pushDevice.release(client)
                   await client.signOut().catch(() => undefined)
                   client.token = undefined
                   rememberSession(undefined)

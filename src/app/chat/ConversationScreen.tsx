@@ -23,6 +23,12 @@ import { useBreakpoint } from '../components/useBreakpoint'
 import { edgeMarginRem } from '../layout/margins'
 import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
+import {
+  clearOnRead,
+  inForeground,
+  useActiveConversation,
+  watchForeground
+} from '../push/activeConversation'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { ChatFileOps } from './AttachmentView'
 import { ChatAttentionControl } from './ChatAttentionControl'
@@ -132,6 +138,14 @@ export interface ConversationScreenProps {
   draft?: ChatDraft
   draftOwner?: ChatDraftOwner
   onDraftChange?: (draft: ChatDraft) => void
+}
+
+/**
+ * Whether what is on screen can be read now: a visible page in a browser,
+ * and an app in the foreground on a phone.
+ */
+function readableNow(): boolean {
+  return readDocumentActive() && inForeground()
 }
 
 /** How often a chat not open yet is tried again, and how many times. */
@@ -464,8 +478,23 @@ export function ConversationScreen(
       mounted.current = false
     }
   }, [])
-  const [documentActive, setDocumentActive] = useState(readDocumentActive)
-  useEffect(() => watchReadDocumentActive(setDocumentActive), [])
+  const [documentActive, setDocumentActive] = useState(readableNow)
+  useEffect(() => {
+    const update = (): void => {
+      setDocumentActive(readableNow())
+    }
+    const stopDocument = watchReadDocumentActive(update)
+    const stopApp = watchForeground(update)
+    return () => {
+      stopDocument()
+      stopApp()
+    }
+  }, [])
+  // On screen in the foreground: this device shows no notification for it.
+  useActiveConversation(
+    conversationId,
+    props.active !== false && documentActive
+  )
   const [approvals, setApprovals] = useState<GrantApproval[]>([])
   const scroller = useRef<ChatHistoryHandle>(null)
   // Rows above the virtualized history: banners and the earlier-page control.
@@ -813,7 +842,7 @@ export function ConversationScreen(
       current == null ||
       attentionSession.current == null ||
       props.active === false ||
-      !readDocumentActive() ||
+      !readableNow() ||
       menu != null ||
       mentionChoosing != null ||
       reacting != null ||
@@ -823,7 +852,10 @@ export function ConversationScreen(
       return
     readRevision.current =
       current.conversation.preferences?.manualUnreadRevision ?? 0
-    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+    engine
+      .markRead(conversationId, readRevision.current)
+      .then(clearOnRead(conversationId))
+      .catch(() => undefined)
   }, [
     engine,
     conversationId,
@@ -1933,7 +1965,10 @@ export function ConversationScreen(
     )
       return
     if (newest === 0 && unread === 0 && !manualUnread) return
-    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+    engine
+      .markRead(conversationId, readRevision.current)
+      .then(clearOnRead(conversationId))
+      .catch(() => undefined)
   }, [
     engine,
     conversationId,
@@ -1957,10 +1992,13 @@ export function ConversationScreen(
     if (
       attentionSession.current == null ||
       !paneActive.current ||
-      !readDocumentActive()
+      !readableNow()
     )
       return
-    engine.markRead(conversationId, readRevision.current).catch(() => undefined)
+    engine
+      .markRead(conversationId, readRevision.current)
+      .then(clearOnRead(conversationId))
+      .catch(() => undefined)
   }, [props.readingSession, engine, conversationId])
 
   const lastAttentionOffset = useRef(scrolled.current.offset)
@@ -2305,9 +2343,10 @@ export function ConversationScreen(
     setText(next)
     readRevision.current =
       view.conversation.preferences?.manualUnreadRevision ?? 0
-    if (attentionSession.current != null && readDocumentActive())
+    if (attentionSession.current != null && readableNow())
       engine
         .markRead(conversationId, readRevision.current)
+        .then(clearOnRead(conversationId))
         .catch(() => undefined)
     if (next !== '' && view.composer === 'enabled') {
       engine.typing(conversationId)
@@ -3257,7 +3296,7 @@ export function ConversationScreen(
                 if (
                   attentionSession.current == null ||
                   props.active === false ||
-                  !readDocumentActive() ||
+                  !readableNow() ||
                   isRestoringPopupFocus()
                 )
                   return
@@ -3265,6 +3304,7 @@ export function ConversationScreen(
                   view.conversation.preferences?.manualUnreadRevision ?? 0
                 engine
                   .markRead(conversationId, readRevision.current)
+                  .then(clearOnRead(conversationId))
                   .catch(() => undefined)
               }}
               text={text}

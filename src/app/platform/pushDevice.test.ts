@@ -8,11 +8,13 @@ import {
   writeSwitches
 } from './notificationSwitches'
 import {
+  askWhenWanted,
   type BrowserPush,
   browserPushDevice,
   keyBytes,
   type PushClient,
   pushDevice,
+  type ReleaseClient,
   type WorkerContainer
 } from './pushDevice'
 import type { PushDeviceOptions } from './pushState'
@@ -109,20 +111,40 @@ function subscription(
 }
 
 /** `navigator.serviceWorker`, holding `held` until asked for a new one. */
-function workers(held?: ReturnType<typeof subscription>): WorkerContainer & {
+function workers(
+  held?: ReturnType<typeof subscription>,
+  shown: string[] = []
+): WorkerContainer & {
   registered: Array<{ url: string; scope: string }>
   subscribed: Array<{ userVisibleOnly: boolean; key: string }>
+  /** The tags of the notifications the worker shows. */
+  shown: string[]
 } {
+  // A subscription let go of is gone, as the browser's is.
+  const current = (): ReturnType<typeof subscription> | null =>
+    held == null || held.dropped ? null : held
   const container = {
     registered: [] as Array<{ url: string; scope: string }>,
     subscribed: [] as Array<{ userVisibleOnly: boolean; key: string }>,
+    shown,
+    getRegistration: async () => ({
+      getNotifications: async (filter: { tag: string }) =>
+        container.shown
+          .filter(tag => tag === filter.tag)
+          .map(tag => ({
+            close: () => {
+              container.shown.splice(container.shown.indexOf(tag), 1)
+            }
+          })),
+      pushManager: { getSubscription: async () => current() }
+    }),
     register: async (url: string, options: { scope: string }) => {
       container.registered.push({ url, scope: options.scope })
       return {}
     },
     ready: Promise.resolve({
       pushManager: {
-        getSubscription: async () => held ?? null,
+        getSubscription: async () => current(),
         subscribe: async (options: {
           userVisibleOnly: true
           applicationServerKey: Uint8Array
@@ -140,14 +162,20 @@ function workers(held?: ReturnType<typeof subscription>): WorkerContainer & {
   return container
 }
 
-/** The API: the server's key (null for none), and what was posted and patched. */
-function client(key: string | null = KEY): PushClient & {
-  posted: PushRegistration[]
-  patched: Array<[string, Partial<PushSwitches>]>
-} {
+/**
+ * The API: the server's key (null for none), and what was posted, patched
+ * and deleted.
+ */
+function client(key: string | null = KEY): PushClient &
+  ReleaseClient & {
+    posted: PushRegistration[]
+    patched: Array<[string, Partial<PushSwitches>]>
+    deleted: string[]
+  } {
   const api = {
     posted: [] as PushRegistration[],
     patched: [] as Array<[string, Partial<PushSwitches>]>,
+    deleted: [] as string[],
     webPushKey: async () => key,
     registerPush: async (registration: PushRegistration) => {
       api.posted.push(registration)
@@ -156,6 +184,9 @@ function client(key: string | null = KEY): PushClient & {
     updatePush: async (id: string, change: Partial<PushSwitches>) => {
       api.patched.push([id, change])
       return { ...OFF, ...change }
+    },
+    unregisterPush: async (id: string) => {
+      api.deleted.push(id)
     }
   }
   return api
@@ -336,6 +367,39 @@ describe('notifications in a browser', function () {
     expect(container.registered).deep.equals([])
   })
 
+  it('asks a server without Web Push again only at the next start or sign-in, or with other switches', async function () {
+    const api = client(null)
+    let asked = 0
+    api.webPushKey = async () => {
+      asked++
+      return null
+    }
+    const storage = memory()
+    const device = await browserDevice(
+      {
+        notification: () => notification('granted', 'granted'),
+        workers: () => workers()
+      },
+      ON,
+      storage
+    )
+    await device.sync(api, U)
+    expect(asked).equals(1)
+    // Each foreground finds the same switches: nothing to ask again.
+    await askWhenWanted(device, api, U)
+    await askWhenWanted(device, api, U)
+    expect(asked).equals(1)
+    // Another tab changed them: worth one more look.
+    await writeSwitches(U, OFF, storage)
+    await askWhenWanted(device, api, U)
+    await askWhenWanted(device, api, U)
+    expect(asked).equals(2)
+    // The next start or sign-in asks again.
+    await device.sync(api, U)
+    expect(asked).equals(3)
+    expect(api.posted).deep.equals([])
+  })
+
   it('answers the permission when registering fails', async function () {
     const failing = client()
     failing.registerPush = async () => {
@@ -349,6 +413,18 @@ describe('notifications in a browser', function () {
         })
       ).sync(failing, U)
     ).equals('granted')
+  })
+
+  it('never asks on its own: a browser asks only from a tap', async function () {
+    const api = notification('default', 'granted')
+    const device = await browserDevice(
+      { notification: () => api, workers: () => workers() },
+      { messages: true, rsvpEvents: true }
+    )
+    const on = client()
+    expect(await askWhenWanted(device, on, U)).equals('prompt')
+    expect(api.asked).equals(0)
+    expect(on.posted).deep.equals([])
   })
 
   it('keeps the switches it is given, a change at a time, for each person on their own', async function () {
@@ -561,7 +637,7 @@ describe('notifications in a browser', function () {
     expect(api.order).deep.equals(['post false false', 'patch false false'])
   })
 
-  it('tries a register that failed again after a while, until the server has the switches', async function () {
+  it('tries a register that failed again, after a while and at the next foreground, until the server has the switches', async function () {
     const container = workers()
     const api = client()
     let offline = true
@@ -585,25 +661,55 @@ describe('notifications in a browser', function () {
     offline = false
     await wait(30)
     expect(api.posted.map(row => row.messages)).deep.equals([true])
-    // A patch and its post both failing: tried again after a while.
+    // A patch and its post both failing: tried once more after a while,
+    // still offline, and then left to the next foreground.
     offline = true
     api.updatePush = async () => {
       throw new Error('offline')
     }
     await device.setSwitches(api, U, { rsvpEvents: true })
-    offline = false
     await wait(30)
+    expect(api.posted).lengthOf(1)
+    offline = false
+    expect(await askWhenWanted(device, api, U)).equals('granted')
     expect(api.posted[1]).deep.include({ messages: true, rsvpEvents: true })
+    // Caught up, a foreground posts nothing more.
+    await askWhenWanted(device, api, U)
+    expect(api.posted).lengthOf(2)
   })
 
-  it('builds a change on what another tab stored', async function () {
+  it('registers a browser allowed in its settings after it was refused, at the next foreground', async function () {
+    const browser = notification('denied', 'granted')
+    const api = client()
+    const device = await browserDevice(
+      { notification: () => browser, workers: () => workers() },
+      { messages: true, rsvpEvents: true }
+    )
+    await device.sync(api, U)
+    expect(await askWhenWanted(device, api, U)).equals('denied')
+    expect(api.posted).deep.equals([])
+    // Allowed in the site's settings: the next foreground registers it,
+    // once, with the switches.
+    browser.permission = 'granted'
+    expect(await askWhenWanted(device, api, U)).equals('granted')
+    await askWhenWanted(device, api, U)
+    expect(api.posted.map(row => [row.messages, row.rsvpEvents])).deep.equals([
+      [true, true]
+    ])
+  })
+
+  it('builds on what another tab stored, and posts it at a foreground when the server has older switches', async function () {
     // Two tabs share one storage, one subscription and so one registration.
     const storage = memory()
-    const server = { switches: OFF }
+    const server = {
+      switches: OFF,
+      posted: [] as NotificationSwitches[]
+    }
     const tabClient = (): ReturnType<typeof client> => {
       const api = client()
       api.registerPush = async ({ messages, rsvpEvents }) => {
         server.switches = { messages, rsvpEvents }
+        server.posted.push(server.switches)
         return 'psh_1'
       }
       api.updatePush = async (id, change) => {
@@ -629,6 +735,265 @@ describe('notifications in a browser', function () {
     expect(await b.setSwitches(inB, U, { rsvpEvents: false })).deep.equals(OFF)
     expect(server.switches).deep.equals(OFF)
     expect(await readSwitches(U, storage)).deep.equals(OFF)
+    // A turns one on again. B last gave the server older switches than are
+    // stored, so at its next foreground it posts what is stored; A, in step,
+    // posts nothing.
+    await a.setSwitches(inA, U, { rsvpEvents: true })
+    const posts = server.posted.length
+    await askWhenWanted(a, inA, U)
+    expect(server.posted.length).equals(posts)
+    await askWhenWanted(b, inB, U)
+    expect(server.posted.slice(posts)).deep.equals([
+      { messages: false, rsvpEvents: true }
+    ])
+  })
+
+  it('closes a read conversation’s notifications, and leaves the rest to the worker', async function () {
+    const container = workers(undefined, [
+      'chat:cnv_1',
+      'chat:cnv_2',
+      'event:gam_1'
+    ])
+    const device = await browserDevice({
+      notification: () => notification('granted', 'granted'),
+      workers: () => container
+    })
+    // The worker looks at its windows itself.
+    device.setActiveConversation('cnv_1')
+    await device.clearConversation('cnv_1')
+    expect(container.shown).deep.equals(['chat:cnv_2', 'event:gam_1'])
+    // No worker, or one that fails, clears nothing and says nothing.
+    await (
+      await browserDevice({
+        notification: () => undefined,
+        workers: () => undefined
+      })
+    ).clearConversation('cnv_2')
+    container.getRegistration = async () => {
+      throw new Error('No worker yet')
+    }
+    await device.clearConversation('cnv_2')
+    expect(container.shown).deep.equals(['chat:cnv_2', 'event:gam_1'])
+  })
+
+  it('deletes its registration at sign-out and unsubscribes, the server answering or not', async function () {
+    const held = subscription('https://fcm.googleapis.com/fcm/send/held')
+    const container = workers(held)
+    const api = client()
+    const device = await browserDevice({
+      notification: () => notification('granted', 'granted'),
+      workers: () => container
+    })
+    await device.sync(api, U)
+    await device.release(api)
+    expect(api.deleted).deep.equals(['psh_1'])
+    expect(held.dropped).equals(true)
+    // Released already: nothing more to delete.
+    await device.release(api)
+    expect(api.deleted).deep.equals(['psh_1'])
+
+    // Signed in again, then out with the server away (the logout fails as
+    // the delete does): the browser lets go of its subscription anyway.
+    const subscribed = subscription('https://fcm.googleapis.com/fcm/send/again')
+    const again = workers(subscribed)
+    const offline = client()
+    offline.unregisterPush = async () => {
+      throw new Error('offline')
+    }
+    const browser = await browserDevice({
+      notification: () => notification('granted', 'granted'),
+      workers: () => again
+    })
+    await browser.sync(offline, U)
+    await browser.release(offline)
+    expect(subscribed.dropped).equals(true)
+
+    // A registration that never went through leaves only the subscription
+    // to drop, and a browser without workers nothing; neither throws.
+    const failing = client()
+    failing.registerPush = async () => {
+      throw new Error('offline')
+    }
+    const unregistered = workers()
+    const never = await browserDevice({
+      notification: () => notification('granted', 'granted'),
+      workers: () => unregistered
+    })
+    await never.sync(failing, U)
+    await never.release(failing)
+    expect(failing.deleted).deep.equals([])
+    await (
+      await browserDevice({
+        notification: () => undefined,
+        workers: () => undefined
+      })
+    ).release(failing)
+    unregistered.getRegistration = async () => {
+      throw new Error('No worker yet')
+    }
+    await never.release(failing)
+  })
+
+  it('lets go at sign-out at once, deletes the registration a change on its way made once it lands, and posts nothing asked for before', async function () {
+    const api = heldClient()
+    const held = subscription('https://fcm.googleapis.com/fcm/send/x')
+    const device = await browserDevice(
+      {
+        notification: () => notification('granted', 'granted'),
+        workers: () => workers(held)
+      },
+      undefined,
+      memory(),
+      { releaseTimeoutMs: 50 }
+    )
+    const changing = device.setSwitches(api, U, ON)
+    while (api.order.length === 0) await wait()
+    // Asked for before the sign-out, behind the change on its way.
+    const syncing = device.sync(api, U)
+    const releasing = device.release(api)
+    await wait()
+    // The subscription goes at once, the post still unanswered.
+    expect(held.dropped).equals(true)
+    await api.answerNext()
+    await changing
+    await syncing
+    await releasing
+    expect(api.order).deep.equals(['post true false'])
+    expect(api.deleted).deep.equals(['psh_1'])
+  })
+
+  it('lets go at sign-out within its bound when a request ahead of it never answers', async function () {
+    // A switch change on a stalled link: its post never comes back.
+    const api = client()
+    api.registerPush = async () => await new Promise<string>(() => {})
+    const held = subscription('https://fcm.googleapis.com/fcm/send/x')
+    const device = await browserDevice(
+      {
+        notification: () => notification('granted', 'granted'),
+        workers: () => workers(held)
+      },
+      undefined,
+      memory(),
+      { releaseTimeoutMs: 20 }
+    )
+    device.setSwitches(api, U, ON).catch(() => undefined)
+    await wait(5)
+    const started = Date.now()
+    await device.release(api)
+    expect(Date.now() - started).lessThan(1000)
+    expect(held.dropped).equals(true)
+  })
+
+  /**
+   * A browser holding a subscription whose unsubscribing waits for
+   * `letGo`, with a bound of its own, and an API whose delete never answers.
+   */
+  async function slowBrowser(): Promise<{
+    device: ReturnType<typeof browserPushDevice>
+    container: ReturnType<typeof workers>
+    held: ReturnType<typeof subscription>
+    api: ReturnType<typeof client>
+    hanging: ReturnType<typeof client>
+    letGo: () => void
+  }> {
+    const held = subscription('https://fcm.googleapis.com/fcm/send/held')
+    const container = workers(held)
+    const waiting: Array<() => void> = []
+    held.unsubscribe = async () => {
+      await new Promise<void>(resolve => {
+        waiting.push(resolve)
+      })
+      held.dropped = true
+      return true
+    }
+    const hanging = client()
+    hanging.unregisterPush = async () => {
+      await new Promise<void>(() => {})
+    }
+    return {
+      device: await browserDevice(
+        {
+          notification: () => notification('granted', 'granted'),
+          workers: () => container
+        },
+        undefined,
+        memory(),
+        { releaseTimeoutMs: 20 }
+      ),
+      container,
+      held,
+      api: client(),
+      hanging,
+      letGo: () => {
+        for (const resolve of waiting.splice(0)) resolve()
+      }
+    }
+  }
+
+  it('waits for a hanging delete and a hanging unsubscribe only so long, and a sign-in registers then and again once it is let go', async function () {
+    const { device, container, held, api, hanging, letGo } = await slowBrowser()
+    await device.sync(api, U)
+    expect(api.posted).length(1)
+    const started = Date.now()
+    let released = false
+    const releasing = device.release(hanging).then(() => {
+      released = true
+    })
+    // Signed in again at once: nothing registers within the bound.
+    const syncing = device.sync(api, U)
+    await wait(5)
+    expect(api.posted).length(1)
+    // Past it, sign-out is over (its logout goes), and the sign-in has
+    // registered the subscription the browser still holds.
+    await wait(40)
+    expect(released).equals(true)
+    await releasing
+    await syncing
+    expect(Date.now() - started).lessThan(1000)
+    expect(api.posted).length(2)
+    expect(held.dropped).equals(false)
+    // The late unsubscribe took it down: a new one is made and registered.
+    letGo()
+    await wait(5)
+    expect(held.dropped).equals(true)
+    expect(container.subscribed).length(1)
+    expect(api.posted).length(3)
+    expect(JSON.parse(api.posted[2].address)).property(
+      'endpoint',
+      'https://fcm.googleapis.com/fcm/send/new'
+    )
+  })
+
+  it('registers a sign-in after an unsubscribe that never settles, and nothing after a later sign-out', async function () {
+    const { device, container, api, hanging, letGo } = await slowBrowser()
+    await device.sync(api, U)
+    const started = Date.now()
+    await device.release(hanging)
+    expect(Date.now() - started).lessThan(1000)
+    await device.sync(api, U)
+    expect(api.posted).length(2)
+    // Signed out again before the first unsubscribe settles: nothing
+    // registers after either.
+    await device.release(hanging)
+    letGo()
+    await wait(5)
+    expect(api.posted).length(2)
+    expect(container.subscribed).length(0)
+  })
+
+  it('registers once only after an unsubscribe that settles within the bound', async function () {
+    const { device, container, api, hanging, letGo } = await slowBrowser()
+    await device.sync(api, U)
+    const releasing = device.release(hanging)
+    const syncing = device.sync(api, U)
+    await wait(5)
+    letGo()
+    await releasing
+    await syncing
+    await wait(5)
+    // Registered after the unsubscribe, which can no longer take it down.
+    expect(container.subscribed).length(1)
+    expect(api.posted).length(2)
   })
 
   it('reads a base64url key into its bytes', function () {

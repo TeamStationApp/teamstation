@@ -17,12 +17,8 @@ import type { StoredUser } from '../platform/storedUser'
 import { openDocumentCache } from '../sync/cache'
 import { getTheme } from '../theme/ThemeContext'
 import { apiBaseUrl, appOrigin, setLaunchApiBaseUrl } from './config'
-import {
-  apiBaseFor,
-  loadServerOverride,
-  saveServerOverride,
-  serverLinkOf
-} from './serverOverride'
+import { launchApi } from './launchApi'
+import { saveServerOverride, serverLinkOf } from './serverOverride'
 
 /**
  * A develop build's `teamstation-develop://server?origin=…` link keeps the
@@ -86,16 +82,15 @@ export function Root(): React.ReactElement {
     const settle = async (): Promise<void> => {
       // Both at once: neither waits on the other, and a slow storage read
       // should not hold up an address that is already in hand.
-      const [url, token, user, override] = await Promise.all([
+      const [url, token, user, api] = await Promise.all([
         Linking.getInitialURL().catch(() => null),
         loadToken(),
         loadUser(),
-        loadServerOverride(deviceStorage, appOrigin)
+        launchApi()
       ])
       if (!live) return
       // A server link is kept for the next launch, not opened as a route.
       seedRoute(keepServerLink(url) ? null : (url ?? null))
-      const api = apiBaseFor(override, apiBaseUrl)
       setLaunchApiBaseUrl(api)
       setOpened({ token, user, api })
     }

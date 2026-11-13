@@ -1,12 +1,19 @@
+import { chatTag } from '../../common/push'
 import type { NotificationSwitches } from './notificationSwitches'
 import {
   type PushClient,
   type PushDevice,
   type PushDeviceOptions,
+  type PushState,
   sharedPushDevice
 } from './pushState'
 
-export type { PushClient, PushDevice, PushState } from './pushState'
+export type {
+  PushClient,
+  PushDevice,
+  PushState,
+  ReleaseClient
+} from './pushState'
 
 /** The part of the browser's `Notification` this reads. */
 interface NotificationApi {
@@ -21,9 +28,18 @@ interface Subscription {
   unsubscribe: () => Promise<boolean>
 }
 
+/** The part of a `ServiceWorkerRegistration` clearing and releasing read. */
+interface WorkerRegistration {
+  getNotifications: (filter: {
+    tag: string
+  }) => Promise<ReadonlyArray<{ close: () => void }>>
+  pushManager: { getSubscription: () => Promise<Subscription | null> }
+}
+
 /** The part of the browser's `ServiceWorkerContainer` this uses. */
 export interface WorkerContainer {
   register: (url: string, options: { scope: string }) => Promise<unknown>
+  getRegistration: () => Promise<WorkerRegistration | undefined>
   ready: Promise<{
     pushManager: {
       getSubscription: () => Promise<Subscription | null>
@@ -96,6 +112,16 @@ export async function registerBrowser(
 }
 
 /**
+ * Lets go of this browser's push subscription, so its endpoint wakes it no
+ * more whatever the server still holds.
+ */
+async function unsubscribe(workers: WorkerContainer): Promise<void> {
+  const registration = await workers.getRegistration()
+  const subscription = await registration?.pushManager.getSubscription()
+  await subscription?.unsubscribe()
+}
+
+/**
  * A browser's notifications (`sharedPushDevice`). The browser asks the
  * person only in answer to a click, so `enable` is called from one; a
  * browser without `Notification` cannot show any, and one without service
@@ -130,10 +156,44 @@ export function browserPushDevice(
         return workers == null
           ? undefined
           : await registerBrowser(workers, client, switches)
-      }
+      },
+      letGo: async () => {
+        const workers = browser.workers()
+        if (workers != null) await unsubscribe(workers)
+      },
+      // The service worker sees which conversation a focused window shows.
+      setActiveConversation: () => undefined,
+      clearConversation: async conversationId => {
+        const tag = chatTag(conversationId)
+        try {
+          const registration = await browser.workers()?.getRegistration()
+          for (const shown of (await registration?.getNotifications({
+            tag
+          })) ?? [])
+            shown.close()
+        } catch {
+          // Nothing shown here, or no worker yet.
+        }
+      },
+      // The service worker asks the server who is signed in (`forWhoIsHere`).
+      signedIn: () => undefined
     },
     options
   )
+}
+
+/**
+ * A browser never asks on its own: it may ask only from a tap, so Account
+ * offers Allow notifications on this device instead. At a foreground it
+ * catches up: allowed since it was last looked at, or with a register that
+ * failed or switches another tab changed, it registers again.
+ */
+export async function askWhenWanted(
+  device: PushDevice,
+  client: PushClient,
+  userId: string
+): Promise<PushState> {
+  return await device.catchUp(client, userId)
 }
 
 export const pushDevice = browserPushDevice()
