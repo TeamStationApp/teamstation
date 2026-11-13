@@ -34,17 +34,34 @@ export interface StatsBuilderSupervisor {
   stop: (signal?: NodeJS.Signals | string) => Promise<void>
 }
 
+/** Forks the stats builder (`start.ts`) and keeps one running (`supervise`). */
+export function superviseStatsBuilder(
+  options: SuperviseStatsBuilderOptions
+): StatsBuilderSupervisor {
+  return supervise({
+    ...options,
+    modulePath: require.resolve('./start'),
+    name: 'stats builder'
+  })
+}
+
+export interface SuperviseOptions extends SuperviseStatsBuilderOptions {
+  /** The child's entry file. */
+  modulePath: string
+  /** What its log lines call it. */
+  name: string
+}
+
 /**
- * Forks the stats builder and keeps one running until asked to stop.
+ * Forks `modulePath` and keeps one running until asked to stop: the stats
+ * builder, and the push sender (`push/sender/start.ts`).
  *
  * A death it did not ask for is logged and followed by another fork after a
  * delay that starts at 1 s and doubles to 60 s. A child that has lived 60 s
  * resets that delay to 1 s. `stop` sends the signal, waits for the exit, and
  * SIGKILLs after 5 s; a second `stop` returns the same promise.
  */
-export function superviseStatsBuilder(
-  options: SuperviseStatsBuilderOptions
-): StatsBuilderSupervisor {
+export function supervise(options: SuperviseOptions): StatsBuilderSupervisor {
   const setTimer = options.setTimeout ?? setTimeout
   const clearTimer = options.clearTimeout ?? clearTimeout
 
@@ -59,8 +76,7 @@ export function superviseStatsBuilder(
 
   const spawn = (): void => {
     if (stopping) return
-    const modulePath = require.resolve('./start')
-    child = options.fork(modulePath, [], {
+    child = options.fork(options.modulePath, [], {
       execArgv: process.execArgv,
       stdio: 'inherit'
     })
@@ -83,7 +99,7 @@ export function superviseStatsBuilder(
       if (livedMs >= LIFE_RESET_MS) delayMs = INITIAL_DELAY_MS
       const waitMs = delayMs
       options.log(
-        `stats builder: exited (${signal ?? code}), restarting in ${
+        `${options.name}: exited (${signal ?? code}), restarting in ${
           waitMs / 1000
         }s`
       )

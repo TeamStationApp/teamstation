@@ -1793,7 +1793,8 @@ export interface Database {
 }
 
 /** The kinds of long-running process, each with its own size of pool. */
-export type DatabaseRole = 'worker' | 'primary' | 'statsBuilder' | 'ingest'
+export type DatabaseRole =
+  'worker' | 'primary' | 'statsBuilder' | 'ingest' | 'pushSender'
 
 export interface PoolOptions {
   role?: DatabaseRole

@@ -1634,6 +1634,134 @@ export async function mayViewFullNames(
 }
 
 /**
+ * Which of these readers may **see** this one person's full name: each
+ * reader's own `mayViewFullNames` of that person, asked the other way round
+ * so that many readers take a fixed number of queries, not a set each. The
+ * person's rows, the teams they play on, their open adds and the levels whose
+ * people lists hold them are read once; the readers' rows, guardian and family
+ * links, standing and roles are read for all of them together.
+ */
+export async function mayViewFullNameOf(
+  db: Kysely<Database>,
+  userId: string,
+  readers: ReadonlyArray<{ userId: string; isAdmin: boolean }>
+): Promise<Set<string>> {
+  const allowed = new Set<string>()
+  // `nameAuthority`: a site admin, and the person themself.
+  for (const reader of readers)
+    if (reader.isAdmin || reader.userId === userId) allowed.add(reader.userId)
+  let rest = [
+    ...new Set(
+      readers.map(reader => reader.userId).filter(id => !allowed.has(id))
+    )
+  ]
+  if (rest.length === 0) return allowed
+  const gathered = await onePeople(db, [userId, ...rest])
+  const person = gathered.get(userId)!
+  const rowsOf = (id: string): string[] => gathered.get(id)?.userIds ?? [id]
+  // Another of their own rows, or a guardian or family of one of them.
+  for (const id of rest) if (person.userIds.includes(id)) allowed.add(id)
+  rest = rest.filter(id => !allowed.has(id))
+  if (rest.length === 0) return allowed
+  const linked = new Set(
+    (
+      await db
+        .selectFrom('user_links')
+        .select('user_id')
+        .where('related_user_id', '=', anyOf(person.userIds))
+        .where('kind', 'in', ['guardian', 'family'])
+        .where('user_id', '=', anyOf(rest.flatMap(rowsOf)))
+        .execute()
+    ).map(row => row.user_id)
+  )
+  for (const id of rest)
+    if (rowsOf(id).some(row => linked.has(row))) allowed.add(id)
+  rest = rest.filter(id => !allowed.has(id))
+  if (rest.length === 0) return allowed
+
+  const roles = await roleScopesForUsers(db, rest)
+  // Staff of a team the person plays on, unless an open add alone holds them
+  // there.
+  const plays = await db
+    .selectFrom('memberships')
+    .select('team_id')
+    .where('user_id', '=', anyOf(person.userIds))
+    .where('is_player', '=', true)
+    .execute()
+  const playTeams = [...new Set(plays.map(play => play.team_id))]
+  const held = await openAddsOf(db, playTeams)
+  const settled = new Set(
+    playTeams.filter(
+      team => !person.userIds.some(row => held.get(team)?.has(row) === true)
+    )
+  )
+  for (const id of rest)
+    if (
+      (['admin', 'coach', 'assistant', 'scorekeeper'] as const).some(role =>
+        [...roles.get(id)![role].teamIds].some(team => settled.has(team))
+      )
+    )
+      allowed.add(id)
+  rest = rest.filter(id => !allowed.has(id))
+  if (rest.length === 0) return allowed
+
+  // `mayViewFullNames`: managers of a level whose people list holds them, if
+  // their own account stands.
+  const standing = new Set(
+    (
+      await db
+        .selectFrom('users')
+        .select('id')
+        .where('id', '=', anyOf(rest))
+        .where('disabled_at', 'is', null)
+        .where('merged_into', 'is', null)
+        .where('login_enabled', '=', true)
+        .execute()
+    ).map(row => row.id)
+  )
+  const manages = new Map<string, ScopeSet>()
+  for (const id of rest) {
+    if (!standing.has(id)) continue
+    const scopes = emptyScopes()
+    for (const role of ['admin', 'coach', 'assistant'] as const)
+      for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const)
+        for (const level of roles.get(id)![role][key]) scopes[key].add(level)
+    if (
+      scopes.leagueIds.size > 0 ||
+      scopes.seasonIds.size > 0 ||
+      scopes.teamIds.size > 0
+    )
+      manages.set(id, scopes)
+  }
+  if (manages.size === 0) return allowed
+  const level = (
+    await peopleListLevels(db, [userId], new Map([[userId, person]]))
+  ).get(userId)!
+  const external = await externalCustodians(db, [...level.teamIds])
+  for (const [id, scopes] of manages) {
+    const admin = roles.get(id)!.admin
+    const administers = (custodian: Custodian): boolean =>
+      custodian.type === 'league'
+        ? admin.leagueIds.has(custodian.id)
+        : custodian.type === 'season'
+          ? admin.seasonIds.has(custodian.id)
+          : admin.teamIds.has(custodian.id)
+    if (
+      [...level.leagueIds].some(league => scopes.leagueIds.has(league)) ||
+      [...level.seasonIds].some(season => scopes.seasonIds.has(season)) ||
+      [...level.teamIds].some(team => {
+        if (scopes.teamIds.has(team)) return true
+        const custodian = external.get(team)
+        return custodian != null && administers(custodian)
+      }) ||
+      [...level.umpireLeagueIds].some(league => admin.leagueIds.has(league))
+    )
+      allowed.add(id)
+  }
+  return allowed
+}
+
+/**
  * Everybody this reader might read in full (`mayViewFullNames`), and maybe
  * more, but never fewer: what a search over every account narrows to before
  * it asks, so that the asking is bounded by the reader's own reach and not

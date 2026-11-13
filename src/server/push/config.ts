@@ -18,7 +18,15 @@ export interface PushSettings {
   iosFiltering: boolean
   /** Where the log transport writes, or null for none. */
   logFile: string | null
+  /** How long a chat post waits before its wakes are sent. */
+  chatHoldSeconds: number
 }
+
+/**
+ * How long a chat post waits before it wakes anybody: time for a member
+ * who has the conversation open to read it, and not be notified of it.
+ */
+export const CHAT_HOLD_SECONDS = 15
 
 /** The section when every one of its values is there, and otherwise null. */
 function complete<T extends Record<string, string>>(
@@ -37,7 +45,8 @@ export function pushSettings(config: Pick<ServerConfig, 'push'>): PushSettings {
     fcm: complete(push?.fcm),
     webPush: complete(push?.webPush),
     iosFiltering: push?.iosFiltering ?? false,
-    logFile: push?.logFile == null || push.logFile === '' ? null : push.logFile
+    logFile: push?.logFile == null || push.logFile === '' ? null : push.logFile,
+    chatHoldSeconds: Math.max(0, push?.chatHoldSeconds ?? CHAT_HOLD_SECONDS)
   }
 }
 

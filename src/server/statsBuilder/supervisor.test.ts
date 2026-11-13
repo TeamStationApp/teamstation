@@ -3,6 +3,7 @@ import { describe, it } from 'mocha'
 
 import {
   type ForkFn,
+  supervise,
   type SupervisedChild,
   superviseStatsBuilder
 } from './supervisor'
@@ -219,5 +220,33 @@ describe('superviseStatsBuilder', function () {
     harness.children[0].exit(1, null)
     // Mid-restart delay: no live child.
     await supervisor.stop('SIGTERM')
+  })
+})
+
+describe('supervise', function () {
+  it('forks the named child and calls it by its name when it dies', async function () {
+    const harness = makeHarness()
+    const supervisor = supervise({
+      fork: harness.fork,
+      log: message => harness.logs.push(message),
+      clock: harness.clock,
+      setTimeout: harness.setTimeout,
+      clearTimeout: harness.clearTimeout,
+      modulePath: '/var/app/push/sender/start.js',
+      name: 'push sender'
+    })
+    expect(harness.forks.map(fork => fork.modulePath)).deep.equals([
+      '/var/app/push/sender/start.js'
+    ])
+    harness.children[0].exit(1, null)
+    expect(harness.logs).deep.equals([
+      'push sender: exited (1), restarting in 1s'
+    ])
+    harness.advance(1000)
+    expect(harness.forks).length(2)
+    const stopped = supervisor.stop('SIGTERM')
+    expect(harness.children[1].signal).equals('SIGTERM')
+    harness.children[1].exit(0, 'SIGTERM')
+    await stopped
   })
 })

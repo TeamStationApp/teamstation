@@ -114,9 +114,16 @@ export const asServerConfig = asObject({
       worker: asOptional(asNumber, 10),
       primary: asOptional(asNumber, 3),
       statsBuilder: asOptional(asNumber, 3),
-      ingest: asOptional(asNumber, 3)
+      ingest: asOptional(asNumber, 3),
+      pushSender: asOptional(asNumber, 3)
     }),
-    () => ({ worker: 10, primary: 3, statsBuilder: 3, ingest: 3 })
+    () => ({
+      worker: 10,
+      primary: 3,
+      statsBuilder: 3,
+      ingest: 3,
+      pushSender: 3
+    })
   ),
 
   /**
@@ -416,6 +423,9 @@ export const asServerConfig = asObject({
    * messages then go to iPhones as alerts the app may hide, rather than as
    * background pushes. `logFile` also writes every message, one JSON line
    * each, for a development seat or an end-to-end test to replay.
+   * `chatHoldSeconds` is how long a chat post waits before it wakes anybody,
+   * so a member who reads it in the app meanwhile is not notified; an
+   * end-to-end stack sets it low.
    */
   push: asOptional(
     asObject({
@@ -442,7 +452,8 @@ export const asServerConfig = asObject({
         })
       ),
       iosFiltering: asOptional(asBoolean, false),
-      logFile: asOptional(asString, '')
+      logFile: asOptional(asString, ''),
+      chatHoldSeconds: asOptional(asNumber, 15)
     })
   ),
 
