@@ -518,6 +518,49 @@ describe('scheduling setup routes', function () {
     expect(await chosen.text()).includes('Choose fields that exist')
   })
 
+  it('takes a field removed from the list off every season of the league, keeping the league’s own', async () => {
+    const path = `/leagues/${f.leagueA}/schedule-setup`
+    const added = await venue('ven_added', null)
+    const own = await venue('ven_mine', f.leagueA)
+    await json(
+      await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [], fieldIds: [], addedFieldIds: [added, own] },
+        101
+      )
+    )
+    const settingsPath = (season: string): string =>
+      `/seasons/${season}/schedule-settings`
+    for (const season of [f.seasonA, f.playoffs]) {
+      const { settings } = await json<SeasonScheduleSettings>(
+        await f.h.request('GET', settingsPath(season), undefined, 101)
+      )
+      await json(
+        await f.h.request(
+          'PUT',
+          settingsPath(season),
+          { ...settings, fieldIds: [added, own] },
+          101
+        )
+      )
+    }
+    await json(
+      await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [], fieldIds: [], addedFieldIds: [] },
+        101
+      )
+    )
+    for (const season of [f.seasonA, f.playoffs]) {
+      const { settings } = await json<SeasonScheduleSettings>(
+        await f.h.request('GET', settingsPath(season), undefined, 101)
+      )
+      expect(settings.fieldIds).deep.equals([own])
+    }
+  })
+
   it('saves only the constraint after another administrator changes the run', async () => {
     const path = `/leagues/${f.leagueA}/schedule-setup`
     const field = await venue('new-selection', f.leagueA)

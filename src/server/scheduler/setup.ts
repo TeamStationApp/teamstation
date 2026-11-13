@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import { type Kysely, sql } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
 import { calendarDateText } from '../../common/groupCreation'
@@ -542,6 +542,45 @@ export async function saveScheduleSetup(
   )
   if (choice.fieldIds?.some(id => !live.has(id)) === true)
     throw badRequest('Choose fields that exist')
+  // A field taken off the list is no season's any more, so no other season
+  // keeps scheduling on a field the setup no longer shows. A field of the
+  // league's own venues stays listed, and stays chosen.
+  if (choice.addedFieldIds != null) {
+    const before = await db
+      .selectFrom('league_schedule_setups')
+      .select('added_field_ids')
+      .where('league_id', '=', leagueId)
+      .executeTakeFirst()
+    const removed = (before?.added_field_ids ?? []).filter(
+      id => !choice.addedFieldIds!.includes(id)
+    )
+    const owned = await ownedVenueIds(db, leagueId, clock)
+    const dropped =
+      removed.length === 0
+        ? []
+        : (
+            await db
+              .selectFrom('venue_fields')
+              .select(['id', 'venue_id'])
+              .where('id', 'in', removed)
+              .execute()
+          )
+            .filter(field => !owned.includes(field.venue_id))
+            .map(field => field.id)
+    for (const id of dropped)
+      await db
+        .updateTable('season_schedule_settings')
+        .set({ field_ids: sql<string[]>`array_remove(field_ids, ${id})` })
+        .where(
+          'season_id',
+          'in',
+          db
+            .selectFrom('seasons')
+            .select('id')
+            .where('league_id', '=', leagueId)
+        )
+        .execute()
+  }
   const values = {
     ...(choice.seasonIds == null
       ? {}
