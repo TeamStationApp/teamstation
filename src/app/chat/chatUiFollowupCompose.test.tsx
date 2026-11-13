@@ -1615,6 +1615,26 @@ describe('chat conversation shared file preparation and sending', function () {
     expect(drafts.get('cnv_solstice')?.text).equals('Other draft')
   })
 
+  for (const [first, other] of [
+    ['Cancel reply', 'Remove notes.pdf'],
+    ['Remove notes.pdf', 'Cancel reply']
+  ])
+    it(`keeps the rest of a restored reply draft with a file after ${first}`, async function () {
+      await screen(new FakeEngine(), {
+        draft: {
+          text: 'Caption',
+          picked: [prepared()],
+          scrollOffset: 0,
+          replyTo: message({
+            senderName: 'Shohei Ohtani',
+            body: 'Original body'
+          })
+        }
+      })
+      await press(first)
+      expect(document.querySelector(`[aria-label="${other}"]`)).not.equals(null)
+    })
+
   it('retains a reply draft and prepared files on failed Enter sending and clears only after success', async function () {
     const engine = new FakeEngine()
     engine.failSend = true
