@@ -13,7 +13,6 @@ import NodeSocket from 'ws'
 
 import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import {
-  dropRunner,
   installSceneProbe,
   placeFielder,
   puppeteerDriver,
@@ -69,8 +68,9 @@ const trace = (step: string): void => {
 
 interface Fixture {
   games: string[]
-  away: number[]
-  home: number[]
+  /** The players' user ids, as `scoring-game` prints them (develop b9f65cb37). */
+  away: string[]
+  home: string[]
 }
 function scoringGame(games = 1): Fixture {
   const out = execFileSync(
@@ -105,8 +105,8 @@ function scoringGame(games = 1): Fixture {
     )
   return {
     games: value('GAME_ID'),
-    away: value('AWAY')[0].split(',').map(Number),
-    home: value('HOME')[0].split(',').map(Number)
+    away: value('AWAY')[0].split(','),
+    home: value('HOME')[0].split(',')
   }
 }
 function sql(query: string): string {
@@ -214,20 +214,6 @@ function clipFile(name: string): { path: string; seconds: number } {
   const path = join(temp, `${name}.wav`)
   writeFileSync(path, wavOf(pcm))
   return { path, seconds: pcm.length / 32000 }
-}
-/** A clip made now, for a name the fixture game only has once it is set up. */
-function spoken(name: string, sentence: string): void {
-  execFileSync('say', ['-o', join(temp, `${name}.aiff`), sentence])
-  execFileSync('afconvert', [
-    '-f',
-    'WAVE',
-    '-d',
-    'LEI16@16000',
-    '-c',
-    '1',
-    join(temp, `${name}.aiff`),
-    join(temp, `${name}.spoken.wav`)
-  ])
 }
 
 interface Heard {
@@ -448,6 +434,15 @@ async function hold(page: Page): Promise<void> {
   const box = await button!.boundingBox()
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
   await page.mouse.down()
+  // The clip starts once the microphone sends audio: opening it (the
+  // stream, an AudioContext, the worklet) can outlast the clip's half
+  // second of silence on a slow machine, and the first word was lost.
+  const before = (await heard(page)).audioFrames
+  await page.waitForFunction(
+    count => (window as any).__dictation.audioFrames > count,
+    {},
+    before
+  )
   await play(page)
   await new Promise(resolve => setTimeout(resolve, 600))
   await page.mouse.up()
@@ -569,12 +564,29 @@ async function fieldShown(page: Page): Promise<FieldMoment[]> {
     }
   })
 }
+/** The start frame of an utterance: its context, and its tags' players. */
+interface StartFrame {
+  context?: unknown
+  tagOrder?: unknown
+}
+/**
+ * A tag's player: a tag names a slot of the start frame's `tagOrder`, which
+ * holds the players' ids (develop b9f65cb37).
+ */
+function idOfSlot(start: StartFrame, tag: string): number | undefined {
+  const slot = idOfTag(tag)
+  const order = Array.isArray(start.tagOrder)
+    ? (start.tagOrder as number[])
+    : []
+  return slot == null ? undefined : order[slot]
+}
 /** A player's id, from the tag the sentence's context named him by. */
-function idIn(context: string, label: string): number {
+function idIn(start: StartFrame, label: string): number {
+  const context = String(start.context)
   const match = new RegExp(`${label}: [^(]*\\(tag ([A-Z]{2}[0-9])\\)`).exec(
     context
   )
-  const id = match == null ? undefined : idOfTag(match[1])
+  const id = match == null ? undefined : idOfSlot(start, match[1])
   if (id == null) throw new Error(`No ${label} in ${context}`)
   return id
 }
@@ -587,6 +599,7 @@ async function dictateWatched(
   reply: Record<string, any>
   shown: FieldMoment[]
   context: string
+  start: StartFrame
   page: Page
   browser: Browser
 }> {
@@ -600,10 +613,11 @@ async function dictateWatched(
   trace(`${clip}: ${JSON.stringify(reply)}`)
   const shown = await fieldShown(page)
   trace(`${clip}: shown ${JSON.stringify(shown)}`)
-  const context = String(
-    (await heard(page)).sent.find(f => f.kind === 'start')!.context
-  )
-  return { reply, shown, context, page, browser }
+  const start = (await heard(page)).sent.find(
+    f => f.kind === 'start'
+  )! as StartFrame
+  const context = String(start.context)
+  return { reply, shown, context, start, page, browser }
 }
 /** Walks this many batters by tapping four balls each. */
 async function walks(
@@ -854,7 +868,10 @@ describe('dictation, end to end', function () {
           (a: any) => a.type === 'fieldingPlay'
         )
         expect(charged?.error, JSON.stringify(reply.actions)).equals(
-          idOfTag(third![1])
+          idOfSlot(
+            heard.sent.find(f => f.kind === 'start')! as StartFrame,
+            third![1]
+          )
         )
         expect(
           reply.actions.find((a: any) => a.type === 'result')?.eventType
@@ -871,15 +888,15 @@ describe('dictation, end to end', function () {
     it('E10: a hit runs the batter and the runner at once, while the ball flies', async function () {
       const gameId = scoringGame().games[0]
       await runnerOn(scorer, gameId, 'second')
-      const { reply, shown, context, page, browser } = await dictateWatched(
+      const { reply, shown, start, page, browser } = await dictateWatched(
         scorer,
         gameId,
         'singleToLeft'
       )
       try {
         expect(reply.kind, JSON.stringify(reply)).equals('actions')
-        const batter = idIn(context, 'Batter')
-        const runner = idIn(context, 'On second')
+        const batter = idIn(start, 'Batter')
+        const runner = idIn(start, 'On second')
         const kinds = shown.map(moment => moment.presentation)
         expect(kinds).includes('hit:swing')
         expect(kinds).includes('hit:flight')
@@ -911,14 +928,14 @@ describe('dictation, end to end', function () {
     it('E11: a tag-up waits for the catch', async function () {
       const gameId = scoringGame().games[0]
       await runnerOn(scorer, gameId, 'third')
-      const { reply, shown, context, page, browser } = await dictateWatched(
+      const { reply, shown, start, page, browser } = await dictateWatched(
         scorer,
         gameId,
         'tagUp'
       )
       try {
         expect(reply.kind, JSON.stringify(reply)).equals('actions')
-        const runner = idIn(context, 'On third')
+        const runner = idIn(start, 'On third')
         const flying = shown.filter(moment =>
           moment.presentation.startsWith('hit:')
         )
@@ -963,7 +980,8 @@ describe('dictation, end to end', function () {
         expect(pictures.map(key => key.split('|')[1])).deep.equals([
           'hit:swing',
           'hit:flight',
-          'throw:transfer'
+          // An out's last throw is drawn as the tag (develop dfad1324a).
+          'throw:tag'
         ])
         await waitSaved(page)
         expect(await summary(page)).includes('1 outs')
@@ -1026,7 +1044,18 @@ describe('dictation, end to end', function () {
         ).equals(null)
         expect(await page.$$('[role="radio"]')).length(0)
         // The sheet is the screen's height, and a pull on its handle closes
-        // it.
+        // it. It slides up as it opens: measured once it is up.
+        await page.waitForFunction(() => {
+          const handle = document.querySelector(
+            '[aria-label="Pull down to close"]'
+          )
+          const done = document.querySelector('[aria-label="Done"]')
+          if (handle === null || done === null) return false
+          return (
+            handle.getBoundingClientRect().top < 40 &&
+            done.getBoundingClientRect().bottom > window.innerHeight - 60
+          )
+        })
         const handle = (await (await page.$(
           '[aria-label="Pull down to close"]'
         ))!.boundingBox())!
@@ -1159,10 +1188,8 @@ describe('dictation, end to end', function () {
           expect(reply.kind, `${clip}: ${JSON.stringify(reply)}`).equals(
             'actions'
           )
-          const context = String(
-            heard.sent.find(f => f.kind === 'start')!.context
-          )
-          const first = idIn(context, 'On first')
+          const start = heard.sent.find(f => f.kind === 'start')! as StartFrame
+          const first = idIn(start, 'On first')
           const steals = Object.fromEntries(
             (reply.actions as Array<Record<string, any>>)
               .filter(action => action.type === 'baseRunning')
@@ -1172,9 +1199,9 @@ describe('dictation, end to end', function () {
             clip === 'heSteals'
               ? { [first]: 'steal 2B' }
               : clip === 'heStealsThird'
-                ? { [idIn(context, 'On second')]: 'steal 3B' }
+                ? { [idIn(start, 'On second')]: 'steal 3B' }
                 : {
-                    [idIn(context, 'On second')]: 'steal 3B',
+                    [idIn(start, 'On second')]: 'steal 3B',
                     [first]: 'steal 2B'
                   }
           )
@@ -1295,9 +1322,12 @@ describe('dictation, end to end', function () {
           trajectory: String(hit.trajectory)
         }
       }
+      // Waited for: the play is entered a moment after the reply.
       const undoText = async (page: Page): Promise<string> =>
         String(
-          await page.$eval('[aria-label^="Undo "]', node => node.textContent)
+          await (await page.waitForSelector('[aria-label^="Undo "]'))!.evaluate(
+            node => node.textContent
+          )
         )
       {
         const gameId = scoringGame().games[0]
@@ -1693,10 +1723,10 @@ describe('dictation, end to end', function () {
       // The first two visitors share a first name, and both walk: a sentence
       // naming only "Chase" could be about either runner.
       sql(
-        `update users set first_name = 'Chase', last_name = 'Lee', display_name = 'Chase Lee' where id = ${fixture.away[0]}`
+        `update users set first_name = 'Chase', last_name = 'Lee', display_name = 'Chase Lee' where id = '${fixture.away[0]}'`
       )
       sql(
-        `update users set first_name = 'Chase', last_name = 'Moore', display_name = 'Chase Moore' where id = ${fixture.away[1]}`
+        `update users set first_name = 'Chase', last_name = 'Moore', display_name = 'Chase Moore' where id = '${fixture.away[1]}'`
       )
       const setup = await launch()
       try {
@@ -1709,7 +1739,6 @@ describe('dictation, end to end', function () {
       } finally {
         await setup.close()
       }
-      spoken('chaseSingled', 'Chase was picked off.')
       const plays = async (): Promise<number> =>
         (await stored(scorer, gameId)).plays.length
       const before = await plays()
@@ -1803,8 +1832,8 @@ describe('dictation, end to end', function () {
           timeout: 30000
         })
         await page.waitForSelector('canvas[data-field-ready="true"]')
-        // The runner from first takes second while the play can be edited.
-        await dropRunner(page, 1, 'Safe')
+        // The ground out takes the runner from first to second by itself
+        // (develop 0e36b3ddf).
         await finishAtBat(page)
         await hitTo('Ball Caught', 'LF', 40)
         await finishAtBat(page)
