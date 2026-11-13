@@ -65,10 +65,6 @@ export async function autoSchedulerFixture(
       : { googleMapsApiKey: options.googleMapsApiKey },
     { googleMapsApiKey: options.googleMapsApiKey }
   )
-  // The fixture simulates the device on the server's event loop. A covered
-  // scheduling search can outlast HTTP's idle timer before the result PUT;
-  // keep that connection alive while synchronous device work holds the loop.
-  f.h.server.keepAliveTimeout = 0
   try {
     return await seedTeamsAndGames(f)
   } catch (error) {

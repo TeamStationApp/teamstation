@@ -1,7 +1,11 @@
-import { buildOptions } from '../common/autoScheduler'
+import { buildOptionsAsync } from '../common/autoScheduler'
 import { asPreparedPreview } from '../common/schedulePreviews'
 
-/** Integration fixtures emulate the device computation between the two HTTP calls. */
+/**
+ * Integration fixtures emulate the device computation between the two HTTP
+ * calls, yielding as a device does, so the server in the same process keeps
+ * serving (and closing idle connections) while it runs.
+ */
 export async function deviceSchedulerResponse(
   request: (method: string, path: string, body?: unknown) => Promise<Response>,
   method: string,
@@ -19,7 +23,7 @@ export async function deviceSchedulerResponse(
   const completed = await request(
     'PUT',
     `/schedule-previews/${prepared.id}/result`,
-    buildOptions(prepared.input)
+    await buildOptionsAsync(prepared.input)
   )
   return new Response(await completed.text(), {
     status: completed.ok ? 201 : completed.status,
