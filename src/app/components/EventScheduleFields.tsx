@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import {
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  Text,
+  View
+} from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import {
@@ -15,6 +22,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { ButtonIcon } from './ButtonIcon'
 import { CancelAction } from './CancelAction'
+import { browserNavigator, isIosWebKit } from './iosWebKit'
 import { PickerDialog } from './PickerDialog'
 import { RadioMark } from './RadioMark'
 import { TextField } from './TextField'
@@ -399,35 +407,46 @@ export function TimePicker({
       <Text accessibilityRole="header" style={styles.title}>
         Choose time
       </Text>
-      <View style={styles.wheels}>
-        <Wheel
-          label="Hour"
-          format={option => String(option).padStart(2, '0')}
-          testID="event-time-hour-wheel"
-          rowTestID="event-time-hour"
-          options={Array.from({ length: 12 }, (_, i) => i + 1)}
-          value={hours}
-          onChange={setHours}
+      {Platform.OS === 'web' && isIosWebKit(browserNavigator()) ? (
+        <SafariTimeWheel
+          time={chosen}
+          onChange={([nextHours, nextMinutes, nextPeriod]) => {
+            setHours(nextHours)
+            setMinutes(nextMinutes)
+            setPeriod(nextPeriod)
+          }}
         />
-        <Wheel
-          label="Minute"
-          format={option => String(option).padStart(2, '0')}
-          testID="event-time-minute-wheel"
-          rowTestID="event-time-minute"
-          options={Array.from({ length: 12 }, (_, i) => i * 5)}
-          value={minutes}
-          onChange={setMinutes}
-        />
-        <Wheel
-          label="Period"
-          format={option => (option === 0 ? 'AM' : 'PM')}
-          testID="event-time-period-wheel"
-          rowTestID="event-time-period"
-          options={[0, 1]}
-          value={period}
-          onChange={setPeriod}
-        />
-      </View>
+      ) : (
+        <View style={styles.wheels}>
+          <Wheel
+            label="Hour"
+            format={option => String(option).padStart(2, '0')}
+            testID="event-time-hour-wheel"
+            rowTestID="event-time-hour"
+            options={Array.from({ length: 12 }, (_, i) => i + 1)}
+            value={hours}
+            onChange={setHours}
+          />
+          <Wheel
+            label="Minute"
+            format={option => String(option).padStart(2, '0')}
+            testID="event-time-minute-wheel"
+            rowTestID="event-time-minute"
+            options={Array.from({ length: 12 }, (_, i) => i * 5)}
+            value={minutes}
+            onChange={setMinutes}
+          />
+          <Wheel
+            label="Period"
+            format={option => (option === 0 ? 'AM' : 'PM')}
+            testID="event-time-period-wheel"
+            rowTestID="event-time-period"
+            options={[0, 1]}
+            value={period}
+            onChange={setPeriod}
+          />
+        </View>
+      )}
       <Text style={styles.hint}>
         {displayClock(chosen)}
         {dayOffset === 1 ? ' · Next day' : ''}
@@ -442,6 +461,87 @@ export function TimePicker({
         label="Cancel"
         accessibilityLabel="Cancel time picker"
         onPress={onCancel}
+      />
+    </View>
+  )
+}
+
+/**
+ * The hour (1–12), the minute (a multiple of five) and the period (0 AM, 1
+ * PM) of a 24-hour `HH:MM`, its minute rounded down to the five-minute step.
+ * Rounding down keeps it on the same day. Undefined for anything else, as the
+ * empty value Safari's Reset leaves.
+ */
+export function safariTime(raw: string): [number, number, number] | undefined {
+  const match = /^(\d{2}):(\d{2})/.exec(raw)
+  if (match == null) return undefined
+  const hour = Number(match[1])
+  const minute = Number(match[2])
+  if (hour > 23 || minute > 59) return undefined
+  return [
+    hour % 12 === 0 ? 12 : hour % 12,
+    minute - (minute % 5),
+    hour < 12 ? 0 : 1
+  ]
+}
+
+/**
+ * The time field an event came from. The phone's build has no DOM types, and
+ * this is drawn only in a browser.
+ */
+const field = (event: { currentTarget: unknown }): { value: string } =>
+  event.currentTarget as { value: string }
+
+/**
+ * The time pop-up in Safari on an iPhone or iPad: one time field, which
+ * Safari presents as its own wheel of hour, minute and AM/PM. Safari offers
+ * every minute; the time held is rounded down to five. Nothing is written into
+ * the field while its wheel is open, which would turn the wheel under the
+ * finger; the rounded time goes back into it once it closes.
+ */
+function SafariTimeWheel({
+  time,
+  onChange
+}: {
+  /** The held time, `HH:MM`. */
+  time: string
+  onChange: (time: [number, number, number]) => void
+}): React.ReactElement {
+  const theme = useTheme()
+  const styles = getStyles(theme)
+  const pick = (raw: string): void => {
+    const next = safariTime(raw)
+    if (next != null) onChange(next)
+  }
+  return (
+    <View style={styles.safariTime}>
+      <input
+        type="time"
+        step={300}
+        aria-label="Time"
+        data-testid="event-time-input"
+        defaultValue={time}
+        // React's onChange hears every turn of Safari's wheel (`input`) and
+        // its Reset (`change`).
+        onChange={event => {
+          pick(field(event).value)
+        }}
+        onBlur={event => {
+          field(event).value = time
+        }}
+        // 16 px or more, or Safari zooms the page when the field takes focus.
+        style={{
+          height: 44,
+          minWidth: theme.rem(9),
+          boxSizing: 'border-box',
+          border: `1px solid ${theme.defaultBorderColor}`,
+          borderRadius: theme.rem(theme.radiusRem),
+          background: theme.containerBackgroundColor,
+          color: theme.primaryTextColor,
+          fontFamily: theme.regularTextFont,
+          fontSize: 16,
+          textAlign: 'center'
+        }}
       />
     </View>
   )
@@ -861,6 +961,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor
   },
   wheels: { flexDirection: 'row', gap: theme.rem(0.5) },
+  safariTime: { alignItems: 'center' as const },
   scene: { flex: 1, backgroundColor: theme.backgroundColor },
   sceneHeader: {
     flexDirection: 'row',

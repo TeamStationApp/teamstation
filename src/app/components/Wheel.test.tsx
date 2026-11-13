@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { Platform } from 'react-native'
 
 import { ThemeProvider } from '../theme/ThemeContext'
 import { Wheel } from './Wheel'
@@ -217,5 +218,42 @@ describe('the wheel', function () {
       await delay()
     })
     expect(chosen).deep.equals([15, 10])
+  })
+})
+
+describe('the wheel on each platform', function () {
+  const was = Platform.OS
+  afterEach(function () {
+    Platform.OS = was
+  })
+
+  it('is the system’s spinning wheel on iOS, reporting where it stops', async function () {
+    Platform.OS = 'ios'
+    const chosen = await render(5)
+    expect(document.body.textContent).contains('Height')
+    // No scrolling column: no rows of its own.
+    expect(row(10)).equals(null)
+    const picker = wheel()
+    expect(picker.getAttribute('aria-label')).equals('Height')
+    // React Native Web draws the picker as a list box with its items.
+    expect(
+      [...picker.querySelectorAll('option')].map(node => node.textContent)
+    ).deep.equals(['Default', '0%', '5%', '10%', '15%'])
+    await act(async () => {
+      handler(picker, 'onValueChange')(15)
+      await delay()
+    })
+    await act(async () => {
+      handler(wheel(), 'onValueChange')('-1')
+      await delay()
+    })
+    expect(chosen).deep.equals([15, -1])
+  })
+
+  it('is the scrolling column on Android', async function () {
+    Platform.OS = 'android'
+    await render(5)
+    expect(row(10).textContent).equals('10%')
+    expect(wheel().querySelector('option')).equals(null)
   })
 })

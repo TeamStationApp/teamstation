@@ -4,6 +4,12 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
+import {
+  DEFAULT_PRIVACY_LABEL,
+  PLAYER_NAME_PRIVACY_LABELS,
+  PLAYER_NAME_PRIVACY_STOPS
+} from '../common/playerNamePrivacy'
+import { turnWheel, wheelAt } from '../test/iosWheel.e2e'
 import type { PrivacyNativeManifest } from '../test/playerNamePrivacyNativeFixture.e2e'
 import { maestro } from '../test/refinementsMaestro.e2e'
 
@@ -79,9 +85,18 @@ async function main(): Promise<void> {
   const tap = async (text: string): Promise<void> => {
     await m.tapOn({ text, timeout: 20000 })
   }
-  /** One wheel row, by its test id: the same words also sit behind the dialog. */
+  const stops = PLAYER_NAME_PRIVACY_STOPS.map(value =>
+    value == null ? DEFAULT_PRIVACY_LABEL : PLAYER_NAME_PRIVACY_LABELS[value]
+  )
+  /**
+   * One wheel stop: on iOS the system's wheel, turned to the stop's label; on
+   * Android the row, by its test id, since the same words also sit behind the
+   * dialog.
+   */
   const spin = async (stop: number): Promise<void> => {
-    await m.tapOn({ id: `player-name-privacy-${stop}`, timeout: 20000 })
+    if (platform === 'ios')
+      await turnWheel(m, async () => await wheelAt(m), stops[stop], stops)
+    else await m.tapOn({ id: `player-name-privacy-${stop}`, timeout: 20000 })
   }
   const shot = async (name: string): Promise<void> => {
     await m.waitForAnimationToEnd()
