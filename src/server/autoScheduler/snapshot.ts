@@ -1,5 +1,6 @@
 import { type Kysely, sql } from 'kysely'
 
+import { seasonZones } from '../../common/autoScheduler/seasonZones'
 import type {
   EngineBooking,
   EngineInput,
@@ -540,7 +541,11 @@ export function ruleContext(
           bufferMinutes: season.settings.bufferMinutes,
           doubleheaders: season.settings.doubleheaders,
           maxGamesOnWeekdays: season.settings.maxGamesOnWeekdays,
-          maxGamesOnWeekend: season.settings.maxGamesOnWeekend
+          maxGamesOnWeekend: season.settings.maxGamesOnWeekend,
+          fallback: {
+            size: season.settings.fieldSize,
+            zone: seasonZones(snap.engine.fields, season.settings)[0]
+          }
         }
       ])
     ),

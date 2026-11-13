@@ -39,6 +39,8 @@ export interface RuleContext {
       doubleheaders: Doubleheaders
       maxGamesOnWeekdays?: number
       maxGamesOnWeekend?: number
+      /** The zone of a retained game outside the run for a game of this size, worked out ahead. */
+      fallback?: { size: string; zone: string }
     }
   >
   /** Everything else holding the run's fields and teams. */
@@ -100,10 +102,12 @@ export function ruleProblem(
     return 'Choose one of this season’s selected fields.'
   const bufferMs = (season?.bufferMinutes ?? 0) * 60 * 1000
   // A retained game outside the run uses this season's selected-field zone.
-  const fallbackZone = seasonZones(
-    [...context.fields].map(([id, each]) => ({ id, ...each })),
-    { fieldIds: season?.fieldIds, fieldSize: game.size }
-  )[0]
+  const fallbackZone =
+    (season?.fallback?.size === game.size ? season.fallback.zone : undefined) ??
+    seasonZones(
+      [...context.fields].map(([id, each]) => ({ id, ...each })),
+      { fieldIds: season?.fieldIds, fieldSize: game.size }
+    )[0]
   const day = (holding: Holding): string => {
     const zone =
       (holding.fieldId == null

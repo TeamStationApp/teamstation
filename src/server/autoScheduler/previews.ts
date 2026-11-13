@@ -10,6 +10,7 @@ import {
 import type {
   EngineBooking,
   EngineInput,
+  EngineResult,
   PlannedGame,
   ScheduleOption
 } from '../../common/autoScheduler/types'
@@ -18,7 +19,6 @@ import { gameCalendarDay } from '../../common/gameTime'
 import { makeId } from '../../common/ids'
 import {
   type AddedGame,
-  asPreviewResult,
   editedGames,
   type PreparedPreview,
   type PreviewEdits,
@@ -363,10 +363,7 @@ class NearHoldings {
 }
 
 /** Validate device placements against the immutable server-held input. */
-export function validatePlacements(
-  snap: Snapshot,
-  result: ReturnType<typeof asPreviewResult>
-): void {
+export function validatePlacements(snap: Snapshot, result: EngineResult): void {
   const { engine } = snap
   const seasons = new Map(
     engine.seasons.map(season => [
@@ -406,9 +403,10 @@ export function validatePlacements(
       }))
     ]
     const holdings = new NearHoldings(starting)
+    // Without live weekly games, the weekly caps count the same holdings.
     const weekly =
       engine.weeklyGames == null
-        ? new NearHoldings(starting)
+        ? holdings
         : new NearHoldings(
             engine.weeklyGames.map((game, index) => ({
               ...game,
@@ -490,25 +488,27 @@ export function validatePlacements(
         weeklyOthers: weekly.near(start)
       })
       holdings.add(holdingOf(game))
-      weekly.add(holdingOf(game))
+      if (weekly !== holdings) weekly.add(holdingOf(game))
     }
   }
 }
 
 /** A device result's fingerprint, to recognise a retry of the same result. */
-function resultHash(result: ReturnType<typeof asPreviewResult>): string {
+function resultHash(result: EngineResult): string {
   return createHash('sha256').update(JSON.stringify(result)).digest('hex')
 }
 
-/** Complete a prepared preview; a retry of the same result is idempotent. */
+/**
+ * Complete a prepared preview with a device result `asPreviewResult` has
+ * cleaned; a retry of the same result is idempotent.
+ */
 export async function completePreview(
   db: Db,
   actor: Actor,
   previewId: string,
-  raw: unknown,
+  result: EngineResult,
   clock: Clock
 ): Promise<SchedulePreview> {
-  const result = asPreviewResult(raw)
   const hash = resultHash(result)
   // Validation can take seconds, so it runs before the transaction: no
   // lock or pooled connection waits on it. A building preview's input
