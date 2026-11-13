@@ -1,17 +1,20 @@
 import { type Request, Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { badRequest, gone, notFound, unauthorized } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import {
   asPreviewEditsBody,
-  asPreviewRequest
+  asPreviewRequest,
+  asPreviewResult
 } from '../../common/schedulePreviews'
 import type { Actor } from '../auth/sessions'
 import {
-  buildPreview,
+  completePreview,
   editPreview,
+  preparePreview,
   previewFor,
+  type PreviewRow,
   previewView
 } from '../autoScheduler/previews'
 import { publishPreview } from '../autoScheduler/publish'
@@ -19,6 +22,7 @@ import { gamesToReschedule } from '../autoScheduler/reschedule'
 import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
 import { requireGroupAdmin } from '../groups/rights'
+import { scheduleResultBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 
@@ -51,15 +55,51 @@ export function schedulePreviewRoutes(
 ): Router {
   const router = Router()
   const clock = options.clock ?? realClock
+  // Builds were once made here, on the server; the device makes them now,
+  // from a preparation. An app from before that is told to update instead
+  // of being sent a reply it cannot read.
   router.post(
     '/leagues/:leagueId/schedule-previews',
+    withAsync(async () => {
+      throw gone('Update the app to build schedules.')
+    })
+  )
+  router.post(
+    '/leagues/:leagueId/schedule-previews/preparations',
     requireActor,
     withAsync(async (req, res) => {
       const leagueId = param(req.params.leagueId)
       const request = clean(asPreviewRequest, req.body)
       res
         .status(201)
-        .json(await buildPreview(db, actor(req), leagueId, request, clock))
+        .json(await preparePreview(db, actor(req), leagueId, request, clock))
+    })
+  )
+  router.put(
+    '/schedule-previews/:previewId/result',
+    requireActor,
+    // Only an admin of the preview's league gets the large body read.
+    withAsync(async (req, res, next) => {
+      res.locals.preview = await previewFor(
+        db,
+        actor(req),
+        param(req.params.previewId)
+      )
+      next()
+    }),
+    scheduleResultBody,
+    withAsync(async (req, res) => {
+      const result = clean(asPreviewResult, req.body)
+      res.json(
+        await completePreview(
+          db,
+          actor(req),
+          param(req.params.previewId),
+          result,
+          clock,
+          res.locals.preview as PreviewRow
+        )
+      )
     })
   )
   router.get(

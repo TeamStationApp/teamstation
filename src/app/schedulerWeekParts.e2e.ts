@@ -77,11 +77,11 @@ async function main(): Promise<void> {
     })
     const number = async (label: string, value: string): Promise<void> => {
       const css = `input[aria-label="${label}"]`
-      await b.m.tapOn({ css })
+      await b.m.tapOn({ css: `[aria-label^="${label}:"]` })
       await b.m.eraseText({ characters: 3 })
       await b.m.inputText({ text: value, css })
       await b.m.tapOn({ text: 'Times are local to each field.' })
-      await contains(b.page, 'Game maximum saved.')
+      await b.page.waitForSelector(`[aria-label="${label}: ${value}"]`)
     }
     await number('Max games on weekdays', '2')
     await number('Max games on weekend', '0')
@@ -99,6 +99,7 @@ async function main(): Promise<void> {
     )
     const settings = {
       ...SEASON_A_SETTINGS,
+      fieldIds: [state.fieldId],
       regularGames: 2,
       exhibitionGames: 0,
       maxGamesOnWeekdays: 1,
@@ -111,10 +112,16 @@ async function main(): Promise<void> {
       fieldIds: [state.fieldId]
     })
     const build = async (): Promise<SchedulePreview> =>
-      await api(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-        mode: 'full',
-        existing: 'workAround'
-      })
+      await api(
+        fx,
+        101,
+        'POST',
+        `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+        {
+          mode: 'full',
+          existing: 'workAround'
+        }
+      )
     const preview = await build()
     expect(preview.options[0].games.length).greaterThan(0)
     const games = preview.options[0].games

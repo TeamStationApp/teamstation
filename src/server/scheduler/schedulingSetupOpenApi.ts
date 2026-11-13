@@ -48,6 +48,13 @@ export function schedulingSetupPaths(
       'endsOn'
     ],
     properties: {
+      fieldIds: {
+        type: 'array',
+        maxItems: 100,
+        items: { type: 'string' },
+        description:
+          'Explicit fields selected for this season; only matching sizes can be scheduled.'
+      },
       fieldSize: { type: 'string', enum: [...FIELD_SIZES] },
       gameMinutes: {
         type: 'integer',

@@ -16,6 +16,7 @@ import {
   TRUE_ORDER
 } from './score'
 import type { Slot } from './slots'
+import { finishSteps } from './steps'
 
 /** One search's schedule: where each matchup went, or null if it didn't fit. */
 export interface Placement {
@@ -279,6 +280,16 @@ export function place(
   order: readonly number[] = TRUE_ORDER,
   budget = searchBudget(matchups.length)
 ): Placement {
+  return finishSteps(placeSteps(context, matchups, seed, order, budget))
+}
+
+export function* placeSteps(
+  context: RunContext,
+  matchups: Matchup[],
+  seed: number,
+  order: readonly number[] = TRUE_ORDER,
+  budget = searchBudget(matchups.length)
+): Generator<void, Placement> {
   const search = new Search(context, matchups, order)
   const open = search.games.map(game =>
     openSlots(game.season, game.matchup.homeTeamId, game.matchup.awayTeamId)
@@ -301,9 +312,13 @@ export function place(
       return [season.season.id, order]
     })
   )
-  for (const i of greedy) if (open[i] > 0) search.placeGreedily(i, rank)
+  for (const i of greedy) {
+    yield
+    if (open[i] > 0) search.placeGreedily(i, rank)
+  }
 
   for (let step = 0; step < budget; step++) {
+    if (step % 64 === 0) yield
     const roll = random()
     if (search.unplaced.items.length > 0 && roll < 0.2) {
       search.tryPlacing(random)

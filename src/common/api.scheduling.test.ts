@@ -2,10 +2,13 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { TeamStationClient } from './api'
+import { buildOptions } from './autoScheduler'
+import { input } from './autoScheduler/fixtures.test'
 import type { GameToReschedule, SchedulePreview } from './schedulePreviews'
 import type { ScheduleSettings, ScheduleSetup } from './seasonScheduling'
 
 const SETTINGS: ScheduleSettings = {
+  fieldIds: [],
   fieldSize: '50/70',
   gameMinutes: 90,
   bufferMinutes: 10,
@@ -80,7 +83,10 @@ function client(answers: unknown[]): {
         String(url),
         init?.body == null ? undefined : JSON.parse(init.body)
       ])
-      return new Response(JSON.stringify(answers.shift()), { status: 200 })
+      const answer = answers.shift()
+      return answer instanceof Response
+        ? answer
+        : new Response(JSON.stringify(answer), { status: 200 })
     }) as unknown as typeof fetch
   })
   return { api, calls }
@@ -225,7 +231,9 @@ describe('api client scheduling setup', () => {
       startAt: '2027-04-17T14:00:00.000Z',
       endAt: '2027-04-17T15:30:00.000Z'
     }
+    const engine = input({ seasons: [], fields: [] })
     const { api, calls } = client([
+      { id: 'spv/1', input: engine },
       preview,
       preview,
       preview,
@@ -245,8 +253,18 @@ describe('api client scheduling setup', () => {
     expect(calls).deep.equals([
       [
         'POST',
-        '/api/v1/leagues/lea%2Fa/schedule-previews',
+        '/api/v1/leagues/lea%2Fa/schedule-previews/preparations',
         { mode: 'full', existing: 'workAround' }
+      ],
+      [
+        'PUT',
+        '/api/v1/schedule-previews/spv%2F1/result',
+        {
+          options: buildOptions(engine).options.map(option => ({
+            games: option.games
+          })),
+          blocking: buildOptions(engine).blocking
+        }
       ],
       ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
       [
@@ -257,6 +275,65 @@ describe('api client scheduling setup', () => {
       ['POST', '/api/v1/schedule-previews/spv%2F1/publications', { option: 0 }],
       ['GET', '/api/v1/leagues/lea%2Fa/games-to-reschedule', undefined]
     ])
+  })
+
+  it('sends the same result again while offline or validation is busy, and stops at any other refusal', async () => {
+    const engine = input({ seasons: [], fields: [] })
+    const refusal = (code: string, retry: boolean): Response =>
+      new Response(
+        JSON.stringify({
+          code,
+          message: retry ? 'Schedule validation is busy.' : 'Took too long.',
+          ...(retry ? { details: { retry: true } } : {})
+        }),
+        { status: 503 }
+      )
+    const preview = { id: 'spv/1' }
+    const busy = client([
+      { id: 'spv/1', input: engine },
+      refusal('unavailable', true),
+      refusal('unavailable', true),
+      preview
+    ])
+    await busy.api
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch(() => undefined)
+    const puts = busy.calls.filter(([method]) => method === 'PUT')
+    expect(puts).has.length(3)
+    expect(puts[2][2]).deep.equals(puts[0][2])
+    // Offline is asked again the same way.
+    let dropped = false
+    let offlinePuts = 0
+    const offline = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async (_url: unknown, init?: { method?: string }) => {
+        if (init?.method === 'PUT') offlinePuts++
+        if (init?.method === 'PUT' && !dropped) {
+          dropped = true
+          throw new TypeError('Network request failed')
+        }
+        return new Response(
+          JSON.stringify(
+            init?.method === 'POST' ? { id: 'spv/1', input: engine } : preview
+          ),
+          { status: 200 }
+        )
+      }
+    })
+    await offline
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch(() => undefined)
+    expect(dropped).equals(true)
+    expect(offlinePuts).equals(2)
+    const final = client([
+      { id: 'spv/1', input: engine },
+      refusal('unavailable', false)
+    ])
+    const error = await final.api
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch((caught: unknown) => caught)
+    expect(String(error)).includes('Took too long.')
+    expect(final.calls.filter(([method]) => method === 'PUT')).has.length(1)
   })
 
   it('reads each preview season’s first day, and a season without one', async () => {

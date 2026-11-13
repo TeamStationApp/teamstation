@@ -1,3 +1,4 @@
+import { seasonFields } from './autoScheduler/seasonZones'
 import { monthDay as shortDate } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import type { ScheduleSettings } from './seasonScheduling'
@@ -32,6 +33,7 @@ export interface CheckedSeason {
   exhibitionTeams: number
   settings: Pick<
     ScheduleSettings,
+    | 'fieldIds'
     | 'fieldSize'
     | 'gameMinutes'
     | 'regularGames'
@@ -152,7 +154,7 @@ export function schedulingChecks(
         )
       }
     }
-    const sized = usable.filter(field => field.sizes.includes(s.fieldSize))
+    const sized = seasonFields(usable, s)
     if (sized.length === 0)
       add(
         'noField',

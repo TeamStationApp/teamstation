@@ -6,9 +6,11 @@ import {
   FIELD_SIZES,
   type FieldSize,
   fieldSizeLabel,
+  sizesLabel,
   type VenueClaim,
   type VenueDetail
 } from '../../common/venues'
+import { weeklyWindow } from '../../common/windowPeriods'
 import {
   Badge,
   Button,
@@ -29,11 +31,8 @@ import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
 import { useSceneReveals } from '../components/sceneShown'
+import { TimeWindowsEditor } from '../components/TimeWindowsEditor'
 import { useConfirmedAction } from '../components/useConfirmedAction'
-import {
-  VENUE_OPEN_DEFAULT,
-  WeeklyHoursEditor
-} from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { openEventDirections } from '../platform/eventDirections'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
@@ -49,11 +48,6 @@ export function approvalLabel(approvesAt: string): string {
     day: 'numeric',
     year: 'numeric'
   }).format(new Date(approvesAt))}`
-}
-
-/** A field's sizes as a row's detail line. */
-export function sizesLabel(sizes: readonly FieldSize[]): string {
-  return sizes.map(fieldSizeLabel).join(' · ')
 }
 
 /** Approve, in the success colour of the card it sits on. */
@@ -488,19 +482,18 @@ export function VenueScreen({
                 />
               </ListCard>
             </CardThemeScope>
-            <Text style={styles.subhead}>Default hours</Text>
+            <Text style={styles.subhead}>Time Windows</Text>
             <Text style={styles.sentence}>
               Fields use these hours unless they set their own.
             </Text>
-            <WeeklyHoursEditor
+            <TimeWindowsEditor
               label="Default hours"
-              value={detail.defaultHours.map(entry => ({ ...entry }))}
+              value={detail.defaultWindows ?? weeklyWindow(detail.defaultHours)}
               disabled={busy}
-              openDefault={VENUE_OPEN_DEFAULT}
-              onChange={hours => {
+              onChange={windows => {
                 run(
                   async () =>
-                    await client.updateVenue(id, { defaultHours: hours }),
+                    await client.updateVenue(id, { defaultWindows: windows }),
                   'Hours saved.'
                 ).catch(() => undefined)
               }}

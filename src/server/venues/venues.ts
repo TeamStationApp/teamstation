@@ -2,10 +2,13 @@ import { type Kysely, type Selectable, sql } from 'kysely'
 
 import {
   badRequest,
+  conflict,
   notFound,
   unavailable,
   unsupportedMedia
 } from '../../common/errors'
+import { periodOn } from '../../common/fieldAvailability'
+import { gameCalendarDay } from '../../common/gameTime'
 import { calendarDateText } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import {
@@ -19,6 +22,12 @@ import {
   type VenueSummary,
   type WeekdayHours
 } from '../../common/venues'
+import {
+  asWindowPeriods,
+  LEGACY_WINDOW_START,
+  weeklyWindow,
+  type WindowPeriod
+} from '../../common/windowPeriods'
 import { adminScopes } from '../access'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -69,6 +78,34 @@ const GROUPS = ['yours', 'claimed', 'unclaimed'] as const
 type VenueRow = Selectable<VenuesTable>
 type FieldRow = Selectable<VenueFieldsTable>
 
+/**
+ * Whether stored windows say more than one week of hours, which a legacy
+ * hours write would lose.
+ */
+function dated(raw: unknown): boolean {
+  if (raw == null) return false
+  const windows = asWindowPeriods(raw)
+  return !(
+    windows.length === 0 ||
+    (windows.length === 1 &&
+      windows[0].from === LEGACY_WINDOW_START &&
+      windows[0].until == null)
+  )
+}
+
+/**
+ * The weekly hours in effect on a date, for readers of the legacy hours
+ * columns, which hold one week: none on a date no window covers.
+ */
+function hoursIn(windows: WindowPeriod[], today: string): WeekdayHours[] {
+  return periodOn(windows, today)?.hours ?? []
+}
+
+/** The venue's date now, the day venueDetail reads its hours on. */
+function venueToday(venue: { timezone: string }, clock: Clock): string {
+  return gameCalendarDay(clock.now().toISOString(), venue.timezone)
+}
+
 function hoursOf(raw: unknown): WeekdayHours[] {
   return asWeeklyHours(raw)
 }
@@ -80,7 +117,12 @@ export function datesOf(raw: unknown): string[] {
 }
 
 /** A field as the API returns it. */
-export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
+export function fieldOf(
+  row: FieldRow,
+  media: MediaContext,
+  today?: string
+): VenueField {
+  const windows = row.windows == null ? null : asWindowPeriods(row.windows)
   return {
     id: row.id,
     name: row.name,
@@ -91,7 +133,14 @@ export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
         : { latitude: row.pin_latitude, longitude: row.pin_longitude },
     startsOn: calendarDateText(row.starts_on),
     endsOn: calendarDateText(row.ends_on),
-    hours: row.hours == null ? null : hoursOf(row.hours),
+    // Legacy readers get the week in effect today, read from the windows.
+    hours:
+      windows != null && today != null
+        ? hoursIn(windows, today)
+        : row.hours == null
+          ? null
+          : hoursOf(row.hours),
+    windows,
     blackouts: datesOf(row.blackouts),
     photoUrl: imageUrl(media.space, row.photo_path, 640),
     photoLargeUrl: imageUrl(media.space, row.photo_path, 1280)
@@ -99,13 +148,22 @@ export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
 }
 
 /** A venue's defaults, for availability and the API. */
-export function venueDefaults(row: VenueRow): {
+export function venueDefaults(
+  row: VenueRow,
+  today?: string
+): {
+  defaultWindows: WindowPeriod[]
   defaultHours: WeekdayHours[]
   defaultBlackouts: string[]
   timezone: string
 } {
+  const defaultWindows = asWindowPeriods(row.default_windows)
   return {
-    defaultHours: hoursOf(row.default_hours),
+    defaultHours:
+      today == null
+        ? hoursOf(row.default_hours)
+        : hoursIn(defaultWindows, today),
+    defaultWindows,
     defaultBlackouts: datesOf(row.default_blackouts),
     timezone: row.timezone
   }
@@ -149,6 +207,7 @@ export async function venueDetail(
     await settle(trx, venueId, clock)
   })
   const venue = await venueRow(db, venueId)
+  const today = venueToday(venue, clock)
   const fields = await db
     .selectFrom('venue_fields')
     .selectAll()
@@ -168,12 +227,12 @@ export async function venueDetail(
     name: venue.name,
     address: venue.address,
     sizeSwitchMinutes: venue.size_switch_minutes,
-    ...venueDefaults(venue),
+    ...venueDefaults(venue, today),
     photoUrl: imageUrl(services.media.space, venue.photo_path, 640),
     photoLargeUrl: imageUrl(services.media.space, venue.photo_path, 1280),
     owners,
     claims,
-    fields: fields.map(field => fieldOf(field, services.media)),
+    fields: fields.map(field => fieldOf(field, services.media, today)),
     rights: await venueRights(db, actor, venueId, clock),
     map: mapAt(venue, services)
   }
@@ -234,6 +293,7 @@ export async function placeDetail(
     timezone: place.timezone,
     sizeSwitchMinutes: 0,
     defaultHours: [],
+    defaultWindows: [],
     defaultBlackouts: [],
     photoUrl: null,
     photoLargeUrl: null,
@@ -620,6 +680,15 @@ export async function updateVenue(
   await atomic(db, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
+    const current = await venueRow(trx, venueId)
+    if (
+      changes.defaultHours != null &&
+      changes.defaultWindows === undefined &&
+      dated(current.default_windows)
+    )
+      throw conflict(
+        'This venue has dated time windows. Update the app to change them.'
+      )
     await trx
       .updateTable('venues')
       .set({
@@ -627,9 +696,22 @@ export async function updateVenue(
         ...(changes.sizeSwitchMinutes == null
           ? {}
           : { size_switch_minutes: changes.sizeSwitchMinutes }),
+        ...(changes.defaultWindows == null
+          ? {}
+          : {
+              default_windows: JSON.stringify(changes.defaultWindows),
+              default_hours: JSON.stringify(
+                hoursIn(changes.defaultWindows, venueToday(current, clock))
+              )
+            }),
         ...(changes.defaultHours == null
           ? {}
-          : { default_hours: JSON.stringify(changes.defaultHours) }),
+          : {
+              default_hours: JSON.stringify(changes.defaultHours),
+              default_windows: JSON.stringify(
+                weeklyWindow(changes.defaultHours)
+              )
+            }),
         ...(changes.defaultBlackouts == null
           ? {}
           : { default_blackouts: changes.defaultBlackouts }),
@@ -660,6 +742,7 @@ export async function updateVenue(
     if (
       fieldsChanged != null &&
       (changes.sizeSwitchMinutes != null ||
+        changes.defaultWindows !== undefined ||
         changes.defaultHours != null ||
         changes.defaultBlackouts != null)
     )
@@ -677,13 +760,17 @@ export async function updateVenue(
   return await venueDetail(db, actor, venueId, services)
 }
 
-function fieldValues(changes: FieldChanges): Partial<{
+function fieldValues(
+  changes: FieldChanges,
+  today: string
+): Partial<{
   name: string
   sizes: string[]
   pin_latitude: number | null
   pin_longitude: number | null
   starts_on: string | null
   ends_on: string | null
+  windows: string | null
   hours: string | null
   blackouts: string[]
 }> {
@@ -702,10 +789,22 @@ function fieldValues(changes: FieldChanges): Partial<{
           starts_on: changes.dates?.startsOn ?? null,
           ends_on: changes.dates?.endsOn ?? null
         }),
+    ...(changes.windows === undefined
+      ? {}
+      : changes.windows === null
+        ? { windows: null, hours: null }
+        : {
+            windows: JSON.stringify(changes.windows),
+            hours: JSON.stringify(hoursIn(changes.windows, today))
+          }),
     ...(changes.hours === undefined
       ? {}
       : {
-          hours: changes.hours == null ? null : JSON.stringify(changes.hours)
+          hours: changes.hours == null ? null : JSON.stringify(changes.hours),
+          windows:
+            changes.hours == null
+              ? null
+              : JSON.stringify(weeklyWindow(changes.hours))
         }),
     ...(changes.blackouts == null ? {} : { blackouts: changes.blackouts })
   }
@@ -736,7 +835,10 @@ export async function createField(
         venue_id: venueId,
         name: changes.name!,
         sizes: [...changes.sizes!],
-        ...fieldValues(changes),
+        ...fieldValues(
+          changes,
+          venueToday(await venueRow(trx, venueId), clock)
+        ),
         ...(photo == null
           ? {}
           : {
@@ -786,8 +888,19 @@ export async function updateField(
   await atomic(db, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
-    await liveField(trx, venueId, fieldId)
-    const values = fieldValues(changes)
+    const current = await liveField(trx, venueId, fieldId)
+    if (
+      changes.hours != null &&
+      changes.windows === undefined &&
+      dated(current.windows)
+    )
+      throw conflict(
+        'This field has dated time windows. Update the app to change them.'
+      )
+    const values = fieldValues(
+      changes,
+      venueToday(await venueRow(trx, venueId), clock)
+    )
     if (Object.keys(values).length === 0 && photo == null) return
     await trx
       .updateTable('venue_fields')
@@ -811,6 +924,7 @@ export async function updateField(
       (changes.sizes != null ||
         changes.dates !== undefined ||
         changes.hours !== undefined ||
+        changes.windows !== undefined ||
         changes.blackouts != null)
     )
       await fieldsChanged(trx, [fieldId])

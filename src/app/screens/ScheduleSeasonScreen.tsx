@@ -1,63 +1,45 @@
-import React, { useCallback, useEffect, useState } from 'react'
-import {
-  ActivityIndicator,
-  Text,
-  TextInput,
-  type TextInputProps,
-  View
-} from 'react-native'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ActivityIndicator, Switch, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
-import { monthDay } from '../../common/calendarDates'
-import { addDays, type WindowPeriod } from '../../common/fieldAvailability'
+import { seasonFields } from '../../common/autoScheduler/seasonZones'
+import type { WindowPeriod } from '../../common/fieldAvailability'
 import {
-  addWindowPeriod,
   asWindowPeriods,
   copyWindowPeriods,
+  liveFieldIds,
   MAX_GAMES,
   type ScheduleSettings,
+  type ScheduleSetup,
+  setupFieldDetail,
   type SetupSeason
 } from '../../common/seasonScheduling'
-import { Button, ListCard, Screen, SectionHeader } from '../components'
-import { ActionList, ActionRow } from '../components/ActionRow'
+import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
 import {
-  BlackoutDatesEditor,
-  dateLabel
-} from '../components/BlackoutDatesEditor'
+  Button,
+  HandoffView,
+  ListCard,
+  Screen,
+  SectionHeader,
+  useHandoff,
+  useHeaderHandoff,
+  useHeaderSlot
+} from '../components'
+import { ActionList, ActionRow } from '../components/ActionRow'
+import { BlackoutDatesEditor } from '../components/BlackoutDatesEditor'
 import { CheckRow } from '../components/CheckRow'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { DangerText } from '../components/DangerText'
-import { CalendarPicker } from '../components/EventScheduleFields'
-import { PickerDialog } from '../components/PickerDialog'
 import { SegmentedPill } from '../components/SegmentedPill'
-import {
-  WeeklyHoursEditor,
-  WINDOW_OPEN_DEFAULT
-} from '../components/WeeklyHoursEditor'
+import { SpreadsheetNumber } from '../components/SpreadsheetNumber'
+import { TimeWindowsEditor } from '../components/TimeWindowsEditor'
+import { WINDOW_OPEN_DEFAULT } from '../components/WeeklyHoursEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-
-/** "Mar 1", with the year when it isn't the season's first year. */
-function shortDate(date: string, year: string): string {
-  return monthDay(date, !date.startsWith(year))
-}
+import { FieldPickerScene } from './FieldPickerScene'
 
 function plural(count: number, one: string): string {
   return `${count} ${count === 1 ? one : `${one}s`}`
-}
-
-/** Which date of a period the calendar is choosing. */
-type Choosing = { index: number; end: 'from' | 'until' } | 'add' | null
-
-/** A value typed on a shared card, in the card's own text colour. */
-function CardTextInput({
-  style,
-  ...props
-}: TextInputProps): React.ReactElement {
-  const theme = useTheme()
-  return (
-    <TextInput {...props} style={[style, { color: theme.primaryTextColor }]} />
-  )
 }
 
 /**
@@ -80,9 +62,37 @@ export function ScheduleSeasonScreen({
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState(false)
-  const [maximumDrafts, setMaximumDrafts] = useState<Record<string, string>>({})
+  const [setup, setSetup] = useState<ScheduleSetup>()
+  const [picking, setPicking] = useState(false)
+  const currentSeason = useRef(season)
+  currentSeason.current = season
+  const active = useRef(true)
+  const screenKey = `${leagueId}:${seasonId}`
+  const currentKey = useRef(screenKey)
+  currentKey.current = screenKey
+  const writes = useRef<Promise<void>>(Promise.resolve())
+  useEffect(() => {
+    active.current = true
+    return () => {
+      active.current = false
+    }
+  }, [leagueId, seasonId])
+  const { headerHeight } = useHeaderSlot()
+  const handoff = useHandoff(headerHeight)
+  const progress = handoff.progress
+  useHeaderHandoff(
+    useMemo(
+      () => (
+        <HandoffView progress={progress}>
+          <Text style={styles.headerTitle} numberOfLines={1}>
+            Season Scheduling Constraints
+          </Text>
+        </HandoffView>
+      ),
+      [progress, styles.headerTitle]
+    )
+  )
   const [revision, setRevision] = useState(0)
-  const [choosing, setChoosing] = useState<Choosing>(null)
   // The league's other seasons with game windows, newest first.
   const [sources, setSources] = useState<SetupSeason[]>([])
   const [copying, setCopying] = useState(false)
@@ -91,9 +101,13 @@ export function ScheduleSeasonScreen({
   useEffect(() => {
     const current = begin()
     setError('')
+    setSeason(undefined)
+    setBusy(false)
+    setNotice('')
     client.scheduleSetup(leagueId).then(
       setup => {
         if (!current()) return
+        setSetup(setup)
         setSeason(setup.seasons.find(item => item.id === seasonId) ?? null)
         setSources(
           setup.seasons
@@ -113,22 +127,31 @@ export function ScheduleSeasonScreen({
     )
   }, [client, leagueId, seasonId, revision, begin])
   const run = useCallback(
-    async (work: () => Promise<void>, done: string): Promise<void> => {
+    async (
+      work: () => Promise<void>,
+      done: string,
+      /** Throw a failure on to the caller, which shows it, instead. */
+      options: { rethrow?: boolean } = {}
+    ): Promise<void> => {
+      const key = currentKey.current
+      const current = (): boolean =>
+        active.current && currentKey.current === key
       setBusy(true)
       setError('')
       setNotice('')
       try {
         await work()
-        setMaximumDrafts({})
-        setNotice(done)
+        if (current()) setNotice(done)
       } catch (failure) {
-        setError(
-          failure instanceof Error && failure.message !== ''
-            ? failure.message
-            : 'That could not be saved. Try again.'
-        )
+        if (options.rethrow === true) throw failure
+        if (current())
+          setError(
+            failure instanceof Error && failure.message !== ''
+              ? failure.message
+              : 'That could not be saved. Try again.'
+          )
       } finally {
-        setBusy(false)
+        if (current()) setBusy(false)
       }
     },
     []
@@ -160,13 +183,36 @@ export function ScheduleSeasonScreen({
       </Screen>
     )
   const settings = season.settings
-  const save = (changes: Partial<ScheduleSettings>, done: string): void => {
-    run(async () => {
-      const saved = await client.saveScheduleSettings(season.id, {
-        ...settings,
-        ...changes
+  // A change worked out from the settings as they are when it is written,
+  // so one that waited behind another write builds on that write.
+  type Changes =
+    | Partial<ScheduleSettings>
+    | ((current: ScheduleSettings) => Partial<ScheduleSettings>)
+  const persist = async (changes: Changes): Promise<void> => {
+    const pending = writes.current
+      .catch(() => undefined)
+      .then(async () => {
+        if (!active.current || currentKey.current !== screenKey) return
+        const before = currentSeason.current
+        if (before?.id !== seasonId) return
+        const saved = await client.saveScheduleSettings(before.id, {
+          ...before.settings,
+          ...(typeof changes === 'function'
+            ? changes(before.settings)
+            : changes)
+        })
+        if (active.current && currentKey.current === screenKey) {
+          const next = { ...before, saved: true, settings: saved.settings }
+          currentSeason.current = next
+          setSeason(next)
+        }
       })
-      setSeason({ ...season, saved: true, settings: saved.settings })
+    writes.current = pending
+    await pending
+  }
+  const save = (changes: Changes, done: string): void => {
+    run(async () => {
+      await persist(changes)
     }, done).catch(() => undefined)
   }
   const setWindows = (windows: WindowPeriod[], done: string): void => {
@@ -181,9 +227,14 @@ export function ScheduleSeasonScreen({
     }
     save({ windows }, done)
   }
-  const year = settings.startsOn.slice(0, 4)
   const copyFrom = (source: SetupSeason): void => {
-    const windows = copyWindowPeriods(source.settings, settings)
+    // The copy keeps its place after this season's first window day, and is
+    // cut only at the season's own last day: the windows it replaces don't
+    // bound it.
+    const windows = copyWindowPeriods(source.settings, {
+      startsOn: settings.startsOn,
+      endsOn: season.seasonDates?.endsOn ?? settings.endsOn
+    })
     if (windows.length === 0) {
       setNotice('')
       setError(`${source.name}’s windows all fall after this season ends.`)
@@ -191,18 +242,15 @@ export function ScheduleSeasonScreen({
     }
     setWindows(windows, `Game windows copied from ${source.name}.`)
   }
-  // The end a period without an end date runs to: the day before the next
-  // period, or the season's last day.
-  const openEnd = (index: number): string => {
-    const next = settings.windows[index + 1]
-    return next == null ? settings.endsOn : addDays(next.from, -1)
-  }
   return (
-    <Screen>
+    <Screen onScroll={handoff.handleScroll}>
       <View style={styles.page}>
-        <Text accessibilityRole="header" style={styles.title}>
-          {season.name}
-        </Text>
+        <View ref={handoff.ref}>
+          <Text accessibilityRole="header" style={styles.title}>
+            Season Scheduling Constraints
+          </Text>
+          <Text style={styles.meta}>{season.name}</Text>
+        </View>
         <Text style={styles.meta}>Times are local to each field.</Text>
         {error !== '' && (
           <Text accessibilityRole="alert" style={styles.error}>
@@ -225,37 +273,21 @@ export function ScheduleSeasonScreen({
               key={key}
               title={label}
               end={
-                <CardTextInput
-                  key={`${season.id}:${settings[key] ?? 1}`}
-                  accessibilityLabel={label}
-                  value={
-                    maximumDrafts[`${season.id}:${key}`] ??
-                    String(settings[key] ?? 1)
-                  }
-                  editable={!busy}
-                  keyboardType="number-pad"
-                  returnKeyType="done"
-                  selectTextOnFocus
-                  style={styles.maximum}
-                  onChangeText={value => {
-                    setMaximumDrafts(drafts => ({
-                      ...drafts,
-                      [`${season.id}:${key}`]: value
-                    }))
-                  }}
-                  onBlur={() => {
-                    const value = (
-                      maximumDrafts[`${season.id}:${key}`] ??
-                      String(settings[key] ?? 1)
-                    ).trim()
-                    if (!/^\d+$/.test(value) || Number(value) > MAX_GAMES) {
-                      setNotice('')
-                      setError(`Choose a maximum from 0 to ${MAX_GAMES}.`)
-                    } else {
-                      setError('')
-                      if (Number(value) !== (settings[key] ?? 1))
-                        save({ [key]: Number(value) }, 'Game maximum saved.')
-                    }
+                <SpreadsheetNumber
+                  key={`${season.id}:${key}`}
+                  label={label}
+                  value={settings[key] ?? 1}
+                  maximum={MAX_GAMES}
+                  disabled={busy}
+                  // The cell shows its own error, so a failure goes to it.
+                  onSave={async value => {
+                    await run(
+                      async () => {
+                        await persist({ [key]: value })
+                      },
+                      'Game maximum saved.',
+                      { rethrow: true }
+                    )
                   }}
                 />
               }
@@ -286,7 +318,7 @@ export function ScheduleSeasonScreen({
           games may be scheduled.
         </Text>
         <SectionHeader
-          title="Game windows"
+          title="Time Windows"
           note={String(settings.windows.length)}
         />
         <Text style={styles.meta}>
@@ -294,87 +326,17 @@ export function ScheduleSeasonScreen({
           start through its end date or, with none, until the next period
           begins. Days no period covers have no games.
         </Text>
-        {settings.windows.length === 0 && (
-          <Text style={styles.meta}>No game windows yet.</Text>
-        )}
-        {settings.windows.map((period, index) => {
-          const from = dateLabel(period.from)
-          const last = index === settings.windows.length - 1
-          return (
-            <View key={period.from} style={styles.period}>
-              <View style={styles.periodHead}>
-                <Text style={styles.periodTitle}>
-                  {period.until == null
-                    ? `From ${shortDate(period.from, year)}`
-                    : `${shortDate(period.from, year)} – ${shortDate(period.until, year)}`}
-                </Text>
-                <DangerText
-                  label="Remove"
-                  accessibilityLabel={`Remove the windows from ${from}`}
-                  onPress={() => {
-                    setWindows(
-                      settings.windows.filter((_, i) => i !== index),
-                      'Period removed.'
-                    )
-                  }}
-                />
-              </View>
-              <ActionList bounded>
-                <ActionRow
-                  title="Starts"
-                  detail={from}
-                  openLabel={`Change the start of the windows from ${from}`}
-                  onOpen={() => {
-                    if (!busy) setChoosing({ index, end: 'from' })
-                  }}
-                />
-                <ActionRow
-                  title="Ends"
-                  detail={
-                    period.until != null
-                      ? dateLabel(period.until)
-                      : last
-                        ? 'End of season'
-                        : 'When the next period begins'
-                  }
-                  openLabel={`Change the end of the windows from ${from}`}
-                  onOpen={() => {
-                    if (!busy) setChoosing({ index, end: 'until' })
-                  }}
-                />
-              </ActionList>
-              <WeeklyHoursEditor
-                label={`Windows from ${from}`}
-                value={period.hours}
-                disabled={busy}
-                openDefault={WINDOW_OPEN_DEFAULT}
-                onChange={hours => {
-                  setWindows(
-                    settings.windows.map((item, i) =>
-                      i === index ? { ...item, hours } : item
-                    ),
-                    'Windows saved.'
-                  )
-                }}
-              />
-            </View>
-          )
-        })}
-        <Button
-          label={
-            settings.windows.length === 0
-              ? 'Add game windows'
-              : 'Add a period from a date'
-          }
-          kind="secondary"
+        <TimeWindowsEditor
+          label="Windows"
+          openDefault={WINDOW_OPEN_DEFAULT}
+          value={settings.windows}
+          today={settings.startsOn}
+          // The season's own last day: its settings' dates are its windows'.
+          endDate={season.seasonDates?.endsOn ?? settings.endsOn}
+          requireEnd
           disabled={busy}
-          onPress={() => {
-            if (settings.windows.length === 0)
-              setWindows(
-                [{ from: settings.startsOn, hours: [] }],
-                'Period added.'
-              )
-            else setChoosing('add')
+          onChange={windows => {
+            setWindows(windows, 'Time windows saved.')
           }}
         />
         {sources.length > 0 && (
@@ -400,6 +362,140 @@ export function ScheduleSeasonScreen({
             save({ blackouts }, 'Blackout days saved.')
           }}
         />
+        <SectionHeader title="Choose required field size" />
+        <ActionList bounded>
+          {FIELD_SIZES.map(size => (
+            <ActionRow
+              key={size}
+              title={fieldSizeLabel(size)}
+              end={
+                <Switch
+                  accessibilityLabel={`Required field size ${fieldSizeLabel(size)}`}
+                  value={settings.fieldSize === size}
+                  disabled={busy}
+                  onValueChange={() => {
+                    if (settings.fieldSize !== size)
+                      save(
+                        current => ({
+                          fieldSize: size,
+                          fieldIds: (current.fieldIds ?? []).filter(
+                            id =>
+                              setup?.fields.some(
+                                field =>
+                                  field.id === id &&
+                                  !field.deleted &&
+                                  field.sizes.includes(size)
+                              ) === true
+                          )
+                        }),
+                        'Field size saved.'
+                      )
+                  }}
+                />
+              }
+            />
+          ))}
+        </ActionList>
+        <SectionHeader
+          title="Select fields to use"
+          actions={[
+            {
+              label: 'Add field',
+              accessibilityLabel: 'Add a field from the registry',
+              onPress: () => {
+                setPicking(true)
+              }
+            }
+          ]}
+        />
+        <ListCard>
+          {setup?.fields.map(field => {
+            const compatible =
+              !field.deleted && field.sizes.includes(settings.fieldSize)
+            return (
+              <View
+                key={field.id}
+                style={!compatible ? styles.unavailable : undefined}
+              >
+                <CheckRow
+                  label={`${field.name}, ${field.venueName}`}
+                  detail={setupFieldDetail(field)}
+                  checked={settings.fieldIds?.includes(field.id) ?? false}
+                  disabled={busy || !compatible}
+                  onToggle={() => {
+                    const selecting =
+                      settings.fieldIds?.includes(field.id) !== true
+                    save(
+                      current => ({
+                        fieldIds: selecting
+                          ? [
+                              ...new Set([
+                                ...(current.fieldIds ?? []),
+                                field.id
+                              ])
+                            ]
+                          : (current.fieldIds ?? []).filter(
+                              id => id !== field.id
+                            )
+                      }),
+                      'Fields saved.'
+                    )
+                  }}
+                />
+                {!compatible &&
+                  settings.fieldIds?.includes(field.id) === true && (
+                    <DangerText
+                      label="Remove selection"
+                      accessibilityLabel={`Remove unavailable selection ${field.name}`}
+                      disabled={busy}
+                      onPress={() => {
+                        save(
+                          current => ({
+                            fieldIds: (current.fieldIds ?? []).filter(id =>
+                              seasonFields(
+                                setup.fields.filter(
+                                  available => !available.deleted
+                                ),
+                                current
+                              ).some(available => available.id === id)
+                            )
+                          }),
+                          'Fields saved.'
+                        )
+                      }}
+                    />
+                  )}
+                {!field.ours && setup.addedFieldIds.includes(field.id) && (
+                  <DangerText
+                    label="Remove"
+                    accessibilityLabel={`Remove ${field.name}, ${field.venueName} from the list`}
+                    disabled={busy}
+                    onPress={() => {
+                      run(async () => {
+                        await persist(current => ({
+                          fieldIds: (current.fieldIds ?? []).filter(
+                            id => id !== field.id
+                          )
+                        }))
+                        const next = await client.saveScheduleSetup(leagueId, {
+                          seasonIds: setup.seasonIds,
+                          fieldIds: liveFieldIds(setup).filter(
+                            id => id !== field.id
+                          ),
+                          addedFieldIds: setup.addedFieldIds.filter(
+                            id => id !== field.id
+                          )
+                        })
+                        if (active.current && currentKey.current === screenKey)
+                          setSetup(next)
+                      }, 'Field removed.').catch(() => undefined)
+                    }}
+                  />
+                )}
+              </View>
+            )
+          })}
+        </ListCard>
         <SectionHeader
           title="Exhibition teams"
           note={String(season.exhibitionTeams)}
@@ -432,8 +528,10 @@ export function ScheduleSeasonScreen({
                         : item
                     )
                     const flagged = teams.filter(item => item.exhibition).length
+                    if (!active.current || currentKey.current !== screenKey)
+                      return
                     setSeason({
-                      ...season,
+                      ...currentSeason.current!,
                       teams,
                       exhibitionTeams: flagged,
                       participants: teams.length - flagged
@@ -445,82 +543,34 @@ export function ScheduleSeasonScreen({
           </ListCard>
         )}
       </View>
-      {choosing === 'add' && (
-        <PickerDialog
+      {picking && setup != null && (
+        <FieldPickerScene
+          client={client}
           onClose={() => {
-            setChoosing(null)
+            setPicking(false)
           }}
-        >
-          <CalendarPicker
-            value={settings.windows[settings.windows.length - 1].from}
-            onChoose={date => {
-              setChoosing(null)
-              if (settings.windows.some(period => period.from === date)) {
-                setError('A period already starts on that date.')
-                return
-              }
-              // A new period starts as a copy of the one before it, which
-              // it splits when the date falls inside it.
-              setWindows(
-                addWindowPeriod(settings.windows, date),
-                'Period added.'
-              )
-            }}
-            onCancel={() => {
-              setChoosing(null)
-            }}
-          />
-        </PickerDialog>
-      )}
-      {choosing != null && choosing !== 'add' && (
-        <PickerDialog
-          onClose={() => {
-            setChoosing(null)
-          }}
-        >
-          <CalendarPicker
-            value={
-              choosing.end === 'from'
-                ? settings.windows[choosing.index].from
-                : (settings.windows[choosing.index].until ??
-                  openEnd(choosing.index))
-            }
-            onChoose={date => {
-              const { index, end } = choosing
-              setChoosing(null)
-              setWindows(
-                settings.windows
-                  .map((period, i) =>
-                    i === index ? { ...period, [end]: date } : period
-                  )
-                  .sort((a, b) => a.from.localeCompare(b.from)),
-                end === 'from' ? 'Start saved.' : 'End date saved.'
-              )
-            }}
-            other={
-              choosing.end === 'until'
-                ? {
-                    label: 'No end date',
-                    onPress: () => {
-                      const { index } = choosing
-                      setChoosing(null)
-                      setWindows(
-                        settings.windows.map((period, i) =>
-                          i === index
-                            ? { from: period.from, hours: period.hours }
-                            : period
-                        ),
-                        'End date removed.'
-                      )
+          onChooseField={chosen => {
+            setPicking(false)
+            run(async () => {
+              const next = await client.saveScheduleSetup(leagueId, {
+                seasonIds: setup.seasonIds,
+                fieldIds: liveFieldIds(setup),
+                addedFieldIds: [...new Set([...setup.addedFieldIds, chosen.id])]
+              })
+              if (active.current && currentKey.current === screenKey)
+                setSetup(next)
+              await persist(current =>
+                chosen.sizes.includes(current.fieldSize)
+                  ? {
+                      fieldIds: [
+                        ...new Set([...(current.fieldIds ?? []), chosen.id])
+                      ]
                     }
-                  }
-                : undefined
-            }
-            onCancel={() => {
-              setChoosing(null)
-            }}
-          />
-        </PickerDialog>
+                  : {}
+              )
+            }, 'Field added.').catch(() => undefined)
+          }}
+        />
       )}
       {/*
         Picking a source over windows the season has turns this same sheet
@@ -566,12 +616,12 @@ export function ScheduleSeasonScreen({
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  maximum: {
-    width: 56,
-    minHeight: 48,
-    textAlign: 'right',
-    fontSize: 16
+  headerTitle: {
+    fontSize: theme.rem(1),
+    color: theme.primaryTextColor,
+    fontFamily: theme.semiBoldTextFont
   },
+  unavailable: { opacity: 0.4 },
   preference: { width: 212 },
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
   title: {
@@ -592,17 +642,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   notice: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.9375),
-    color: theme.primaryTextColor
-  },
-  period: { gap: theme.rem(0.5) },
-  periodHead: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const
-  },
-  periodTitle: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
     color: theme.primaryTextColor
   }
 }))

@@ -6,8 +6,10 @@ import {
   addWindowPeriod,
   asSeasonScheduleSettings,
   asWindowPeriods,
+  boundedSeasonWindows,
   copyWindowPeriods,
-  defaultScheduleSettings
+  defaultScheduleSettings,
+  windowRange
 } from './seasonScheduling'
 
 const EVENINGS = [{ weekday: 2, start: '17:30', end: '21:00' }]
@@ -200,5 +202,35 @@ describe('season scheduling', () => {
     expect(period.hours).deep.equals(EVENINGS)
     expect(period.hours).not.equals(EVENINGS)
     expect(period.hours[0]).not.equals(EVENINGS[0])
+  })
+})
+
+describe('a season’s dated windows', () => {
+  it('ends every saved window at the next one or the season’s saved last day, and starts migrated hours on its first', () => {
+    const migrated = [{ from: '0001-01-01', hours: EVENINGS }]
+    expect(
+      boundedSeasonWindows(migrated, '2027-03-01', '2027-07-31')
+    ).deep.equals([
+      { from: '2027-03-01', until: '2027-07-31', hours: EVENINGS }
+    ])
+    const bounded = boundedSeasonWindows(
+      SPRING.windows,
+      '2027-03-01',
+      '2027-07-31'
+    )
+    expect(bounded.map(period => [period.from, period.until])).deep.equals([
+      ['2027-03-01', '2027-05-31'],
+      ['2027-06-01', '2027-07-31']
+    ])
+    expect(asWindowPeriods(bounded)).deep.equals(bounded)
+  })
+  it('takes the season’s dates from its windows, or none without any', () => {
+    expect(
+      windowRange([
+        { from: '2027-06-01', until: '2027-06-30', hours: LATER },
+        { from: '2027-04-01', until: '2027-04-15', hours: EVENINGS }
+      ])
+    ).deep.equals({ startsOn: '2027-04-01', endsOn: '2027-06-30' })
+    expect(windowRange([])).equals(null)
   })
 })

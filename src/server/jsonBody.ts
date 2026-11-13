@@ -6,6 +6,30 @@ import { badRequest, unauthorized } from '../common/errors'
 const smallBody = express.json({ limit: '1mb' })
 const analyticsBody = express.json({ limit: '64kb' })
 
+/**
+ * A parser that reads a body only for somebody signed in: anybody else is
+ * answered 401 before a byte of it is parsed. `withActor` runs ahead of it.
+ */
+function signedInOnly(parser: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    if (req.actor == null) {
+      next(unauthorized())
+      return
+    }
+    parser(req, res, next)
+  }
+}
+
+/**
+ * Up to three bounded device-generated schedule options with their game
+ * IDs. The result route reads it itself, once it knows the actor administers
+ * the preview's league, so no other account can make the server parse it.
+ */
+export const scheduleResultBody = express.json({ limit: '64mb' })
+const parsedByRoute: RequestHandler = (_req, _res, next) => {
+  next()
+}
+
 /** One post of a game's plays is the whole game. */
 const gameBody = express.json({ limit: '32mb' })
 
@@ -21,27 +45,14 @@ const pictureParser = express.json({ limit: '14mb' })
  * with the parser's bare 413. Read, as a picture is, only for somebody
  * signed in.
  */
-const tessParser = express.json({ limit: '8mb' })
-const tessBody: RequestHandler = (req, res, next) => {
-  if (req.actor == null) {
-    next(unauthorized())
-    return
-  }
-  tessParser(req, res, next)
-}
+const tessBody = signedInOnly(express.json({ limit: '8mb' }))
 
 /**
  * A picture's body is read only for somebody signed in: anybody else is
  * answered 401 before a byte of it is parsed, so the 14 MB limit is not
  * open to the world. `withActor` runs ahead of this parser for that.
  */
-const pictureBody: RequestHandler = (req, res, next) => {
-  if (req.actor == null) {
-    next(unauthorized())
-    return
-  }
-  pictureParser(req, res, next)
-}
+const pictureBody = signedInOnly(pictureParser)
 
 /**
  * The requests whose body is a whole set at once, or a picture, by method and
@@ -55,6 +66,11 @@ const LARGE_BODIES: ReadonlyArray<{
   path: RegExp
   parser: RequestHandler
 }> = [
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/schedule-previews\/[^/]+\/result$/,
+    parser: parsedByRoute
+  },
   {
     method: 'POST',
     path: /^\/api\/v1\/analytics\/events$/,

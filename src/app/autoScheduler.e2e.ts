@@ -16,6 +16,8 @@ import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
+import { buildOptions } from '../common/autoScheduler'
+import { asPreparedPreview } from '../common/schedulePreviews'
 import { googlePlaces } from '../server/location/googlePlaces'
 import {
   api,
@@ -355,7 +357,7 @@ async function e2(run: Run): Promise<void> {
   // Its own hours: Saturday 8:00 AM to 6:00 PM, through the pickers.
   await admin.m.tapOn({ text: 'Its own hours', timeout: 15000 })
   await contains(admin.page, 'This field now keeps its own hours.')
-  await tapLabel(admin, 'Field hours: Saturday, Closed')
+  await tapLabel(admin, 'Field hours from Existing hours: Saturday, Closed')
   await admin.m.tapOn({ text: 'Open', timeout: 15000 })
   await tapLabel(admin, 'Opens 9:00 AM')
   await tapLabel(admin, 'Hour 08')
@@ -379,7 +381,7 @@ async function e2(run: Run): Promise<void> {
       () => document.querySelector('[aria-label="2026-10-01"]') != null
     )
     if (shown) break
-    await tapLabel(admin, 'Next month')
+    await tapLabel(admin, 'Previous month')
   }
   await tapLabel(admin, '2026-10-01')
   for (let month = 0; month < 12; month++) {
@@ -572,7 +574,7 @@ async function e4(run: Run): Promise<void> {
   await run.visit(admin, `/games/${second}?tab=info`)
   await contains(admin.page, 'too close to this one to change the field’s size')
   await run.visit(admin, '/notifications')
-  await tapLabel(admin, 'History')
+  await admin.m.tapOn({ text: 'History', role: 'button', timeout: 15000 })
   await contains(admin.page, 'Field warning: Demo Hawks at Demo Owls')
   await showText(admin, 'Field warning: Demo Hawks at Demo Owls')
   await capture(admin.m, artifacts, 'notifications-field-warning.png')
@@ -623,7 +625,10 @@ async function e5(run: Run): Promise<void> {
     .execute()
   const admin = await run.session('autoScheduler-e5', 101)
   await run.visit(admin, `/venues/${venueId}/fields/${fieldId}`)
-  await tapLabel(admin, 'Field hours: Saturday, 8:00 AM – 6:00 PM')
+  await tapLabel(
+    admin,
+    'Field hours from Existing hours: Saturday, 8:00 AM – 6:00 PM'
+  )
   await tapLabel(admin, 'Closes 6:00 PM')
   await tapLabel(admin, 'Hour 11')
   await tapLabel(admin, 'Period AM')
@@ -955,15 +960,14 @@ async function e6(run: Run): Promise<void> {
   const scheduler = `/groups/league/${fx.f.leagueA}/scheduler`
   const admin = await run.session('autoScheduler-e6', 101)
   await run.visit(admin, scheduler)
-  await contains(admin.page, 'FIELDS FOR THIS RUN')
+  await contains(admin.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
   await tapLabel(admin, 'Demo Regular')
-  await contains(admin.page, 'SCHEDULE SETTINGS')
+  await contains(admin.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
   await tapLabel(admin, 'Demo Playoffs')
   await tapLabel(admin, 'Demo Playoffs Size: 60/90')
   await tapLabel(admin, '55/80')
   await tapLabel(admin, 'Demo Playoffs Size: 55/80')
   await tapText(admin, 'Cancel')
-  await tapLabel(admin, 'Field 1, Example Park')
   await tapLabel(admin, 'Demo Regular Size: 60/90')
   await tapLabel(admin, '50/70')
   await setNumber(admin, 'Demo Regular Game length in minutes: 120', '90')
@@ -973,20 +977,21 @@ async function e6(run: Run): Promise<void> {
   await tapLabel(admin, 'Demo Regular Doubleheaders: Only if necessary')
   await tapLabel(admin, 'Only if necessary')
   // The season's detail: exhibition teams and windows.
-  await tapLabel(admin, 'Open Demo Regular')
+  await tapLabel(admin, 'Demo Regular: Change constraints')
   await at(admin, /\/scheduler\/seasons\//)
   await contains(admin.page, 'Check the teams that play only exhibition games')
+  await tapLabel(admin, 'Field 1, Example Park')
   for (const name of EXHIBITION) {
     await tapLabel(admin, `Demo ${name}`)
     await contains(admin.page, `Demo ${name} saved.`)
   }
-  await tapText(admin, 'Add game windows')
+  await tapText(admin, 'Add another time window')
   const march = 'Windows from Monday, March 1, 2027'
   await contains(admin.page, 'From Mar 1')
   for (const day of WEEKDAY_NAMES)
     await setDay(admin, march, day, '17:30', '21:00')
   await setDay(admin, march, 'Saturday', '08:00', '18:00')
-  await tapText(admin, 'Add a period from a date')
+  await tapText(admin, 'Add another time window')
   await chooseDate(admin, '2027-06-01')
   const june = 'Windows from Tuesday, June 1, 2027'
   await contains(admin.page, 'From Jun 1')
@@ -1042,16 +1047,10 @@ async function e6(run: Run): Promise<void> {
       for (const node of [grid, ...grid.querySelectorAll('div')])
         node.scrollLeft = 0
   })
-  await scrollToText(admin, 'SCHEDULE SETTINGS', 'start')
+  await scrollToText(admin, 'SELECT SEASONS TO AUTO SCHEDULE.', 'start')
   await capture(admin.m, artifacts, 'scheduler-grid.png')
   await tapLabel(admin, 'Demo Playoffs')
   await gone(admin, 'Demo Playoffs has no chosen field')
-  await admin.page.waitForFunction(
-    () =>
-      document.querySelector('[aria-label="Demo Regular Total games: 21"]') !==
-      null,
-    { timeout: 15000 }
-  )
   expect(await buildEnabled(admin)).equals(true)
   const setup = await fx.f.h.db
     .selectFrom('league_schedule_setups')
@@ -1060,7 +1059,7 @@ async function e6(run: Run): Promise<void> {
     .executeTakeFirstOrThrow()
   expect(setup).deep.equals({
     season_ids: [fx.f.seasonA],
-    field_ids: [run.state.fieldId]
+    field_ids: []
   })
   // seasonA's Teams tab lists the flagged teams as exhibition teams.
   await run.visit(admin, `/groups/season/${fx.f.seasonA}?tab=teams`)
@@ -1662,11 +1661,15 @@ async function e10(run: Run): Promise<void> {
   const capacity = await storedPreview(run, capacityId)
   trace('E10 const unmet = capacity.options[0].unmet[')
   const unmet = capacity.options[0].unmet[0]
-  expect(unmet.message).matches(
-    /^every team gets \d+ of the 40 requested regular-season games$/
+  const missingTeamGames = capacity.options[0].fairness
+    .filter(row => !row.exhibitionTeam)
+    .reduce((total, row) => total + Math.max(0, 40 - row.regularGames), 0)
+  expect(missingTeamGames).greaterThan(0)
+  expect(unmet.message).equals(
+    `${missingTeamGames} requested team games remain unplaced`
   )
   expect(unmet.cause).equals(
-    'not enough 50/70 field time to give every team 40 games'
+    'The submitted option leaves requested games unplaced within the selected constraints.'
   )
   trace('E10 const counts = new Set')
   const counts = new Set(
@@ -1738,18 +1741,34 @@ async function e10(run: Run): Promise<void> {
     ...SEASON_A_SETTINGS,
     regularGames: 6
   })
-  await curl(run, lines, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-    mode: 'full'
-  })
+  await curl(
+    run,
+    lines,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+    {
+      mode: 'full'
+    }
+  )
   trace('E10 const built = JSON.parse')
   const answer = await curl(
     run,
     lines,
     'POST',
-    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
     { mode: 'full', existing: 'workAround' }
   )
-  const first = JSON.parse(answer.replace(/\nHTTP \d+\n$/, '')) as {
+  const preparation = asPreparedPreview(
+    JSON.parse(answer.replace(/\nHTTP \d+\n$/, ''))
+  )
+  const completed = await curl(
+    run,
+    lines,
+    'PUT',
+    `/schedule-previews/${preparation.id}/result`,
+    buildOptions(preparation.input)
+  )
+  const first = JSON.parse(completed.replace(/\nHTTP \d+\n$/, '')) as {
     id: string
     options: Array<{ games: Array<{ key: string }> }>
   }
@@ -1764,10 +1783,20 @@ async function e10(run: Run): Promise<void> {
     run,
     lines,
     'POST',
-    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
     { mode: 'partial', fromPreviewId: first.id, option: 0 }
   )
-  const built = JSON.parse(again.replace(/\nHTTP \d+\n$/, '')) as {
+  const nextPreparation = asPreparedPreview(
+    JSON.parse(again.replace(/\nHTTP \d+\n$/, ''))
+  )
+  const nextCompleted = await curl(
+    run,
+    lines,
+    'PUT',
+    `/schedule-previews/${nextPreparation.id}/result`,
+    buildOptions(nextPreparation.input)
+  )
+  const built = JSON.parse(nextCompleted.replace(/\nHTTP \d+\n$/, '')) as {
     id: string
   }
   const refused = await curl(
@@ -1804,10 +1833,16 @@ async function e11(run: Run): Promise<void> {
   const built = await api<{
     id: string
     options: Array<{ games: Array<{ key: string }> }>
-  }>(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-    mode: 'full',
-    existing: 'workAround'
-  })
+  }>(
+    fx,
+    101,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+    {
+      mode: 'full',
+      existing: 'replace'
+    }
+  )
   const count = built.options[0].games.length
   expect(count).greaterThan(1)
   const admin = await run.session('autoScheduler-e11', 101)

@@ -1,13 +1,13 @@
 import React, { useImperativeHandle } from 'react'
 import { Pressable, Text, type TextInput, View } from 'react-native'
 
-import { monthDay } from '../../common/calendarDates'
 import {
   doubleheadersLabel,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { fieldSizeLabel } from '../../common/venues'
 import { WideTable } from '../components'
+import { CheckRow } from '../components/CheckRow'
 import {
   isNumberColumn,
   type NumberColumn,
@@ -26,32 +26,12 @@ export type GridColumn =
   | 'regularGames'
   | 'exhibitionGames'
   | 'doubleheaders'
-  | 'dates'
-  | 'blackouts'
-  | 'windows'
 
 interface Column {
-  id: GridColumn | 'total'
+  id: GridColumn
   title: string
   widthRem: number
   value: (season: SetupSeason) => string
-}
-
-function count(n: number, one: string, many = `${one}s`): string {
-  return n === 0 ? 'None' : `${n} ${n === 1 ? one : many}`
-}
-
-/**
- * The games a season's settings come to: half the participants' regular
- * games, since each game has two of them, and every exhibition game, which
- * has one.
- */
-export function seasonGameTotal(season: SetupSeason): number {
-  const s = season.settings
-  return (
-    Math.floor((season.participants * s.regularGames) / 2) +
-    (season.exhibitionTeams === 0 ? 0 : season.participants * s.exhibitionGames)
-  )
 }
 
 /** What a screen reader hears for a season's teams. */
@@ -106,35 +86,10 @@ export const GRID_COLUMNS: Column[] = [
     value: season => String(season.settings.exhibitionGames)
   },
   {
-    id: 'total',
-    title: 'Total games',
-    widthRem: 6,
-    value: season => String(seasonGameTotal(season))
-  },
-  {
     id: 'doubleheaders',
     title: 'Doubleheaders',
     widthRem: 8.5,
     value: season => doubleheadersLabel(season.settings.doubleheaders)
-  },
-  {
-    id: 'dates',
-    title: 'Dates',
-    widthRem: 9,
-    value: season =>
-      `${monthDay(season.settings.startsOn)} – ${monthDay(season.settings.endsOn)}`
-  },
-  {
-    id: 'blackouts',
-    title: 'Blackouts',
-    widthRem: 6,
-    value: season => count(season.settings.blackouts.length, 'day')
-  },
-  {
-    id: 'windows',
-    title: 'Windows',
-    widthRem: 6.5,
-    value: season => count(season.settings.windows.length, 'period')
   }
 ]
 
@@ -152,6 +107,9 @@ export interface SeasonScheduleGridHandle {
  */
 export function SeasonScheduleGrid({
   seasons,
+  selectedIds,
+  onToggle,
+  disabled = false,
   onEdit,
   onSaveNumber,
   onOpenSeason,
@@ -159,6 +117,9 @@ export function SeasonScheduleGrid({
   ref
 }: {
   seasons: SetupSeason[]
+  selectedIds?: string[]
+  onToggle?: (seasonId: string) => void
+  disabled?: boolean
   onEdit: (seasonId: string, column: GridColumn) => void
   /** Resolves null once saved, or the message saying why it wasn't. */
   onSaveNumber: (
@@ -200,34 +161,25 @@ export function SeasonScheduleGrid({
               {column.title}
             </Text>
           ))}
+          <Text
+            style={[styles.cell, styles.headText, { width: theme.rem(10) }]}
+          >
+            Constraints
+          </Text>
         </View>
         {seasons.map(season => (
           <View key={season.id} style={styles.row}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`Open ${season.name}`}
-              style={styles.nameCell}
-              onPress={() => {
-                onOpenSeason(season.id)
-              }}
-            >
-              <Text style={[styles.nameText, styles.link]} numberOfLines={2}>
-                {season.name}
-              </Text>
-            </Pressable>
+            <View style={styles.nameCell}>
+              <CheckRow
+                label={season.name}
+                checked={selectedIds?.includes(season.id) ?? true}
+                disabled={disabled}
+                onToggle={() => onToggle?.(season.id)}
+              />
+            </View>
             {GRID_COLUMNS.map(column => {
               const value = column.value(season)
               const width = { width: theme.rem(column.widthRem) }
-              if (column.id === 'total')
-                return (
-                  <Text
-                    key={column.id}
-                    accessibilityLabel={`${season.name} ${column.title}: ${value}`}
-                    style={[styles.cell, styles.value, width]}
-                  >
-                    {value}
-                  </Text>
-                )
               const id = column.id
               if (isNumberColumn(id))
                 return numbers.cell({
@@ -255,6 +207,18 @@ export function SeasonScheduleGrid({
                 </Pressable>
               )
             })}
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`${season.name}: Change constraints`}
+              style={[styles.cell, { width: theme.rem(10) }]}
+              onPress={() => {
+                onOpenSeason(season.id)
+              }}
+            >
+              <Text style={[styles.value, styles.link]}>
+                Change constraints
+              </Text>
+            </Pressable>
           </View>
         ))}
       </WideTable>
@@ -288,13 +252,8 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor,
     textTransform: 'uppercase' as const
   },
-  nameCell: { width: theme.rem(9), paddingHorizontal: theme.rem(0.75) },
-  name: { width: theme.rem(9), paddingHorizontal: theme.rem(0.75) },
-  nameText: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(0.9375),
-    color: theme.primaryTextColor
-  },
+  nameCell: { width: theme.rem(12) },
+  name: { width: theme.rem(12), paddingHorizontal: theme.rem(0.75) },
   cell: {
     paddingHorizontal: theme.rem(0.375),
     paddingVertical: theme.rem(0.5),

@@ -12,12 +12,8 @@ import { asLiteral } from './asLiteral'
 import { daysBetween } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import { asCalendarDate, isRecord } from './groupCreation'
-import {
-  asBlackouts,
-  asFieldSize,
-  asWeeklyHours,
-  type FieldSize
-} from './venues'
+import { asBlackouts, asFieldSize, type FieldSize, sizesLabel } from './venues'
+import { asWindowPeriods } from './windowPeriods'
 
 /** Whether a team may play twice in a day. */
 export const DOUBLEHEADERS = ['never', 'ifNecessary', 'allowed'] as const
@@ -41,10 +37,11 @@ export const MINUTE_STEP = 5
 export const GAME_MINUTES = { min: 30, max: 600 } as const
 export const BUFFER_MINUTES = { min: 0, max: 240 } as const
 export const MAX_GAMES = 200
-export const MAX_WINDOW_PERIODS = 20
+export { MAX_WINDOW_PERIODS, asWindowPeriods } from './windowPeriods'
 
 /** What a season's schedule is built from. */
 export interface ScheduleSettings {
+  fieldIds?: string[]
   fieldSize: FieldSize
   gameMinutes: number
   /** The time kept free on a field between one game and the next. */
@@ -101,39 +98,6 @@ function asGameCount(what: string): Cleaner<number> {
 }
 
 /**
- * A season's window periods: dated, one per date, oldest first, each ending,
- * if it has an end date, on or after its start and before the next begins.
- */
-export function asWindowPeriods(raw: unknown): WindowPeriod[] {
-  if (!Array.isArray(raw)) throw new TypeError('Choose the game windows')
-  if (raw.length > MAX_WINDOW_PERIODS)
-    throw new TypeError(
-      `Choose at most ${MAX_WINDOW_PERIODS} periods of game windows`
-    )
-  const periods = raw.map((entry: unknown): WindowPeriod => {
-    if (!isRecord(entry)) throw new TypeError('Choose the game windows')
-    const from = asCalendarDate(entry.from)
-    const hours = asWeeklyHours(entry.hours)
-    if (entry.until == null) return { from, hours }
-    const until = asCalendarDate(entry.until)
-    if (until < from)
-      throw new TypeError(
-        'End each period of game windows on or after the day it starts'
-      )
-    return { from, until, hours }
-  })
-  periods.sort((a, b) => a.from.localeCompare(b.from))
-  for (let i = 1; i < periods.length; i++) {
-    if (periods[i].from === periods[i - 1].from)
-      throw new TypeError('Start each period of game windows on its own date')
-    const until = periods[i - 1].until
-    if (until != null && until >= periods[i].from)
-      throw new TypeError('Periods of game windows can’t overlap')
-  }
-  return periods
-}
-
-/**
  * The periods with one more starting on `date`, a copy of the weekly hours
  * of the period before it. A date inside a dated period splits it: that
  * period ends the day before, and the new one ends where it did. Otherwise
@@ -185,6 +149,47 @@ export function copyWindowPeriods(
   })
 }
 
+/**
+ * A season's time windows, each with an end date. Every window a season
+ * schedules in has one. Windows without, saved before that or sent by an
+ * older client with the season's dates around them, mean what they always
+ * did: each ends when the next starts, and all of them lie within the
+ * dates, so they are cut to them.
+ */
+export function boundedSeasonWindows(
+  windows: readonly WindowPeriod[],
+  startsOn: string,
+  endsOn: string
+): WindowPeriod[] {
+  if (windows.every(period => period.until != null)) return [...windows]
+  const sorted = [...windows].sort((a, b) => a.from.localeCompare(b.from))
+  return sorted.flatMap((period, index): WindowPeriod[] => {
+    const next = sorted[index + 1]
+    const end = period.until ?? (next == null ? endsOn : addDays(next.from, -1))
+    const from = period.from < startsOn ? startsOn : period.from
+    const until = end > endsOn ? endsOn : end
+    return from > until ? [] : [{ ...period, from, until }]
+  })
+}
+
+/**
+ * The dates a season schedules in: its first window's start to its last
+ * window's end; null with no windows.
+ */
+export function windowRange(
+  windows: readonly WindowPeriod[]
+): { startsOn: string; endsOn: string } | null {
+  if (windows.length === 0) return null
+  let startsOn = windows[0].from
+  let endsOn = windows[0].until ?? windows[0].from
+  for (const period of windows) {
+    if (period.from < startsOn) startsOn = period.from
+    const end = period.until ?? period.from
+    if (end > endsOn) endsOn = end
+  }
+  return { startsOn, endsOn }
+}
+
 /** A whole set of settings, as a season admin saves it. */
 export function asScheduleSettings(raw: unknown): ScheduleSettings {
   if (!isRecord(raw)) throw new TypeError('Choose the schedule settings')
@@ -193,6 +198,9 @@ export function asScheduleSettings(raw: unknown): ScheduleSettings {
   if (endsOn < startsOn)
     throw new TypeError('The last day must be on or after the first')
   return {
+    ...(raw.fieldIds === undefined
+      ? {}
+      : { fieldIds: asIdList('fields', MAX_SETUP_FIELDS)(raw.fieldIds) }),
     fieldSize: asFieldSizeOf(raw.fieldSize),
     gameMinutes: asSteppedMinutes(
       'a game length',
@@ -248,6 +256,7 @@ export function defaultScheduleSettings(season: {
   year: number
 }): ScheduleSettings {
   return {
+    fieldIds: [],
     fieldSize: '60/90',
     gameMinutes: 120,
     bufferMinutes: 15,
@@ -279,6 +288,7 @@ function asWirePeriod(raw: unknown): WindowPeriod {
 }
 
 const asWireSettings: Cleaner<ScheduleSettings> = asObject({
+  fieldIds: asOptional(asArray(asString), []),
   fieldSize: asFieldSize,
   gameMinutes: asNumber,
   bufferMinutes: asNumber,
@@ -304,7 +314,7 @@ export const asSeasonScheduleSettings = asObject({
 export type SeasonScheduleSettings = ReturnType<typeof asSeasonScheduleSettings>
 
 /** One of the league's seasons, as the setup lists them. */
-export const asSetupSeason = asObject({
+const asWireSetupSeason = asObject({
   id: asString,
   name: asString,
   year: asNumber,
@@ -317,9 +327,24 @@ export const asSetupSeason = asObject({
     asObject({ id: asString, name: asString, exhibition: asBoolean })
   ),
   saved: asBoolean,
-  settings: asWireSettings
+  settings: asWireSettings,
+  /**
+   * The season's own first and last days, or its year's, which bound game
+   * windows copied into it. Its settings' dates are the range its windows
+   * cover.
+   */
+  seasonDates: asOptional(asObject({ startsOn: asString, endsOn: asString }))
 })
-export type SetupSeason = ReturnType<typeof asSetupSeason>
+export type SetupSeason = Omit<
+  ReturnType<typeof asWireSetupSeason>,
+  'seasonDates'
+> & { seasonDates?: { startsOn: string; endsOn: string } }
+
+/** A season of the setup; one from a server without its own dates has none. */
+export function asSetupSeason(raw: unknown): SetupSeason {
+  const { seasonDates, ...season } = asWireSetupSeason(raw)
+  return seasonDates == null ? season : { ...season, seasonDates }
+}
 
 /** A field in the registry the run may use, and whose venue it is. */
 export const asSetupField = asObject({
@@ -365,8 +390,8 @@ export const asScheduleSetup = asObject({
 })
 export type ScheduleSetup = Omit<
   ReturnType<typeof asScheduleSetup>,
-  'avoidHeadCoachConflicts'
-> & { avoidHeadCoachConflicts?: boolean }
+  'avoidHeadCoachConflicts' | 'seasons'
+> & { avoidHeadCoachConflicts?: boolean; seasons: SetupSeason[] }
 
 function asIdList(what: string, max: number): Cleaner<string[]> {
   return raw => {
@@ -423,4 +448,26 @@ export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
       MAX_SETUP_FIELDS
     )(raw.addedFieldIds)
   return choice
+}
+
+/** The setup's chosen fields that still exist, as the server accepts them. */
+export function liveFieldIds(setup: ScheduleSetup): string[] {
+  return setup.fieldIds.filter(id =>
+    setup.fields.some(field => field.id === id && !field.deleted)
+  )
+}
+
+/**
+ * A run field's detail: its sizes, and, for a field of a venue the league
+ * doesn't own, the venue and who owns it.
+ */
+export function setupFieldDetail(field: SetupField): string {
+  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
+  const sizes = sizesLabel(field.sizes)
+  if (field.ours) return sizes
+  const owners =
+    field.ownerNames.length === 0
+      ? 'unclaimed'
+      : `claimed by ${field.ownerNames.join(', ')}`
+  return `${sizes} · ${field.venueName} · ${owners}`
 }

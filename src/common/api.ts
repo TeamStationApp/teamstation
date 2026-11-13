@@ -125,6 +125,7 @@ import {
 } from './publicGroups'
 import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
@@ -5305,14 +5306,46 @@ export class TeamStationClient {
   /** Builds a preview of the league's schedule. See `PreviewRequest`. */
   async buildSchedulePreview(
     leagueId: string,
-    request: PreviewRequest
+    request: PreviewRequest,
+    /** The waits before each retry while the server's validation is busy. */
+    retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000]
   ): Promise<SchedulePreview> {
-    return await this.request(
+    const prepared = await this.request(
       'POST',
-      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
-      asSchedulePreview,
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/preparations`,
+      asPreparedPreview,
       request
     )
+    const { buildOptionsAsync } = await import('./autoScheduler')
+    const built = await buildOptionsAsync(prepared.input)
+    // The server keeps only the games and works out the rest itself.
+    const result = {
+      options: built.options.map(option => ({ games: option.games })),
+      blocking: built.blocking
+    }
+    // A search can take minutes, so the same result is sent again, which the
+    // server accepts once, while the device is offline or the server busy;
+    // any other refusal is final.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.request(
+          'PUT',
+          `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
+          asSchedulePreview,
+          result
+        )
+      } catch (error) {
+        const wait = retryDelaysMs[attempt]
+        const retry =
+          error instanceof HttpError &&
+          (error.code === 'offline' ||
+            (error.code === 'unavailable' &&
+              isRecord(error.details) &&
+              error.details.retry === true))
+        if (wait == null || !retry) throw error
+        await new Promise(resolve => setTimeout(resolve, wait))
+      }
+    }
   }
 
   async schedulePreview(previewId: string): Promise<SchedulePreview> {

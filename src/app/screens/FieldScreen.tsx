@@ -8,6 +8,7 @@ import {
   type VenueDetail,
   type VenueField
 } from '../../common/venues'
+import { weeklyWindow } from '../../common/windowPeriods'
 import {
   Button,
   ButtonIcon,
@@ -27,10 +28,7 @@ import { PickerDialog } from '../components/PickerDialog'
 import { PinMap } from '../components/PinMap'
 import { PlacePhoto } from '../components/PlacePhoto'
 import { SegmentedPill } from '../components/SegmentedPill'
-import {
-  VENUE_OPEN_DEFAULT,
-  WeeklyHoursEditor
-} from '../components/WeeklyHoursEditor'
+import { TimeWindowsEditor } from '../components/TimeWindowsEditor'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -136,7 +134,8 @@ export function FieldScreen({
     latitude: venue.map.latitude,
     longitude: venue.map.longitude
   }
-  const ownHours = field.hours != null
+  const ownHours =
+    field.windows !== undefined ? field.windows != null : field.hours != null
   return (
     <Screen>
       <View style={styles.page}>
@@ -279,7 +278,7 @@ export function FieldScreen({
           <Text style={styles.sentence}>
             Dates do not repeat: set them again each year.
           </Text>
-          <Text style={styles.subhead}>Hours</Text>
+          <Text style={styles.subhead}>Time Windows</Text>
           {editable && (
             <SegmentedPill
               options={[
@@ -290,7 +289,13 @@ export function FieldScreen({
               onSelect={id => {
                 if ((id === 'own') === ownHours) return
                 save(
-                  { hours: id === 'own' ? venue.defaultHours : null },
+                  {
+                    windows:
+                      id === 'own'
+                        ? (venue.defaultWindows ??
+                          weeklyWindow(venue.defaultHours))
+                        : null
+                  },
                   id === 'own'
                     ? 'This field now keeps its own hours.'
                     : 'This field now uses the venue’s hours.'
@@ -299,15 +304,17 @@ export function FieldScreen({
               accessibilityLabel="Venue hours or its own"
             />
           )}
-          <WeeklyHoursEditor
+          <TimeWindowsEditor
             label="Field hours"
-            value={(field.hours ?? venue.defaultHours).map(entry => ({
-              ...entry
-            }))}
+            value={
+              field.windows ??
+              (field.windows === undefined && field.hours != null
+                ? weeklyWindow(field.hours)
+                : (venue.defaultWindows ?? weeklyWindow(venue.defaultHours)))
+            }
             disabled={!editable || !ownHours || busy}
-            openDefault={VENUE_OPEN_DEFAULT}
-            onChange={hours => {
-              save({ hours }, 'Hours saved.').catch(() => undefined)
+            onChange={windows => {
+              save({ windows }, 'Time windows saved.').catch(() => undefined)
             }}
           />
           <Text style={styles.subhead}>Blackout days</Text>

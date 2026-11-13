@@ -17,7 +17,9 @@ import { scheduleSetup } from '../scheduler/setup'
 import { rowsOfPeople, survivors } from '../teams/teamStaff'
 import { fieldFacts } from '../venues/fieldWarnings'
 import { occupancy } from '../venues/occupancy'
-import { managerConflict, type RuleContext } from './rules'
+import { managerConflict } from './rules'
+
+export { ruleContext } from './placementChecks'
 
 type Db = Kysely<Database>
 
@@ -29,6 +31,15 @@ export interface RescheduleRef {
 
 /** What a preview stores beside the engine's input. */
 export interface Snapshot {
+  preparation?: {
+    keep?: PlannedGame[]
+    earlier?: { id: string; edits: unknown }
+    /** The completed device result's hash, so a retry of it is accepted. */
+    resultHash?: string
+    /** Why a recalculation placed nothing again, for a retry of its result. */
+    blocked?: string
+  }
+
   avoidHeadCoachConflicts?: boolean
   engine: EngineInput
   existing: ExistingGames
@@ -261,8 +272,11 @@ export async function snapshot(
   const seasons = setup.seasons.filter(season =>
     setup.seasonIds.includes(season.id)
   )
-  const facts = await fieldFacts(db, setup.fieldIds)
-  const fields = setup.fieldIds
+  const selectedFieldIds = [
+    ...new Set(seasons.flatMap(season => season.settings.fieldIds ?? []))
+  ]
+  const facts = await fieldFacts(db, selectedFieldIds)
+  const fields = selectedFieldIds
     .map(id => facts.get(id))
     .filter((field): field is NonNullable<typeof field> => field != null)
     .filter(field => !field.deleted)
@@ -502,37 +516,77 @@ export async function snapshot(
   }
 }
 
-/** The hard rules' context for a snapshot's fields and seasons. */
-export function ruleContext(
-  snap: Snapshot,
-  others: RuleContext['others'],
-  headCoaches?: Record<string, string>
-): RuleContext {
+/**
+ * The input a device searches: the server's copy, with what the league's
+ * admins may not read swapped for tokens that hold only within this
+ * snapshot. Those are other games' ids, teams outside the run's seasons and
+ * games, other leagues' seasons, the user ids of Managers/Head Coaches, and
+ * fields outside the run, which go. The search needs only to
+ * tell them apart; validation and summaries use the server's copy.
+ */
+export function deviceInput(engine: EngineInput): EngineInput {
+  const own = new Set<string>([
+    ...engine.seasons.flatMap(season => [
+      ...season.participants,
+      ...season.exhibitionTeams
+    ]),
+    ...engine.fixed.flatMap(game => [game.homeTeamId, game.awayTeamId]),
+    ...(engine.required ?? []).flatMap(game => [
+      game.homeTeamId,
+      game.awayTeamId
+    ]),
+    ...Object.keys(engine.teamNames)
+  ])
+  const tokens = (prefix: string): ((value: string) => string) => {
+    const seen = new Map<string, string>()
+    return value => {
+      let token = seen.get(value)
+      if (token == null) {
+        token = `${prefix}${seen.size + 1}`
+        seen.set(value, token)
+      }
+      return token
+    }
+  }
+  const outside = tokens('team:')
+  const team = (id: string): string => (own.has(id) ? id : outside(id))
+  const coach = tokens('coach:')
+  const busy = tokens('busy:')
+  // Another league's seasons and fields appear only on its weekly games.
+  const seasons = new Set(engine.seasons.map(each => each.id))
+  const fields = new Set(engine.fields.map(each => each.id))
+  const season = tokens('season:')
   return {
-    headCoaches,
-    fields: new Map(
-      snap.engine.fields.map(field => [
-        field.id,
-        {
-          name: field.name,
-          venueName: field.venueName,
-          sizes: field.sizes,
-          availability: field.availability,
-          switchMs: field.switchMinutes * 60000
-        }
-      ])
-    ),
-    seasons: new Map(
-      snap.engine.seasons.map(season => [
-        season.id,
-        {
-          bufferMinutes: season.settings.bufferMinutes,
-          doubleheaders: season.settings.doubleheaders,
-          maxGamesOnWeekdays: season.settings.maxGamesOnWeekdays,
-          maxGamesOnWeekend: season.settings.maxGamesOnWeekend
-        }
-      ])
-    ),
-    others
+    ...engine,
+    ...(engine.headCoaches == null
+      ? {}
+      : {
+          headCoaches: Object.fromEntries(
+            Object.entries(engine.headCoaches).map(([id, user]) => [
+              team(id),
+              coach(user)
+            ])
+          )
+        }),
+    bookings: engine.bookings.map(booking => ({
+      ...booking,
+      key: busy(booking.key),
+      teamIds: booking.teamIds.map(team)
+    })),
+    ...(engine.weeklyGames == null
+      ? {}
+      : {
+          weeklyGames: engine.weeklyGames.map(game => ({
+            ...game,
+            seasonId: seasons.has(game.seasonId)
+              ? game.seasonId
+              : season(game.seasonId),
+            fieldId:
+              game.fieldId != null && fields.has(game.fieldId)
+                ? game.fieldId
+                : null,
+            teamIds: game.teamIds.map(team)
+          }))
+        })
   }
 }

@@ -14,6 +14,7 @@ import { chosenSeasonIds, scheduleSetup } from '../scheduler/setup'
 import { CLAIM_WAIT_MS } from '../venues/ownership'
 
 const SETTINGS: ScheduleSettings = {
+  fieldIds: [],
   fieldSize: '50/70',
   gameMinutes: 90,
   bufferMinutes: 10,
@@ -234,6 +235,7 @@ describe('scheduling setup routes', function () {
       seasonId: f.seasonA,
       saved: false,
       settings: {
+        fieldIds: [],
         fieldSize: '60/90',
         gameMinutes: 120,
         bufferMinutes: 15,
@@ -285,13 +287,18 @@ describe('scheduling setup routes', function () {
       saved: true,
       settings: {
         ...SETTINGS,
-        windows: [SETTINGS.windows[1], SETTINGS.windows[0]]
+        // Windows sent without end dates end at the next one and at the
+        // season's last day; the season's dates are those they cover.
+        windows: [
+          { ...SETTINGS.windows[1], until: '2027-03-31' },
+          { ...SETTINGS.windows[0], until: '2027-05-31' }
+        ]
       }
     })
-    // A period's end date is kept, and read back.
+    // A period's end date is kept, and read back, and dates the season.
     const ended = [
       { ...SETTINGS.windows[1], until: '2027-03-20' },
-      SETTINGS.windows[0]
+      { ...SETTINGS.windows[0], until: '2027-04-30' }
     ]
     expect(
       await json(
@@ -300,7 +307,11 @@ describe('scheduling setup routes', function () {
     ).deep.nested.include({ 'settings.windows': ended })
     expect(
       await json(await f.h.request('GET', path, undefined, 101))
-    ).deep.nested.include({ 'settings.windows': ended })
+    ).deep.nested.include({
+      'settings.windows': ended,
+      'settings.startsOn': '2027-03-01',
+      'settings.endsOn': '2027-04-30'
+    })
     expect(
       await json(
         await f.h.request('PUT', path, { ...SETTINGS, windows: [] }, 101)
@@ -514,6 +525,49 @@ describe('scheduling setup routes', function () {
     )
     expect(chosen.status).equals(400)
     expect(await chosen.text()).includes('Choose fields that exist')
+  })
+
+  it('takes a field removed from the list off every season of the league, keeping the league’s own', async () => {
+    const path = `/leagues/${f.leagueA}/schedule-setup`
+    const added = await venue('ven_added', null)
+    const own = await venue('ven_mine', f.leagueA)
+    await json(
+      await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [], fieldIds: [], addedFieldIds: [added, own] },
+        101
+      )
+    )
+    const settingsPath = (season: string): string =>
+      `/seasons/${season}/schedule-settings`
+    for (const season of [f.seasonA, f.playoffs]) {
+      const { settings } = await json<SeasonScheduleSettings>(
+        await f.h.request('GET', settingsPath(season), undefined, 101)
+      )
+      await json(
+        await f.h.request(
+          'PUT',
+          settingsPath(season),
+          { ...settings, fieldIds: [added, own] },
+          101
+        )
+      )
+    }
+    await json(
+      await f.h.request(
+        'PUT',
+        path,
+        { seasonIds: [], fieldIds: [], addedFieldIds: [] },
+        101
+      )
+    )
+    for (const season of [f.seasonA, f.playoffs]) {
+      const { settings } = await json<SeasonScheduleSettings>(
+        await f.h.request('GET', settingsPath(season), undefined, 101)
+      )
+      expect(settings.fieldIds).deep.equals([own])
+    }
   })
 
   it('saves only the constraint after another administrator changes the run', async () => {
