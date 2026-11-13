@@ -674,6 +674,12 @@ export const enUs = {
   account_notifications_rsvp_events: 'Notify for RSVPed events',
   account_notifications_blocked: 'Notifications are blocked by this device',
   account_notifications_allow: 'Allow notifications on this device',
+  notifications_ask_title:
+    "TeamStation would like to send you notifications for events you've RSVP'd to and for direct messages from other users",
+  notifications_ask_not_now: 'Not Now',
+  notifications_ask_continue: 'Continue',
+  notifications_ask_web_blocked:
+    "Allow notifications for TeamStation in your browser's site settings.",
   account_sign_out: 'Sign out',
   account_api_keys: 'API keys',
   account_api_keys_load_error: 'Could not load your API keys',
@@ -768,6 +774,7 @@ export const enUs = {
   chat_new_message: 'New message',
   chat_push_mention_title: '%1$s in %2$s',
   chat_push_new_message_from: 'New message from %s',
+  chat_push_elsewhere: 'TeamStation',
   chat_loading: 'Opening chat…',
   chat_cannot_load: 'Chat could not be opened.',
   chat_keys_unreadable:

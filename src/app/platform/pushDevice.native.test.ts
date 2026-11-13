@@ -1,7 +1,21 @@
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 
-import type { PushDevice } from './pushState'
+import type { PushClient, PushDevice } from './pushState'
+
+/** The signed-in person. */
+const U = 'usr_1'
+
+/** The phone registers nothing yet, so this is never called. */
+const client: PushClient = {
+  webPushKey: async () => null,
+  registerPush: async () => {
+    throw new Error('A phone does not register here')
+  },
+  updatePush: async () => {
+    throw new Error('A phone does not register here')
+  }
+}
 
 /**
  * A phone's notifications through `TSPush`, the app's own module. React
@@ -59,7 +73,7 @@ describe('notifications on a phone', function () {
       const push = module(state, 'granted')
       const device = loadWith(push)
       expect(await device.state()).equals(state)
-      expect(await device.sync()).equals(state)
+      expect(await device.sync(client, U)).equals(state)
       expect(push.asked).equals(0)
     }
     expect(await loadWith(module('restricted', 'granted')).state()).equals(
@@ -69,17 +83,26 @@ describe('notifications on a phone', function () {
 
   it('asks only when not asked yet, and answers what the person chose', async function () {
     const allowed = module('prompt', 'granted')
-    expect(await loadWith(allowed).enable()).equals('granted')
+    expect(await loadWith(allowed).enable(client, U)).equals('granted')
     const refused = module('prompt', 'denied')
-    expect(await loadWith(refused).enable()).equals('denied')
+    expect(await loadWith(refused).enable(client, U)).equals('denied')
     const blocked = module('denied', 'granted')
-    expect(await loadWith(blocked).enable()).equals('denied')
+    expect(await loadWith(blocked).enable(client, U)).equals('denied')
     expect(blocked.asked).equals(0)
   })
 
   it('cannot notify in a build without the module', async function () {
     const device = loadWith(undefined)
     expect(await device.state()).equals('unsupported')
-    expect(await device.enable()).equals('unsupported')
+    expect(await device.enable(client, U)).equals('unsupported')
+  })
+
+  it('keeps a switch change to itself, registering nothing yet', async function () {
+    expect(
+      await loadWith(module('granted', 'granted')).setSwitches(client, U, {
+        messages: true
+      })
+    ).deep.include({ messages: true })
+    await loadWith(undefined).setSwitches(client, U, { messages: false })
   })
 })

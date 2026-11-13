@@ -21,6 +21,7 @@ import {
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
 import { chatRowText, nativeRowInList } from '../../test/chatRows'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 import { nativeHistoryRecovery } from './chatHistoryRecoveryNative.e2e'
 import { nativeRecoveryPermissions } from './chatHistoryRecoveryPermissions.e2e'
 
@@ -924,6 +925,8 @@ async function main(): Promise<void> {
       return
     }
     await m.assertVisible({ text: 'Chats', timeout: 60000 })
+    // The Chat tab asks about notifications once per person per device.
+    await dismissNotificationAskOn(m)
     const initialRow = chatRow(fixture.conversationLabel)
     await reveal(m, initialRow, 'DOWN')
     await m.assertVisible({ ...initialRow, timeout: 60000 })
@@ -1017,6 +1020,7 @@ async function main(): Promise<void> {
                 onList(flatten(await m.hierarchy())) ? true : undefined,
               30000
             )
+            await dismissNotificationAskOn(m)
             return
           }
           await tapVisibleControl(m, 'Back')
@@ -1070,6 +1074,7 @@ async function main(): Promise<void> {
         await reveal(m, { id: rowId })
         await m.tapOn({ id: rowId })
         await m.assertVisible({ id: 'chat-composer', timeout: 30000 })
+        await dismissNotificationAskOn(m)
         return
       }
       const title = selected.title
@@ -1106,6 +1111,7 @@ async function main(): Promise<void> {
       await m.tapOnPoint({
         point: `${Math.round(bounds.x + bounds.width / 2)},${Math.round(bounds.y + bounds.height / 2)}`
       })
+      await dismissNotificationAskOn(m)
     }
     async function open(): Promise<void> {
       await scopedOpen(fixture.conversationId, fixture.targetText)
@@ -6776,6 +6782,7 @@ async function main(): Promise<void> {
         await m.tapOn({ text: `Pick ${candidate.shortName}` })
         await m.tapOn({ text: 'Start conversation' })
         await m.assertVisible({ id: 'chat-composer', timeout: 60000 })
+        await dismissNotificationAskOn(m)
         let created: string | undefined
         const afterCreate = await api.chatConversations()
         for (const row of [...afterCreate].sort(

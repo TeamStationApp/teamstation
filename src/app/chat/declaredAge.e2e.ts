@@ -41,6 +41,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { readSeedTable, type SeedTablePerson } from '../../test/chatSeedTable'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 const APP = 'app.teamstation.app'
 
@@ -161,6 +162,14 @@ async function webSignIn(m: Device, key: string): Promise<void> {
   await m.assertVisible({ text: 'Account, .*', timeout: 30000 })
 }
 
+/**
+ * Chat open past its gates asks about notifications, once per person per
+ * device: answered Not Now, as nothing here is about it.
+ */
+async function notNow(m: Device): Promise<void> {
+  if (await dismissNotificationAskOn(m)) step('notification ask: Not Now')
+}
+
 async function webTab(m: Device, label: string): Promise<void> {
   step(`tap the ${label} tab`)
   await m.tapOn({ css: `[role="tab"][aria-label="${label}"]` })
@@ -201,6 +210,7 @@ async function webConsent(m: Device): Promise<void> {
   await m.tapOn(agree)
   await m.assertNotVisible({ ...sheet, timeout: 20000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
+  await notNow(m)
   const answer = await chatAge(m)
   assert.equal(answer.confirmed, true)
   assert.equal(answer.source, 'self')
@@ -209,6 +219,7 @@ async function webConsent(m: Device): Promise<void> {
   await webTab(m, 'Chat')
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
+  await notNow(m)
 }
 
 async function webApple(m: Device): Promise<void> {
@@ -216,6 +227,7 @@ async function webApple(m: Device): Promise<void> {
   await webTab(m, 'Chat')
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 20000 })
+  await notNow(m)
   assert.equal((await chatAge(m)).source, 'apple', 'the stand-in confirmed C')
 }
 
@@ -261,6 +273,7 @@ async function webMessage(m: Device): Promise<void> {
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await m.tapOn(agree)
   await m.assertVisible({ id: 'chat-composer', timeout: 30000 })
+  await notNow(m)
   assert.match(await address(m), /^\/chat\//, 'the DM with A opened')
 }
 
@@ -355,6 +368,7 @@ async function ios(m: Device): Promise<void> {
   await m.tapOn({ text: 'Chat' })
   await m.assertNotVisible({ ...sheet, timeout: 10000 })
   await m.assertNotVisible({ ...locked, timeout: 30000 })
+  await notNow(m)
   await shot(m, 'ios-apple13-no-sheet.png')
 }
 
@@ -404,11 +418,14 @@ async function phoneConsent(
   await m.assertVisible({ ...sheet, timeout: 20000 })
   await answerSheet(m, agree)
   await m.assertNotVisible({ ...locked, timeout: 30000 })
+  await notNow(m)
   step('stopApp; launchApp, still signed in')
   await m.stopApp({ appId: APP })
   await m.launchApp({ appId: APP })
   await m.assertVisible({ text: 'Account, .*', timeout: 30000 })
   await m.tapOn({ text: 'Chat' })
+  // Answered Not Now before the relaunch: not asked again.
+  await notNow(m)
   // The chat list itself, not just no sheet while the answer is pending.
   await m.assertVisible({ text: 'New message', timeout: 30000 })
   await m.assertNotVisible({ ...sheet, timeout: 5000 })

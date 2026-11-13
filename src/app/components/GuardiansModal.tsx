@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import type {
   Guardian,
@@ -11,6 +11,7 @@ import { HttpError } from '../../common/errors'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { Modal } from './Modal'
 import { TextField } from './TextField'
 
 export interface GuardiansModalProps {

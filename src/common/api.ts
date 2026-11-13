@@ -3746,6 +3746,20 @@ class TimedOut extends DeadlinePassed {
   }
 }
 
+/** A device's own two notification switches, as its Account shows them. */
+export interface PushSwitches {
+  messages: boolean
+  rsvpEvents: boolean
+}
+
+/** `POST /me/push-registrations`: one device's push address and switches. */
+export interface PushRegistration extends PushSwitches {
+  platform: 'ios' | 'android' | 'web'
+  /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
+  address: string
+  environment: 'production' | 'development'
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -4700,6 +4714,58 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  /**
+   * The VAPID public key a browser subscribes to push with, or null while
+   * the server sends no Web Push.
+   */
+  async webPushKey(): Promise<string | null> {
+    try {
+      return (
+        await this.request(
+          'GET',
+          '/push/web-key',
+          asObject({ publicKey: asString })
+        )
+      ).publicKey
+    } catch (error) {
+      if (error instanceof HttpError && error.code === 'notFound') return null
+      throw error
+    }
+  }
+
+  /**
+   * Where this signed-in device is woken: a phone's token or a browser's
+   * subscription (`address`, its JSON). Posting the same one again keeps one
+   * registration, moved to this session.
+   */
+  async registerPush(registration: PushRegistration): Promise<string> {
+    return (
+      await this.request(
+        'POST',
+        '/me/push-registrations',
+        asObject({ id: asString }),
+        registration
+      )
+    ).id
+  }
+
+  /**
+   * Changes this device's switches on the registration this session made
+   * (`registerPush`'s id); a switch left out keeps its value.
+   */
+  async updatePush(
+    id: string,
+    change: Partial<PushSwitches>
+  ): Promise<PushSwitches> {
+    const { messages, rsvpEvents } = await this.request(
+      'PATCH',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asObject({ messages: asBoolean, rsvpEvents: asBoolean }),
+      change
+    )
+    return { messages, rsvpEvents }
   }
 
   /** Whether this account has unlocked chat, and how. */

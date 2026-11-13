@@ -1,5 +1,5 @@
 import React, { useState } from 'react'
-import { Modal, Pressable, ScrollView, Switch, Text, View } from 'react-native'
+import { Pressable, ScrollView, Switch, Text, View } from 'react-native'
 
 import type { VideoSummary } from '../../common/api'
 import { lstrings, sprintf } from '../locales/strings'
@@ -11,6 +11,7 @@ import {
 } from '../player/multiCam/takes'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { Modal } from './Modal'
 import { VideoPoster } from './VideoPoster'
 
 export interface AnglePickerModalProps {

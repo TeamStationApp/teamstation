@@ -1,9 +1,10 @@
 import React from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { Modal } from './Modal'
 
 export interface AnglesUnavailableModalProps {
   onClose: () => void

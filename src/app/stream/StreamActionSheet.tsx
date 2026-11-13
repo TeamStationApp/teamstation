@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import type { LiveStream, TeamStationClient } from '../../common/api'
 import { Button } from '../components/Button'
+import { Modal } from '../components/Modal'
 import {
   asksTwice,
   type PhoneStreamAction,

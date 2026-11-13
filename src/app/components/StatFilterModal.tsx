@@ -1,11 +1,12 @@
 import React, { useState } from 'react'
-import { Modal, Pressable, ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
 import type { PlayerStats } from '../../common/api'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
+import { Modal } from './Modal'
 import { RadioMark } from './RadioMark'
 
 /** What a player's figures are narrowed to. Everything unset is a career. */

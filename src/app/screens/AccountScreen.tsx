@@ -42,7 +42,8 @@ import { lstrings } from '../locales/strings'
 import {
   anySwitchOn,
   type NotificationSwitches,
-  switchesKey
+  switchesKey,
+  writeAsked
 } from '../platform/notificationSwitches'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import {
@@ -361,11 +362,20 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [signingOut, setSigningOut] = useState(false)
 
   /**
+   * Any change the person makes here is their answer: the app's own ask
+   * (`startAsk`) never comes to them on this device after it, and never
+   * changes their switches itself.
+   */
+  const decided = (): void => {
+    writeAsked(me).catch(() => undefined)
+  }
+  /**
    * Asks this device for permission, while the tap still counts as the
-   * person's. The answer can wait on the person, so nothing waits on it.
+   * person's; allowed, it registers with the switches it keeps then. The
+   * answer can wait on the person, so nothing waits on it.
    */
   const ask = (): void => {
-    pushDevice.enable().then(
+    pushDevice.enable(client, me).then(
       value => {
         // A read begun before the answer would show what it replaced.
         permissionRead.current++
@@ -375,15 +385,17 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     )
   }
   /**
-   * Keeps a switch on this device (`setSwitches`). Turning one on asks this
-   * device for permission when it has not been asked.
+   * Keeps a switch on this device, which tells the server by its
+   * registration (`setSwitches`). Turning one on asks this device for
+   * permission when it has not been asked.
    */
   const notify = (change: Partial<NotificationSwitches>, on: boolean): void => {
     const current = switchesNow.current
     if (current == null) return
     const turn = ++switchesTurn.current
+    decided()
     show({ ...current, ...change })
-    pushDevice.setSwitches(me, change).then(
+    pushDevice.setSwitches(client, me, change).then(
       stored => {
         if (turn === switchesTurn.current) show(stored)
       },
@@ -950,7 +962,10 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                   label={lstrings.account_notifications_allow}
                   kind="secondary"
                   style={{ alignSelf: 'flex-start' }}
-                  onPress={ask}
+                  onPress={() => {
+                    decided()
+                    ask()
+                  }}
                 />
               )}
             </View>

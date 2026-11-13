@@ -5,6 +5,7 @@ import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
 import { publicWebNodes } from '../../test/chat2Maestro.e2e'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 import {
   type BrowserSession,
   browserSession,
@@ -60,7 +61,8 @@ async function main(): Promise<void> {
     const sidebar = '[data-testid="navigation-sidebar"]'
     await m.openBrowser({ url: origin + '/' })
     await tap(`${sidebar} [aria-label="Messages"]`)
-    await tap('[aria-label="Not Now"]')
+    // The age sheet's, by id: the notification ask says Not Now too.
+    await tap('[data-testid="chat-age-decline"]')
     await page.waitForFunction(() => location.pathname === '/')
     assert.equal(await page.$('[data-testid="chat-workspace"]'), null)
     await tap(`${sidebar} [aria-label="Messages"]`)
@@ -68,6 +70,8 @@ async function main(): Promise<void> {
     await page.waitForSelector('[data-testid="chat-workspace"]', {
       timeout: 30000
     })
+    // Past the age sheet, messaging asks about notifications.
+    await dismissNotificationAskOn(m)
     console.log('Messages preserves age consent and real browser key enrolment')
 
     const source = `/teams/${fixture.f.teamA}?tab=chats`
@@ -174,6 +178,9 @@ async function main(): Promise<void> {
           await page.waitForSelector(`[data-testid=${JSON.stringify(id)}]`, {
             visible: true
           })
+        },
+        notNow: async () => {
+          await dismissNotificationAskOn(m)
         }
       })
       assert.equal(new URL(page.url()).pathname, conversation)

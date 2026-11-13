@@ -84,6 +84,7 @@ import { AppSidebar } from './components/AppSidebar'
 import { PictureDirectoriesContext } from './components/CachedPicture'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
+import { ModalPresenceProvider } from './components/modalPresence'
 import { OfflineBanner } from './components/OfflineBanner'
 import { useSidebarWidth } from './components/sidebarLayout'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
@@ -157,6 +158,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
+import { pushDevice } from './platform/pushDevice'
 import { useInsets } from './platform/safeArea'
 import { signInRequest } from './platform/signInRequest'
 import {
@@ -164,6 +166,11 @@ import {
   type StoredUser,
   storedUserOf
 } from './platform/storedUser'
+import {
+  NotificationAskContext,
+  useNotificationAskState
+} from './push/notificationAskContext'
+import { NotificationAskHost } from './push/NotificationAskHost'
 import { GameReplayScreen } from './replay/GameReplayScreen'
 import { ScoreboardOverrideScreen } from './scoreboard/ScoreboardOverrideScreen'
 import { ScoreGameScreen } from './scoreboard/ScoreGameScreen'
@@ -610,6 +617,13 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }, [client, notificationUser])
   useForegroundRefresh(refreshNotifications)
+  // A device already allowed to notify registers again for each session it
+  // is signed in with, at start and after a sign-in, with the switches it
+  // keeps for this person, so the server knows where to wake them.
+  useEffect(() => {
+    if (notificationUser == null) return
+    pushDevice.sync(client, notificationUser).catch(() => undefined)
+  }, [client, notificationUser])
   // Until we have asked, we do not know whether anybody is signed in. Showing
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.
@@ -817,6 +831,13 @@ function Shell(props: AppProps): React.ReactElement {
    */
   const chatAge = useChatAgeState(client, signedInAs, appleAge)
   const chatOn = chatAge.access === 'allowed'
+  /**
+   * The ask about notifications, at an RSVP answer and on entering messaging
+   * from inside the app: the Chat tab, a Message button, or a conversation
+   * opened from a list. A notification's tap and a link go to the address
+   * (`goToRoute`), which never asks.
+   */
+  const notificationAsk = useNotificationAskState()
   /**
    * A chat surface for the person signed in: nothing signed out, and while
    * chat is locked a stand-in the age sheet is up over (agreeing draws the
@@ -1443,6 +1464,7 @@ function Shell(props: AppProps): React.ReactElement {
    * chat frames off this tab's stack, and the address with them.
    */
   const declineChat = (): void => {
+    notificationAsk.actions.withdraw('messaging')
     const back = tab === 'chat' ? beforeChat.current : tab
     const next = { ...stacks, chat: [] as Pushed[] }
     for (const key of ['home', 'videos', 'schedule', 'search'] as const)
@@ -1874,6 +1896,7 @@ function Shell(props: AppProps): React.ReactElement {
     }
     Keyboard.dismiss()
     captureChatLeave(() => {
+      if (next === 'chat') notificationAsk.actions.request('messaging')
       if (next === tab && stacks[tab].length > 0)
         dropRouteSuffix(
           stacks[tab],
@@ -2231,6 +2254,7 @@ function Shell(props: AppProps): React.ReactElement {
   }
   /** A chat, from the list or from a team's, season's or league's page. */
   const openChat = (chat: { id: string; title: string }): void => {
+    notificationAsk.actions.request('messaging')
     const next: Pushed = {
       name: 'conversation',
       conversationId: chat.id,
@@ -3414,6 +3438,7 @@ function Shell(props: AppProps): React.ReactElement {
               navigationRef.current.top !== top
             )
               return
+            notificationAsk.actions.request('messaging')
             const listed = chatEngine
               ?.conversations()
               .find(chat => chat.id === conversation.id)
@@ -4314,6 +4339,12 @@ function Shell(props: AppProps): React.ReactElement {
                 chatSurface={isChatSurface(tab, top?.name)}
                 onLeaveChat={declineChat}
               />
+              <NotificationAskHost
+                state={notificationAsk}
+                client={client}
+                userId={signedInAs}
+                chatShown={isChatSurface(tab, top?.name)}
+              />
               {confirmingSignOut && (
                 <ChoiceSheet
                   title="Sign Out?"
@@ -4373,16 +4404,22 @@ function Shell(props: AppProps): React.ReactElement {
     </GestureHandlerRootView>
   )
   return (
-    <ChatAgeContext.Provider value={chatAge}>
-      {caching == null ? (
-        shell
-      ) : (
-        // The phone draws each picture from its file of it, offline too.
-        <PictureDirectoriesContext.Provider value={caching.pictureFiles}>
-          {shell}
-        </PictureDirectoriesContext.Provider>
-      )}
-    </ChatAgeContext.Provider>
+    // Every modal on show, which the ask never stacks on: counted in a store
+    // of its own, so a modal coming or going never re-renders this shell.
+    <ModalPresenceProvider>
+      <ChatAgeContext.Provider value={chatAge}>
+        <NotificationAskContext.Provider value={notificationAsk.actions}>
+          {caching == null ? (
+            shell
+          ) : (
+            // The phone draws each picture from its file of it, offline too.
+            <PictureDirectoriesContext.Provider value={caching.pictureFiles}>
+              {shell}
+            </PictureDirectoriesContext.Provider>
+          )}
+        </NotificationAskContext.Provider>
+      </ChatAgeContext.Provider>
+    </ModalPresenceProvider>
   )
 }
 

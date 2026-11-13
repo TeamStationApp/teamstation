@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Modal, ScrollView, Text, View } from 'react-native'
+import { ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { localityLabel } from '../../common/locality'
 import type { PublicGroup, SearchRow } from '../../common/publicGroups'
 import { Button, TextField } from '../components'
 import { ListRow } from '../components/ListRow'
+import { Modal } from '../components/Modal'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { PlaceholderTeamForm, type TeamChoice } from './PlaceholderTeamForm'

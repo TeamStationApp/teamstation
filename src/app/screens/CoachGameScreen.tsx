@@ -2,7 +2,6 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   BackHandler,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -46,6 +45,7 @@ import {
 } from '../../common/scoring/state'
 import { Button } from '../components/Button'
 import { ButtonIcon } from '../components/ButtonIcon'
+import { Modal } from '../components/Modal'
 import { type SuccessNotice, SuccessToast } from '../components/SuccessToast'
 import { lstrings, sprintf } from '../locales/strings'
 import type { Route } from '../navigation/routes'

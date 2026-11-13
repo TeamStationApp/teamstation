@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { ActivityIndicator, Modal, ScrollView, Text, View } from 'react-native'
+import { ActivityIndicator, ScrollView, Text, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import type { GameFieldSummary } from '../../common/gameApprovals'
@@ -12,6 +12,7 @@ import {
   type VenueSummary
 } from '../../common/venues'
 import { Button, ListCard, ListRow, TextField } from '../components'
+import { Modal } from '../components/Modal'
 import { useLatestRequest } from '../hooks/useLatestRequest'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'

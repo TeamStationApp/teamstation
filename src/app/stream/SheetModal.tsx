@@ -1,7 +1,6 @@
 import React from 'react'
 import {
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -10,6 +9,7 @@ import {
   View
 } from 'react-native'
 
+import { Modal } from '../components/Modal'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 

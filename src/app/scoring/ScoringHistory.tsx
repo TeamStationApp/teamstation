@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   Animated,
-  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -12,6 +11,7 @@ import {
 
 import type { TagTarget } from '../../common/eventTags'
 import { ButtonIcon } from '../components/ButtonIcon'
+import { Modal } from '../components/Modal'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { MODAL_ORIENTATIONS } from './modalOrientations'

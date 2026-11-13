@@ -7,7 +7,7 @@ import {
   sharedPushDevice
 } from './pushState'
 
-export type { PushDevice, PushState } from './pushState'
+export type { PushClient, PushDevice, PushState } from './pushState'
 
 /** The permission half of the app's `TSPush` module. */
 interface PushPermissions extends TurboModule {
@@ -39,7 +39,9 @@ export function phonePushDevice(
       state,
       ask: async () => {
         if ((await state()) === 'prompt') await module()?.requestPermission()
-      }
+      },
+      // A phone registers nothing yet, so its switches stay on the phone.
+      register: async () => undefined
     },
     options
   )

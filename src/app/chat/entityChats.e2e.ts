@@ -3,6 +3,8 @@ import assert from 'node:assert/strict'
 import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
+
 async function main(): Promise<void> {
   const {
     MAESTRO_D_CLIENT_ROOT,
@@ -124,6 +126,8 @@ async function main(): Promise<void> {
         await new Promise(resolve => setTimeout(resolve, 300))
         await m.tapOn({ css: '[data-testid="entity-chat-' + row.id + '"]' })
         await waitForPath('/chat/' + row.id)
+        // Opening a conversation asks about notifications once per person.
+        await dismissNotificationAskOn(m)
         // The embedded workspace returns directly to its originating section.
         await m.tapOn({ css: '[aria-label="Back"]' })
         await waitForPath(target)

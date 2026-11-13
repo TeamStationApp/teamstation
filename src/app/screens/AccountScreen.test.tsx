@@ -18,16 +18,27 @@ import { App } from '../App'
 import { holdsStore } from '../chat/engine/links'
 import { newRecord } from '../chat/keyRecord'
 import { KEY_DATABASE, keyStore } from '../chat/keyStore'
+import {
+  createModalPresence,
+  ModalPresenceProvider
+} from '../components/modalPresence'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
 import {
   type NotificationSwitches,
+  readAsked,
   readSwitches,
   switchesKey,
   writeSwitches
 } from '../platform/notificationSwitches'
-import type { PushDevice, PushState } from '../platform/pushDevice'
+import type { PushClient, PushDevice, PushState } from '../platform/pushDevice'
 import type { UserSettingStorage } from '../platform/userSetting'
+import type { AskDevice, AskReason } from '../push/notificationAsk'
+import {
+  type NotificationAskState,
+  useNotificationAskState
+} from '../push/notificationAskContext'
+import { NotificationAskHost } from '../push/NotificationAskHost'
 import { SLIDE_TRAVEL } from '../stream/overlay/SlideToStop'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -328,12 +339,14 @@ type FakeDevice = PushDevice & {
   asked: number
   /** How often its permission was read. */
   reads: number
+  through?: PushClient
   /** Each `enable`, and each `setSwitches` with its change. */
   given: Array<[string] | [string, Partial<NotificationSwitches>]>
 }
 /**
  * A device whose permission is `now`, which `enable` changes to `answer`,
- * keeping its switches in the last fixture's storage.
+ * keeping the client it was to register through, and its switches in the
+ * last fixture's storage.
  */
 function device(now: PushState, answer: PushState = now): FakeDevice {
   const storage = fixtureStorage
@@ -347,14 +360,16 @@ function device(now: PushState, answer: PushState = now): FakeDevice {
     },
     switches: async userId => await readSwitches(userId, storage),
     sync: async () => now,
-    setSwitches: async (userId, change) => {
+    setSwitches: async (client, userId, change) => {
+      fake.through = client
       fake.given.push(['set', change])
       const next = { ...(await readSwitches(userId, storage)), ...change }
       await writeSwitches(userId, next, storage)
       return next
     },
-    enable: async () => {
+    enable: async client => {
       fake.asked++
+      fake.through = client
       fake.given.push(['enable'])
       now = answer
       return now
@@ -387,6 +402,68 @@ afterEach(async () => {
   globalThis.fetch = originalFetch
   document.body.replaceChildren()
 })
+
+/**
+ * The app's ask, drawn over nothing for `userId` on a device in
+ * `permission`, after `reason`: whether its sheet came up, and what it
+ * changed. It reads this device's own storage, as Account writes it.
+ */
+async function askAfter(
+  userId: string,
+  permission: PushState,
+  reason: AskReason
+): Promise<{
+  sheet: boolean
+  switched: Array<Partial<NotificationSwitches>>
+}> {
+  const switched: Array<Partial<NotificationSwitches>> = []
+  const stub: AskDevice = {
+    state: async () => permission,
+    switches: async () => ({ messages: false, rsvpEvents: false }),
+    setSwitches: async (_client, _user, change) => {
+      switched.push(change)
+      return { messages: false, rsvpEvents: false, ...change }
+    },
+    enable: async () => permission
+  }
+  let asks: NotificationAskState | undefined
+  function Host(): React.ReactElement {
+    const state = useNotificationAskState()
+    asks = state
+    return (
+      <ModalPresenceProvider presence={createModalPresence(0)}>
+        <NotificationAskHost
+          state={state}
+          client={{} as unknown as PushClient}
+          userId={userId}
+          chatShown
+          device={stub}
+        />
+      </ModalPresenceProvider>
+    )
+  }
+  const host = document.createElement('div')
+  document.body.appendChild(host)
+  const ask = createRoot(host)
+  await act(async () => {
+    ask.render(
+      <ThemeProvider>
+        <Host />
+      </ThemeProvider>
+    )
+    await delay()
+  })
+  await act(async () => {
+    asks!.actions.request(reason)
+    await delay()
+  })
+  const sheet =
+    document.querySelector('[data-testid="notification-ask"]') != null
+  await act(async () => {
+    ask.unmount()
+  })
+  return { sheet, switched }
+}
 
 describe('Account settings screen', () => {
   // The Shell reads the account's chat age on mount: confirmed here.
@@ -513,7 +590,7 @@ describe('Account settings screen', () => {
       Platform.OS = web
     }
   })
-  it('keeps each switch on this device, asking it only when turning one on, and saves nothing on the account', async () => {
+  it('keeps each switch on this device, asking it only when turning one on, and tells the server only through this device', async () => {
     const f = fixture()
     const phone = device('prompt', 'granted')
     await render(
@@ -525,8 +602,8 @@ describe('Account settings screen', () => {
     expect(toggle(RSVP_EVENTS)?.checked).equals(false)
     await flip(RSVP_EVENTS)
     await flip(MESSAGES)
-    // Each change goes to this device, which keeps it; turning one on also
-    // asks, and turning one off asks nothing.
+    // Each change goes to this device, which keeps it and tells the server;
+    // turning one on also asks, and turning one off asks nothing.
     expect(phone.asked).equals(2)
     expect(phone.given).deep.equals([
       ['set', { messages: true }],
@@ -535,6 +612,7 @@ describe('Account settings screen', () => {
       ['enable'],
       ['set', { messages: false }]
     ])
+    expect(phone.through).equals(f.client)
     expect(toggle(MESSAGES)?.checked).equals(false)
     expect(toggle(RSVP_EVENTS)?.checked).equals(true)
     expect(text()).not.includes(BLOCKED)
@@ -695,6 +773,9 @@ describe('Account settings screen', () => {
     expect(text()).not.includes(BLOCKED)
     await press(ALLOW)
     expect(browser.asked).equals(1)
+    // Allowed, the browser registers through the signed-in client, with
+    // its switches.
+    expect(browser.through).equals(f.client)
     expect(browser.given).deep.equals([['enable']])
     expect(button(ALLOW)).equals(undefined)
     expect(text()).not.includes(BLOCKED)
@@ -711,6 +792,46 @@ describe('Account settings screen', () => {
       />
     )
     expect(text()).includes(BLOCKED)
+  })
+  it('counts a switch changed here as asked: an RSVP after it neither asks nor changes the switches', async () => {
+    window.localStorage.clear()
+    const f = fixture()
+    const me = f.session.user.id
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => undefined}
+        pushDevice={device('granted')}
+      />
+    )
+    expect(await readAsked(me), 'nothing changed yet').equals(false)
+    await flip(MESSAGES)
+    expect(await readAsked(me)).equals(true)
+    // Allowed already: with no record, the ask would turn both on quietly.
+    const ask = await askAfter(me, 'granted', 'rsvp')
+    expect(ask.sheet).equals(false)
+    expect(ask.switched).deep.equals([])
+    expect(await readSwitches(me, f.switchStorage)).deep.equals({
+      messages: true,
+      rsvpEvents: false
+    })
+  })
+  it('counts Allow tapped here as asked: entering chat after it neither asks nor changes the switches', async () => {
+    window.localStorage.clear()
+    const f = fixture()
+    const me = f.session.user.id
+    f.kept({ messages: true, rsvpEvents: false })
+    const browser = device('prompt', 'denied')
+    await render(
+      <AccountScreen {...f} onSignOut={() => undefined} pushDevice={browser} />
+    )
+    await press(ALLOW)
+    expect(browser.asked).equals(1)
+    expect(await readAsked(me)).equals(true)
+    // Refused at the system: with no record, the ask would show its sheet.
+    const ask = await askAfter(me, 'denied', 'messaging')
+    expect(ask.sheet).equals(false)
+    expect(ask.switched).deep.equals([])
   })
   it('opens the Apple Music settings walkthrough from Walk-up songs, on an iPhone only', async () => {
     const web = Platform.OS

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Pressable, Text, TextInput, View } from 'react-native'
+import { Pressable, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { type BuildInfo, buildInfo } from '../../common/distribution'
@@ -12,6 +12,7 @@ import { RenderErrorProbe } from '../sentry'
 import { nativeCrash } from '../sentrySdk'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+import { Modal } from './Modal'
 
 export type { ServerControl }
 

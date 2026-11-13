@@ -39,6 +39,25 @@ export default [
     }
   },
 
+  // Every modal of the app's is counted while on show (`modalPresence`), so
+  // the ask about notifications never stacks on one: React Native's own
+  // `Modal` is drawn only through the app's.
+  {
+    files: ['src/app/**/*.ts', 'src/app/**/*.tsx'],
+    ignores: ['src/app/components/Modal.tsx', 'src/app/**/*.test.*'],
+    rules: {
+      // By name, so the TV code's `import * as ReactNative` stays allowed.
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportDeclaration[source.value='react-native'] > ImportSpecifier[imported.name='Modal']",
+          message: "Use the app's Modal (src/app/components/Modal)."
+        }
+      ]
+    }
+  },
+
   // The server and its tests read their types from the server's own project,
   // as `npm run typecheck` does. Under the root tsconfig every one of them
   // would share a program holding the whole app as well, and one ESLint

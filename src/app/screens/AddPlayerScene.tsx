@@ -3,7 +3,6 @@ import React, { useEffect, useRef, useState } from 'react'
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
-  Modal,
   Platform,
   Pressable,
   SafeAreaView as WebSafeAreaView,
@@ -33,6 +32,7 @@ import {
 import { PLAYER_POSITIONS } from '../../common/playerSettings'
 import { Button, Card } from '../components'
 import { CandidateCard } from '../components/CandidateCard'
+import { Modal } from '../components/Modal'
 import { PlayerForm } from '../components/PlayerForm'
 import { PlayerSearchField } from '../components/PlayerSearchField'
 import { useRosterCandidates } from '../hooks/useRosterCandidates'

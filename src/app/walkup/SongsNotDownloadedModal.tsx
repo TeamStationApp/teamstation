@@ -1,7 +1,8 @@
 import React, { useRef } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { Button } from '../components/Button'
+import { Modal } from '../components/Modal'
 import { lstrings } from '../locales/strings'
 import { MODAL_ORIENTATIONS } from '../scoring/modalOrientations'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'

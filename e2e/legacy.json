@@ -58,6 +58,7 @@
     "src/app/navigation/navbarPop.e2e.ts",
     "src/app/navigation/stackTransitions.e2e.ts",
     "src/app/navigation/stackTransitionsNative.e2e.ts",
+    "src/app/notifications.e2e.ts",
     "src/app/passwordCalibration.e2e.ts",
     "src/app/passwordForm.e2e.ts",
     "src/app/passwordNative.e2e.ts",
@@ -216,7 +217,8 @@
     "src/test/chat2FixtureControl.e2e.ts",
     "src/test/chat2FixtureProxyServe.e2e.ts",
     "src/test/chatBrowserLegacyActions.e2e.ts",
-    "src/test/longListsFixture.e2e.ts"
+    "src/test/longListsFixture.e2e.ts",
+    "src/app/push/webCoverage.e2e.ts"
   ],
   "parked": [
     "appletv/e2e/auth.e2e.ts",
@@ -320,6 +322,7 @@
     "src/app/navigation/navbarPop.e2e.ts": "app-shell",
     "src/app/navigation/stackTransitions.e2e.ts": "app-shell",
     "src/app/navigation/stackTransitionsNative.e2e.ts": "app-shell",
+    "src/app/notifications.e2e.ts": "platform",
     "src/app/passwordCalibration.e2e.ts": "account",
     "src/app/passwordForm.e2e.ts": "account",
     "src/app/passwordNative.e2e.ts": "account",

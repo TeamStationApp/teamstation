@@ -16,6 +16,7 @@ import {
   inMapFrame,
   waitInMapFrame
 } from '../../test/mapFrameProbe'
+import { dismissNotificationAskOn } from '../../test/notificationAsk'
 
 async function main(): Promise<void> {
   const artifacts = resolve(process.env.EVENT_INFO_ARTIFACTS!)
@@ -215,6 +216,8 @@ async function main(): Promise<void> {
       `document.querySelector('[data-testid="event-rsvp-104-1"]').getAttribute('aria-disabled')!=='true'`
     )
     await m.tapOn({ text: 'Done' })
+    // An RSVP asks about notifications once per person per device.
+    await dismissNotificationAskOn(m)
     await wait(
       `document.querySelectorAll('[data-testid^="schedule-rsvp-avatar-"]').length===3`
     )
@@ -419,6 +422,7 @@ async function main(): Promise<void> {
     )
     writeFileSync(join(artifacts, 'rsvp-modal.png'), await m.screenshot())
     await m.tapOn({ text: 'Done' })
+    await dismissNotificationAskOn(m)
     await wait(
       `document.querySelector('[data-testid="event-rsvp-modal"]')==null && document.querySelector('[data-testid="event-reply-status-${rsvpId.slice(11)}"]')?.textContent==='No'`
     )

@@ -8,7 +8,6 @@ import React, {
 } from 'react'
 import {
   type GestureResponderEvent,
-  Modal,
   NativeModules,
   Platform,
   Pressable,
@@ -21,6 +20,7 @@ import {
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import type { TeamStationClient } from '../../common/api'
+import { Modal } from '../components/Modal'
 import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import {

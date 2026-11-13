@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
-  Modal,
   Pressable,
   ScrollView,
   useWindowDimensions,
@@ -9,6 +8,7 @@ import {
 } from 'react-native'
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler'
 
+import { Modal } from '../components/Modal'
 import { useInsets } from '../platform/safeArea'
 import { DRAG_OPEN_PX, type DropMenu, type DropRect } from './dropMenu'
 import { MODAL_ORIENTATIONS } from './modalOrientations'
