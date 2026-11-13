@@ -581,6 +581,44 @@ describe('a season of the next schedule', () => {
     expect(fake.saves).length(1)
   })
 
+  it('replaces a short window with a longer copy, bounded by the season’s own dates', async () => {
+    const target = {
+      ...SEASON,
+      seasonDates: { startsOn: '2027-03-01', endsOn: '2027-06-30' },
+      settings: {
+        ...SEASON.settings,
+        startsOn: '2027-04-01',
+        endsOn: '2027-04-14',
+        windows: [{ from: '2027-04-01', until: '2027-04-14', hours: EVENINGS }]
+      }
+    }
+    const source = {
+      ...SEASON,
+      id: 'sea_source',
+      name: 'Demo Summer',
+      settings: {
+        ...SEASON.settings,
+        startsOn: '2027-04-01',
+        endsOn: '2027-07-31',
+        windows: [
+          { from: '2027-04-01', until: '2027-05-31', hours: EVENINGS },
+          { from: '2027-06-01', until: '2027-07-31', hours: LATER }
+        ]
+      }
+    }
+    const fake = fakeClient(target, { others: [source] })
+    await show(fake.client)
+    await tapText('Copy from another season')
+    await tapLabel('Demo Summer')
+    await tapLabel('Replace game windows')
+    await settle(20)
+    // Not cut at the window it replaces, only at the season's last day.
+    expect(fake.saves.at(-1)?.windows).deep.equals([
+      { from: '2027-04-01', until: '2027-05-31', hours: EVENINGS },
+      { from: '2027-06-01', until: '2027-06-30', hours: LATER }
+    ])
+  })
+
   it('copies the game windows of another of the league’s seasons, moved to this one', async () => {
     const empty = { ...SEASON, id: 'sea_none', name: 'Demo Fall' }
     const spring = {
