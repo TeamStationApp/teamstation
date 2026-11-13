@@ -288,10 +288,16 @@ describe('device result summaries', () => {
     expect(summaryOf(weekly)).deep.equals(limited.options.map(o => o.unmet))
   })
   it('accepts bounded blocked results and refuses malformed or contradictory payloads', () => {
-    const blocked = { options: [], blocking: 'No selected fields' }
-    expect(summarizeResult(input(), asPreviewResult(blocked))).deep.equals(
-      blocked
-    )
+    // A blocked result keeps the engine's reason, not the device's text.
+    const blocked = { options: [], blocking: 'Anything a device sends' }
+    expect(summarizeResult(input(), asPreviewResult(blocked))).deep.equals({
+      options: [],
+      blocking:
+        'No game fits the selected fields, time windows and constraints.'
+    })
+    expect(
+      summarizeResult(input({ fields: [] }), asPreviewResult(blocked)).blocking
+    ).not.equals('Anything a device sends')
     for (const bad of [
       null,
       {},

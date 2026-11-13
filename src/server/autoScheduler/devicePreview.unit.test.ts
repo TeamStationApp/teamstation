@@ -109,13 +109,9 @@ async function stored(
       return []
     }
     if (query.sql.startsWith('delete from "schedule_previews"')) {
-      const [league, status, before] = query.parameters
+      const [status, before] = query.parameters
       for (const [id, row] of rows)
-        if (
-          row.league_id === league &&
-          row.status === status &&
-          row.created_at < (before as Date)
-        )
+        if (row.status === status && row.created_at < (before as Date))
           rows.delete(id)
       return []
     }
@@ -137,7 +133,12 @@ describe('device preview state transitions without a database', () => {
     const rows = new Map<string, PreviewRow>([
       [
         'abandoned',
-        { ...pending('abandoned'), created_at: new Date('2026-12-30') }
+        // Another league's: one that never builds again leaves none behind.
+        {
+          ...pending('abandoned'),
+          league_id: 'other',
+          created_at: new Date('2026-12-30')
+        }
       ],
       [
         'recent',
@@ -237,7 +238,7 @@ describe('device preview state transitions without a database', () => {
       }
     })
   })
-  it('retains kept games, completes blocked results, and discards the source only after acceptance', async () => {
+  it('retains kept games and discards the source on acceptance, but keeps it when nothing is placed again', async () => {
     authorize()
     for (const blocked of [false, true]) {
       const row = pending('new')
@@ -266,19 +267,35 @@ describe('device preview state transitions without a database', () => {
           ['old', old]
         ]),
         async db => {
+          if (blocked) {
+            // The device's own words are not what the preview says.
+            const error = await completePreview(
+              db,
+              actor,
+              'new',
+              { options: [], blocking: 'Anything a device sends' },
+              clock
+            ).catch((caught: unknown) => caught)
+            expect(String(error)).includes(
+              'None of the rejected games could be placed again'
+            )
+            expect(String(error)).not.includes('Anything a device sends')
+            expect(old.status).equals('open')
+            expect(row.status).equals('discarded')
+            return
+          }
           const completed = await completePreview(
             db,
             actor,
             'new',
-            blocked ? { options: [], blocking: 'No fit' } : result,
+            result,
             clock
           )
           expect(old.status).equals('discarded')
-          if (blocked) expect(completed.blocking).equals('No fit')
-          else
-            expect(
-              completed.options[0].games.map(game => game.key)
-            ).deep.equals(['one', 'kept'])
+          expect(completed.options[0].games.map(game => game.key)).deep.equals([
+            'one',
+            'kept'
+          ])
         }
       )
     }

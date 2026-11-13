@@ -15,7 +15,6 @@ import type {
   ScheduleOption
 } from '../../common/autoScheduler/types'
 import { badRequest, conflict, notFound } from '../../common/errors'
-import { gameCalendarDay } from '../../common/gameTime'
 import { makeId } from '../../common/ids'
 import {
   type AddedGame,
@@ -25,7 +24,6 @@ import {
   type PreviewRequest,
   type SchedulePreview
 } from '../../common/schedulePreviews'
-import { fieldSizeLabel } from '../../common/venues'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -35,29 +33,30 @@ import { requireGroupAdmin } from '../groups/rights'
 import { chosenSeasonIds } from '../scheduler/setup'
 import { occupancy } from '../venues/occupancy'
 import { noticeTeams, type Tallies } from './cancel'
+import {
+  holdingOf,
+  requireKeepsRules,
+  validatePlacements
+} from './placementChecks'
 import { proposePlanned } from './propose'
 import {
   gamesToReschedule,
   publishedStates,
   rejectPublished
 } from './reschedule'
-import {
-  type Holding,
-  managerConflict,
-  type RuleContext,
-  ruleProblem
-} from './rules'
+import { type Holding, managerConflict } from './rules'
 import {
   deviceInput,
   headCoachesOf,
   type RescheduleRef,
-  ruleContext,
   runGames,
   type Snapshot,
   snapshot,
   upcoming
 } from './snapshot'
 import { validateOffThread } from './validateOffThread'
+
+export { holdingOf, requireKeepsRules, validatePlacements }
 
 type Db = Kysely<Database>
 export type PreviewRow = Selectable<SchedulePreviewsTable>
@@ -291,10 +290,10 @@ export async function preparePreview(
     throw error
   }
   // A build whose device never sent its result is dropped after a day, with
-  // the snapshot it held.
+  // the snapshot it held: any league's, so one that never builds again
+  // leaves none behind.
   await db
     .deleteFrom('schedule_previews')
-    .where('league_id', '=', leagueId)
     .where('status', '=', 'building')
     .where('created_at', '<', new Date(clock.now().getTime() - BUILD_EXPIRY_MS))
     .execute()
@@ -326,174 +325,6 @@ export async function preparePreview(
   return { id, input: deviceInput(snap.engine) }
 }
 
-const DAY_MS = 24 * 60 * 60 * 1000
-
-/**
- * Holdings by the UTC day they start, so a game's rules read only those
- * near it: every rule looks at most a week either side. Long holdings are
- * always near. Candidates keep the order they were added in.
- */
-class NearHoldings {
-  private readonly byDay = new Map<number, Array<[number, Holding]>>()
-  private readonly long: Array<[number, Holding]> = []
-  private added = 0
-
-  constructor(holdings: readonly Holding[]) {
-    for (const holding of holdings) this.add(holding)
-  }
-
-  add(holding: Holding): void {
-    const entry: [number, Holding] = [this.added++, holding]
-    if (holding.end - holding.start > DAY_MS) {
-      this.long.push(entry)
-      return
-    }
-    const day = Math.floor(holding.start / DAY_MS)
-    const list = this.byDay.get(day) ?? []
-    list.push(entry)
-    this.byDay.set(day, list)
-  }
-
-  near(start: number): Holding[] {
-    const day = Math.floor(start / DAY_MS)
-    const found = [...this.long]
-    for (let d = day - 9; d <= day + 9; d++)
-      found.push(...(this.byDay.get(d) ?? []))
-    return found.sort((a, b) => a[0] - b[0]).map(([, holding]) => holding)
-  }
-}
-
-/** Validate device placements against the immutable server-held input. */
-export function validatePlacements(snap: Snapshot, result: EngineResult): void {
-  const { engine } = snap
-  const seasons = new Map(
-    engine.seasons.map(season => [
-      season.id,
-      {
-        season,
-        participants: new Set(season.participants),
-        exhibition: new Set(season.exhibitionTeams)
-      }
-    ])
-  )
-  const required =
-    engine.required == null
-      ? null
-      : new Map(engine.required.map(game => [game.key, game]))
-  const fixedCounts = new Map<string, number>()
-  for (const fixed of engine.fixed)
-    for (const team of [fixed.homeTeamId, fixed.awayTeamId]) {
-      const key = `${fixed.seasonId}:${team}:${fixed.exhibition}`
-      fixedCounts.set(key, (fixedCounts.get(key) ?? 0) + 1)
-    }
-  const taken = new Set([
-    ...engine.fixed.map(fixed => fixed.key),
-    ...engine.bookings.map(booking => booking.key)
-  ])
-  engine.weeklyGames?.forEach((_, index) => taken.add(`weekly:${index}`))
-  const base = ruleContext(snap, [], engine.headCoaches)
-  const now = new Date(engine.notBefore - 1)
-  for (const option of result.options) {
-    const keys = new Set<string>()
-    const counts = new Map<string, number>()
-    const starting: Holding[] = [
-      ...engine.bookings.map(booking => ({ ...booking, seasonId: null })),
-      ...engine.fixed.map(game => ({
-        ...game,
-        teamIds: [game.homeTeamId, game.awayTeamId]
-      }))
-    ]
-    const holdings = new NearHoldings(starting)
-    // Without live weekly games, the weekly caps count the same holdings.
-    const weekly =
-      engine.weeklyGames == null
-        ? holdings
-        : new NearHoldings(
-            engine.weeklyGames.map((game, index) => ({
-              ...game,
-              key: `weekly:${index}`,
-              size: null,
-              end: game.start
-            }))
-          )
-    for (const game of option.games) {
-      const start = Date.parse(game.startAt)
-      const end = Date.parse(game.endAt)
-      const of = seasons.get(game.seasonId)
-      if (
-        of == null ||
-        !Number.isFinite(start) ||
-        !Number.isFinite(end) ||
-        end <= start ||
-        game.key.length === 0 ||
-        game.key.length > 300 ||
-        keys.has(game.key) ||
-        taken.has(game.key)
-      )
-        throw badRequest('Submit unique games with valid seasons and times')
-      keys.add(game.key)
-      const { season, participants, exhibition } = of
-      if (
-        game.homeTeamId === game.awayTeamId ||
-        end - start !== season.settings.gameMinutes * 60000
-      )
-        throw badRequest(
-          'Each game needs two different teams and the season’s game length'
-        )
-      if (
-        required == null &&
-        (game.exhibition
-          ? !(
-              (participants.has(game.homeTeamId) &&
-                exhibition.has(game.awayTeamId)) ||
-              (participants.has(game.awayTeamId) &&
-                exhibition.has(game.homeTeamId))
-            )
-          : !participants.has(game.homeTeamId) ||
-            !participants.has(game.awayTeamId))
-      )
-        throw badRequest('Choose the season’s regular or exhibition matchups')
-      const wanted = required?.get(game.key)
-      if (required != null) {
-        if (
-          wanted?.seasonId !== game.seasonId ||
-          wanted.homeTeamId !== game.homeTeamId ||
-          wanted.awayTeamId !== game.awayTeamId ||
-          wanted.exhibition !== game.exhibition
-        )
-          throw badRequest('Place only the requested games')
-      } else {
-        if (
-          engine.teamIds != null &&
-          (!engine.teamIds.includes(game.homeTeamId) ||
-            !engine.teamIds.includes(game.awayTeamId))
-        )
-          throw badRequest('Place only the selected teams')
-        for (const team of [game.homeTeamId, game.awayTeamId]) {
-          if (!participants.has(team)) continue
-          const key = `${game.seasonId}:${team}:${game.exhibition}`
-          const count = (counts.get(key) ?? 0) + 1
-          counts.set(key, count)
-          if (
-            count + (fixedCounts.get(key) ?? 0) >
-            (game.exhibition
-              ? season.settings.exhibitionGames
-              : season.settings.regularGames)
-          )
-            throw badRequest('Do not exceed the season’s requested game counts')
-        }
-      }
-      requireKeepsRulesIn(snap, game, now, wanted, {
-        ...base,
-        others: holdings.near(start),
-        weeklyOthers: weekly.near(start)
-      })
-      holdings.add(holdingOf(game))
-      if (weekly !== holdings) weekly.add(holdingOf(game))
-    }
-  }
-}
-
 /** A device result's fingerprint, to recognise a retry of the same result. */
 function resultHash(result: EngineResult): string {
   return createHash('sha256').update(JSON.stringify(result)).digest('hex')
@@ -508,71 +339,92 @@ export async function completePreview(
   actor: Actor,
   previewId: string,
   result: EngineResult,
-  clock: Clock
+  clock: Clock,
+  /** The row as the caller already read and authorized it, if it did. */
+  read?: PreviewRow
 ): Promise<SchedulePreview> {
   const hash = resultHash(result)
   // Validation can take seconds, so it runs before the transaction: no
   // lock or pooled connection waits on it. A building preview's input
   // never changes, and the status is checked again under the lock.
-  const before = await previewFor(db, actor, previewId)
+  const before = read ?? (await previewFor(db, actor, previewId))
+  const held = snapshotOf(before)
   const summarized =
-    before.status === 'building' && snapshotOf(before).preparation != null
-      ? await validateOffThread(snapshotOf(before), result)
+    before.status === 'building' && held.preparation != null
+      ? await validateOffThread(held, result)
       : undefined
-  return await atomic(db, async trx => {
-    const row = await previewFor(trx, actor, previewId, { forUpdate: true })
-    const snap = snapshotOf(row)
-    const preparation = snap.preparation
-    if (row.status !== 'building') {
-      if (row.status !== 'discarded' && preparation?.resultHash === hash)
-        return await previewView(trx, row, clock)
-      throw conflict('This preview is no longer waiting for a device result')
-    }
-    if (preparation == null || summarized == null)
-      throw conflict('Prepare the schedule again')
-    if (preparation.earlier != null) {
-      const earlier = await previewFor(trx, actor, preparation.earlier.id, {
-        forUpdate: true
-      })
-      if (
-        earlier.status !== 'open' ||
-        !isDeepStrictEqual(earlier.edits, preparation.earlier.edits)
-      )
-        throw conflict(
-          'This preview changed while it was recalculated. Recalculate it again.'
+  const done = await atomic(
+    db,
+    async (trx): Promise<SchedulePreview | { blocked: string }> => {
+      const row = await previewFor(trx, actor, previewId, { forUpdate: true })
+      const snap = snapshotOf(row)
+      const preparation = snap.preparation
+      if (row.status !== 'building') {
+        if (row.status !== 'discarded' && preparation?.resultHash === hash)
+          return await previewView(trx, row, clock)
+        throw conflict('This preview is no longer waiting for a device result')
+      }
+      if (preparation == null || summarized == null)
+        throw conflict('Prepare the schedule again')
+      if (preparation.earlier != null) {
+        const earlier = await previewFor(trx, actor, preparation.earlier.id, {
+          forUpdate: true
+        })
+        if (
+          earlier.status !== 'open' ||
+          !isDeepStrictEqual(earlier.edits, preparation.earlier.edits)
         )
-    }
-    const options =
-      preparation.keep == null
-        ? summarized.options
-        : summarized.options.map(option => ({
-            ...option,
-            games: withKept(preparation.keep!, option.games)
-          }))
-    preparation.resultHash = hash
-    await trx
-      .updateTable('schedule_previews')
-      .set({
-        status: 'open',
-        input: JSON.stringify(snap),
-        options: JSON.stringify(options),
-        blocking: summarized.blocking
-      })
-      .where('id', '=', row.id)
-      .execute()
-    if (preparation.earlier != null)
+          throw conflict(
+            'This preview changed while it was recalculated. Recalculate it again.'
+          )
+      }
+      const options =
+        preparation.keep == null
+          ? summarized.options
+          : summarized.options.map(option => ({
+              ...option,
+              games: withKept(preparation.keep!, option.games)
+            }))
+      preparation.resultHash = hash
+      // A recalculation that places nothing again leaves the preview it
+      // recalculated as it was, edits and all, and says why.
+      if (preparation.earlier != null && options.length === 0) {
+        await trx
+          .updateTable('schedule_previews')
+          .set({ status: 'discarded', input: JSON.stringify(snap) })
+          .where('id', '=', row.id)
+          .execute()
+        return { blocked: summarized.blocking ?? '' }
+      }
       await trx
         .updateTable('schedule_previews')
-        .set({ status: 'discarded' })
-        .where('id', '=', preparation.earlier.id)
+        .set({
+          status: 'open',
+          input: JSON.stringify(snap),
+          options: JSON.stringify(options),
+          blocking: summarized.blocking
+        })
+        .where('id', '=', row.id)
         .execute()
-    const updated = await trx
-      .selectFrom('schedule_previews')
-      .selectAll()
-      .where('id', '=', row.id)
-      .executeTakeFirstOrThrow()
-    return await previewView(trx, updated, clock)
-  })
+      if (preparation.earlier != null)
+        await trx
+          .updateTable('schedule_previews')
+          .set({ status: 'discarded' })
+          .where('id', '=', preparation.earlier.id)
+          .execute()
+      const updated = await trx
+        .selectFrom('schedule_previews')
+        .selectAll()
+        .where('id', '=', row.id)
+        .executeTakeFirstOrThrow()
+      return await previewView(trx, updated, clock)
+    }
+  )
+  if ('blocked' in done)
+    throw conflict(
+      `None of the rejected games could be placed again (${done.blocked.replace(/\.$/, '')}). The preview is as it was.`
+    )
+  return done
 }
 
 /**
@@ -609,94 +461,6 @@ export function rescheduleKey(game: {
 /** An added game as an option holds it. */
 function planned(game: AddedGame, key: string): PlannedGame {
   return { key, ...game }
-}
-
-/** A game, fixed or placed, as the hard rules see it. */
-export function holdingOf(game: PlannedGame): Holding {
-  return {
-    key: game.key,
-    fieldId: game.fieldId,
-    size: game.size,
-    teamIds: [game.homeTeamId, game.awayTeamId],
-    seasonId: game.seasonId,
-    start: Date.parse(game.startAt),
-    end: Date.parse(game.endAt)
-  }
-}
-
-/**
- * Checks an added game against the hard rules the engine places games by,
- * among the given other games, and says what is wrong with it: it is still
- * to come, within its season's dates on its field's local calendar, in the
- * season's field size, and between two of the season's teams.
- */
-export function requireKeepsRules(
-  snap: Snapshot,
-  game: PlannedGame,
-  others: Holding[],
-  now: Date,
-  headCoaches?: Record<string, string>,
-  weeklyOthers?: Holding[]
-): void {
-  const required = snap.engine.required?.find(
-    required =>
-      required.key === game.key &&
-      required.seasonId === game.seasonId &&
-      required.homeTeamId === game.homeTeamId &&
-      required.awayTeamId === game.awayTeamId &&
-      required.exhibition === game.exhibition
-  )
-  requireKeepsRulesIn(snap, game, now, required, {
-    ...ruleContext(snap, others, headCoaches),
-    weeklyOthers
-  })
-}
-
-type RequiredMatchup = NonNullable<EngineInput['required']>[number]
-
-/**
- * The same checks in a rule context built once for many games; `required`
- * is the run's required matchup the game places, when it places one.
- */
-function requireKeepsRulesIn(
-  snap: Snapshot,
-  game: PlannedGame,
-  now: Date,
-  required: RequiredMatchup | undefined,
-  context: RuleContext
-): void {
-  const season = snap.engine.seasons.find(each => each.id === game.seasonId)
-  if (season == null) throw badRequest('Choose a season of this run')
-  if (Date.parse(game.startAt) <= now.getTime())
-    throw badRequest('Choose a time still to come')
-  const field = snap.engine.fields.find(each => each.id === game.fieldId)
-  const day = gameCalendarDay(
-    game.startAt,
-    field?.availability.timezone ?? 'UTC'
-  )
-  if (day < season.settings.startsOn || day > season.settings.endsOn)
-    throw badRequest(`Choose a day within ${season.name}’s dates`)
-  if (game.size !== season.settings.fieldSize)
-    throw badRequest(
-      `${season.name} plays on ${fieldSizeLabel(season.settings.fieldSize)} fields`
-    )
-  const teams = new Set([...season.participants, ...season.exhibitionTeams])
-  if (required != null) {
-    teams.add(required.homeTeamId)
-    teams.add(required.awayTeamId)
-  }
-  if (!teams.has(game.homeTeamId) || !teams.has(game.awayTeamId))
-    throw badRequest(`Choose two of ${season.name}’s teams`)
-  const problem = ruleProblem(
-    {
-      ...holdingOf(game),
-      fieldId: game.fieldId,
-      size: game.size,
-      seasonId: game.seasonId
-    },
-    context
-  )
-  if (problem != null) throw badRequest(problem)
 }
 
 /** What holds the run's fields and teams now, from the database. */

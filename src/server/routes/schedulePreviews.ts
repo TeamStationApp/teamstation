@@ -14,6 +14,7 @@ import {
   editPreview,
   preparePreview,
   previewFor,
+  type PreviewRow,
   previewView
 } from '../autoScheduler/previews'
 import { publishPreview } from '../autoScheduler/publish'
@@ -78,8 +79,12 @@ export function schedulePreviewRoutes(
     '/schedule-previews/:previewId/result',
     requireActor,
     // Only an admin of the preview's league gets the large body read.
-    withAsync(async (req, _res, next) => {
-      await previewFor(db, actor(req), param(req.params.previewId))
+    withAsync(async (req, res, next) => {
+      res.locals.preview = await previewFor(
+        db,
+        actor(req),
+        param(req.params.previewId)
+      )
       next()
     }),
     scheduleResultBody,
@@ -91,7 +96,8 @@ export function schedulePreviewRoutes(
           actor(req),
           param(req.params.previewId),
           result,
-          clock
+          clock,
+          res.locals.preview as PreviewRow
         )
       )
     })

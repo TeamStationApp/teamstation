@@ -1,3 +1,4 @@
+import { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { createRequire } from 'node:module'
 import { mock } from 'node:test'
@@ -20,6 +21,11 @@ import type { Snapshot } from './snapshot'
 import { validateOffThread } from './validateOffThread'
 
 const blocked: EngineResult = { options: [], blocking: 'No games fit' }
+/** What the server stores for a blocked result: its own reason. */
+const serverBlocked: EngineResult = {
+  options: [],
+  blocking: 'No game fits the selected fields, time windows and constraints.'
+}
 const snapshot = (): Snapshot => ({
   engine: input(),
   existing: 'workAround',
@@ -141,7 +147,9 @@ describe('isolated device result validation', function () {
     expect(await failure(validateOffThread(snapshot(), blocked, 1))).includes(
       'too long'
     )
-    expect(await validateOffThread(snapshot(), blocked)).deep.equals(blocked)
+    expect(await validateOffThread(snapshot(), blocked)).deep.equals(
+      serverBlocked
+    )
   })
   it('handles worker crashes and premature exits without poisoning the queue', async () => {
     for (const event of ['error', 'exit']) {
@@ -165,7 +173,9 @@ describe('isolated device result validation', function () {
       )
       mock.restoreAll()
     }
-    expect(await validateOffThread(snapshot(), blocked)).deep.equals(blocked)
+    expect(await validateOffThread(snapshot(), blocked)).deep.equals(
+      serverBlocked
+    )
   })
   it('bounds queued requests and processes accepted requests in order', async () => {
     let created = 0
@@ -192,5 +202,23 @@ describe('isolated device result validation', function () {
     )
     expect(await Promise.all(requests)).deep.equals(Array(4).fill(blocked))
     expect(created).equals(4)
+  })
+  it('loads nothing in the worker that cannot be torn down with it', () => {
+    // A native addon loaded in a worker crashes the process when the worker
+    // ends, so the checks the worker runs stay clear of the server's modules.
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '-r',
+        require.resolve('sucrase/register'),
+        '-e',
+        `require(${JSON.stringify(require.resolve('./placementChecks'))});
+        console.log(JSON.stringify(Object.keys(require.cache)))`
+      ],
+      { encoding: 'utf8' }
+    )
+    const loaded = JSON.parse(probe.stdout) as string[]
+    expect(loaded.some(file => file.endsWith('.node'))).equals(false)
+    expect(loaded.some(file => file.includes('/server/db/'))).equals(false)
   })
 })

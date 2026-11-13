@@ -1,4 +1,5 @@
 import {
+  blockingCause,
   capacityCause,
   type GameKind,
   managerCauseOfOption,
@@ -25,6 +26,8 @@ import type { EngineInput, EngineResult, ScheduleOption } from './types'
 const FULL_CONTEXT_BYTES = 64 * 1024 * 1024
 const UNPLACED_CAUSE =
   'The selected fields, time windows and constraints leave too little room for these games.'
+const NO_OPTION_CAUSE =
+  'No game fits the selected fields, time windows and constraints.'
 const REQUIRED_CAUSE =
   'The selected fields, time windows and constraints leave no room for these games.'
 
@@ -33,7 +36,16 @@ export function summarizeResult(
   input: EngineInput,
   result: EngineResult
 ): EngineResult {
-  if (result.options.length === 0) return result
+  // A device that found nothing says so in its own words; the reason
+  // stored is the engine's, from the server's input.
+  if (result.options.length === 0)
+    return {
+      options: [],
+      blocking:
+        (fullContextBytes(input) > FULL_CONTEXT_BYTES
+          ? null
+          : blockingCause(buildContext(input))) ?? NO_OPTION_CAUSE
+    }
   const context = buildContext(
     input,
     result.options.flatMap(option => option.games)

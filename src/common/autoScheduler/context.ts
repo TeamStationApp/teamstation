@@ -1,3 +1,4 @@
+import type { WindowPeriod } from '../fieldAvailability'
 import { wallMinutes } from '../weeklyHours'
 import { Occupancy } from './feasibility'
 import { type Matchup, seasonTeams } from './matchups'
@@ -104,7 +105,11 @@ export class InvalidSubmission extends Error {
   }
 }
 
-/** The weekday of a day number, 0 being Sunday: day 0 was a Thursday. */
+/**
+ * The weekday of a day number, 0 being Sunday: day 0 was a Thursday.
+ * fieldAvailability's weekdayOf reads a date's text; these counts run on
+ * day numbers.
+ */
 function weekdayNumber(day: number): number {
   return (((day + 4) % 7) + 7) % 7
 }
@@ -119,6 +124,22 @@ function openDays(from: number, until: number, weekdays: Set<number>): number {
 }
 
 /**
+ * The day numbers a window period covers within a season's dates, first
+ * and last; null when none. A period with no end runs to the season's.
+ */
+function periodDays(
+  period: WindowPeriod,
+  startsOn: string,
+  endsOn: string
+): [number, number] | null {
+  const from = dayNumber(period.from > startsOn ? period.from : startsOn)
+  const until = dayNumber(
+    period.until != null && period.until < endsOn ? period.until : endsOn
+  )
+  return until < from ? null : [from, until]
+}
+
+/**
  * Roughly the bytes a full context of the run takes: a slot for every
  * 5-minute start in its windows on every field, about 160 bytes each, and a
  * byte per slot for each team's availability.
@@ -130,11 +151,9 @@ export function fullContextBytes(input: EngineInput): number {
     const fields = seasonFields(input.fields, season.settings).length
     const teams = seasonTeams(season).length
     for (const period of windows) {
-      const from = dayNumber(period.from > startsOn ? period.from : startsOn)
-      const until = dayNumber(
-        period.until != null && period.until < endsOn ? period.until : endsOn
-      )
-      if (until < from) continue
+      const range = periodDays(period, startsOn, endsOn)
+      if (range == null) continue
+      const [from, until] = range
       for (const day of period.hours) {
         const starts =
           Math.max(0, wallMinutes(day.end) - wallMinutes(day.start)) / 5
@@ -164,11 +183,9 @@ export function requireBoundedFieldDays(input: EngineInput): void {
     for (const period of windows) {
       const weekdays = new Set(period.hours.map(day => day.weekday))
       if (weekdays.size === 0) continue
-      const from = dayNumber(period.from > startsOn ? period.from : startsOn)
-      const until = dayNumber(
-        period.until != null && period.until < endsOn ? period.until : endsOn
-      )
-      if (until < from) continue
+      const range = periodDays(period, startsOn, endsOn)
+      if (range == null) continue
+      const [from, until] = range
       days += openDays(from, until, weekdays)
       for (const day of blackouts)
         if (day >= from && day <= until && weekdays.has(weekdayNumber(day)))

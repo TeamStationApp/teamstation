@@ -28,8 +28,13 @@ export async function validateOffThread(
   result: EngineResult,
   timeoutMs = 30000
 ): Promise<EngineResult> {
+  // Busy is the one refusal worth sending the same result again for.
   if (pending >= 4)
-    throw unavailable('Schedule validation is busy. Try again shortly.')
+    throw new HttpError(
+      'unavailable',
+      'Schedule validation is busy. Try again shortly.',
+      { retry: true }
+    )
   pending++
   const turn = queue.then(
     async () =>
@@ -84,9 +89,15 @@ async function runValidation(
           )
       })
     })
-    worker.once('error', () => {
+    worker.once('error', (error: Error & { code?: string }) => {
       finish(() => {
-        reject(unavailable('Schedule validation stopped. Try a smaller run.'))
+        reject(
+          unavailable(
+            error.code === 'ERR_WORKER_OUT_OF_MEMORY'
+              ? 'Schedule validation ran out of memory. Try a smaller run.'
+              : 'Schedule validation stopped. Try a smaller run.'
+          )
+        )
       })
     })
     worker.once('exit', () => {
@@ -105,7 +116,7 @@ const job = isMainThread ? undefined : (workerData as ValidationJob | undefined)
 if (job?.deviceScheduleValidation != null) {
   const { snap, result } = job.deviceScheduleValidation
   // Dynamic import keeps the worker entry independent of the route module's initialization.
-  import('./previews')
+  import('./placementChecks')
     .then(({ validatePlacements }) => {
       validatePlacements(snap, result)
       return summarizeResult(snap.engine, result)
