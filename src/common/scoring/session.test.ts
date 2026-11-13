@@ -2404,6 +2404,41 @@ describe('a scoring session', function () {
       expect(final.sides.home.battingOrder).deep.equals(home)
     })
 
+    it('keeps a player our later roster left out off the side when the other device only pitched', async function () {
+      // Only a player another device brought onto the side is kept against
+      // our roster: one our roster leaves out, whom nobody else added, stays
+      // off, as an open roster sheet shows the side.
+      const store = new LineupStore()
+      const ours = await openAt(store, '2026-09-25T12:00:30.000Z')
+      expect(
+        ours.apply({
+          type: 'lineup',
+          kind: 'addPlayer',
+          side: 'home',
+          player: 9001,
+          name: 'Bench Player',
+          jersey: ''
+        }).problems
+      ).deep.equals([])
+      await ours.flush()
+      const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+      expect(theirs.apply({ type: 'pitch', call: 'B' }).problems).deep.equals(
+        []
+      )
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      stage(ours, setup => {
+        setup.sides.home.players = setup.sides.home.players.filter(
+          id => id !== 9001
+        )
+        delete setup.players[9001]
+      })
+      await ours.flush()
+      expect(ours.rebases).greaterThan(0)
+      const final = setupOf((await open(store)).session.state)
+      expect(final.sides.home.players).not.include(9001)
+    })
+
     it('keeps our lineup change through a rebase whose read reconciles a roster mismatch', async function () {
       const store = new LineupStore()
       let at = '2026-09-25T12:00:10.000Z'
