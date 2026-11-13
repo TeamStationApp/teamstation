@@ -101,6 +101,11 @@ function hoursIn(windows: WindowPeriod[], today: string): WeekdayHours[] {
   return periodOn(windows, today)?.hours ?? []
 }
 
+/** The venue's date now, the day venueDetail reads its hours on. */
+function venueToday(venue: { timezone: string }, clock: Clock): string {
+  return gameCalendarDay(clock.now().toISOString(), venue.timezone)
+}
+
 function hoursOf(raw: unknown): WeekdayHours[] {
   return asWeeklyHours(raw)
 }
@@ -202,7 +207,7 @@ export async function venueDetail(
     await settle(trx, venueId, clock)
   })
   const venue = await venueRow(db, venueId)
-  const today = gameCalendarDay(clock.now().toISOString(), venue.timezone)
+  const today = venueToday(venue, clock)
   const fields = await db
     .selectFrom('venue_fields')
     .selectAll()
@@ -675,10 +680,11 @@ export async function updateVenue(
   await atomic(db, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
+    const current = await venueRow(trx, venueId)
     if (
       changes.defaultHours != null &&
       changes.defaultWindows === undefined &&
-      dated((await venueRow(trx, venueId)).default_windows)
+      dated(current.default_windows)
     )
       throw conflict(
         'This venue has dated time windows. Update the app to change them.'
@@ -695,7 +701,7 @@ export async function updateVenue(
           : {
               default_windows: JSON.stringify(changes.defaultWindows),
               default_hours: JSON.stringify(
-                hoursIn(changes.defaultWindows, calendarDateText(clock.now())!)
+                hoursIn(changes.defaultWindows, venueToday(current, clock))
               )
             }),
         ...(changes.defaultHours == null
@@ -829,7 +835,10 @@ export async function createField(
         venue_id: venueId,
         name: changes.name!,
         sizes: [...changes.sizes!],
-        ...fieldValues(changes, calendarDateText(clock.now())!),
+        ...fieldValues(
+          changes,
+          venueToday(await venueRow(trx, venueId), clock)
+        ),
         ...(photo == null
           ? {}
           : {
@@ -888,7 +897,10 @@ export async function updateField(
       throw conflict(
         'This field has dated time windows. Update the app to change them.'
       )
-    const values = fieldValues(changes, calendarDateText(clock.now())!)
+    const values = fieldValues(
+      changes,
+      venueToday(await venueRow(trx, venueId), clock)
+    )
     if (Object.keys(values).length === 0 && photo == null) return
     await trx
       .updateTable('venue_fields')

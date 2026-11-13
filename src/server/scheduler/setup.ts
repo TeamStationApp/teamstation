@@ -179,19 +179,28 @@ function setupLock(leagueId: string | null, seasonId: string): string {
 export async function saveSeasonScheduleSettings(
   db: Db,
   seasonId: string,
-  settings: ScheduleSettings
+  settings: ScheduleSettings,
+  clock: Clock = realClock
 ): Promise<SeasonScheduleSettings> {
   const season = await seasonRow(db, seasonId)
   return await atomic(db, async trx => {
     await lockKeys(trx, [setupLock(season.league_id, seasonId)])
-    return await writeSeasonScheduleSettings(trx, seasonId, settings)
+    return await writeSeasonScheduleSettings(
+      trx,
+      seasonId,
+      season.league_id,
+      settings,
+      clock
+    )
   })
 }
 
 async function writeSeasonScheduleSettings(
   db: Db,
   seasonId: string,
-  settings: ScheduleSettings
+  leagueId: string | null,
+  settings: ScheduleSettings,
+  clock: Clock
 ): Promise<SeasonScheduleSettings> {
   const previous = await seasonScheduleSettings(db, seasonId)
   const chosen = settings.fieldIds ?? previous.settings.fieldIds ?? []
@@ -200,7 +209,7 @@ async function writeSeasonScheduleSettings(
       ? []
       : await db
           .selectFrom('venue_fields')
-          .select(['id', 'sizes', 'deleted_at'])
+          .select(['id', 'venue_id', 'sizes', 'deleted_at'])
           .where('id', 'in', chosen)
           .execute()
   // A stored field deleted or changed since is dropped quietly, so other
@@ -211,6 +220,27 @@ async function writeSeasonScheduleSettings(
     chosen.some(id => !stored.has(id) && !live.some(field => field.id === id))
   )
     throw badRequest('Choose available fields for this season')
+  // A league's season chooses among the fields its setup lists: its own
+  // venues' and those added to the list, so the list can take one away.
+  const added = live.filter(field => !stored.has(field.id))
+  if (leagueId != null && added.length > 0) {
+    const setup = await db
+      .selectFrom('league_schedule_setups')
+      .select(['field_ids', 'added_field_ids'])
+      .where('league_id', '=', leagueId)
+      .executeTakeFirst()
+    const listed = new Set([
+      ...(setup?.field_ids ?? []),
+      ...(setup?.added_field_ids ?? [])
+    ])
+    const owned = await ownedVenueIds(db, leagueId, clock)
+    if (
+      added.some(
+        field => !listed.has(field.id) && !owned.includes(field.venue_id)
+      )
+    )
+      throw badRequest('Add the field to the league’s list first')
+  }
   const changedSize = previous.settings.fieldSize !== settings.fieldSize
   if (
     !changedSize &&
@@ -223,6 +253,18 @@ async function writeSeasonScheduleSettings(
   const fieldIds = live
     .filter(field => field.sizes.includes(settings.fieldSize))
     .map(field => field.id)
+  // Open windows are cut to the dates sent with them. Sent beside ended
+  // ones, as an older app sends one it adds to the windows it read, an open
+  // window starting after those dates would vanish, so it is refused.
+  if (
+    settings.windows.some(period => period.until != null) &&
+    settings.windows.some(
+      period => period.until == null && period.from > settings.endsOn
+    )
+  )
+    throw badRequest(
+      'Give each time window an end date within the season. Update the app to add windows after the last one.'
+    )
   const windows = boundedSeasonWindows(
     settings.windows,
     settings.startsOn,

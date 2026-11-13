@@ -660,6 +660,16 @@ describe('publishing a schedule preview', function () {
       )
       .onConflict(oc => oc.columns(['team_id', 'season_id']).doNothing())
       .execute()
+    // League B lists League A's field before its season chooses it.
+    expect(
+      (
+        await w.call(102, 'PUT', `/leagues/${f.leagueB}/schedule-setup`, {
+          seasonIds: [f.seasonB],
+          fieldIds: [fieldId],
+          addedFieldIds: [fieldId]
+        })
+      ).status
+    ).equals(200)
     expect(
       (
         await w.call(102, 'PUT', `/seasons/${f.seasonB}/schedule-settings`, {
@@ -667,14 +677,6 @@ describe('publishing a schedule preview', function () {
           fieldIds: [fieldId],
           regularGames: 1,
           exhibitionGames: 0
-        })
-      ).status
-    ).equals(200)
-    expect(
-      (
-        await w.call(102, 'PUT', `/leagues/${f.leagueB}/schedule-setup`, {
-          seasonIds: [f.seasonB],
-          fieldIds: [fieldId]
         })
       ).status
     ).equals(200)

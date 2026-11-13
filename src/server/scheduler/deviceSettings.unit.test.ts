@@ -234,6 +234,15 @@ describe('device scheduling persistence boundaries', () => {
       },
       async db => {
         await saveSeasonScheduleSettings(db, 'sea_demo', settings)
+        // An older app's window after the dates it sends would vanish, so it
+        // is refused and nothing is written.
+        const lost = await saveSeasonScheduleSettings(db, 'sea_demo', {
+          ...settings,
+          endsOn: '2027-06-15',
+          windows: [...settings.windows, { from: '2027-07-01', hours }]
+        }).catch((error: unknown) => error)
+        expect(String(lost)).includes('end date within the season')
+        expect(writes).has.length(1)
         await saveSeasonScheduleSettings(db, 'sea_demo', {
           ...settings,
           startsOn: '2027-03-15',
@@ -385,6 +394,46 @@ describe('device scheduling persistence boundaries', () => {
       expect(wrote).equals(true)
       expect(notified).equals(true)
     }
+  })
+  it('writes the legacy hours of the period in force on the venue’s own date', async () => {
+    mock.method(ownership, 'requireVenueEditor', async () => undefined)
+    mock.method(ownership, 'settleClaims', async () => [])
+    mock.method(ownership, 'liveClaims', async () => [])
+    mock.method(ownership, 'describeClaims', async () => ({
+      owners: [],
+      claims: []
+    }))
+    mock.method(ownership, 'venueRights', async () => ({ canEdit: true }))
+    const june = [{ weekday: 6, start: '10:00', end: '12:00' }]
+    const split = [
+      { from: '2027-05-01', until: '2027-05-31', hours },
+      { from: '2027-06-01', until: '2027-06-30', hours: june }
+    ]
+    // 1 PM UTC on May 31 is already June 1 in Auckland.
+    const late = {
+      ...services,
+      clock: { now: () => new Date('2027-05-31T13:00:00Z') }
+    }
+    let stored: unknown
+    await withQueryReplies(
+      query => {
+        if (query.sql.startsWith('update "venues"')) {
+          stored = query.parameters.find(
+            value =>
+              typeof value === 'string' && value.startsWith('[{"weekday"')
+          )
+          return []
+        }
+        if (query.sql.includes('from "venue_fields"')) return []
+        if (query.sql.includes('from "venues"'))
+          return [{ ...venue, timezone: 'Pacific/Auckland' }]
+        return []
+      },
+      async db => {
+        await updateVenue(db, actor, venue.id, { defaultWindows: split }, late)
+      }
+    )
+    expect(JSON.parse(String(stored))).deep.equals(june)
   })
   it('refuses a legacy hours write over dated windows instead of losing them', async () => {
     mock.method(ownership, 'requireVenueEditor', async () => undefined)
