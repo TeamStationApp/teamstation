@@ -483,6 +483,236 @@ xcodebuild test -workspace TeamStation.xcworkspace -scheme TeamStation \
 `mobile/test/teamStationAppSceneLifecycle.e2e.ts` covers launch and the four
 kinds of link on a device.
 
+## Push notifications
+
+A chat message sends each member's devices a wake with no readable content
+in it, only the encrypted envelope. The phone or browser decrypts it and shows
+a notification only for a direct message or a mention of its own user. An
+event reminder is plain text, sent two hours before an event the person said
+yes to. The server needs no key to build any of this, and every transport
+whose keys are missing simply is not made.
+
+### The push queue and the push sender
+
+The API never sends a push itself. A new post, and the primary's reminder
+sweep every five minutes, each write a small request to a Valkey stream,
+`<redis prefix>:push:requests`, on the server's own `redis` settings. A
+separate process, the push sender (`src/server/push/sender/`), reads it as
+the consumer group `push-senders`, works out who hears of each request, and
+sends. It is the only process that reads the APNs, FCM and VAPID keys.
+
+- The server's primary forks and supervises one sender wherever
+  `backgroundJobs` is on, as it does the stats builder, and stops it on the
+  way down. `node lib/server/push/sender/start.js` runs one on its own.
+- A request that fails is tried again after 5 s, 30 s, 2 min and 10 min, and
+  after the fifth try is kept on `<prefix>:push:dead` with its error. A send a
+  service refuses for good (APNs 400s such as `BadDeviceToken`, FCM
+  `INVALID_ARGUMENT` or `SENDER_ID_MISMATCH`, Web Push 400 or 403) is logged
+  and not tried again, and its registration is marked (`rejected_at`) and
+  sent nothing more until the device posts it again. It is kept rather than
+  deleted because APNs also answers `BadDeviceToken` for a good token sent to
+  the other environment. A dead token's registration is deleted.
+- A person keeps the 20 registrations they posted most recently; a new one
+  past that removes their least recently posted.
+- Each transport has at most 32 sends under way at once.
+- A sender joins the group as `<host>:<pid>`. On the way up it lets go of the
+  consumers that have held nothing for a minute, which stopped senders leave.
+  Another sender takes over a request left unsettled for a minute, so while a
+  sender works on what it holds it claims it afresh every 20 s: a slow batch
+  is never taken over and sent twice.
+- A sender holds up to 32 requests at once and settles each as it finishes,
+  reading more as room comes free, so one slow request (a large conversation
+  with APNs slow) holds up no other: a held DM still goes when its hold ends.
+- While Valkey or the database is away, the sender waits a second between
+  tries, doubling up to 30 s, and logs the outage once a minute.
+- **Valkey is required for pushes.** Without it a post still sends, and its
+  wake is lost and logged; a reminder is queued again by the next sweep.
+
+### No notification for a message already seen
+
+- **The hold.** The sender waits `push.chatHoldSeconds` (15 by default) after
+  a post before it wakes anybody, parking the request in `<prefix>:push:later`
+  meanwhile. It then leaves out everyone whose read cursor is at the message or
+  past it, and everyone who has written in the conversation since. The
+  one-hour stale bound and the retries are unchanged, and a retry is not held
+  again.
+- **The conversation on screen.** The app tells each device which
+  conversation it shows in the foreground, with the app active (not under
+  Notification Center, the app switcher or a call, where it reads nothing
+  either): `TSPush.setActiveConversation` on a
+  phone, where Android posts nothing for it and iOS's `willPresent` shows no
+  banner. A browser's service worker shows nothing while a focused, visible
+  window is at `/chat/<id>`. Safari and Firefox end a subscription that is
+  sent pushes that show nothing, so there it shows the notification and takes
+  it down at once.
+- **Clear on read.** A wake that may go to someone marks them woken in that
+  conversation (`<prefix>:push:woken:<user>:<conversation>`, kept a day). The
+  mark is made before their read cursor is looked at, so a read at any moment
+  is either seen, and they are not woken, or finds the mark; a mark made for
+  someone found to have read already is taken back. When their read cursor
+  moves while the mark is there, the read route queues a `read` request, and
+  the sender tells their other devices to take down the notifications tagged
+  `chat:<id>` for messages up to the one they read to. Each notification keeps
+  its message's `seq` (web `data`, Android extras, iOS `userInfo`), so a clear
+  that arrives late, behind the alert for a later message, leaves that one up.
+  Android gets a normal-priority data message and Chrome and Edge a web push,
+  each kept 8 h, and iOS a background push, kept 8 h as well. Safari and
+  Firefox get none, because a push that shows nothing would spend their
+  quota. Their
+  notifications go when a TeamStation tab opens the conversation. The device
+  that read clears its own as it marks the conversation read. A device whose
+  clear fails keeps the mark, and the clear is sent again to that device
+  alone.
+- **Signing out.** The app deletes the device's registration while its
+  session can still do so, waiting 3 s at most, then signs out, and the
+  device lets go of its address whatever the server answered: the browser
+  unsubscribes, Android deletes its FCM token and an iPhone unregisters from
+  APNs, registering again only once a signed-in app asks for a token. A
+  sign-in that starts meanwhile registers only once that is done, and a
+  logout that would come after it is not sent, so it cannot end the new
+  session. Signed out, a phone shows nothing it would post on its own: no
+  wake, not even a DM's sender, and on Android no reminder. A browser's
+  worker shows a push only while the server says the person it is for is
+  signed in there.
+- **Web wakes** are kept by the push service for an hour, the same bound the
+  sender puts on a wake, so a browser opened after a night closed is not handed
+  every wake it missed. **iOS alerts** (DMs, and group messages with
+  `iosFiltering`) are kept by APNs for an hour too, since APNs hands an alert
+  to a reachable phone at once; iOS background wakes, which APNs and iOS may
+  hold back to save battery, are kept 8 h, as Android's are.
+
+### What has to exist outside the repository
+
+None of these are in git, and none should be:
+
+- **An APNs auth key** (`AuthKey_<keyId>.p8`) for the team, with Push
+  Notifications enabled on both App IDs, `app.teamstation.app` and
+  `app.teamstation.develop`.
+- **App IDs for the two notification extensions**,
+  `app.teamstation.app.notifications` and
+  `app.teamstation.develop.notifications`. Mason's `teamstation` project lists
+  both in its app records' `apple.bundleIds`, so its archive signs the
+  extension with an ad hoc profile of its own.
+- **A Firebase project** whose `google-services.json` covers both Android
+  application ids. Mason's builder holds the file as a secret and points
+  `TS_GOOGLE_SERVICES_JSON` at it. `android/app/build.gradle` applies the
+  google-services plugin only when `android/app/google-services.json` exists,
+  so a checkout without it builds an app with no FCM token and nothing else
+  changes.
+- **An FCM service account** with the Firebase Cloud Messaging API, for the
+  server's HTTP v1 sends.
+- **Apple's notification-filtering entitlement**
+  (`com.apple.developer.usernotifications.filtering`). Until Apple grants it,
+  group mentions on iOS are background pushes, which iOS delivers when it
+  likes and never to an app the user swiped away. DMs and reminders are alerts
+  and always arrive. Once it is granted, sign the extension with
+  `TeamStationNotifications.filtering.entitlements` (`TS_NSE_ENTITLEMENTS`, set
+  in `Masonfile.ts` as `NSE_ENTITLEMENTS`) and turn on `push.iosFiltering`.
+  Every group message is then an alert, and the extension hides the ones that
+  don't mention the reader.
+
+### `serverConfig.json`
+
+```json
+"push": {
+  "apns": { "keyId": "…", "teamId": "…", "p8Key": "-----BEGIN PRIVATE KEY-----…", "topic": "app.teamstation.app" },
+  "fcm": { "projectId": "…", "clientEmail": "…@….iam.gserviceaccount.com", "privateKey": "-----BEGIN PRIVATE KEY-----…" },
+  "webPush": { "publicKey": "…", "privateKey": "…", "subject": "mailto:…" },
+  "iosFiltering": false,
+  "logFile": "",
+  "chatHoldSeconds": 15
+}
+```
+
+- A section with an empty value counts as missing, and that platform gets no
+  pushes.
+- `apns.topic` is the bundle id of the app this server's users run:
+  `app.teamstation.develop` on a development seat.
+- A registration carries its own APNs environment, `development` from a
+  debug build and `production` from Mason's archive (`TS_APS_ENVIRONMENT`), and
+  the transport picks the APNs host from it.
+- `webPush` is a VAPID pair, made once with `npx web-push generate-vapid-keys`.
+- `logFile` writes every push the push sender sends as one JSON line,
+  alongside whatever transports exist. The device tests read it.
+- `chatHoldSeconds` is how long a post waits before it wakes anybody. The
+  device tests' stacks set it to 2.
+
+### Mason's inputs
+
+| Input | Where | What |
+| --- | --- | --- |
+| `TS_APS_ENVIRONMENT` | `Masonfile.ts` archive `xcargs` | `production`; the project's default is `development` |
+| `TS_NSE_ENTITLEMENTS` | `Masonfile.ts` archive `xcargs` | The extension's entitlements file: `TeamStationNotifications.entitlements`, or the `.filtering` one once Apple grants it |
+| `TS_APP_BUNDLE_ID` | `project.pbxproj`, rewritten by `applyDevelopIdentity` | The app's id; the extension is `$(TS_APP_BUNDLE_ID).notifications` |
+| `TS_GOOGLE_SERVICES_JSON` | the builder's environment | Path to `google-services.json`, copied into `android/app` by `copyGoogleServices` |
+
+### Testing it on a simulator and an emulator
+
+There is no Firebase on the emulator and no APNs on the simulator, so the
+device tests start the API with only the log transport and hand each logged
+push to the app themselves. On Android, the debug build's `PUSH_DEBUG`
+broadcast goes through the app's FCM service, as FCM would. On iOS,
+`xcrun simctl push` delivers it.
+
+`scripts/push-coverage.mjs` starts each stack on ports of its own, with a
+Valkey prefix of its own and its push sender running, runs the scenario and
+measures it. The scenarios queue the reminder sweep's requests themselves
+rather than wait five minutes for it. One run at a time:
+
+```sh
+# N1–N4 in Chrome: settings on two devices, a denied permission, DM, mention
+# and plain message, the reminder and the taps.
+TS_COVERAGE_BASE=origin/develop TS_NOTIFY_ARTIFACTS=<dir> \
+TS_PUSH_WEB_RUN=<scratch> TS_PUSH_WEB_DATABASE=postgres://localhost:5433/<db> \
+TS_PUSH_VAPID=<vapid.json> node scripts/push-coverage.mjs run web
+
+# The Kotlin unit tests, then N5 on an emulator you booted.
+export JAVA_HOME=<a JDK 17 to 21> ANDROID_HOME=<the SDK>
+export TS_ANDROID_DEBUG_KEYSTORE=$HOME/.android/debug.keystore
+TS_COVERAGE_BASE=origin/develop node scripts/push-coverage.mjs run kotlin
+TS_COVERAGE_BASE=origin/develop TS_NOTIFY_ARTIFACTS=<dir> MAESTRO_D=notify-<run> \
+TS_PUSH_ANDROID_RUN=<scratch> TS_PUSH_ANDROID_DATABASE=postgres://localhost:5433/<db> \
+TS_PUSH_ANDROID_DEVICE=emulator-<port> node scripts/push-coverage.mjs run android
+
+# TeamStationTests over the wake vectors, then N6 on a simulator you booted.
+TS_COVERAGE_BASE=origin/develop TS_PUSH_IOS_DEVICE=<udid> \
+TS_PUSH_IOS_HOST=<this Mac's LAN address> node scripts/push-coverage.mjs run xctest
+TS_COVERAGE_BASE=origin/develop TS_NOTIFY_ARTIFACTS=<dir> MAESTRO_D=notify-<run> \
+TS_PUSH_IOS_RUN=<scratch> TS_PUSH_IOS_DATABASE=postgres://localhost:5433/<db> \
+TS_PUSH_IOS_DEVICE=<udid> TS_PUSH_IOS_HOST=<this Mac's LAN address> \
+node scripts/push-coverage.mjs run ios
+```
+
+With every one of those variables set, `TS_COVERAGE_BASE=origin/develop npm
+run coverage.push` runs them all and applies the gate: 95% of the changed
+lines combined and 90% of the isolated logic in unit tests alone.
+
+- **The Kotlin build** wants `JAVA_HOME` set to a JDK from 17 to 21. Gradle
+  under a newer JDK fails before it compiles anything. It also wants
+  `TS_ANDROID_DEBUG_KEYSTORE`, as any debug build here does.
+- **The iOS builds** bundle their JavaScript with the API at this Mac's LAN
+  address, not the loopback, because `app/native/config.ts` refuses a loopback
+  (see *Running it*). `run ios` starts the API there.
+- **Each run drops and makes its own database again**, so give each a name of
+  its own on port 5433, never one another worktree uses.
+- The scenarios themselves are `src/app/notifications.e2e.ts` (web, Puppeteer)
+  and `mobile/test/teamStationAppNotifications.e2e.ts` (maestro-d's JavaScript
+  client, N5 and N6). The header of each gives its own command, for running
+  one against a stack you already have.
+
+**What the simulator cannot show.** In Xcode 27.2, `simctl push` delivers an
+alert without running the Notification Service Extension, and it refuses a
+push with no alert. So on the simulator, N6 shows:
+
+- the alert's placeholder text, not the decrypted DM;
+- no background group wake;
+- no filtering suppression;
+- no background `read` push taking a notification down.
+
+`ChatWakeDecryptorTests` covers the first three over the same vectors the web
+and Android decryptors are tested with, and `PushTests` covers the last. Seeing them on a phone needs a real APNs
+delivery, and so the APNs key.
+
 ## What this costs the server
 
 `.gitattributes` keeps `ios/`, `android/`, `maestro/` and `tools/` out of a
