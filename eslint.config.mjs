@@ -27,6 +27,7 @@ export default [
       'src/app/**/*.tsx',
       'src/common/**/*.ts',
       // The app's own test helpers, in its project.
+      'src/test/chatWakeCases.ts',
       'src/test/fakeScoreboardSocket.ts',
       'src/test/PagedListStandIn.tsx',
       'src/test/responderDrag.ts',
@@ -45,6 +46,7 @@ export default [
   {
     files: ['src/server/**/*.ts', 'src/migrate/**/*.ts', 'src/test/**/*.ts'],
     ignores: [
+      'src/test/chatWakeCases.ts',
       'src/test/fakeScoreboardSocket.ts',
       'src/test/scoringHelpers.ts',
       'src/test/scoreboardServer.e2e.ts',
@@ -102,6 +104,7 @@ export default [
       'scripts/chat-history-recovery-ui-scenes.ts',
       'scripts/chat-history-recovery-chat2.ts',
       'scripts/chat-history-recovery-relay.ts',
+      'scripts/pushWakeVectors.ts',
       'scripts/e2e/**/*.ts',
       'scripts/splash/**/*.ts',
       'scripts/testModels.test.ts',

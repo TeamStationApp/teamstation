@@ -10,7 +10,11 @@ import {
   type ChatMessage,
   TeamStationClient
 } from '../../../common/api'
-import { signEpoch, signPuk } from '../../../common/chatCrypto/chain'
+import {
+  sealPreviousEpochKey,
+  signEpoch,
+  signPuk
+} from '../../../common/chatCrypto/chain'
 import {
   ChatCryptoUnavailable,
   type CoreCall
@@ -30,6 +34,7 @@ import { type ChatEngineError, type EngineContext, KeyHolder } from './context'
 import {
   IdentityCache,
   openEnvelope,
+  openEpochKey,
   openEpochKeys,
   takeEpochs
 } from './decrypt'
@@ -265,6 +270,101 @@ describe('chat decryption when the crypto core stops', () => {
     })
   })
 })
+
+describe('opening epoch keys without keeping them', () => {
+  it('answers the keys a box and the chain give, and openEpochKeys keeps the same', async () => {
+    const { ctx, state } = fixture()
+    const record = ctx.keys.record
+    const [key1, key2] = [
+      new Uint8Array(32).fill(1),
+      new Uint8Array(32).fill(2)
+    ]
+    state.epochs.set(2, {
+      valid: true,
+      record: {
+        ...state.epochs.get(1)!.record,
+        epoch: 2,
+        previousKeyBox: b64(
+          sealPreviousEpochKey({
+            conversationId: 'cnv_test',
+            epoch: 2,
+            epochKey: key2,
+            previousEpochKey: key1
+          })
+        )
+      }
+    })
+    const boxes = [
+      {
+        epoch: 2,
+        identityId: 'cid_test',
+        pukGeneration: 1,
+        box: b64(
+          hpkeSeal(
+            'epoch',
+            record.puks[0].keys.publicKey,
+            epochAad({
+              conversationId: 'cnv_test',
+              epoch: 2,
+              recipientUserId: userIdOfGumbo(1),
+              identityId: 'cid_test',
+              generation: 1
+            }),
+            key2
+          )
+        ),
+        grantedByUserId: null
+      },
+      { ...boxesOf(3), pukGeneration: 2 }
+    ]
+    const { found, needKeys } = openEpochKey(
+      record,
+      ctx.userId,
+      'cnv_test',
+      state,
+      boxes
+    )
+    expect([...found.entries()]).deep.equals([
+      [2, key2],
+      [1, key1]
+    ])
+    expect(needKeys).equals(true)
+    expect(ctx.keys.record).equals(record)
+    expect(record.epochKeys).deep.equals({})
+    expect(await openEpochKeys(ctx, 'cnv_test', state, boxes)).deep.equals({
+      opened: 2,
+      needKeys: true
+    })
+    expect(ctx.keys.record.epochKeys).deep.equals({
+      cnv_test: { '1': b64(key1), '2': b64(key2) }
+    })
+  })
+
+  it('opens nothing for a device with no identity yet', () => {
+    const { ctx, state } = fixture()
+    const record = { ...ctx.keys.record, identity: undefined }
+    expect(
+      openEpochKey(record, ctx.userId, 'cnv_test', state, [boxesOf(1)])
+    ).deep.equals({ found: new Map(), needKeys: false })
+  })
+})
+
+/** A box that opens to nothing, for epoch `epoch`. */
+function boxesOf(epoch: number): {
+  epoch: number
+  identityId: string
+  pukGeneration: number
+  box: string
+  grantedByUserId: null
+} {
+  return {
+    epoch,
+    identityId: 'cid_test',
+    pukGeneration: 1,
+    box: b64(new Uint8Array(48)),
+    grantedByUserId: null
+  }
+}
 
 describe('independent historical box delivery', () => {
   function delivery(): ReturnType<typeof fixture> & {

@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process'
 
 // In tsconfig.app.json, though they sit under src/test.
 const appHelpers = [
+  'src/test/chatWakeCases.ts',
   'src/test/fakeScoreboardSocket.ts',
   'src/test/PagedListStandIn.tsx',
   'src/test/responderDrag.ts',
