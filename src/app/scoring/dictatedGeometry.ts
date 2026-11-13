@@ -10,7 +10,12 @@ import {
   type Position,
   POSITIONS
 } from '../../common/scoring/state'
-import { BASES, DIRT_EDGE, type GroundPoint } from '../field/fieldModel'
+import {
+  BASES,
+  createPlayers,
+  DIRT_EDGE,
+  type GroundPoint
+} from '../field/fieldModel'
 import { OUTFIELD_RADIUS } from '../field/stadiumBoundary'
 
 /**
@@ -119,6 +124,21 @@ export function directionPoint(
         ? CAUGHT_DEPTH
         : OTHER_DEPTH)
   return at(SPRAY[direction], depth)
+}
+
+/** A catcher's catch comes down a few units into fair ground. */
+const IN_FRONT_OF_THE_PLATE: GroundPoint = { x: 0, z: -4 }
+
+/**
+ * Where a ball a fielder took came down, when the words name him and no
+ * part of the field: where he plays — the pitcher's mound, each infielder's
+ * and outfielder's spot. The catcher crouches behind the plate, but a ball
+ * he catches comes down just in front of it.
+ */
+export function fielderSpot(position: Position): GroundPoint {
+  if (position === 'C') return { ...IN_FRONT_OF_THE_PLATE }
+  const player = createPlayers().find(player => player.id === position)
+  return player == null ? { x: 0, z: 0 } : { ...player.position }
 }
 
 /** A fielder's position in the field, from the game's defense. */

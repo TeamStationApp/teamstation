@@ -516,6 +516,11 @@ describe('dictation interpreter', function () {
     expect(system).match(
       /a steal on a wild pitch is its advance, not baseRunning/
     )
+    // A named fielder, and no place, is that fielder's spot.
+    expect(system).match(
+      /"Flies out to the pitcher" is trajectory fly_ball, the pitcher,\s+and result field_out with outBy catch, with no direction/
+    )
+    expect(system).match(/Never invent a\s+direction\./)
     // A runner who holds short of the hit ends at the base he held.
     expect(system).match(
       /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/

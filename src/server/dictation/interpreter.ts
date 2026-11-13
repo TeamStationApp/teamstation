@@ -655,6 +655,10 @@ Several calls from one sentence are normal.
   is direction left_center, the center fielder the scorer named, and result
   field_out with outBy catch. Robbing the home run is the catch, not result
   home_run.
+- A fielder the scorer names with no part of the field: leave direction
+  and depth off; the game puts the ball where he plays. Never invent a
+  direction. "Flies out to the pitcher" is trajectory fly_ball, the pitcher,
+  and result field_out with outBy catch, with no direction.
 - A caught foul ball — a foul pop, "foul ball caught by the first baseman" —
   is result field_out with outBy catch and foulCaught true, never an
   ordinary fly out. Leave out who caught it when the scorer does not say;
