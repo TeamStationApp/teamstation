@@ -147,6 +147,9 @@ function legacyArtifacts(file: string): string {
 /** Files whose own run takes longer than the default limit. */
 const LONG: Record<string, number> = {
   'src/app/scoring/scoring.e2e.ts': 90 * 60 * 1000,
+  // Its dictated scenarios each wait on the real recogniser and model: just
+  // under twenty minutes on a droplet.
+  'src/app/scoring/dictationPipeline.e2e.ts': 40 * 60 * 1000,
   // Its time-zone, settings and schedule checks run past forty minutes on a
   // busy droplet.
   'src/app/screens/eventInfo2.e2e.ts': 60 * 60 * 1000
