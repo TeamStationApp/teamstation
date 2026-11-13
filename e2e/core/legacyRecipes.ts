@@ -493,7 +493,11 @@ const concurrentScoring: Recipe = async context => {
       seeded.status === 0
         ? {
             label: run.label,
-            needs: 'web',
+            // Four innings check every change of sides reaches the other
+            // scorer within three seconds; the change plays an animation
+            // that a server's software rendering, about five frames a
+            // second, draws out past it.
+            needs: run.label === 'four-innings' ? 'gpu' : 'web',
             args: [...run.args, '--surface', 'chromium'],
             env: {
               ...run.env,
