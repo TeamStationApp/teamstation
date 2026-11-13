@@ -515,8 +515,10 @@ describe('the roster screen for a scorekeeper', function () {
         (nodes, index) => {
           // A card lifts at once from its grip; pressed elsewhere it waits,
           // and a move first scrolls the list (develop d09de6a09).
-          const grip =
-            nodes[index].querySelector('[data-roster-grip]') ?? nodes[index]
+          // No `??` here: page code cannot reach Sucrase's helper.
+          let grip: Element = nodes[index]
+          const found = grip.querySelector('[data-roster-grip]')
+          if (found !== null) grip = found
           const r = grip.getBoundingClientRect()
           return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
         },
