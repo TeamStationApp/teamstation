@@ -43,14 +43,16 @@ describe('the push settings', function () {
       fcm: null,
       webPush: null,
       iosFiltering: false,
-      logFile: null
+      logFile: null,
+      chatHoldSeconds: 15
     })
     expect(pushSettings(asServerConfig({ push: {} }))).deep.equals({
       apns: null,
       fcm: null,
       webPush: null,
       iosFiltering: false,
-      logFile: null
+      logFile: null,
+      chatHoldSeconds: 15
     })
     expect(pushTransports(pushSettings(asServerConfig({})))).deep.equals({})
   })
@@ -63,7 +65,8 @@ describe('the push settings', function () {
           fcm,
           webPush,
           iosFiltering: true,
-          logFile: '/var/app/push.jsonl'
+          logFile: '/var/app/push.jsonl',
+          chatHoldSeconds: 1
         }
       })
     )
@@ -72,8 +75,14 @@ describe('the push settings', function () {
       fcm,
       webPush,
       iosFiltering: true,
-      logFile: '/var/app/push.jsonl'
+      logFile: '/var/app/push.jsonl',
+      chatHoldSeconds: 1
     })
+    // A hold below nothing is none.
+    expect(
+      pushSettings(asServerConfig({ push: { chatHoldSeconds: -5 } }))
+        .chatHoldSeconds
+    ).equals(0)
     const off = pushSettings(
       asServerConfig({
         push: {
@@ -88,7 +97,8 @@ describe('the push settings', function () {
       fcm: null,
       webPush: null,
       iosFiltering: false,
-      logFile: null
+      logFile: null,
+      chatHoldSeconds: 15
     })
   })
 

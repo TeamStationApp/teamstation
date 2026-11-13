@@ -17,6 +17,7 @@ import { ENVELOPE_KINDS } from '../../common/chatCrypto/seal'
 import { notFound } from '../../common/errors'
 import { chatCaller } from '../chat/keys'
 import {
+  type ChatMessageView,
   type ChatObjectStore,
   conversationOfMessage,
   DEFAULT_PAGE,
@@ -149,6 +150,27 @@ export interface ChatMessageRouteOptions {
   clock?: () => Date
   /** Where attachment objects live (the Space, from M10 on). */
   objects?: ChatObjectStore
+  /**
+   * Asks for the members' devices to be woken for a new post, once it has
+   * committed: the server queues a request for the push sender
+   * (`push/queue.ts`). The send is answered without waiting for it.
+   */
+  wakes?: (message: ChatMessageView) => Promise<unknown>
+  /**
+   * Told of a read cursor that moved, once it has committed: the server
+   * queues a request to take the conversation's notifications down from the
+   * reader's other devices, when a wake reached them there
+   * (`PushEnqueuer.addRead`). The read is answered without waiting for it.
+   */
+  reads?: (read: ChatReadMove) => Promise<unknown>
+}
+
+/** A read cursor that moved: whose, where, by which session. */
+export interface ChatReadMove {
+  userId: string
+  sessionId: string
+  conversationId: string
+  seq: number
 }
 
 /**
@@ -157,8 +179,10 @@ export interface ChatMessageRouteOptions {
  * answer 404 to anybody not in the conversation now (`memberNow`).
  *
  * - `POST /chat/conversations/:id/messages`: post an envelope (201, or 200
- *   with the stored row for a repeat); `GET …/messages?after=&before=&limit=`.
- * - `PUT /chat/conversations/:id/read` `{ seq }`: move the read cursor on.
+ *   with the stored row for a repeat); a new post wakes the members' devices
+ *   (`wakes`). `GET …/messages?after=&before=&limit=`.
+ * - `PUT /chat/conversations/:id/read` `{ seq }`: move the read cursor on;
+ *   a move takes the chat's notifications down elsewhere (`reads`).
  * - `POST /chat/reports` `{ messageId, plaintext, messageKey }`.
  * - `GET /admin/chat/reports?open=`, `PUT /admin/chat/reports/:id/resolve`:
  *   site administrators only.
@@ -203,6 +227,11 @@ export function chatMessageRoutes(
         clock(),
         options.objects
       )
+      // A retry (not created) woke them already; only a post is news.
+      if (posted.created && posted.message.kind === 'post')
+        options.wakes?.(posted.message).catch((error: unknown) => {
+          console.warn(`push: chat wakes failed: ${String(error)}`)
+        })
       res.status(posted.created ? 201 : 200).json(posted.message)
     })
   )
@@ -235,16 +264,26 @@ export function chatMessageRoutes(
       const id = pathParam(req.params.conversationId)
       await mustBeMember(id, caller.userId)
       const body = cleanBody(asReadBody, req.body)
-      res.json(
-        await markRead(
-          db,
-          id,
-          caller.userId,
-          body.seq,
-          clock(),
-          body.clearManualUnreadRevision
-        )
+      const { seq, moved } = await markRead(
+        db,
+        id,
+        caller.userId,
+        body.seq,
+        clock(),
+        body.clearManualUnreadRevision
       )
+      if (moved)
+        options
+          .reads?.({
+            userId: caller.userId,
+            sessionId: caller.sessionId,
+            conversationId: id,
+            seq
+          })
+          .catch((error: unknown) => {
+            console.warn(`push: chat read failed: ${String(error)}`)
+          })
+      res.json({ seq })
     })
   )
 

@@ -1,6 +1,6 @@
 import './sentry/instrument'
 
-import { fork } from 'node:child_process'
+import { fork, type ForkOptions } from 'node:child_process'
 import cluster from 'node:cluster'
 import { randomBytes } from 'node:crypto'
 import { availableParallelism } from 'node:os'
@@ -11,7 +11,12 @@ import express from 'express'
 import { defaultTvAppOrigin } from '../common/tvLogin'
 import { deliverSignInCode } from './auth/codeDelivery'
 import { deviceEventControlSecretProblem } from './auth/deviceEventControl'
-import { type BackgroundJobs, startBackgroundJobs } from './backgroundJobs'
+import {
+  type BackgroundJobs,
+  skipWhileRunning,
+  startBackgroundJobs,
+  type Stoppable
+} from './backgroundJobs'
 import { versionOf } from './buildVersion'
 import { makeValkeyCache } from './cache/valkeyCache'
 import type { ChangeFeed } from './changeFeed/feed'
@@ -59,6 +64,13 @@ import { requestLogs, startServerLogging } from './observability/logging'
 import { startAnalytics } from './observability/service'
 import { openApiDocument } from './openapi'
 import { pushSettings, webPushKey } from './push/config'
+import {
+  chatRequestOf,
+  makePushEnqueuer,
+  type PushEnqueuer,
+  readRequestOf
+} from './push/queue'
+import { queueReminders } from './push/rsvpReminders'
 import { speechSettings } from './replay/speech'
 import { accountRoutes } from './routes/account'
 import { adminRoutes } from './routes/admin'
@@ -139,6 +151,7 @@ import {
   type StatsBuilderHandle
 } from './statsBuilder/serverHooks'
 import {
+  supervise,
   type SupervisedChild,
   superviseStatsBuilder
 } from './statsBuilder/supervisor'
@@ -402,6 +415,43 @@ function startLocalCopyWarnings(db: ReturnType<typeof makeDatabase>): void {
   timer.unref?.()
 }
 
+/** How often events about to start are looked for, to remind who said yes. */
+const RSVP_REMINDER_INTERVAL_MS = 5 * 60 * 1000
+
+function logError(message: string): void {
+  console.error(message)
+}
+
+/** The API's side of the push queue, on this process's own connection. */
+function pushEnqueuer(): PushEnqueuer {
+  return makePushEnqueuer(serverConfig, logError)
+}
+
+/**
+ * Asks the push sender to remind people of the events they said yes to, two
+ * hours ahead: once Valkey is first there on the way up, and then every five
+ * minutes, one request for each event start in the window. The sender writes
+ * each reminder down before it sends it, so a request queued again, or by a
+ * second node, sends nothing twice; one lost with Valkey away is queued again
+ * by the next sweep. Answers how to stop: the timer, and the sweep's own
+ * queue client.
+ */
+function startRsvpReminders(db: ReturnType<typeof makeDatabase>): Stoppable {
+  const queue = pushEnqueuer()
+  const sweep = skipWhileRunning(async () => {
+    await queueReminders(db, new Date(), queue, logError)
+  })
+  queue.whenReady(sweep)
+  const timer = setInterval(sweep, RSVP_REMINDER_INTERVAL_MS)
+  timer.unref?.()
+  return {
+    stop: async () => {
+      clearInterval(timer)
+      await queue.close()
+    }
+  }
+}
+
 /**
  * Where uploads wait while their parts arrive: a Director's recordings, and
  * chat attachments under `chat/`.
@@ -444,6 +494,14 @@ function jobsOn(
   db: ReturnType<typeof makeDatabase>,
   feed: () => ChangeFeed
 ): BackgroundJobs<StatsBuilderHandle> {
+  const forkChild = (
+    modulePath: string,
+    args: string[],
+    options: ForkOptions
+  ): SupervisedChild => fork(modulePath, args, options) as SupervisedChild
+  const say = (message: string): void => {
+    console.log(message)
+  }
   return {
     reopenInterrupted: () => {
       reopenInterrupted(db)
@@ -457,6 +515,7 @@ function jobsOn(
     startLocalCopyWarnings: () => {
       startLocalCopyWarnings(db)
     },
+    startRsvpReminders: () => startRsvpReminders(db),
     startChatAttachmentPurge: () => {
       startChatAttachmentPurge(db)
     },
@@ -468,21 +527,25 @@ function jobsOn(
         console.log(message)
       })
     },
+    // The only process that reads the push keys and sends.
+    startPushSender: () =>
+      supervise({
+        fork: forkChild,
+        log: say,
+        clock: () => new Date(),
+        modulePath: require.resolve('./push/sender/start'),
+        name: 'push sender'
+      }),
     startStatsBuilder: () =>
       startStatsBuilder({
         enabled: serverConfig.statsBuilder,
         supervise: () =>
           superviseStatsBuilder({
-            fork: (modulePath, args, options) =>
-              fork(modulePath, args, options) as SupervisedChild,
-            log: message => {
-              console.log(message)
-            },
+            fork: forkChild,
+            log: say,
             clock: () => new Date()
           }),
-        log: message => {
-          console.log(message)
-        }
+        log: say
       })
   }
 }
@@ -658,6 +721,9 @@ function runWorker(): void {
     db,
     { log }
   )
+  // What a new post asks the push sender for; never waited on, and dropped
+  // with Valkey away.
+  const pushQueue = pushEnqueuer()
   const app = express()
 
   app.set('trust proxy', 'loopback')
@@ -805,13 +871,17 @@ function runWorker(): void {
       freshEpochsEnabled: () => serverConfig.chatHistoryRecoveryEnabled
     })
   )
-  // A delete takes the attachments only it referenced off the Space.
+  // A delete takes the attachments only it referenced off the Space; a new
+  // post asks the push sender to wake the members' phones and browsers, and
+  // a read to take what that showed down from the reader's other devices.
   app.use(
     '/api/v1',
     chatMessageRoutes(db, mediaContext, {
       objects: spaceConfigured(serverConfig.space)
         ? spaceObjectStore(serverConfig.space)
-        : undefined
+        : undefined,
+      wakes: async message => await pushQueue.add(chatRequestOf(message)),
+      reads: async read => await pushQueue.addRead(readRequestOf(read))
     })
   )
   // Its parts are raw bytes, read by its own `express.raw` (9 MiB a part).
@@ -903,6 +973,7 @@ function runWorker(): void {
   app.use(
     '/api/v1',
     pushRoutes(db, {
+      // The public half only: the keys that send are the push sender's.
       webPushKey: webPushKey(pushSettings(serverConfig))
     })
   )
@@ -1022,6 +1093,7 @@ function runWorker(): void {
         await stopRelay(relay)
         await feed.close()
         await rosterCache.close()
+        await pushQueue.close()
         await Promise.all([quit(playlistSubscriber), quit(playlistClient)])
         await db.destroy()
       },

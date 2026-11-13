@@ -33,6 +33,45 @@ const wake: PushMessage = {
 const noDatabase = null as unknown as Kysely<Database>
 
 describe('sending to devices', function () {
+  it('counts unsent whoever no device was sent to, a device skipped as much as one failed', async function () {
+    const phone = (id: string, userId: string): PushAddress => ({
+      ...device(id, userId),
+      platform: 'ios'
+    })
+    const report = await sendToDevices(
+      noDatabase,
+      [
+        // No APNs transport: skipped.
+        phone('psh_skipped', 'usr_skipped'),
+        // Skipped on one device, reached on another.
+        phone('psh_also_skipped', 'usr_reached'),
+        device('psh_sent', 'usr_reached'),
+        // Skipped and failed.
+        phone('psh_skipped_too', 'usr_failing'),
+        device('psh_failed', 'usr_failing'),
+        // Nothing to send this device.
+        device('psh_quiet', 'usr_quiet')
+      ],
+      to => (to.id === 'psh_quiet' ? null : wake),
+      {
+        android: {
+          send: async to =>
+            to.id === 'psh_failed'
+              ? { status: 'failed', reason: 'HTTP 503' }
+              : { status: 'sent' }
+        }
+      },
+      () => undefined
+    )
+    expect(report).deep.include({ sent: 1, skipped: 4, failed: 1 })
+    expect(report.unreached).deep.equals(['usr_failing'])
+    expect(report.unsent).deep.equals([
+      'usr_failing',
+      'usr_quiet',
+      'usr_skipped'
+    ])
+  })
+
   it('tries again only whom a failure kept it from, never whom a service refused for good', async function () {
     const answers: Record<string, PushResult> = {
       psh_sent: { status: 'sent' },
@@ -83,7 +122,8 @@ describe('sending to devices', function () {
       rejected: 2,
       removed: 0,
       // Refused on one device for good, failed on another: worth a try.
-      unreached: ['usr_failing']
+      unreached: ['usr_failing'],
+      unsent: ['usr_failing']
     })
     expect(said.sort()).deep.equals([
       'push: android psh_failed failed: HTTP 503',

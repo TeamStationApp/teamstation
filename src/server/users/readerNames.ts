@@ -75,3 +75,18 @@ export async function fullNamesFor(
     isAdmin: reader.isAdmin
   })
 }
+
+/**
+ * Which of these readers read `userId` in full: `fullNamesFor` of that one
+ * person for each reader, in a fixed number of queries however many readers
+ * there are (`mayViewFullNameOf`), and none when the read goes to a model.
+ */
+export async function readersInFull(
+  db: Kysely<Database>,
+  readers: readonly Reader[],
+  userId: string
+): Promise<Set<string>> {
+  if (isSpoken() || readers.length === 0) return new Set()
+  const { mayViewFullNameOf } = await import('../access')
+  return await mayViewFullNameOf(db, userId, readers)
+}

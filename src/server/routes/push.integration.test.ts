@@ -619,7 +619,8 @@ describe('push registrations', function () {
         failed: 0,
         rejected: 1,
         removed: 0,
-        unreached: []
+        unreached: [],
+        unsent: []
       })
       // Kept, with its environment, for whoever reads the log; but marked.
       expect((await rows()).map(row => row.id).sort()).deep.equals(
@@ -707,7 +708,8 @@ describe('push registrations', function () {
         failed: 0,
         rejected: 0,
         removed: 0,
-        unreached: []
+        unreached: [],
+        unsent: []
       })
       expect(sent.map(([id]) => id).sort()).deep.equals([kept, other].sort())
       // The ended sessions' rows are kept, not pruned.
@@ -766,7 +768,8 @@ describe('push registrations', function () {
         failed: 2,
         rejected: 0,
         removed: 1,
-        unreached: []
+        unreached: [],
+        unsent: []
       })
       expect(sent.map(([id]) => id).sort()).deep.equals(
         [gone, failing, throwing].sort()
@@ -802,7 +805,8 @@ describe('push registrations', function () {
         failed: 1,
         rejected: 0,
         removed: 0,
-        unreached: [P1]
+        unreached: [P1],
+        unsent: [P1]
       })
       expect(lines).deep.equals([
         `push: android ${throwing} threw: Error: the socket closed`
@@ -843,7 +847,8 @@ describe('push registrations', function () {
         failed: 3,
         rejected: 0,
         removed: 0,
-        unreached: [P1]
+        unreached: [P1],
+        unsent: [P1]
       })
     })
 
@@ -871,7 +876,8 @@ describe('push registrations', function () {
         failed: 0,
         rejected: 0,
         removed: 0,
-        unreached: []
+        unreached: [],
+        unsent: []
       })
       expect(sent.map(([id]) => id)).deep.equals([ios])
     })
@@ -909,7 +915,8 @@ describe('push registrations', function () {
         failed: 0,
         rejected: 0,
         removed: 0,
-        unreached: []
+        unreached: [],
+        unsent: []
       })
       expect((await rows()).map(row => row.id)).deep.equals([id])
     })
@@ -931,7 +938,8 @@ describe('push registrations', function () {
         failed: 0,
         rejected: 0,
         removed: 0,
-        unreached: [P1]
+        unreached: [P1],
+        unsent: [P1]
       })
       expect(lines).deep.equals([
         'push: reading registrations failed: Error: no database'

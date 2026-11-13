@@ -78,6 +78,13 @@ export interface PushReport {
    * found gone. A later try may yet reach them.
    */
   unreached: string[]
+  /**
+   * Those of `unreached`, and the people a device of theirs was skipped for
+   * (no transport for its platform) with none sent to or found gone: a
+   * reminder written down for them was not delivered. Somebody a service
+   * refused the message for, and nothing else, is in neither.
+   */
+  unsent: string[]
 }
 
 /** Writes one line about a failure; the server's log by default. */
@@ -199,7 +206,8 @@ export function emptyReport(): PushReport {
     failed: 0,
     rejected: 0,
     removed: 0,
-    unreached: []
+    unreached: [],
+    unsent: []
   }
 }
 
@@ -225,7 +233,8 @@ export async function sendPush(
     devices = await liveRegistrations(db, userIds, wants)
   } catch (error) {
     log(`push: reading registrations failed: ${String(error)}`)
-    return { ...emptyReport(), unreached: [...new Set(userIds)].sort() }
+    const everybody = [...new Set(userIds)].sort()
+    return { ...emptyReport(), unreached: everybody, unsent: everybody }
   }
   return await sendToDevices(db, devices, build, transports, log)
 }
@@ -264,6 +273,8 @@ export async function sendToDevices(
   const answered = new Set<string>()
   /** People a send to failed. */
   const failing = new Set<string>()
+  /** People a device of theirs had no transport or message for. */
+  const skipped = new Set<string>()
   await Promise.all(
     devices.map(async to => {
       try {
@@ -272,6 +283,7 @@ export async function sendToDevices(
           message == null ? null : await deliver(transports, to, message)
         if (result == null) {
           report.skipped++
+          skipped.add(to.userId)
           return
         }
         if (result.status === 'sent') {
@@ -314,5 +326,8 @@ export async function sendToDevices(
     })
   )
   report.unreached = [...failing].filter(id => !answered.has(id)).sort()
+  report.unsent = [...new Set([...failing, ...skipped])]
+    .filter(id => !answered.has(id))
+    .sort()
   return report
 }
