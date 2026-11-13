@@ -5323,8 +5323,9 @@ export class TeamStationClient {
       options: built.options.map(option => ({ games: option.games })),
       blocking: built.blocking
     }
-    // A search can take minutes, so a busy server is asked again with the
-    // same result, which it accepts once; any other refusal is final.
+    // A search can take minutes, so the same result is sent again, which the
+    // server accepts once, while the device is offline or the server busy;
+    // any other refusal is final.
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.request(
@@ -5335,14 +5336,13 @@ export class TeamStationClient {
         )
       } catch (error) {
         const wait = retryDelaysMs[attempt]
-        if (
-          wait == null ||
-          !(error instanceof HttpError) ||
-          error.code !== 'unavailable' ||
-          !isRecord(error.details) ||
-          error.details.retry !== true
-        )
-          throw error
+        const retry =
+          error instanceof HttpError &&
+          (error.code === 'offline' ||
+            (error.code === 'unavailable' &&
+              isRecord(error.details) &&
+              error.details.retry === true))
+        if (wait == null || !retry) throw error
         await new Promise(resolve => setTimeout(resolve, wait))
       }
     }

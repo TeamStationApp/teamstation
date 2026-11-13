@@ -277,7 +277,7 @@ describe('api client scheduling setup', () => {
     ])
   })
 
-  it('sends the same result again while validation is busy, and stops at any other refusal', async () => {
+  it('sends the same result again while offline or validation is busy, and stops at any other refusal', async () => {
     const engine = input({ seasons: [], fields: [] })
     const refusal = (code: string, retry: boolean): Response =>
       new Response(
@@ -301,6 +301,30 @@ describe('api client scheduling setup', () => {
     const puts = busy.calls.filter(([method]) => method === 'PUT')
     expect(puts).has.length(3)
     expect(puts[2][2]).deep.equals(puts[0][2])
+    // Offline is asked again the same way.
+    let dropped = false
+    let offlinePuts = 0
+    const offline = new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: async (_url: unknown, init?: { method?: string }) => {
+        if (init?.method === 'PUT') offlinePuts++
+        if (init?.method === 'PUT' && !dropped) {
+          dropped = true
+          throw new TypeError('Network request failed')
+        }
+        return new Response(
+          JSON.stringify(
+            init?.method === 'POST' ? { id: 'spv/1', input: engine } : preview
+          ),
+          { status: 200 }
+        )
+      }
+    })
+    await offline
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch(() => undefined)
+    expect(dropped).equals(true)
+    expect(offlinePuts).equals(2)
     const final = client([
       { id: 'spv/1', input: engine },
       refusal('unavailable', false)
