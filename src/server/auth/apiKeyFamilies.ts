@@ -12,7 +12,8 @@ import type { ApiKeyArea, ApiKeyPermission } from '../../common/apiKeys'
  * join codes, people-role management, venues, locations, parent links,
  * relationship requests, live streams, video and media, the Director and its
  * uploads, device event control, node administration, walk-up songs,
- * narrations, chat, Tess, OAuth approvals, and the account's own API keys.
+ * narrations, chat, push registrations, Tess, OAuth approvals, and the
+ * account's own API keys.
  */
 export const API_KEY_FAMILIES: Record<ApiKeyArea, readonly string[]> = {
   account: [
