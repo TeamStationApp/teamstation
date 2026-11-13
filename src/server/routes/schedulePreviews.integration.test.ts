@@ -26,7 +26,7 @@ describe('schedule preview routes', function () {
     await w.call<SchedulePreview>(
       user,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       body
     )
   const edit = async (

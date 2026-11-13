@@ -33,7 +33,7 @@ describe('device preview lifecycle', function () {
         .execute()
       const response = await h.request(
         'POST',
-        `/leagues/${leagueA}/schedule-previews`,
+        `/leagues/${leagueA}/schedule-previews/preparations`,
         { mode: 'full', existing: 'workAround' },
         key
       )
@@ -65,7 +65,7 @@ describe('device preview lifecycle', function () {
     try {
       const response = await f.h.request(
         'POST',
-        `/leagues/${f.leagueA}/schedule-previews`,
+        `/leagues/${f.leagueA}/schedule-previews/preparations`,
         { mode: 'full', existing: 'workAround' },
         101
       )

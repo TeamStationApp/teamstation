@@ -50,6 +50,18 @@ export function schedulePreviewPaths(
   return {
     '/leagues/{leagueId}/schedule-previews': {
       post: {
+        summary: 'Retired: build a schedule preview on the server',
+        security: [{ bearer: [] }],
+        description:
+          'Schedules are now built on the device from a preparation (POST /leagues/{leagueId}/schedule-previews/preparations). This path answers 410 so a client from before that change says to update instead of failing to read the reply.',
+        parameters: [pathId('leagueId')],
+        responses: {
+          410: { description: 'Update the app to build schedules.' }
+        }
+      }
+    },
+    '/leagues/{leagueId}/schedule-previews/preparations': {
+      post: {
         summary: 'Prepare an authorized schedule input for the device',
         security: [{ bearer: [] }],
         description:

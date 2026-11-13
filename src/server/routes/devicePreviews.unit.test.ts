@@ -64,13 +64,26 @@ describe('device preview HTTP boundary', () => {
           )
         })
       expect(
-        await request('/leagues/league/schedule-previews', 'POST', {
-          mode: 'full',
-          existing: 'workAround'
-        })
+        await request(
+          '/leagues/league/schedule-previews/preparations',
+          'POST',
+          {
+            mode: 'full',
+            existing: 'workAround'
+          }
+        )
       ).deep.equals(prepared)
       expect(status).equals(201)
       expect(prepare.mock.calls[0].arguments[2]).equals('league')
+      // An app from before device builds is told to update, and nothing is prepared.
+      await assert.rejects(
+        request('/leagues/league/schedule-previews', 'POST', {
+          mode: 'full',
+          existing: 'workAround'
+        }),
+        { status: 410, message: 'Update the app to build schedules.' }
+      )
+      expect(prepare.mock.callCount()).equals(1)
       const blocked = { options: [], blocking: 'No selected fields' }
       expect(
         await request('/schedule-previews/preview/result', 'PUT', blocked)

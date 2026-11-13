@@ -5310,7 +5310,7 @@ export class TeamStationClient {
   ): Promise<SchedulePreview> {
     const prepared = await this.request(
       'POST',
-      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/preparations`,
       asPreparedPreview,
       request
     )

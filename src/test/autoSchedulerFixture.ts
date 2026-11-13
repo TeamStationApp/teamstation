@@ -322,7 +322,7 @@ export async function seedThrough(
     fx,
     101,
     'POST',
-    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
     { mode: 'full', existing: 'workAround' }
   )
   if (order < 9) return { venueId, fieldId, previewId: preview.id }

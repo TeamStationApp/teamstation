@@ -16,7 +16,7 @@ export async function deviceSchedulerResponse(
   if (
     !response.ok ||
     method !== 'POST' ||
-    !/^\/leagues\/[^/]+\/schedule-previews$/.test(path)
+    !/^\/leagues\/[^/]+\/schedule-previews\/preparations$/.test(path)
   )
     return response
   const prepared = asPreparedPreview(await response.json())

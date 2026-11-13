@@ -1,7 +1,7 @@
 import { type Request, Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import { badRequest, notFound, unauthorized } from '../../common/errors'
+import { badRequest, gone, notFound, unauthorized } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import {
   asPreviewEditsBody,
@@ -54,8 +54,17 @@ export function schedulePreviewRoutes(
 ): Router {
   const router = Router()
   const clock = options.clock ?? realClock
+  // Builds were once made here, on the server; the device makes them now,
+  // from a preparation. An app from before that is told to update instead
+  // of being sent a reply it cannot read.
   router.post(
     '/leagues/:leagueId/schedule-previews',
+    withAsync(async () => {
+      throw gone('Update the app to build schedules.')
+    })
+  )
+  router.post(
+    '/leagues/:leagueId/schedule-previews/preparations',
     requireActor,
     withAsync(async (req, res) => {
       const leagueId = param(req.params.leagueId)

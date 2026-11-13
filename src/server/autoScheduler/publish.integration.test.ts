@@ -30,7 +30,7 @@ describe('publishing a schedule preview', function () {
     await w.call<SchedulePreview>(
       user,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       body
     )
   const publish = async (
@@ -59,7 +59,7 @@ describe('publishing a schedule preview', function () {
     const { f, teams } = w.fx
     const response = await f.h.request(
       'POST',
-      `/leagues/${f.leagueA}/schedule-previews`,
+      `/leagues/${f.leagueA}/schedule-previews/preparations`,
       { mode: 'full', existing: 'workAround' },
       101
     )
@@ -682,7 +682,7 @@ describe('publishing a schedule preview', function () {
       await w.call<SchedulePreview>(
         102,
         'POST',
-        `/leagues/${f.leagueB}/schedule-previews`,
+        `/leagues/${f.leagueB}/schedule-previews/preparations`,
         { mode: 'full', existing: 'workAround' }
       )
     ).body

@@ -250,7 +250,7 @@ describe('api client scheduling setup', () => {
     expect(calls).deep.equals([
       [
         'POST',
-        '/api/v1/leagues/lea%2Fa/schedule-previews',
+        '/api/v1/leagues/lea%2Fa/schedule-previews/preparations',
         { mode: 'full', existing: 'workAround' }
       ],
       ['PUT', '/api/v1/schedule-previews/spv%2F1/result', buildOptions(engine)],
