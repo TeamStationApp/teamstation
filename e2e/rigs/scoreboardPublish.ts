@@ -116,6 +116,13 @@ export async function sendOver(
     // Still open, with no close frame from the server on its way in.
     outcome.delivered = socket.readyState === WebSocket.OPEN && !serverClosed
   }
+  // The server's close frame came in the settle but its handshake is not
+  // done (a slower machine): its code is read once it is.
+  if (socket.readyState === WebSocket.CLOSING && !serverClosed)
+    await Promise.race([
+      closed,
+      new Promise(resolve => setTimeout(resolve, 2000))
+    ])
   if (socket.readyState === WebSocket.OPEN) {
     socket.close(1000)
     await closed

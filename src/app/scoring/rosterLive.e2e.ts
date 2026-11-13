@@ -451,11 +451,11 @@ describe('two scorekeepers on one game', function () {
     await a.scoreGame(fixture.gameId)
     await settled(a.page)
     // Every API request from here is held open: none is answered.
-    const held: Array<{ url: string }> = []
+    const held: Array<{ url: string; request: HTTPRequest }> = []
     await a.page.setRequestInterception(true)
     const hold = (request: HTTPRequest): void => {
       if (request.url().includes('/api/')) {
-        held.push({ url: request.url() })
+        held.push({ url: request.url(), request })
         return
       }
       request.continue().catch(() => undefined)
@@ -500,6 +500,11 @@ describe('two scorekeepers on one game', function () {
       expect(held.length).greaterThan(0)
     } finally {
       a.page.off('request', hold)
+      // A held request stays open after interception ends, and the next
+      // page's wait for quiet sees it: each is failed, as a dropped
+      // connection would be.
+      for (const { request } of held)
+        await request.abort('connectionfailed').catch(() => undefined)
       await a.page.setRequestInterception(false)
     }
     // Offline: the same, with nothing to reach.
