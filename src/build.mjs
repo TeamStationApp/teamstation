@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url'
 
 import buildInfoTools from '../scripts/build-info.cjs'
 import { buildWasm, findCargo } from '../scripts/chatCryptoBuild.mjs'
+import { buildServiceWorker } from '../scripts/serviceWorkerBuild.mjs'
 import { webSettings } from '../scripts/web-build-settings.mjs'
 import {
   cspFor,
@@ -206,6 +207,9 @@ const options = {
 }
 
 await mkdir(out, { recursive: true })
+// The notifications' service worker, as `sw.js`, with the bundle's defines
+// (`scripts/serviceWorkerBuild.mjs`).
+await buildServiceWorker({ out, serve, define: options.define })
 const template = withCsp(
   await readFile('src/app/web/index.html', 'utf8'),
   policy

@@ -482,6 +482,47 @@ describe('api client', function () {
     ])
   })
 
+  it('reads the Web Push key, none while the server sends none, and registers a device', async function () {
+    const client = (answer: ReturnType<typeof stubFetch>): TeamStationClient =>
+      new TeamStationClient({
+        baseUrl: 'http://example.com/api/v1',
+        fetch: answer.fetch
+      })
+    const key = stubFetch(200, { publicKey: 'BPublicKey' })
+    expect(await client(key).webPushKey()).equals('BPublicKey')
+    expect(key.calls.map(call => [call.method, call.url])).deep.equals([
+      ['GET', 'http://example.com/api/v1/push/web-key']
+    ])
+    expect(
+      await client(
+        stubFetch(404, { code: 'notFound', message: 'Web Push is off' })
+      ).webPushKey()
+    ).equals(null)
+    let refused: unknown
+    await client(stubFetch(500, { code: 'internal', message: 'Down' }))
+      .webPushKey()
+      .catch((error: unknown) => {
+        refused = error
+      })
+    expect(refused).instanceOf(HttpError)
+    const posted = stubFetch(200, { id: 'psh_1' })
+    const registration = {
+      platform: 'web' as const,
+      address: '{"endpoint":"https://fcm.googleapis.com/fcm/send/1"}',
+      environment: 'production' as const
+    }
+    expect(await client(posted).registerPush(registration)).equals('psh_1')
+    expect(
+      posted.calls.map(call => [call.method, call.url, call.body])
+    ).deep.equals([
+      [
+        'POST',
+        'http://example.com/api/v1/me/push-registrations',
+        JSON.stringify(registration)
+      ]
+    ])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({

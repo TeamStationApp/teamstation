@@ -305,7 +305,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
    * person's. The answer can wait on the person, so nothing waits on it.
    */
   const ask = (): void => {
-    pushDevice.enable().then(
+    pushDevice.enable(client).then(
       value => {
         // A read begun before the answer would show what it replaced.
         permissionRead.current++

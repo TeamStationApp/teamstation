@@ -21,7 +21,7 @@ import { newRecord } from '../chat/keyRecord'
 import { KEY_DATABASE, keyStore } from '../chat/keyStore'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
-import type { PushDevice, PushState } from '../platform/pushDevice'
+import type { PushClient, PushDevice, PushState } from '../platform/pushDevice'
 import { SLIDE_TRAVEL } from '../stream/overlay/SlideToStop'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -309,17 +309,21 @@ function fixture(
   }
 }
 
-/** A device whose permission is `now`, which `enable` changes to `answer`. */
+/**
+ * A device whose permission is `now`, which `enable` changes to `answer`,
+ * keeping the client it was to register through.
+ */
 function device(
   now: PushState,
   answer: PushState = now
-): PushDevice & { asked: number } {
-  const fake = {
+): PushDevice & { asked: number; through?: PushClient } {
+  const fake: PushDevice & { asked: number; through?: PushClient } = {
     asked: 0,
     state: async () => now,
     sync: async () => now,
-    enable: async () => {
+    enable: async client => {
       fake.asked++
+      fake.through = client
       now = answer
       return now
     }
@@ -588,6 +592,8 @@ describe('Account settings screen', () => {
     expect(text()).not.includes(BLOCKED)
     await press(ALLOW)
     expect(browser.asked).equals(1)
+    // Allowed, the browser registers through the signed-in client.
+    expect(browser.through).equals(f.client)
     expect(button(ALLOW)).equals(undefined)
     expect(text()).not.includes(BLOCKED)
     // A device already refused, with a switch on, shows the line at once.

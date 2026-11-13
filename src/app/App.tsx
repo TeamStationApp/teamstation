@@ -156,6 +156,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
+import { pushDevice } from './platform/pushDevice'
 import { signInRequest } from './platform/signInRequest'
 import {
   sessionUserOf,
@@ -599,6 +600,13 @@ function Shell(props: AppProps): React.ReactElement {
     }
   }, [client, notificationUser])
   useForegroundRefresh(refreshNotifications)
+  // A device already allowed to notify registers again for each session it
+  // is signed in with, at start and after a sign-in, so the server knows
+  // where to wake this person.
+  useEffect(() => {
+    if (notificationUser == null) return
+    pushDevice.sync(client).catch(() => undefined)
+  }, [client, notificationUser])
   // Until we have asked, we do not know whether anybody is signed in. Showing
   // the sign-in screen in the meantime is what made every link useless: the
   // cookie was there, nothing read it, and the address was thrown away.

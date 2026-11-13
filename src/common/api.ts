@@ -3488,6 +3488,14 @@ export interface StreamingRequest {
   onabort: (() => void) | null
 }
 
+/** `POST /me/push-registrations`: one device's push address. */
+export interface PushRegistration {
+  platform: 'ios' | 'android' | 'web'
+  /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
+  address: string
+  environment: 'production' | 'development'
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -4299,6 +4307,41 @@ export class TeamStationClient {
       asAccountNotifications,
       change
     )
+  }
+
+  /**
+   * The VAPID public key a browser subscribes to push with, or null while
+   * the server sends no Web Push.
+   */
+  async webPushKey(): Promise<string | null> {
+    try {
+      return (
+        await this.request(
+          'GET',
+          '/push/web-key',
+          asObject({ publicKey: asString })
+        )
+      ).publicKey
+    } catch (error) {
+      if (error instanceof HttpError && error.code === 'notFound') return null
+      throw error
+    }
+  }
+
+  /**
+   * Where this signed-in device is woken: a phone's token or a browser's
+   * subscription (`address`, its JSON). Posting the same one again keeps one
+   * registration, moved to this session.
+   */
+  async registerPush(registration: PushRegistration): Promise<string> {
+    return (
+      await this.request(
+        'POST',
+        '/me/push-registrations',
+        asObject({ id: asString }),
+        registration
+      )
+    ).id
   }
 
   /** Whether this account has unlocked chat, and how. */
