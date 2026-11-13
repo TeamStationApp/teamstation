@@ -1,3 +1,5 @@
+import { isDeepStrictEqual } from 'node:util'
+
 import { type Kysely, sql } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
@@ -270,7 +272,20 @@ async function writeSeasonScheduleSettings(
     settings.startsOn,
     settings.endsOn
   )
-  const dates = windowRange(windows) ?? settings
+  // The windows set the season's dates. An older app that moves only the
+  // dates would see its change undone, so that is refused.
+  const range = windowRange(windows)
+  if (
+    range != null &&
+    settings.windows.every(period => period.until != null) &&
+    (settings.startsOn !== range.startsOn ||
+      settings.endsOn !== range.endsOn) &&
+    isDeepStrictEqual(settings.windows, previous.settings.windows)
+  )
+    throw badRequest(
+      'The season’s time windows set its dates. Update the app to change them.'
+    )
+  const dates = range ?? settings
   const values = {
     field_ids: fieldIds,
     field_size: settings.fieldSize,

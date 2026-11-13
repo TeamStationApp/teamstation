@@ -268,6 +268,72 @@ describe('device scheduling persistence boundaries', () => {
       { from: '2027-05-01', until: '2027-05-20', hours }
     ])
   })
+  it('refuses an older app’s change of only the dates its windows set', async () => {
+    const windows = [{ from: '2027-04-01', until: '2027-06-30', hours }]
+    const stored = {
+      season_id: 'sea_demo',
+      field_ids: [],
+      field_size: '50/70',
+      game_minutes: 90,
+      buffer_minutes: 10,
+      regular_games: 4,
+      exhibition_games: 1,
+      doubleheaders: 'ifNecessary',
+      starts_on: '2027-04-01',
+      ends_on: '2027-06-30',
+      blackouts: [],
+      windows,
+      max_games_on_weekdays: 1,
+      max_games_on_weekend: 1,
+      prefer_game_on: 'weekend'
+    }
+    let wrote = 0
+    await withQueryReplies(
+      query => {
+        if (query.sql.includes('pg_advisory_xact_lock')) return []
+        if (query.sql.startsWith('insert into "season_schedule_settings"')) {
+          wrote++
+          return []
+        }
+        if (query.sql.includes('from "season_schedule_settings"'))
+          return [stored]
+        if (query.sql.includes('from "seasons"'))
+          return [
+            {
+              id: 'sea_demo',
+              league_id: null,
+              year: 2027,
+              starts_on: '2027-03-01',
+              ends_on: '2027-08-31'
+            }
+          ]
+        throw new Error(query.sql)
+      },
+      async db => {
+        const settings = {
+          ...season().settings,
+          fieldIds: [],
+          startsOn: '2027-04-01',
+          endsOn: '2027-06-30',
+          windows
+        }
+        const moved = await saveSeasonScheduleSettings(db, 'sea_demo', {
+          ...settings,
+          endsOn: '2027-08-31'
+        }).catch((error: unknown) => error)
+        expect(String(moved)).includes('Update the app to change them')
+        expect(wrote).equals(0)
+        // Unchanged dates, or new windows, save.
+        await saveSeasonScheduleSettings(db, 'sea_demo', settings)
+        await saveSeasonScheduleSettings(db, 'sea_demo', {
+          ...settings,
+          endsOn: '2027-08-31',
+          windows: [{ ...windows[0], until: '2027-08-31' }]
+        })
+        expect(wrote).equals(2)
+      }
+    )
+  })
   it('lists the union of season selections and legacy run selections', async () => {
     await withQueryReplies(
       query => {
