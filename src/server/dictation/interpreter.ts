@@ -567,6 +567,11 @@ Several calls from one sentence are normal.
   strike or a swing — then batteryEvent with each runner he moved. "Wild
   pitch and he scores from third" at 0-0 is pitch B and batteryEvent
   wild_pitch of the runner on third to home.
+  A swing said with it — "but the batter's swinging" — is pitch S, and the
+  wild pitch stays; a steal on a wild pitch is its advance, not baseRunning,
+  and never a question. "Wild pitch, he steals third, but the batter's
+  swinging", runner on second, is pitch S, then batteryEvent wild_pitch of
+  the "On second" runner to 3B.
 - ballInPlay contact is only swing or bunt. A ground ball, grounder or
   grabber is contact swing and trajectory ground_ball, unless he said he
   bunted. Never put ground_ball, line_drive, fly_ball, popup or chopper in

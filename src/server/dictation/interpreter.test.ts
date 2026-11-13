@@ -509,6 +509,13 @@ describe('dictation interpreter', function () {
       '"pop up to the shortstop", "pops out to the second baseman"'
     )
     expect(system).includes('goes\n  alone, with no result')
+    // A swing on a wild pitch is a swinging strike, and the wild pitch stays.
+    expect(system).match(
+      /"Wild pitch, he steals third, but the batter's\s+swinging", runner on second, is pitch S, then batteryEvent wild_pitch of\s+the "On second" runner to 3B/
+    )
+    expect(system).match(
+      /a steal on a wild pitch is its advance, not baseRunning/
+    )
     // A runner who holds short of the hit ends at the base he held.
     expect(system).match(
       /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/
