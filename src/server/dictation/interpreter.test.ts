@@ -509,6 +509,10 @@ describe('dictation interpreter', function () {
       '"pop up to the shortstop", "pops out to the second baseman"'
     )
     expect(system).includes('goes\n  alone, with no result')
+    // A runner who holds short of the hit ends at the base he held.
+    expect(system).match(
+      /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/
+    )
     // Only what was said, every call a tool call, undo only when asked.
     expect(system).includes('it is not a list of events')
     expect(system).includes('never call pitch once for each of its codes')

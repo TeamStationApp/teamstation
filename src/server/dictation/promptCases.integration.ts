@@ -1522,5 +1522,21 @@ const BLAKE = 2
       expect(resultType(actions), JSON.stringify(actions)).equals('intent_walk')
       expect(actions.some(action => action.type === 'pitch')).equals(false)
     })
+
+    it('#223 keeps a runner who holds at third on a double there', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, second: casey }),
+          'Double to left center, and the runner on second holds at third'
+        )
+      )
+      const dumped = JSON.stringify(actions)
+      expect(resultType(actions), dumped).equals('double')
+      const held = movements(actions).filter(move => move.runner === CASEY)
+      expect(held, dumped).has.length(1)
+      expect(held[0].to, dumped).equals('3B')
+      expect(held[0].out === true, dumped).equals(false)
+    })
   }
 )

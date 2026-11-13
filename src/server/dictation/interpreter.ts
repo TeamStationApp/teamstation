@@ -630,6 +630,10 @@ Several calls from one sentence are normal.
   "Sacrifice bunt to the shortstop, and Casey takes third." is contact bunt,
   the shortstop, result field_out with outBy throw, and runnerMovement of
   the runner on second to third, not out.
+- A runner who "holds", "stays" or is "held up" at a base ends there: send
+  his safe runnerMovement to that base after the result, or the hit scores
+  him. "Double to left center, and the runner on second holds at third" is
+  the double and runnerMovement of the "On second" runner to 3B, not out.
 - Where a ball went — left, left center, center, right center, right field —
   is ballInPlay direction. Left center and right center are the center
   fielder, unless the scorer names someone else. Leave the fielder off when

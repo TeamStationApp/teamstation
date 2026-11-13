@@ -10,6 +10,7 @@ import type {
 import {
   baseDestination,
   destinationBase,
+  DESTINATIONS,
   RUNNER_REASONS
 } from '../../common/scoring/actions'
 import {
@@ -886,27 +887,31 @@ export function sentenceDefaults(
   const baseOutWords = baseOutsSaid(transcript, game)
   const settled = holding(
     game,
-    choiceRelayLocations(
+    saidHolds(
       game,
-      doublePlay(
+      choiceRelayLocations(
         game,
-        creditThrowOuts(
+        doublePlay(
           game,
-          forceThenOverthrow(
+          creditThrowOuts(
             game,
-            baseOuts(
+            forceThenOverthrow(
               game,
-              errorAfterResult(explicitChoice(game, filled, transcript)),
+              baseOuts(
+                game,
+                errorAfterResult(explicitChoice(game, filled, transcript)),
+                transcript,
+                baseOutWords
+              ),
               transcript,
               baseOutWords
             ),
-            transcript,
-            baseOutWords
+            transcript
           ),
           transcript
-        ),
-        transcript
-      )
+        )
+      ),
+      transcript
     )
   )
   return thirdOut(game, settled, transcript, baseOutWords)
@@ -2369,18 +2374,62 @@ function holding(
   actions: readonly ScoringAction[]
 ): ScoringAction[] {
   const on = basesOf(game)
-  const stays = (action: ScoringAction, index: number): boolean =>
-    action.type === 'runnerMovement' &&
-    action.out !== true &&
-    on.get(action.runner) === action.to &&
-    !actions
-      .slice(0, index)
-      .some(
-        earlier =>
-          earlier.type === 'runnerMovement' && earlier.runner === action.runner
-      )
-  // A hold said before the play's result holds him against that result.
   const resultAt = actions.findIndex(action => action.type === 'result')
+  const result = actions[resultAt]
+  const hit = result?.type === 'result' && HITS.has(result.eventType)
+  // Moves said after the last pitch, battery event or steal before the
+  // result are this ball's; one said before them happened before it.
+  const since = actions
+    .slice(0, Math.max(0, resultAt))
+    .findLastIndex(
+      action =>
+        action.type === 'pitch' ||
+        action.type === 'batteryEvent' ||
+        action.type === 'baseRunning'
+    )
+  const stays = (action: ScoringAction, index: number): boolean => {
+    if (
+      action.type !== 'runnerMovement' ||
+      action.out === true ||
+      actions
+        .slice(0, index)
+        .some(
+          earlier =>
+            earlier.type === 'runnerMovement' &&
+            earlier.runner === action.runner
+        )
+    )
+      return false
+    // Where the sentence has him before this move: his base, or where his
+    // steal or a battery event earlier in it took him.
+    let base = on.get(action.runner)
+    if (base == null) return false
+    for (const earlier of actions.slice(0, index)) {
+      if (
+        earlier.type === 'baseRunning' &&
+        earlier.runner === action.runner &&
+        earlier.kind === 'steal' &&
+        earlier.to != null
+      )
+        base = earlier.to
+      if (earlier.type === 'batteryEvent')
+        for (const advance of earlier.advances ?? [])
+          if (advance.runner === action.runner) base = advance.to
+    }
+    // A runner held short of the hit — "holds at third" on a double — is
+    // held there against the hit, which would otherwise send him on. A move
+    // with a reason of its own (a steal, a throwing error) happened before
+    // the ball and stays there.
+    return (
+      base === action.to ||
+      (hit &&
+        index > since &&
+        action.fieldingRoute == null &&
+        (action.reason == null || action.reason === 'Advance') &&
+        DESTINATIONS.indexOf(action.to) > DESTINATIONS.indexOf(base))
+    )
+  }
+  // A hold said before the play's result holds him against that result.
   const ordered =
     resultAt < 0
       ? [...actions]
@@ -2406,11 +2455,115 @@ function holding(
       )
       if (stays && (sent == null || sent.to === destinationBase(action.to)))
         continue
+      // A hold short of where the play sent him that the bases cannot take
+      // — the runner behind already has the base he held — is left out, and
+      // the hit plays as it would without it, rather than losing the whole
+      // sentence.
+      if (
+        action.out !== true &&
+        on.has(action.runner) &&
+        sent != null &&
+        sent.to > destinationBase(action.to) &&
+        applyAction(state, action).problems.some(
+          problem => problem.code === 'illegal'
+        )
+      )
+        continue
     }
     kept.push(action)
     state = applyAction(state, action).state
   }
   return kept
+}
+
+/** A runner's full and last names, as patterns, longest first. */
+function namesOf(game: GameState, id: number): string[] {
+  const player = game.gameData.players[id]
+  const escape = (text: string): string =>
+    text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return [player?.fullName, player?.lastName]
+    .map(name => name?.trim())
+    .filter((name): name is string => name != null && name.length > 1)
+    .map(name => `\\b${escape(name)}\\b`)
+}
+
+/** The base a hit takes its batter to. */
+const BATTER_REACHES: Partial<Record<string, Destination>> = {
+  single: '1B',
+  double: '2B',
+  triple: '3B'
+}
+
+/** A base as the words say it. */
+const HELD_BASE: Record<string, Destination> = {
+  first: '1B',
+  '1st': '1B',
+  second: '2B',
+  '2nd': '2B',
+  third: '3B',
+  '3rd': '3B'
+}
+/** A runner's own words for stopping at a base: "holds at third". */
+const HOLDS =
+  '(?:holds|held|stays|stayed|stops|stopped|pulls\\s+up|pulled\\s+up|is\\s+held\\s+up|was\\s+held\\s+up|gets\\s+held\\s+up)(?:\\s+up)?\\s+at\\s+(first|second|third|1st|2nd|3rd)\\b'
+
+/**
+ * A runner the words say held at a base on a hit — "the runner on second
+ * holds at third", "Casey holds at third", or "the runner holds at third"
+ * with one runner on — sent there when the sentence moves him nowhere, just
+ * after the result, so the hit does not score him by rule.
+ */
+function saidHolds(
+  game: GameState,
+  actions: readonly ScoringAction[],
+  transcript: string
+): ScoringAction[] {
+  const resultAt = actions.findIndex(action => action.type === 'result')
+  const result = actions[resultAt]
+  if (result?.type !== 'result' || !HITS.has(result.eventType))
+    return [...actions]
+  const on = basesOf(game)
+  const held: ScoringAction[] = []
+  for (const [runner, base] of on) {
+    if (
+      actions.some(
+        action => action.type === 'runnerMovement' && action.runner === runner
+      )
+    )
+      continue
+    const from = Object.keys(HELD_BASE)
+      .filter(word => HELD_BASE[word] === base)
+      .join('|')
+    const named = [
+      `\\brunner\\s+(?:on|at|from)\\s+(?:${from})(?:\\s+base)?`,
+      ...playerPatterns(game, runner),
+      // A runner said by his whole name, or his last: "Casey Jones holds".
+      ...namesOf(game, runner)
+    ]
+    // "He" or "the runner", with one runner on, is that runner — unless the
+    // base he held is the batter's own on the hit, or the words say the
+    // batter-runner.
+    const vague =
+      on.size === 1 ? ['(?<![\\w-])(?:the\\s+)?runner\\b', '\\bhe\\b'] : []
+    for (const name of [...named, ...vague]) {
+      const match = new RegExp(`${name}[,]?\\s+${HOLDS}`, 'i').exec(transcript)
+      if (match == null) continue
+      const to = HELD_BASE[match[match.length - 1].toLowerCase()]
+      if (vague.includes(name) && to === BATTER_REACHES[result.eventType]) break
+      // A hold at his own base keeps him there against the hit, as one
+      // past it stops him short of where the hit sends him.
+      if (DESTINATIONS.indexOf(to) >= DESTINATIONS.indexOf(base))
+        held.push({ type: 'runnerMovement', runner, to })
+      break
+    }
+  }
+  return held.length === 0
+    ? [...actions]
+    : [
+        ...actions.slice(0, resultAt + 1),
+        ...held,
+        ...actions.slice(resultAt + 1)
+      ]
 }
 
 const DOUBLE_PLAY =

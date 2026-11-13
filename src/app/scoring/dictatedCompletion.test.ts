@@ -2878,6 +2878,238 @@ describe('strike three in a sentence', function () {
 })
 
 describe('a runner who holds', function () {
+  const holdSaid =
+    'Double to left center, and the runner on second holds at third'
+  const toLeftCenter: ScoringAction = {
+    type: 'ballInPlay',
+    contact: 'swing',
+    direction: 'left_center'
+  }
+  const double: ScoringAction = { type: 'result', eventType: 'double' }
+  const holdsAtThird: ScoringAction = {
+    type: 'runnerMovement',
+    runner: 6,
+    to: '3B'
+  }
+  for (const [when, actions] of [
+    ['after the double', [toLeftCenter, double, holdsAtThird]],
+    ['before the double', [holdsAtThird, toLeftCenter, double]],
+    ['between the ball and the double', [toLeftCenter, holdsAtThird, double]],
+    ['not at all', [toLeftCenter, double]]
+  ] as const)
+    it(`stays on third on a double, the hold sent ${when}`, function () {
+      const state = settle(sayAs(holdSaid, game({ second: 6 }), ...actions))
+      expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+      expect(bases(state)).deep.equals([null, BATTER, 6])
+      nothingToTap(state)
+    })
+
+  it('is held by name, or as the only runner on', function () {
+    for (const said of [
+      'Double to left center, and number 6 holds at third.',
+      'Double to left center, the runner holds at third.',
+      'Double to left center, the runner on second is held up at third.'
+    ]) {
+      const state = settle(
+        sayAs(said, game({ second: 6 }), toLeftCenter, double)
+      )
+      expect(state.session.liveData.linescore.teams.away.runs, said).equals(0)
+      expect(bases(state), said).deep.equals([null, BATTER, 6])
+    }
+  })
+
+  it('is held by his whole name or his last', function () {
+    for (const said of [
+      'Double to left center, Casey Jones holds at third.',
+      'Double to left center, Jones holds at third.'
+    ]) {
+      const start = game({ second: 6 })
+      const player = start.session.gameData.players[6]
+      player.fullName = 'Casey Jones'
+      player.lastName = 'Jones'
+      const state = settle(sayAs(said, start, toLeftCenter, double))
+      expect(state.session.liveData.linescore.teams.away.runs, said).equals(0)
+      expect(bases(state), said).deep.equals([null, BATTER, 6])
+    }
+  })
+
+  it('leaves out a hold the bases cannot take, and scores the rest', function () {
+    // The double sends the runner from first to third: the runner from
+    // second cannot be held there too.
+    for (const actions of [
+      [toLeftCenter, double, holdsAtThird],
+      [holdsAtThird, toLeftCenter, double],
+      [toLeftCenter, double]
+    ]) {
+      const state = settle(
+        sayAs(
+          'Double to left center, the runner on second holds at third',
+          game({ first: 5, second: 6 }),
+          ...actions
+        )
+      )
+      expect(state.dictation?.problem).equals(undefined)
+      expect(bases(state)).deep.equals([null, BATTER, 5])
+      expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    }
+  })
+
+  it('names one runner of two by his base', function () {
+    const state = settle(
+      sayAs(
+        'Double to left center, and the runner on second holds at third.',
+        game({ second: 6, third: 7 }),
+        toLeftCenter,
+        double
+      )
+    )
+    expect(bases(state)).deep.equals([null, BATTER, 6])
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    nothingToTap(state)
+  })
+
+  it('leaves a runner who took a base before the pitch to the hit', function () {
+    const before: ScoringAction[] = [
+      { type: 'pitch', call: 'B' },
+      {
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: 6, to: '3B' }]
+      },
+      { type: 'runnerMovement', runner: 6, to: 'home' }
+    ]
+    const said =
+      'Wild pitch, he takes third and scores, then a double to left center.'
+    const done = completeSentence(
+      game({ second: 6 }).session,
+      [...before, toLeftCenter, double],
+      said
+    )
+    expect(
+      'actions' in done && done.actions.slice(0, 4).map(a => a.type)
+    ).deep.equals(['pitch', 'batteryEvent', 'runnerMovement', 'ballInPlay'])
+    const state = settle(
+      sayAs(said, game({ second: 6 }), ...before, toLeftCenter, double)
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    expect(bases(state)).deep.equals([null, BATTER, null])
+  })
+
+  it('holds a runner at his own base against the hit', function () {
+    const state = settle(
+      sayAs(
+        'Single to right, number 7 stays at third.',
+        game({ third: 7 }),
+        { type: 'ballInPlay', contact: 'swing', direction: 'right' },
+        { type: 'result', eventType: 'single' }
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(state)).deep.equals([BATTER, null, 7])
+  })
+
+  it('leaves a move from his own steal or a throw before the hit where it was', function () {
+    const single: ScoringAction = { type: 'result', eventType: 'single' }
+    const toRight: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      direction: 'right'
+    }
+    const state = settle(
+      sayAs(
+        'He steals second and takes third when the throw gets away, then a single to right.',
+        game({ first: 5 }),
+        { type: 'baseRunning', runner: 5, kind: 'steal', to: '2B' },
+        {
+          type: 'runnerMovement',
+          runner: 5,
+          to: '3B',
+          reason: 'Throwing Error'
+        },
+        toRight,
+        single
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    expect(bases(state)).deep.equals([BATTER, null, null])
+    const stole = playDefaults(
+      game({ second: 6 }).session,
+      [
+        { type: 'runnerMovement', runner: 6, to: '3B', reason: 'Steal' },
+        toLeftCenter,
+        double
+      ],
+      'He steals third, then a double to left center.'
+    )
+    expect(stole.map(action => action.type)).deep.equals([
+      'runnerMovement',
+      'ballInPlay',
+      'result'
+    ])
+  })
+
+  it('holds a runner a wild pitch moved earlier in the sentence', function () {
+    const state = settle(
+      sayAs(
+        'Swing and a miss, wild pitch, he takes second. Next pitch, double to left center, he holds at third.',
+        game({ first: 5 }),
+        { type: 'pitch', call: 'S' },
+        {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 5, to: '2B' }]
+        },
+        { type: 'runnerMovement', runner: 5, to: '3B' },
+        toLeftCenter,
+        double
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(state)).deep.equals([null, BATTER, 5])
+  })
+
+  it("leaves the batter's own hold to the batter", function () {
+    for (const said of [
+      'Double to left, he holds at second.',
+      'Double to left, the batter-runner holds at second.'
+    ])
+      expect(
+        playDefaults(
+          game({ first: 5 }).session,
+          [
+            { type: 'ballInPlay', contact: 'swing', direction: 'left' },
+            { type: 'result', eventType: 'double' }
+          ],
+          said
+        ).filter(
+          action => action.type === 'runnerMovement' && action.runner === 5
+        ),
+        said
+      ).deep.equals([])
+  })
+
+  it('does not add a hold the words do not say, nor one on an out', function () {
+    const said = (
+      transcript: string,
+      ...actions: ScoringAction[]
+    ): ScoringAction[] =>
+      playDefaults(game({ second: 6 }).session, actions, transcript)
+    expect(
+      said('Double to left center, he scores.', toLeftCenter, double).filter(
+        action => action.type === 'runnerMovement'
+      )
+    ).deep.equals([])
+    expect(
+      said(
+        'Ground out to short, the runner on second holds at third.',
+        grounder,
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      ).filter(
+        action => action.type === 'runnerMovement' && action.runner === 6
+      )
+    ).deep.equals([])
+  })
+
   it('stays on third on a single, which would otherwise send him home', function () {
     const state = settle(
       sayAs(
