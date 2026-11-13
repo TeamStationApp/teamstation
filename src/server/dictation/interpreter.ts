@@ -589,7 +589,9 @@ Several calls from one sentence are normal.
   was out on it, a runner the hit's own bases send home scoring. When the
   scorer does not say who made an error, leave that charge off: the game
   asks. On a fielder's choice, send the ball in play and the
-  result, and a runner out only when the scorer said which. Do not call
+  result, and a runner out only when the scorer said which. "Fielder's
+  choice, runner out at second" is ballInPlay with contact swing alone,
+  result fielders_choice and the "On first" runner out at 2B. Do not call
   askScorer for any of these. Safe at first with nobody on is result single
   — a bunt single when he bunted — never fielders_choice. A fielder's choice
   needs a runner already on. Safe at first with a runner on, when the scorer

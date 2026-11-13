@@ -208,6 +208,32 @@ describe('remote log', () => {
       ['Bob B.', [sprintf(lstrings.remote_log_undo, 'Swinging strike')]]
     ])
   })
+  it('words a remote Undo of a tapped ball in play by the flight its angle gives', () => {
+    // As the scoring screen taps it: the contact, then the angle and spot.
+    const tapped = (launchAngle: number): ScoringAction => ({
+      type: 'ballInPlay',
+      contact: 'swing',
+      launchAngle,
+      location: { x: -20, z: -70 }
+    })
+    const history = new History().add([ball, 'ann'])
+    const log = startRemoteLog(history.picture(), VIEWER)
+    const steps: Step[] = [
+      [contact, 'ann'],
+      [tapped(20), 'ann'],
+      [{ type: 'result', eventType: 'single' }, 'ann']
+    ]
+    for (const [action, author] of steps) history.tryAdd(action, author)
+    const added = history.actions.length - 1
+    history.undo(added, 'bob')
+    nextRemoteLog(log, history.picture())
+    const undone = rows(log).find(([name]) => name === 'Bob B.')
+    expect(undone, JSON.stringify(rows(log))).not.equals(undefined)
+    expect(added).equals(3)
+    expect(undone![1]).deep.equals([
+      sprintf(lstrings.remote_log_undo, 'Ball in play, line drive, single')
+    ])
+  })
   it('drops every row when a reset clears the history and its removals', () => {
     const history = new History()
     const log = startRemoteLog(history.picture(), VIEWER)
@@ -357,6 +383,30 @@ describe('remote log', () => {
     nextRemoteLog(log, history.picture(), { mix })
     expect(mixes).equals(0)
   })
+  it('names a ball in play by its trajectory, a bunt, or a tapped angle, and a dictated swing as a ball in play', () => {
+    expect(
+      [
+        { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
+        { type: 'ballInPlay', contact: 'swing', launchAngle: 20 },
+        { type: 'ballInPlay', contact: 'swing', launchAngle: 40 },
+        { type: 'ballInPlay', contact: 'bunt', launchAngle: -10 },
+        { type: 'ballInPlay', contact: 'bunt' },
+        {
+          type: 'ballInPlay',
+          contact: 'bunt',
+          trajectory: 'popup',
+          direction: 'right'
+        }
+      ].map(action => actionWords(action as ScoringAction))
+    ).deep.equals([
+      `${lstrings.remote_log_ball_in_play} to left center`,
+      'Line drive',
+      'Fly ball',
+      'Bunt',
+      'Bunt',
+      'Popup to right'
+    ])
+  })
   it('words every action type and game flow kind from the locale', () => {
     const words = [
       actionWords(ball),
@@ -420,7 +470,7 @@ describe('remote log', () => {
       lstrings.remote_log_pitch_foul_tip,
       lstrings.remote_log_pitch_foul_bunt,
       lstrings.remote_log_lineup,
-      'Swing',
+      lstrings.remote_log_ball_in_play,
       'Line drive to left',
       'Field out (catch)',
       'Runner to 2B (Wild Pitch)',

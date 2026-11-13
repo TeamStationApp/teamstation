@@ -1151,6 +1151,7 @@ export const enUs = {
   remote_log_pitch_foul: 'Foul',
   remote_log_pitch_foul_tip: 'Foul tip',
   remote_log_pitch_foul_bunt: 'Foul bunt',
+  remote_log_ball_in_play: 'Ball in play',
   remote_log_ball_in_play_to: '%1$s to %2$s',
   remote_log_runner_to: 'Runner to %s',
   remote_log_runner_out_at: 'Runner out at %s',

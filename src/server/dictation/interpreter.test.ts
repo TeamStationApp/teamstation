@@ -516,6 +516,14 @@ describe('dictation interpreter', function () {
     expect(system).match(
       /a steal on a wild pitch is its advance, not baseRunning/
     )
+    // A hit's trajectory only from the words that say how it travelled.
+    // Only in the section a sentence about where its ball went is given.
+    expect(system).not.match(
+      /"Single\s+to deep right center" has no trajectory/
+    )
+    expect(BALL_PLACE_INSTRUCTIONS).match(
+      /"Single\s+to deep right center" has no trajectory/
+    )
     // A named fielder, and no place, is that fielder's spot.
     expect(system).match(
       /"Flies out to the pitcher" is trajectory fly_ball, the pitcher,\s+and result field_out with outBy catch, with no direction/
@@ -2942,6 +2950,20 @@ describe('where the ball went and the pitch, in the prompt', function () {
       'Taken down the line, double.'
     ])
       expect(placeSections(plain), plain).not.includes(PITCH_INSTRUCTIONS)
+    // A loop is a bloop, whole words only; every other word a prefix.
+    for (const ball of [
+      'Loop single to center.',
+      'A looper to right, it falls in.',
+      'Looping fly to left, it drops.',
+      'He loops one into center for a single.',
+      'Looped into right, it drops.',
+      'He fouls it off down the left side.',
+      'Fouled off down the right field line.'
+    ])
+      expect(placeSections(ball), ball).includes(BALL_PLACE_INSTRUCTIONS)
+    expect(placeSections('He loops the lineup.')).not.includes(
+      BALL_PLACE_INSTRUCTIONS
+    )
   })
 
   it('offers where a ball and a pitch went only beside their sections', async function () {

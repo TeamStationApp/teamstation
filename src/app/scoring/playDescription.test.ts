@@ -214,8 +214,8 @@ describe('a play in two lines', function () {
     })
     expect(told(game({ second: 2 }), inPlay(17), result('single'))).deep.equals(
       {
-        // Said with no trajectory, a hit is a line drive.
-        primary: 'Chase L. line drive single to center',
+        // Said with no word for how it travelled, a hit has no trajectory.
+        primary: 'Chase L. single to center',
         secondary: 'Ann B. to third'
       }
     )
@@ -239,7 +239,7 @@ describe('a play in two lines', function () {
         { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
         result('single')
       )?.primary
-    ).equals('Chase L. line drive single to left center')
+    ).equals('Chase L. single to left center')
     expect(
       told(
         game(),
@@ -262,7 +262,7 @@ describe('a play in two lines', function () {
         fielders: [17, 13]
       })
     ).deep.equals({
-      primary: 'Chase L. line drive single to center',
+      primary: 'Chase L. single to center',
       secondary: 'Out at second, Ben C. (CF) to Tia R. (2B)'
     })
   })

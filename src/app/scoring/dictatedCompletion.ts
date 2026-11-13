@@ -467,6 +467,14 @@ function fairBearing(
 }
 
 /**
+ * Words that say a ball was hit on a line: a liner, a drive, a rope — not
+ * the run a hit "drives in" or "drives home", or "drives two in", though "a
+ * drive in the gap" is the ball's.
+ */
+const LINER_SAID =
+  /\b(?:line[\s-]?drives?|liners?|lines|lined|drilled|ropes?|roped)\b|\bdrives?\b(?!\s+(?:home\b|in\b(?!\s+the\s+(?:gap|alley|corner|hole)\b)|[\w']+\s+(?:in|home)\b|[\w']+\s+[\w']+\s+(?:in|home)\b))/i
+
+/**
  * Words that name a part of the field a ball went to: a side, a gap, the
  * hole, a corner, up the middle, over second, a foul line. "Left fielder"
  * names a fielder and "line drive" how the ball travelled; "left" and
@@ -570,8 +578,9 @@ function saidSide(
 
 /**
  * What a sentence leaves to be assumed, filled in before it is tried:
- * - a hit with no trajectory is a line drive, and a caught foul a pop-up
- *   that was caught;
+ * - a hit with no trajectory is a line drive when the words say one, a
+ *   fly when it was a bloop, and otherwise has none; a caught foul is a
+ *   pop-up that was caught;
  * - a ball in play sent after its result, with only runners' moves
  *   between, goes before it;
  * - a caught ball no action names a fielder for, and whose words do not
@@ -799,10 +808,18 @@ export function sentenceDefaults(
       )
         next.homeRunKind = 'out-of-park'
       const base = oneBall ? baseSaid(transcript) : undefined
+      // A hit's trajectory is the words': a line drive only when they say
+      // one, and a bloop — a short fly — is in the air. A bloop the model
+      // called a line drive the words never said is a fly too.
+      const liner = LINER_SAID.test(transcript)
+      if (next.depth === 'bloop' && next.trajectory === 'line_drive' && !liner)
+        next.trajectory = 'fly_ball'
       if (next.trajectory == null && next.launchAngle == null) {
         if (ownFoul) next.trajectory = 'popup'
-        else if (own != null && HITS.has(own.eventType))
-          next.trajectory = 'line_drive'
+        else if (own != null && HITS.has(own.eventType)) {
+          if (liner) next.trajectory = 'line_drive'
+          else if (next.depth === 'bloop') next.trajectory = 'fly_ball'
+        }
       }
       if (ownCatch && next.fielder == null) {
         // A foul is caught on its side — by its direction, or the words

@@ -396,15 +396,17 @@ describe('a dictated sentence finishes the play', function () {
   })
 
   describe('fills in what a sentence leaves to be assumed', function () {
-    it('makes a hit with no trajectory a line drive, landing where it was sent', function () {
-      const [inPlay] = playDefaults(game().session, [
-        { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
-        { type: 'result', eventType: 'single' }
-      ])
-      expect(inPlay).deep.include({
-        trajectory: 'line_drive',
-        direction: 'left_center'
-      })
+    it('leaves a hit with no trajectory word without one, landing where it was sent', function () {
+      const [inPlay] = playDefaults(
+        game().session,
+        [
+          { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
+          { type: 'result', eventType: 'single' }
+        ],
+        'Single to left center.'
+      )
+      expect(inPlay).deep.include({ direction: 'left_center' })
+      expect(inPlay).not.have.property('trajectory')
       const { location } = inPlay as { location: { x: number; z: number } }
       expect(
         Math.round((Math.atan2(location.x, -location.z) * 180) / Math.PI)
@@ -421,6 +423,73 @@ describe('a dictated sentence finishes the play', function () {
         { type: 'result', eventType: 'double' }
       ]
       expect(playDefaults(game().session, said)).deep.equals(said)
+    })
+
+    it("takes a hit's trajectory from the words: a liner, or a bloop in the air", function () {
+      type InPlay = Extract<ScoringAction, { type: 'ballInPlay' }>
+      const hit = (
+        transcript: string,
+        ball: Partial<InPlay> = {}
+      ): ScoringAction => {
+        const inPlay: InPlay = {
+          type: 'ballInPlay',
+          contact: 'swing',
+          direction: 'center',
+          ...ball
+        }
+        return playDefaults(
+          game().session,
+          [inPlay, { type: 'result', eventType: 'single' }],
+          transcript
+        )[0]
+      }
+      for (const said of [
+        'Line drive single to center.',
+        'A liner to center, single.',
+        'A drive to center, single.',
+        'He ropes one to center for a single.'
+      ])
+        expect(hit(said), said).deep.include({ trajectory: 'line_drive' })
+      expect(hit('Single to deep right center.')).not.have.property(
+        'trajectory'
+      )
+      // A loop is a bloop, and a bloop is in the air.
+      expect(hit('Loop single to center.')).deep.include({
+        trajectory: 'fly_ball',
+        depth: 'bloop'
+      })
+      expect(
+        hit('Loop single to center field.', { trajectory: 'line_drive' })
+      ).deep.include({ trajectory: 'fly_ball', depth: 'bloop' })
+      // A line drive the words say stays one, bloop or not.
+      expect(
+        hit('A line drive bloop to center, single.', {
+          trajectory: 'line_drive'
+        })
+      ).deep.include({ trajectory: 'line_drive' })
+      // The run a hit drives in is no liner.
+      for (const said of [
+        'Single to center, drives in Casey.',
+        'Single to center, drives home Casey.',
+        'Single to center, drives two in.',
+        'Single to center, drives him home.',
+        'Single to center and it drives in.'
+      ])
+        expect(hit(said), said).not.have.property('trajectory')
+      expect(
+        hit('Bloop single to center, drives home a run.', {
+          trajectory: 'line_drive'
+        })
+      ).deep.include({ trajectory: 'fly_ball' })
+      expect(
+        hit('Bloop single to center, drives in two.', {
+          trajectory: 'line_drive'
+        })
+      ).deep.include({ trajectory: 'fly_ball' })
+      // Any other trajectory the model sent is its own.
+      expect(
+        hit('Single to center.', { trajectory: 'ground_ball' })
+      ).deep.include({ trajectory: 'ground_ball' })
     })
 
     it('makes a caught foul a caught pop-up in foul territory', function () {
