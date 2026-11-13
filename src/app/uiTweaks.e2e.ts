@@ -602,13 +602,8 @@ async function main(): Promise<void> {
               () => true,
               () => false
             )
-          // A remount that lands just after the sheet opened takes it away
-          // again: it counts once it is still there a moment later.
-          await new Promise(resolve => setTimeout(resolve, 1000))
-          const stayed =
-            opened && (await s.page.$('[aria-label="First Name"]')) != null
-          if (stayed) break
-          if (tries === 2) throw new Error('Create Player opened no sheet')
+          if (opened) break
+          if (tries === 1) throw new Error('Create Player opened no sheet')
         }
         await fill(s.m, 'First Name', firstName)
         await fill(s.m, 'Last Name', lastName)

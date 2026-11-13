@@ -2,6 +2,7 @@ import React, {
   type ReactNode,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState
@@ -243,6 +244,7 @@ export function RosterEditor({
   conflict = false,
   onDraftChange,
   onDirtyChange,
+  onHeldChange,
   onEditPlayer,
   unrostered,
   onRosteredChange,
@@ -349,6 +351,13 @@ export function RosterEditor({
   guests?: readonly RosterEntry[]
   /** Whether the draft differs from the game it was opened over, as it changes. */
   onDirtyChange?: (dirty: boolean) => void
+  /**
+   * Whether the editor holds something of the scorer's that a fresh copy of
+   * it would lose: a staged change, or one of its sheets open (a player being
+   * made, found, edited or shared, or the help). Said in the commit that
+   * changes it, before anything else can run.
+   */
+  onHeldChange?: (held: boolean) => void
   onEditPlayer?: (userId: string, name: string, teamId: string) => void
   unrostered?: Unrostered
   onRosteredChange?: (
@@ -856,9 +865,22 @@ export function RosterEditor({
     locked
   )
   const dirty = rosterDirty(base, draft, runners, nextBatter)
-  useEffect(() => {
+  // In the commit itself: a game read meanwhile would otherwise find the
+  // editor clean and redraw it over the scorer's change.
+  useLayoutEffect(() => {
     onDirtyChange?.(dirty)
   }, [dirty, onDirtyChange])
+  const holding =
+    dirty ||
+    adding ||
+    searching ||
+    chosen != null ||
+    sharing ||
+    editingLocal != null ||
+    helping
+  useLayoutEffect(() => {
+    onHeldChange?.(holding)
+  }, [holding, onHeldChange])
   const sizes = rosterFooterSizes(dense, defense)
   /** Cancel's and Save Rosters' shell, which a crowded Defense tab shrinks. */
   const footerButton = {

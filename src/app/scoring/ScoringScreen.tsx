@@ -130,7 +130,11 @@ import {
 import { usePriorRunnerCorrection } from './priorRunnerCorrection'
 import { useDictationHandover } from './rosterDictation'
 import { sameValue } from './rosterDirty'
-import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
+import {
+  RosterEditor,
+  type RosterEditorDraft,
+  type RosterMode
+} from './RosterEditor'
 import { type GameChanges, listen, useRosterLive } from './rosterLive'
 import { RunnerControls } from './RunnerControls'
 import type { RunnerDragView } from './runnerDrag'
@@ -2253,23 +2257,8 @@ function ScoringPanel(props: {
     }
     // A roster-triggered read may defer behind a save or another read. The
     // eventual automatic follow must refresh the open clean editor too.
-    if (
-      changed &&
-      canAdopt() &&
-      currentSheet.current === 'rosters' &&
-      !rosterDirty.current
-    ) {
-      setRosterInitial(held => ({
-        draft: refreshed.session,
-        side: held?.side ?? battingSide(refreshed.session),
-        mode: held?.mode ?? 'lineup',
-        ...(held?.scrollOffsets == null
-          ? {}
-          : { scrollOffsets: held.scrollOffsets }),
-        base: refreshed.session
-      }))
-      setRosterRead(value => value + 1)
-    }
+    if (changed && canAdopt() && currentSheet.current === 'rosters')
+      redrawRoster(refreshed.session, 'lineup')
     return { session: refreshed.session, oldUnresolved }
   }
   /**
@@ -2492,11 +2481,54 @@ function ScoringPanel(props: {
   })
   const rosterDirty = useRef(rosterChanged)
   rosterDirty.current = rosterChanged
+  // Whether the open editor holds a staged change or a sheet of its own, as
+  // it says in the commit that changes it: a game read meanwhile redraws it
+  // only while it holds nothing.
+  const rosterHeld = useRef(false)
+  // A redraw put off while the editor held something, made once it holds
+  // nothing again.
+  const heldRedraw = useRef<(() => void) | undefined>(undefined)
+  /**
+   * Draws the open editor again over `fresh`, keeping its tab, mode and
+   * scroll: at once when it holds nothing, once it holds nothing when it
+   * holds a sheet, and never over a staged change, which saves on top.
+   */
+  const redrawRoster = (fresh: GameState, mode: RosterMode): void => {
+    heldRedraw.current = undefined
+    if (rosterDirty.current) return
+    const redraw = (): void => {
+      setRosterInitial(held => ({
+        draft: fresh,
+        side: held?.side ?? battingSide(fresh),
+        mode: held?.mode ?? mode,
+        ...(held?.scrollOffsets == null
+          ? {}
+          : { scrollOffsets: held.scrollOffsets }),
+        base: fresh
+      }))
+      setRosterRead(value => value + 1)
+    }
+    if (rosterHeld.current) heldRedraw.current = redraw
+    else redraw()
+  }
+  const onRosterHeld = useCallback((held: boolean) => {
+    rosterHeld.current = held
+    if (held) return
+    const redraw = heldRedraw.current
+    heldRedraw.current = undefined
+    if (redraw != null && !rosterDirty.current) redraw()
+  }, [])
+  const onRosterDirty = useCallback((dirty: boolean) => {
+    rosterDirty.current = dirty
+    setRosterChanged(dirty)
+  }, [])
   const { stop: stopRosterLive } = rosterLive
   useEffect(() => {
     if (sheet === 'rosters') return
     stopRosterLive()
     setRosterChanged(false)
+    rosterHeld.current = false
+    heldRedraw.current = undefined
   }, [sheet, stopRosterLive])
   const openRosters = (
     lineup: boolean | { dictated: DictatedRoster } = false
@@ -2539,20 +2571,10 @@ function ScoringPanel(props: {
         if (
           fresh == null ||
           currentSheet.current !== 'rosters' ||
-          rosterDirty.current ||
           JSON.stringify(setupOf(fresh)) === JSON.stringify(setupOf(local))
         )
           return
-        setRosterInitial(held => ({
-          draft: fresh,
-          side: held?.side ?? battingSide(fresh),
-          mode: held?.mode ?? (lineup ? 'lineup' : 'editRoster'),
-          ...(held?.scrollOffsets == null
-            ? {}
-            : { scrollOffsets: held.scrollOffsets }),
-          base: fresh
-        }))
-        setRosterRead(value => value + 1)
+        redrawRoster(fresh, lineup ? 'lineup' : 'editRoster')
       })
       .catch(() => undefined)
   }
@@ -3751,7 +3773,8 @@ function ScoringPanel(props: {
                 unaccepted={lineupsUnaccepted(state, props.visibleDefaults)}
                 onDraftChange={setRosterInitial}
                 conflict={rosterLive.conflict}
-                onDirtyChange={setRosterChanged}
+                onDirtyChange={onRosterDirty}
+                onHeldChange={onRosterHeld}
                 onEditPlayer={props.onEditPlayer}
                 onCreateGuest={async (side, player) => {
                   const entry = await props.client.createGuestPlayer(

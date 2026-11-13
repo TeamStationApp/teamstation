@@ -1644,6 +1644,39 @@ describe('the scorekeeper’s roster sheet on the game socket', function () {
     expect(order()).deep.equals(theirs)
   })
 
+  it('keeps a Create Player sheet open over another device’s lineups, and reads them in once it closes', async function () {
+    const { changes, other, digest } = await scoring()
+    await click('Open scoring menu')
+    await click('Set Team Rosters')
+    await settle()
+    const before = order()
+    // A scorer without roster rights makes placeholders from Create Player.
+    const sheet = 'Number of placeholder players'
+    await click('Create Player')
+    await settle()
+    expect(shown(sheet)).equals(true)
+    const theirs = await swapLeadoff(await other())
+    digest.value = 'd2'
+    await changes.lineups('d2')
+    await settle()
+    // The scorer's sheet stays, over the order it opened on.
+    expect(shown(sheet)).equals(true)
+    expect(order()).deep.equals(before)
+    // Closed with nothing made, the editor holds nothing: theirs is read in.
+    const cancels = document.querySelectorAll<HTMLElement>(
+      '[aria-label="Cancel"]'
+    )
+    await act(async () => {
+      cancels.item(cancels.length - 1).click()
+    })
+    await settle()
+    expect(shown(sheet)).equals(false)
+    expect(order()).deep.equals(theirs)
+    expect(document.querySelector('[data-testid="Roster conflict"]')).equals(
+      null
+    )
+  })
+
   it('warns over a dirty draft and keeps it; Cancel takes theirs', async function () {
     const { changes, other, digest } = await scoring()
     await click('Open scoring menu')
