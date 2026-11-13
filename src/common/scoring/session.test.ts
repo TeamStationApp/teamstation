@@ -2322,6 +2322,88 @@ describe('a scoring session', function () {
       expect(final.sides.home.battingOrder).deep.equals(home)
     })
 
+    it('keeps a player another device added to a side when ours adds players to it by themselves', async function () {
+      const store = new LineupStore()
+      const ours = await openAt(store, '2026-09-25T12:00:30.000Z')
+      const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+      const add = (player: number, name: string): ScoringAction => ({
+        type: 'lineup',
+        kind: 'addPlayer',
+        side: 'home',
+        player,
+        name,
+        jersey: ''
+      })
+      expect(theirs.apply(add(9001, 'Julio Rodriguez')).problems).deep.equals(
+        []
+      )
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      // Ours, later, adds two placeholders over the roster it read before.
+      for (const [id, name] of [
+        [9002, 'Hawks A'],
+        [9003, 'Hawks B']
+      ] as const)
+        expect(ours.apply(add(id, name)).problems).deep.equals([])
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      expect(ours.problem).equals(null)
+      const home = setupOf((await open(store)).session.state).sides.home.players
+      expect(home).include.members([9001, 9002, 9003])
+    })
+
+    it('keeps a player another device added to the other side under our later whole roster', async function () {
+      const store = new LineupStore()
+      const ours = await openAt(store, '2026-09-25T12:00:30.000Z')
+      const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+      expect(
+        theirs.apply({
+          type: 'lineup',
+          kind: 'addPlayer',
+          side: 'away',
+          player: 9001,
+          name: 'Julio Rodriguez',
+          jersey: ''
+        }).problems
+      ).deep.equals([])
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      const home = stage(ours, reverseHome)
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      const final = setupOf((await open(store)).session.state)
+      expect(final.sides.away.players).include(9001)
+      expect(final.sides.home.battingOrder).deep.equals(home)
+    })
+
+    it('keeps a player another device added to a side under our later whole roster of it', async function () {
+      // The defensive sheet's placeholders are such a roster: made over the
+      // side as this device last read it, before the other device's player.
+      const store = new LineupStore()
+      const ours = await openAt(store, '2026-09-25T12:00:30.000Z')
+      const theirs = await openAt(store, '2026-09-25T12:00:20.000Z')
+      expect(
+        theirs.apply({
+          type: 'lineup',
+          kind: 'addPlayer',
+          side: 'home',
+          player: 9001,
+          name: 'Julio Rodriguez',
+          jersey: ''
+        }).problems
+      ).deep.equals([])
+      store.moveTo = 'theirs'
+      await theirs.flush()
+      const home = stage(ours, reverseHome)
+      await ours.flush()
+      expect(ours.rebases).equals(1)
+      const final = setupOf((await open(store)).session.state)
+      expect(final.sides.home.players).include(9001)
+      expect(final.players[9001].fullName).equals('Julio Rodriguez')
+      // Ours is the later change of the side, and its order stands.
+      expect(final.sides.home.battingOrder).deep.equals(home)
+    })
+
     it('keeps our lineup change through a rebase whose read reconciles a roster mismatch', async function () {
       const store = new LineupStore()
       let at = '2026-09-25T12:00:10.000Z'
