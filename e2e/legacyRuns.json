@@ -180,7 +180,7 @@
       ],
       "needs": "web",
       "fixture": {"runner": "web", "scenario": "currentHistoryReply"},
-      "env": {"CHAT_UI_CURRENT_HISTORY_REPLY_RESULT": "{legacy:chatUiFollowup}/current-history-reply.json"}
+      "env": {"CHAT_UI_CURRENT_HISTORY_REPLY_RESULT": "{legacy:chatUiFollowup.e2e}/current-history-reply.json"}
     },
     {
       "label": "lockedCurrentReply",

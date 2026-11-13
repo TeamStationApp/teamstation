@@ -475,7 +475,7 @@ async function s5(daemon: Daemon): Promise<void> {
       join(artifacts, 'desktop-replies-after.png'),
       await m.screenshot()
     )
-    await m.tapOn({ text: 'Cancel reply' })
+    await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     console.log('$ S8 personal message pin badge/header/list and verified jump')
     await m.tapOn({ css: row + ' [aria-label="More message actions"]' })
     await m.tapOn({ text: 'Pin' })
@@ -656,7 +656,7 @@ async function s6(daemon: Daemon): Promise<void> {
     await hold()
     await m.tapOn({ text: 'Reply' })
     await m.assertVisible({ text: 'Replying to Hank C' })
-    await m.tapOn({ text: 'Cancel reply' })
+    await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     await hold()
     await m.tapOn({ text: 'Pin' })
     await m.assertVisible({ text: 'Pinned messages: 1', timeout: 30000 })
@@ -766,7 +766,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
       await m.screenshot()
     )
     await m.tapOn({ text: 'Remove notes.txt' })
-    await m.tapOn({ text: 'Cancel reply' })
+    await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.pressKey({ key: SELECT_ALL })
     await m.pressKey({ key: 'Backspace' })
@@ -944,7 +944,9 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
       )
     )
     await m.mockNetwork({
-      url: path + '/pins/' + message,
+      // By path: the page calls through the web app's own origin, which is
+      // not the API address the fixture names.
+      url: new URL(path).pathname + '/pins/' + message,
       method: pinLabel === 'Pin' ? 'PUT' : 'DELETE',
       response: {
         status: 503,
@@ -952,24 +954,11 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
         body: JSON.stringify({ error: 'Synthetic personal pin failure' })
       }
     })
-    // Which pin requests left the page, and how they ended: whether Enter
-    // reached the pin action, or its request came back late.
-    await m.evalBrowserScript({
-      script: `if(!window.chatUiPins){window.chatUiPins=[];const f=window.fetch.bind(window);window.fetch=async(input,init)=>{const url=String(input&&input.url||input);if(!url.includes('/pins/'))return f(input,init);const at=Date.now(),entry={method:(init&&init.method)||'GET',url:url.slice(-40),at};window.chatUiPins.push(entry);try{const r=await f(input,init);entry.status=r.status;entry.ms=Date.now()-at;return r}catch(e){entry.error=String(e);entry.ms=Date.now()-at;throw e}}}return true`
-    })
     await m.pressKey({ key: 'Enter' })
-    try {
-      await m.assertVisible({
-        text: 'Could not update this message pin. Try again.',
-        timeout: 30000
-      })
-    } catch (error) {
-      console.log(
-        'pin requests',
-        await read('return JSON.stringify(window.chatUiPins||[])')
-      )
-      throw error
-    }
+    await m.assertVisible({
+      text: 'Could not update this message pin. Try again.',
+      timeout: 30000
+    })
     console.log(
       await read(
         `const error=[...document.querySelectorAll('*')].find(x=>x.childElementCount===0&&x.textContent==='Could not update this message pin. Try again.');if(!error||error.closest('[aria-hidden="true"]'))throw new Error('Pin feedback hidden from accessibility');if(document.querySelector('[aria-label^="Message actions for"]'))throw new Error('Failed pin left obscuring menu');return JSON.stringify({pinFailureVisibleAndReachable:true})`
