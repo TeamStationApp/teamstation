@@ -227,6 +227,22 @@ if (base == null)
   throw new Error('Set TS_COVERAGE_BASE to the branch base (git merge-base)')
 const manager = process.env.TS_MANAGER_COACH_COVERAGE === '1'
 const reuseUnitRuns = manager && process.argv.includes('--reuse-unit')
+// A combined run reads the browser and server counters the end-to-end run
+// recorded; refuse at once, not after every suite, when they are missing.
+const serverCoverage = process.env.TS_AUTO_SCHEDULER_SERVER_COVERAGE
+const browserCoverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
+if (
+  !unitOnly &&
+  !manager &&
+  (browserCoverage == null ||
+    !existsSync(browserCoverage) ||
+    serverCoverage == null ||
+    !existsSync(serverCoverage) ||
+    readdirSync(serverCoverage).length === 0)
+)
+  throw new Error(
+    'Combined coverage requires recorded browser and server counters'
+  )
 const report = resolve(manager ? 'coverage/manager' : 'coverage/autoScheduler')
 const source = coverageSource()
 function verifySource() {
@@ -395,7 +411,6 @@ if (!reuseUnitRuns) {
 }
 
 // The end-to-end server's counters join the unit ones before the report.
-const serverCoverage = process.env.TS_AUTO_SCHEDULER_SERVER_COVERAGE
 if (!unitOnly && serverCoverage != null && existsSync(serverCoverage))
   for (const file of readdirSync(serverCoverage))
     cpSync(resolve(serverCoverage, file), resolve(temp, `server-${file}`))
@@ -443,19 +458,6 @@ if (reuseUnitRuns) {
   unit.merge(map)
   map = unit
 }
-const browserCoverage = process.env.TS_AUTO_SCHEDULER_BROWSER_COVERAGE
-if (
-  !unitOnly &&
-  !manager &&
-  (browserCoverage == null ||
-    !existsSync(browserCoverage) ||
-    serverCoverage == null ||
-    !existsSync(serverCoverage) ||
-    readdirSync(serverCoverage).length === 0)
-)
-  throw new Error(
-    'Combined coverage requires recorded browser and server counters'
-  )
 if (!unitOnly && browserCoverage != null)
   map.merge(JSON.parse(readFileSync(browserCoverage, 'utf8')))
 writeFileSync(
