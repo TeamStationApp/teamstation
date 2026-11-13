@@ -17,6 +17,7 @@ import type {
   EngineResult,
   PlannedGame
 } from '../../common/autoScheduler/types'
+import { HttpError } from '../../common/errors'
 import type { Snapshot } from './snapshot'
 import { validateOffThread } from './validateOffThread'
 
@@ -168,9 +169,15 @@ describe('isolated device result validation', function () {
         'Worker',
         FailedWorker as unknown as typeof WorkerTypes.Worker
       )
-      expect(await failure(validateOffThread(snapshot(), blocked))).includes(
-        'validation stopped'
+      const error = await validateOffThread(snapshot(), blocked).catch(
+        (caught: unknown) => caught
       )
+      if (event === 'error') {
+        // A fault in validation is the server's, logged with what the worker
+        // said, not a transient outage to retry.
+        expect(error).instanceOf(Error).and.not.instanceOf(HttpError)
+        expect(String(error)).includes('fixture worker failure')
+      } else expect(String(error)).includes('validation stopped')
       mock.restoreAll()
     }
     expect(await validateOffThread(snapshot(), blocked)).deep.equals(

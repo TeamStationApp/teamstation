@@ -36,6 +36,8 @@ export interface Snapshot {
     earlier?: { id: string; edits: unknown }
     /** The completed device result's hash, so a retry of it is accepted. */
     resultHash?: string
+    /** Why a recalculation placed nothing again, for a retry of its result. */
+    blocked?: string
   }
 
   avoidHeadCoachConflicts?: boolean

@@ -282,6 +282,16 @@ describe('device preview state transitions without a database', () => {
             expect(String(error)).not.includes('Anything a device sends')
             expect(old.status).equals('open')
             expect(row.status).equals('discarded')
+            // The same result sent again, its answer lost, gets the same
+            // reason, not that the preview no longer waits.
+            const again = await completePreview(
+              db,
+              actor,
+              'new',
+              { options: [], blocking: 'Anything a device sends' },
+              clock
+            ).catch((caught: unknown) => caught)
+            expect(String(again)).equals(String(error))
             return
           }
           const completed = await completePreview(

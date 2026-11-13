@@ -360,8 +360,13 @@ export async function completePreview(
       const snap = snapshotOf(row)
       const preparation = snap.preparation
       if (row.status !== 'building') {
-        if (row.status !== 'discarded' && preparation?.resultHash === hash)
-          return await previewView(trx, row, clock)
+        if (preparation?.resultHash === hash) {
+          // A retry of a result already taken answers as the first did.
+          if (row.status !== 'discarded')
+            return await previewView(trx, row, clock)
+          if (preparation.blocked != null)
+            return { blocked: preparation.blocked }
+        }
         throw conflict('This preview is no longer waiting for a device result')
       }
       if (preparation == null || summarized == null)
@@ -389,12 +394,13 @@ export async function completePreview(
       // A recalculation that places nothing again leaves the preview it
       // recalculated as it was, edits and all, and says why.
       if (preparation.earlier != null && options.length === 0) {
+        preparation.blocked = summarized.blocking ?? ''
         await trx
           .updateTable('schedule_previews')
           .set({ status: 'discarded', input: JSON.stringify(snap) })
           .where('id', '=', row.id)
           .execute()
-        return { blocked: summarized.blocking ?? '' }
+        return { blocked: preparation.blocked }
       }
       await trx
         .updateTable('schedule_previews')

@@ -1,3 +1,4 @@
+import { MAX_FIELD_DAYS } from '../../common/autoScheduler/context'
 import { FIELD_SIZES } from '../../common/venues'
 
 /** The Auto-Scheduler preview paths, merged into `openApiDocument`. */
@@ -64,8 +65,7 @@ export function schedulePreviewPaths(
       post: {
         summary: 'Prepare an authorized schedule input for the device',
         security: [{ bearer: [] }],
-        description:
-          'For a league admin, from the league’s chosen seasons and fields. A full build of seasons that already have upcoming games answers 409 with details.existingGames until existing says whether to replace or work around them. A partial build places only teamIds’ games again, replacing theirs. fromPreviewId and option recalculate an open preview: its option’s games but the rejected ones, and the added games, stay, and the old preview is discarded only when the device submits a valid result. Returns id and input (EngineInput), with the server-held preview in building state. The device runs the shared scheduler and PUTs its result; the server never runs the scheduling search.',
+        description: `For a league admin, from the league’s chosen seasons and fields. A full build of seasons that already have upcoming games answers 409 with details.existingGames until existing says whether to replace or work around them. A partial build places only teamIds’ games again, replacing theirs. fromPreviewId and option recalculate an open preview: its option’s games but the rejected ones, and the added games, stay, and the old preview is discarded only when the device submits a valid result. Returns id and input (EngineInput), with the server-held preview in building state. The device runs the shared scheduler and PUTs its result; the server never runs the scheduling search. A run is bounded at ${MAX_FIELD_DAYS.toLocaleString('en')} field-days: each season counts the days its time windows have hours on, less blackouts, times its selected fields (a field two seasons share counts for each); a larger run answers 400 before anything is prepared.`,
         parameters: [pathId('leagueId')],
         requestBody: jsonBody({
           type: 'object',
@@ -109,7 +109,7 @@ export function schedulePreviewPaths(
         security: [{ bearer: [] }],
         parameters: [pathId('previewId')],
         description:
-          'Only a league admin can complete a building preview. The immutable server snapshot validates all games; display summaries are derived from accepted placements. Up to three options of at most 20,000 games each, with a 64 MiB authenticated request limit. Summary validation supports at most 10,000 selected field-days across the run; larger date ranges return 400. Identical retries return the stored preview. Conflicting results or a changed recalculation source return 409.',
+          'Only a league admin can complete a building preview. The immutable server snapshot validates all games; display summaries are derived from accepted placements. Up to three options of at most 20,000 games each, with a 64 MiB authenticated request limit. Identical retries return the stored preview. Conflicting results or a changed recalculation source return 409.',
         requestBody: jsonBody({
           type: 'object',
           required: ['options', 'blocking'],

@@ -17,7 +17,7 @@ interface ValidationJob {
 }
 type ValidationReply =
   | { ok: true; result: EngineResult }
-  | { ok: false; invalid: boolean; message: string }
+  | { ok: false; invalid: boolean; message: string; stack?: string }
 
 let queue: Promise<unknown> = Promise.resolve()
 let pending = 0
@@ -85,18 +85,18 @@ async function runValidation(
           reject(
             reply.invalid
               ? badRequest(reply.message)
-              : unavailable('Schedule validation failed. Try again.')
+              : workerFault(reply.message, reply.stack)
           )
       })
     })
     worker.once('error', (error: Error & { code?: string }) => {
       finish(() => {
         reject(
-          unavailable(
-            error.code === 'ERR_WORKER_OUT_OF_MEMORY'
-              ? 'Schedule validation ran out of memory. Try a smaller run.'
-              : 'Schedule validation stopped. Try a smaller run.'
-          )
+          error.code === 'ERR_WORKER_OUT_OF_MEMORY'
+            ? unavailable(
+                'Schedule validation ran out of memory. Try a smaller run.'
+              )
+            : workerFault(error.message, error.stack)
         )
       })
     })
@@ -110,6 +110,18 @@ async function runValidation(
       })
     })
   })
+}
+
+/**
+ * A fault in validation itself, the same on every retry: an Error, not an
+ * HttpError, so the error handler logs and reports it in full and answers
+ * a bare internal error.
+ */
+function workerFault(message: string, stack?: string): Error {
+  const fault = new Error(`Schedule validation failed: ${message}`)
+  if (stack != null)
+    fault.stack = `${fault.message}\n--- in the worker ---\n${stack}`
+  return fault
 }
 
 const job = isMainThread ? undefined : (workerData as ValidationJob | undefined)
@@ -130,7 +142,10 @@ if (job?.deviceScheduleValidation != null) {
           invalid:
             error instanceof InvalidSubmission ||
             (error instanceof HttpError && error.code === 'badRequest'),
-          message: error instanceof Error ? error.message : 'Validation failed'
+          message: error instanceof Error ? error.message : String(error),
+          ...(error instanceof Error && error.stack != null
+            ? { stack: error.stack }
+            : {})
         } satisfies ValidationReply)
     )
 }
