@@ -738,11 +738,15 @@ async function s4Full(daemon: Daemon): Promise<void> {
     console.log(
       '$ S4 preserve multiline text, reply, prepared file and positive reading position across live960px resize'
     )
+    // Crossing the wide breakpoint remounts the conversation with a new
+    // composer and scroller (develop f6d21316d): the draft and document are
+    // checked by their text, and the reading position by staying up in the
+    // history rather than on the latest message.
     for (const orientation of ['LANDSCAPE', 'PORTRAIT']) {
       await m.setOrientation({ orientation })
       console.log(
         await m.evalBrowserScript({
-          script: `await new Promise(r=>setTimeout(r,500));const input=document.querySelector('[data-testid="chat-composer"]');if(!window.chatUiResizeDocument||input!==window.chatUiResizeField||input.value!==${JSON.stringify(draft)})throw new Error('Draft or document lost');if(!document.querySelector('[aria-label="Cancel reply"]')||!document.querySelector('[aria-label="Remove notes.txt"]'))throw new Error('Reply/file context lost');if(Math.abs(window.chatUiResizeScroller.scrollTop-window.chatUiResizeOffset)>2)throw new Error('Reading position lost');return JSON.stringify({width:innerWidth,draftReplyFilePositionPreserved:true})`
+          script: `await new Promise(r=>setTimeout(r,500));const input=document.querySelector('[data-testid="chat-composer"]');if(!window.chatUiResizeDocument||input==null||input.value!==${JSON.stringify(draft)})throw new Error('Draft or document lost');if(!document.querySelector('[aria-label="Cancel reply"]')||!document.querySelector('[aria-label="Remove notes.txt"]'))throw new Error('Reply/file context lost');const readingPane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const reading=readingPane&&[...readingPane.querySelectorAll('div')].find(x=>/auto|scroll/.test(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!reading||reading.scrollTop+reading.clientHeight>=reading.scrollHeight-2)throw new Error('Reading position lost');return JSON.stringify({width:innerWidth,draftReplyFilePositionPreserved:true})`
         })
       )
     }
@@ -754,7 +758,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
     await m.assertVisible({ text: 'Remove notes.txt' })
     console.log(
       await m.evalBrowserScript({
-        script: `if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(draft)}||!document.querySelector('[aria-label="Cancel reply"]'))throw new Error('Back/reopen lost full draft');if(Math.abs(window.chatUiResizeScroller.scrollTop-window.chatUiResizeOffset)>2)throw new Error('Back/reopen lost reading position');return JSON.stringify({backReopenFullDraft:true})`
+        script: `if(document.querySelector('[data-testid="chat-composer"]').value!==${JSON.stringify(draft)}||!document.querySelector('[aria-label="Cancel reply"]'))throw new Error('Back/reopen lost full draft');const readingPane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const reading=readingPane&&[...readingPane.querySelectorAll('div')].find(x=>/auto|scroll/.test(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!reading||reading.scrollTop+reading.clientHeight>=reading.scrollHeight-2)throw new Error('Back/reopen lost reading position');return JSON.stringify({backReopenFullDraft:true})`
       })
     )
     writeFileSync(
@@ -948,11 +952,24 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
         body: JSON.stringify({ error: 'Synthetic personal pin failure' })
       }
     })
-    await m.pressKey({ key: 'Enter' })
-    await m.assertVisible({
-      text: 'Could not update this message pin. Try again.',
-      timeout: 30000
+    // Which pin requests left the page, and how they ended: whether Enter
+    // reached the pin action, or its request came back late.
+    await m.evalBrowserScript({
+      script: `if(!window.chatUiPins){window.chatUiPins=[];const f=window.fetch.bind(window);window.fetch=async(input,init)=>{const url=String(input&&input.url||input);if(!url.includes('/pins/'))return f(input,init);const at=Date.now(),entry={method:(init&&init.method)||'GET',url:url.slice(-40),at};window.chatUiPins.push(entry);try{const r=await f(input,init);entry.status=r.status;entry.ms=Date.now()-at;return r}catch(e){entry.error=String(e);entry.ms=Date.now()-at;throw e}}}return true`
     })
+    await m.pressKey({ key: 'Enter' })
+    try {
+      await m.assertVisible({
+        text: 'Could not update this message pin. Try again.',
+        timeout: 30000
+      })
+    } catch (error) {
+      console.log(
+        'pin requests',
+        await read('return JSON.stringify(window.chatUiPins||[])')
+      )
+      throw error
+    }
     console.log(
       await read(
         `const error=[...document.querySelectorAll('*')].find(x=>x.childElementCount===0&&x.textContent==='Could not update this message pin. Try again.');if(!error||error.closest('[aria-hidden="true"]'))throw new Error('Pin feedback hidden from accessibility');if(document.querySelector('[aria-label^="Message actions for"]'))throw new Error('Failed pin left obscuring menu');return JSON.stringify({pinFailureVisibleAndReachable:true})`
@@ -1784,7 +1801,7 @@ async function bands(daemon: Daemon): Promise<void> {
         css: '[data-testid="chat-composer"]',
         timeout: 60000
       })
-      const scrollScript = `const pane=document.querySelector('[data-testid="chat-list-pane"]');const row=pane?.querySelector('[data-testid^="chat-conversation-"]');let scroll=row?.parentElement;while(scroll&&scroll!==pane&&!(scroll.scrollHeight>scroll.clientHeight+2&&/auto|scroll/.test(getComputedStyle(scroll).overflowY)))scroll=scroll.parentElement;if(!scroll||scroll===pane)throw new Error('Actual sidebar scroll container unavailable');`
+      const scrollScript = `const pane=document.querySelector('[data-testid="chat-list-pane"]');const row=pane?.querySelector('[data-testid^="chat-conversation-"]:not([data-testid="chat-conversation-list"])');let scroll=row?.parentElement;while(scroll&&scroll!==pane&&!(scroll.scrollHeight>scroll.clientHeight+2&&/auto|scroll/.test(getComputedStyle(scroll).overflowY)))scroll=scroll.parentElement;if(!scroll||scroll===pane)throw new Error('Actual sidebar scroll container unavailable');`
       await m.evalBrowserScript({
         script:
           scrollScript +
@@ -3078,6 +3095,11 @@ async function currentHistoryReply(daemon: Daemon): Promise<void> {
       replyId: string
       replyBody: string
     }
+    // The history is virtualized (develop 865902df3): the reply, at the far
+    // end of a long history, renders once the reader goes to the latest.
+    await m.evalBrowserScript({
+      script: `const latest=[...document.querySelectorAll('[aria-label="Go to latest message"]')].find(x=>x.getClientRects().length>0);if(latest)latest.click();return true`
+    })
     await m.evalBrowserScript({
       script: `for(let n=0;n<100;n++){const row=document.querySelector('[data-testid="chat-message-'+${JSON.stringify(current.replyId)}+'"]');if(row&&row.textContent.includes(${JSON.stringify(body)})&&row.querySelector('[aria-label^="Jump to message from "],[aria-label="Jump to the earlier message this replies to"]')&&document.querySelector('[data-testid="chat-composer"]').value==='')return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Current reply plaintext/quote did not render')`
     })
@@ -3347,8 +3369,11 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
     console.log(
       '$ Actual Chrome coarse media + rawTouchEvent bubble500ms recognizes exactly one menu'
     )
+    // A scroll during the hold cancels it: the list measures its rows and
+    // settles a moment after the conversation is pushed, so the press waits
+    // until the history has stopped moving.
     await m.evalBrowserScript({
-      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-message-' + required('CHAT_UI_MESSAGE') + '"] [tabindex="0"]')});bubble.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,300));const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
+      script: `const bubble=document.querySelector(${JSON.stringify('[data-testid="chat-message-' + required('CHAT_UI_MESSAGE') + '"] [tabindex="0"]')});bubble.scrollIntoView({block:'center'});let still=bubble.parentElement;while(still&&!/auto|scroll/.test(getComputedStyle(still).overflowY))still=still.parentElement;still=still||document.scrollingElement;let last=-1,stable=0;while(stable<5){await new Promise(r=>setTimeout(r,100));stable=still.scrollTop===last?stable+1:0;last=still.scrollTop}const r=bubble.getBoundingClientRect(),x=r.left+r.width/2,y=r.top+r.height/2,t=new Touch({identifier:2,target:bubble,clientX:x,clientY:y,pageX:x+scrollX,pageY:y+scrollY,screenX:x,screenY:y});bubble.dispatchEvent(new TouchEvent('touchstart',{bubbles:true,cancelable:true,touches:[t],targetTouches:[t],changedTouches:[t]}));await new Promise(r=>setTimeout(r,550));bubble.dispatchEvent(new TouchEvent('touchend',{bubbles:true,cancelable:true,touches:[],targetTouches:[],changedTouches:[t]}));bubble.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));return true`
     })
     await m.assertVisible({ text: 'Copy' })
     await m.assertVisible({ text: 'Reply' })
