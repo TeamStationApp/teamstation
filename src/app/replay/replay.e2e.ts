@@ -2057,10 +2057,9 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     await signInWeb(m, LEAGUE)
     await openReplay(m, FINAL)
     await evalJson<boolean>(m, CARD_LOG)
-    const boxAtStart = await evalJson<string>(
-      m,
-      `return document.querySelector('[data-testid="replay-box-score"]').textContent`
-    )
+    // The box score at "Play ball!", read by R4 for R13: on a droplet the
+    // first pitch can come before a look straight after the replay opens.
+    let boxAtStart = ''
     const geometry = await evalJson<Geometry>(m, GEOMETRY)
     note(
       `buttons: rewind [left, bottom, width] ${JSON.stringify(geometry.rewind)}, pause [right, bottom, width] ${JSON.stringify(geometry.pause)}`
@@ -2082,7 +2081,10 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       assert.ok(attempt <= 4, 'R4: no tap came while the card said Play ball!')
       await openReplay(m, FINAL)
       await evalJson<boolean>(m, CARD_LOG)
-      const now = await evalJson<string>(m, `return ${CARD}`)
+      const [now, box] = await evalJson<[string, string]>(
+        m,
+        `return [${CARD}, document.querySelector('[data-testid="replay-box-score"]')?.textContent ?? '']`
+      )
       if (!now.startsWith('Play ball!')) {
         note(`R4 attempt ${attempt}: opened at ${now}`)
         continue
@@ -2093,7 +2095,10 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       )
       const before = shown.at(-1)?.text ?? ''
       note(`R4 attempt ${attempt}: before the tap ${before}`)
-      if (before.startsWith('Play ball!')) words = tapped
+      if (before.startsWith('Play ball!')) {
+        words = tapped
+        boxAtStart = box
+      }
     }
     note(`R4 at Play ball!: ${words.text}`)
     assert.ok(words.text.startsWith('Rewind to top of first'))

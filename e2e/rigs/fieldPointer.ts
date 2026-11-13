@@ -352,10 +352,30 @@ async function offered(field: FieldDriver, index: number): Promise<string> {
  * Where the player with field id `id` draws and a scorer can press him: his
  * nameplate, or his figure through the scene probe when he wears none (the
  * pitcher, runners) or a control covers the plate. A player both covered
- * fails, naming the control on top, rather than pressing it.
+ * fails, naming the control on top, rather than pressing it, once he has had
+ * three seconds to come out from under it: the field still moving, as it
+ * can be for longer on a machine that draws slowly.
  */
 export async function pointOf(field: FieldDriver, id: string): Promise<Point> {
-  const at = await field.evaluate<Point | string | null>(`(() => {
+  const end = Date.now() + 3000
+  for (;;) {
+    const at = await pointNow(field, id)
+    if (typeof at !== 'string' || Date.now() > end) {
+      if (at == null) throw new Error(`Player ${id} is not on the field`)
+      if (typeof at === 'string')
+        throw new Error(`Player ${id} is covered by "${at}"`)
+      return at
+    }
+    await pause(100)
+  }
+}
+
+/** `pointOf`'s one look: a point, the control covering him, or nothing. */
+async function pointNow(
+  field: FieldDriver,
+  id: string
+): Promise<Point | string | null> {
+  return await field.evaluate<Point | string | null>(`(() => {
     const field = document.querySelector('[aria-label="Baseball field"]')
     const plate = document.querySelector(${JSON.stringify(`[data-nameplate="${id}"]`)})
     // What is on top at a point, when it is not the field or this plate.
@@ -381,10 +401,6 @@ export async function pointOf(field: FieldDriver, id: string): Promise<Point> {
     const over = cover(...point)
     return over == null ? point : over
   })()`)
-  if (at == null) throw new Error(`Player ${id} is not on the field`)
-  if (typeof at === 'string')
-    throw new Error(`Player ${id} is covered by "${at}"`)
-  return at
 }
 
 /**
