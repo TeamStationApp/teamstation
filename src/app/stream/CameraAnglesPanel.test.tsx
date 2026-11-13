@@ -113,8 +113,8 @@ function fakeClient(): FakeClient {
     mine: [],
     others: [],
     canAdd: 4,
-    gameCanAdd: 6,
-    maxGameCameras: 6,
+    gameCanAdd: 4,
+    maxGameCameras: 4,
     discarded: [],
     discard: async () => {},
     patched: [],
@@ -2012,14 +2012,14 @@ describe('setting up a camera on a phone', function () {
     it('says under the rows why a camera was refused, and fires nothing', async function () {
       const fake = fakeClient()
       fake.next = async () => {
-        throw new HttpError('conflict', 'This game already has 6 cameras.')
+        throw new HttpError('conflict', 'This game already has 4 cameras.')
       }
       const links = fakeLinks(['mevostream://configure'])
       await mountWith(fake, links)
       await toSources()
       await pressId('camera-source-mevo')
       expect(byTestId('camera-source-error')?.textContent).equals(
-        'This game already has 6 cameras.'
+        'This game already has 4 cameras.'
       )
       expect(byTestId('camera-source-sheet')).not.equals(null)
       expect(links.fired).deep.equals([])
@@ -2374,12 +2374,12 @@ describe('setting up a camera on a phone', function () {
   it('says why a camera was refused, with no Revoke', async function () {
     const fake = fakeClient()
     fake.next = async () => {
-      throw new HttpError('conflict', 'This game already has 6 cameras.')
+      throw new HttpError('conflict', 'This game already has 4 cameras.')
     }
     await mount(fake)
     await toSources()
     await pressId('camera-source-rtmp')
-    expect(text()).contains('This game already has 6 cameras.')
+    expect(text()).contains('This game already has 4 cameras.')
     expect(byTestId('rtmp-revoke')).equals(null)
     await pressId('rtmp-done')
     await settle()
@@ -2512,6 +2512,52 @@ describe('setting up a camera on a phone', function () {
     await mount(full)
     expect(byTestId('record-video-limit')?.textContent).equals(
       'This game already has 8 cameras. End one to add another.'
+    )
+    await pressId('record-video')
+    expect(text()).not.contains('Name this camera angle')
+  })
+
+  it('counts the cameras of a game left above its limit', async function () {
+    const fake = fakeClient()
+    fake.mine = [1, 2].map(slot =>
+      stream({
+        id: `liv_0000000000000000000${slot}`,
+        slot,
+        label: `Cam ${slot}`
+      })
+    )
+    fake.others = [3, 4, 5, 6].map(slot =>
+      stream({
+        id: `liv_0000000000000000000${slot}`,
+        userId: userIdOfGumbo(8),
+        slot: slot - 2,
+        label: `Other ${slot}`
+      })
+    )
+    fake.canAdd = 0
+    fake.gameCanAdd = 0
+    fake.maxGameCameras = 4
+    await mount(fake)
+    expect(byTestId('record-video-limit')?.textContent).equals(
+      'This game already has 6 cameras. End one to add another.'
+    )
+  })
+
+  it('gives the game’s sentence when one person holds all of a game’s cameras', async function () {
+    const fake = fakeClient()
+    fake.mine = [1, 2, 3, 4].map(slot =>
+      stream({
+        id: `liv_0000000000000000000${slot}`,
+        slot,
+        label: `Cam ${slot}`
+      })
+    )
+    fake.canAdd = 0
+    fake.gameCanAdd = 0
+    fake.maxGameCameras = 4
+    await mount(fake)
+    expect(byTestId('record-video-limit')?.textContent).equals(
+      'This game already has 4 cameras. End one to add another.'
     )
     await pressId('record-video')
     expect(text()).not.contains('Name this camera angle')
@@ -3342,7 +3388,7 @@ describe('web camera management', function () {
         maxCameras: 4,
         canAdd: 1,
         gameCanAdd: 1,
-        maxGameCameras: 6,
+        maxGameCameras: 4,
         discarded: []
       })
       await delay(10)

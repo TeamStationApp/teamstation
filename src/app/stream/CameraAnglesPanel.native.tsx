@@ -25,6 +25,7 @@ import {
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
+  cameraLimit,
   cameraRefusal,
   type CameraTap,
   isEnded,
@@ -619,12 +620,7 @@ function SignedInCameraAnglesPanel(
     phone.cancelUpload(id).then(refresh, refresh)
   }
 
-  const limit =
-    streams?.gameCanAdd === 0
-      ? sprintf(lstrings.stream_limit_game, streams.maxGameCameras)
-      : streams?.canAdd === 0
-        ? sprintf(lstrings.stream_limit_person, streams.maxCameras)
-        : undefined
+  const limit = cameraLimit(streams)
   /** A camera as the list last gave it, or as it was when it was chosen. */
   const asListed = (stream: LiveStream | undefined): LiveStream | undefined =>
     angles.find(angle => angle.stream.id === stream?.id)?.stream ?? stream

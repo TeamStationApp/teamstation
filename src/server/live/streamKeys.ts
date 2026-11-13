@@ -130,8 +130,12 @@ export interface LiveStreamRow {
 /** How many cameras one person may have active on one game at once. */
 export const MAX_CAMERAS = 4
 
-/** How many cameras one game may have active at once, whoever holds them. */
-export const MAX_GAME_CAMERAS = 6
+/**
+ * How many cameras one game may have active at once, whoever holds them. A
+ * game's cameras are its angles, so this matches the multi-camera player's
+ * `MAX_ANGLES` (`src/app/player/multiCam/takes.ts`); change both together.
+ */
+export const MAX_GAME_CAMERAS = 4
 
 /**
  * `details.reason` on the refusal of a camera over either limit, so a client
@@ -349,9 +353,13 @@ export function freeSlot(mine: LiveStreamRow[]): number | undefined {
 }
 
 /**
- * The slot a new camera of this person's takes, or the refusal when they or
- * the game are full, marked `CAMERA_LIMIT_REASON`. Only active cameras count,
- * and a Director's is one.
+ * The slot a new camera of this person's takes, or the refusal when the game
+ * or they are full, marked `CAMERA_LIMIT_REASON`. Only active cameras count,
+ * and a Director's is one. The game's limit is checked first, so a full game
+ * gives the game's sentence whoever holds its cameras, as the camera panels
+ * say from `gameCanAdd`. The sentence counts the active cameras, so a game
+ * left above the limit, from when it was higher, says what it really holds.
+ * The person's limit binds only while a game's is above it.
  *
  * Every path that creates a camera calls this under the game's
  * `liveStreams:<gameId>` lock, so two asking at once cannot both pass.
@@ -364,16 +372,16 @@ export async function checkCameraLimits(
   const active = (await liveStreamsFor(trx, gameId)).filter(row =>
     isActiveStream(row)
   )
+  if (active.length >= MAX_GAME_CAMERAS) {
+    throw badRequest(
+      `This game already has ${active.length} cameras. End one to add another.`,
+      { reason: CAMERA_LIMIT_REASON }
+    )
+  }
   const slot = freeSlot(active.filter(row => row.userId === userId))
   if (slot == null) {
     throw badRequest(
       `You already have ${MAX_CAMERAS} cameras on this game. End one to add another.`,
-      { reason: CAMERA_LIMIT_REASON }
-    )
-  }
-  if (active.length >= MAX_GAME_CAMERAS) {
-    throw badRequest(
-      `This game already has ${MAX_GAME_CAMERAS} cameras. End one to add another.`,
       { reason: CAMERA_LIMIT_REASON }
     )
   }

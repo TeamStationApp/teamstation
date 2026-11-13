@@ -161,7 +161,7 @@ import Testing
   }
 
   @Test func saysWhatACameraLimitMeansInTheServersWords() {
-    let sentence = "This game already has 6 cameras. End one to add another."
+    let sentence = "This game already has 4 cameras. End one to add another."
     #expect(TeamStationError.cameraLimit(sentence).localizedDescription == sentence)
   }
 

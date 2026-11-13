@@ -34,7 +34,7 @@
 // no cameras, and the viewer's request not yet made:
 //
 //   TS_STREAM_IOS_UDID=<simulator> \
-//   TS_STREAM_FULL_GAME=<a game with 6 active cameras, some of the user's> \
+//   TS_STREAM_FULL_GAME=<a game with 4 active cameras, some of the user's> \
 //   TS_STREAM_WEB=<the web app's origin> \
 //   TS_STREAM_MASK_PYTHON=<a Python with Pillow, to mask keys in screenshots> \
 //   [TS_STREAM_STEPS=E1,E3,E4,E11,E16]
@@ -111,6 +111,7 @@ import { promisify } from 'node:util'
 
 import puppeteer from 'puppeteer'
 
+import { isEnded } from './cameraRowRules'
 import { waitForCameraLimit } from './webCameraLimit.e2e'
 
 interface Bounds {
@@ -282,6 +283,7 @@ async function camerasOf(
   others: Listed[]
   canAdd: number
   gameCanAdd: number
+  maxGameCameras: number
   discarded: string[]
 }> {
   const answer = await request(
@@ -1132,7 +1134,13 @@ async function setup(): Promise<void> {
     if (wanted.includes('E11')) {
       const full = await camerasOf(token, fullGame)
       assert.equal(full.gameCanAdd, 0, 'the game is full')
-      const reason = 'This game already has 6 cameras. End one to add another.'
+      const active = [...full.mine, ...full.others].filter(row => !isEnded(row))
+      assert.equal(
+        active.length,
+        full.maxGameCameras,
+        'TS_STREAM_FULL_GAME holds exactly the game’s limit, so ending one frees a place'
+      )
+      const reason = `This game already has ${full.maxGameCameras} cameras. End one to add another.`
       await become(email)
       await openGame(fullGame)
       const limit = await find(byId('record-video-limit'), 15000)
@@ -1171,7 +1179,7 @@ async function setup(): Promise<void> {
         await page.goto(`${web}/games/${fullGame}?tab=watch`, {
           waitUntil: 'networkidle2'
         })
-        await waitForCameraLimit(page, true)
+        await waitForCameraLimit(page, full.maxGameCameras)
         if (artifacts != null) {
           // A camera nothing streams to shows its URL whole: no key in the shot.
           await page.evaluate(() => {
@@ -1223,7 +1231,7 @@ async function setup(): Promise<void> {
         )
         await m.tapOn({ id: 'sheet-cancel' })
         assert(await gone(byId('angle-name-prompt')), 'Cancel closes it')
-        await waitForCameraLimit(page, false)
+        await waitForCameraLimit(page, undefined)
         const added = await request(
           'POST',
           `/games/${fullGame}/live-streams`,

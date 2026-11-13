@@ -475,14 +475,14 @@ describe('launchCamera', function () {
     const go = launcher({
       installed: [MEVO_SCHEME],
       addLiveStream: async () => {
-        throw new Error('This game already has 6 cameras.')
+        throw new Error('This game already has 4 cameras.')
       }
     })
     let caught: unknown
     await go.run().catch((error: unknown) => {
       caught = error
     })
-    expect((caught as Error).message).contains('6 cameras')
+    expect((caught as Error).message).contains('4 cameras')
     expect(go.fired).deep.equals([])
     expect(go.created).deep.equals([])
   })

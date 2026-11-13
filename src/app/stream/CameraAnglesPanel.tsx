@@ -21,6 +21,7 @@ import { launchWebCamera } from './cameraDeepLinks'
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
+  cameraLimit,
   cameraRefusal,
   isEnded,
   orderAngles
@@ -208,12 +209,7 @@ export function CameraAnglesPanel({
       ? [...active, ...ended].find(angle => angle.stream.id === sheet.id)
       : undefined
   const stream = chosen?.stream
-  const limit =
-    streams?.gameCanAdd === 0
-      ? sprintf(lstrings.stream_limit_game, streams.maxGameCameras)
-      : streams?.canAdd === 0
-        ? sprintf(lstrings.stream_limit_person, streams.maxCameras)
-        : undefined
+  const limit = cameraLimit(streams)
   const record = (): void => {
     setError(undefined)
     setSheet({ kind: 'name' })
