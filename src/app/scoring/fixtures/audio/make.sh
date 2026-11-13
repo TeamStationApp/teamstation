@@ -91,7 +91,7 @@ clip foulPopTagThird 'The runner on second tags up to third on the foul pop out.
 # (src/server/dev/lineupFixture.ts)
 clip lineupJudgeFourth 'Put Judge fourth.'
 clip defenseThree 'Soto at short, Harper at second, and Turner in center field.'
-clip setThisLineup 'Set this lineup: Betts, Springer, Judge, Altuve, Bregman, Alvarez, Tucker, Semien, Pena.'
+clip setThisLineup 'Set this lineup: Betts, Springer, Judge, Altuve, Bregman, Alvarez, Tucker, Garcia, Pena.'
 clip mixedLineupDefense 'Put Altuve leadoff and Betts at short.'
 clip freemanAtFirst 'Freeman plays first base.'
 # S1-S5: substitutions said on the scoring screen, against the same rosters.

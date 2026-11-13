@@ -69,20 +69,26 @@ function track(page: Page): void {
 /**
  * Waits until the page has had no request in flight for half a second; when
  * it never does, says which requests stayed open, so the run's log shows what
- * held the page busy.
+ * held the page busy. The requests are this file's own count, not
+ * puppeteer's: a request held by interception and let go as its page was
+ * left never finishes in puppeteer's, and would keep every later page busy.
  */
 async function settled(page: Page): Promise<void> {
-  try {
-    await page.waitForNetworkIdle({ idleTime: 500, timeout: 30000 })
-  } catch (error) {
+  const open = inFlight.get(page) ?? new Map<HTTPRequest, number>()
+  const deadline = Date.now() + 30000
+  let quietSince = Date.now()
+  for (;;) {
     const now = Date.now()
-    const busy = [...(inFlight.get(page) ?? [])].map(
-      ([request, at]) =>
-        `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
-    )
-    throw new Error(`The page never settled; still open: ${busy.join(', ')}`, {
-      cause: error
-    })
+    if (open.size > 0) quietSince = now
+    else if (now - quietSince >= 500) return
+    if (now > deadline) {
+      const busy = [...open].map(
+        ([request, at]) =>
+          `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
+      )
+      throw new Error(`The page never settled; still open: ${busy.join(', ')}`)
+    }
+    await new Promise(resolve => setTimeout(resolve, 100))
   }
 }
 
@@ -253,7 +259,7 @@ class Scorer {
 
   /** Every save has gone out and come back. */
   async waitSaved(): Promise<void> {
-    await this.page.waitForNetworkIdle({ idleTime: 300, timeout: 30000 })
+    await settled(this.page)
     await this.page.waitForFunction(
       () => document.querySelector('[aria-label="Save status"]') == null,
       { timeout: 30000 }
@@ -514,6 +520,7 @@ describe('two scorekeepers on one game', function () {
       // The held phase's page goes: whatever it was still waiting on ends
       // with it, and the offline phase, and L5, start from a fresh load.
       await a.page.goto('about:blank')
+      inFlight.get(a.page)?.clear()
     }
     // Offline: the same, with nothing to reach.
     await a.scoreGame(fixture.gameId)

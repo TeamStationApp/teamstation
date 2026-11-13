@@ -50,7 +50,7 @@ export const LINEUP_NAMES: Record<'home' | 'away', readonly string[]> = {
     'Valdez',
     'Betts',
     'Springer',
-    'Semien',
+    'Garcia',
     'Freeman'
   ],
   home: [

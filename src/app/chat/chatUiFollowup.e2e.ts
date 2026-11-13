@@ -765,8 +765,10 @@ async function s4Full(daemon: Daemon): Promise<void> {
       join(required('CHAT_UI_ARTIFACTS'), 'web-full-draft-resize-after.png'),
       await m.screenshot()
     )
-    await m.tapOn({ text: 'Remove notes.txt' })
+    // The reply first: the composer grows upward, so removing the file row
+    // under it brings the reply's close button down to where the file's was.
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
+    await m.tapOn({ css: '[aria-label="Remove notes.txt"]' })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.pressKey({ key: SELECT_ALL })
     await m.pressKey({ key: 'Backspace' })

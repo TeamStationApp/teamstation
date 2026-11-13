@@ -62,7 +62,7 @@ const NINE = [
   'Bregman',
   'Alvarez',
   'Tucker',
-  'Semien',
+  'Garcia',
   'Pena'
 ]
 const clip = (name: string): string =>
