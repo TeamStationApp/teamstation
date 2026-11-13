@@ -3,6 +3,7 @@ import { Text, View } from 'react-native'
 
 import { monthDay } from '../../common/calendarDates'
 import { addDays } from '../../common/fieldAvailability'
+import { calendarDateText } from '../../common/groupCreation'
 import { addWindowPeriod } from '../../common/seasonScheduling'
 import {
   asWindowPeriods,
@@ -25,7 +26,7 @@ export function TimeWindowsEditor({
   value,
   onChange,
   disabled = false,
-  today = new Date().toISOString().slice(0, 10),
+  today = calendarDateText(new Date())!,
   endDate,
   label = 'Time Windows',
   openDefault = VENUE_OPEN_DEFAULT
