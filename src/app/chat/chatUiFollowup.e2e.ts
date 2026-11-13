@@ -771,7 +771,11 @@ async function s4Full(daemon: Daemon): Promise<void> {
     const composers = `JSON.stringify({path:location.pathname,composers:[...document.querySelectorAll('[data-testid="chat-composer"]')].map(n=>({draft:n.value===${JSON.stringify(draft)},length:n.value.length,shown:n.getClientRects().length>0&&getComputedStyle(n).visibility!=='hidden'})),replies:[...document.querySelectorAll('[aria-label="Cancel reply"]')].map(n=>n.getClientRects().length>0),files:[...document.querySelectorAll('[aria-label="Remove notes.txt"]')].map(n=>n.getClientRects().length>0)})`
     console.log(
       'before Cancel reply',
-      await m.evalBrowserScript({ script: `return ${composers}` })
+      await m.evalBrowserScript({ script: `return ${composers}` }),
+      // What a tap at the button's centre would land on.
+      await m.evalBrowserScript({
+        script: `const b=document.querySelector('[aria-label="Cancel reply"]'),r=b.getBoundingClientRect(),top=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);return JSON.stringify({rect:[r.x,r.y,r.width,r.height],viewport:[innerWidth,innerHeight],top:top?.closest('[aria-label]')?.getAttribute('aria-label')??top?.tagName,inside:b.contains(top)})`
+      })
     )
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
     console.log(
@@ -1735,7 +1739,9 @@ async function bands(daemon: Daemon): Promise<void> {
   let targets: Array<{ id: string; title: string; pinned: boolean }> = []
   async function setPin(chat: { id: string }, desired: boolean): Promise<void> {
     await m.openLink({ link: WEB + '/chat/' + chat.id })
-    await m.assertVisible({ text: 'Conversation actions', timeout: 60000 })
+    // Its own row's button: another "Conversation actions" can be on the
+    // page and hidden.
+    await m.assertVisible({ css: conversationActions(chat.id), timeout: 60000 })
     await m.tapOn({ css: conversationActions(chat.id) })
     await m.assertVisible({ text: 'Mark unread' })
     const current = getData(

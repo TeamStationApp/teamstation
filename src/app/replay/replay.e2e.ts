@@ -266,6 +266,36 @@ const CARD_LOG = `
 
 const CARD = CARD_TEXT
 
+/**
+ * The card's first words, and the box score as they show, waited for in the
+ * page: "Play ball!" shows for two seconds, which one look after another from
+ * here can miss on a slow machine. Answers at once when the card has words,
+ * and waits up to 15 s for them.
+ */
+const FIRST_CARD = `
+  return JSON.stringify(await new Promise(resolve => {
+    const read = () => ${CARD};
+    const box = () => document.querySelector('[data-testid="replay-box-score"]')?.textContent ?? '';
+    if (read() !== '') return resolve({ card: read(), box: box() });
+    const observer = new MutationObserver(() => {
+      if (read() === '') return;
+      observer.disconnect();
+      resolve({ card: read(), box: box() });
+    });
+    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
+    setTimeout(() => { observer.disconnect(); resolve({ card: read(), box: box() }); }, 15000);
+  }));
+`
+
+async function firstCard(m: Device): Promise<{ card: string; box: string }> {
+  const result = (await m.evalBrowserScript({ script: FIRST_CARD })) as {
+    data?: unknown
+  }
+  return typeof result.data === 'string'
+    ? (JSON.parse(result.data) as { card: string; box: string })
+    : { card: '', box: '' }
+}
+
 async function openGame(m: Device, gameId: string): Promise<void> {
   await m.openBrowser({ url: `${required('REPLAY_WEB_URL')}/games/${gameId}` })
   await m.assertVisible({ text: 'Box score', timeout: 20000 })
@@ -353,6 +383,12 @@ async function replay(m: Device): Promise<void> {
   assert.ok((await pillLabels(m)).includes('Replay'), 'no Replay pill')
   await m.tapOn({ text: 'Replay' })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+  // Read before anything else: "Play ball!" shows for two seconds.
+  const opening = (await firstCard(m)).card
+  assert.ok(
+    opening.startsWith('Play ball!'),
+    `the replay opens on Play ball!, not ${opening}`
+  )
   await m.assertVisible({ id: 'replay-exit' })
   await m.assertVisible({ id: 'replay-speaker' })
   await m.assertVisible({ id: 'replay-pause' })
@@ -380,7 +416,6 @@ async function replay(m: Device): Promise<void> {
   )
   const changes: number[] = []
   let last = await cardUntil(m, 'the card', text => text !== '', 15000)
-  assert.ok(last.startsWith('Play ball!'), 'the replay opens on Play ball!')
   await shot(m, 'replay-open')
   while (changes.length < 8) {
     const before = last
@@ -1226,6 +1261,25 @@ async function tapButton(m: Device, name: string): Promise<void> {
   }
 }
 
+/**
+ * Taps Finish at-bat when the scorer shows it, and says whether it did. An
+ * at-bat can close by itself between the look and the tap (a walk does): a
+ * button gone by then was nothing to finish.
+ */
+async function finishIfOpen(m: Device): Promise<boolean> {
+  if (!(await hasControl(m, 'Finish at-bat'))) return false
+  try {
+    await m.tapOn({
+      css: ':is(button, [role="button"])[aria-label="Finish at-bat"]',
+      timeout: 3000
+    })
+    return true
+  } catch (error) {
+    if (await hasControl(m, 'Finish at-bat')) throw error
+    return false
+  }
+}
+
 /** Whether a control the scorer can tap is on the page, and enabled. */
 async function hasControl(m: Device, label: string): Promise<boolean> {
   return await evalJson<boolean>(
@@ -1445,8 +1499,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     // Each pitch writes a different card: ball three, a foul, ball four and
     // the next batter's first pitch.
     for (const control of ['Ball', 'Foul Ball', 'Ball', 'Called Strike']) {
-      if (await hasControl(scorer, 'Finish at-bat'))
-        await tapButton(scorer, 'Finish at-bat')
+      await finishIfOpen(scorer)
       await tapButton(scorer, control)
       await wait(1500)
     }
@@ -1461,10 +1514,7 @@ async function live(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     let ended = false
     for (let i = 0; i < 12 && !ended; i++) {
       await wait(1500)
-      if (await hasControl(scorer, 'Finish at-bat')) {
-        await tapButton(scorer, 'Finish at-bat')
-        continue
-      }
+      if (await finishIfOpen(scorer)) continue
       await tapButton(scorer, 'Open scoring menu')
       await wait(500)
       if (await hasControl(scorer, 'End Game')) {
@@ -1530,10 +1580,7 @@ async function liveAnnouncer(
     let ended = false
     for (let i = 0; i < 40 && !ended; i++) {
       await wait(1500)
-      if (await hasControl(scorer, 'Finish at-bat')) {
-        await tapButton(scorer, 'Finish at-bat')
-        continue
-      }
+      if (await finishIfOpen(scorer)) continue
       // The scorer's own summary says when the bottom of the 2nd is over.
       const summary = await evalJson<string>(
         scorer,
@@ -2086,10 +2133,7 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       await m.tapOn({ text: 'Replay' })
       await m.assertVisible({ id: 'game-replay', timeout: 20000 })
       await evalJson<boolean>(m, CARD_LOG)
-      const [now, box] = await evalJson<[string, string]>(
-        m,
-        `return [${CARD}, document.querySelector('[data-testid="replay-box-score"]')?.textContent ?? '']`
-      )
+      const { card: now, box } = await firstCard(m)
       if (!now.startsWith('Play ball!')) {
         note(`R4 attempt ${attempt}: opened at ${now}`)
         continue
