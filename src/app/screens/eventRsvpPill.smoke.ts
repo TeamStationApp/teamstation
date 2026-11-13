@@ -5,6 +5,13 @@ import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
 
 import {
+  pickerWheels,
+  turnWheel,
+  wheelAt,
+  type WheelNode,
+  wheelValue
+} from '../../test/iosWheel.e2e'
+import {
   androidSmokeRecording,
   watchSmokeRecorder
 } from '../../test/smokeRecorder'
@@ -46,6 +53,15 @@ async function main(): Promise<void> {
     await m.launchApp({ appId })
     await m.assertVisible({ text: 'ARE YOU GOING?', timeout: 10000 })
     console.log('Pill fixture visible')
+    const minutes = Array.from({ length: 12 }, (_, i) =>
+      String(i * 5).padStart(2, '0')
+    )
+    /** 23:35: on iOS the system's minute wheel, elsewhere the row. */
+    const chooseMinute35 = async (): Promise<void> => {
+      if (platform === 'ios')
+        await turnWheel(m, async () => await wheelAt(m, 1), '35', minutes)
+      else await m.tapOn({ id: 'event-time-minute-35' })
+    }
     if (process.env.TEST_PICKER_ONLY === '1') {
       await m.scrollUntilVisible({
         element: { id: 'event-schedule-time' },
@@ -53,13 +69,25 @@ async function main(): Promise<void> {
         maxScrolls: 6
       })
       await m.tapOn({ id: 'event-schedule-time' })
-      await m.assertVisible({ id: 'event-time-hour-11', timeout: 5000 })
-      await m.assertVisible({ id: 'event-time-minute-30', timeout: 5000 })
+      if (platform === 'ios') {
+        // The system's wheels: hour, minute and period.
+        await m.assertVisible({ text: 'Choose time', timeout: 5000 })
+        const wheels = pickerWheels((await m.hierarchy()) as WheelNode)
+        assert.deepEqual(
+          wheels.map((wheel, index) =>
+            wheelValue(wheel, index === 1 ? minutes : [])
+          ),
+          ['11', '30', 'PM']
+        )
+      } else {
+        await m.assertVisible({ id: 'event-time-hour-11', timeout: 5000 })
+        await m.assertVisible({ id: 'event-time-minute-30', timeout: 5000 })
+      }
       writeFileSync(
         join(artifacts, `${platform}-time-picker.png`),
         await m.screenshot()
       )
-      await m.tapOn({ id: 'event-time-minute-35' })
+      await chooseMinute35()
       await m.tapOn({ text: 'Use time' })
       await m.scrollUntilVisible({
         element: { id: 'smoke-schedule' },
@@ -144,7 +172,7 @@ async function main(): Promise<void> {
     })
     await m.tapOn({ id: 'event-schedule-time' })
     await m.assertVisible({ text: 'Choose time' })
-    await m.tapOn({ id: 'event-time-minute-35' })
+    await chooseMinute35()
     await m.tapOn({ text: 'Use time' })
     await m.scrollUntilVisible({
       element: { id: 'smoke-schedule' },

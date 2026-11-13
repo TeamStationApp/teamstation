@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import { turnWheel, wheelAt, wheelValue } from '../../test/iosWheel.e2e'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { runnerTargets } from './runnerDrag'
@@ -593,14 +594,23 @@ async function main(): Promise<void> {
         ['Hawks score', 'Hawks', 0],
         ['Inning', 'Inning', 1]
       ] as const) {
+        // The system's wheel: its row reads the value.
+        const options = Array.from({ length: 51 }, (_, i) => String(i))
+        const reads = async (value: number): Promise<void> => {
+          for (let tries = 0; tries < 20; tries++) {
+            if (wheelValue(await wheelAt(m), options) === String(value)) return
+            await m.waitForAnimationToEnd({ timeout: 1000 })
+          }
+          assert.fail(`${label} wheel does not read ${value}`)
+        }
         await tap(row)
-        await shown(`${label}: ${initial}`)
+        await reads(initial)
         await m.waitForAnimationToEnd({ timeout: 3000 })
         const nodes = flat(await m.hierarchy())
         const title = nodes.find(node => node.text === label)?.bounds
-        const wheel = nodes.find(
-          node => node.text === `${label}: ${initial}`
-        )?.bounds
+        // The picker's frame: its wheel's bounds overhang it, for the rows
+        // it curves away above and below.
+        const wheel = nodes.find(node => node.type === 'Picker')?.bounds
         const done = nodes.find(node => node.text === 'Done')?.bounds
         const cancel = nodes
           .filter(node => node.text === 'Cancel')
@@ -611,16 +621,22 @@ async function main(): Promise<void> {
         assert(wheel.y + wheel.height < done.y, 'Done overlaps wheel')
         assert(done.y + done.height < cancel.y, 'Cancel overlaps Done')
         await capture(`override-${label.toLowerCase()}`)
-        await point(wheel.x + wheel.width / 2, wheel.y + wheel.height / 2 + 44)
-        await shown(`${label}: ${initial + 1}`)
+        const turn = async (): Promise<void> => {
+          await turnWheel(
+            m,
+            async () => await wheelAt(m),
+            String(initial + 1),
+            options
+          )
+        }
+        await turn()
         await tap('Cancel')
         await tap(row)
-        await shown(`${label}: ${initial}`)
-        await point(wheel.x + wheel.width / 2, wheel.y + wheel.height / 2 + 44)
-        await shown(`${label}: ${initial + 1}`)
+        await reads(initial)
+        await turn()
         await tap('Done')
         await tap(row)
-        await shown(`${label}: ${initial + 1}`)
+        await reads(initial + 1)
         await tap('Done')
       }
       await tap('Apply Override')
