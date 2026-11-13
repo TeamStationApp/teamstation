@@ -376,7 +376,7 @@ async function main(): Promise<void> {
           await stack.restartApi({ speech: stack.speech })
         }
         const recipe = RECIPES[file]
-        const invocations: Invocation[] =
+        const listed: Invocation[] =
           BLOCKED[file] != null
             ? [{ blocked: BLOCKED[file] }]
             : recipe == null
@@ -393,6 +393,16 @@ async function main(): Promise<void> {
                   run: async (path, invocation) =>
                     (await run(path, invocation)).exit
                 })
+        // E2E_ONLY_LABELS=a,b runs only those labelled runs of each file: a
+        // rerun of the scenarios that failed, without the hour of the rest.
+        const only = process.env.E2E_ONLY_LABELS?.split(',').filter(Boolean)
+        const invocations =
+          only == null || only.length === 0
+            ? listed
+            : listed.filter(
+                invocation =>
+                  invocation.label == null || only.includes(invocation.label)
+              )
         // The player games take minutes to make: only for a run that can go.
         const runnable = invocations.some(
           invocation =>
