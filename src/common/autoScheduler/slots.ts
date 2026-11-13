@@ -178,7 +178,8 @@ export function* seasonSlotsSteps(
   )
 
   // Summary validation indexes only submitted starts, never the search grid.
-  const proposed = submitted == null ? undefined : new Map<string, number[]>()
+  const proposed =
+    submitted == null ? undefined : new Map<string, Set<number>>()
   for (const game of submitted ?? []) {
     if (game.seasonId !== season.id) continue
     const field = fields.find(field => field.id === game.fieldId)
@@ -187,8 +188,8 @@ export function* seasonSlotsSteps(
     if (Date.parse(game.endAt) - start !== gameMs) continue
     const date = gameCalendarDay(game.startAt, field.availability.timezone)
     const key = `${field.id}|${date}`
-    const starts = proposed!.get(key) ?? []
-    starts.push(start)
+    const starts = proposed!.get(key) ?? new Set<number>()
+    starts.add(start)
     proposed!.set(key, starts)
   }
   const slots: Slot[] = []

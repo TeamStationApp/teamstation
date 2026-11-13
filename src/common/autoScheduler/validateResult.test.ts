@@ -106,7 +106,7 @@ describe('device result summaries', () => {
     expect(
       summarizeResult(run, { options: [empty], blocking: null }).options[0]
         .unmet[0].message
-    ).equals('1 requested games remain unplaced')
+    ).equals('1 of the 1 game to place again couldn’t be placed')
     expect(
       summarizeResult(run, {
         options: [{ ...empty, games: [game] }],
@@ -121,6 +121,48 @@ describe('device result summaries', () => {
       summarizeResult(run, { options: [empty], blocking: null }).options[0]
         .unmet
     ).deep.equals([])
+  })
+  it('reports no exhibition shortfall when the season has no exhibition teams', () => {
+    const run = input({
+      seasons: [
+        season({ regularGames: 2, exhibitionGames: 1 }, { exhibitionTeams: [] })
+      ]
+    })
+    const built = buildOptions(run)
+    expect(built.options[0].unmet).deep.equals([])
+    expect(
+      summarizeResult(run, asPreviewResult(built)).options.map(
+        option => option.unmet
+      )
+    ).deep.equals(built.options.map(option => option.unmet))
+  })
+  it('reports a field-time shortfall with the engine’s totals and cause', () => {
+    const run = input({
+      seasons: [
+        season({ regularGames: 4, exhibitionGames: 0, endsOn: '2027-03-03' })
+      ]
+    })
+    const built = buildOptions(run)
+    expect(built.options[0].unmet).has.length.greaterThan(0)
+    expect(
+      summarizeResult(run, asPreviewResult(built)).options.map(
+        option => option.unmet
+      )
+    ).deep.equals(built.options.map(option => option.unmet))
+  })
+  it('scores and explains an option that leaves more games unplaced', () => {
+    const run = input({
+      seasons: [season({ regularGames: 2, exhibitionGames: 0 })]
+    })
+    const [best] = asPreviewResult(buildOptions(run)).options
+    const fewer = { ...best, games: best.games.slice(1) }
+    const summary = summarizeResult(run, {
+      options: [best, fewer],
+      blocking: null
+    })
+    expect(summary.options[0].unmet).deep.equals([])
+    expect(summary.options[1].unmet).has.length(1)
+    expect(summary.options[1].reasons[0]).equals('1 more game left unplaced')
   })
   it('accepts bounded blocked results and refuses malformed or contradictory payloads', () => {
     const blocked = { options: [], blocking: 'No selected fields' }
