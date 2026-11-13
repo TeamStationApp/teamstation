@@ -1394,6 +1394,7 @@ describe('GameSocket chat (U9)', function () {
       hint,
       { ...noSeq, kind: 'members' },
       { type: 'chatUser', kind: 'devices' },
+      { type: 'chatUser', kind: 'notifications' },
       {
         type: 'chatTyping',
         conversationId: 'cnv_1',

@@ -250,6 +250,26 @@ const clientHashSchema = {
   writeOnly: true
 }
 
+const accountNotificationsSchema = {
+  type: 'object',
+  required: ['messages', 'rsvpEvents'],
+  properties: {
+    messages: {
+      type: 'boolean',
+      description: 'Notify for direct messages and mentions'
+    },
+    rsvpEvents: {
+      type: 'boolean',
+      description: 'Remind before the events you said yes to'
+    }
+  }
+}
+const accountNotificationsResponse = {
+  description: 'Your notification switches; both are off until saved',
+  content: {
+    'application/json': { schema: accountNotificationsSchema }
+  }
+}
 const accountResponse = {
   description:
     'The account identity, password status and accepted email addresses',
@@ -263,13 +283,15 @@ const accountResponse = {
           'emails',
           'passwordNeedsUpgrade',
           'passwordParameters',
-          'newPasswordSalt'
+          'newPasswordSalt',
+          'notifications'
         ],
         properties: {
           user: { $ref: '#/components/schemas/User' },
           hasPassword: { type: 'boolean' },
           passwordNeedsUpgrade: { type: 'boolean' },
           newPasswordSalt: { type: 'string', pattern: '^[0-9a-f]{32}$' },
+          notifications: accountNotificationsSchema,
           passwordParameters: {
             anyOf: [
               { type: 'null' },
@@ -485,7 +507,7 @@ const accountPaths = {
       security: [{ bearer: [] }],
       summary: 'Delete your account (signed-in sessions only)',
       description:
-        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags and notifications; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last direct administrator of a team, season or league, naming every such group.',
+        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags, notifications, notification switches and push addresses; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last direct administrator of a team, season or league, naming every such group.',
       responses: {
         204: { description: 'Deleted' },
         409: {
@@ -552,6 +574,43 @@ const accountPaths = {
       responses: {
         200: chatAgeResponse,
         400: { description: 'A missing or unknown source, or another field' },
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
+    }
+  },
+  '/me/account/notifications': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'Read your notification switches (signed-in sessions only)',
+      responses: {
+        200: accountNotificationsResponse,
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
+    },
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Change your notification switches (signed-in sessions only)',
+      description:
+        'Account-wide: every signed-in device of yours follows the change at once. A switch left out keeps its value. A device shows notifications only where it has been given permission.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                messages: { type: 'boolean' },
+                rsvpEvents: { type: 'boolean' }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: accountNotificationsResponse,
+        400: { description: 'A switch that is not true or false' },
         401: { description: 'Not signed in' },
         403: { description: 'An API key or a machine actor' }
       }

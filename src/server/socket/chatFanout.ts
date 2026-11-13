@@ -6,7 +6,10 @@ import type { ChatSocketFrame } from '../../common/gameSocket'
 import { asUserId } from '../../common/userId'
 import type { ChangeFeed } from '../changeFeed/feed'
 import { blockingRecipientIds } from '../chat/blocks'
-import { CHAT_CHANGES_CHANNEL } from '../chat/membershipLog'
+import {
+  CHAT_CHANGES_CHANNEL,
+  type ChatUserChangeKind
+} from '../chat/membershipLog'
 import { type Database, isConnectionUnavailable } from '../db/database'
 import { spread } from './spread'
 
@@ -22,7 +25,7 @@ export type ChatChangePayload =
       seq?: number
     }
   | { c: string; k: 'typing'; u: string }
-  | { u: string; k: 'link' | 'devices' | 'preferences' | 'blocks' }
+  | { u: string; k: ChatUserChangeKind }
 
 export const asChatChangePayload = asEither(
   asObject({
@@ -33,7 +36,7 @@ export const asChatChangePayload = asEither(
   asObject({ c: asString, k: asLiteral('typing'), u: asUserId }),
   asObject({
     u: asUserId,
-    k: asLiteral('link', 'devices', 'preferences', 'blocks')
+    k: asLiteral('link', 'devices', 'preferences', 'blocks', 'notifications')
   })
 )
 

@@ -1671,6 +1671,8 @@ export class ChatEngine {
     if (this.stopped) return
     switch (event.type) {
       case 'chatUser':
+        // Notification switches are Account's; nothing chat holds changed.
+        if (event.kind === 'notifications') return
         if (event.kind === 'blocks') {
           this.awaitBlockPolicy()
           this.relist()

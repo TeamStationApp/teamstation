@@ -127,7 +127,8 @@ describe('migrations', function () {
           "select column_name from information_schema.columns where table_name = 'games' and column_name in ('scoring_mutation', 'scoring_authorship') order by column_name"
         )
       ).rows.map(row => row.column_name)
-    expect(await migrateDown(pool, migrations)).deep.equals([
+    expect(await migrateDown(pool, migrations, 2)).deep.equals([
+      '118pushNotifications',
       '117scoringAuthorship'
     ])
     expect(await columns()).deep.equals(['scoring_mutation'])
@@ -634,7 +635,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '114gamePlans',
           '115scoringMutation',
           '116pitchingStrikes',
-          '117scoringAuthorship'
+          '117scoringAuthorship',
+          '118pushNotifications'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

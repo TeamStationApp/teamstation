@@ -13,9 +13,11 @@ import {
 } from 'cleaners'
 
 import {
+  type AccountNotifications,
   type AccountPicture,
   type AccountSettings,
   asAccountEmailPending,
+  asAccountNotifications,
   asAccountSettings
 } from './accountSettings'
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
@@ -4276,6 +4278,27 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  /** The account's notification switches, which every device follows. */
+  async accountNotifications(): Promise<AccountNotifications> {
+    return await this.request(
+      'GET',
+      '/me/account/notifications',
+      asAccountNotifications
+    )
+  }
+
+  /** Changes either switch; the one left out keeps its value. */
+  async setAccountNotifications(
+    change: Partial<AccountNotifications>
+  ): Promise<AccountNotifications> {
+    return await this.request(
+      'PUT',
+      '/me/account/notifications',
+      asAccountNotifications,
+      change
+    )
   }
 
   /** Whether this account has unlocked chat, and how. */

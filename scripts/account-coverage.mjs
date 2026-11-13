@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 
 import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
+import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
@@ -22,7 +23,8 @@ const suites = [
   'src/app/platform/pickAccountPhoto.test.tsx',
   'src/app/walkup/useSongPlayer.test.tsx',
   'src/app/screens/fullName.test.tsx',
-  'src/app/screens/PlayerScreen.test.tsx'
+  'src/app/screens/PlayerScreen.test.tsx',
+  'src/app/platform/pushDevice.test.ts'
 ]
 const required = [
   'src/common/passwordProtocol.ts',
@@ -51,7 +53,13 @@ mkdirSync(temp, { recursive: true })
 mkdirSync('lib', { recursive: true })
 await build({
   ...webSettings,
-  plugins: [...webSettings.plugins, pagedListStandInPlugin()],
+  // Chat's core as `npm test` bundles it: the Node addon, for the suites
+  // that make chat keys.
+  plugins: [
+    ...webSettings.plugins,
+    chatCoreResolvePlugin(),
+    pagedListStandInPlugin()
+  ],
   stdin: {
     contents: suites.map(file => `import './${file}'`).join('\n'),
     resolveDir: process.cwd(),
@@ -75,6 +83,9 @@ await build({
   sourcemap: true,
   define: {
     __DEV__: 'true',
+    TS_CHAT_NODE_ADDON: JSON.stringify(
+      resolve('src/common/chatCrypto/node/chat_crypto.node')
+    ),
     TS_API_BASE_URL: JSON.stringify('/api/v1'),
     'process.env.NODE_ENV': JSON.stringify('test')
   },
@@ -92,6 +103,7 @@ run('node_modules/.bin/mocha', [
   './src/test/scoringDomSetup.cjs',
   'src/server/routes/account.integration.test.ts',
   'src/server/routes/account.chatAge.integration.test.ts',
+  'src/server/routes/accountNotifications.integration.test.ts',
   'src/server/routes/password.integration.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordProtocol.test.ts',
@@ -151,8 +163,11 @@ for (const file of required) {
       `${file}: expected mapped line coverage >= 90%, got ${JSON.stringify(count)}`
     )
 }
+// With TS_COVERAGE_BASE, only the lines changed since that ref are checked.
+const base = process.env.TS_COVERAGE_BASE
 run('node', [
   'scripts/changed-line-check.cjs',
+  ...(base == null || base === '' ? [] : ['--base', base]),
   '--coverage',
   resolve(reportDir, 'coverage-final.json'),
   '--ext',

@@ -68,9 +68,12 @@ export class DeviceApprovals {
     this.active = true
     try {
       this.unsubscribe = this.socket?.onChat(event => {
+        // Mutes and notification switches change no device or link.
         if (
           event.type === 'resync' ||
-          (event.type === 'chatUser' && event.kind !== 'preferences')
+          (event.type === 'chatUser' &&
+            event.kind !== 'preferences' &&
+            event.kind !== 'notifications')
         )
           this.refresh().catch(() => undefined)
       })

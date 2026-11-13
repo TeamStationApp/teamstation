@@ -1,5 +1,5 @@
 import { expect } from 'chai'
-import { Kysely, PostgresDialect } from 'kysely'
+import { type Insertable, Kysely, PostgresDialect } from 'kysely'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
@@ -175,6 +175,94 @@ describe('one person, however many rows', function () {
     expect(teams.map(row => row.team_id).sort()).deep.equals(
       [hawks, ravens].sort()
     )
+  })
+
+  it('takes the closed row’s notification switches and reminders, keeping the survivor’s own switches', async function () {
+    if (db == null) this.skip()
+    const keeper = mintUser()
+    const switched = mintUser()
+    const plain = mintUser()
+    const unset = mintUser()
+    for (const [made, name] of [
+      [keeper, 'Paul Goldschmidt'],
+      [switched, 'Paul Goldschmidt'],
+      [plain, 'Nolan Arenado'],
+      [unset, 'Nolan Arenado']
+    ] as const)
+      await insertFixtureUsers(db, {
+        id: userIdOfGumbo(made),
+        legacyId: legacyId(made),
+        display_name: name
+      })
+    const at = new Date('2027-05-01T22:00:00.000Z')
+    await db
+      .insertInto('user_notification_settings')
+      .values([
+        // The survivor saved its own: they stay.
+        { user_id: userIdOfGumbo(keeper), messages: true, rsvp_events: false },
+        {
+          user_id: userIdOfGumbo(switched),
+          messages: false,
+          rsvp_events: true
+        },
+        // A survivor with none takes the closed row's.
+        { user_id: userIdOfGumbo(unset), messages: true, rsvp_events: true }
+      ])
+      .execute()
+    const reminder = (
+      made: number,
+      eventId: string
+    ): Insertable<Database['push_reminders_sent']> => ({
+      event_kind: 'game' as const,
+      event_id: eventId,
+      user_id: userIdOfGumbo(made),
+      start_at: at
+    })
+    await db
+      .insertInto('push_reminders_sent')
+      .values([
+        reminder(keeper, 'gam_merge_both'),
+        reminder(switched, 'gam_merge_both'),
+        reminder(switched, 'gam_merge_closed'),
+        reminder(unset, 'gam_merge_unset')
+      ])
+      .execute()
+
+    await closeInto(db, userIdOfGumbo(switched), userIdOfGumbo(keeper))
+    await closeInto(db, userIdOfGumbo(unset), userIdOfGumbo(plain))
+
+    const settings = await db
+      .selectFrom('user_notification_settings')
+      .select(['user_id', 'messages', 'rsvp_events'])
+      .where(
+        'user_id',
+        'in',
+        [keeper, switched, plain, unset].map(userIdOfGumbo)
+      )
+      .orderBy('user_id')
+      .execute()
+    expect(settings).deep.equals(
+      [
+        { user_id: userIdOfGumbo(keeper), messages: true, rsvp_events: false },
+        { user_id: userIdOfGumbo(plain), messages: true, rsvp_events: true }
+      ].sort((a, b) => a.user_id.localeCompare(b.user_id))
+    )
+    const reminders = await db
+      .selectFrom('push_reminders_sent')
+      .select(['user_id', 'event_id'])
+      .where(
+        'user_id',
+        'in',
+        [keeper, switched, plain, unset].map(userIdOfGumbo)
+      )
+      .orderBy('event_id')
+      .orderBy('user_id')
+      .execute()
+    expect(reminders).deep.equals([
+      { user_id: userIdOfGumbo(keeper), event_id: 'gam_merge_both' },
+      { user_id: userIdOfGumbo(keeper), event_id: 'gam_merge_closed' },
+      { user_id: userIdOfGumbo(plain), event_id: 'gam_merge_unset' }
+    ])
   })
 
   it('keeps the jersey the other row had', async function () {

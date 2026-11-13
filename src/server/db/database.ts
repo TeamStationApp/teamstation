@@ -586,6 +586,44 @@ export interface AuthSessionsTable {
   revoked_at: Timestamp | null
 }
 
+/** The account-wide notification switches; a missing row is both off. */
+export interface UserNotificationSettingsTable {
+  user_id: string
+  messages: Generated<boolean>
+  rsvp_events: Generated<boolean>
+  updated_at: Generated<Date>
+}
+
+/** One signed-in device's push address, live while its session is. */
+export interface PushRegistrationsTable {
+  id: string
+  user_id: string
+  session_id: string
+  platform: 'ios' | 'android' | 'web'
+  /** The token itself, or a web subscription's endpoint. */
+  address_key: string
+  /** The APNs or FCM token, or the Web Push subscription's JSON. */
+  address: string
+  environment: 'production' | 'development'
+  created_at: Generated<Date>
+  seen_at: Generated<Date>
+  /**
+   * When a push service refused a send to this address for good (a token for
+   * another environment or app), after which nothing is sent to it until the
+   * device posts it again; null while it is good.
+   */
+  rejected_at: Date | null
+}
+
+/** A reminder sent before an event's start, so it is sent once. */
+export interface PushRemindersSentTable {
+  event_kind: 'game' | 'teamEvent'
+  event_id: string
+  user_id: string
+  start_at: Timestamp
+  sent_at: Generated<Date>
+}
+
 export interface ApiTokensTable {
   id: string
   user_id: string
@@ -1668,6 +1706,8 @@ export interface Database {
   audit_log: AuditLogTable
   user_api_keys: UserApiKeysTable
   plate_appearances: PlateAppearancesTable
+  push_registrations: PushRegistrationsTable
+  push_reminders_sent: PushRemindersSentTable
   game_play_archives: GamePlayArchivesTable
   tv_login_requests: TvLoginRequestsTable
   auth_sessions: AuthSessionsTable
@@ -1740,6 +1780,7 @@ export interface Database {
   tess_messages: TessMessagesTable
   tess_usage_weeks: TessUsageWeeksTable
   user_links: UserLinksTable
+  user_notification_settings: UserNotificationSettingsTable
   user_emails: UserEmailsTable
   users: UsersTable
   video_wall_anchors: VideoWallAnchorsTable

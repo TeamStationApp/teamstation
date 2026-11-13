@@ -282,8 +282,12 @@ export type ScreenScopeListener = (event: ScreenScopeEvent) => void
 /** What changed in a conversation: as `chat_changes` names it. */
 export type ChatHintKind = 'message' | 'members' | 'epoch' | 'grant' | 'read'
 
-/** What changed about the person's own chat keys. */
-export type ChatUserHintKind = 'link' | 'devices' | 'preferences' | 'blocks'
+/**
+ * What changed about the person's own chat keys, or their notification
+ * switches.
+ */
+export type ChatUserHintKind =
+  'link' | 'devices' | 'preferences' | 'blocks' | 'notifications'
 
 /** A chat frame the server sends. */
 export type ChatSocketFrame =
@@ -473,7 +477,8 @@ const asChatFrame: Cleaner<ChatSocketFrame> = asEither(
       'link',
       'devices',
       'preferences',
-      'blocks'
+      'blocks',
+      'notifications'
     ) as Cleaner<ChatUserHintKind>
   }),
   asObject({
