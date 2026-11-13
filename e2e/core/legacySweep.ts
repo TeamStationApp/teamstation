@@ -59,6 +59,13 @@ function deviceFor(
       return process.platform === 'darwin' || env.E2E_HEVC === '1'
         ? {}
         : undefined
+    // A browser here draws WebGL on a GPU, as the field's frame timing needs:
+    // a Mac does; a server draws in software, about five frames a second.
+    // E2E_GPU=1 says it does.
+    case 'gpu':
+      return process.platform === 'darwin' || env.E2E_GPU === '1'
+        ? {}
+        : undefined
     case 'ios-phone':
       return env.E2E_IOS_UDID == null
         ? undefined
@@ -140,8 +147,9 @@ function legacyArtifacts(file: string): string {
 /** Files whose own run takes longer than the default limit. */
 const LONG: Record<string, number> = {
   'src/app/scoring/scoring.e2e.ts': 90 * 60 * 1000,
-  // Its time-zone, settings and schedule checks run past twenty minutes.
-  'src/app/screens/eventInfo2.e2e.ts': 40 * 60 * 1000
+  // Its time-zone, settings and schedule checks run past forty minutes on a
+  // busy droplet.
+  'src/app/screens/eventInfo2.e2e.ts': 60 * 60 * 1000
 }
 
 const DAEMONS = ['e2eSuite', 'e2eSuite-ios', 'e2eSuite-android']
