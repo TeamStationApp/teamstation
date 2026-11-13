@@ -2609,12 +2609,11 @@ describe('scoring browser', function () {
       await page.keyboard.press('Escape')
       await page.waitForSelector('[aria-label="Create Player"]')
       expect(await page.$('[aria-label="First Name"]')).equals(null)
-      expect(
-        await page.$eval(
-          '[aria-label="Add Mookie B to Lineup"]',
-          n => n.textContent
-        )
-      ).includes('#07 Mookie B')
+      // The roster draws the saved player a moment after the sheet goes.
+      const added = await page.waitForSelector(
+        '[aria-label="Add Mookie B to Lineup"]'
+      )
+      expect(await added!.evaluate(n => n.textContent)).includes('#07 Mookie B')
       await click(page, 'Home Team')
       expect(await page.$('[aria-label="Add Mookie B to Lineup"]')).equals(null)
       await click(page, 'Away Team')
