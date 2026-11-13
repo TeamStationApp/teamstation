@@ -6,7 +6,12 @@ import {
   requiredCause,
   seasonMatchups
 } from './capacity'
-import { buildContext, InvalidSubmission, type SeasonContext } from './context'
+import {
+  buildContext,
+  InvalidSubmission,
+  type RunContext,
+  type SeasonContext
+} from './context'
 import { requiredLines, unmetLines } from './counts'
 import type { Matchup, Targets } from './matchups'
 import { fairnessRows, optionReasons } from './options'
@@ -37,9 +42,9 @@ export function summarizeResult(
     ])
   )
   // What the run had to place in each season, as the engine pairs it at
-  // the requested counts; a partial or required run places only its own.
+  // the requested counts. A run of required matchups places only those.
   const requestedMatchups = new Map(
-    context.seasons.map(season => [
+    (context.required == null ? context.seasons : []).map(season => [
       season.season.id,
       seasonMatchups(
         context,
@@ -112,6 +117,12 @@ export function summarizeResult(
       )
     }
   })
+  // The causes read the run's availability as the engine's search did: a
+  // context with occupancy and every slot, built only when a line needs one.
+  let fullContext: RunContext | undefined
+  const full = (): RunContext => (fullContext ??= buildContext(input))
+  const fullSeason = (season: SeasonContext): SeasonContext =>
+    full().seasonById.get(season.season.id)!
   const causes = new Map<string, string>()
   const causeOf = (
     season: SeasonContext,
@@ -121,7 +132,7 @@ export function summarizeResult(
     const key = `${season.season.id}|${kind}`
     let cause = causes.get(key)
     if (cause == null) {
-      cause = capacityCause(context, season, kind, requested)
+      cause = capacityCause(full(), fullSeason(season), kind, requested)
       causes.set(key, cause)
     }
     return cause
@@ -130,7 +141,15 @@ export function summarizeResult(
     blocking: null,
     options: result.options.map((option, index): ScheduleOption => {
       const placement = placements[index]
-      const placedCause = managerCauseOfOption(context, placement)
+      let manager: ReturnType<typeof managerCauseOfOption> | undefined
+      const placedCause = (
+        season: SeasonContext,
+        unplaced: Matchup[]
+      ): string | undefined => {
+        if (input.headCoaches == null || unplaced.length === 0) return
+        manager ??= managerCauseOfOption(full(), placement)
+        return manager(fullSeason(season), unplaced)
+      }
       return {
         games: option.games,
         fairness: fairnessRows(context, placement),
@@ -147,7 +166,7 @@ export function summarizeResult(
                 placement,
                 (season, unplaced) =>
                   placedCause(season, unplaced) ??
-                  requiredCause(context, season, unplaced)
+                  requiredCause(full(), fullSeason(season), unplaced)
               ),
         score: placement.score.map(value => Math.round(value * 1e6) / 1e6),
         reasons:

@@ -1,9 +1,10 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { wallInstant } from '../fieldAvailability'
 import { asPreviewResult } from '../schedulePreviews'
 import { buildContext } from './context'
-import { fixedGame, input, season } from './fixtures.test'
+import { field, fixedGame, hoursOn, input, season, ZONE } from './fixtures.test'
 import { buildOptions } from './index'
 import { summarizeResult } from './validateResult'
 
@@ -163,6 +164,57 @@ describe('device result summaries', () => {
     expect(summary.options[0].unmet).deep.equals([])
     expect(summary.options[1].unmet).has.length(1)
     expect(summary.options[1].reasons[0]).equals('1 more game left unplaced')
+  })
+  it('names the engine’s manager and field-time causes for a shortfall', () => {
+    const saturdays = hoursOn([6], '08:00', '18:00')
+    const run = input({
+      seasons: [
+        season({
+          regularGames: 3,
+          exhibitionGames: 0,
+          doubleheaders: 'never',
+          endsOn: '2027-03-31',
+          windows: [{ from: '2027-03-01', hours: saturdays }]
+        })
+      ],
+      fields: [
+        field({ availability: { ...field().availability, hours: saturdays } })
+      ]
+    })
+    const [home, away] = run.seasons[0].participants
+    run.seasons[0].participants = [home, away]
+    run.headCoaches = { [home]: 'coach', outside: 'coach' }
+    run.bookings = ['2027-03-06', '2027-03-13', '2027-03-20'].map(day => ({
+      key: `bkg_${day}`,
+      fieldId: null,
+      size: null,
+      teamIds: ['outside'],
+      start: wallInstant(day, '07:00', ZONE),
+      end: wallInstant(day, '19:00', ZONE)
+    }))
+    const summaryOf = (each: typeof run): unknown[] =>
+      summarizeResult(each, asPreviewResult(buildOptions(each))).options.map(
+        option => option.unmet
+      )
+    const built = buildOptions(run)
+    expect(built.options[0].unmet[0].cause).includes('Manager/Head Coach')
+    expect(summaryOf(run)).deep.equals(built.options.map(o => o.unmet))
+    // A weekly maximum that does not bind: field time is the cause, as the
+    // engine reports it, not the maximum.
+    const weekly = {
+      ...run,
+      headCoaches: undefined,
+      bookings: [],
+      seasons: [
+        season(
+          { ...run.seasons[0].settings, regularGames: 5, maxGamesOnWeekend: 1 },
+          { participants: [home, away] }
+        )
+      ]
+    }
+    const limited = buildOptions(weekly)
+    expect(limited.options[0].unmet[0].cause).includes('field time')
+    expect(summaryOf(weekly)).deep.equals(limited.options.map(o => o.unmet))
   })
   it('accepts bounded blocked results and refuses malformed or contradictory payloads', () => {
     const blocked = { options: [], blocking: 'No selected fields' }
