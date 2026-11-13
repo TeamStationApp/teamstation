@@ -765,9 +765,13 @@ async function s4Full(daemon: Daemon): Promise<void> {
       join(required('CHAT_UI_ARTIFACTS'), 'web-full-draft-resize-after.png'),
       await m.screenshot()
     )
-    // The reply first: the composer grows upward, so removing the file row
-    // under it brings the reply's close button down to where the file's was.
+    // Cancelling the reply leaves the rest of the draft: its text and file.
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
+    console.log(
+      await m.evalBrowserScript({
+        script: `await new Promise(r=>setTimeout(r,500));const state={text:document.querySelector('[data-testid="chat-composer"]')?.value===${JSON.stringify(draft)},reply:document.querySelector('[aria-label="Cancel reply"]')!=null,file:document.querySelector('[aria-label="Remove notes.txt"]')!=null};if(!state.text||state.reply||!state.file)throw new Error('Cancel reply left '+JSON.stringify(state));return JSON.stringify({cancelReplyKeptDraft:state})`
+      })
+    )
     await m.tapOn({ css: '[aria-label="Remove notes.txt"]' })
     await m.tapOn({ css: '[data-testid="chat-composer"]' })
     await m.pressKey({ key: SELECT_ALL })
@@ -3058,9 +3062,12 @@ async function currentHistoryReply(daemon: Daemon): Promise<void> {
     })
     for (let count = 0; count < 20; count += 1) {
       const result = (await m.evalBrowserScript({
-        script: `for(let n=0;n<120;n++){if(document.querySelector(${JSON.stringify(selector)}))return 'found';const earlier=[...document.querySelectorAll('[role="button"]')].find(n=>n.getAttribute('aria-label')==='Load earlier messages'||n.textContent.trim()==='Load earlier messages');if(earlier){const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-1}));earlier.scrollIntoView({block:'center'});earlier.setAttribute('data-chat-current-earlier','true');await new Promise(r=>setTimeout(r,300));return 'page'}await new Promise(r=>setTimeout(r,100))}throw new Error('Protected original is unavailable before current-reply setup')`
+        script: `for(let n=0;n<120;n++){if(document.querySelector(${JSON.stringify(selector)}))return 'found';const earlier=[...document.querySelectorAll('[role="button"]')].find(n=>n.getAttribute('aria-label')==='Load earlier messages'||n.textContent.trim()==='Load earlier messages');if(earlier){const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-1}));earlier.scrollIntoView({block:'center'});earlier.setAttribute('data-chat-current-earlier','true');await new Promise(r=>setTimeout(r,300));return 'page'}await new Promise(r=>setTimeout(r,100))}return 'waiting'`
       })) as { data?: unknown }
       if (result.data === 'found') break
+      // Neither the original nor a way to earlier history yet: the history
+      // is still loading, on a droplet for longer than one look's 12 s.
+      if (result.data === 'waiting') continue
       await m.tapOn({ css: '[data-chat-current-earlier="true"]' })
       await new Promise(resolve => setTimeout(resolve, 500))
     }
