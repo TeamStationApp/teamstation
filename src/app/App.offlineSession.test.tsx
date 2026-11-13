@@ -317,6 +317,139 @@ describe('the phone session with no signal', () => {
     }
   })
 
+  it('takes the session cookie out of the phone’s jar before the logout, so a logout that never lands leaves nothing to sign in on', async () => {
+    showRoute({ name: 'account' }, true)
+    answer = async () =>
+      asSessionUser({
+        id: ICHIRO.id,
+        displayName: ICHIRO.displayName,
+        isAdmin: false
+      })
+    const api = TeamStationClient.prototype
+    const trace: string[] = []
+    // The jar the API's sign-in left its cookie in, and the kept token.
+    const jar = new Set(['ts_session'])
+    let kept: string | undefined = 'token-one'
+    api.signOut = async function (this: TeamStationClient) {
+      trace.push(`logout with ${this.token ?? 'no token'}`)
+      // No signal: never answers, so no `Max-Age=0` comes back.
+      await new Promise<void>(() => {})
+    }
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={ICHIRO}
+        documentCache={memoryCaches().open}
+        onToken={token => {
+          kept = token
+        }}
+        forgetSessionCookie={async () => {
+          trace.push('cookie forgotten')
+          jar.delete('ts_session')
+        }}
+      />
+    )
+    await settle(50)
+    await press('Sign out')
+    await settle(50)
+    expect(trace).deep.equals(['cookie forgotten', 'logout with token-one'])
+    // What a cold launch would sign in on: neither.
+    expect(jar.size).equals(0)
+    expect(kept).equals(undefined)
+    expect(document.body.textContent).includes('Use a password instead')
+  })
+
+  it('signs out when the jar will not let go, and when there is no jar', async () => {
+    for (const forget of [
+      async () => {
+        throw new Error('no cookie jar')
+      },
+      undefined
+    ]) {
+      showRoute({ name: 'account' }, true)
+      answer = async () =>
+        asSessionUser({
+          id: ICHIRO.id,
+          displayName: ICHIRO.displayName,
+          isAdmin: false
+        })
+      const trace: string[] = []
+      TeamStationClient.prototype.signOut = async function (
+        this: TeamStationClient
+      ) {
+        trace.push(`logout with ${this.token ?? 'no token'}`)
+        this.token = undefined
+      }
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={ICHIRO}
+          documentCache={memoryCaches().open}
+          {...(forget == null ? {} : { forgetSessionCookie: forget })}
+        />
+      )
+      await settle(50)
+      await press('Sign out')
+      await settle(50)
+      expect(trace).deep.equals(['logout with token-one'])
+      await unmount()
+    }
+  })
+
+  it('takes the session cookie out of the jar before an account switch’s logout', async () => {
+    answer = async () =>
+      asSessionUser({
+        id: ICHIRO.id,
+        displayName: ICHIRO.displayName,
+        isAdmin: false
+      })
+    const trace: string[] = []
+    TeamStationClient.prototype.signOut = async function (
+      this: TeamStationClient
+    ) {
+      trace.push(`logout with ${this.token ?? 'no token'}`)
+      throw new HttpError('offline', 'Cannot reach TeamStation.')
+    }
+    const fetchBefore = globalThis.fetch
+    globalThis.fetch = async (url, init) =>
+      (typeof url === 'string'
+        ? url
+        : url instanceof URL
+          ? url.href
+          : url.url
+      ).endsWith('/oauth/approve/switch-approval/details')
+        ? new Response(
+            JSON.stringify({ clientName: 'Fixture app', scopes: ['openid'] }),
+            { status: 200 }
+          )
+        : await fetchBefore(url, init)
+    showRoute({ name: 'oauthApprove', uid: 'switch-approval' }, true)
+    await mount(
+      <App
+        initialToken="token-one"
+        initialUser={ICHIRO}
+        documentCache={memoryCaches().open}
+        onToken={token => {
+          if (token == null) trace.push('token dropped')
+        }}
+        forgetSessionCookie={async () => {
+          trace.push('cookie forgotten')
+        }}
+      />
+    )
+    await settle(100)
+    await press('Use a different account')
+    await settle(100)
+    expect(trace).deep.equals([
+      'cookie forgotten',
+      'logout with token-one',
+      'token dropped'
+    ])
+    expect(document.querySelector('[aria-label="E-mail address"]')).not.equals(
+      null
+    )
+  })
+
   /**
    * A browser allowed to notify, with its subscription, whose unsubscribing
    * is in `trace` (and which never answers when `hangs`), for `body`'s

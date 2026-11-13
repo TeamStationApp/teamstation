@@ -17,6 +17,14 @@ export async function saveToken(_token: string | undefined): Promise<void> {
 }
 
 /**
+ * Takes the session cookie out of the phone's own cookie jar at sign-out.
+ * The browser's is `HttpOnly`: the logout's answer clears it.
+ */
+export async function forgetSessionCookie(): Promise<void> {
+  // Nothing this code can reach.
+}
+
+/**
  * Who was signed in, kept beside the token on a phone. The web asks the
  * server each time, so there is nobody here.
  */

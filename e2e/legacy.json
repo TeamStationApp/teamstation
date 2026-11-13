@@ -1,6 +1,7 @@
 {
   "tests": [
     "mobile/test/offlineSync.e2e.ts",
+    "mobile/test/teamStationAppNotifications.e2e.ts",
     "mobile/test/teamStationAppSignInLink.e2e.ts",
     "mobile/test/teamStationTvDeepLink.e2e.ts",
     "scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts",
@@ -265,6 +266,7 @@
   ],
   "modules": {
     "mobile/test/offlineSync.e2e.ts": "platform",
+    "mobile/test/teamStationAppNotifications.e2e.ts": "platform",
     "mobile/test/teamStationAppSignInLink.e2e.ts": "account",
     "mobile/test/teamStationTvDeepLink.e2e.ts": "platform",
     "scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts": "platform",

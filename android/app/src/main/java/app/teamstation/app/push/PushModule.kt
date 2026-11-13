@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.webkit.CookieManager
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import app.teamstation.app.walkup.NativePushSpec
@@ -21,7 +22,8 @@ import com.google.firebase.messaging.FirebaseMessaging
 /**
  * `TSPush` (`src/app/push/NativePush.ts`): this phone's notification
  * permission, its FCM token, the notifications a chat wake shows and a read
- * takes down, and the conversation on screen.
+ * takes down, the conversation on screen, and the session cookie the app's
+ * networking keeps.
  */
 class PushModule(context: ReactApplicationContext) : NativePushSpec(context) {
   private val prefs = context.getSharedPreferences(PushHandler.PREFS, 0)
@@ -118,6 +120,29 @@ class PushModule(context: ReactApplicationContext) : NativePushSpec(context) {
   /** Who the app keeps as signed in, or null: [PushHandler.signedIn]. */
   override fun setUser(userId: String?) {
     PushHandler.setSignedIn(reactApplicationContext, userId)
+  }
+
+  /**
+   * The session token in the cookie React Native's networking keeps for [url]: [SessionCookie].
+   * No WebView to keep cookies in is no cookie either.
+   */
+  override fun sessionCookie(url: String, promise: Promise) {
+    promise.resolve(
+        runCatching { SessionCookie.of(CookieManager.getInstance().getCookie(url)) }.getOrNull())
+  }
+
+  /**
+   * Takes the session cookie for [url] out of the jar React Native's networking keeps
+   * ([SessionCookie.expiring]), and writes the jar to disk at once, so a sign-out the app does
+   * not live past still leaves it gone. Only that cookie: the jar's others, and other hosts', stay.
+   */
+  override fun clearSessionCookie(url: String, promise: Promise) {
+    runCatching {
+      val jar = CookieManager.getInstance()
+      for (cookie in SessionCookie.expiring(url)) jar.setCookie(url, cookie)
+      jar.flush()
+    }
+    promise.resolve(null)
   }
 
   override fun setActiveConversation(conversationId: String?) {

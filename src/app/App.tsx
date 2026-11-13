@@ -282,9 +282,9 @@ export interface AppProps {
    *
    * The web keeps its session in an `HttpOnly` cookie that this code cannot
    * read and the browser sends by itself, which is the stronger arrangement
-   * and why both are supported. A phone has no cookie jar — `server/auth/
-   * tokens.ts` reads the `Authorization` header first and says as much — so on
-   * a phone the token is carried here.
+   * and why both are supported. A phone sends the token as an
+   * `Authorization` header, which `server/auth/tokens.ts` reads first, so
+   * on a phone the token is carried here.
    */
   initialToken?: string
   /**
@@ -304,6 +304,15 @@ export interface AppProps {
   initialUser?: StoredUser
   /** Called with who is signed in, or none, so a phone keeps it. */
   onUser?: (user: StoredUser | undefined) => void
+  /**
+   * Takes the session cookie out of the phone's own cookie jar
+   * (`sessionStore.native.ts`'s `forgetCookie`), at sign-out and an account
+   * switch, before the logout is sent: the logout's answer clears it too,
+   * but one that never lands would leave the session in the jar, and the
+   * next launch signed in on it. The web is not given one; its cookie is
+   * `HttpOnly`.
+   */
+  forgetSessionCookie?: () => Promise<void>
   /**
    * Opens a person's document cache. Given (on the phone), the client keeps
    * the documents it can show offline; the web keeps none and is not given
@@ -506,7 +515,12 @@ function Shell(props: AppProps): React.ReactElement {
     setBackOverride(() => handler)
   }, [])
 
-  const { initialToken, onToken, onUser, documentCache } = props
+  const { initialToken, onToken, onUser, documentCache, forgetSessionCookie } =
+    props
+  /** The phone's cookie jar lets go of the session, whatever else answers. */
+  const forgetCookie = async (): Promise<void> => {
+    await forgetSessionCookie?.().catch(() => undefined)
+  }
   // One client for as long as the app runs, kept across sign-out and the next
   // sign-in. On the phone it keeps documents, in a file opened only once a
   // user id is known.
@@ -741,15 +755,18 @@ function Shell(props: AppProps): React.ReactElement {
    * The delete and the letting go are given `RELEASE_TIMEOUT_MS` at most,
    * together, so the logout is never held up for long. A logout that comes after somebody signed in
    * again is not sent: it would end the new session, whose token or cookie
-   * the client now holds, and the old session expires on the server.
+   * the client now holds, and the old session expires on the server. The
+   * phone's cookie jar lets go of the session first of all, so a logout that
+   * never lands leaves nothing on the phone to sign in on.
    */
   const signOutNow = (): void => {
+    const forgotten = forgetCookie()
     const finish = (): void => {
       const releasing = pushDevice.release(client)
       leaveSession()
       const left = sessionTurn.current
-      releasing
-        .finally(async () => {
+      Promise.allSettled([releasing, forgotten])
+        .then(async () => {
           if (sessionTurn.current === left) await client.signOut()
         })
         .catch(() => undefined)
@@ -2422,8 +2439,11 @@ function Shell(props: AppProps): React.ReactElement {
             route.name !== 'oauthApprove'
               ? undefined
               : async () => {
+                  // As at sign-out: the jar lets go before the logout.
+                  const forgotten = forgetCookie()
                   await releaseChat(keyStore).catch(() => undefined)
                   await pushDevice.release(client)
+                  await forgotten
                   await client.signOut().catch(() => undefined)
                   client.token = undefined
                   rememberSession(undefined)

@@ -28,6 +28,19 @@ export interface Spec extends TurboModule {
    */
   setUser: (userId: string | null) => void
   /**
+   * The session token in the cookie the API set at sign-in (`ts_session`),
+   * which React Native's networking keeps in the app's cookie jar, for the
+   * API at `url`; null when the jar holds none. Read by a phone
+   * that keeps no token (`sessionStore.native.ts`'s `loadToken`).
+   */
+  sessionCookie: (url: string) => Promise<string | null>
+  /**
+   * Takes that cookie out of the jar for the API at `url`: at sign-out and
+   * an account switch, before the logout is sent, and when a token read from
+   * it is refused (`sessionStore.native.ts`'s `forgetCookie`).
+   */
+  clearSessionCookie: (url: string) => Promise<void>
+  /**
    * Posts a notification, one per `tag`, on `channel` (`messages`, `events`),
    * keeping `seq`, the chat message it is for (0 for none), so a read of an
    * earlier message leaves it up.
