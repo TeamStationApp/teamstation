@@ -364,6 +364,7 @@ describe('a season of the next schedule', () => {
       maxGamesOnWeekdays: 2,
       gameMinutes: 90
     })
+    expect(text()).includes('Game maximum saved.')
     await tapLabel('Max games on weekend: 1')
     await fill('Max games on weekend', '0')
     await act(async () => {

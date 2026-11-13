@@ -449,3 +449,10 @@ export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
     )(raw.addedFieldIds)
   return choice
 }
+
+/** The setup's chosen fields that still exist, as the server accepts them. */
+export function liveFieldIds(setup: ScheduleSetup): string[] {
+  return setup.fieldIds.filter(id =>
+    setup.fields.some(field => field.id === id && !field.deleted)
+  )
+}
