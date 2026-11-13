@@ -646,17 +646,5 @@ export const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
     color: '#211B00'
-  },
-  fieldRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const
-  },
-  fieldCheck: { flex: 1 },
-  removeCell: {
-    alignSelf: 'stretch' as const,
-    justifyContent: 'center' as const,
-    paddingHorizontal: theme.rem(1),
-    borderLeftWidth: 1,
-    borderLeftColor: theme.defaultBorderColor
   }
 }))

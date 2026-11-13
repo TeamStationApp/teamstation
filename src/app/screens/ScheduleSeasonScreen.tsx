@@ -35,6 +35,13 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { setupFieldDetail } from './AutoSchedulerScreen'
 import { FieldPickerScene } from './FieldPickerScene'
 
+/** The setup's chosen fields that still exist, as the server accepts them. */
+function liveFieldIds(setup: ScheduleSetup): string[] {
+  return setup.fieldIds.filter(id =>
+    setup.fields.some(field => field.id === id && !field.deleted)
+  )
+}
+
 function plural(count: number, one: string): string {
   return `${count} ${count === 1 ? one : `${one}s`}`
 }
@@ -446,7 +453,7 @@ export function ScheduleSeasonScreen({
                         })
                         const next = await client.saveScheduleSetup(leagueId, {
                           seasonIds: setup.seasonIds,
-                          fieldIds: setup.fieldIds.filter(
+                          fieldIds: liveFieldIds(setup).filter(
                             id => id !== field.id
                           ),
                           addedFieldIds: setup.addedFieldIds.filter(
@@ -521,9 +528,7 @@ export function ScheduleSeasonScreen({
             run(async () => {
               const next = await client.saveScheduleSetup(leagueId, {
                 seasonIds: setup.seasonIds,
-                fieldIds: setup.fieldIds.filter(id =>
-                  setup.fields.some(field => field.id === id && !field.deleted)
-                ),
+                fieldIds: liveFieldIds(setup),
                 addedFieldIds: [...new Set([...setup.addedFieldIds, chosen.id])]
               })
               if (active.current && currentKey.current === screenKey)
@@ -588,12 +593,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont
   },
   unavailable: { opacity: 0.4 },
-  maximum: {
-    width: 56,
-    minHeight: 48,
-    textAlign: 'right',
-    fontSize: 16
-  },
   preference: { width: 212 },
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
   title: {
@@ -614,17 +613,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   notice: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.9375),
-    color: theme.primaryTextColor
-  },
-  period: { gap: theme.rem(0.5) },
-  periodHead: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const,
-    justifyContent: 'space-between' as const
-  },
-  periodTitle: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
     color: theme.primaryTextColor
   }
 }))

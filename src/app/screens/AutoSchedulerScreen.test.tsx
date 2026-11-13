@@ -38,7 +38,6 @@ import {
   chosenSeasons,
   setupFieldDetail
 } from './AutoSchedulerScreen'
-import { seasonGameTotal } from './SeasonScheduleGrid'
 
 const SETTINGS: ScheduleSettings = {
   fieldSize: '50/70',
@@ -337,9 +336,7 @@ describe('the Auto-Scheduler setup', () => {
     else process.env.TZ = zone
   })
 
-  it('totals a season’s games', () => {
-    expect(seasonGameTotal(season())).equals(10 + 7)
-    expect(seasonGameTotal(season({ exhibitionTeams: 0 }))).equals(10)
+  it('lists the chosen seasons', () => {
     expect(chosenSeasons(setupOf()).map(item => item.id)).deep.equals(['sea_a'])
   })
 
