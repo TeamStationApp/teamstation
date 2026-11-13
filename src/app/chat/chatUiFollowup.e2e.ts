@@ -755,6 +755,12 @@ async function s4Full(daemon: Daemon): Promise<void> {
       )
     }
     await m.tapOn({ text: 'Back' })
+    // Back slides the conversation out; a row opened before it has gone is
+    // closed again as the slide ends, which a droplet draws slowly enough to
+    // see.
+    await m.evalBrowserScript({
+      script: `for(let i=0;i<100;i++){if(!document.querySelector('[data-testid="chat-composer"]'))return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Back left the conversation open')`
+    })
     await m.evalBrowserScript({
       // By its id: the row's name is its title and then the latest message.
       script: `const row=document.querySelector('[data-testid="chat-list-pane"]').querySelector(${JSON.stringify(chatRowById(conversation))});if(!row)throw new Error('Synthetic DM row unavailable');row.click();return true`
