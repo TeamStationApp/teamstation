@@ -766,7 +766,20 @@ async function s4Full(daemon: Daemon): Promise<void> {
       await m.screenshot()
     )
     // Cancelling the reply leaves the rest of the draft: its text and file.
+    // What the page holds either side of the tap, every copy counted, as
+    // the wide layout's hidden pane may hold a second composer.
+    const composers = `JSON.stringify({path:location.pathname,composers:[...document.querySelectorAll('[data-testid="chat-composer"]')].map(n=>({draft:n.value===${JSON.stringify(draft)},length:n.value.length,shown:n.getClientRects().length>0&&getComputedStyle(n).visibility!=='hidden'})),replies:[...document.querySelectorAll('[aria-label="Cancel reply"]')].map(n=>n.getClientRects().length>0),files:[...document.querySelectorAll('[aria-label="Remove notes.txt"]')].map(n=>n.getClientRects().length>0)})`
+    console.log(
+      'before Cancel reply',
+      await m.evalBrowserScript({ script: `return ${composers}` })
+    )
     await m.tapOn({ css: '[aria-label="Cancel reply"]' })
+    console.log(
+      'after Cancel reply',
+      await m.evalBrowserScript({
+        script: `await new Promise(r=>setTimeout(r,500));return ${composers}`
+      })
+    )
     console.log(
       await m.evalBrowserScript({
         script: `await new Promise(r=>setTimeout(r,500));const state={text:document.querySelector('[data-testid="chat-composer"]')?.value===${JSON.stringify(draft)},reply:document.querySelector('[aria-label="Cancel reply"]')!=null,file:document.querySelector('[aria-label="Remove notes.txt"]')!=null};if(!state.text||state.reply||!state.file)throw new Error('Cancel reply left '+JSON.stringify(state));return JSON.stringify({cancelReplyKeptDraft:state})`
