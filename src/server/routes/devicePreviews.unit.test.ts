@@ -16,7 +16,7 @@ describe('device preview HTTP boundary', () => {
   afterEach(() => {
     mock.restoreAll()
   })
-  it('returns preparation separately from completion and maps malformed results to bad requests', async () => {
+  it('returns preparation separately from completion and maps only malformed results to bad requests', async () => {
     const prepared = { id: 'preview', input: { seasons: [] } }
     const prepare = mock.method(
       previews,
@@ -65,24 +65,28 @@ describe('device preview HTTP boundary', () => {
       ).deep.equals(prepared)
       expect(status).equals(201)
       expect(prepare.mock.calls[0].arguments[2]).equals('league')
+      const blocked = { options: [], blocking: 'No selected fields' }
       expect(
-        await request('/schedule-previews/preview/result', 'PUT', {
-          options: []
-        })
+        await request('/schedule-previews/preview/result', 'PUT', blocked)
       ).deep.equals({ id: 'preview', status: 'open' })
       expect(complete.mock.calls[0].arguments[2]).equals('preview')
-      failure = new TypeError('Malformed games')
       await assert.rejects(
         request('/schedule-previews/preview/result', 'PUT', {}),
-        { status: 400, message: 'Malformed games' }
+        { status: 400 }
+      )
+      // A fault inside completion is the server's, not a bad request.
+      failure = new TypeError('Internal fault')
+      await assert.rejects(
+        request('/schedule-previews/preview/result', 'PUT', blocked),
+        (error: unknown) => error instanceof TypeError && !('status' in error)
       )
       failure = conflict('Changed source')
       await assert.rejects(
-        request('/schedule-previews/preview/result', 'PUT', {}),
+        request('/schedule-previews/preview/result', 'PUT', blocked),
         { status: 409 }
       )
       await assert.rejects(
-        request('/schedule-previews/preview/result', 'PUT', {}, false),
+        request('/schedule-previews/preview/result', 'PUT', blocked, false),
         { status: 401 }
       )
       expect(complete.mock.callCount()).equals(3)

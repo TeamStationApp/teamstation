@@ -95,6 +95,40 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
   return [...groups.values()]
 }
 
+/** A submitted result or run the server refuses, as opposed to a fault of its own. */
+export class InvalidSubmission extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidSubmission'
+  }
+}
+
+/**
+ * Refuses a run whose seasons span too many field days to summarize.
+ * Normal runs are a few fields over a few months; split larger runs by season.
+ */
+export function requireBoundedFieldDays(input: EngineInput): void {
+  let fieldDays = 0
+  for (const season of input.seasons) {
+    const days = Math.max(
+      0,
+      dayNumber(season.settings.endsOn) -
+        dayNumber(season.settings.startsOn) +
+        1
+    )
+    const fields = input.fields.filter(
+      field =>
+        (season.settings.fieldIds ?? []).includes(field.id) &&
+        field.sizes.includes(season.settings.fieldSize)
+    ).length
+    fieldDays += days * fields
+    if (!Number.isFinite(fieldDays) || fieldDays > 10000)
+      throw new InvalidSubmission(
+        'This scheduling run spans too many field days; select fewer seasons or shorter date ranges'
+      )
+  }
+}
+
 /** Reads the input into the slots, groups and starting occupancy of the run. */
 export function buildContext(
   input: EngineInput,
@@ -107,29 +141,8 @@ export function* buildContextSteps(
   input: EngineInput,
   submitted?: readonly PlannedGame[]
 ): Generator<void, RunContext> {
-  if (submitted != null) {
-    // Bound calendar work before touching availability, even for an empty result.
-    // Normal runs are a few fields over a few months; split larger runs by season.
-    let fieldDays = 0
-    for (const season of input.seasons) {
-      const days = Math.max(
-        0,
-        dayNumber(season.settings.endsOn) -
-          dayNumber(season.settings.startsOn) +
-          1
-      )
-      const fields = input.fields.filter(
-        field =>
-          (season.settings.fieldIds ?? []).includes(field.id) &&
-          field.sizes.includes(season.settings.fieldSize)
-      ).length
-      fieldDays += days * fields
-      if (!Number.isFinite(fieldDays) || fieldDays > 10000)
-        throw new TypeError(
-          'This scheduling run spans too many field days; select fewer seasons or shorter date ranges'
-        )
-    }
-  }
+  // Bound calendar work before touching availability, even for an empty result.
+  if (submitted != null) requireBoundedFieldDays(input)
   const fieldZones = new Map(
     input.fields.map(field => [field.id, field.availability.timezone])
   )

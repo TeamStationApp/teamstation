@@ -5,7 +5,8 @@ import { badRequest, notFound, unauthorized } from '../../common/errors'
 import { isRecord } from '../../common/groupCreation'
 import {
   asPreviewEditsBody,
-  asPreviewRequest
+  asPreviewRequest,
+  asPreviewResult
 } from '../../common/schedulePreviews'
 import type { Actor } from '../auth/sessions'
 import {
@@ -67,20 +68,16 @@ export function schedulePreviewRoutes(
     '/schedule-previews/:previewId/result',
     requireActor,
     withAsync(async (req, res) => {
-      try {
-        res.json(
-          await completePreview(
-            db,
-            actor(req),
-            param(req.params.previewId),
-            req.body,
-            clock
-          )
+      const result = clean(asPreviewResult, req.body)
+      res.json(
+        await completePreview(
+          db,
+          actor(req),
+          param(req.params.previewId),
+          result,
+          clock
         )
-      } catch (error) {
-        if (error instanceof TypeError) throw badRequest(error.message)
-        throw error
-      }
+      )
     })
   )
   router.get(

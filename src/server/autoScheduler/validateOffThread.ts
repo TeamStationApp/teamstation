@@ -6,6 +6,7 @@ import {
   workerData
 } from 'node:worker_threads'
 
+import { InvalidSubmission } from '../../common/autoScheduler/context'
 import type { EngineResult } from '../../common/autoScheduler/types'
 import { summarizeResult } from '../../common/autoScheduler/validateResult'
 import { badRequest, HttpError, unavailable } from '../../common/errors'
@@ -116,7 +117,7 @@ if (job?.deviceScheduleValidation != null) {
         parentPort?.postMessage({
           ok: false,
           invalid:
-            error instanceof TypeError ||
+            error instanceof InvalidSubmission ||
             (error instanceof HttpError && error.code === 'badRequest'),
           message: error instanceof Error ? error.message : 'Validation failed'
         } satisfies ValidationReply)
