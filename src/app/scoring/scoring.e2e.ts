@@ -6375,7 +6375,20 @@ describe('scoring browser', function () {
         source
       )
       // The dropped card lands in the gap the drag held open: a lineup card's
-      // full height, one gap from each neighbour, drawn over neither.
+      // full height, one gap from each neighbour, drawn over neither. It
+      // grows to that height as it lands, which a droplet draws slowly.
+      await page
+        .waitForFunction(
+          height =>
+            Math.abs(
+              document
+                .querySelector('[data-roster-target="lineup-1"]')!
+                .getBoundingClientRect().height - height
+            ) <= 1,
+          { timeout: 3000 },
+          destination.height
+        )
+        .catch(() => undefined)
       const landed = await rect('[data-roster-target="lineup-1"]')
       expect(landed.height).closeTo(destination.height, 1)
       expect(

@@ -777,8 +777,15 @@ describe('dictation, end to end', function () {
       try {
         const page = await open(browser, scorer, gameId, path)
         await switchOn(page)
-        // With the mic on and the screen at rest, Space talks.
+        // With the mic on and the screen at rest, Space talks. The clip
+        // starts once the microphone sends audio, as with a held button.
+        const before = (await heard(page)).audioFrames
         await page.keyboard.down('Space')
+        await page.waitForFunction(
+          count => (window as any).__dictation.audioFrames > count,
+          {},
+          before
+        )
         await play(page)
         await new Promise(resolve => setTimeout(resolve, 600))
         await page.keyboard.up('Space')
