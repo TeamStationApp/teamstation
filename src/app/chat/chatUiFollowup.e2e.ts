@@ -489,9 +489,8 @@ async function s5(daemon: Daemon): Promise<void> {
       join(artifacts, 'desktop-pinned-messages-after.png'),
       await m.screenshot()
     )
-    await m.tapOn({
-      css: '[role="button"][aria-label=' + JSON.stringify(target) + ']'
-    })
+    // One pin jumps straight to its message; no list opens (develop
+    // 8cd994cef).
     await m.assertVisible({ text: target })
     console.log(
       await m.evalBrowserScript({
@@ -734,7 +733,7 @@ async function s4Full(daemon: Daemon): Promise<void> {
     })
     await m.assertVisible({ text: 'Remove notes.txt' })
     await m.evalBrowserScript({
-      script: `let scroll=window.chatUiResizeRow.parentElement;while(scroll&&!['auto','scroll'].includes(getComputedStyle(scroll).overflowY))scroll=scroll.parentElement;if(!scroll||scroll.scrollHeight<=scroll.clientHeight+80)throw new Error('Fixture does not provide a reading position');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-80}));scroll.scrollTop=40;scroll.dispatchEvent(new Event('scroll',{bubbles:true}));await new Promise(r=>setTimeout(r,250));window.chatUiResizeDocument=Date.now();window.chatUiResizeField=document.querySelector('[data-testid="chat-composer"]');window.chatUiResizeScroller=scroll;window.chatUiResizeOffset=scroll.scrollTop;if(Math.abs(scroll.scrollTop-40)>2)throw new Error('Reading position was not set');return JSON.stringify({reply:true,file:true,readingOffset:scroll.scrollTop})`
+      script: `const pane=[...document.querySelectorAll('[data-testid="chat-message-pane"]')].find(p=>getComputedStyle(p).visibility!=='hidden'&&p.getClientRects().length>0);const scroll=pane&&[...pane.querySelectorAll('div')].find(x=>['auto','scroll'].includes(getComputedStyle(x).overflowY)&&x.scrollHeight>x.clientHeight+80);if(!scroll||scroll.scrollHeight<=scroll.clientHeight+80)throw new Error('Fixture does not provide a reading position');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-80}));scroll.scrollTop=40;scroll.dispatchEvent(new Event('scroll',{bubbles:true}));await new Promise(r=>setTimeout(r,250));window.chatUiResizeDocument=Date.now();window.chatUiResizeField=document.querySelector('[data-testid="chat-composer"]');window.chatUiResizeScroller=scroll;window.chatUiResizeOffset=scroll.scrollTop;if(Math.abs(scroll.scrollTop-40)>2)throw new Error('Reading position was not set');return JSON.stringify({reply:true,file:true,readingOffset:scroll.scrollTop})`
     })
     console.log(
       '$ S4 preserve multiline text, reply, prepared file and positive reading position across live960px resize'
@@ -852,9 +851,11 @@ async function reviewNavigation(daemon: Daemon): Promise<void> {
     await m.tapOn({ css: '[data-testid="chat-conversation-identity"]' })
     assert(
       await read<boolean>(
-        'return JSON.stringify(location.pathname.endsWith("/members"))'
+        'return JSON.stringify(location.pathname.endsWith("/info"))'
       ),
-      'Members must navigate outside the workspace'
+      // The title opens the conversation's information page (develop
+      // 3757c207d).
+      'Info must navigate outside the workspace'
     )
     await m.setNetworkConditions({
       latency: 1200,
@@ -3078,7 +3079,7 @@ async function currentHistoryReply(daemon: Daemon): Promise<void> {
       replyBody: string
     }
     await m.evalBrowserScript({
-      script: `for(let n=0;n<100;n++){const row=document.querySelector('[data-testid="chat-message-'+${JSON.stringify(current.replyId)}+'"]');if(row&&row.textContent.includes(${JSON.stringify(body)})&&row.querySelector('[aria-label^="Jump to message from "]')&&document.querySelector('[data-testid="chat-composer"]').value==='')return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Current reply plaintext/quote did not render')`
+      script: `for(let n=0;n<100;n++){const row=document.querySelector('[data-testid="chat-message-'+${JSON.stringify(current.replyId)}+'"]');if(row&&row.textContent.includes(${JSON.stringify(body)})&&row.querySelector('[aria-label^="Jump to message from "],[aria-label="Jump to the earlier message this replies to"]')&&document.querySelector('[data-testid="chat-composer"]').value==='')return true;await new Promise(r=>setTimeout(r,100))}throw new Error('Current reply plaintext/quote did not render')`
     })
     writeFileSync(
       required('CHAT_UI_CURRENT_HISTORY_REPLY_RESULT'),
@@ -3326,21 +3327,23 @@ async function coarseTouch(daemon: Daemon): Promise<void> {
         script: `const row=document.querySelector(${JSON.stringify(MEMBERS_ROW)});if(!row)throw new Error('Hawks Members row unavailable');row.scrollIntoView({block:'center'});await new Promise(r=>setTimeout(r,250));const rect=row.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;function event(type,dx,end=false){const touch=new Touch({identifier:1,target:row,clientX:x+dx,clientY:y,pageX:x+dx+scrollX,pageY:y+scrollY,screenX:x+dx,screenY:y});row.dispatchEvent(new TouchEvent(type,{bubbles:true,cancelable:true,touches:end?[]:[touch],targetTouches:end?[]:[touch],changedTouches:[touch]}));}event('touchstart',0);await new Promise(r=>setTimeout(r,250));event('touchmove',11);await new Promise(r=>setTimeout(r,350));event('touchend',11,true);row.dispatchEvent(new MouseEvent('mouseup',{bubbles:true}));row.dispatchEvent(new MouseEvent('click',{bubbles:true,clientX:x+11,clientY:y}));await new Promise(r=>setTimeout(r,200));if(document.querySelector('[aria-label="Conversation actions"]:not([role="button"])'))throw new Error('Moved touch opened conversation menu');if(getComputedStyle(document.querySelector('[data-testid="chat-list-pane"]')).display==='none'||document.querySelector('[data-testid="chat-composer"]'))throw new Error('Moved touch opened row');return JSON.stringify({rawBrowserTouchMovementCancelled:true,noMenu:true,noRowNavigation:true})`
       })
     )
-    await m.tapOn({ css: MEMBERS_ROW })
-    await m.assertVisible({
-      text: required('CHAT_UI_TARGET_TEXT'),
-      timeout: 60000
-    })
     await m.evalBrowserScript({
       script: `const original=window.matchMedia.bind(window);window.matchMedia=q=>q.includes('pointer')&&q.includes('fine')?new Proxy(original(q),{get(t,k){if(k==='matches')return false;const v=Reflect.get(t,k);return typeof v==='function'?v.bind(t):v}}):original(q);return true`
     })
     // The conversation's own menu is its row's (develop 2bc27808d removed
-    // the header's), by the conversation's id.
+    // the header's), opened while the list is the top screen: once the
+    // conversation is pushed over it at this width, the covered list stays
+    // mounted but takes no taps (develop f6d21316d).
     await m.tapOn({
       css: conversationActions(required('CHAT_UI_CONVERSATION'))
     })
     await m.assertVisible({ text: 'Mark unread' })
     await m.pressKey({ key: 'Escape' })
+    await m.tapOn({ css: MEMBERS_ROW })
+    await m.assertVisible({
+      text: required('CHAT_UI_TARGET_TEXT'),
+      timeout: 60000
+    })
     console.log(
       '$ Actual Chrome coarse media + rawTouchEvent bubble500ms recognizes exactly one menu'
     )
