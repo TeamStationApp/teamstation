@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 
 import { season } from '../../common/autoScheduler/fixtures.test'
+import { boundedSeasonWindows } from '../../common/seasonScheduling'
 import type { FieldChanges, VenueChanges } from '../../common/venues'
 import { weeklyWindow } from '../../common/windowPeriods'
 import { migrations } from '../../migrate/migrations'
@@ -105,7 +106,11 @@ describe('device scheduling persistence boundaries', () => {
     }
   })
   it('writes selected fields, preserves omitted choices, drops stale stored fields and refuses unavailable added ones', async () => {
-    const settings = season().settings
+    const open = season().settings
+    const settings = {
+      ...open,
+      windows: boundedSeasonWindows(open.windows, open.startsOn, open.endsOn)
+    }
     const row = {
       season_id: 'sea_demo',
       field_ids: ['fld_one'],
@@ -153,6 +158,7 @@ describe('device scheduling persistence boundaries', () => {
             )
             return []
           }
+          if (query.sql.includes('pg_advisory_xact_lock')) return []
           if (query.sql.includes('from "season_schedule_settings"'))
             return [stored]
           if (query.sql.includes('from "seasons"'))
@@ -193,6 +199,65 @@ describe('device scheduling persistence boundaries', () => {
         }
       )
     }
+  })
+  it('dates a season by its windows, and ends and cuts an older client’s open windows to the dates it sends', async () => {
+    const settings = {
+      ...season().settings,
+      fieldIds: [],
+      startsOn: '2027-01-01',
+      endsOn: '2027-12-31',
+      windows: [
+        { from: '2027-04-01', until: '2027-04-30', hours },
+        { from: '2027-06-01', until: '2027-06-15', hours }
+      ]
+    }
+    const writes: unknown[][] = []
+    await withQueryReplies(
+      query => {
+        if (query.sql.includes('pg_advisory_xact_lock')) return []
+        if (query.sql.startsWith('insert into "season_schedule_settings"')) {
+          writes.push([...query.parameters])
+          return []
+        }
+        if (query.sql.includes('from "season_schedule_settings"')) return []
+        if (query.sql.includes('from "seasons"'))
+          return [
+            {
+              id: 'sea_demo',
+              league_id: 'lea_demo',
+              year: 2027,
+              starts_on: settings.startsOn,
+              ends_on: settings.endsOn
+            }
+          ]
+        throw new Error(query.sql)
+      },
+      async db => {
+        await saveSeasonScheduleSettings(db, 'sea_demo', settings)
+        await saveSeasonScheduleSettings(db, 'sea_demo', {
+          ...settings,
+          startsOn: '2027-03-15',
+          endsOn: '2027-05-20',
+          windows: [
+            { from: '0001-01-01', hours },
+            { from: '2027-05-01', hours }
+          ]
+        })
+      }
+    )
+    expect(writes[0]).includes('2027-04-01')
+    expect(writes[0]).includes('2027-06-15')
+    expect(writes[0]).not.includes('2027-01-01')
+    expect(writes[0]).not.includes('2027-12-31')
+    expect(writes[1]).includes('2027-03-15')
+    expect(writes[1]).includes('2027-05-20')
+    const stored = JSON.parse(
+      String(writes[1].find(value => String(value).startsWith('[{')))
+    )
+    expect(stored).deep.equals([
+      { from: '2027-03-15', until: '2027-04-30', hours },
+      { from: '2027-05-01', until: '2027-05-20', hours }
+    ])
   })
   it('lists the union of season selections and legacy run selections', async () => {
     await withQueryReplies(
@@ -314,6 +379,41 @@ describe('device scheduling persistence boundaries', () => {
       )
       expect(wrote).equals(true)
       expect(notified).equals(true)
+    }
+  })
+  it('refuses a legacy hours write over dated windows instead of losing them', async () => {
+    mock.method(ownership, 'requireVenueEditor', async () => undefined)
+    const datedWindows = [
+      { from: '2027-03-01', until: '2027-05-31', hours },
+      { from: '2027-06-01', hours: [] }
+    ]
+    for (const kind of ['venue', 'field'] as const) {
+      let wrote = false
+      await withQueryReplies(
+        query => {
+          if (query.sql.startsWith('update ')) wrote = true
+          if (query.sql.includes('from "venue_fields"'))
+            return [{ ...field, windows: datedWindows }]
+          if (query.sql.includes('from "venues"'))
+            return [{ ...venue, default_windows: datedWindows }]
+          return []
+        },
+        async db => {
+          const error = await (
+            kind === 'venue'
+              ? updateVenue(
+                  db,
+                  actor,
+                  venue.id,
+                  { defaultHours: hours },
+                  services
+                )
+              : updateField(db, actor, venue.id, field.id, { hours }, services)
+          ).catch((caught: unknown) => caught)
+          expect(String(error)).includes('dated time windows')
+        }
+      )
+      expect(wrote).equals(false)
     }
   })
 })

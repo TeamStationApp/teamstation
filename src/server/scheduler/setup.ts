@@ -1,17 +1,22 @@
 import { type Kysely, sql } from 'kysely'
 
 import { badRequest, conflict, notFound } from '../../common/errors'
+import type { WindowPeriod } from '../../common/fieldAvailability'
 import { calendarDateText } from '../../common/groupCreation'
 import {
   asWindowPeriods,
+  boundedSeasonWindows,
   defaultScheduleSettings,
   type ScheduleSettings,
   type ScheduleSetup,
   type ScheduleSetupChoice,
   type SeasonScheduleSettings,
-  type SetupField
+  type SetupField,
+  windowRange
 } from '../../common/seasonScheduling'
 import { asFieldSize } from '../../common/venues'
+import { lockKeys } from '../db/advisoryLocks'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { type Clock, realClock } from '../groups/requests'
 import { seasonParticipants } from '../stats/seasonTeams'
@@ -77,6 +82,18 @@ export async function seasonLeagueId(
   return season.league_id
 }
 
+/**
+ * A season's windows with the dates it schedules in: those its windows
+ * cover, or the saved dates while it has none.
+ */
+function seasonDates(
+  windows: WindowPeriod[],
+  startsOn: string,
+  endsOn: string
+): Pick<ScheduleSettings, 'startsOn' | 'endsOn' | 'windows'> {
+  return { ...(windowRange(windows) ?? { startsOn, endsOn }), windows }
+}
+
 /** The settings of seasons, saved or their defaults. */
 export async function settingsOf(
   db: Db,
@@ -125,10 +142,16 @@ export async function settingsOf(
               maxGamesOnWeekdays: row.max_games_on_weekdays,
               maxGamesOnWeekend: row.max_games_on_weekend,
               preferGameOn: row.prefer_game_on,
-              startsOn: calendarDateText(row.starts_on)!,
-              endsOn: calendarDateText(row.ends_on)!,
-              blackouts: datesOf(row.blackouts),
-              windows: asWindowPeriods(row.windows)
+              ...seasonDates(
+                boundedSeasonWindows(
+                  asWindowPeriods(row.windows),
+                  calendarDateText(row.starts_on)!,
+                  calendarDateText(row.ends_on)!
+                ),
+                calendarDateText(row.starts_on)!,
+                calendarDateText(row.ends_on)!
+              ),
+              blackouts: datesOf(row.blackouts)
             }
           }
         ]
@@ -146,7 +169,26 @@ export async function seasonScheduleSettings(
   return { seasonId, ...found }
 }
 
+/** The lock a league's schedule setup and its seasons' settings are written under. */
+function setupLock(leagueId: string | null, seasonId: string): string {
+  return leagueId == null
+    ? `schedule-settings:${seasonId}`
+    : `schedule-setup:${leagueId}`
+}
+
 export async function saveSeasonScheduleSettings(
+  db: Db,
+  seasonId: string,
+  settings: ScheduleSettings
+): Promise<SeasonScheduleSettings> {
+  const season = await seasonRow(db, seasonId)
+  return await atomic(db, async trx => {
+    await lockKeys(trx, [setupLock(season.league_id, seasonId)])
+    return await writeSeasonScheduleSettings(trx, seasonId, settings)
+  })
+}
+
+async function writeSeasonScheduleSettings(
   db: Db,
   seasonId: string,
   settings: ScheduleSettings
@@ -181,6 +223,12 @@ export async function saveSeasonScheduleSettings(
   const fieldIds = live
     .filter(field => field.sizes.includes(settings.fieldSize))
     .map(field => field.id)
+  const windows = boundedSeasonWindows(
+    settings.windows,
+    settings.startsOn,
+    settings.endsOn
+  )
+  const dates = windowRange(windows) ?? settings
   const values = {
     field_ids: fieldIds,
     field_size: settings.fieldSize,
@@ -198,10 +246,11 @@ export async function saveSeasonScheduleSettings(
     ...(settings.preferGameOn === undefined
       ? {}
       : { prefer_game_on: settings.preferGameOn }),
-    starts_on: settings.startsOn,
-    ends_on: settings.endsOn,
+    // A season schedules only within its time windows, so they set its dates.
+    starts_on: dates.startsOn,
+    ends_on: dates.endsOn,
     blackouts: settings.blackouts,
-    windows: JSON.stringify(settings.windows),
+    windows: JSON.stringify(windows),
     updated_at: new Date()
   }
   await db
@@ -512,6 +561,20 @@ export async function saveScheduleSetup(
   choice: ScheduleSetupChoice,
   clock: Clock = realClock
 ): Promise<ScheduleSetup> {
+  // One transaction under the league's lock: the seasons lose a dropped
+  // field together with the setup row, and no other save lands in between.
+  return await atomic(db, async trx => {
+    await lockKeys(trx, [setupLock(leagueId, '')])
+    return await writeScheduleSetup(trx, leagueId, choice, clock)
+  })
+}
+
+async function writeScheduleSetup(
+  db: Db,
+  leagueId: string,
+  choice: ScheduleSetupChoice,
+  clock: Clock
+): Promise<ScheduleSetup> {
   if (choice.seasonIds != null && choice.seasonIds.length > 0) {
     const own = await db
       .selectFrom('seasons')
@@ -567,10 +630,14 @@ export async function saveScheduleSetup(
           )
             .filter(field => !owned.includes(field.venue_id))
             .map(field => field.id)
-    for (const id of dropped)
+    if (dropped.length > 0)
       await db
         .updateTable('season_schedule_settings')
-        .set({ field_ids: sql<string[]>`array_remove(field_ids, ${id})` })
+        .set({
+          field_ids: sql<
+            string[]
+          >`array(select id from unnest(field_ids) as id where id <> all(${dropped}::text[]))`
+        })
         .where(
           'season_id',
           'in',

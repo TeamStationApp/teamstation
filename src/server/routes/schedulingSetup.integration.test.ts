@@ -287,13 +287,18 @@ describe('scheduling setup routes', function () {
       saved: true,
       settings: {
         ...SETTINGS,
-        windows: [SETTINGS.windows[1], SETTINGS.windows[0]]
+        // Windows sent without end dates end at the next one and at the
+        // season's last day; the season's dates are those they cover.
+        windows: [
+          { ...SETTINGS.windows[1], until: '2027-03-31' },
+          { ...SETTINGS.windows[0], until: '2027-05-31' }
+        ]
       }
     })
-    // A period's end date is kept, and read back.
+    // A period's end date is kept, and read back, and dates the season.
     const ended = [
       { ...SETTINGS.windows[1], until: '2027-03-20' },
-      SETTINGS.windows[0]
+      { ...SETTINGS.windows[0], until: '2027-04-30' }
     ]
     expect(
       await json(
@@ -302,7 +307,11 @@ describe('scheduling setup routes', function () {
     ).deep.nested.include({ 'settings.windows': ended })
     expect(
       await json(await f.h.request('GET', path, undefined, 101))
-    ).deep.nested.include({ 'settings.windows': ended })
+    ).deep.nested.include({
+      'settings.windows': ended,
+      'settings.startsOn': '2027-03-01',
+      'settings.endsOn': '2027-04-30'
+    })
     expect(
       await json(
         await f.h.request('PUT', path, { ...SETTINGS, windows: [] }, 101)

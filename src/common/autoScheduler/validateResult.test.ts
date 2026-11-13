@@ -80,6 +80,46 @@ describe('device result summaries', () => {
       })
     ).throws('too many field days')
   })
+  it('counts only the days a time window covers toward the field-day limit', () => {
+    const fields = Array.from({ length: 28 }, (_, i) =>
+      field({ id: `fld_${i}` })
+    )
+    const spring = season({
+      fieldIds: fields.map(each => each.id),
+      startsOn: '2027-01-01',
+      endsOn: '2027-12-31',
+      windows: [
+        {
+          from: '2027-04-01',
+          until: '2027-04-30',
+          hours: hoursOn([6], '08:00', '18:00')
+        }
+      ]
+    })
+    const empty = { games: [], fairness: [], reasons: [], unmet: [], score: [] }
+    expect(() =>
+      summarizeResult(input({ seasons: [spring], fields }), {
+        options: [empty],
+        blocking: null
+      })
+    ).not.throws()
+    const year = season({
+      ...spring.settings,
+      windows: [
+        {
+          ...spring.settings.windows[0],
+          from: '2027-01-01',
+          until: '2027-12-31'
+        }
+      ]
+    })
+    expect(() =>
+      summarizeResult(input({ seasons: [year], fields }), {
+        options: [empty],
+        blocking: null
+      })
+    ).throws('shorter time windows')
+  })
   it('derives fairness from placements and rejects games outside time windows', () => {
     const run = input({
       seasons: [season({ regularGames: 1, exhibitionGames: 0 })]

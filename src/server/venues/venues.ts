@@ -2,11 +2,13 @@ import { type Kysely, type Selectable, sql } from 'kysely'
 
 import {
   badRequest,
+  conflict,
   notFound,
   unavailable,
   unsupportedMedia
 } from '../../common/errors'
 import { periodOn } from '../../common/fieldAvailability'
+import { gameCalendarDay } from '../../common/gameTime'
 import { calendarDateText } from '../../common/groupCreation'
 import { makeId } from '../../common/ids'
 import {
@@ -22,6 +24,7 @@ import {
 } from '../../common/venues'
 import {
   asWindowPeriods,
+  LEGACY_WINDOW_START,
   weeklyWindow,
   type WindowPeriod
 } from '../../common/windowPeriods'
@@ -76,6 +79,21 @@ type VenueRow = Selectable<VenuesTable>
 type FieldRow = Selectable<VenueFieldsTable>
 
 /**
+ * Whether stored windows say more than one week of hours, which a legacy
+ * hours write would lose.
+ */
+function dated(raw: unknown): boolean {
+  if (raw == null) return false
+  const windows = asWindowPeriods(raw)
+  return !(
+    windows.length === 0 ||
+    (windows.length === 1 &&
+      windows[0].from === LEGACY_WINDOW_START &&
+      windows[0].until == null)
+  )
+}
+
+/**
  * The weekly hours in effect on a date, for readers of the legacy hours
  * columns, which hold one week: none on a date no window covers.
  */
@@ -94,7 +112,12 @@ export function datesOf(raw: unknown): string[] {
 }
 
 /** A field as the API returns it. */
-export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
+export function fieldOf(
+  row: FieldRow,
+  media: MediaContext,
+  today?: string
+): VenueField {
+  const windows = row.windows == null ? null : asWindowPeriods(row.windows)
   return {
     id: row.id,
     name: row.name,
@@ -105,8 +128,14 @@ export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
         : { latitude: row.pin_latitude, longitude: row.pin_longitude },
     startsOn: calendarDateText(row.starts_on),
     endsOn: calendarDateText(row.ends_on),
-    hours: row.hours == null ? null : hoursOf(row.hours),
-    windows: row.windows == null ? null : asWindowPeriods(row.windows),
+    // Legacy readers get the week in effect today, read from the windows.
+    hours:
+      windows != null && today != null
+        ? hoursIn(windows, today)
+        : row.hours == null
+          ? null
+          : hoursOf(row.hours),
+    windows,
     blackouts: datesOf(row.blackouts),
     photoUrl: imageUrl(media.space, row.photo_path, 640),
     photoLargeUrl: imageUrl(media.space, row.photo_path, 1280)
@@ -114,15 +143,22 @@ export function fieldOf(row: FieldRow, media: MediaContext): VenueField {
 }
 
 /** A venue's defaults, for availability and the API. */
-export function venueDefaults(row: VenueRow): {
+export function venueDefaults(
+  row: VenueRow,
+  today?: string
+): {
   defaultWindows: WindowPeriod[]
   defaultHours: WeekdayHours[]
   defaultBlackouts: string[]
   timezone: string
 } {
+  const defaultWindows = asWindowPeriods(row.default_windows)
   return {
-    defaultHours: hoursOf(row.default_hours),
-    defaultWindows: asWindowPeriods(row.default_windows),
+    defaultHours:
+      today == null
+        ? hoursOf(row.default_hours)
+        : hoursIn(defaultWindows, today),
+    defaultWindows,
     defaultBlackouts: datesOf(row.default_blackouts),
     timezone: row.timezone
   }
@@ -166,6 +202,7 @@ export async function venueDetail(
     await settle(trx, venueId, clock)
   })
   const venue = await venueRow(db, venueId)
+  const today = gameCalendarDay(clock.now().toISOString(), venue.timezone)
   const fields = await db
     .selectFrom('venue_fields')
     .selectAll()
@@ -185,12 +222,12 @@ export async function venueDetail(
     name: venue.name,
     address: venue.address,
     sizeSwitchMinutes: venue.size_switch_minutes,
-    ...venueDefaults(venue),
+    ...venueDefaults(venue, today),
     photoUrl: imageUrl(services.media.space, venue.photo_path, 640),
     photoLargeUrl: imageUrl(services.media.space, venue.photo_path, 1280),
     owners,
     claims,
-    fields: fields.map(field => fieldOf(field, services.media)),
+    fields: fields.map(field => fieldOf(field, services.media, today)),
     rights: await venueRights(db, actor, venueId, clock),
     map: mapAt(venue, services)
   }
@@ -638,6 +675,14 @@ export async function updateVenue(
   await atomic(db, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
+    if (
+      changes.defaultHours != null &&
+      changes.defaultWindows === undefined &&
+      dated((await venueRow(trx, venueId)).default_windows)
+    )
+      throw conflict(
+        'This venue has dated time windows. Update the app to change them.'
+      )
     await trx
       .updateTable('venues')
       .set({
@@ -834,7 +879,15 @@ export async function updateField(
   await atomic(db, async trx => {
     await lockKeys(trx, [`venue:${venueId}`])
     await requireVenueEditor(trx, actor, venueId, clock)
-    await liveField(trx, venueId, fieldId)
+    const current = await liveField(trx, venueId, fieldId)
+    if (
+      changes.hours != null &&
+      changes.windows === undefined &&
+      dated(current.windows)
+    )
+      throw conflict(
+        'This field has dated time windows. Update the app to change them.'
+      )
     const values = fieldValues(changes, calendarDateText(clock.now())!)
     if (Object.keys(values).length === 0 && photo == null) return
     await trx

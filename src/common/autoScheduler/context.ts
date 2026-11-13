@@ -110,17 +110,20 @@ export class InvalidSubmission extends Error {
 export function requireBoundedFieldDays(input: EngineInput): void {
   let fieldDays = 0
   for (const season of input.seasons) {
-    const days = Math.max(
-      0,
-      dayNumber(season.settings.endsOn) -
-        dayNumber(season.settings.startsOn) +
-        1
-    )
-    const fields = seasonFields(input.fields, season.settings).length
-    fieldDays += days * fields
+    const { startsOn, endsOn, windows } = season.settings
+    // Only days a time window with hours covers can hold a game.
+    let days = 0
+    for (const period of windows) {
+      if (period.hours.length === 0) continue
+      const from = period.from > startsOn ? period.from : startsOn
+      const until =
+        period.until != null && period.until < endsOn ? period.until : endsOn
+      days += Math.max(0, dayNumber(until) - dayNumber(from) + 1)
+    }
+    fieldDays += days * seasonFields(input.fields, season.settings).length
     if (!Number.isFinite(fieldDays) || fieldDays > 10000)
       throw new InvalidSubmission(
-        'This scheduling run spans too many field days; select fewer seasons or shorter date ranges'
+        'This scheduling run spans too many field days; choose fewer seasons or fields, or shorter time windows'
       )
   }
 }

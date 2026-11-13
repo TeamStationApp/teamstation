@@ -149,6 +149,47 @@ export function copyWindowPeriods(
   })
 }
 
+/**
+ * A season's time windows, each with an end date. Every window a season
+ * schedules in has one. Windows without, saved before that or sent by an
+ * older client with the season's dates around them, mean what they always
+ * did: each ends when the next starts, and all of them lie within the
+ * dates, so they are cut to them.
+ */
+export function boundedSeasonWindows(
+  windows: readonly WindowPeriod[],
+  startsOn: string,
+  endsOn: string
+): WindowPeriod[] {
+  if (windows.every(period => period.until != null)) return [...windows]
+  const sorted = [...windows].sort((a, b) => a.from.localeCompare(b.from))
+  return sorted.flatMap((period, index): WindowPeriod[] => {
+    const next = sorted[index + 1]
+    const end = period.until ?? (next == null ? endsOn : addDays(next.from, -1))
+    const from = period.from < startsOn ? startsOn : period.from
+    const until = end > endsOn ? endsOn : end
+    return from > until ? [] : [{ ...period, from, until }]
+  })
+}
+
+/**
+ * The dates a season schedules in: its first window's start to its last
+ * window's end; null with no windows.
+ */
+export function windowRange(
+  windows: readonly WindowPeriod[]
+): { startsOn: string; endsOn: string } | null {
+  if (windows.length === 0) return null
+  let startsOn = windows[0].from
+  let endsOn = windows[0].until ?? windows[0].from
+  for (const period of windows) {
+    if (period.from < startsOn) startsOn = period.from
+    const end = period.until ?? period.from
+    if (end > endsOn) endsOn = end
+  }
+  return { startsOn, endsOn }
+}
+
 /** A whole set of settings, as a season admin saves it. */
 export function asScheduleSettings(raw: unknown): ScheduleSettings {
   if (!isRecord(raw)) throw new TypeError('Choose the schedule settings')
