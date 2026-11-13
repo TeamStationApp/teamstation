@@ -2,6 +2,7 @@ import { MAX_ASK_OPTIONS } from '../../common/api'
 import {
   type BallInPlayAction,
   cleanAction,
+  mapPlayers,
   type Problem,
   type ScoringAction,
   spokenAction,
@@ -1594,8 +1595,9 @@ export class Interpretation {
 
   /**
    * A player the model wrote by his whole name, as GAME gives it, in place
-   * of his tag: his tag, when no one else has that name. Not for a roster
-   * command, which may name a player by name on purpose.
+   * of his tag: his tag, when no one else has that name. Only in the fields
+   * that name a player: a player written "B" leaves a ball's call "B" alone.
+   * Not for a roster command, which may name a player by name on purpose.
    */
   private withTagsForNames(
     args: Record<string, unknown> | null
@@ -1608,12 +1610,7 @@ export class Interpretation {
         .map(([tag]) => tag)
       return tags.length === 1 ? tags[0] : value
     }
-    return Object.fromEntries(
-      Object.entries(args).map(([key, value]) => [
-        key,
-        Array.isArray(value) ? value.map(tagOf) : tagOf(value)
-      ])
-    )
+    return mapPlayers(args, tagOf)
   }
 
   /**

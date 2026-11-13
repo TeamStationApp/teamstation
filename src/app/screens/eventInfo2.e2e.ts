@@ -251,10 +251,21 @@ async function main(): Promise<void> {
       )
         return
       const request = response.request()
+      // A body that never ends, as a page left for another holds its open
+      // requests, is logged as unavailable rather than waited for.
+      const within = async <T>(read: Promise<T>, fallback: T): Promise<T> =>
+        await Promise.race([
+          read.catch(() => fallback),
+          new Promise<T>(resolve =>
+            setTimeout(() => {
+              resolve(fallback)
+            }, 10000)
+          )
+        ])
       network.push(
         (async () => {
-          const body = await response.text().catch(() => '<unavailable>')
-          const posted = await request.fetchPostData().catch(() => undefined)
+          const body = await within(response.text(), '<unavailable>')
+          const posted = await within(request.fetchPostData(), undefined)
           const path = new URL(response.url())
           const log = `$ browser ${request.method()} ${path.pathname}${path.search}\n${posted ?? ''}\n${response.status()} ${body}\n`
           appendFileSync(networkLog, log)
@@ -1745,6 +1756,7 @@ async function main(): Promise<void> {
       'Team schedule player-only counts and compact guardian RSVP modal persist; general schedule excludes the controls'
     )
     await Promise.all(network)
+    console.log('Network log written; collecting browser coverage')
     const requireCoverage = createRequire(join(process.cwd(), 'package.json'))
     const convert = requireCoverage('v8-to-istanbul')
     const map = requireCoverage('istanbul-lib-coverage').createCoverageMap({})
