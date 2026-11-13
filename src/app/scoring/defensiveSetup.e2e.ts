@@ -1175,7 +1175,7 @@ describe('current defensive scoring setup browser', function () {
   })
   it('E9 preserves peer-saved pitches through warning and field roster mutations', async () => {
     for (const route of ['lineup', 'defender'] as const) {
-      const { page, peer, unexpected } = await open({ awayCount: 8 })
+      const { page, peer, unexpected, saves } = await open({ awayCount: 8 })
       try {
         if (route === 'defender') await tapSlot(page, 'P')
         await peer([
@@ -1186,7 +1186,32 @@ describe('current defensive scoring setup browser', function () {
           await click(page, 'Set Lineup')
           // Save Rosters lights for a change: the ninth batter.
           await click(page, `Add ${roster('away')[8].shortName} to Lineup`)
-          await click(page, 'Save Rosters')
+          try {
+            await click(page, 'Save Rosters')
+          } catch (error) {
+            // What the sheet showed, and every save, when it did not light.
+            const sheet = await page.evaluate(() => ({
+              save: [
+                ...document.querySelectorAll('[aria-label="Save Rosters"]')
+              ].map(n => ({
+                disabled: n.getAttribute('aria-disabled'),
+                rect: (({ x, y, width, height }) => [x, y, width, height])(
+                  n.getBoundingClientRect()
+                )
+              })),
+              lineup: [
+                ...document.querySelectorAll('[data-roster-target^="lineup-"]')
+              ].map(n => n.textContent),
+              alerts: [...document.querySelectorAll('[role="alert"]')].map(
+                n => n.textContent
+              ),
+              viewport: [innerWidth, innerHeight]
+            }))
+            throw new Error(
+              `Save Rosters: ${JSON.stringify({ sheet, saves }, undefined, 1)}`,
+              { cause: error }
+            )
+          }
         } else await choose(page, 'P', 1)
         await page.waitForSelector('[aria-label*="2 balls"]')
         await new Promise(resolve => setTimeout(resolve, 150))
