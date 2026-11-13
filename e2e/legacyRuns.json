@@ -3328,5 +3328,17 @@
       "env": {"TS_UI_SCOPE": "playback"},
       "needs": "hevc"
     }
+  ],
+  "src/app/scoring/scoring.e2e.ts": [
+    {
+      "label": "default",
+      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing", "--invert"],
+      "needs": "web"
+    },
+    {
+      "label": "frames",
+      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing"],
+      "needs": "gpu"
+    }
   ]
 }
