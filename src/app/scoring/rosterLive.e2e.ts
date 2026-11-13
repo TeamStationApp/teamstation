@@ -499,13 +499,18 @@ describe('two scorekeepers on one game', function () {
       console.log(`      held: ${held.length} API requests still unanswered`)
       expect(held.length).greaterThan(0)
     } finally {
-      a.page.off('request', hold)
       // A held request stays open after interception ends, and the next
-      // page's wait for quiet sees it: each is failed, as a dropped
-      // connection would be.
+      // page's wait for quiet sees it: each held one goes on to the server
+      // now, and so does any that comes while interception is switched off.
+      a.page.off('request', hold)
+      const pass = (request: HTTPRequest): void => {
+        request.continue().catch(() => undefined)
+      }
+      a.page.on('request', pass)
       for (const { request } of held)
-        await request.abort('connectionfailed').catch(() => undefined)
+        await request.continue().catch(() => undefined)
       await a.page.setRequestInterception(false)
+      a.page.off('request', pass)
     }
     // Offline: the same, with nothing to reach.
     await a.scoreGame(fixture.gameId)

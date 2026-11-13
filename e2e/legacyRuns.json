@@ -7,7 +7,8 @@
       ],
       "needs": "web",
       "env": {
-        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}"
+        "TS_CHAT_ARTIFACTS": "{legacy:chat.e2e}",
+        "CHAT_HISTORY_DUMPIO": "1"
       }
     },
     {
@@ -3332,12 +3333,12 @@
   "src/app/scoring/scoring.e2e.ts": [
     {
       "label": "default",
-      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing", "--invert"],
+      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing|finishes coordinated hit flight|requires a grab and cancels constrained drags", "--invert"],
       "needs": "web"
     },
     {
       "label": "frames",
-      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing"],
+      "args": ["--grep", "scrolls roster and lineup rows before the hold|places a fielder on the rendered field|real seven-second correction window|on the live field|pitch animation, hit flight and celebration timing|finishes coordinated hit flight|requires a grab and cancels constrained drags"],
       "needs": "gpu"
     }
   ],
