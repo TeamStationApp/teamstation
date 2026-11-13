@@ -29,7 +29,8 @@ export function TimeWindowsEditor({
   today = calendarDateText(new Date())!,
   endDate,
   label = 'Time Windows',
-  openDefault = VENUE_OPEN_DEFAULT
+  openDefault = VENUE_OPEN_DEFAULT,
+  requireEnd = false
 }: {
   value: WindowPeriod[]
   onChange: (windows: WindowPeriod[]) => void
@@ -38,11 +39,18 @@ export function TimeWindowsEditor({
   endDate?: string
   label?: string
   openDefault?: { start: string; end: string }
+  /**
+   * Every window ends on a date, as a season's do: one added without an end
+   * runs to the next window, or to `endDate` (today at the earliest), and
+   * an end can be moved but not taken away.
+   */
+  requireEnd?: boolean
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [choosing, setChoosing] = useState<Choosing | null>(null)
   const [error, setError] = useState('')
-  const change = (windows: WindowPeriod[]): void => {
+  const change = (changed: WindowPeriod[]): void => {
+    const windows = requireEnd ? ended(changed) : changed
     try {
       asWindowPeriods(windows)
       setError('')
@@ -51,6 +59,14 @@ export function TimeWindowsEditor({
       setError(`${(failure as Error).message}.`)
     }
   }
+  const ended = (windows: WindowPeriod[]): WindowPeriod[] =>
+    windows.map((period, index) => {
+      if (period.until != null) return period
+      const next = windows[index + 1]
+      const last = endDate != null && endDate > today ? endDate : today
+      const until = next == null ? last : addDays(next.from, -1)
+      return { ...period, until: until < period.from ? period.from : until }
+    })
   const dateName = (day: string): string =>
     day === LEGACY_WINDOW_START ? 'Existing hours' : dateLabel(day)
   const chosen =
@@ -110,7 +126,7 @@ export function TimeWindowsEditor({
                   ? dateName(period.until)
                   : index < value.length - 1
                     ? 'When the next period begins'
-                    : endDate == null
+                    : endDate == null || requireEnd
                       ? 'No end date'
                       : 'End of season'
               }
@@ -188,7 +204,7 @@ export function TimeWindowsEditor({
                 )
             }}
             other={
-              choosing !== 'add' && choosing.end === 'until'
+              choosing !== 'add' && choosing.end === 'until' && !requireEnd
                 ? {
                     label: 'No end date',
                     onPress: () => {

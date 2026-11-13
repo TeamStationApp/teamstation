@@ -288,7 +288,7 @@ async function main(): Promise<void> {
     const prepared = b.page.waitForResponse(
       response =>
         response.request().method() === 'POST' &&
-        response.url().endsWith('/schedule-previews') &&
+        response.url().endsWith('/schedule-previews/preparations') &&
         response.status() === 201
     )
     const completed = b.page.waitForResponse(

@@ -112,10 +112,16 @@ async function main(): Promise<void> {
       fieldIds: [state.fieldId]
     })
     const build = async (): Promise<SchedulePreview> =>
-      await api(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-        mode: 'full',
-        existing: 'workAround'
-      })
+      await api(
+        fx,
+        101,
+        'POST',
+        `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+        {
+          mode: 'full',
+          existing: 'workAround'
+        }
+      )
     const preview = await build()
     expect(preview.options[0].games.length).greaterThan(0)
     const games = preview.options[0].games

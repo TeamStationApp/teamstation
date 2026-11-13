@@ -318,6 +318,7 @@ export function ScheduleSeasonScreen({
           value={settings.windows}
           today={settings.startsOn}
           endDate={settings.endsOn}
+          requireEnd
           disabled={busy}
           onChange={windows => {
             setWindows(windows, 'Time windows saved.')

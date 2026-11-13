@@ -1741,15 +1741,21 @@ async function e10(run: Run): Promise<void> {
     ...SEASON_A_SETTINGS,
     regularGames: 6
   })
-  await curl(run, lines, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-    mode: 'full'
-  })
+  await curl(
+    run,
+    lines,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+    {
+      mode: 'full'
+    }
+  )
   trace('E10 const built = JSON.parse')
   const answer = await curl(
     run,
     lines,
     'POST',
-    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
     { mode: 'full', existing: 'workAround' }
   )
   const preparation = asPreparedPreview(
@@ -1777,7 +1783,7 @@ async function e10(run: Run): Promise<void> {
     run,
     lines,
     'POST',
-    `/leagues/${fx.f.leagueA}/schedule-previews`,
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
     { mode: 'partial', fromPreviewId: first.id, option: 0 }
   )
   const nextPreparation = asPreparedPreview(
@@ -1827,10 +1833,16 @@ async function e11(run: Run): Promise<void> {
   const built = await api<{
     id: string
     options: Array<{ games: Array<{ key: string }> }>
-  }>(fx, 101, 'POST', `/leagues/${fx.f.leagueA}/schedule-previews`, {
-    mode: 'full',
-    existing: 'replace'
-  })
+  }>(
+    fx,
+    101,
+    'POST',
+    `/leagues/${fx.f.leagueA}/schedule-previews/preparations`,
+    {
+      mode: 'full',
+      existing: 'replace'
+    }
+  )
   const count = built.options[0].games.length
   expect(count).greaterThan(1)
   const admin = await run.session('autoScheduler-e11', 101)

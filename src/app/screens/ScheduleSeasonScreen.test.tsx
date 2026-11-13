@@ -440,39 +440,32 @@ describe('a season of the next schedule', () => {
     expect(text()).includes('no longer part of the league')
   })
 
-  it('adds window periods, sets their hours, and removes one', async () => {
+  it('adds window periods with end dates, sets their hours, and removes one', async () => {
     const fake = fakeClient(SEASON)
     await show(fake.client)
     expect(text()).includes('No time windows. No games can be scheduled.')
     await tapText('Add another time window')
     await settle(20)
+    // A season's first window runs to its last day; every window ends.
     expect(fake.saves.at(-1)?.windows).deep.equals([
-      { from: '2027-03-01', hours: [] }
+      { from: '2027-03-01', until: '2027-07-31', hours: [] }
     ])
     await press('Windows from Monday, March 1, 2027: Saturday, Closed')
     await tapText('Open')
     await tapText('Done')
     await settle(20)
+    const open = [{ weekday: 6, start: '17:00', end: '21:00' }]
     expect(fake.saves.at(-1)?.windows).deep.equals([
-      {
-        from: '2027-03-01',
-        hours: [{ weekday: 6, start: '17:00', end: '21:00' }]
-      }
+      { from: '2027-03-01', until: '2027-07-31', hours: open }
     ])
     expect(text()).includes('Time windows saved.')
     await tapText('Add another time window')
     await chooseCalendarDate('2027-06-01')
     await settle(20)
-    // The new period starts as a copy of the one before it.
+    // The new period starts as a copy of the one it splits.
     expect(fake.saves.at(-1)?.windows).deep.equals([
-      {
-        from: '2027-03-01',
-        hours: [{ weekday: 6, start: '17:00', end: '21:00' }]
-      },
-      {
-        from: '2027-06-01',
-        hours: [{ weekday: 6, start: '17:00', end: '21:00' }]
-      }
+      { from: '2027-03-01', until: '2027-05-31', hours: open },
+      { from: '2027-06-01', until: '2027-07-31', hours: open }
     ])
     await tapText('Add another time window')
     await chooseCalendarDate('2027-06-01')
@@ -501,33 +494,35 @@ describe('a season of the next schedule', () => {
     expect(fake.saves.at(-1)?.windows).deep.equals([
       { from: '2027-03-01', until: '2027-04-14', hours: EVENINGS },
       { from: '2027-04-15', until: '2027-05-31', hours: EVENINGS },
-      PERIODS[1]
+      // An older open window gets the season's last day as its end.
+      { ...PERIODS[1], until: '2027-07-31' }
     ])
     expect(text()).includes('Mar 1 – Apr 14')
     expect(text()).includes('Apr 15 – May 31')
     expect(text()).includes('Time windows saved.')
   })
 
-  it('gives a period an end date, then takes it away again', async () => {
+  it('moves a period’s end, and has no way to leave one without an end', async () => {
+    const bounded = [
+      { from: '2027-03-01', until: '2027-05-31', hours: EVENINGS },
+      { from: '2027-06-01', until: '2027-07-31', hours: LATER }
+    ]
     const fake = fakeClient({
       ...SEASON,
-      settings: { ...SEASON.settings, windows: PERIODS }
+      settings: { ...SEASON.settings, windows: bounded }
     })
     await show(fake.client)
-    expect(text()).includes('From Mar 1')
-    expect(text()).includes('From Jun 1')
-    // With no end date, a period runs until the next, and the last to the
-    // season's end.
-    expect(text()).includes('When the next period begins')
-    expect(text()).includes('End of season')
+    expect(text()).includes('Mar 1 – May 31')
+    expect(text()).includes('Jun 1 – Jul 31')
     await tapLabel('Change the end of Windows from Monday, March 1, 2027')
-    // The calendar opens on the day before the next period.
     expect(hasLabel('Choose 2027-05-31')).equals(true)
+    // A season's window always ends.
+    expect(text()).not.includes('No end date')
     await chooseCalendarDate('2027-05-20')
     await settle(20)
     expect(fake.saves.at(-1)?.windows).deep.equals([
       { from: '2027-03-01', until: '2027-05-20', hours: EVENINGS },
-      PERIODS[1]
+      bounded[1]
     ])
     expect(text()).includes('Mar 1 – May 20')
     expect(text()).includes('Thursday, May 20, 2027')
@@ -545,21 +540,14 @@ describe('a season of the next schedule', () => {
       'End each period of game windows on or after the day it starts.'
     )
     expect(fake.saves).length(1)
-    await tapLabel('Change the end of Windows from Monday, March 1, 2027')
-    await tapText('No end date')
-    await settle(20)
-    expect(fake.saves.at(-1)?.windows).deep.equals(PERIODS)
-    expect(Object.keys(fake.saves.at(-1)!.windows[0])).not.includes('until')
-    expect(text()).includes('From Mar 1')
-    expect(text()).includes('Time windows saved.')
-    // The last period's calendar opens on the season's last day.
+    // The last period's calendar opens on its own last day.
     await tapLabel('Change the end of Windows from Tuesday, June 1, 2027')
     expect(hasLabel('Choose 2027-07-31')).equals(true)
     await tapText('Cancel')
-    expect(fake.saves).length(2)
+    expect(fake.saves).length(1)
   })
 
-  it('moves a period’s start, and names a date outside the season’s year with its year', async () => {
+  it('moves a period’s start within its end, and names a date outside the season’s year with its year', async () => {
     const fake = fakeClient({
       ...SEASON,
       settings: {
@@ -581,15 +569,16 @@ describe('a season of the next schedule', () => {
       '2027-12-20'
     ])
     expect(text()).includes('Time windows saved.')
-    // A start past the next period's moves it after that one.
+    // The window that had no end now ends before the next one starts.
+    expect(fake.saves.at(-1)?.windows[0].until).equals('2027-12-19')
+    // A start past its own end is refused.
     await tapLabel('Change the start of Windows from Monday, March 8, 2027')
     await chooseCalendarDate('2028-01-20')
     await settle(20)
-    expect(fake.saves.at(-1)?.windows.map(period => period.from)).deep.equals([
-      '2027-12-20',
-      '2028-01-20'
-    ])
-    expect(text()).includes('From Jan 20, 2028')
+    expect(text()).includes(
+      'End each period of game windows on or after the day it starts.'
+    )
+    expect(fake.saves).length(1)
   })
 
   it('copies the game windows of another of the league’s seasons, moved to this one', async () => {
