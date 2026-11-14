@@ -1,9 +1,13 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
+import { PNG } from 'pngjs'
 
+import { drawnPicture } from '../clockReader.test'
 import {
   ChromeSurface,
+  clocksFromFrames,
   compareReads,
+  FRAME_SCRIPT,
   pageBlock,
   type PageRead,
   parsePageRead,
@@ -307,6 +311,37 @@ describe('the Chrome surface', function () {
         (e: unknown) => (e as Error).message
       )
     ).equals('chrome: the full-screen player is not up')
+  })
+
+  it("reads each tile's clock from the frame the page drew of its video", async function () {
+    const frame = drawnPicture('SYNTHB', 2)
+    const image = new PNG({ width: frame.width, height: frame.height })
+    image.data.set(frame.data)
+    const dataUrl = `data:image/png;base64,${PNG.sync.write(image).toString('base64')}`
+    const page = [
+      { angle: 'SynthB', frame: dataUrl },
+      { angle: 'SynthC', frame: null }
+    ]
+    const clocks = clocksFromFrames(JSON.stringify(page))
+    expect(clocks[0].reading).deep.include({ label: 'SYNTHB', confidence: 1 })
+    expect(clocks[1]).deep.equals({ angle: 'SynthC', reading: null })
+    const { device } = fakeDevice()
+    const surface = new ChromeSurface({
+      device,
+      page: {
+        evaluate: async (script: string) => {
+          expect(script).equals(FRAME_SCRIPT)
+          return page
+        }
+      },
+      gameUrl: 'https://app.example.test/games/game_0000',
+      sleep: noSleep
+    })
+    expect((await surface.readClocks()).map(clock => clock.angle)).deep.equals([
+      'SynthB',
+      'SynthC'
+    ])
+    expect(FRAME_SCRIPT).contains("toDataURL('image/png')")
   })
 
   it('finds the block of videos only on a page that says its size', function () {

@@ -1,6 +1,8 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
+import { PNG } from 'pngjs'
 
+import { drawnPicture } from '../clockReader.test'
 import { type Call, fakeDevice, jsonFixture, noSleep, png } from './fakes.test'
 import {
   barFraction,
@@ -404,6 +406,55 @@ describe('the native app surface', function () {
       .map(call => call[1] as Record<string, number>)
     expect(swipes[0].endX).equals(120)
     expect(swipes[1].endX).equals(2280)
+  })
+
+  it("reads each tile's burned-in clock from one screenshot, by its bounds in points", async function () {
+    // A 2× screenshot of a 640 × 360 point screen whose one tile is a
+    // synthetic frame drawn at half size, from (0, 0).
+    const frame = drawnPicture('SYNTHA', 2)
+    const shot = new PNG({ width: 1280, height: 720 })
+    shot.data.fill(24)
+    for (let y = 0; y < frame.height; y++) {
+      for (let x = 0; x < frame.width; x++) {
+        for (const [dx, dy] of [
+          [0, 0],
+          [1, 0],
+          [0, 1],
+          [1, 1]
+        ]) {
+          const to = ((y * 2 + dy) * 1280 + x * 2 + dx) * 4
+          shot.data.set(
+            frame.data.subarray(
+              (y * frame.width + x) * 4,
+              (y * frame.width + x) * 4 + 4
+            ),
+            to
+          )
+        }
+      }
+    }
+    const screen: HierarchyNode = {
+      bounds: { x: 0, y: 0, width: 640, height: 360 },
+      children: [
+        {
+          text: 'SynthA angle',
+          bounds: { x: 0, y: 0, width: 640, height: 360 }
+        }
+      ]
+    }
+    const { surface } = appSurface({
+      hierarchy: screen,
+      screenshot: PNG.sync.write(shot)
+    })
+    const clocks = await surface.readClocks()
+    expect(clocks).length(1)
+    expect(clocks[0].angle).equals('SynthA')
+    expect(clocks[0].reading).deep.include({
+      label: 'SYNTHA',
+      confidence: 1
+    })
+    const none = appSurface({ hierarchy: {}, screenshot: png(10, 10) })
+    expect(await none.surface.readClocks()).deep.equals([])
   })
 
   it('probes each tile from two screenshots, with notices, bar and foreground', async function () {

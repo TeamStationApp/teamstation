@@ -1,7 +1,8 @@
 import type { MaestroDevice } from '../../../core/maestro'
+import { readClock, type TileClock } from '../clockReader'
 import type { ProbeTile } from '../soakRecords'
 import { playerBlock } from './hierarchy'
-import type { Rect } from './regions'
+import { decodePng, type Rect } from './regions'
 import {
   DEFAULT_SKIPS,
   LABELS,
@@ -84,6 +85,60 @@ export const READ_SCRIPT = `(() => {
     viewport: { width: window.innerWidth, height: window.innerHeight }
   })
 })()`
+
+/** The size each tile's video is drawn at for its clock: half the synthetic frame. */
+export const FRAME_W = 640
+export const FRAME_H = 360
+
+/**
+ * Runs in the page: each tile's current video frame, drawn into a canvas and
+ * returned as a PNG data URL, so its burned-in clock is read without the
+ * screenshot's scaling. A tile with no video, or one not yet decoding, has none.
+ */
+export const FRAME_SCRIPT = `(() => {
+  const videos = [...document.querySelectorAll('video')]
+  const centreIn = (r, t) => {
+    const x = r.left + r.width / 2, y = r.top + r.height / 2
+    return x >= t.left && x <= t.right && y >= t.top && y <= t.bottom
+  }
+  const canvas = document.createElement('canvas')
+  canvas.width = ${FRAME_W}
+  canvas.height = ${FRAME_H}
+  const context = canvas.getContext('2d')
+  return JSON.stringify([...document.querySelectorAll('[aria-label$=" angle"]')].map(el => {
+    const t = el.getBoundingClientRect()
+    const v = el.querySelector('video') || videos.find(v => centreIn(v.getBoundingClientRect(), t)) || null
+    let frame = null
+    if (v && v.readyState >= 2) {
+      try {
+        context.drawImage(v, 0, 0, ${FRAME_W}, ${FRAME_H})
+        frame = canvas.toDataURL('image/png')
+      } catch (error) {
+        frame = null
+      }
+    }
+    return { angle: el.getAttribute('aria-label').replace(/ angle$/, ''), frame }
+  }))
+})()`
+
+/** The clocks in the frames FRAME_SCRIPT returned. */
+export function clocksFromFrames(raw: unknown): TileClock[] {
+  const frames = (typeof raw === 'string' ? JSON.parse(raw) : raw) as Array<{
+    angle: string
+    frame: string | null
+  }>
+  return frames.map(({ angle, frame }) => {
+    if (frame == null) return { angle, reading: null }
+    const png = Buffer.from(
+      frame.replace(/^data:image\/png;base64,/, ''),
+      'base64'
+    )
+    return {
+      angle,
+      reading: readClock(decodePng(png), { x: 0, y: 0, w: FRAME_W, h: FRAME_H })
+    }
+  })
+}
 
 export function parsePageRead(raw: unknown): PageRead {
   const read = (typeof raw === 'string' ? JSON.parse(raw) : raw) as PageRead
@@ -304,6 +359,11 @@ export class ChromeSurface implements SoakSurfaceDriver {
    */
   async relaunch(): Promise<void> {
     await this.join()
+  }
+
+  /** Every tile's burned-in clock, from its video's current frame. */
+  async readClocks(): Promise<TileClock[]> {
+    return clocksFromFrames(await this.options.page.evaluate(FRAME_SCRIPT))
   }
 
   async probe(): Promise<SurfaceProbe> {

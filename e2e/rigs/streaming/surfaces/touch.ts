@@ -1,4 +1,5 @@
 import type { MaestroDevice } from '../../../core/maestro'
+import { readClock, type TileClock } from '../clockReader'
 import {
   centre,
   findBounds,
@@ -8,7 +9,7 @@ import {
   type ScreenRead
 } from './hierarchy'
 import type { Rect } from './regions'
-import { decodePng, regionAdvancing } from './regions'
+import { decodePng, regionAdvancing, toPixels } from './regions'
 import {
   DEFAULT_SKIPS,
   LABELS,
@@ -249,6 +250,30 @@ export abstract class TouchSurface implements SoakSurfaceDriver {
     return state.foregroundApp == null
       ? null
       : state.foregroundApp === this.options.appId
+  }
+
+  /**
+   * Every tile's burned-in clock from one screenshot: the tile's bounds from the
+   * hierarchy, in points, scaled to the screenshot's pixels.
+   */
+  async readClocks(): Promise<TileClock[]> {
+    const shot = await this.device.screenshot()
+    const read = readScreen(await this.hierarchy())
+    if (read.screen == null) return []
+    const picture = decodePng(shot)
+    const scale = picture.width / (read.screen.x + read.screen.width)
+    return read.tiles.map(tile => {
+      const box = toPixels(tile.bounds, scale, 0)
+      return {
+        angle: tile.angle,
+        reading: readClock(picture, {
+          x: box.x,
+          y: box.y,
+          w: box.width,
+          h: box.height
+        })
+      }
+    })
   }
 
   async probe(): Promise<SurfaceProbe> {
