@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -25,6 +26,7 @@ import {
   DIRECTOR_DEVELOP_APP,
   DISTRIBUTOR_APP,
   DISTRIBUTOR_DEVELOP_APP,
+  MAPS_KEY_CHECK,
   provenanceEnvironment,
   releaseIos,
   seatEnvironment,
@@ -555,13 +557,7 @@ describe('TeamStation pipeline Masonfile', () => {
       line.includes(':app:bundleRelease')
     )
     assert.ok(assemble >= 0 && assemble < mapsCheck && mapsCheck < bundle)
-    assert.match(commands[mapsCheck] ?? '', /build-tools\/\*\/ \| sort -V/)
-    assert.match(commands[mapsCheck] ?? '', /aapt2" dump xmltree/)
-    assert.match(
-      commands[mapsCheck] ?? '',
-      /grep -qF "\\"\$GOOGLE_MAPS_ANDROID_API_KEY\\""/
-    )
-    assert.equal(log.includes('AIza'), false)
+    assert.equal(commands[mapsCheck], MAPS_KEY_CHECK)
     assert.match(log, /stash:ios-adhoc:build\/TeamStation\.ipa/)
     assert.match(
       log,
@@ -680,6 +676,101 @@ describe('TeamStation pipeline Masonfile', () => {
       )
     } finally {
       rmSync(workspace, { recursive: true, force: true })
+    }
+  })
+
+  it('checks the release APK manifest for exactly the Maps key, naming each failure', () => {
+    const key = 'AIzaTestOnlyMapsKey0123456789abcdefghij'
+    const root = mkdtempSync(path.join(tmpdir(), 'maps-key-check-'))
+    const tools = path.join(root, 'sdk', 'build-tools')
+    const apks = path.join(root, 'android', 'app/build/outputs/apk/release')
+    const manifest = (value: string): string =>
+      [
+        '      E: meta-data (line=73)',
+        '        A: http://schemas.android.com/apk/res/android:name(0x01010003)="com.google.android.geo.API_KEY" (Raw: "com.google.android.geo.API_KEY")',
+        `        A: http://schemas.android.com/apk/res/android:value(0x01010024)="${value}" (Raw: "${value}")`,
+        '      E: activity (line=76)'
+      ].join('\n')
+    const aapt2 = (version: string, body: string): void => {
+      mkdirSync(path.join(tools, version), { recursive: true })
+      const file = path.join(tools, version, 'aapt2')
+      writeFileSync(file, `#!/bin/sh\n${body}\n`)
+      chmodSync(file, 0o755)
+    }
+    const check = (
+      env: Record<string, string | undefined>
+    ): { status: number | null; out: string } => {
+      const result = spawnSync('sh', ['-c', MAPS_KEY_CHECK], {
+        cwd: path.join(root, 'android'),
+        encoding: 'utf8',
+        env: {
+          PATH: process.env.PATH,
+          ANDROID_HOME: path.join(root, 'sdk'),
+          ...env
+        }
+      })
+      return { status: result.status, out: result.stdout + result.stderr }
+    }
+    try {
+      mkdirSync(apks, { recursive: true })
+      writeFileSync(path.join(apks, 'app-release.apk'), '')
+      writeFileSync(path.join(root, 'manifest.txt'), manifest(key))
+      // The newest build-tools wins: 9.0.0 sorts below 37.0.0 only by version.
+      aapt2('9.0.0', 'exit 9')
+      aapt2('37.0.0', `cat '${path.join(root, 'manifest.txt')}'`)
+      const pass = check({ GOOGLE_MAPS_ANDROID_API_KEY: key })
+      assert.deepEqual(pass, {
+        status: 0,
+        out: 'The release APK carries the Google Maps key.\n'
+      })
+      for (const [env, message] of [
+        [{ GOOGLE_MAPS_ANDROID_API_KEY: `${key}x` }, 'has no Google Maps key'],
+        [
+          { GOOGLE_MAPS_ANDROID_API_KEY: key.slice(0, 20) },
+          'has no Google Maps key'
+        ],
+        [{ GOOGLE_MAPS_ANDROID_API_KEY: '' }, 'secret is empty'],
+        [{}, 'secret is empty'],
+        [
+          { GOOGLE_MAPS_ANDROID_API_KEY: key, ANDROID_HOME: '' },
+          'No build-tools aapt2'
+        ],
+        [
+          {
+            GOOGLE_MAPS_ANDROID_API_KEY: key,
+            ANDROID_HOME: path.join(root, 'none')
+          },
+          'No build-tools aapt2'
+        ]
+      ] as const) {
+        const failed = check(env)
+        assert.equal(failed.status, 1)
+        assert.match(failed.out, new RegExp(message))
+        assert.equal(failed.out.includes(key.slice(4)), false)
+      }
+      writeFileSync(path.join(root, 'manifest.txt'), manifest(''))
+      assert.match(
+        check({ GOOGLE_MAPS_ANDROID_API_KEY: key }).out,
+        /has no Google Maps key/
+      )
+      aapt2('38.0.0', 'exit 3')
+      assert.match(
+        check({ GOOGLE_MAPS_ANDROID_API_KEY: key }).out,
+        /aapt2 could not read the release APK manifest/
+      )
+      writeFileSync(path.join(apks, 'other.apk'), '')
+      assert.match(
+        check({ GOOGLE_MAPS_ANDROID_API_KEY: key }).out,
+        /Expected one release APK/
+      )
+      rmSync(apks, { recursive: true })
+      mkdirSync(apks, { recursive: true })
+      assert.match(
+        check({ GOOGLE_MAPS_ANDROID_API_KEY: key }).out,
+        /Expected one release APK/
+      )
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
   })
 
