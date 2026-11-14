@@ -870,11 +870,14 @@ describe('TeamStation pipeline Masonfile', () => {
               }
             ).ios
             const android = (
-              members as { android: Array<{ publishes?: string[] }> }
+              members as {
+                android: Array<{ publishes?: string[]; secrets?: string[] }>
+              }
             ).android
             recorded.push(ios[0]?.apple.app ?? '')
             recorded.push((ios[0]?.publishes ?? []).join(','))
             recorded.push((android[1]?.publishes ?? []).join(','))
+            recorded.push((android[0]?.secrets ?? []).join(','))
             recorded.push(ios[1]?.apple.app ?? '')
           }
         })
@@ -885,6 +888,7 @@ describe('TeamStation pipeline Masonfile', () => {
       DEVELOP_APP,
       DEVELOP_APP,
       DEVELOP_APP,
+      'GOOGLE_MAPS_ANDROID_API_KEY',
       STABLE_APP,
       TV_APP,
       DIRECTOR_DEVELOP_APP,
