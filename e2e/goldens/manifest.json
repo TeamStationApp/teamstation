@@ -489,6 +489,32 @@
       "size": 55626,
       "masks": []
     },
+    "assistant/chat/space-hold#quick-press-activates-a-focused-tab/team-tab-selected/web-chromium@chromium-1536x900-128": {
+      "sha256": "f386efed537207c9c417ebb71ac5d00e1919abea437f2022fd852ebbd7ed1cbc",
+      "size": 72251,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "0"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "6"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "7"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "8"
+        }
+      ]
+    },
     "assistant/chat/space-hold#quick-press-types-a-space/field-holds-a-space/web-chromium@chromium-1280x900-128": {
       "sha256": "7a94748fc649c13ee8b52b2e019d637c0f9d921e23e842b881416e375ecec2ad",
       "size": 85723,

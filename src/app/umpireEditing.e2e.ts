@@ -153,61 +153,64 @@ async function main(): Promise<void> {
       maxTouchPoints: 1
     })
     // The drags are the selector's: the app counts rows from the touched
-    // selector's own top, a row its height. They start from the middle of
+    // selector's own top, a row its height. Each starts from the middle of
     // Ada's selector, not her checkbox, which sits 22 points from the top of
-    // an 80-point row, and go in rows. The selectors are in the list's order:
-    // Ada, Billy, Uma.
-    const [ada, billy] = await page.$$eval(
-      '[data-testid^="umpire-select-drag-"]',
-      nodes => nodes.map(n => n.getBoundingClientRect().toJSON() as DOMRect)
-    )
-    const point = { x: ada.x + ada.width / 2, y: ada.y + ada.height / 2 }
-    const row = billy.y - ada.y
-    const rows = (count: number): number => Math.round(row * count)
-    // What a failed drag is told: each selector's top and height.
+    // an 80-point row, and goes in rows. The list moves down once changes
+    // are staged, so the selectors are measured at each drag. They are in
+    // the list's order: Ada, Billy, Uma.
+    const selectors = async (): Promise<DOMRect[]> =>
+      await page.$$eval('[data-testid^="umpire-select-drag-"]', nodes =>
+        nodes.map(n => n.getBoundingClientRect().toJSON() as DOMRect)
+      )
+    // What a failed drag is told: where each selector was and where it
+    // started.
+    let started = { x: 0, y: 0 }
     const layout = async (): Promise<string> =>
       JSON.stringify({
-        row,
-        point,
+        started,
         scrollY: await page.evaluate(() => window.scrollY),
-        selectors: await page.$$eval(
-          '[data-testid^="umpire-select-drag-"]',
-          nodes =>
-            nodes.map(n => {
-              const r = n.getBoundingClientRect()
-              return [Math.round(r.top), Math.round(r.height)]
-            })
-        )
+        selectors: (await selectors()).map(r => [
+          Math.round(r.top),
+          Math.round(r.height)
+        ])
       })
-    const drag = async (offsets: number[], start = point): Promise<void> => {
+    /** A touch from `from` rows below the middle of Ada's selector. */
+    const drag = async (offsets: number[], from = 0): Promise<void> => {
+      const [ada, billy] = await selectors()
+      const row = billy.y - ada.y
+      const start = {
+        x: ada.x + ada.width / 2,
+        y: ada.y + ada.height / 2 + Math.round(row * from)
+      }
+      started = start
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
         touchPoints: [start]
       })
-      for (const y of offsets)
+      for (const rows of offsets)
         await cdp.send('Input.dispatchTouchEvent', {
           type: 'touchMove',
-          touchPoints: [{ ...start, y: start.y + y }]
+          touchPoints: [{ ...start, y: start.y + Math.round(row * rows) }]
         })
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchEnd',
         touchPoints: []
       })
     }
-    await drag([rows(2)])
+    await drag([2])
     expect(await checked(), await layout()).length(3)
     await click('Billy Lee')
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma Lee'])
     await click('Ada Lee')
     await click('Uma Lee')
-    await drag([rows(2), rows(1)])
+    await drag([2, 1])
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Billy Lee'])
     await click('Ada Lee')
     await click('Billy Lee')
-    await drag([rows(113 / 80)], { ...point, y: point.y + rows(23 / 80) })
+    await drag([113 / 80], 23 / 80)
     expect(await checked(), await layout()).length(3)
     for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
-    await drag([-rows(113 / 80)], { ...point, y: point.y + rows(136 / 80) })
+    await drag([-113 / 80], 136 / 80)
     expect(await checked(), await layout()).length(3)
     for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     await drag([])

@@ -403,7 +403,16 @@ async function main(): Promise<void> {
     await capture(m, artifacts!, 'scoring-overlay-after.png')
     await m.tapOn({ css: '[aria-label="Open scoring menu"]' })
     await tap(m, 'Set Team Rosters')
-    await m.tapOn({ css: '[aria-label="Away Team"]' })
+    // The sheet draws its tabs again as it finishes opening: a tap that finds
+    // the tab it aimed at replaced is made again on the new one.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await m.tapOn({ css: '[aria-label="Away Team"]' })
+        break
+      } catch (error) {
+        if (attempt === 3 || !String(error).includes('detached')) throw error
+      }
+    }
     await m.tapOn({ css: '[aria-label="Lineup"]' })
     await contains(page, '1. Alex Lee')
     await capture(m, artifacts!, 'scoring-lineup-after.png')
