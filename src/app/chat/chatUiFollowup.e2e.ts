@@ -3089,10 +3089,12 @@ async function currentHistoryReply(daemon: Daemon): Promise<void> {
       css: '[data-testid="chat-composer"]',
       timeout: 60000
     })
+    const looks: unknown[] = []
     for (let count = 0; count < 20; count += 1) {
       const result = (await m.evalBrowserScript({
         script: `for(let n=0;n<120;n++){if(document.querySelector(${JSON.stringify(selector)}))return 'found';const earlier=[...document.querySelectorAll('[role="button"]')].find(n=>n.getAttribute('aria-label')==='Load earlier messages'||n.textContent.trim()==='Load earlier messages');if(earlier){const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:-1}));earlier.scrollIntoView({block:'center'});earlier.setAttribute('data-chat-current-earlier','true');await new Promise(r=>setTimeout(r,300));return 'page'}await new Promise(r=>setTimeout(r,100))}return 'waiting'`
       })) as { data?: unknown }
+      looks.push(result.data)
       if (result.data === 'found') break
       // Neither the original nor a way to earlier history yet: the history
       // is still loading, on a droplet for longer than one look's 12 s.
@@ -3101,7 +3103,7 @@ async function currentHistoryReply(daemon: Daemon): Promise<void> {
       await new Promise(resolve => setTimeout(resolve, 500))
     }
     await m.evalBrowserScript({
-      script: `const node=document.querySelector(${JSON.stringify(selector)});if(!node)throw new Error('Protected original did not load');const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));node.scrollIntoView({block:'center'});node.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
+      script: `const node=document.querySelector(${JSON.stringify(selector)});if(!node){const shown=[...document.querySelectorAll('[data-testid^="chat-message-"]')].map(n=>n.getAttribute('data-testid'));throw new Error('Protected original did not load: looks '+${JSON.stringify(JSON.stringify(looks))}+', '+shown.length+' messages shown, first '+shown.slice(0,3).join(' ')+', pane says '+String((document.querySelector('[data-testid="chat-message-pane"]')||document.body).innerText).replace(/\\s+/g,' ').slice(0,300))}const pane=document.querySelector('[data-testid="chat-message-pane"]'),scroll=[...pane.querySelectorAll('div')].find(n=>getComputedStyle(n).overflowY==='auto');scroll.dispatchEvent(new WheelEvent('wheel',{bubbles:true,deltaY:1}));node.scrollIntoView({block:'center'});node.dispatchEvent(new PointerEvent('pointerenter',{bubbles:false}));return true`
     })
     await m.tapOn({ css: selector + ' [aria-label="Reply"]' })
     await m.assertVisible({ text: 'Cancel reply' })
