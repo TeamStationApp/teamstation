@@ -413,6 +413,18 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const unsaved = dirty || planChanged
   const dirtyNow = useRef(unsaved)
   dirtyNow.current = unsaved
+  // Whether the editor holds a staged change or a sheet of its own, as it
+  // says in the commit that changes it: a read draws it again only while it
+  // holds nothing, and one put off meanwhile is drawn once it holds nothing.
+  const editorHeld = useRef(false)
+  const heldRedraw = useRef<(() => void) | undefined>(undefined)
+  const onEditorHeld = useCallback((holding: boolean) => {
+    editorHeld.current = holding
+    if (holding) return
+    const redraw = heldRedraw.current
+    heldRedraw.current = undefined
+    redraw?.()
+  }, [])
   const readSides = useCallback(
     async (): Promise<GameDetail> => await client.game(gameId),
     [client, gameId]
@@ -481,16 +493,22 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
         sameValue(setupOf(shown), setupOf(next.session))
       )
         return
-      mountedOn.current = next.session
-      setHeld(last => ({
-        draft: next.session,
-        side: opened!.side,
-        mode: last?.mode ?? 'boxScore',
-        ...(last?.scrollOffsets == null
-          ? {}
-          : { scrollOffsets: last.scrollOffsets })
-      }))
-      setRead(value => value + 1)
+      const side = opened!.side
+      const redraw = (): void => {
+        mountedOn.current = next.session
+        setHeld(last => ({
+          draft: next.session,
+          side,
+          mode: last?.mode ?? 'boxScore',
+          ...(last?.scrollOffsets == null
+            ? {}
+            : { scrollOffsets: last.scrollOffsets })
+        }))
+        setRead(value => value + 1)
+      }
+      heldRedraw.current = undefined
+      if (editorHeld.current) heldRedraw.current = redraw
+      else redraw()
     },
     [opened, client, gameId, heard, reopenSwapped]
   )
@@ -919,6 +937,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       base?: GameState,
       staged = false
     ): void => {
+      // This draw is newer than any put off while the editor held something.
+      heldRedraw.current = undefined
       setHeld(last => ({
         draft: next,
         side: saving.side,
@@ -1189,6 +1209,7 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               unaccepted={unaccepted}
               conflict={live.conflict}
               onDirtyChange={setDirty}
+              onHeldChange={onEditorHeld}
               renderBoxScore={() => (
                 <ScrollView testID="Coach box score">
                   <BoxScore
