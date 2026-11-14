@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { View } from 'react-native'
-import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps'
+import { PROVIDER_GOOGLE } from 'react-native-maps'
 
 import type { EventLocation } from '../../common/eventInfo'
 import { EventMap as WebEventMap } from './EventMap.native'
+import { eventMapCoordinate } from './eventMapCoordinate'
+import { NativeEventMapView } from './NativeEventMapView'
 
 /** Native Google Maps SDK; its Android-restricted key lives in the built manifest. */
 export function EventMap({
@@ -11,23 +12,12 @@ export function EventMap({
 }: {
   location: EventLocation
 }): React.ReactElement {
-  if (
-    location.latitude == null ||
-    location.longitude == null ||
-    !Number.isFinite(location.latitude) ||
-    !Number.isFinite(location.longitude) ||
-    Math.abs(location.latitude) > 90 ||
-    Math.abs(location.longitude) > 180
-  )
-    throw new Error('The address could not be located.')
+  const coordinate = eventMapCoordinate(location)
   return (
     <NativeGoogleMap
-      key={`${location.latitude}/${location.longitude}`}
+      key={`${coordinate.latitude}/${coordinate.longitude}`}
       location={location}
-      coordinate={{
-        latitude: location.latitude,
-        longitude: location.longitude
-      }}
+      coordinate={coordinate}
     />
   )
 }
@@ -58,42 +48,16 @@ function NativeGoogleMap({
       clearTimeout(timer)
     }
   }, [])
-  if (fallback)
-    return (
-      <WebEventMap location={{ ...location, googleMapsApiKey: undefined }} />
-    )
+  if (fallback) return <WebEventMap location={location} />
   return (
-    <View
-      style={{
-        height: 260,
-        width: '100%',
-        borderRadius: 16,
-        overflow: 'hidden'
+    <NativeEventMapView
+      coordinate={coordinate}
+      provider={PROVIDER_GOOGLE}
+      onMapLoaded={() => {
+        if (failed.current) return
+        loaded.current = true
+        clearDeadline.current()
       }}
-    >
-      <MapView
-        key={`${coordinate.latitude}/${coordinate.longitude}`}
-        testID="event-location-map"
-        accessibilityLabel="Event location map"
-        provider={PROVIDER_GOOGLE}
-        onMapLoaded={() => {
-          if (failed.current) return
-          loaded.current = true
-          clearDeadline.current()
-        }}
-        style={{ flex: 1 }}
-        initialRegion={{
-          ...coordinate,
-          latitudeDelta: 0.015,
-          longitudeDelta: 0.015
-        }}
-        scrollEnabled
-        zoomEnabled
-        rotateEnabled={false}
-        toolbarEnabled={false}
-      >
-        <Marker coordinate={coordinate} title="Event location" />
-      </MapView>
-    </View>
+    />
   )
 }
