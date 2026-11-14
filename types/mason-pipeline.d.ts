@@ -109,6 +109,8 @@ declare module '@mason/types' {
     publishes?: string[]
     buildNumbers?: string[]
     cache?: Array<{ key: string; paths: string[] }>
+    /** Project secrets the stage's commands get in their environment. */
+    secrets?: string[]
     apple?: {
       distribution: string
       app: string

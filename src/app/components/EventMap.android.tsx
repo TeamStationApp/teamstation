@@ -5,7 +5,10 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps'
 import type { EventLocation } from '../../common/eventInfo'
 import { EventMap as WebEventMap } from './EventMap.native'
 
-/** Native Google Maps SDK; its Android-restricted key lives in the built manifest. */
+/**
+ * Native Google Maps SDK. Its key is the GOOGLE_MAPS_ANDROID_API_KEY build
+ * secret, which Gradle writes into the built manifest.
+ */
 export function EventMap({
   location
 }: {
