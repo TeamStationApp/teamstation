@@ -52,6 +52,7 @@ const ownedPaths = new Set([
   'src/app/components/EventMap.android.tsx',
   'src/app/components/EventMap.ios.tsx',
   'src/app/components/eventMapCoordinate.ts',
+  'src/app/components/NativeEventMapView.tsx',
   'src/common/eventPlaces.ts',
   'src/app/screens/EventSettingsScreen.tsx',
   'src/app/screens/EventInfoTab.tsx',
