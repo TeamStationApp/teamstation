@@ -388,19 +388,30 @@ export function asPreviewResult(raw: unknown): EngineResult {
     )
   )
     throw new TypeError('Submit a bounded list of scheduled games')
-  const options = raw.options.map(option => ({
-    games: asArray(asWirePlannedGame)(
-      (option as Record<string, unknown>).games
-    ).map(game => ({
-      ...game,
-      startAt: asZonedInstant(game.startAt),
-      endAt: asZonedInstant(game.endAt)
-    })),
-    fairness: [],
-    reasons: [],
-    unmet: [],
-    score: []
-  }))
+  // The device's summaries are kept as it sent them, bounded: they describe
+  // its own league's schedule, which the league reads.
+  const options = raw.options.map(option => {
+    const cleaned = asWireOption(option)
+    if (
+      cleaned.fairness.length > 20000 ||
+      cleaned.reasons.length > 20 ||
+      cleaned.unmet.length > 1000 ||
+      cleaned.score.length > 20 ||
+      [
+        ...cleaned.reasons,
+        ...cleaned.unmet.flatMap(line => [line.message, line.cause])
+      ].some(text => text.length > 2000)
+    )
+      throw new TypeError('Submit bounded schedule summaries')
+    return {
+      ...cleaned,
+      games: cleaned.games.map(game => ({
+        ...game,
+        startAt: asZonedInstant(game.startAt),
+        endAt: asZonedInstant(game.endAt)
+      }))
+    }
+  })
   const blocking = raw.blocking === null ? null : asString(raw.blocking)
   if (blocking !== null && (blocking.length > 1000 || options.length !== 0))
     throw new TypeError('A blocked schedule cannot contain options')

@@ -19,7 +19,6 @@ import {
 import * as reschedules from './reschedule'
 import type { Snapshot } from './snapshot'
 import * as snapshotModule from './snapshot'
-import * as offThread from './validateOffThread'
 
 const actor = { userId: 'admin', scopes: [], isAdmin: true }
 const clock = { now: () => new Date('2027-01-01') }
@@ -145,60 +144,40 @@ describe('device preview state transitions without a database', () => {
         { ...pending('recent'), created_at: new Date('2026-12-31T12:00:00Z') }
       ]
     ])
-    const seen: string[] = []
-    const validate = offThread.validateOffThread
-    let lockedWhileValidating = false
-    mock.method(
-      offThread,
-      'validateOffThread',
-      async (...args: Parameters<typeof validate>) => {
-        lockedWhileValidating = seen.some(sql =>
-          sql.includes('for no key update')
-        )
-        return await validate(...args)
-      }
-    )
-    await stored(
-      rows,
-      async db => {
-        const prepared = await preparePreview(
-          db,
-          actor,
-          'league',
-          { mode: 'full', existing: 'workAround' },
-          clock
-        )
-        // A build left waiting over a day is dropped; a newer one is kept.
-        expect(rows.has('abandoned')).equals(false)
-        expect(rows.has('recent')).equals(true)
-        expect(rows.get(prepared.id)?.status).equals('building')
-        expect(rows.get(prepared.id)?.options).deep.equals([])
-        const complete = await completePreview(
-          db,
-          actor,
-          prepared.id,
-          result,
-          clock
-        )
-        expect(complete.options[0].games).deep.equals([game])
-        expect(complete.status).equals('open')
-        // The worker ran before any row was locked for the write.
-        expect(lockedWhileValidating).equals(false)
-        expect(seen.some(sql => sql.includes('for no key update'))).equals(true)
-        expect(
-          await completePreview(db, actor, prepared.id, result, clock)
-        ).deep.equals(complete)
-        const refused = await completePreview(
-          db,
-          actor,
-          prepared.id,
-          { options: [], blocking: 'different' },
-          clock
-        ).catch((error: unknown) => error)
-        expect(refused).instanceOf(Error)
-      },
-      seen
-    )
+    await stored(rows, async db => {
+      const prepared = await preparePreview(
+        db,
+        actor,
+        'league',
+        { mode: 'full', existing: 'workAround' },
+        clock
+      )
+      // A build left waiting over a day is dropped; a newer one is kept.
+      expect(rows.has('abandoned')).equals(false)
+      expect(rows.has('recent')).equals(true)
+      expect(rows.get(prepared.id)?.status).equals('building')
+      expect(rows.get(prepared.id)?.options).deep.equals([])
+      const complete = await completePreview(
+        db,
+        actor,
+        prepared.id,
+        result,
+        clock
+      )
+      expect(complete.options[0].games).deep.equals([game])
+      expect(complete.status).equals('open')
+      expect(
+        await completePreview(db, actor, prepared.id, result, clock)
+      ).deep.equals(complete)
+      const refused = await completePreview(
+        db,
+        actor,
+        prepared.id,
+        { options: [], blocking: 'different' },
+        clock
+      ).catch((error: unknown) => error)
+      expect(refused).instanceOf(Error)
+    })
   })
   it('refuses editing a building preview, missing preparation and stale sources without changing the source', async () => {
     authorize()
@@ -268,7 +247,7 @@ describe('device preview state transitions without a database', () => {
         ]),
         async db => {
           if (blocked) {
-            // The device's own words are not what the preview says.
+            // The device says why, and the preview it recalculated stays.
             const error = await completePreview(
               db,
               actor,
@@ -279,7 +258,7 @@ describe('device preview state transitions without a database', () => {
             expect(String(error)).includes(
               'None of the rejected games could be placed again'
             )
-            expect(String(error)).not.includes('Anything a device sends')
+            expect(String(error)).includes('Anything a device sends')
             expect(old.status).equals('open')
             expect(row.status).equals('discarded')
             // The same result sent again, its answer lost, gets the same
@@ -310,24 +289,34 @@ describe('device preview state transitions without a database', () => {
       )
     }
   })
-  it('refuses games outside season windows after hard field checks pass', async () => {
+  it('stores the device’s options as sent, summaries and all, for publication to check', async () => {
     authorize()
     const row = pending('new')
+    // A season with no windows: the device broke its rules, and it is its
+    // league's own schedule. Publishing checks games against live bookings.
     const snap = row.input as Snapshot
     snap.engine.seasons[0].settings.windows = []
+    const summarized = {
+      ...result,
+      options: result.options.map(option => ({
+        ...option,
+        reasons: ['As the device found it'],
+        score: [1, 2, 3]
+      }))
+    }
     await stored(new Map([['new', row]]), async db => {
-      const error = await completePreview(
+      const completed = await completePreview(
         db,
         actor,
         'new',
-        result,
+        summarized,
         clock
-      ).catch((error: unknown) => error)
-      expect(error)
-        .instanceOf(Error)
-        .property('message')
-        .includes('time windows')
-      expect(row.status).equals('building')
+      )
+      expect(completed.status).equals('open')
+      expect(completed.options[0]).deep.includes({
+        reasons: ['As the device found it'],
+        score: [1, 2, 3]
+      })
     })
   })
 })

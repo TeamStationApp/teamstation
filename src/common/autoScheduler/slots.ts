@@ -13,7 +13,7 @@ import type { FieldSize } from '../venues'
 import { firstNonZero } from './score'
 import { seasonFields } from './seasonZones'
 import { finishSteps } from './steps'
-import type { EngineInput, EngineSeason, PlannedGame } from './types'
+import type { EngineInput, EngineSeason } from './types'
 
 export const MINUTE = 60_000
 export const DAY = 86_400_000
@@ -156,17 +156,15 @@ export function firstOpenDate(
 export function seasonSlots(
   input: EngineInput,
   season: EngineSeason,
-  clock: LocalClock,
-  submitted?: readonly PlannedGame[]
+  clock: LocalClock
 ): SeasonSlots {
-  return finishSteps(seasonSlotsSteps(input, season, clock, submitted))
+  return finishSteps(seasonSlotsSteps(input, season, clock))
 }
 
 export function* seasonSlotsSteps(
   input: EngineInput,
   season: EngineSeason,
-  clock: LocalClock,
-  submitted?: readonly PlannedGame[]
+  clock: LocalClock
 ): Generator<void, SeasonSlots> {
   const { settings } = season
   const gameMs = settings.gameMinutes * MINUTE
@@ -174,21 +172,6 @@ export function* seasonSlotsSteps(
   const blackouts = new Set(settings.blackouts)
   const fields = seasonFields(input.fields, settings)
 
-  // Summary validation indexes only submitted starts, never the search grid.
-  const proposed =
-    submitted == null ? undefined : new Map<string, Set<number>>()
-  for (const game of submitted ?? []) {
-    if (game.seasonId !== season.id) continue
-    const field = fields.find(field => field.id === game.fieldId)
-    if (field == null) continue
-    const start = Date.parse(game.startAt)
-    if (Date.parse(game.endAt) - start !== gameMs) continue
-    const date = gameCalendarDay(game.startAt, field.availability.timezone)
-    const key = `${field.id}|${date}`
-    const starts = proposed!.get(key) ?? new Set<number>()
-    starts.add(start)
-    proposed!.set(key, starts)
-  }
   const slots: Slot[] = []
   const windows: SeasonWindow[] = []
   const supply: Supply = {
@@ -242,18 +225,8 @@ export function* seasonSlotsSteps(
             onGrid: (at - first) % stride === 0
           })
         }
-        if (proposed == null) {
-          for (let at = first; at + gameMs <= interval.end; at += STEP)
-            addSlot(at)
-        } else {
-          for (const at of proposed.get(`${field.id}|${date}`) ?? [])
-            if (
-              at >= first &&
-              at + gameMs <= interval.end &&
-              at === alignUp(at)
-            )
-              addSlot(at)
-        }
+        for (let at = first; at + gameMs <= interval.end; at += STEP)
+          addSlot(at)
       }
     }
   }

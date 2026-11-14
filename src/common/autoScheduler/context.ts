@@ -1,8 +1,6 @@
-import type { WindowPeriod } from '../fieldAvailability'
-import { wallMinutes } from '../weeklyHours'
 import { Occupancy } from './feasibility'
 import { type Matchup, seasonTeams } from './matchups'
-import { seasonFields, seasonZones } from './seasonZones'
+import { seasonZones } from './seasonZones'
 import {
   dayNumber,
   firstOpenDate,
@@ -15,13 +13,7 @@ import {
   type Supply
 } from './slots'
 import { finishSteps } from './steps'
-import type {
-  EngineField,
-  EngineInput,
-  EngineSeason,
-  FixedGame,
-  PlannedGame
-} from './types'
+import type { EngineField, EngineInput, EngineSeason, FixedGame } from './types'
 
 /**
  * A season's slots of one field on one date in one part of the day. Every
@@ -97,130 +89,14 @@ function groupSlots(slots: Slot[]): SlotGroup[] {
   return [...groups.values()]
 }
 
-/** A submitted result or run the server refuses, as opposed to a fault of its own. */
-export class InvalidSubmission extends Error {
-  constructor(message: string) {
-    super(message)
-    this.name = 'InvalidSubmission'
-  }
-}
-
-/**
- * The weekday of a day number, 0 being Sunday: day 0 was a Thursday.
- * fieldAvailability's weekdayOf reads a date's text; these counts run on
- * day numbers.
- */
-function weekdayNumber(day: number): number {
-  return (((day + 4) % 7) + 7) % 7
-}
-
-/** How many days from `from` to `until` fall on one of the weekdays. */
-function openDays(from: number, until: number, weekdays: Set<number>): number {
-  const total = until - from + 1
-  let count = Math.floor(total / 7) * weekdays.size
-  for (let day = from + total - (total % 7); day <= until; day++)
-    if (weekdays.has(weekdayNumber(day))) count++
-  return count
-}
-
-/**
- * The day numbers a window period covers within a season's dates, first
- * and last; null when none. A period with no end runs to the season's.
- */
-function periodDays(
-  period: WindowPeriod,
-  startsOn: string,
-  endsOn: string
-): [number, number] | null {
-  const from = dayNumber(period.from > startsOn ? period.from : startsOn)
-  const until = dayNumber(
-    period.until != null && period.until < endsOn ? period.until : endsOn
-  )
-  return until < from ? null : [from, until]
-}
-
-/**
- * Roughly the bytes a full context of the run takes: a slot for every
- * 5-minute start in its windows on every field, about 160 bytes each, and a
- * byte per slot for each team's availability.
- */
-export function fullContextBytes(input: EngineInput): number {
-  let bytes = 0
-  for (const season of input.seasons) {
-    const { startsOn, endsOn, windows } = season.settings
-    const fields = seasonFields(input.fields, season.settings).length
-    const teams = seasonTeams(season).length
-    for (const period of windows) {
-      const range = periodDays(period, startsOn, endsOn)
-      if (range == null) continue
-      const [from, until] = range
-      for (const day of period.hours) {
-        const starts =
-          Math.max(0, wallMinutes(day.end) - wallMinutes(day.start)) / 5
-        bytes +=
-          starts *
-          openDays(from, until, new Set([day.weekday])) *
-          fields *
-          (160 + teams)
-      }
-    }
-  }
-  return bytes
-}
-
-/**
- * The most field days a run's summary reads, a season's shared field once
- * per season. Reading a field day's calendar takes about 0.2 ms, so this is
- * under ten seconds of the validation worker's thirty, and over three times
- * the largest runs leagues have built.
- */
-export const MAX_FIELD_DAYS = 40000
-
-/**
- * Refuses a run whose seasons span too many field days to summarize.
- * Normal runs are a few fields over a few months; split larger runs by season.
- */
-export function requireBoundedFieldDays(input: EngineInput): void {
-  let fieldDays = 0
-  for (const season of input.seasons) {
-    const { startsOn, endsOn, windows } = season.settings
-    // Only the days a time window has hours on, and no blackout, can hold
-    // a game.
-    const blackouts = [...new Set(season.settings.blackouts)].map(dayNumber)
-    let days = 0
-    for (const period of windows) {
-      const weekdays = new Set(period.hours.map(day => day.weekday))
-      if (weekdays.size === 0) continue
-      const range = periodDays(period, startsOn, endsOn)
-      if (range == null) continue
-      const [from, until] = range
-      days += openDays(from, until, weekdays)
-      for (const day of blackouts)
-        if (day >= from && day <= until && weekdays.has(weekdayNumber(day)))
-          days--
-    }
-    fieldDays += days * seasonFields(input.fields, season.settings).length
-    if (!Number.isFinite(fieldDays) || fieldDays > MAX_FIELD_DAYS)
-      throw new InvalidSubmission(
-        'This scheduling run spans too many field days; choose fewer seasons or fields, or shorter time windows'
-      )
-  }
-}
-
 /** Reads the input into the slots, groups and starting occupancy of the run. */
-export function buildContext(
-  input: EngineInput,
-  submitted?: readonly PlannedGame[]
-): RunContext {
-  return finishSteps(buildContextSteps(input, submitted))
+export function buildContext(input: EngineInput): RunContext {
+  return finishSteps(buildContextSteps(input))
 }
 
 export function* buildContextSteps(
-  input: EngineInput,
-  submitted?: readonly PlannedGame[]
+  input: EngineInput
 ): Generator<void, RunContext> {
-  // Bound calendar work before touching availability, even for an empty result.
-  if (submitted != null) requireBoundedFieldDays(input)
   const fieldZones = new Map(
     input.fields.map(field => [field.id, field.availability.timezone])
   )
@@ -230,8 +106,7 @@ export function* buildContextSteps(
     const { slots, windows, supply } = yield* seasonSlotsSteps(
       input,
       season,
-      clock,
-      submitted
+      clock
     )
     const zones = seasonZones(input.fields, season.settings)
     const zoneOf = (fieldId: string | null): string =>
@@ -287,7 +162,6 @@ export function* buildContextSteps(
         seasons.some(season => season.season.id === matchup.seasonId)
       ) ?? null
   }
-  if (submitted != null) return context
   const occupancy = new Occupancy(context)
   for (const season of seasons) {
     for (const [i, slot] of season.slots.entries()) {

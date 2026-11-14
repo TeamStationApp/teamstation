@@ -5307,7 +5307,7 @@ export class TeamStationClient {
   async buildSchedulePreview(
     leagueId: string,
     request: PreviewRequest,
-    /** The waits before each retry while the server's validation is busy. */
+    /** The waits before each retry while the device is offline. */
     retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000]
   ): Promise<SchedulePreview> {
     const prepared = await this.request(
@@ -5317,15 +5317,11 @@ export class TeamStationClient {
       request
     )
     const { buildOptionsAsync } = await import('./autoScheduler')
-    const built = await buildOptionsAsync(prepared.input)
-    // The server keeps only the games and works out the rest itself.
-    const result = {
-      options: built.options.map(option => ({ games: option.games })),
-      blocking: built.blocking
-    }
-    // A search can take minutes, so the same result is sent again, which the
-    // server accepts once, while the device is offline or the server busy;
-    // any other refusal is final.
+    // The options are stored as built, summaries and all.
+    const result = await buildOptionsAsync(prepared.input)
+    // A search can take minutes, so while the device is offline the same
+    // result is sent again, which the server accepts once; any refusal is
+    // final.
     for (let attempt = 0; ; attempt++) {
       try {
         return await this.request(
@@ -5336,13 +5332,12 @@ export class TeamStationClient {
         )
       } catch (error) {
         const wait = retryDelaysMs[attempt]
-        const retry =
-          error instanceof HttpError &&
-          (error.code === 'offline' ||
-            (error.code === 'unavailable' &&
-              isRecord(error.details) &&
-              error.details.retry === true))
-        if (wait == null || !retry) throw error
+        if (
+          wait == null ||
+          !(error instanceof HttpError) ||
+          error.code !== 'offline'
+        )
+          throw error
         await new Promise(resolve => setTimeout(resolve, wait))
       }
     }

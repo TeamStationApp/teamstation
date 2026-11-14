@@ -3,10 +3,6 @@ import { isDeepStrictEqual } from 'node:util'
 
 import type { Kysely, Selectable, Transaction } from 'kysely'
 
-import {
-  InvalidSubmission,
-  requireBoundedFieldDays
-} from '../../common/autoScheduler/context'
 import type {
   EngineBooking,
   EngineInput,
@@ -33,11 +29,7 @@ import { requireGroupAdmin } from '../groups/rights'
 import { chosenSeasonIds } from '../scheduler/setup'
 import { occupancy } from '../venues/occupancy'
 import { noticeTeams, type Tallies } from './cancel'
-import {
-  holdingOf,
-  requireKeepsRules,
-  validatePlacements
-} from './placementChecks'
+import { holdingOf, requireKeepsRules } from './placementChecks'
 import { proposePlanned } from './propose'
 import {
   gamesToReschedule,
@@ -54,9 +46,8 @@ import {
   snapshot,
   upcoming
 } from './snapshot'
-import { validateOffThread } from './validateOffThread'
 
-export { holdingOf, requireKeepsRules, validatePlacements }
+export { holdingOf, requireKeepsRules }
 
 type Db = Kysely<Database>
 export type PreviewRow = Selectable<SchedulePreviewsTable>
@@ -282,13 +273,6 @@ export async function preparePreview(
     return { snap, keep, earlier }
   })
   const { snap, keep, earlier } = plan
-  // Refuse here what validation would refuse after the device's whole search.
-  try {
-    requireBoundedFieldDays(snap.engine)
-  } catch (error) {
-    if (error instanceof InvalidSubmission) throw badRequest(error.message)
-    throw error
-  }
   // A build whose device never sent its result is dropped after a day, with
   // the snapshot it held: any league's, so one that never builds again
   // leaves none behind.
@@ -333,26 +317,20 @@ function resultHash(result: EngineResult): string {
 /**
  * Complete a prepared preview with a device result `asPreviewResult` has
  * cleaned; a retry of the same result is idempotent.
+ *
+ * The device built the result by the rules it was given, and it is stored
+ * as it came: if the device broke a rule, that is its league's own schedule
+ * it got wrong. What other leagues hold, fields, teams and Managers/Head
+ * Coaches, is checked against live bookings when the preview is published.
  */
 export async function completePreview(
   db: Db,
   actor: Actor,
   previewId: string,
   result: EngineResult,
-  clock: Clock,
-  /** The row as the caller already read and authorized it, if it did. */
-  read?: PreviewRow
+  clock: Clock
 ): Promise<SchedulePreview> {
   const hash = resultHash(result)
-  // Validation can take seconds, so it runs before the transaction: no
-  // lock or pooled connection waits on it. A building preview's input
-  // never changes, and the status is checked again under the lock.
-  const before = read ?? (await previewFor(db, actor, previewId))
-  const held = snapshotOf(before)
-  const summarized =
-    before.status === 'building' && held.preparation != null
-      ? await validateOffThread(held, result)
-      : undefined
   const done = await atomic(
     db,
     async (trx): Promise<SchedulePreview | { blocked: string }> => {
@@ -369,8 +347,7 @@ export async function completePreview(
         }
         throw conflict('This preview is no longer waiting for a device result')
       }
-      if (preparation == null || summarized == null)
-        throw conflict('Prepare the schedule again')
+      if (preparation == null) throw conflict('Prepare the schedule again')
       if (preparation.earlier != null) {
         const earlier = await previewFor(trx, actor, preparation.earlier.id, {
           forUpdate: true
@@ -385,8 +362,8 @@ export async function completePreview(
       }
       const options =
         preparation.keep == null
-          ? summarized.options
-          : summarized.options.map(option => ({
+          ? result.options
+          : result.options.map(option => ({
               ...option,
               games: withKept(preparation.keep!, option.games)
             }))
@@ -394,7 +371,7 @@ export async function completePreview(
       // A recalculation that places nothing again leaves the preview it
       // recalculated as it was, edits and all, and says why.
       if (preparation.earlier != null && options.length === 0) {
-        preparation.blocked = summarized.blocking ?? ''
+        preparation.blocked = result.blocking ?? ''
         await trx
           .updateTable('schedule_previews')
           .set({ status: 'discarded', input: JSON.stringify(snap) })
@@ -408,7 +385,7 @@ export async function completePreview(
           status: 'open',
           input: JSON.stringify(snap),
           options: JSON.stringify(options),
-          blocking: summarized.blocking
+          blocking: result.blocking
         })
         .where('id', '=', row.id)
         .execute()

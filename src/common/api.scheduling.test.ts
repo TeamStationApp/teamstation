@@ -256,16 +256,7 @@ describe('api client scheduling setup', () => {
         '/api/v1/leagues/lea%2Fa/schedule-previews/preparations',
         { mode: 'full', existing: 'workAround' }
       ],
-      [
-        'PUT',
-        '/api/v1/schedule-previews/spv%2F1/result',
-        {
-          options: buildOptions(engine).options.map(option => ({
-            games: option.games
-          })),
-          blocking: buildOptions(engine).blocking
-        }
-      ],
+      ['PUT', '/api/v1/schedule-previews/spv%2F1/result', buildOptions(engine)],
       ['GET', '/api/v1/schedule-previews/spv%2F1', undefined],
       [
         'PUT',
@@ -277,31 +268,13 @@ describe('api client scheduling setup', () => {
     ])
   })
 
-  it('sends the same result again while offline or validation is busy, and stops at any other refusal', async () => {
+  it('sends the same result again while offline, and stops at any refusal', async () => {
     const engine = input({ seasons: [], fields: [] })
-    const refusal = (code: string, retry: boolean): Response =>
-      new Response(
-        JSON.stringify({
-          code,
-          message: retry ? 'Schedule validation is busy.' : 'Took too long.',
-          ...(retry ? { details: { retry: true } } : {})
-        }),
-        { status: 503 }
-      )
+    const refusal = (code: string): Response =>
+      new Response(JSON.stringify({ code, message: 'Took too long.' }), {
+        status: 503
+      })
     const preview = { id: 'spv/1' }
-    const busy = client([
-      { id: 'spv/1', input: engine },
-      refusal('unavailable', true),
-      refusal('unavailable', true),
-      preview
-    ])
-    await busy.api
-      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
-      .catch(() => undefined)
-    const puts = busy.calls.filter(([method]) => method === 'PUT')
-    expect(puts).has.length(3)
-    expect(puts[2][2]).deep.equals(puts[0][2])
-    // Offline is asked again the same way.
     let dropped = false
     let offlinePuts = 0
     const offline = new TeamStationClient({
@@ -327,7 +300,7 @@ describe('api client scheduling setup', () => {
     expect(offlinePuts).equals(2)
     const final = client([
       { id: 'spv/1', input: engine },
-      refusal('unavailable', false)
+      refusal('unavailable')
     ])
     const error = await final.api
       .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
