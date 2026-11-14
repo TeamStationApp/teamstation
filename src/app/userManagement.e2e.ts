@@ -192,6 +192,36 @@ async function main(): Promise<void> {
 
     // 1. The row on Node administration, and the screen behind it.
     const node = await open(NODE)
+    // Node administration is the sidebar's row directly above the account.
+    await node.goto(f.h.origin + '/', { waitUntil: 'networkidle0' })
+    const footer = await node.evaluate(() =>
+      [
+        ...document.querySelectorAll(
+          '[data-testid="sidebar-account-footer"] [role="button"]'
+        )
+      ].map(button => String(button.getAttribute('aria-label')))
+    )
+    expect(footer.slice(-2)).deep.equals([
+      'Node administration',
+      'Account, José Alvarez'
+    ])
+    await node.screenshot({ path: join(artifacts!, 'sidebar-node-admin.png') })
+    await press(node, 'Node administration')
+    await node.waitForFunction(() => location.pathname === '/node')
+    // And Account no longer offers it.
+    await node.goto(f.h.origin + '/account', { waitUntil: 'networkidle0' })
+    await text(node, 'Delete account')
+    expect(
+      await node.evaluate(() =>
+        [
+          ...document.querySelectorAll('main [role="button"], [role="button"]')
+        ].some(
+          button =>
+            button.closest('[data-testid="navigation-sidebar"]') == null &&
+            String(button.textContent) === 'Node administration'
+        )
+      )
+    ).equals(false)
     await node.goto(f.h.origin + '/node', { waitUntil: 'networkidle0' })
     await text(node, 'User Management')
     await node.screenshot({
@@ -452,6 +482,14 @@ async function main(): Promise<void> {
     // 1, continued: anybody else is refused, and so is the API, and Node
     // administration offers them no User Management row.
     const member = await open(101)
+    await member.goto(f.h.origin + '/', { waitUntil: 'networkidle0' })
+    await member.waitForSelector('[data-testid="sidebar-account-footer"]')
+    expect(
+      await member.evaluate(
+        () =>
+          document.querySelector('[aria-label="Node administration"]') == null
+      )
+    ).equals(true)
     await member.goto(f.h.origin + '/node', { waitUntil: 'networkidle0' })
     await new Promise(resolve => setTimeout(resolve, 3500))
     expect(
@@ -486,6 +524,14 @@ async function main(): Promise<void> {
 
     // 6. A phone: every column of a row, nothing off its edge.
     const phone = await open(NODE, 390, 844)
+    // No sidebar: the account menu's last row.
+    await phone.goto(f.h.origin + '/', { waitUntil: 'networkidle0' })
+    await press(phone, 'Account, José Alvarez')
+    await phone.waitForSelector('[aria-label="Node administration"]')
+    await new Promise(resolve => setTimeout(resolve, 400))
+    await phone.screenshot({ path: join(artifacts!, 'menu-node-admin.png') })
+    await press(phone, 'Node administration')
+    await phone.waitForFunction(() => location.pathname === '/node')
     await phone.goto(f.h.origin + '/node/users', { waitUntil: 'networkidle0' })
     await phone.waitForSelector('[aria-label^="Login time"]')
     await text(phone, 'Last active')

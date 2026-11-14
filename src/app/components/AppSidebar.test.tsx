@@ -195,4 +195,36 @@ describe('wide navigation sidebar', () => {
       document.querySelector('[aria-label="Close build information"]')
     ).equals(null)
   })
+
+  it('puts Node administration directly above the account, for a node administrator only', async () => {
+    let opened = 0
+    const props = {
+      selected: 'home' as const,
+      onSelect: () => undefined,
+      account: {
+        userId: 'usr_ruth',
+        name: 'Babe Ruth',
+        onPress: () => undefined
+      },
+      notifications: { pending: false, onPress: () => undefined }
+    }
+    await render(
+      <AppSidebar {...props} nodeAdministration={{ onPress: () => opened++ }} />
+    )
+    const labels = (): Array<string | null> =>
+      [
+        ...byTestId('sidebar-account-footer')!.querySelectorAll(
+          '[role="button"]'
+        )
+      ].map(n => n.getAttribute('aria-label'))
+    expect(labels()).deep.equals([
+      'Notifications',
+      'Node administration',
+      'Account, Babe Ruth'
+    ])
+    await click(byLabel('Node administration'))
+    expect(opened).equals(1)
+    await rerender(<AppSidebar {...props} />)
+    expect(labels()).deep.equals(['Notifications', 'Account, Babe Ruth'])
+  })
 })

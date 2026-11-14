@@ -295,34 +295,10 @@ afterEach(async () => {
 describe('Account settings screen', () => {
   // The Shell reads the account's chat age on mount: confirmed here.
   confirmedChatAgeHooks()
-  it('opens node administration from the freshly loaded account even when the session predates the grant', async () => {
+  it('leaves Node administration to the sidebar and the account menu, even for an administrator', async () => {
     const f = fixture(false, true)
-    f.session.user = { ...f.session.user, isAdmin: false }
-    let opened = false
-    await render(
-      <AccountScreen
-        {...f}
-        onSignOut={() => {}}
-        onNodeAdministration={() => {
-          opened = true
-        }}
-      />
-    )
-    await press('Node administration')
-    expect(opened).equals(true)
-  })
-  it('hides node administration after revocation even when the session still advertises that role', async () => {
-    const f = fixture()
     f.session.user = { ...f.session.user, isAdmin: true }
-    await render(
-      <AccountScreen
-        {...f}
-        onSignOut={() => {}}
-        onNodeAdministration={() => {
-          throw new Error('Revoked entry must be hidden')
-        }}
-      />
-    )
+    await render(<AccountScreen {...f} onSignOut={() => {}} />)
     expect(button('Node administration')).equals(undefined)
   })
   it('opens and closes blocked people without opening chat devices', async () => {
@@ -938,15 +914,14 @@ describe('Account settings screen', () => {
         onAccountDeleted={() => {
           deleted++
         }}
-        onNodeAdministration={() => undefined}
       />
     )
-    // The very last thing on the screen, after even Node administration.
+    // The very last thing on the screen, straight after Sign out.
     const buttons = [
       ...document.querySelectorAll<HTMLElement>('[role="button"]')
     ]
     expect(buttons.at(-1)?.textContent).equals('Delete account')
-    expect(buttons.at(-2)?.textContent).equals('Node administration')
+    expect(buttons.at(-2)?.textContent).equals('Sign out')
     // Sign out and Delete account are both bold and centered.
     for (const label of ['Sign out', 'Delete account']) {
       const target = button(label)!

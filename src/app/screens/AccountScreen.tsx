@@ -67,7 +67,6 @@ export interface AccountScreenProps {
   onSignOutRequest?: () => void
   /** The account was deleted, or its session ended mid-delete; leave without asking the server. */
   onAccountDeleted?: () => void
-  onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
   /** Opens Create API key. */
   onCreateApiKey?: () => void
@@ -95,7 +94,6 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     onAccountDeleted = onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
-    onNodeAdministration,
     readiness = walkUpReadiness,
     target
   } = props
@@ -851,14 +849,6 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
             style={styles.centered}
             onPress={signOut}
           />
-          {user.isAdmin && onNodeAdministration != null && (
-            <Button
-              label="Node administration"
-              kind="secondary"
-              block
-              onPress={onNodeAdministration}
-            />
-          )}
           <DangerText
             label={lstrings.account_delete}
             bold

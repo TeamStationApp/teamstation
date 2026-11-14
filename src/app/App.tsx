@@ -3475,9 +3475,6 @@ function Shell(props: AppProps): React.ReactElement {
         onCreateApiKey={() => {
           push({ name: 'apiKeyNew' })
         }}
-        onNodeAdministration={() => {
-          push({ name: 'nodeAdministration' })
-        }}
         onAccountChanged={user => {
           setSession(current =>
             current?.user.id !== user.id ? current : { ...current, user }
@@ -3941,6 +3938,16 @@ function Shell(props: AppProps): React.ReactElement {
             if (top?.name !== 'notifications') push({ name: 'notifications' })
           }
         }
+  // Node administration is reached from beside the account: the sidebar's
+  // row above it, or the account menu's last row where there is no sidebar.
+  const nodeAdministration = isAdmin
+    ? {
+        onPress: () => {
+          if (top?.name !== 'nodeAdministration')
+            push({ name: 'nodeAdministration' })
+        }
+      }
+    : undefined
   const account =
     session == null
       ? undefined
@@ -3957,6 +3964,7 @@ function Shell(props: AppProps): React.ReactElement {
     <AppHeader
       apiBaseUrl={apiBaseUrl}
       isAdmin={isAdmin}
+      nodeAdministration={nodeAdministration}
       buildsClient={session == null ? undefined : client}
       title={
         chromeFrame?.name === 'conversation'
@@ -4146,6 +4154,7 @@ function Shell(props: AppProps): React.ReactElement {
                           <AppSidebar
                             account={account}
                             notifications={notifications}
+                            nodeAdministration={nodeAdministration}
                             selected={tab}
                             onSelect={selectTab}
                             unread={chatOn && hasUnread(chatList)}
