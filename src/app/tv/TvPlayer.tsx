@@ -41,6 +41,7 @@ import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
 import type { Rect as TileRect } from '../player/multiCam/layout'
 import { angleLabels } from '../player/multiCam/takes'
+import type { NativeProgressData } from '../player/nativeProgress'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
@@ -60,6 +61,7 @@ import {
 } from './NativePresentation'
 import { NativeSeekQueue } from './nativeSeekQueue'
 import { PlaybackClock } from './playbackClock'
+import { PlaybackRecovery } from './playbackRecovery'
 import {
   initialPlayback,
   type PlaybackAction,
@@ -83,12 +85,22 @@ import { angleNeighbor, tvLayout } from './tvLayout'
 const HIGHLIGHTS_PANEL_WIDTH = 420
 const LAYOUT_DURATION = 240
 const STATS_SCROLL_SENSITIVITY = 0.5
+/** The one error camera recovery raises, and so the only one it may clear. */
+const CAMERAS_FAILED = 'The cameras could not play. Try again.'
+const withoutRecoveryError = (previous: string | null): string | null =>
+  previous === CAMERAS_FAILED ? null : previous
+/** Unchanged when `index` was not failing, so a playing camera re-renders nothing. */
+const without =
+  (index: number) =>
+  (previous: number[]): number[] =>
+    previous.includes(index) ? previous.filter(i => i !== index) : previous
 
 interface Angle {
   name: string
   video: VideoSummary
   uri: string
   timeline: WallTimeline
+  revision: number
 }
 interface Statistics extends ReplayStatistics {
   board: BoardTimelineWindow | null
@@ -109,6 +121,14 @@ export function TvPlayer({
   onClose: () => void
 }): React.ReactElement {
   const [angles, setAngles] = useState<Angle[] | null>(null)
+  const anglesRef = useRef<Angle[] | null>(null)
+  anglesRef.current = angles
+  const recovery = useRef(new Map<number, PlaybackRecovery>())
+  const refreshing = useRef(new Set<number>())
+  /** `finished`: a live camera swapped on purpose for its recording. */
+  const refreshAngle = useRef<
+    ((index: number, reason?: 'recover' | 'finished') => Promise<void>) | null
+  >(null)
   const [error, setError] = useState<string | null>(null)
   const [retry, setRetry] = useState(0)
   const screen = useWindowDimensions()
@@ -180,6 +200,8 @@ export function TvPlayer({
   const [wall, setWall] = useState<number | null>(null)
   const [failures, setFailures] = useState<number[]>([])
   const [buffering, setBuffering] = useState<number[]>([])
+  const bufferingRef = useRef(buffering)
+  bufferingRef.current = buffering
   const [state, dispatch] = useReducer(playbackReducer, 0, initialPlayback)
   const current = useRef(state)
   current.current = state
@@ -289,6 +311,8 @@ export function TvPlayer({
     setError(null)
     setAngles(null)
     setFailures([])
+    recovery.current.clear()
+    refreshing.current.clear()
     setStats(EMPTY_STATS)
     const load = async (): Promise<void> => {
       const game = await client.game(request.game.id)
@@ -321,7 +345,8 @@ export function TvPlayer({
             video,
             name: names.get(video.id) ?? video.title,
             uri: playback.url,
-            timeline
+            timeline,
+            revision: 0
           }
         })
       )
@@ -333,20 +358,98 @@ export function TvPlayer({
         throw failed?.reason ?? new Error('No camera angles could open.')
       }
       if (!active) return
-      loaded.forEach((angle, index) => {
-        const queue = new NativeSeekQueue(
+      // Mounts whose first settled seek restores them: only that seek earns
+      // the opening grace. A drift correction on a mount that has played
+      // earns none, or a frozen follower answering each one is never replaced.
+      const restoring = new Set(loaded.map((_, index) => index))
+      const seekQueue = (index: number): NativeSeekQueue =>
+        new NativeSeekQueue(
           seconds => refs.current[index]?.seek(seconds, 0),
           () => {
             clock.current.settled(index)
+            if (restoring.delete(index))
+              recovery.current.get(index)?.opening(Date.now())
+            else recovery.current.get(index)?.seeked()
+            if (current.current.paused) {
+              recovery.current.get(index)?.readyPaused(Date.now())
+              setError(withoutRecoveryError)
+            }
+            setFailures(without(index))
           }
         )
-        seekQueues.current[index] = queue
+      loaded.forEach((angle, index) => {
+        const watch = new PlaybackRecovery(Date.now())
+        watch.opening(Date.now())
+        recovery.current.set(index, watch)
+        seekQueues.current[index] = seekQueue(index)
         clock.current.register(index, angle.timeline, seconds => {
-          queue.request(seconds)
+          seekQueues.current[index]?.request(seconds)
         })
       })
       dispatch({ type: 'reset', count: loaded.length })
-      setAngles(loaded)
+      // State gets copies: `loaded` is rewritten in place by `refreshAngle`.
+      setAngles([...loaded])
+      // The periodic refresh's swap to a recording, asked for while another
+      // refresh of that camera runs, is kept and run after it. A recovery asked
+      // for then is dropped: the running refresh is that recovery.
+      const queuedSwap = new Set<number>()
+      refreshAngle.current = async (index, reason = 'recover') => {
+        if (refreshing.current.has(index)) {
+          if (reason === 'finished') queuedSwap.add(index)
+          return
+        }
+        // Already a recording: a queued swap has nothing left to do.
+        if (reason === 'finished' && loaded[index].video.status !== 'live')
+          return
+        refreshing.current.add(index)
+        try {
+          const previous = loaded[index]
+          // This game's port, held across the await: a reopened game has a
+          // new clock.
+          const port = clock.current.ports[index]
+          const held = port.timeline
+          const [playback, fetched] = await Promise.all([
+            client.playback(previous.video.id),
+            client.wallTimeline(previous.video.id).catch(() => null)
+          ])
+          // As at load: a camera plays without a fresh timeline, on the one
+          // it had.
+          const timeline = fetched ?? held
+          if (!active || playback.url === null) return
+          const updated = {
+            ...previous,
+            uri: playback.url,
+            timeline,
+            video: {
+              ...previous.video,
+              status: timeline.live ? ('live' as const) : ('ready' as const)
+            },
+            revision: previous.revision + 1
+          }
+          loaded[index] = updated
+          // Rejects the old mount's callbacks now, not at the next render.
+          const next = [...loaded]
+          anglesRef.current = next
+          // One the periodic refresh wrote during the wait may be newer than
+          // this fetch; it stays for the swap that refresh queued.
+          if (port.timeline === held) port.timeline = timeline
+          // Remounting abandons the old native seek, including its completion.
+          seekQueues.current[index] = seekQueue(index)
+          setBuffering(previous => previous.filter(i => i !== index))
+          // A finished live camera is not unavailable: it is loading its recording.
+          if (reason === 'recover')
+            setFailures(previous => [...new Set([...previous, index])])
+          restoring.add(index)
+          recovery.current.get(index)?.opening(Date.now())
+          setAngles(next)
+        } finally {
+          if (active) {
+            refreshing.current.delete(index)
+            if (queuedSwap.delete(index))
+              refreshAngle.current?.(index, 'finished').catch(() => undefined)
+          }
+        }
+      }
       let refreshSequence = 0
       let appliedStatisticsSequence = 0
       let appliedTimelineSequence = 0
@@ -367,16 +470,21 @@ export function TvPlayer({
           if (highlights !== null) setClips(highlights)
         }
         if (loaded.some(a => a.video.status === 'live')) {
+          // A camera refreshed meanwhile already holds a newer timeline.
+          const revisions = loaded.map(a => a.revision)
           const updates = await Promise.all(
             loaded.map(
-              async a =>
-                await client.wallTimeline(a.video.id).catch(() => a.timeline)
+              async a => await client.wallTimeline(a.video.id).catch(() => null)
             )
           )
           if (active && sequence > appliedTimelineSequence) {
             appliedTimelineSequence = sequence
             updates.forEach((timeline, i) => {
+              if (timeline === null || loaded[i].revision !== revisions[i])
+                return
               clock.current.ports[i].timeline = timeline
+              if (!timeline.live && loaded[i].video.status === 'live')
+                refreshAngle.current?.(i, 'finished').catch(() => undefined)
             })
           }
         }
@@ -402,10 +510,47 @@ export function TvPlayer({
     return () => {
       active = false
       statisticsRefresh.current = null
+      refreshAngle.current = null
       generation.current = activeGeneration + 1
       clearInterval(timer)
     }
   }, [client, request, retry])
+  useEffect(() => {
+    const timer = setInterval(() => {
+      for (const [index, watch] of recovery.current) {
+        const port = clock.current.ports[index]
+        if (port == null) continue
+        if (seekQueues.current[index]?.timedOut()) {
+          clock.current.fail(index)
+          watch.error(Date.now())
+          setFailures(previous => [...new Set([...previous, index])])
+        }
+        const live = anglesRef.current?.[index].video.status === 'live'
+        const heldForMaster =
+          bufferingRef.current.includes(clock.current.master) &&
+          index !== clock.current.master
+        if (
+          !seekQueues.current[index]?.pending &&
+          watch.retry(
+            Date.now(),
+            !current.current.paused &&
+              !heldForMaster &&
+              clock.current.available(index),
+            !live && port.ended
+          )
+        ) {
+          clock.current.fail(index)
+          setFailures(previous => [...new Set([...previous, index])])
+          refreshAngle.current?.(index).catch(() => undefined)
+        }
+        if (watch.exhausted && clock.current.ports.every(p => p.failed))
+          setError(CAMERAS_FAILED)
+      }
+    }, 1000)
+    return () => {
+      clearInterval(timer)
+    }
+  }, [])
   const previousOverlay = useRef(false)
   const previousFull = useRef<number | null>(null)
   useEffect(() => {
@@ -789,6 +934,16 @@ export function TvPlayer({
       index,
       angles?.[index].video.status === 'live' ? Infinity : duration
     )
+    // A paused live remount waits for seekable bounds that only playback
+    // reports. It has opened; the selected moment is restored on play.
+    if (
+      current.current.paused &&
+      clock.current.ports[index].pendingWall !== null
+    )
+      recovery.current.get(index)?.readyPaused(Date.now())
+    markReady()
+  }
+  const markReady = (): void => {
     if (ready.current || !clock.current.ports.every(p => p.loaded || p.failed))
       return
     ready.current = true
@@ -823,8 +978,32 @@ export function TvPlayer({
       pendingClip.current = undefined
     }
   }
-  const progress = (index: number, seconds: number): void => {
-    const next = clock.current.progress(index, seconds)
+  const progress = (
+    index: number,
+    seconds: number,
+    seekableEnd?: number,
+    seekableStart?: number
+  ): void => {
+    const port = clock.current.ports[index]
+    if (
+      port != null &&
+      !port.failed &&
+      !port.settling &&
+      port.target == null &&
+      port.pendingWall === null &&
+      recovery.current.get(index)?.progress(seconds, Date.now()) === true
+    ) {
+      setError(withoutRecoveryError)
+      setFailures(without(index))
+    }
+    const next = clock.current.progress(
+      index,
+      seconds,
+      seekableEnd,
+      seekableStart,
+      !(current.current.paused && transportState.rate === 1) &&
+        transport.current?.scrubbing !== true
+    )
     if (index !== clock.current.master || next === null) return
     setWall(previous =>
       previous !== null &&
@@ -920,6 +1099,17 @@ export function TvPlayer({
         {angles?.map((angle, index) => {
           const rect = layout.tiles[state.visible.indexOf(index)]
           const available = clock.current.available(index)
+          // A camera without a port (the frame a reopened game's new clock
+          // is not yet registered) is unavailable, as `available` has it.
+          const port = clock.current.ports.at(index)
+          const failing = failures.includes(index)
+          // Past its recording's last frame, not missing: says so.
+          const notice =
+            available && !failing
+              ? null
+              : port?.ended === true && !port.failed && !failing
+                ? 'end of video'
+                : 'video unavailable at this moment'
           return (
             <CameraFrame
               key={angle.video.id}
@@ -941,9 +1131,9 @@ export function TvPlayer({
                 }}
                 testID={`tv-angle-${index}`}
                 accessibilityRole="button"
-                accessibilityLabel={`Camera ${angle.name}`}
+                accessibilityLabel={`Camera ${angle.name}${notice === null ? '' : `: ${notice}`}`}
                 accessibilityValue={{
-                  text: `${clock.current.ports[index]?.position.toFixed(1)} seconds`
+                  text: `${port?.position.toFixed(1)} seconds`
                 }}
                 focusable={
                   !overlay &&
@@ -985,6 +1175,7 @@ export function TvPlayer({
                 }}
               >
                 <TransportVideo
+                  key={`${angle.video.id}:${angle.revision}`}
                   ref={ref => {
                     refs.current[index] = ref
                   }}
@@ -1000,16 +1191,37 @@ export function TvPlayer({
                   }
                   resizeMode="contain"
                   progressUpdateInterval={250}
+                  reportBandwidth
+                  onBandwidthUpdate={() => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    seekQueues.current[index]?.transferProgress()
+                    recovery.current.get(index)?.transfer(Date.now())
+                  }}
                   onLoad={event => {
+                    if (anglesRef.current?.[index] !== angle) return
                     loaded(index, event.duration)
+                    if (clock.current.wall === null)
+                      setFailures(previous => previous.filter(i => i !== index))
                   }}
                   onSeek={event => {
+                    if (anglesRef.current?.[index] !== angle) return
                     seekQueues.current[index]?.complete(event.seekTime)
                   }}
-                  onProgress={event => {
-                    progress(index, event.currentTime)
+                  onProgress={(event: NativeProgressData) => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    progress(
+                      index,
+                      event.currentTime,
+                      event.seekableEnd ?? event.seekableDuration,
+                      event.seekableStart
+                    )
                   }}
                   onBuffer={event => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    seekQueues.current[index]?.buffer(event.isBuffering)
+                    recovery.current
+                      .get(index)
+                      ?.buffer(event.isBuffering, Date.now())
                     setBuffering(previous =>
                       event.isBuffering
                         ? [...new Set([...previous, index])]
@@ -1017,6 +1229,12 @@ export function TvPlayer({
                     )
                   }}
                   onEnd={() => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    if (angle.video.status === 'live') {
+                      seekQueues.current[index]?.fail()
+                      recovery.current.get(index)?.error(Date.now())
+                      return
+                    }
                     const complete = clock.current.end(index)
                     setWall(clock.current.wall)
                     setReadySequence(n => n + 1)
@@ -1030,17 +1248,19 @@ export function TvPlayer({
                     }
                   }}
                   onError={() => {
+                    if (anglesRef.current?.[index] !== angle) return
+                    seekQueues.current[index]?.fail()
                     const unavailable = clock.current.fail(index)
-                    loaded(index, 0)
+                    recovery.current.get(index)?.error(Date.now())
+                    markReady()
                     setFailures(previous => [...new Set([...previous, index])])
-                    if (unavailable)
-                      setError('The cameras could not play. Try again.')
+                    if (unavailable) setError(CAMERAS_FAILED)
                   }}
                 />
-                {(!available || failures.includes(index)) && (
+                {notice !== null && (
                   <View style={styles.unavailable}>
                     <Text style={styles.copy}>
-                      {angle.name}: video unavailable at this moment
+                      {angle.name}: {notice}
                     </Text>
                   </View>
                 )}

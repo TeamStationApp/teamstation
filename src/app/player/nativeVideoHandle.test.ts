@@ -29,6 +29,251 @@ function seeked(seekTime: number): OnSeekData {
 }
 
 describe('NativeVideoHandle', function () {
+  it('replaces obsolete native seeks and resumes only after the newest target lands', async () => {
+    const handle = new NativeVideoHandle(() => undefined)
+    const { ref, calls } = fakePlayer()
+    handle.attach(ref)
+    await handle.play()
+    handle.currentTime = 10
+    handle.currentTime = 20
+    handle.currentTime = 30
+    expect(calls).deep.equals(['seek 10', 'seek 20', 'seek 30'])
+    handle.handleSeek(seeked(10))
+    expect(calls).deep.equals(['seek 10', 'seek 20', 'seek 30'])
+    handle.handleSeek(seeked(10))
+    expect(handle.currentTime).equals(30)
+    handle.handleSeek(seeked(30))
+    expect(calls).deep.equals(['seek 10', 'seek 20', 'seek 30', 'resume'])
+    expect(handle.seeking).equals(false)
+  })
+
+  it('ignores obsolete progress and accepts progress at the latest target', () => {
+    const handle = new NativeVideoHandle(() => undefined)
+    const { ref, calls } = fakePlayer()
+    handle.attach(ref)
+    handle.currentTime = 10
+    handle.currentTime = 20
+    handle.handleProgress({
+      currentTime: 10,
+      playableDuration: 60,
+      seekableDuration: 60
+    })
+    expect(calls).deep.equals(['seek 10', 'seek 20'])
+    expect(handle.seeking).equals(true)
+    expect(handle.reportedTime).equals(0)
+    handle.handleProgress({
+      currentTime: 20,
+      playableDuration: 60,
+      seekableDuration: 60
+    })
+    expect(handle.seeking).equals(false)
+    expect(handle.reportedTime).equals(20)
+    expect(handle.paused).equals(true)
+  })
+  it('lets a cold seek buffer beyond five seconds and complete without resetting', () => {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    const { ref, calls } = fakePlayer()
+    handle.attach(ref)
+    let errors = 0
+    handle.onError = () => {
+      errors++
+    }
+    handle.currentTime = 100
+    handle.handleBuffer({ isBuffering: true })
+    now = 90_000
+    handle.checkSeekTimeout()
+    expect(errors).equals(0)
+    handle.handleBuffer({ isBuffering: false })
+    handle.checkSeekTimeout()
+    expect(errors).equals(0)
+    handle.handleSeek(seeked(100))
+    expect(handle.seeking).equals(false)
+    expect(calls).deep.equals(['seek 100'])
+  })
+
+  it('keeps downloading a slow seek while transfers arrive and recovers if they stop', () => {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    let errors = 0
+    handle.onError = () => {
+      errors++
+    }
+    handle.handleTransferProgress()
+    handle.currentTime = 100
+    handle.handleTransferProgress()
+    handle.handleBuffer({ isBuffering: true })
+    for (now = 10_000; now <= 90_000; now += 10_000) {
+      handle.handleTransferProgress()
+      handle.checkSeekTimeout()
+    }
+    expect(errors).equals(0)
+    expect(handle.reportedTime).equals(0)
+    now = 209_999
+    handle.checkSeekTimeout()
+    expect(errors).equals(0)
+    now = 210_000
+    handle.checkSeekTimeout()
+    expect(errors).equals(1)
+    handle.handleTransferProgress()
+    handle.handleSeek(seeked(100))
+    expect(handle.seeking).equals(true)
+  })
+
+  it('bounds a buffering seek and gives a ready player time to acknowledge', () => {
+    for (const finishesBuffering of [false, true]) {
+      let now = 0
+      const handle = new NativeVideoHandle(
+        () => undefined,
+        () => now
+      )
+      handle.attach(fakePlayer().ref)
+      let errors = 0
+      handle.onError = () => {
+        errors++
+      }
+      handle.currentTime = 100
+      handle.handleBuffer({ isBuffering: true })
+      now = 119_999
+      handle.checkSeekTimeout()
+      expect(errors).equals(0)
+      if (finishesBuffering) handle.handleBuffer({ isBuffering: false })
+      now = finishesBuffering ? 124_998 : 120_000
+      handle.checkSeekTimeout()
+      expect(errors).equals(finishesBuffering ? 0 : 1)
+      now = 124_999
+      handle.checkSeekTimeout()
+      expect(errors).equals(1)
+    }
+  })
+
+  it('times out a seek on a player flipping in and out of buffering', () => {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    let erroredAt: number | null = null
+    handle.onError = () => {
+      erroredAt ??= now
+    }
+    handle.currentTime = 100
+    handle.handleBuffer({ isBuffering: true })
+    for (now = 1000; now <= 130_000; now += 1000) {
+      if (now % 3000 === 0)
+        handle.handleBuffer({ isBuffering: now % 6000 === 0 })
+      handle.checkSeekTimeout()
+    }
+    expect(erroredAt).equals(120_000)
+  })
+
+  it('waits for an answer to a sent seek rather than adopting other progress', () => {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    const at = (
+      currentTime: number
+    ): Parameters<NativeVideoHandle['handleProgress']>[0] => ({
+      currentTime,
+      playableDuration: 60,
+      seekableDuration: 60
+    })
+    handle.handleProgress(at(12))
+    handle.currentTime = 50
+    now = 2000
+    handle.handleProgress(at(12.5))
+    expect(handle.seeking, 'past the old patience').equals(true)
+    expect(handle.currentTime).equals(50)
+  })
+  it('ignores a stale position paired with the newest target and duplicate requests', () => {
+    const handle = new NativeVideoHandle(() => undefined)
+    const { ref, calls } = fakePlayer()
+    handle.attach(ref)
+    handle.currentTime = 10
+    handle.currentTime = 20
+    handle.currentTime = 20
+    handle.handleSeek({ seekTime: 20, currentTime: 10 })
+    expect(handle.seeking).equals(true)
+    expect(calls).deep.equals(['seek 10', 'seek 20'])
+    handle.handleSeek(seeked(20))
+    expect(handle.seeking).equals(false)
+  })
+
+  it('accepts a seek the player stopped at the end of a recording or live window', () => {
+    for (const live of [false, true]) {
+      let now = 0
+      const handle = new NativeVideoHandle(
+        () => undefined,
+        () => now
+      )
+      handle.attach(fakePlayer().ref)
+      handle.handleLoad({
+        currentTime: 10,
+        duration: live ? 0 : 120,
+        naturalSize: { width: 640, height: 360, orientation: 'landscape' },
+        audioTracks: [],
+        textTracks: [],
+        videoTracks: []
+      })
+      if (live)
+        handle.handleProgress({
+          currentTime: 10,
+          playableDuration: 60,
+          seekableDuration: 120
+        })
+      let errors = 0
+      handle.onError = () => {
+        errors++
+      }
+      handle.currentTime = 130
+      handle.handleSeek({ seekTime: 130, currentTime: 119.8 })
+      expect(handle.seeking, live ? 'live' : 'recording').equals(false)
+      expect(handle.currentTime).equals(119.8)
+      now = 6000
+      handle.checkSeekTimeout()
+      expect(errors, 'an answered clamp is not a lost seek').equals(0)
+    }
+  })
+  it('reports native progress separately and escalates a lost seek completion', () => {
+    let now = 0
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    handle.handleProgress({ currentTime: 12 } as Parameters<
+      NativeVideoHandle['handleProgress']
+    >[0])
+    handle.currentTime = 50
+    expect(handle.currentTime).equals(50)
+    expect(handle.reportedTime).equals(12)
+    let errors = 0
+    handle.onError = () => {
+      errors++
+    }
+    now = 4999
+    handle.checkSeekTimeout()
+    expect(errors).equals(0)
+    now = 5000
+    handle.checkSeekTimeout()
+    handle.checkSeekTimeout()
+    expect(errors).equals(1)
+    handle.reset()
+    handle.handleSeek(seeked(50))
+    expect(handle.reportedTime).equals(0)
+    expect(handle.currentTime).equals(0)
+  })
   it('starts a playing video again after a seek, which iOS leaves paused', async function () {
     const handle = new NativeVideoHandle(() => undefined)
     const { ref, calls } = fakePlayer()
@@ -590,6 +835,18 @@ describe('NativeVideoHandle’s length on a live game', function () {
 })
 
 describe('NativeVideoHandle’s seekable end, for a resume that waits on it (U23)', function () {
+  it('uses the end of an Apple sliding window rather than its length', () => {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.handleProgress({
+      currentTime: 90,
+      playableDuration: 100,
+      seekableDuration: 70,
+      seekableStart: 50,
+      seekableEnd: 120
+    })
+    expect(handle.seekableEnd).equals(120)
+    expect(handle.liveEdge).equals(120)
+  })
   it('reports progress and a new length, and the newest footage it could seek to', function () {
     const handle = new NativeVideoHandle(() => undefined)
     handle.attach(fakePlayer().ref)

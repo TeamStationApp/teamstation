@@ -117,7 +117,7 @@
     "coverage.deploy": "c8 --all --include 'scripts/deploy.ts' --include 'scripts/deploy/**/*.ts' --include 'scripts/clientConfig.mjs' --exclude '**/*.test.ts' --report-dir coverage/deploy --reporter text --reporter json --reporter lcov --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 'scripts/deploy/**/*.test.ts'",
     "deploy:hosting": "node -r sucrase/register scripts/deploy/hosting.ts",
     "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'",
-    "test:portable": "npm run test.eventControl && npm run test:deploy && npm run test:hosting && node --test scripts/coverage-provenance.test.cjs",
+    "test:portable": "npm run test.eventControl && npm run test:deploy && npm run test:hosting && npm run test.nativePatches && node --test scripts/coverage-provenance.test.cjs",
     "coverage.deepLinks": "node scripts/deep-links-coverage.mjs",
     "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts scripts/deploy/fieldApps.test.ts scripts/deploy/patchExpoModulesJsi.test.ts",
     "coverage.creation": "node scripts/creation-coverage.mjs",
@@ -139,6 +139,8 @@
     "coverage.observability": "node scripts/observability-coverage.mjs",
     "chat-crypto": "node scripts/chatCryptoBuild.mjs node wasm",
     "chat-seed": "node -r sucrase/register src/server/dev/chatSeed.ts",
+    "test.nativePatches": "mocha -r sucrase/register 'scripts/patchVideo*.integration.test.ts'",
+    "test.nativeSeek": "node appletv/scripts/test-video-seek.cjs node_modules/react-native-video/ios/Video/Features/RCTPlayerOperations.swift",
     "test.tv": "node scripts/build-scoring-tests.mjs && mocha -r sucrase/register -r ./src/test/scoringDomSetup.cjs --timeout 60000 --exit src/server/routes/tvLogin.integration.test.ts src/server/routes/videoCollections.integration.test.ts src/server/auth/tvLocation.test.ts 'src/app/tv/*.test.ts' src/test/tvBuildConfig.test.ts lib/scoring-tests.cjs --grep \"TV |TeamStation TV|account|Account\"",
     "coverage.gameStatistics": "node scripts/game-statistics-coverage.mjs",
     "coverage.tv": "node scripts/tv-coverage.mjs"

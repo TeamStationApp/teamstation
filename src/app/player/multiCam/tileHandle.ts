@@ -10,6 +10,8 @@ import type { VideoHandle } from '../videoHandle'
  * the rest out, and the grid works from what is there.
  */
 export interface TileHandle extends VideoHandle {
+  /** Native owns a transfer-aware seek deadline; the grid must not shorten it. */
+  checkSeekTimeout?: () => void
   readonly ended?: boolean
   /** Still moving to where it was last sent; a browser says, a phone does not. */
   readonly seeking?: boolean
