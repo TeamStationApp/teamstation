@@ -213,6 +213,39 @@ describe('NativeVideoHandle', function () {
     expect(canPlay).equals(1)
   })
 
+  it('keeps the picture it has when the load is reported after it, as Android can', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    handle.handleReadyForDisplay()
+    handle.handleLoad({
+      currentTime: 104,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(handle.readyState).equals(4)
+    // A reload is a fresh start: nothing in hand until it loads again.
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    handle.reload()
+    expect(handle.readyState).equals(0)
+  })
+
+  it('is ready once its loaded player says it holds enough, picture reported or not', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    let canPlay = 0
+    handle.addEventListener('canplay', () => {
+      canPlay += 1
+    })
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(handle.readyState).equals(1)
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(4)
+    expect(canPlay).equals(1)
+  })
+
   it('has ended once it plays to the end, until it is moved back', function () {
     const handle = new NativeVideoHandle(() => undefined)
     handle.attach(fakePlayer().ref)

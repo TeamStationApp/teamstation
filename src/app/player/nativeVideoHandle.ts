@@ -20,6 +20,7 @@ import {
 import {
   HAVE_CURRENT_DATA,
   HAVE_ENOUGH_DATA,
+  HAVE_METADATA,
   type VideoEventName,
   type VideoHandle,
   type VideoListenerOptions
@@ -340,7 +341,12 @@ export class NativeVideoHandle implements VideoHandle {
     this.length = length
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
-    this.state = 1
+    // Never lower: ExoPlayer can draw its first frame, and say so, before it
+    // reports the load, and knocking that picture back to "metadata only"
+    // left every tile of a phone's grid short for good — the grid waits for
+    // `HAVE_ENOUGH_DATA` before it plays, so it held them frozen on their
+    // first frame until somebody scrubbed.
+    this.state = Math.max(this.state, HAVE_METADATA)
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -475,7 +481,9 @@ export class NativeVideoHandle implements VideoHandle {
    *
    * Android's player says ready only once it holds what it was told to start
    * with (`bufferForPlaybackMs`); AVPlayer says it when it judges playback
-   * likely to keep up.
+   * likely to keep up. Either is enough to play once the source has loaded,
+   * picture reported or not: Android does not always report one, and a tile
+   * left short there is one the grid never starts.
    */
   handleBuffer = (data: OnBufferData): void => {
     this.rebase()
@@ -501,7 +509,7 @@ export class NativeVideoHandle implements VideoHandle {
       }
       return
     }
-    if (this.state < HAVE_CURRENT_DATA || this.state === HAVE_ENOUGH_DATA) {
+    if (this.state < HAVE_METADATA || this.state === HAVE_ENOUGH_DATA) {
       return
     }
     this.state = HAVE_ENOUGH_DATA
@@ -596,8 +604,9 @@ export class NativeVideoHandle implements VideoHandle {
       this.props = { ...this.props, paused: true }
       this.onPropsChange()
     }
-    // A fresh attempt, paused until somebody plays it.
+    // A fresh attempt, paused until somebody plays it, with nothing loaded yet.
     this.failed = false
+    this.state = 0
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
     // live offset travel with it, and a bare address put ExoPlayer back on
