@@ -114,9 +114,16 @@ export const asServerConfig = asObject({
       worker: asOptional(asNumber, 10),
       primary: asOptional(asNumber, 3),
       statsBuilder: asOptional(asNumber, 3),
-      ingest: asOptional(asNumber, 3)
+      ingest: asOptional(asNumber, 3),
+      pushSender: asOptional(asNumber, 3)
     }),
-    () => ({ worker: 10, primary: 3, statsBuilder: 3, ingest: 3 })
+    () => ({
+      worker: 10,
+      primary: 3,
+      statsBuilder: 3,
+      ingest: 3,
+      pushSender: 3
+    })
   ),
 
   /**
@@ -402,6 +409,51 @@ export const asServerConfig = asObject({
       apiKey: asOptional(asString),
       baseUrl: asOptional(asString, 'https://api.anthropic.com/v1'),
       model: asOptional(asString, 'claude-sonnet-5-5')
+    })
+  ),
+
+  /**
+   * Notifications on phones and browsers (`src/server/push/config.ts`).
+   *
+   * Each service is off until its keys are here, and the devices registered
+   * for it are kept and skipped. `apns.p8Key` is the auth key's PEM, `fcm`
+   * the service account's email and PEM, `webPush` the VAPID pair in
+   * base64url with its `mailto:` or `https:` subject. `iosFiltering` is on
+   * once Apple has granted the notification-filtering entitlement: group
+   * messages then go to iPhones as alerts the app may hide, rather than as
+   * background pushes. `logFile` also writes every message, one JSON line
+   * each, for a development seat or an end-to-end test to replay.
+   * `chatHoldSeconds` is how long a chat post waits before it wakes anybody,
+   * so a member who reads it in the app meanwhile is not notified; an
+   * end-to-end stack sets it low.
+   */
+  push: asOptional(
+    asObject({
+      apns: asOptional(
+        asObject({
+          keyId: asString,
+          teamId: asString,
+          p8Key: asString,
+          topic: asString
+        })
+      ),
+      fcm: asOptional(
+        asObject({
+          projectId: asString,
+          clientEmail: asString,
+          privateKey: asString
+        })
+      ),
+      webPush: asOptional(
+        asObject({
+          publicKey: asString,
+          privateKey: asString,
+          subject: asString
+        })
+      ),
+      iosFiltering: asOptional(asBoolean, false),
+      logFile: asOptional(asString, ''),
+      chatHoldSeconds: asOptional(asNumber, 15)
     })
   ),
 

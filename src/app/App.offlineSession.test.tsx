@@ -13,9 +13,10 @@ import { COALESCE_MS } from '../common/screenScope'
 import { userIdOfGumbo } from '../common/userId'
 import { confirmedChatAgeHooks } from '../test/chatAgeTesting'
 import { fakeSockets } from '../test/fakeScoreboardSocket'
-import { mount, press, settle, unmount } from '../test/gameFormDom'
+import { fill, mount, press, settle, unmount } from '../test/gameFormDom'
 import { App } from './App'
 import { showRoute } from './navigation/useAddressBar'
+import { RELEASE_TIMEOUT_MS } from './platform/pushState'
 import type { StoredUser } from './platform/storedUser'
 import type { DocumentStore, StoredDocument } from './sync/cacheStore'
 
@@ -230,6 +231,308 @@ describe('the phone session with no signal', () => {
     expect(caches.destroyed).deep.equals([ICHIRO.id])
     expect(users.at(-1)).equals(undefined)
   })
+  it('deletes the push registration on sign-out, and unsubscribes even when the server cannot be told', async () => {
+    showRoute({ name: 'account' }, true)
+    answer = async () =>
+      asSessionUser({
+        id: ICHIRO.id,
+        displayName: ICHIRO.displayName,
+        isAdmin: false
+      })
+    const api = TeamStationClient.prototype
+    const trace: string[] = []
+    api.webPushKey = async () => Buffer.alloc(65, 4).toString('base64url')
+    api.registerPush = async () => 'psh_phone'
+    api.unregisterPush = async function (this: TeamStationClient, id) {
+      trace.push(`delete ${id} with ${this.token ?? 'no token'}`)
+      throw new HttpError('offline', 'Cannot reach TeamStation.')
+    }
+    api.signOut = async function (this: TeamStationClient) {
+      trace.push('logout')
+      throw new HttpError('offline', 'Cannot reach TeamStation.')
+    }
+    // A browser allowed to notify, with its subscription.
+    const subscription = {
+      options: { applicationServerKey: null },
+      toJSON: () => ({ endpoint: 'https://push.example.test/1' }),
+      unsubscribe: async () => {
+        trace.push('unsubscribe')
+        return true
+      }
+    }
+    const pushManager = {
+      getSubscription: async () => subscription,
+      subscribe: async () => subscription
+    }
+    Object.assign(globalThis, {
+      Notification: {
+        permission: 'granted',
+        requestPermission: async () => 'granted'
+      }
+    })
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        register: async () => ({}),
+        ready: Promise.resolve({ pushManager }),
+        getRegistration: async () => ({
+          getNotifications: async () => [],
+          pushManager
+        })
+      }
+    })
+    try {
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={ICHIRO}
+          documentCache={memoryCaches().open}
+        />
+      )
+      await settle(50)
+      await press('Sign out')
+      await settle(50)
+      // The delete goes first, with the session; the logout after it. Both
+      // fail, and the browser has let go of its subscription all the same.
+      expect(trace).deep.equals([
+        'delete psh_phone with token-one',
+        'unsubscribe',
+        'logout'
+      ])
+    } finally {
+      Reflect.deleteProperty(globalThis, 'Notification')
+      Reflect.deleteProperty(navigator, 'serviceWorker')
+    }
+  })
+
+  /**
+   * A browser allowed to notify, with its subscription, whose unsubscribing
+   * is in `trace` (and which never answers when `hangs`), for `body`'s
+   * length.
+   */
+  async function inBrowserAllowed(
+    trace: string[],
+    body: () => Promise<void>,
+    hangs = false
+  ): Promise<void> {
+    const subscription = {
+      options: { applicationServerKey: null },
+      toJSON: () => ({ endpoint: 'https://push.example.test/1' }),
+      unsubscribe: async () => {
+        trace.push('unsubscribe')
+        if (hangs) await new Promise<void>(() => {})
+        return true
+      }
+    }
+    const pushManager = {
+      getSubscription: async () => subscription,
+      subscribe: async () => subscription
+    }
+    Object.assign(globalThis, {
+      Notification: {
+        permission: 'granted',
+        requestPermission: async () => 'granted'
+      }
+    })
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      value: {
+        register: async () => ({}),
+        ready: Promise.resolve({ pushManager }),
+        getRegistration: async () => ({
+          getNotifications: async () => [],
+          pushManager
+        })
+      }
+    })
+    try {
+      await body()
+    } finally {
+      Reflect.deleteProperty(globalThis, 'Notification')
+      Reflect.deleteProperty(navigator, 'serviceWorker')
+    }
+  }
+
+  it('signs out a few seconds after a delete that never answers, having let go at once', async function () {
+    this.timeout(10_000)
+    showRoute({ name: 'account' }, true)
+    answer = async () =>
+      asSessionUser({
+        id: ICHIRO.id,
+        displayName: ICHIRO.displayName,
+        isAdmin: false
+      })
+    const api = TeamStationClient.prototype
+    const trace: string[] = []
+    api.webPushKey = async () => Buffer.alloc(65, 4).toString('base64url')
+    api.registerPush = async () => 'psh_phone'
+    api.unregisterPush = async function (this: TeamStationClient, id) {
+      trace.push(`delete ${id}`)
+      await new Promise<void>(() => {})
+    }
+    api.signOut = async function (this: TeamStationClient) {
+      trace.push(`logout with ${this.token ?? 'no token'}`)
+      this.token = undefined
+    }
+    await inBrowserAllowed(trace, async () => {
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={ICHIRO}
+          documentCache={memoryCaches().open}
+        />
+      )
+      await settle(50)
+      await press('Sign out')
+      await settle(50)
+      expect(trace).deep.equals(['delete psh_phone', 'unsubscribe'])
+      await settle(RELEASE_TIMEOUT_MS)
+      expect(trace).deep.equals([
+        'delete psh_phone',
+        'unsubscribe',
+        'logout with token-one'
+      ])
+    })
+  })
+
+  it('signs out a few seconds after a delete and an unsubscribe that never answer, and a sign-in after still registers', async function () {
+    this.timeout(10_000)
+    showRoute({ name: 'account' }, true)
+    answer = async () =>
+      asSessionUser({
+        id: ICHIRO.id,
+        displayName: ICHIRO.displayName,
+        isAdmin: false
+      })
+    const api = TeamStationClient.prototype
+    const trace: string[] = []
+    api.webPushKey = async () => Buffer.alloc(65, 4).toString('base64url')
+    api.registerPush = async function (this: TeamStationClient) {
+      trace.push(`register with ${this.token ?? 'no token'}`)
+      return 'psh_phone'
+    }
+    api.unregisterPush = async function (this: TeamStationClient, id) {
+      trace.push(`delete ${id}`)
+      await new Promise<void>(() => {})
+    }
+    api.signOut = async function (this: TeamStationClient) {
+      trace.push(`logout with ${this.token ?? 'no token'}`)
+      this.token = undefined
+    }
+    api.signInWithPassword = async function (this: TeamStationClient) {
+      this.token = 'token-two'
+      return {
+        token: 'token-two',
+        expiresAt: '',
+        user: asSessionUser({
+          id: userIdOfGumbo(52),
+          displayName: 'Mookie B',
+          isAdmin: false
+        })
+      }
+    }
+    await inBrowserAllowed(
+      trace,
+      async () => {
+        await mount(
+          <App
+            initialToken="token-one"
+            initialUser={ICHIRO}
+            documentCache={memoryCaches().open}
+          />
+        )
+        await settle(50)
+        await press('Sign out')
+        await settle(50)
+        expect(trace).deep.equals([
+          'register with token-one',
+          'delete psh_phone',
+          'unsubscribe'
+        ])
+        await settle(RELEASE_TIMEOUT_MS)
+        expect(trace).deep.equals([
+          'register with token-one',
+          'delete psh_phone',
+          'unsubscribe',
+          'logout with token-one'
+        ])
+        await press('Use a password instead')
+        await fill('E-mail address', 'mookie@example.test')
+        await fill('Password', 'not-a-real-password')
+        await press('Sign in')
+        await settle(100)
+        expect(trace.at(-1)).equals('register with token-two')
+      },
+      true
+    )
+  })
+
+  it('never signs out a session begun while the last sign-out’s delete was still out', async function () {
+    showRoute({ name: 'account' }, true)
+    answer = async () =>
+      asSessionUser({
+        id: ICHIRO.id,
+        displayName: ICHIRO.displayName,
+        isAdmin: false
+      })
+    const api = TeamStationClient.prototype
+    const trace: string[] = []
+    let answerDelete: (() => void) | undefined
+    api.webPushKey = async () => Buffer.alloc(65, 4).toString('base64url')
+    api.registerPush = async function (this: TeamStationClient) {
+      trace.push(`register with ${this.token ?? 'no token'}`)
+      return 'psh_phone'
+    }
+    api.unregisterPush = async function (this: TeamStationClient, id) {
+      trace.push(`delete ${id} with ${this.token ?? 'no token'}`)
+      await new Promise<void>(resolve => {
+        answerDelete = resolve
+      })
+    }
+    api.signOut = async function (this: TeamStationClient) {
+      trace.push(`logout with ${this.token ?? 'no token'}`)
+      this.token = undefined
+    }
+    api.signInWithPassword = async function (this: TeamStationClient) {
+      this.token = 'token-two'
+      return {
+        token: 'token-two',
+        expiresAt: '',
+        user: asSessionUser({
+          id: userIdOfGumbo(52),
+          displayName: 'Mookie B',
+          isAdmin: false
+        })
+      }
+    }
+    await inBrowserAllowed(trace, async () => {
+      await mount(
+        <App
+          initialToken="token-one"
+          initialUser={ICHIRO}
+          documentCache={memoryCaches().open}
+        />
+      )
+      await settle(50)
+      await press('Sign out')
+      await settle(50)
+      await press('Use a password instead')
+      await fill('E-mail address', 'mookie@example.test')
+      await fill('Password', 'not-a-real-password')
+      await press('Sign in')
+      await settle(100)
+      // The old delete answers only now, long after the new sign-in.
+      answerDelete?.()
+      await settle(50)
+      expect(trace).deep.equals([
+        'register with token-one',
+        'delete psh_phone with token-one',
+        'unsubscribe',
+        'register with token-two'
+      ])
+    })
+  })
+
   for (const [code, why] of [
     ['internal', 'a 502 while the server restarts'],
     ['unavailable', 'a 503'],

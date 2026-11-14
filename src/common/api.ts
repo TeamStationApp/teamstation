@@ -13,9 +13,11 @@ import {
 } from 'cleaners'
 
 import {
+  type AccountNotifications,
   type AccountPicture,
   type AccountSettings,
   asAccountEmailPending,
+  asAccountNotifications,
   asAccountSettings
 } from './accountSettings'
 import { type ApiKey, type ApiKeyCreate, asApiKey, asApiKeys } from './apiKeys'
@@ -3486,6 +3488,14 @@ export interface StreamingRequest {
   onabort: (() => void) | null
 }
 
+/** `POST /me/push-registrations`: one device's push address. */
+export interface PushRegistration {
+  platform: 'ios' | 'android' | 'web'
+  /** An APNs or FCM token, or a browser's `PushSubscription` as JSON. */
+  address: string
+  environment: 'production' | 'development'
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
@@ -4276,6 +4286,74 @@ export class TeamStationClient {
 
   async accountSettings(): Promise<AccountSettings> {
     return await this.request('GET', '/me/account', asAccountSettings)
+  }
+
+  /** The account's notification switches, which every device follows. */
+  async accountNotifications(): Promise<AccountNotifications> {
+    return await this.request(
+      'GET',
+      '/me/account/notifications',
+      asAccountNotifications
+    )
+  }
+
+  /** Changes either switch; the one left out keeps its value. */
+  async setAccountNotifications(
+    change: Partial<AccountNotifications>
+  ): Promise<AccountNotifications> {
+    return await this.request(
+      'PUT',
+      '/me/account/notifications',
+      asAccountNotifications,
+      change
+    )
+  }
+
+  /**
+   * The VAPID public key a browser subscribes to push with, or null while
+   * the server sends no Web Push.
+   */
+  async webPushKey(): Promise<string | null> {
+    try {
+      return (
+        await this.request(
+          'GET',
+          '/push/web-key',
+          asObject({ publicKey: asString })
+        )
+      ).publicKey
+    } catch (error) {
+      if (error instanceof HttpError && error.code === 'notFound') return null
+      throw error
+    }
+  }
+
+  /**
+   * Where this signed-in device is woken: a phone's token or a browser's
+   * subscription (`address`, its JSON). Posting the same one again keeps one
+   * registration, moved to this session.
+   */
+  async registerPush(registration: PushRegistration): Promise<string> {
+    return (
+      await this.request(
+        'POST',
+        '/me/push-registrations',
+        asObject({ id: asString }),
+        registration
+      )
+    ).id
+  }
+
+  /**
+   * Deletes one of the caller's push registrations (`registerPush`'s id): at
+   * sign-out, while the session is still there to say whose it is.
+   */
+  async unregisterPush(id: string): Promise<void> {
+    await this.request(
+      'DELETE',
+      `/me/push-registrations/${encodeURIComponent(id)}`,
+      asUnknownOk
+    )
   }
 
   /** Whether this account has unlocked chat, and how. */

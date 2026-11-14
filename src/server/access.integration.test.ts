@@ -30,6 +30,7 @@ import {
   mayEditName,
   mayManagePlayer,
   mayViewFullName,
+  mayViewFullNameOf,
   mayViewFullNames,
   type RoleScopes,
   roleScopes,
@@ -1524,6 +1525,60 @@ describe('mayViewFullNames', function () {
     expect(
       await fullNameReach(fixture.db, idOf('Bobby Cox'), { isAdmin: true })
     ).equals(undefined)
+  })
+
+  it('answers, for one person and many readers at once, what each reader’s own mayViewFullName does', async function () {
+    const readers = [
+      ...[...ids.values()].map(userId => ({ userId, isAdmin: false })),
+      { userId: 'usr_nobody0000000000000', isAdmin: false }
+    ]
+    for (const person of ids.keys()) {
+      const expected = new Set<string>()
+      for (const reader of readers)
+        if (
+          await mayViewFullName(fixture.db, reader.userId, idOf(person), about)
+        )
+          expected.add(reader.userId)
+      expect(
+        [
+          ...(await mayViewFullNameOf(fixture.db, idOf(person), readers))
+        ].sort(),
+        person
+      ).deep.equals([...expected].sort())
+    }
+    // A site admin reads everybody; nobody asked about reads nobody.
+    expect([
+      ...(await mayViewFullNameOf(fixture.db, idOf('Aaron Judge'), [
+        { userId: idOf('Bobby Cox'), isAdmin: true }
+      ]))
+    ]).deep.equals([idOf('Bobby Cox')])
+    expect(
+      (await mayViewFullNameOf(fixture.db, idOf('Aaron Judge'), [])).size
+    ).equals(0)
+    // As many queries for every reader as for two.
+    const counted = (): { db: Kysely<Database>; queries: () => number } => {
+      let queries = 0
+      return {
+        db: fixture.db.withPlugin({
+          transformQuery(args) {
+            queries++
+            return args.node
+          },
+          async transformResult(args) {
+            return args.result
+          }
+        }),
+        queries: () => queries
+      }
+    }
+    const two = counted()
+    await mayViewFullNameOf(two.db, idOf('Aaron Judge'), [
+      { userId: idOf('Joe Torre'), isAdmin: false },
+      { userId: idOf('Bobby Cox'), isAdmin: false }
+    ])
+    const all = counted()
+    await mayViewFullNameOf(all.db, idOf('Aaron Judge'), readers)
+    expect(all.queries()).equals(two.queries())
   })
 
   it('reuses rows the caller has, and asks about fifty in as many queries as two', async function () {

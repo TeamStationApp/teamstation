@@ -5,8 +5,16 @@ apply plugin: "com.facebook.react"
 // package's own library would, and generates `expo.modules.ExpoModulesPackageList`.
 apply plugin: "expo-autolinking"
 apply plugin: "jacoco"
+// Firebase is configured from google-services.json, which Mason copies in
+// from its builder (TS_GOOGLE_SERVICES_JSON) and nothing commits. Without
+// it no FirebaseApp starts: the app builds and runs, and registers no push
+// token.
+if (file("google-services.json").exists()) apply plugin: "com.google.gms.google-services"
 
 def observabilityCoverage = System.getenv('TS_OBSERVABILITY_COVERAGE') == '1'
+// Push notification coverage (scripts/push-coverage.mjs): the JUnit run and
+// the emulator run of a debug build are both measured.
+def pushCoverage = System.getenv('TS_PUSH_COVERAGE') == '1'
 jacoco { toolVersion = '0.8.13' }
 
 /**
@@ -138,7 +146,8 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
-            enableAndroidTestCoverage observabilityCoverage
+            enableAndroidTestCoverage observabilityCoverage || pushCoverage
+            enableUnitTestCoverage pushCoverage
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -167,6 +176,23 @@ tasks.register('observabilityHostCoverage', JacocoReport) {
         include 'app/teamstation/app/video/LivePlaylistPatience.class'
     })
     reports { xml.required = true }
+}
+
+// The push classes' coverage from every execution file in TS_PUSH_EXEC
+// (comma-separated): the JUnit run's, and those pulled off the emulator.
+tasks.register('pushCoverage', JacocoReport) {
+    executionData.from(providers.environmentVariable('TS_PUSH_EXEC').map { paths ->
+        paths.split(',').findAll { !it.isEmpty() }.collect { file(it) }
+    })
+    sourceDirectories.from(file('src/main/java'), file('src/debug/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/push/**'
+        include 'app/teamstation/app/MainApplication.class'
+    })
+    reports {
+        xml.required = true
+        html.required = false
+    }
 }
 
 // The sign-in link filter for the app's link host, added to every variant's
@@ -200,6 +226,10 @@ dependencies {
     implementation("androidx.camera:camera-lifecycle:1.6.2")
     implementation("androidx.camera:camera-view:1.6.2")
     implementation("com.google.mlkit:barcode-scanning:17.3.0")
+    // Push notifications through FCM. Always compiled in; it runs only in a
+    // build with a google-services.json (above).
+    implementation(platform("com.google.firebase:firebase-bom:35.1.0"))
+    implementation("com.google.firebase:firebase-messaging")
     // LocalFileIdTest reads the fixtures it shares with localFileId.test.ts.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")

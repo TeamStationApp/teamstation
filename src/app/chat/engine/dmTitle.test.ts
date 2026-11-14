@@ -266,6 +266,27 @@ describe('public chat engine list summaries', () => {
     expect(pinned).deep.equals(['pins:cnv_one'])
   })
 
+  it('leaves devices and chats alone when only the notification switches changed', function () {
+    const chat = engine(client())
+    Object.assign(chat, { status: 'ready', context: {} })
+    const heard: string[] = []
+    const inside = chat as unknown as {
+      hint: (event: unknown) => void
+      later: (key: string) => void
+      relist: () => void
+    }
+    inside.later = key => heard.push(key)
+    inside.relist = () => heard.push('relist')
+    const stop = chat.subscribe(event => heard.push(event.type))
+    inside.hint({ type: 'chatUser', kind: 'notifications' })
+    expect(heard).deep.equals([])
+    // A device change still says so.
+    inside.hint({ type: 'chatUser', kind: 'devices' })
+    expect(heard).deep.equals(['devices'])
+    stop()
+    chat.stop()
+  })
+
   it('uses listed DM people while members are pending, then strips the departed photo and keeps the full-width current member', async () => {
     const listed = summary()
     listed.people[0].avatarUrl = 'https://images.example.test/listed.png'

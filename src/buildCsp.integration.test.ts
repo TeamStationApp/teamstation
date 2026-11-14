@@ -257,6 +257,23 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(html).contains(`src="/${bundle}"`)
     })
 
+    it('ships the notifications’ service worker under its own name, with the bundle’s module', function () {
+      // A service worker is registered by its URL, so `sw.js` is never hashed.
+      const worker = readFileSync(join(once, 'sw.js'), 'utf8')
+      const [module] = readdirSync(once).filter(name =>
+        /^chat-crypto-.*\.wasm$/.test(name)
+      )
+      expect(worker).contains(`/${module}`)
+      expect(worker).contains(integrityOf(readFileSync(join(once, module))))
+      expect(readdirSync(once).filter(name => /^sw\b/.test(name))).deep.equals([
+        'sw.js',
+        'sw.js.map'
+      ])
+      // `pushDevice.ts` registers it from the page, which the policy allows.
+      const html = readFileSync(join(once, 'index.html'), 'utf8')
+      expect(directives(policyOf(html))['worker-src']).includes("'self'")
+    })
+
     it('has no chat bench route in the web bundle', function () {
       const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
       expect(bundle).not.equals(undefined)
@@ -316,6 +333,11 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       expect(worklet.status).equals(200)
       expect(worklet.headers.get('content-type')).matches(/javascript/)
       expect(await worklet.text()).contains("registerProcessor('pcm16k'")
+      // And the service worker, as JavaScript, from the page's origin.
+      const worker = await fetch(`${address}/sw.js`)
+      expect(worker.status).equals(200)
+      expect(worker.headers.get('content-type')).matches(/javascript/)
+      expect(await worker.text()).contains('/chat-crypto.wasm')
       // Stopped with SIGTERM, so its coverage is written as it exits.
       const stopped = server
       await new Promise<void>(resolve => {

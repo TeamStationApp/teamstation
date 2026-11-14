@@ -177,7 +177,7 @@ Four things are worth knowing before changing any of it:
 
   | Process | Start | Owns |
   | --- | --- | --- |
-  | The API | `npm start` (`src/server/index.ts`) | HTTP, sockets, the stats builder; writes `live_streams` rows and mints playback and publish URLs |
+  | The API | `npm start` (`src/server/index.ts`) | HTTP, sockets, the stats builder and the push sender; writes `live_streams` rows and mints playback and publish URLs |
   | The ingest | `npm run start.ingest` (`src/server/ingest/main.ts`) | the RTMP port and the ffmpeg children writing each game's HLS |
 
   The API never calls the ingest: an endpoint writes the `live_streams` row,

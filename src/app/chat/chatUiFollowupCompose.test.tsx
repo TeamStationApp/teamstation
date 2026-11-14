@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { Platform } from 'react-native'
+import { AppState, Platform } from 'react-native'
 
 import { userIdOfGumbo } from '../../common/userId'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -840,6 +840,61 @@ describe('chat read sessions preserve personal unread', function () {
         Object.defineProperty(document, 'visibilityState', originalVisibility)
       if (originalHidden == null) Reflect.deleteProperty(document, 'hidden')
       else Object.defineProperty(document, 'hidden', originalHidden)
+    }
+  })
+
+  it('reads nothing while iOS covers the app (inactive), and reads once it is active again', async function () {
+    const { engine, reads } = unreadSessionEngine()
+    const current = engine.views.get('cnv_aurora')!
+    engine.update('cnv_aurora', {
+      conversation: { ...current.conversation, unread: 2 }
+    })
+    const originalState = Object.getOwnPropertyDescriptor(
+      AppState,
+      'currentState'
+    )
+    let state = 'inactive'
+    Object.defineProperty(AppState, 'currentState', {
+      configurable: true,
+      get: () => state
+    })
+    const change = async (next: string): Promise<void> => {
+      state = next
+      await act(async () => {
+        // React Native Web reports a change on visibilitychange.
+        document.dispatchEvent(new window.Event('visibilitychange'))
+        await wait()
+      })
+    }
+    try {
+      await screen(engine)
+      await act(async () => {
+        const opened = engine.views.get('cnv_aurora')!
+        engine.update('cnv_aurora', {
+          messages: [
+            ...opened.messages,
+            message({
+              id: 'msg_covered',
+              seq: 2,
+              senderName: 'Shohei Ohtani',
+              body: 'Arrives under Notification Center'
+            })
+          ],
+          conversation: { ...opened.conversation, unread: 3 }
+        })
+        await wait()
+      })
+      await type('Typed under the app switcher')
+      expect(reads, 'an inactive app must not read').deep.equals([])
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(3)
+      await change('active')
+      await type('Typed once active')
+      expect(reads.some(([id]) => id === 'cnv_aurora')).equals(true)
+      expect(engine.views.get('cnv_aurora')?.conversation.unread).equals(0)
+    } finally {
+      if (originalState == null)
+        Reflect.deleteProperty(AppState, 'currentState')
+      else Object.defineProperty(AppState, 'currentState', originalState)
     }
   })
 

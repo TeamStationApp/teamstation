@@ -2,10 +2,12 @@ import { type Request, Router } from 'express'
 import { type Kysely, sql } from 'kysely'
 
 import {
+  type AccountNotifications,
   type AccountSettings,
   asAccountEmailConfirmation,
   asAccountEmailRequest,
   asAccountNameBody,
+  asAccountNotificationsBody,
   asAccountPasswordBody,
   asAccountPrimaryBody
 } from '../../common/accountSettings'
@@ -35,6 +37,7 @@ import {
 } from '../auth/passwords'
 import { checkLimits, type LimitRule, recordAttempts } from '../auth/rateLimit'
 import { isMachine } from '../auth/sessions'
+import { notifyChatUser } from '../chat/membershipLog'
 import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
@@ -106,7 +109,24 @@ export async function readAccount(
         : { client: record.client, server: record.server }
     })(),
     newPasswordSalt: passwordSalt(),
+    notifications: await readNotifications(db, userId),
     emails
+  }
+}
+
+/** The account's notification switches; both off until first saved. */
+async function readNotifications(
+  db: Kysely<Database>,
+  userId: string
+): Promise<AccountNotifications> {
+  const row = await db
+    .selectFrom('user_notification_settings')
+    .select(['messages', 'rsvp_events'])
+    .where('user_id', '=', userId)
+    .executeTakeFirst()
+  return {
+    messages: row?.messages ?? false,
+    rsvpEvents: row?.rsvp_events ?? false
   }
 }
 
@@ -255,6 +275,45 @@ export function accountRoutes(
         .execute()
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readChatAge(db, userId))
+    })
+  )
+  router.get(
+    '/me/account/notifications',
+    withAsync(async (req, res) => {
+      res.json(await readNotifications(db, accountId(req)))
+    })
+  )
+  router.put(
+    '/me/account/notifications',
+    withAsync(async (req, res) => {
+      const userId = accountId(req)
+      const { messages, rsvpEvents } = cleanBody(
+        asAccountNotificationsBody,
+        req.body
+      )
+      const now = new Date()
+      await db.transaction().execute(async tx => {
+        await tx
+          .insertInto('user_notification_settings')
+          .values({
+            user_id: userId,
+            messages: messages ?? false,
+            rsvp_events: rsvpEvents ?? false,
+            updated_at: now
+          })
+          .onConflict(oc =>
+            oc.column('user_id').doUpdateSet({
+              ...(messages == null ? {} : { messages }),
+              ...(rsvpEvents == null ? {} : { rsvp_events: rsvpEvents }),
+              updated_at: now
+            })
+          )
+          .execute()
+        // The person's other devices show the change without a reload.
+        await notifyChatUser(tx, userId, 'notifications')
+      })
+      setAudit(res.locals, { entityType: 'user', entityId: userId })
+      res.json(await readNotifications(db, userId))
     })
   )
   router.put(

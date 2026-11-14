@@ -9,5 +9,9 @@ import { AppRegistry } from 'react-native'
 
 import { name as appName } from './app.json'
 import { Root } from './src/app/native/index'
+import { registerPushTasks } from './src/app/push/chatWakeTask'
 
+// The tasks Android runs for a push (push/PushHandler.kt), with the app open
+// or not.
+registerPushTasks(AppRegistry)
 AppRegistry.registerComponent(appName, () => Root)

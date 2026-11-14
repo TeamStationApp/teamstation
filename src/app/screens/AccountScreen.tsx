@@ -1,7 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
-import type { AccountSettings } from '../../common/accountSettings'
+import type {
+  AccountNotifications,
+  AccountSettings
+} from '../../common/accountSettings'
 import type { Session, SessionUser, TeamStationClient } from '../../common/api'
 import type { GameSocket } from '../../common/gameSocket'
 import {
@@ -28,9 +31,16 @@ import {
 } from '../components'
 import { NewPasswordFields } from '../components/NewPasswordFields'
 import { useSceneReveals } from '../components/sceneShown'
+import { SettingToggleRow } from '../components/settings/SettingToggleRow'
 import { sportsPicturesEnabled } from '../components/sportsPictures'
+import { useForegroundEntry } from '../hooks/useForegroundEntry'
 import { lstrings } from '../locales/strings'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
+import {
+  type PushDevice,
+  pushDevice as thisDevice,
+  type PushState
+} from '../platform/pushDevice'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AppleMusicSetup } from '../walkup/AppleMusicSetup'
 import { useWalkUpPreferences } from '../walkup/walkUpPreferences'
@@ -69,6 +79,8 @@ export interface AccountScreenProps {
   onTeamStationTv?: () => void
   /** Where closing the Apple Music walkthrough is remembered. */
   readiness?: ReadinessStore
+  /** This device's notifications; the platform's own by default. */
+  pushDevice?: PushDevice
 }
 
 /** A person's identity and verified sign-in methods, all on their own account. */
@@ -85,7 +97,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
     onNodeAdministration,
-    readiness = walkUpReadiness
+    readiness = walkUpReadiness,
+    pushDevice = thisDevice
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -96,6 +109,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [appleMusicSetupUsed, setAppleMusicSetupUsed] = useState(false)
   const [account, setAccount] = useState<AccountSettings>()
   const [blockedPeople, setBlockedPeople] = useState(false)
+  const [permission, setPermission] = useState<PushState>()
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
   const [name, setName] = useState(session.user.displayName)
@@ -187,6 +201,53 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     }
   }, [client, reload, reveals])
 
+  // Read again whenever the app comes back to the foreground, and not on a
+  // timer: the permission may have been changed in the phone's or the
+  // browser's settings meanwhile.
+  const permissionRead = useRef(0)
+  useEffect(
+    () => () => {
+      permissionRead.current++
+    },
+    [pushDevice]
+  )
+  const readPermission = useCallback(async (): Promise<void> => {
+    const version = ++permissionRead.current
+    const value = await pushDevice.state()
+    if (version === permissionRead.current) setPermission(value)
+  }, [pushDevice])
+  useForegroundEntry(readPermission)
+  const showNotifications = useCallback(
+    (notifications: AccountNotifications): void => {
+      setAccount(current =>
+        current == null ? current : { ...current, notifications }
+      )
+    },
+    []
+  )
+  // The switches are the account's: another device changing one says so.
+  const { socket } = props
+  useEffect(() => {
+    let unsubscribe: (() => void) | undefined
+    try {
+      unsubscribe = socket?.onChat(event => {
+        if (
+          event.type === 'resync' ||
+          (event.type === 'chatUser' && event.kind === 'notifications')
+        )
+          client
+            .accountNotifications()
+            .then(showNotifications)
+            .catch(() => undefined)
+      })
+    } catch {
+      // Without a socket, Account shows what it read when it opened.
+    }
+    return () => {
+      unsubscribe?.()
+    }
+  }, [client, socket, showNotifications])
+
   const accept = (value: AccountSettings): void => {
     setAccount(value)
     onAccountChanged?.(value.user)
@@ -238,6 +299,31 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     })
   }
   const [signingOut, setSigningOut] = useState(false)
+
+  /**
+   * Asks this device for permission, while the tap still counts as the
+   * person's. The answer can wait on the person, so nothing waits on it.
+   */
+  const ask = (): void => {
+    pushDevice.enable(client).then(
+      value => {
+        // A read begun before the answer would show what it replaced.
+        permissionRead.current++
+        setPermission(value)
+      },
+      () => undefined
+    )
+  }
+  /** Saves a switch for the whole account; turning one on asks this device. */
+  const notify = (change: Partial<AccountNotifications>, on: boolean): void => {
+    run('notifications', async () => {
+      if (on) ask()
+      showNotifications(await client.setAccountNotifications(change))
+    })
+  }
+  const wanted =
+    account != null &&
+    (account.notifications.messages || account.notifications.rsvpEvents)
 
   /**
    * The session ends. This account's chat keys stay, and the device stays
@@ -707,6 +793,43 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
           )}
         </ListCard>
       </View>
+      {account != null && (
+        <View style={styles.section}>
+          <SectionHeader title={lstrings.account_notifications} />
+          <ListCard>
+            <SettingToggleRow
+              label={lstrings.account_notifications_messages}
+              value={account.notifications.messages}
+              onChange={messages => {
+                notify({ messages }, messages)
+              }}
+            />
+            <SettingToggleRow
+              label={lstrings.account_notifications_rsvp_events}
+              value={account.notifications.rsvpEvents}
+              onChange={rsvpEvents => {
+                notify({ rsvpEvents }, rsvpEvents)
+              }}
+            />
+          </ListCard>
+          {wanted && permission === 'denied' && (
+            <Text accessibilityLiveRegion="polite" style={styles.email}>
+              {lstrings.account_notifications_blocked}
+            </Text>
+          )}
+          {/* A phone asks by itself (App's askWhenWanted); a browser asks
+              only from a tap. */}
+          {wanted && permission === 'prompt' && Platform.OS === 'web' && (
+            <Button
+              label={lstrings.account_notifications_allow}
+              kind="secondary"
+              style={{ alignSelf: 'flex-start' }}
+              onPress={ask}
+            />
+          )}
+          {feedback('notifications')}
+        </View>
+      )}
       {blockedPeople && (
         <BlockedPeople
           key={session.user.id}

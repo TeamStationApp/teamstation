@@ -60,12 +60,14 @@ export async function notifyChat(
   await sql`select pg_notify(${CHAT_CHANGES_CHANNEL}, ${payload})`.execute(trx)
 }
 
-export type ChatUserChangeKind = 'link' | 'devices' | 'preferences' | 'blocks'
+export type ChatUserChangeKind =
+  'link' | 'devices' | 'preferences' | 'blocks' | 'notifications'
 
 /**
  * `pg_notify('chat_changes', { u, k })`: something about one user's own chat
- * devices changed (`devices`), or a link to a new device was asked for or
- * approved (`link`). Sent when the transaction commits.
+ * devices changed (`devices`), a link to a new device was asked for or
+ * approved (`link`), or their notification switches changed
+ * (`notifications`). Sent when the transaction commits.
  */
 export async function notifyChatUser(
   trx: Kysely<Database>,

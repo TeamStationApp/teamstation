@@ -583,7 +583,7 @@ export async function messagesOf(
 
 /**
  * `PUT …/read`: moves the caller's cursor up to `seq`, never back. A move
- * notifies `read`. Answers the cursor as it stands.
+ * notifies `read`. Answers the cursor as it stands, and whether it moved.
  */
 export async function markRead(
   db: Kysely<Database>,
@@ -592,7 +592,7 @@ export async function markRead(
   seq: number,
   now: Date,
   clearManualUnreadRevision?: number
-): Promise<{ seq: number }> {
+): Promise<{ seq: number; moved: boolean }> {
   return await db.transaction().execute(async trx => {
     // Read/preference rows must not precede their conversation's lock either.
     await lockConversation(trx, conversationId)
@@ -628,7 +628,7 @@ export async function markRead(
       .executeTakeFirst()
     if (moved != null) {
       await notifyChat(trx, conversationId, 'read', seq)
-      return { seq }
+      return { seq, moved: true }
     }
     const cursor = await trx
       .selectFrom('chat_read_cursors')
@@ -636,7 +636,7 @@ export async function markRead(
       .where('conversation_id', '=', conversationId)
       .where('user_id', '=', userId)
       .executeTakeFirstOrThrow()
-    return { seq: Number(cursor.seq) }
+    return { seq: Number(cursor.seq), moved: false }
   })
 }
 

@@ -372,7 +372,7 @@ describe('committed chat harness and application provenance', () => {
 /**
  * Every file an application build can take in: the web bundle's entries
  * (`src/build.mjs`), the native one (`index.js`, through Metro), and the
- * server's (`npm start`) with the stats builder it forks. Each relative
+ * server's (`npm start`) with the stats builder and push sender it forks. Each relative
  * `import`, `require` and `import()` is followed into every platform twin
  * that exists (`.web`, `.native`, `.ios`, `.android`) as well as the plain
  * file, so the set covers every bundler and platform at once.
@@ -383,7 +383,8 @@ function applicationFiles(root: string): string[] {
     'src/app/platform/passwordWorker.ts',
     'index.js',
     'src/server/index.ts',
-    'src/server/statsBuilder/start.ts'
+    'src/server/statsBuilder/start.ts',
+    'src/server/push/sender/start.ts'
   ]
   const twins = ['.web', '.native', '.ios', '.android', '']
   const extensions = ['.tsx', '.ts', '.jsx', '.js', '.cjs', '.mjs', '.json']

@@ -250,6 +250,26 @@ const clientHashSchema = {
   writeOnly: true
 }
 
+const accountNotificationsSchema = {
+  type: 'object',
+  required: ['messages', 'rsvpEvents'],
+  properties: {
+    messages: {
+      type: 'boolean',
+      description: 'Notify for direct messages and mentions'
+    },
+    rsvpEvents: {
+      type: 'boolean',
+      description: 'Remind before the events you said yes to'
+    }
+  }
+}
+const accountNotificationsResponse = {
+  description: 'Your notification switches; both are off until saved',
+  content: {
+    'application/json': { schema: accountNotificationsSchema }
+  }
+}
 const accountResponse = {
   description:
     'The account identity, password status and accepted email addresses',
@@ -263,13 +283,15 @@ const accountResponse = {
           'emails',
           'passwordNeedsUpgrade',
           'passwordParameters',
-          'newPasswordSalt'
+          'newPasswordSalt',
+          'notifications'
         ],
         properties: {
           user: { $ref: '#/components/schemas/User' },
           hasPassword: { type: 'boolean' },
           passwordNeedsUpgrade: { type: 'boolean' },
           newPasswordSalt: { type: 'string', pattern: '^[0-9a-f]{32}$' },
+          notifications: accountNotificationsSchema,
           passwordParameters: {
             anyOf: [
               { type: 'null' },
@@ -404,6 +426,97 @@ const apiKeyPaths = {
     }
   }
 }
+const pushSessionOnly = {
+  401: { description: 'Not signed in' },
+  403: { description: 'An API key, a machine token or Tess: a session only' }
+}
+const pushPaths = {
+  '/push/web-key': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'The VAPID public key a browser subscribes to Web Push with',
+      responses: {
+        200: {
+          description: 'The key, base64url',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['publicKey'],
+                properties: { publicKey: { type: 'string' } }
+              }
+            }
+          }
+        },
+        404: { description: 'Web Push is off on this server' },
+        ...pushSessionOnly
+      }
+    }
+  },
+  '/me/push-registrations': {
+    post: {
+      security: [{ bearer: [] }],
+      summary: "Register this device's push address (signed-in sessions only)",
+      description:
+        "An APNs device token, an FCM registration token, or a browser's PushSubscription (its JSON text or the object) from a known push service. The registration belongs to this session and is live while the session is: signing out stops it. The same token, or a subscription with the same endpoint, posted again moves to the posting session and replaces the stored address, and is sent to again if a push service had refused it for good. Each person keeps the 20 registrations they posted most recently; a new one past that removes their least recently posted.",
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              required: ['platform', 'address'],
+              properties: {
+                platform: { type: 'string', enum: ['ios', 'android', 'web'] },
+                address: {
+                  description:
+                    'The token, or for the web the subscription: { endpoint, keys: { p256dh, auth } }',
+                  oneOf: [{ type: 'string' }, { type: 'object' }]
+                },
+                environment: {
+                  type: 'string',
+                  enum: ['production', 'development'],
+                  default: 'production',
+                  description: "The APNs environment of the app's build"
+                }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: {
+          description: 'The registration',
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['id'],
+                properties: { id: { type: 'string' } }
+              }
+            }
+          }
+        },
+        400: { description: 'An unknown platform or a malformed address' },
+        ...pushSessionOnly
+      }
+    }
+  },
+  '/me/push-registrations/{id}': {
+    delete: {
+      security: [{ bearer: [] }],
+      summary: 'Stop pushes to one of your registrations',
+      parameters: [
+        { name: 'id', in: 'path', required: true, schema: { type: 'string' } }
+      ],
+      responses: {
+        204: { description: 'Deleted' },
+        404: { description: 'None of yours has this id' },
+        ...pushSessionOnly
+      }
+    }
+  }
+}
 const graphqlPaths = {
   '/graphql': {
     post: {
@@ -485,7 +598,7 @@ const accountPaths = {
       security: [{ bearer: [] }],
       summary: 'Delete your account (signed-in sessions only)',
       description:
-        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags and notifications; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last direct administrator of a team, season or league, naming every such group.',
+        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags, notifications, notification switches and push addresses; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last direct administrator of a team, season or league, naming every such group.',
       responses: {
         204: { description: 'Deleted' },
         409: {
@@ -552,6 +665,43 @@ const accountPaths = {
       responses: {
         200: chatAgeResponse,
         400: { description: 'A missing or unknown source, or another field' },
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
+    }
+  },
+  '/me/account/notifications': {
+    get: {
+      security: [{ bearer: [] }],
+      summary: 'Read your notification switches (signed-in sessions only)',
+      responses: {
+        200: accountNotificationsResponse,
+        401: { description: 'Not signed in' },
+        403: { description: 'An API key or a machine actor' }
+      }
+    },
+    put: {
+      security: [{ bearer: [] }],
+      summary: 'Change your notification switches (signed-in sessions only)',
+      description:
+        'Account-wide: every signed-in device of yours follows the change at once. A switch left out keeps its value. A device shows notifications only where it has been given permission.',
+      requestBody: {
+        required: true,
+        content: {
+          'application/json': {
+            schema: {
+              type: 'object',
+              properties: {
+                messages: { type: 'boolean' },
+                rsvpEvents: { type: 'boolean' }
+              }
+            }
+          }
+        }
+      },
+      responses: {
+        200: accountNotificationsResponse,
+        400: { description: 'A switch that is not true or false' },
         401: { description: 'Not signed in' },
         403: { description: 'An API key or a machine actor' }
       }
@@ -3301,6 +3451,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...gamePlanPaths(errorResponse),
       ...accountPaths,
       ...apiKeyPaths,
+      ...pushPaths,
       ...graphqlPaths,
       '/me/builds': {
         get: {

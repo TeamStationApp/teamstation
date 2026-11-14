@@ -29,7 +29,10 @@ import { chatRoutes } from '../routes/chat'
 import { chatAttachmentRoutes } from '../routes/chatAttachments'
 import { chatEpochRoutes } from '../routes/chatEpochs'
 import { chatKeyRoutes } from '../routes/chatKeys'
-import { chatMessageRoutes } from '../routes/chatMessages'
+import {
+  type ChatMessageRouteOptions,
+  chatMessageRoutes
+} from '../routes/chatMessages'
 import { mintUserId } from '../users/mintUserId'
 import { spaceObjectStore } from './attachments'
 import { drainDirty } from './reconciler'
@@ -115,6 +118,10 @@ export async function openChatFixture(
     leagueName?: string
     /** The Space attachments go to (none by default); deletes reach it too. */
     space?: SpaceSettings
+    /** What a new post wakes devices through (`chatMessageRoutes`). */
+    wakes?: ChatMessageRouteOptions['wakes']
+    /** What a moved read cursor is told to (`chatMessageRoutes`). */
+    reads?: ChatMessageRouteOptions['reads']
   } = {}
 ): Promise<ChatFixture | undefined> {
   const adminPool = new Pool({ connectionString: testDatabaseUrl })
@@ -300,7 +307,9 @@ export async function openChatFixture(
             await store?.deleteObjects(keys)
             fixture.deletedObjects.push(...keys)
           }
-        }
+        },
+        wakes: options.wakes,
+        reads: options.reads
       })
     )
     app.use(

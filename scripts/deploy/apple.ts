@@ -263,6 +263,16 @@ export async function withSigning<T>(
     throw new Error(
       'Separate Match signing branch and Apple settings are required'
     )
+  // Each extension is signed with a profile of its own, for every export.
+  const testflight = testflightSettings(context)
+  if (
+    (context.target.extensions ?? []).some(
+      id =>
+        apple.profileNames[id] == null ||
+        (testflight != null && apple.appStoreProfileNames?.[id] == null)
+    )
+  )
+    throw new Error('Every extension needs a signing profile')
   const directory = mkdtempSync(path.join(context.output, '.signing-'))
   const keychain = path.join(directory, 'build.keychain-db')
   const processes = context.processes
@@ -372,7 +382,6 @@ export async function withSigning<T>(
       apple.profileNames,
       'adHoc'
     )
-    const testflight = testflightSettings(context)
     if (testflight == null)
       return await action({ keychain, directory, profiles })
     if (apple.appStoreProfileNames == null)
@@ -558,6 +567,7 @@ export async function archive(
       `CURRENT_PROJECT_VERSION=${nativeNumber(context.target.platform, context.buildNumber)}`,
       `MARKETING_VERSION=${context.version}`,
       'OTHER_SWIFT_FLAGS=$(inherited) -disable-cmo',
+      ...(context.target.buildSettings ?? []),
       ...(isIos ? [] : ['ENABLE_HARDENED_RUNTIME=YES']),
       ...(sourceMap == null ? [] : [`SOURCEMAP_FILE=${sourceMap}`])
     ]
@@ -649,89 +659,142 @@ export async function verifyApp(
       context.target.app === 'app.teamstation.director' ? 2 : 1
     if (info.UIDeviceFamily?.includes(expectedFamily) !== true)
       throw new Error('Wrong iOS device family')
-    const profileFile = path.join(signing.directory, 'embedded.plist')
-    writeFileSync(
-      profileFile,
-      await context.processes.run({
-        file: context.settings.tools.security,
-        args: ['cms', '-D', '-i', path.join(app, 'embedded.mobileprovision')],
-        cwd: signing.directory
-      }),
-      { mode: 0o600 }
-    )
-    const profile = validateProfile(
-      JSON.parse(
-        await ruby(context, 'profile', { file: profileFile }, signing.directory)
-      ),
-      info.CFBundleIdentifier,
-      context,
-      kind
-    )
-    const certificate = path.join(signing.directory, 'leaf')
-    await context.processes.run({
-      file: context.settings.tools.codesign,
-      args: ['-d', `--extract-certificates=${certificate}`, app],
-      cwd: signing.directory
-    })
-    const certificateBytes = readFileSync(`${certificate}0`)
-    const leaf = new X509Certificate(certificateBytes)
-    if (
-      !leaf.subject.split('\n').includes(`OU=${apple.teamId}`) ||
-      !leaf.subject
-        .split('\n')
-        .some(line =>
-          /^CN=(Apple Distribution|iPhone Distribution):/.test(line)
-        ) ||
-      Date.parse(leaf.validTo) <= Date.now() ||
-      Date.parse(leaf.validFrom) > Date.now()
-    )
-      throw new Error('Distribution certificate identity or expiry is invalid')
-    const digest = createHash('sha256').update(certificateBytes).digest('hex')
-    if (!profile.certificates.includes(digest))
-      throw new Error('App certificate is absent from provisioning profile')
-    const entitlementsFile = path.join(signing.directory, 'entitlements.plist')
-    writeFileSync(
-      entitlementsFile,
-      await context.processes.run({
-        file: context.settings.tools.codesign,
-        args: ['-d', '--entitlements', ':-', app],
-        cwd: signing.directory
-      }),
-      { mode: 0o600 }
-    )
-    const entitlements = asProfile({
-      ...profile,
-      entitlements: JSON.parse(
-        await context.processes.run({
-          file: 'plutil',
-          args: ['-convert', 'json', '-o', '-', entitlementsFile],
-          cwd: signing.directory
-        })
-      )
-    }).entitlements
-    if (
-      entitlements['get-task-allow'] ||
-      entitlements['application-identifier'] !==
-        profile.entitlements['application-identifier'] ||
-      entitlements['com.apple.developer.team-identifier'] !== apple.teamId
-    )
-      throw new Error('Release entitlements did not match provisioning')
+    await verifySigned(context, app, info.CFBundleIdentifier, signing, kind)
     if (
       context.target.kind === 'react-native' &&
       (!existsSync(path.join(app, 'main.jsbundle')) ||
         statSync(path.join(app, 'main.jsbundle')).size === 0)
     )
       throw new Error('Release IPA has no bundled JavaScript')
-    // Current targets have no extensions. Reject additions until all identities are configured and verified.
-    if (
-      existsSync(path.join(app, 'PlugIns')) &&
-      readdirSync(path.join(app, 'PlugIns')).some(name =>
-        name.endsWith('.appex')
-      )
+    await verifyExtensions(context, app, signing, kind)
+  }
+}
+/**
+ * Checks that `bundle`, the app or one of its extensions, is signed for `id`:
+ * its embedded profile is the one configured for that id, its certificate a
+ * current distribution certificate of the team that the profile holds, and
+ * its entitlements the profile's, with no debugger allowed.
+ */
+async function verifySigned(
+  context: BuildContext,
+  bundle: string,
+  id: string,
+  signing: Signing,
+  kind: ProfileKind
+): Promise<void> {
+  const apple =
+    context.settings.apps[context.target.app][context.target.platform]!.apple!
+  const profileFile = path.join(signing.directory, 'embedded.plist')
+  writeFileSync(
+    profileFile,
+    await context.processes.run({
+      file: context.settings.tools.security,
+      args: ['cms', '-D', '-i', path.join(bundle, 'embedded.mobileprovision')],
+      cwd: signing.directory
+    }),
+    { mode: 0o600 }
+  )
+  const profile = validateProfile(
+    JSON.parse(
+      await ruby(context, 'profile', { file: profileFile }, signing.directory)
+    ),
+    id,
+    context,
+    kind
+  )
+  const certificate = path.join(signing.directory, 'leaf')
+  await context.processes.run({
+    file: context.settings.tools.codesign,
+    args: ['-d', `--extract-certificates=${certificate}`, bundle],
+    cwd: signing.directory
+  })
+  const certificateBytes = readFileSync(`${certificate}0`)
+  const leaf = new X509Certificate(certificateBytes)
+  if (
+    !leaf.subject.split('\n').includes(`OU=${apple.teamId}`) ||
+    !leaf.subject
+      .split('\n')
+      .some(line =>
+        /^CN=(Apple Distribution|iPhone Distribution):/.test(line)
+      ) ||
+    Date.parse(leaf.validTo) <= Date.now() ||
+    Date.parse(leaf.validFrom) > Date.now()
+  )
+    throw new Error('Distribution certificate identity or expiry is invalid')
+  const digest = createHash('sha256').update(certificateBytes).digest('hex')
+  if (!profile.certificates.includes(digest))
+    throw new Error('App certificate is absent from provisioning profile')
+  const entitlementsFile = path.join(signing.directory, 'entitlements.plist')
+  writeFileSync(
+    entitlementsFile,
+    await context.processes.run({
+      file: context.settings.tools.codesign,
+      args: ['-d', '--entitlements', ':-', bundle],
+      cwd: signing.directory
+    }),
+    { mode: 0o600 }
+  )
+  const entitlements = asProfile({
+    ...profile,
+    entitlements: JSON.parse(
+      await context.processes.run({
+        file: 'plutil',
+        args: ['-convert', 'json', '-o', '-', entitlementsFile],
+        cwd: signing.directory
+      })
     )
-      throw new Error(
-        'Extension verification must be configured before publication'
-      )
+  }).entitlements
+  if (
+    entitlements['get-task-allow'] ||
+    entitlements['application-identifier'] !==
+      profile.entitlements['application-identifier'] ||
+    entitlements['com.apple.developer.team-identifier'] !== apple.teamId
+  )
+    throw new Error('Release entitlements did not match provisioning')
+}
+/**
+ * Checks the extensions in an exported app against the target's
+ * (`Target.extensions`): each one it names is there, nothing else is, and
+ * each has the app's version and build and is signed as the app is.
+ */
+async function verifyExtensions(
+  context: BuildContext,
+  app: string,
+  signing: Signing,
+  kind: ProfileKind
+): Promise<void> {
+  const plugIns = path.join(app, 'PlugIns')
+  const found = existsSync(plugIns)
+    ? readdirSync(plugIns)
+        .filter(name => name.endsWith('.appex'))
+        .sort()
+    : []
+  const expected = context.target.extensions ?? []
+  const mismatch = new Error("Extensions in the IPA do not match the target's")
+  if (found.length !== expected.length) throw mismatch
+  const ids = new Set<string>()
+  for (const name of found) {
+    const extension = path.join(plugIns, name)
+    const info = await readInfo(context, extension)
+    if (
+      !expected.includes(info.CFBundleIdentifier) ||
+      ids.has(info.CFBundleIdentifier)
+    )
+      throw mismatch
+    ids.add(info.CFBundleIdentifier)
+    if (
+      info.CFBundleVersion !==
+        nativeNumber(context.target.platform, context.buildNumber) ||
+      info.CFBundleShortVersionString !== context.version
+    )
+      throw new Error('Extension version or build did not match the app')
+    await verifySigned(
+      context,
+      extension,
+      info.CFBundleIdentifier,
+      signing,
+      kind
+    )
   }
 }
 /** Where one export's options, IPA and unpacked app go in the signing directory. */

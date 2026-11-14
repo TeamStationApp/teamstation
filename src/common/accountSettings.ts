@@ -3,6 +3,25 @@ import { asArray, asBoolean, asObject, asOptional, asString } from 'cleaners'
 import { asArgonParameters, asHex, asPasswordUpdate } from './passwordProtocol'
 import { asGumboId, asUserId } from './userId'
 
+/**
+ * The account-wide notification switches: direct messages and mentions, and
+ * reminders before the events the person said yes to. Both start off.
+ */
+export const asAccountNotifications = asObject({
+  messages: asBoolean,
+  rsvpEvents: asBoolean
+})
+export type AccountNotifications = ReturnType<typeof asAccountNotifications>
+export const NO_ACCOUNT_NOTIFICATIONS: AccountNotifications = {
+  messages: false,
+  rsvpEvents: false
+}
+/** A change to either switch; the one left out keeps its value. */
+export const asAccountNotificationsBody = asObject({
+  messages: asOptional(asBoolean),
+  rsvpEvents: asOptional(asBoolean)
+})
+
 export const asAccountSettings = asObject({
   user: asObject({
     id: asUserId,
@@ -29,6 +48,7 @@ export const asAccountSettings = asObject({
     null
   ),
   newPasswordSalt: asOptional((raw: unknown) => asHex(raw, 16)),
+  notifications: asOptional(asAccountNotifications, NO_ACCOUNT_NOTIFICATIONS),
   emails: asArray(
     asObject({
       id: asString,

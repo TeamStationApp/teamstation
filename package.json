@@ -22,7 +22,8 @@
         "TSHaptics": "RCTHaptics",
         "TSPhoneStream": "RCTPhoneStream",
         "CueSounds": "RCTCueSounds",
-        "NativeChatCrypto": "ChatCryptoProvider"
+        "NativeChatCrypto": "ChatCryptoProvider",
+        "TSPush": "RCTPush"
       },
       "componentProvider": {
         "TSPhoneStreamPreview": "TSPhoneStreamPreviewComponentView",
@@ -62,7 +63,7 @@
     "feedProbe": "node -r sucrase/register src/server/changeFeed/probeCli.ts",
     "import-video": "node -r sucrase/register src/server/dev/importVideoFile.ts",
     "ios": "react-native run-ios",
-    "lint": "node --max-old-space-size=8192 node_modules/eslint/bin/eslint.js .",
+    "lint": "node --max-old-space-size=10240 node_modules/eslint/bin/eslint.js .",
     "lineup-fixture": "node -r sucrase/register src/server/dev/lineupFixture.ts",
     "live-pitch": "node -r sucrase/register src/server/dev/livePitch.ts",
     "make-season": "node -r sucrase/register src/server/dev/makeSeasonFromVideos.ts",
@@ -119,6 +120,7 @@
     "test:hosting": "mocha -r sucrase/register --timeout 60000 'scripts/deploy/hosting/*.test.ts'",
     "test:portable": "npm run test.eventControl && npm run test:deploy && npm run test:hosting && node --test scripts/coverage-provenance.test.cjs",
     "coverage.deepLinks": "node scripts/deep-links-coverage.mjs",
+    "coverage.push": "node scripts/push-coverage.mjs",
     "coverage.mason": "c8 --all --include Masonfile.ts --include scripts/deploy/mason.ts --report-dir coverage/mason --reporter text --reporter json --check-coverage --per-file --lines 90 mocha -r sucrase/register --timeout 15000 scripts/deploy/masonEntry.test.ts scripts/deploy/fieldApps.test.ts scripts/deploy/patchExpoModulesJsi.test.ts",
     "coverage.creation": "node scripts/creation-coverage.mjs",
     "coverage.refinements": "node scripts/refinements-coverage.mjs",
@@ -204,7 +206,8 @@
     "react-native-keychain": "10.0.0",
     "react-native-quick-base64": "3.0.1",
     "@legendapp/list": "3.6.0",
-    "react-native-keyboard-controller": "1.22.8"
+    "react-native-keyboard-controller": "1.22.8",
+    "web-push": "3.6.7"
   },
   "devDependencies": {
     "@babel/core": "^7.29.7",
@@ -232,6 +235,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@types/three": "0.183.1",
+    "@types/web-push": "3.6.4",
     "@types/ws": "8.18.1",
     "babel-plugin-transform-inline-environment-variables": "^0.4.4",
     "c8": "^12.0.0",

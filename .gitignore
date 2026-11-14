@@ -86,3 +86,4 @@ ios/build-sim/
 crates/chat-crypto/target/
 src/common/chatCrypto/node/
 src/common/chatCrypto/wasm/
+android/app/google-services.json

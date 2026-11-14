@@ -3,10 +3,14 @@ import ObjectiveC
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+import UserNotifications
 
 @main
-class AppDelegate: UIResponder, UIApplicationDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, UNUserNotificationCenterDelegate {
   var window: UIWindow?
+
+  /// The notification a cold launch was tapped open from, which `SceneDelegate` already passed on.
+  var launchNotification: String?
 
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
@@ -28,7 +32,85 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     CameraGeometry.installModalLock()
     StatusBarAppearance.install()
 
+    // Before launch ends, so a tap that launched the app is told here too.
+    PushCoverage.start()
+    UNUserNotificationCenter.current().delegate = self
+    PushCenter.shared.registerIfAllowed()
+    NotificationCenter.default.addObserver(
+      forName: UIApplication.didEnterBackgroundNotification,
+      object: nil,
+      queue: nil
+    ) { _ in PushCoverage.flush() }
+
     return true
+  }
+
+  func application(
+    _ application: UIApplication,
+    didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
+  ) {
+    PushCenter.shared.received(deviceToken)
+  }
+
+  func application(
+    _ application: UIApplication,
+    didFailToRegisterForRemoteNotificationsWithError error: Error
+  ) {
+    PushCenter.shared.failed()
+  }
+
+  /**
+   * A background push: a group chat wake, which the server sends this way
+   * while Apple has not granted the filtering entitlement, or a read. A wake
+   * is opened here and shown only for a mention, as the extension shows an
+   * alert; a read takes its conversation's notifications down. iOS delivers
+   * these at its own pace, and never to an app the person swiped away; a DM
+   * and a reminder are alerts and do not come here.
+   */
+  func application(
+    _ application: UIApplication,
+    didReceiveRemoteNotification userInfo: [AnyHashable: Any],
+    fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void
+  ) {
+    let alert = (userInfo["aps"] as? [String: Any])?["alert"]
+    guard alert == nil else { return completionHandler(.noData) }
+    PushCenter.shared.background(userInfo as NSDictionary) { result in
+      PushCoverage.flush()
+      completionHandler(result)
+    }
+  }
+
+  /**
+   * In the foreground a reminder or an opened wake shows as it would anywhere
+   * else, unless it is for the conversation on screen, which the person is
+   * reading.
+   */
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    let content = notification.request.content
+    completionHandler(
+      PushCenter.shared.presents(content.userInfo as NSDictionary, thread: content.threadIdentifier)
+        ? [.banner, .list, .sound] : []
+    )
+  }
+
+  /// A tap opens what the notification is about, as a link would.
+  func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+  ) {
+    let request = response.notification.request
+    if request.identifier != launchNotification,
+       let url = PushCenter.url(of: request.content.userInfo as NSDictionary) {
+      RCTLinkingManager.application(UIApplication.shared, open: url, options: [:])
+    }
+    launchNotification = nil
+    PushCoverage.flush()
+    completionHandler()
   }
 
   /**

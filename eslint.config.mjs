@@ -60,6 +60,7 @@ export default [
       'scripts/chat-history-recovery-ui-scenes.ts',
       'scripts/chat-history-recovery-chat2.ts',
       'scripts/chat-history-recovery-relay.ts',
+      'scripts/pushWakeVectors.ts',
       'scripts/e2e/**/*.ts',
       'scripts/testModels.test.ts',
       'scripts/testTiers.test.ts',
@@ -90,6 +91,8 @@ export default [
       'tools/**',
       // Rust: the chat crypto core and its build products.
       'crates/**',
+      // Gradle's outputs: test and coverage reports carry their own scripts.
+      'android/**/build/**',
       // The mobile/ workspace is a React Native monorepo with its own
       // toolchain (RN babel, Metro, Hermes) and lint conventions that
       // diverge from the Node server's standard-kit config. It has its
