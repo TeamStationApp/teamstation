@@ -1155,6 +1155,13 @@ const activityPage = (recordedSince: boolean): object => ({
       : {})
   }
 })
+/** The account a node administrator is changing, in a path. */
+const targetUser = {
+  name: 'userId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -3613,6 +3620,122 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'Versioned entries with stable ids and short-lived rendition URLs'
             },
             503: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account': {
+        get: {
+          summary:
+            'A node administrator reads another account as its owner would, without its password',
+          description:
+            'For User Management’s Account page. A signed-in node administrator only: machines, Tess and API keys get 403. `hasPassword` is false and no password parameters or salt are sent. A merged, deleted or switched-off account is 404.',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          responses: {
+            200: accountResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account/name': {
+        put: {
+          summary: 'A node administrator saves another account’s name',
+          description:
+            'As `PUT /me/account/name` does for the person, with the same body; audited under the administrator.',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['displayName'],
+                  properties: {
+                    displayName: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 120
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: accountResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account/photo': {
+        put: {
+          summary: 'A node administrator stores another account’s picture',
+          description:
+            'As `PUT /me/account/photo` does for the person, with the same body.',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['image'],
+                  properties: { image: { type: 'object' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: accountResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'A node administrator sets another account back to initials',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          responses: {
+            200: accountResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account/catalog-picture': {
+        put: {
+          summary:
+            'A node administrator chooses a shared picture for another account',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['catalogId'],
+                  properties: { catalogId: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Picture reference saved' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
           }
         }
       },
@@ -7182,6 +7305,27 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/users/{userId}/administration': {
+        get: {
+          summary:
+            'A signed-in node administrator reads one account: every address, its last use, and every team, season and league it belongs to, holds a role on or follows',
+          description:
+            'Across every row merged into the account. Each affiliation is `{kind, id, name, roles}`, teams first, then seasons, then leagues, by name; roles are any of admin, head coach, coach, assistant, scorekeeper, songkeeper, videographer, player, member and following, in that order. A team’s owner or manager is its admin. Merged-away teams are left out. A merged or unknown account is 404.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'path',
+              required: true,
+              schema: userIdSchema
+            }
+          ],
+          responses: {
+            200: { description: 'The account, its addresses and affiliations' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
         patch: {
           summary:
             'A human node administrator changes node role or reversible account suspension',
@@ -7247,6 +7391,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'state, filtered by query (name or verified email, at most 120 ' +
             'characters). This view requires no externalId and does not alter ' +
             'the default identity-lookup response. ' +
+            'With view=directory, a signed-in node administrator searches ' +
+            'open accounts by name or any address, and receives at most 10 ' +
+            '`{userId, displayName, avatarUrl, email, affiliations}`: `email` ' +
+            'is the address that matched, else the primary, and ' +
+            '`affiliations` the line Add Person shows under a name. ' +
             'With `forTeam` instead, the answer is the players a roster ' +
             'manager of that team (or, with `forGame`, a scorekeeper of either ' +
             'team in that game) may add to it: every live player, and every ' +
@@ -7297,9 +7446,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'view',
               in: 'query',
-              schema: { type: 'string', enum: ['administration'] },
+              schema: { type: 'string', enum: ['administration', 'directory'] },
               description:
-                'Omitted: existing external-ID lookup. administration: human node administrator account view.'
+                'Omitted: existing external-ID lookup. administration: human node administrator account view. directory: User Management’s people search for a human node administrator, which takes only q and limit.'
             },
             {
               name: 'query',
@@ -7348,7 +7497,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents. With view=directory: at most 120 characters, matched anywhere in the display name or any address, ignoring case; those whose name or an address starts with it come first, then by name; empty answers [].'
             },
             {
               name: 'limit',
@@ -7360,7 +7509,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 default: 100
               },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100.'
+                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100. With view=directory: default and maximum 10.'
             },
             {
               name: 'capped',

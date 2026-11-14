@@ -215,6 +215,23 @@ describe("Tess's deny list", function () {
       .map(({ file }) => file)
     expect(found.sort()).deep.equals(Object.keys(meant).sort())
   })
+
+  it('keeps User Management’s people to a node administrator’s own eyes', function () {
+    for (const path of [
+      '/node/logins',
+      '/node/sessions?cursor=abc',
+      '/users/usr_1/account',
+      '/users/usr_1/account/name',
+      '/users/usr_1/administration',
+      '/users?view=directory&q=ruth',
+      '/users?q=ruth&VIEW=Directory'
+    ])
+      expect(refused('GET', path), path).equals(true)
+    for (const path of ['/users?view=administration', '/users?q=directory'])
+      expect(refused('GET', path), path).equals(false)
+    // A node role or a suspension is changed as before.
+    expect(refused('PATCH', '/users/usr_1/administration')).equals(false)
+  })
 })
 
 /** Every non-test TypeScript file of the server, by its path below it. */

@@ -11,6 +11,7 @@ import { type Actor, isHumanSession, signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { likeLiteral } from '../db/likeText'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { currentActor } from '../groups/rights'
 import { revokeStreams } from '../live/revokeStreams'
@@ -91,21 +92,13 @@ export async function nodeAccounts(
   if (query.trim() !== '')
     rows = rows.where(eb =>
       eb.or([
-        eb(
-          'display_name',
-          'ilike',
-          '%' + query.replace(/[\\%_]/g, '\\$&') + '%'
-        ),
+        eb('display_name', 'ilike', '%' + likeLiteral(query) + '%'),
         eb.exists(
           eb
             .selectFrom('user_emails')
             .select('id')
             .whereRef('user_emails.user_id', '=', 'users.id')
-            .where(
-              'email',
-              'ilike',
-              '%' + query.replace(/[\\%_]/g, '\\$&') + '%'
-            )
+            .where('email', 'ilike', '%' + likeLiteral(query) + '%')
         )
       ])
     )

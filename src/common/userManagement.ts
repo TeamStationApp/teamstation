@@ -30,3 +30,45 @@ export interface ActivityRow {
   device: string
   appType: AppType
 }
+
+/** One person a node administrator's search found, as Add Person draws them. */
+export interface DirectoryPerson {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  /** The address that matched the search, or their primary. */
+  email: string | null
+  /** The quieter line under the name: their players, guardians and teams. */
+  affiliations: string
+}
+
+/** A role on a team, season or league, as User Management words it. */
+export type AffiliationRole =
+  | 'admin'
+  | 'head coach'
+  | 'coach'
+  | 'assistant'
+  | 'scorekeeper'
+  | 'songkeeper'
+  | 'videographer'
+  | 'player'
+  | 'member'
+  | 'following'
+
+/** A team, season or league somebody belongs to, holds a role on or follows. */
+export interface Affiliation {
+  kind: 'team' | 'season' | 'league'
+  id: string
+  name: string
+  roles: AffiliationRole[]
+}
+
+/** One account, as a node administrator opens it from the search. */
+export interface PersonAdministration {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  emails: Array<{ email: string; isPrimary: boolean; isVerified: boolean }>
+  lastActiveAt: string | null
+  affiliations: Affiliation[]
+}

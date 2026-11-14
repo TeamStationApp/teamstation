@@ -44,8 +44,25 @@ const ANY_METHOD: readonly RegExp[] = [
   /^\/me\/builds(\/|$)/,
   /^\/device-event-control(\/|$)/,
   // Who signed in where and when: for a node administrator's own eyes.
-  /^\/node\/(logins|sessions)(\/|$)/
+  /^\/node\/(logins|sessions)(\/|$)/,
+  // Another person's account, as a node administrator changes it.
+  /^\/users\/[^/]+\/account(\/|$)/
 ]
+
+/** User Management's people search: the `/users` collection's directory view. */
+const DIRECTORY = /(^|[?&])view=directory(&|$)/
+
+/** One person, as User Management reads them; changing their node role is not. */
+const PERSON = /^\/users\/[^/]+\/administration$/
+
+/** Who is on the node, and everything of one of them, as User Management reads it. */
+function readsPeople(method: ApiMethod, checked: ApiPath): boolean {
+  const path = checked.path.replace(/\/$/, '').toLowerCase()
+  if (method === 'GET' && PERSON.test(path)) return true
+  return (
+    path === '/users' && DIRECTORY.test(checked.search.slice(1).toLowerCase())
+  )
+}
 
 /**
  * Routes that treat a machine acting for the person differently from the
@@ -169,5 +186,8 @@ export function checkApiRequest(
 ): ApiPath | string {
   const checked = apiPathOf(raw)
   if (typeof checked === 'string') return checked
+  // A view of a collection is in its query, which the path rules never see.
+  if (readsPeople(method, checked))
+    return 'Tess may not search every account. A node administrator can do this themselves in User Management.'
   return refusalOf(method, checked.path) ?? checked
 }

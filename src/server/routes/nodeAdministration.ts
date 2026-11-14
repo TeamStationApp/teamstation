@@ -17,6 +17,11 @@ import {
   recentLogins,
   recentSessions
 } from '../admin/userActivity'
+import {
+  directoryQueryOf,
+  directorySearch,
+  personAdministration
+} from '../admin/userDirectory'
 import type { Database } from '../db/database'
 import { accountMailEnabled, setAccountMailEnabled } from '../email/accountMail'
 import { cleanBody } from '../jsonBody'
@@ -53,7 +58,20 @@ export function nodeAdministrationRoutes(
   })
   router.get(
     '/users',
+    peopleLimit,
     withAsync(async (req, res, next) => {
+      if (req.query.view === 'directory') {
+        if (req.actor == null) throw unauthorized()
+        res.json(
+          await directorySearch(
+            db,
+            req.actor,
+            directoryQueryOf(req.query),
+            space
+          )
+        )
+        return
+      }
       if (req.query.view !== 'administration') {
         if (req.query.nodeAdmin != null)
           throw badRequest('nodeAdmin requires view=administration')
@@ -78,6 +96,16 @@ export function nodeAdministrationRoutes(
           space
         )
       )
+    })
+  )
+  router.get(
+    '/users/:userId/administration',
+    peopleLimit,
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      const userId = cleanBody(asUserId, req.params.userId)
+      res.json(await personAdministration(db, req.actor, userId, space))
     })
   )
   router.patch(

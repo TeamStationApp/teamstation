@@ -14,9 +14,11 @@ import {
   badRequest,
   conflict,
   forbidden,
+  notFound,
   unauthorized,
   unavailable
 } from '../../common/errors'
+import { asUserId } from '../../common/userId'
 import { deleteAccount } from '../account/deleteAccount'
 import {
   confirmAccountEmail,
@@ -27,6 +29,7 @@ import {
   confirmPasswordReset,
   requestPasswordReset
 } from '../account/passwordReset'
+import { requireSignedInNodeAdmin } from '../admin/nodeAdministration'
 import {
   createPasswordRecord,
   passwordMatches,
@@ -62,7 +65,9 @@ export interface AccountOptions extends PictureStore {
 export async function readAccount(
   db: Kysely<Database>,
   userId: string,
-  options: PictureStore
+  options: PictureStore,
+  /** What a closed account is: the session's own ended, or a 404. */
+  closed: () => Error = unauthorized
 ): Promise<AccountSettings> {
   const user = await db
     .selectFrom('users')
@@ -71,7 +76,7 @@ export async function readAccount(
     .where('merged_into', 'is', null)
     .where('login_enabled', '=', true)
     .executeTakeFirst()
-  if (user == null) throw unauthorized()
+  if (user == null) throw closed()
   const emails = await db
     .selectFrom('user_emails')
     .select([
@@ -113,7 +118,8 @@ export async function readAccount(
 /** Protect each short authorization/write phase; never hold this lock during hashing. */
 async function lockAccount(
   db: Kysely<Database>,
-  userId: string
+  userId: string,
+  closed: () => Error = unauthorized
 ): Promise<string | null> {
   const user = await db
     .selectFrom('users')
@@ -123,7 +129,7 @@ async function lockAccount(
     .where('login_enabled', '=', true)
     .forUpdate()
     .executeTakeFirst()
-  if (user == null) throw unauthorized()
+  if (user == null) throw closed()
   return user.password_hash
 }
 
@@ -148,6 +154,56 @@ function accountId(req: Request): string {
   if (req.actor == null) throw unauthorized()
   if (isMachine(req.actor)) throw forbidden('Sign in to manage your account')
   return req.actor.userId
+}
+
+/**
+ * The account a node administrator is changing from User Management: open,
+ * not merged away and not deleted. Only an administrator signed in
+ * themselves may, never a machine, Tess or an API key.
+ */
+export async function administeredId(
+  db: Kysely<Database>,
+  req: Request
+): Promise<string> {
+  if (req.actor == null) throw unauthorized()
+  await requireSignedInNodeAdmin(
+    db,
+    req.actor,
+    'Only a node administrator, signed in, can change another account'
+  )
+  const userId = cleanBody(asUserId, req.params.userId)
+  const user = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', userId)
+    .where('merged_into', 'is', null)
+    .where('login_enabled', '=', true)
+    .where('deleted_at', 'is', null)
+    .executeTakeFirst()
+  if (user == null) throw notFound()
+  return userId
+}
+
+/**
+ * Another person's account as their administrator reads it: everything the
+ * person would see of their name, photo and addresses, and nothing of their
+ * password.
+ */
+async function readAdministeredAccount(
+  db: Kysely<Database>,
+  userId: string,
+  options: PictureStore
+): Promise<AccountSettings> {
+  // Closed since it was looked up: a 404, never the administrator's 401.
+  const account = await readAccount(db, userId, options, notFound)
+  return {
+    user: account.user,
+    hasPassword: false,
+    passwordNeedsUpgrade: false,
+    passwordParameters: null,
+    newPasswordSalt: undefined,
+    emails: account.emails
+  }
 }
 
 async function limit(
@@ -190,6 +246,19 @@ export function accountRoutes(
       res.json(await readAccount(db, accountId(req), options))
     })
   )
+  router.get(
+    '/users/:userId/account',
+    requireActor,
+    withAsync(async (req, res) => {
+      res.json(
+        await readAdministeredAccount(
+          db,
+          await administeredId(db, req),
+          options
+        )
+      )
+    })
+  )
   router.delete(
     '/me/account',
     withAsync(async (req, res) => {
@@ -205,31 +274,106 @@ export function accountRoutes(
         removePictures(options.space, emptied).catch(() => undefined)
     })
   )
-  router.put(
-    '/me/account/name',
-    withAsync(async (req, res) => {
-      const userId = accountId(req)
-      const { displayName } = cleanBody(asAccountNameBody, req.body)
-      const [first, ...rest] = displayName.split(' ')
-      await db.transaction().execute(async tx => {
-        await lockAccount(tx, userId)
-        await tx
-          .updateTable('users')
-          .set({
-            display_name: displayName,
-            first_name: first,
-            last_name: rest.length === 0 ? null : rest.join(' '),
-            updated_at: new Date()
-          })
-          .where('id', '=', userId)
-          .execute()
-        // The games they are playing in are named again for their viewers.
-        await notifyLiveGamesRenamed(tx, { users: [userId] })
+  // A person's own name and photo, and the same for a node administrator
+  // changing somebody else's from User Management.
+  const profiles: Array<
+    [
+      string,
+      (req: Request) => Promise<string>,
+      (userId: string) => Promise<AccountSettings>,
+      // An account closed under the request: the person's own session
+      // ended, or for an administrator, a person no longer there.
+      () => Error
+    ]
+  > = [
+    [
+      '/me/account',
+      async req => accountId(req),
+      async userId => await readAccount(db, userId, options),
+      unauthorized
+    ],
+    [
+      '/users/:userId/account',
+      async req => await administeredId(db, req),
+      async userId => await readAdministeredAccount(db, userId, options),
+      notFound
+    ]
+  ]
+  for (const [prefix, who, read, closed] of profiles) {
+    router.put(
+      `${prefix}/name`,
+      requireActor,
+      withAsync(async (req, res) => {
+        const userId = await who(req)
+        const { displayName } = cleanBody(asAccountNameBody, req.body)
+        const [first, ...rest] = displayName.split(' ')
+        await db.transaction().execute(async tx => {
+          await lockAccount(tx, userId, closed)
+          await tx
+            .updateTable('users')
+            .set({
+              display_name: displayName,
+              first_name: first,
+              last_name: rest.length === 0 ? null : rest.join(' '),
+              updated_at: new Date()
+            })
+            .where('id', '=', userId)
+            .execute()
+          // The games they are playing in are named again for their viewers.
+          await notifyLiveGamesRenamed(tx, { users: [userId] })
+        })
+        setAudit(res.locals, { entityType: 'user', entityId: userId })
+        res.json(await read(userId))
       })
-      setAudit(res.locals, { entityType: 'user', entityId: userId })
-      res.json(await readAccount(db, userId, options))
-    })
-  )
+    )
+    router.put(
+      `${prefix}/photo`,
+      requireActor,
+      withAsync(async (req, res) => {
+        const userId = await who(req)
+        const picture = asPictureBody({
+          image: req.body?.image,
+          source: 'upload'
+        })
+        await db.transaction().execute(async tx => {
+          await lockAccount(tx, userId, closed)
+          // The person, or a node administrator for them, may replace it.
+          await storePlayerAvatar(tx, options, userId, picture, true)
+          await tx
+            .updateTable('users')
+            .set({ picture_catalog_id: null })
+            .where('id', '=', userId)
+            .execute()
+        })
+        setAudit(res.locals, { entityType: 'user', entityId: userId })
+        res.json(await read(userId))
+      })
+    )
+    router.delete(
+      `${prefix}/photo`,
+      requireActor,
+      withAsync(async (req, res) => {
+        const userId = await who(req)
+        await db.transaction().execute(async tx => {
+          await lockAccount(tx, userId, closed)
+          await tx
+            .updateTable('users')
+            .set({
+              picture_catalog_id: null,
+              avatar_path: null,
+              avatar_sha256: null,
+              avatar_source: null,
+              avatar_updated_at: new Date(),
+              updated_at: new Date()
+            })
+            .where('id', '=', userId)
+            .execute()
+        })
+        setAudit(res.locals, { entityType: 'user', entityId: userId })
+        res.json(await read(userId))
+      })
+    )
+  }
   router.get(
     '/me/account/chat-age',
     withAsync(async (req, res) => {
@@ -255,51 +399,6 @@ export function accountRoutes(
         .execute()
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json(await readChatAge(db, userId))
-    })
-  )
-  router.put(
-    '/me/account/photo',
-    withAsync(async (req, res) => {
-      const userId = accountId(req)
-      const picture = asPictureBody({
-        image: req.body?.image,
-        source: 'upload'
-      })
-      await db.transaction().execute(async tx => {
-        await lockAccount(tx, userId)
-        // The signed-in person may replace their own photo, like a site admin.
-        await storePlayerAvatar(tx, options, userId, picture, true)
-        await tx
-          .updateTable('users')
-          .set({ picture_catalog_id: null })
-          .where('id', '=', userId)
-          .execute()
-      })
-      setAudit(res.locals, { entityType: 'user', entityId: userId })
-      res.json(await readAccount(db, userId, options))
-    })
-  )
-  router.delete(
-    '/me/account/photo',
-    withAsync(async (req, res) => {
-      const userId = accountId(req)
-      await db.transaction().execute(async tx => {
-        await lockAccount(tx, userId)
-        await tx
-          .updateTable('users')
-          .set({
-            picture_catalog_id: null,
-            avatar_path: null,
-            avatar_sha256: null,
-            avatar_source: null,
-            avatar_updated_at: new Date(),
-            updated_at: new Date()
-          })
-          .where('id', '=', userId)
-          .execute()
-      })
-      setAudit(res.locals, { entityType: 'user', entityId: userId })
-      res.json(await readAccount(db, userId, options))
     })
   )
   router.put(
