@@ -16,7 +16,12 @@ export async function yieldTurn(): Promise<void> {
     await new Promise<void>(resolve => setTimeout(resolve, 0))
     return
   }
-  const channel = new MessageChannel()
+  // Typed by hand: the browser's and Node's MessagePort types differ, and
+  // both have onmessage, close and postMessage at run time.
+  const channel = new MessageChannel() as unknown as {
+    port1: { onmessage: (() => void) | null; close: () => void }
+    port2: { postMessage: (message: null) => void }
+  }
   await new Promise<void>(resolve => {
     channel.port1.onmessage = () => {
       channel.port1.close()
