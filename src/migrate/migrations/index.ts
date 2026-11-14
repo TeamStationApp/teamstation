@@ -132,6 +132,7 @@ import { migration115ScoringMutation } from './115scoringMutation'
 import { migration116PitchingStrikes } from './116pitchingStrikes'
 import { migration117DeviceScheduling } from './117deviceScheduling'
 import { migration118DevicePreviews } from './118devicePreviews'
+import { migration119DeviceResultHash } from './119deviceResultHash'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -267,5 +268,6 @@ export const migrations: Migration[] = [
   migration115ScoringMutation,
   migration116PitchingStrikes,
   migration117DeviceScheduling,
-  migration118DevicePreviews
+  migration118DevicePreviews,
+  migration119DeviceResultHash
 ]

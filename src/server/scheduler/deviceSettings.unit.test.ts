@@ -75,9 +75,10 @@ describe('device scheduling persistence boundaries', () => {
     expect(new Set(migrations.map(item => item.name)).size).equals(
       migrations.length
     )
-    expect(migrations.slice(-2).map(item => item.name)).deep.equals([
+    expect(migrations.slice(-3).map(item => item.name)).deep.equals([
       '117deviceScheduling',
-      '118devicePreviews'
+      '118devicePreviews',
+      '119deviceResultHash'
     ])
   })
   it('retains dated windows in field facts and distinguishes inheritance from closure', async () => {

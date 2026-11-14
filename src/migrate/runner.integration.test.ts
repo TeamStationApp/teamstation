@@ -121,7 +121,8 @@ describe('migrations', function () {
 
   it('rolls back scheduling and statistics before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
-    expect(await migrateDown(pool, migrations, 2)).deep.equals([
+    expect(await migrateDown(pool, migrations, 3)).deep.equals([
+      '119deviceResultHash',
       '118devicePreviews',
       '117deviceScheduling'
     ])
@@ -631,7 +632,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '115scoringMutation',
           '116pitchingStrikes',
           '117deviceScheduling',
-          '118devicePreviews'
+          '118devicePreviews',
+          '119deviceResultHash'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
