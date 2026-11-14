@@ -152,20 +152,23 @@ async function main(): Promise<void> {
       enabled: true,
       maxTouchPoints: 1
     })
-    const point = await page.$eval('[aria-label="Select Ada Lee"]', n => {
-      const r = n.getBoundingClientRect()
-      return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
-    })
-    // The drags are in rows, as the list draws them: one row is the step
-    // from Ada's checkbox to Billy's (80 points when they were written).
-    const row =
-      (await page.$eval('[aria-label="Select Billy Lee"]', n => {
-        const r = n.getBoundingClientRect()
-        return r.y + r.height / 2
-      })) - point.y
+    // The drags are the selector's: the app counts rows from the touched
+    // selector's own top, a row its height. They start from the middle of
+    // Ada's selector, not her checkbox, whose middle is 22 points from the
+    // top of an 80-point row, and go in rows.
+    const selector = async (name: string): Promise<DOMRect> =>
+      await page.$eval(`[aria-label="Select ${name}"]`, n => {
+        // No ?? in a page function: sucrase's helper is not in the page.
+        let box: Element = n
+        const drag = n.closest('[data-testid^="umpire-select-drag-"]')
+        if (drag !== null) box = drag
+        return box.getBoundingClientRect().toJSON() as DOMRect
+      })
+    const ada = await selector('Ada Lee')
+    const point = { x: ada.x + ada.width / 2, y: ada.y + ada.height / 2 }
+    const row = (await selector('Billy Lee')).y - ada.y
     const rows = (count: number): number => Math.round(row * count)
-    // What a failed drag is told: the app counts rows by each selector's
-    // own top and height, the drags by the step between checkboxes.
+    // What a failed drag is told: each selector's top and height.
     const layout = async (): Promise<string> =>
       JSON.stringify({
         row,

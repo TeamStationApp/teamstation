@@ -37,18 +37,20 @@ function paneTab(name: string): string {
 }
 
 /**
- * The pane's tallest scroller with room to scroll: the navigation's scenes
- * (fb5ef504a), what is in them, or what holds them. On a wide window the
- * page scrolls as one beside her column, header and sidebar with it.
+ * Everything left of her column that could scroll the pane: on a wide window
+ * the page scrolls as one beside her column (fb5ef504a), header and sidebar
+ * with it, so the search is the whole document, not one container's tree.
  */
 const scrollerCandidates = `(() => {
-  const scenes = document.querySelector('[data-testid="navigation-scenes"]')
-  if (scenes == null) return []
-  const around = []
-  for (let node = scenes.parentElement; node != null; node = node.parentElement) around.push(node)
-  return [scenes, ...around, ...Array.from(scenes.querySelectorAll('*'))]
+  const column = document.querySelector('[data-testid="Tess column"]')
+  const edge = column == null ? innerWidth : column.getBoundingClientRect().left
+  return Array.from(document.querySelectorAll('*')).filter(n => {
+    const r = n.getBoundingClientRect()
+    return r.width > 300 && r.right <= edge + 1
+  })
 })()`
 
+/** The pane's tallest scroller with room to scroll. */
 const findScroller = `${scrollerCandidates}
   .filter(candidate => {
     const style = getComputedStyle(candidate)
@@ -62,11 +64,13 @@ const findScroller = `${scrollerCandidates}
 /** Puts the pane's scroller at the top and marks it for the reads after. */
 async function scrollPaneToTop(web: TessWeb): Promise<void> {
   await eventually(async () => {
-    await web.m.evalBrowserScript({
-      script: `document.querySelector('[data-space-scroller]')?.removeAttribute('data-space-scroller')
-        const node = ${findScroller}
-        if (node != null) { node.setAttribute('data-space-scroller', ''); node.scrollTop = 0 }`
-    })
+    // In the page the reads use, as a string: page code from this file
+    // would be compiled with helpers the page lacks.
+    await web.page.evaluate(`(() => {
+      document.querySelector('[data-space-scroller]')?.removeAttribute('data-space-scroller')
+      const node = ${findScroller}
+      if (node != null) { node.setAttribute('data-space-scroller', ''); node.scrollTop = 0 }
+    })()`)
     expect(
       await paneScrollTop(web),
       `the pane can scroll: ${await scrollers(web)}`
@@ -79,12 +83,17 @@ async function scrollPaneToTop(web: TessWeb): Promise<void> {
 
 /** What could scroll, for a failure: each candidate that is taller inside. */
 async function scrollers(web: TessWeb): Promise<string> {
-  const { data } = (await web.m.evalBrowserScript({
-    script: `return JSON.stringify(${scrollerCandidates}
-      .filter(n => n.scrollHeight > n.clientHeight)
-      .map(n => [n.tagName, n.getAttribute('data-testid'), getComputedStyle(n).overflowY, n.clientHeight, n.scrollHeight]))`
-  })) as { data?: unknown }
-  return String(data)
+  return String(
+    await web.page.evaluate(`JSON.stringify({
+      scenes: document.querySelector('[data-testid="navigation-scenes"]') != null,
+      column: document.querySelector('[data-testid="Tess column"]') != null,
+      page: [document.documentElement.clientHeight, document.documentElement.scrollHeight, getComputedStyle(document.documentElement).overflowY, getComputedStyle(document.body).overflowY],
+      taller: Array.from(document.querySelectorAll('*'))
+        .filter(n => n.scrollHeight > n.clientHeight + 20)
+        .map(n => { const r = n.getBoundingClientRect(); return [n.tagName, n.getAttribute('data-testid'), getComputedStyle(n).overflowY, Math.round(r.left), Math.round(r.width), n.clientHeight, n.scrollHeight] })
+        .slice(0, 12)
+    })`)
+  )
 }
 
 async function paneScrollTop(web: TessWeb): Promise<number> {

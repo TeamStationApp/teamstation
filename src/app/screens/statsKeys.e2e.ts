@@ -107,11 +107,16 @@ async function main(): Promise<void> {
             key.scrollIntoView({block:'center', behavior:'instant'});
             if(${JSON.stringify(name)}==='replay-box') {
               // A phone's replay deck scrolls behind its playback controls.
-              // Its bottom padding must let the final definitions clear them.
+              // Its bottom padding must let the final definitions clear them:
+              // the rewind and pause buttons floating at the bottom since
+              // 7301e87a4, not a 96-point bar.
               scope.scrollTop=scope.scrollHeight;
               const last=key.children[0].lastElementChild.getBoundingClientRect();
               const deck=scope.getBoundingClientRect();
-              if(last.top<deck.top || last.bottom>innerHeight-96)throw Error('Last definition hidden by playback controls');
+              const controls=[...document.querySelectorAll('[data-testid="replay-pause"],[data-testid="replay-rewind"]')].map(n=>n.getBoundingClientRect()).filter(r=>r.height>0);
+              if(controls.length===0)throw Error('No playback controls');
+              const clear=Math.min(...controls.map(r=>r.top));
+              if(last.top<deck.top || last.bottom>clear)throw Error('Last definition hidden by playback controls: its bottom '+Math.round(last.bottom)+', the top of the controls '+Math.round(clear)+', the deck '+Math.round(deck.top)+' to '+Math.round(deck.bottom));
               const figures=scope.querySelector('[data-testid="replay-box-score-tables"]');
               if(figures)figures.scrollLeft=figures.scrollWidth;
             }

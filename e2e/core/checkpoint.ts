@@ -80,15 +80,17 @@ export interface JudgeRuntime {
 }
 
 /**
- * The indices, among a CSS selector's matches, of those drawn on the page:
- * with a size, inside the window, and visible (a scene kept behind another
- * keeps its size), as maestro-d must find each to mask it. Where maestro-d's
- * page helper is loaded its own rule decides too: it fails a mask on an
- * element whose offsetParent is null, which a size alone does not show.
+ * The indices, among a CSS selector's matches, of those drawn on the page,
+ * as maestro-d must find each to mask it: with a size, inside the window,
+ * visible, laid out (maestro-d's own rule turns down an element whose
+ * offsetParent is null), and on top at its centre. A scene kept behind
+ * another keeps its size and its styles; only the last test sees it covered.
+ * maestro-d's page helper is not asked: a reload clears it until its next
+ * lookup.
  */
 async function drawnMatches(device: any, css: string): Promise<number[]> {
   const result = (await device.evalBrowserScript({
-    script: `return JSON.stringify([...document.querySelectorAll(${JSON.stringify(css)})].map((n, i) => { const r = n.getBoundingClientRect(); const shown = r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight && (typeof n.checkVisibility !== 'function' || n.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) && (window.__maestro == null || window.__maestro._isElementVisible(n)); return shown ? i : -1 }).filter(i => i >= 0))`
+    script: `return JSON.stringify([...document.querySelectorAll(${JSON.stringify(css)})].map((n, i) => { const r = n.getBoundingClientRect(); const style = getComputedStyle(n); const laidOut = n.offsetParent !== null || style.position === 'fixed' || style.position === 'sticky'; const x = Math.min(innerWidth - 1, Math.max(0, r.left + r.width / 2)); const y = Math.min(innerHeight - 1, Math.max(0, r.top + r.height / 2)); const top = document.elementFromPoint(x, y); const shown = r.width > 0 && r.height > 0 && r.right > 0 && r.bottom > 0 && r.left < innerWidth && r.top < innerHeight && laidOut && (typeof n.checkVisibility !== 'function' || n.checkVisibility({ checkOpacity: true, checkVisibilityCSS: true })) && top !== null && (n === top || n.contains(top)); return shown ? i : -1 }).filter(i => i >= 0))`
   })) as { data?: unknown }
   return typeof result.data === 'string'
     ? (JSON.parse(result.data) as number[])

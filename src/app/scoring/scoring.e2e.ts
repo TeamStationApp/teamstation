@@ -4,7 +4,11 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
-import puppeteer, { type Browser, type Page } from 'puppeteer'
+import puppeteer, {
+  type Browser,
+  type LaunchOptions,
+  type Page
+} from 'puppeteer'
 import {
   type Mesh,
   type MeshStandardMaterial,
@@ -88,6 +92,12 @@ after(async function () {
     await coverage.record(coverageOut)
 })
 let browser: Browser
+/** How the running describe launched its browser, to launch it again. */
+let launchOptions: LaunchOptions = {}
+async function launch(options: LaunchOptions): Promise<Browser> {
+  launchOptions = options
+  return await puppeteer.launch(options)
+}
 /** Leaves every save unanswered, as a server that never replies would. */
 let holdSaves = false
 /** The away team's name in the mocked game, when a test needs another. */
@@ -104,6 +114,9 @@ async function open(
 ): Promise<{ page: Page; unexpected: string[] }> {
   const createdRoster: Record<string, RosterEntry[]> = {}
   const failedRosters = new Set<string>()
+  // A browser that crashed fails the test it crashed in, not every test
+  // after it: the next one opens in a browser launched as it was.
+  if (!browser.connected) browser = await puppeteer.launch(launchOptions)
   const context = await browser.createBrowserContext()
   const page = await context.newPage()
   await coverage?.track(page)
@@ -758,7 +771,7 @@ async function waitRunnerNearBase(page: Page, base: number): Promise<void> {
 describe('scoring browser', function () {
   this.timeout(60000)
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -6501,7 +6514,7 @@ describe('unforced hit-offer on a single (E1–E4)', function () {
   // Own browser lifecycle so `--grep unforced` still launches Puppeteer
   // (sibling of `scoring browser`, whose before/after would otherwise be skipped).
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -6663,7 +6676,7 @@ describe('ground outs', function () {
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -7016,7 +7029,7 @@ describe('pitcher only', function () {
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -7258,7 +7271,7 @@ describe('out at first', function () {
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -7580,7 +7593,7 @@ describe('scorers leave the field', function () {
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -7832,7 +7845,7 @@ describe('lineup clear', function () {
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -8077,7 +8090,7 @@ describe('fielder drag', function () {
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   const phase = process.env.TS_ARTIFACT_PHASE ?? 'after'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
@@ -8323,7 +8336,7 @@ describe('pitch animation, hit flight and celebration timing (E9)', function () 
   this.timeout(180000)
   const capturing = process.env.TS_CAPTURE_ONLY === '1'
   before(async function () {
-    browser = await puppeteer.launch({
+    browser = await launch({
       headless: true,
       executablePath: process.env.TS_CHROME_PATH,
       args: [
