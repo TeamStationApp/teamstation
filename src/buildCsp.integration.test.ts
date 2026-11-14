@@ -235,6 +235,28 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
       ])
     })
 
+    it('writes the crowd’s sounds beside the bundle, which names them from the root', function () {
+      const sounds = readdirSync(once).filter(name => name.endsWith('.m4a'))
+      expect(
+        sounds.map(name => name.replace(/-[A-Z0-9]+\.m4a$/, '')).sort()
+      ).deep.equals([
+        'cheer-huge',
+        'cheer-large',
+        'cheer-medium',
+        'cheer-small',
+        'crowd-idle'
+      ])
+      const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
+      const code = readFileSync(join(once, bundle!), 'utf8')
+      // Root-relative, so they load from `/games/:id/replay` too.
+      for (const sound of sounds) expect(code).contains(`"/${sound}"`)
+      // The page may play them: its media come from itself.
+      const html = readFileSync(join(once, 'index.html'), 'utf8')
+      expect(directives(policyOf(html))['media-src']).includes("'self'")
+      // The bundle's own script is still named from the root, with its hash.
+      expect(html).contains(`src="/${bundle}"`)
+    })
+
     it('has no chat bench route in the web bundle', function () {
       const bundle = readdirSync(once).find(name => /^app-.*\.js$/.test(name))
       expect(bundle).not.equals(undefined)

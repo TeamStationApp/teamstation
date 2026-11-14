@@ -4,6 +4,7 @@ import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
@@ -169,7 +170,7 @@ if (screens.length > 0)
       TS_API_BASE_URL: JSON.stringify('/api/v1'),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.svg': 'dataurl' }
+    loader: ASSET_LOADER
   })
 
 const run = (command, args, env = process.env) => {

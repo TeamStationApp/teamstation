@@ -7,6 +7,7 @@ import React, {
   useState
 } from 'react'
 import {
+  Platform,
   Pressable,
   StatusBar,
   Text,
@@ -32,20 +33,35 @@ import {
 } from '../../common/replay/replayTimeline'
 import type { SessionContext } from '../../common/scoring/session'
 import { ButtonIcon } from '../components/ButtonIcon'
-import { SCORING_CAMERA } from '../field/BaseballScreen'
+import { GlassView } from '../components/GlassView'
+import {
+  fieldHolderStyle,
+  SCORING_BOTTOM_EXTENSION,
+  SCORING_CAMERA
+} from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
 import { FieldCanvas } from '../field/FieldCanvas'
 import type { FieldPlayer } from '../field/fieldModel'
-import { useFieldSurface } from '../field/useFieldSurface'
+import {
+  FIELD_EDGE_GAP,
+  FLOATING_MARGIN,
+  FLOATING_SIZE,
+  floatingBottom,
+  liftedSafePadding,
+  topLift
+} from '../field/fieldSafeArea'
+import { useFieldInsets, useFieldSurface } from '../field/useFieldSurface'
+import { VolumeButton } from '../field/VolumeButton'
 import { lstrings } from '../locales/strings'
 import { scoringAudio } from '../scoring/scoringAudio'
-import { CONTROL_COLORS } from '../scoring/scoringControlStyle'
 import { scoringFieldPlayers } from '../scoring/scoringMotion'
 import { scoreboardFor } from '../scoring/scoringSelectors'
-import { ScoringButton } from '../scoring/ScoringSheet'
-import { useScoringSheetTheme } from '../scoring/scoringSheetTheme'
+import { scoringSheetTheme } from '../scoring/scoringSheetTheme'
 import { scoringSurface as surface } from '../theme/scoringSurface'
-import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
+import { type AnnouncerLines, nextLines, NO_LINES } from './announcerLines'
+import { cheerForStep } from './crowdCheer'
+import { useCrowd } from './crowdPlayer'
 import { useNarrationPlayer } from './narrationPlayer'
 import type { NarrationClient } from './narrationPlayerTypes'
 import { NarrationQueue, type NarrationStep, PREFETCH } from './narrationQueue'
@@ -61,14 +77,83 @@ import {
   SLOT_MS,
   startReplay
 } from './replayMachine'
-import { ReplayPlayCard, type ReplayPlayCardProps } from './ReplayPlayCard'
+import {
+  ANNOUNCER_LINES,
+  BELOW_NAMEPLATE,
+  cardHeightOf,
+  type CardLineHeights,
+  detailStripHeight,
+  ReplayDetailStrip,
+  ReplayPlayCard,
+  type ReplayPlayCardProps,
+  useCardLineHeights
+} from './ReplayPlayCard'
 
 /** The box score's column beside the field on a wide window. */
 export const SIDE_DECK_WIDTH = 360
-/** Of a tall window's height, what the field leaves below for the box score. */
-export const DECK_SHARE = 0.45
-/** On a wide window, what the field leaves below the catcher for the card. */
-export const SIDE_CARD_ROOM = 150
+/** The least of a tall window the box score keeps at its bottom. */
+export const DECK_MIN = 160
+/**
+ * The gap between the play card and the box score below it, and the least
+ * a deck's detail strip keeps above the floating buttons.
+ */
+const DECK_GAP = 8
+
+/** A tall window's play card and deck. */
+export interface TallDeck {
+  /** Where the deck starts. */
+  top: number
+  /** The card's lines of words below the catcher; 0 draws no card. */
+  lines: number
+}
+/**
+ * Where a tall window's play card and deck go. The card hangs below the
+ * catcher's nameplate and shows as many whole lines of words, up to
+ * ANNOUNCER_LINES, as fit above the deck's least height, DECK_MIN, with its
+ * gap, its lines as tall as `heights`, as measured: at a larger text size,
+ * fewer fit. If not one line fits, no card is drawn: the announcer is heard,
+ * the field shows the play, and the deck's top writes what the card's detail
+ * must say (`deckDetailTop`). The deck starts DECK_GAP below the card, then
+ * keeping DECK_MIN; with no card it starts below the nameplate, so the play
+ * at the plate stays in view, and the box score takes what is left.
+ * Until the catcher is measured, there is no card and the deck keeps DECK_MIN.
+ */
+export function tallDeck(
+  height: number,
+  catcher: ScreenRect | null,
+  heights: CardLineHeights
+): TallDeck {
+  if (catcher == null) return { top: height - DECK_MIN, lines: 0 }
+  const below = catcher.y + catcher.height + BELOW_NAMEPLATE
+  const room = height - DECK_MIN - DECK_GAP - below - cardHeightOf(0, heights)
+  const lines = Math.max(
+    0,
+    Math.min(ANNOUNCER_LINES, Math.floor(room / heights.words))
+  )
+  return lines === 0
+    ? { top: Math.min(below, height), lines }
+    : { top: below + cardHeightOf(lines, heights) + DECK_GAP, lines }
+}
+
+/**
+ * Where the deck starts when its top writes the detail strip: at `deckTop`,
+ * unless the strip would then reach within DECK_GAP of the floating buttons'
+ * tops. The deck then rises just enough over the field's bottom that the
+ * strip clears them, and the box score below it keeps its end clear too.
+ */
+export function deckDetailTop(
+  deckTop: number,
+  height: number,
+  insetBottom: number,
+  heights: CardLineHeights,
+  os: string
+): number {
+  const buttonsTop = height - floatingBottom(insetBottom, os) - FLOATING_SIZE
+  return Math.max(
+    0,
+    Math.min(deckTop, buttonsTop - DECK_GAP - detailStripHeight(heights))
+  )
+}
 const TICK_MS = 100
 /** How often a fading rewind notice is drawn. */
 const FADE_FRAME_MS = 33
@@ -107,16 +192,15 @@ export interface GameReplayScreenProps {
   clock?: () => number
 }
 
-/** How far the rewind and pause buttons sit from the bottom and their side. */
-export const FLOATING_MARGIN = 16
-
-/** Rewind at the bottom left and pause at the bottom right: one look. */
+/**
+ * Rewind at the bottom left and pause at the bottom right: one look. Each
+ * sits `floatingBottom` from the window's bottom.
+ */
 export const FLOATING_BUTTON = {
   position: 'absolute',
-  bottom: FLOATING_MARGIN,
-  width: 56,
-  height: 56,
-  borderRadius: 28,
+  width: FLOATING_SIZE,
+  height: FLOATING_SIZE,
+  borderRadius: FLOATING_SIZE / 2,
   alignItems: 'center',
   justifyContent: 'center',
   backgroundColor: surface.active,
@@ -129,51 +213,36 @@ export const FLOATING_BUTTON = {
   elevation: 6
 } as const
 
-/** What the speaker takes across, upper left, from the window's left edge. */
-export const SPEAKER_RESERVE = 16 + 44 + 8
-
-/** What Exit takes across, upper right, from the field column's right edge. */
-export const EXIT_RESERVE = 16 + 76 + 8
-
-/** The row Exit and the speaker sit in, under the safe area. */
-export const CONTROLS_ROW = 56
-
 /**
- * Where the field starts, from the window's top. When the 3D scoreboard
- * leaves room for the speaker on its left (when there is one) and for Exit
- * on its right, at the top; when it runs under either (a phone), under their
- * row, so they cover neither the board nor a fielder.
+ * The narrowest window that puts the box score beside the field even when it
+ * is taller than wide: a tablet in portrait, whose scoring framing leaves too
+ * little room below the catcher for the card and a box score.
  */
-export function fieldTop(
-  board: ScreenRect | null,
-  safeTop: number,
-  /** The field column's right edge, inside its safe padding, where Exit ends. */
-  width: number,
-  /** The speaker is drawn: the announcer is offered. */
-  speaker: boolean
-): number {
-  if (board == null) return 0
-  const underSpeaker = speaker && board.x < SPEAKER_RESERVE
-  const underExit = board.x + board.width > width - EXIT_RESERVE
-  return underSpeaker || underExit ? safeTop + CONTROLS_ROW : 0
+export const SIDE_MIN_WIDTH = 768
+
+/** A wide window, or a tablet's, puts the box score and the play card beside the field. */
+export function replayLayout(width: number, height: number): { side: boolean } {
+  return { side: width > height || width >= SIDE_MIN_WIDTH }
 }
 
-/** The field's framing for a window: the box score's share below it. */
-export function replayLayout(
-  width: number,
-  height: number
-): { side: boolean; bottomExtension: number; deckTop: number } {
-  const side = width > height
-  const bottomExtension = side
-    ? SIDE_CARD_ROOM
-    : Math.round(DECK_SHARE * height)
-  return { side, bottomExtension, deckTop: height - bottomExtension }
+/**
+ * The box score's bottom padding: its last row scrolls to 8 points above the
+ * floating buttons' tops, from a container that ends `containerBottom` above
+ * the window's bottom.
+ */
+export function boxScoreInset(
+  insetBottom: number,
+  containerBottom: number,
+  os: string
+): number {
+  return floatingBottom(insetBottom, os) + FLOATING_SIZE + 8 - containerBottom
 }
 
 /**
  * A game replayed in 3D, full screen and dark: the field, the play card
- * below the catcher, the box score below that, Exit and the speaker at the
- * top left, rewind at the bottom left and pause at the bottom right.
+ * below the catcher, the box score below that, the volume button at the top
+ * left and the X at the top right, rewind at the bottom left and pause at the
+ * bottom right.
  */
 /**
  * The lines a reader may open, by their scoring id: the box score's own answer,
@@ -191,7 +260,10 @@ export function openablePlayers(box: BoxScore): Map<number, string> {
 export function GameReplayScreen(
   props: GameReplayScreenProps
 ): React.ReactElement {
-  const theme = useScoringSheetTheme()
+  // The app's own theme, which the scoring screen draws in, and the replay's
+  // dark sheet over it.
+  const appTheme = useTheme()
+  const theme = scoringSheetTheme(appTheme)
   const { client, gameId } = props
   // The shell hands a fresh callback on every render; the game is read once.
   const notReplayable = useRef(props.onNotReplayable)
@@ -255,6 +327,7 @@ export function GameReplayScreen(
           onExit={props.onExit}
           onOpenPlayer={props.onOpenPlayer}
           clock={props.clock ?? Date.now}
+          glyphColor={appTheme.primaryTextColor}
         />
       )}
     </ScopedThemeProvider>
@@ -276,6 +349,8 @@ function ReplayView(props: {
   onExit: () => void
   onOpenPlayer?: (userId: string, name: string) => void
   clock: () => number
+  /** The X's glyph: the scoring screen's ☰ colour, dark on the glass. */
+  glyphColor: string
 }): React.ReactElement {
   const [openable, setOpenable] = useState<ReadonlyMap<number, string>>()
   const { client: boxClient, onOpenPlayer } = props
@@ -328,9 +403,8 @@ function ReplayView(props: {
         speaking: speaking => {
           dispatch({ type: 'SPEAKING', speaking })
         },
+        // The announcer alone gives up: the cues play on.
         unavailable: () => {
-          scoringAudio.setEnabled(false)
-          setMuted(true)
           setUnavailable(true)
         }
       }),
@@ -342,9 +416,12 @@ function ReplayView(props: {
     },
     [narration]
   )
+  // The announcer follows the volume button, but only where the server has
+  // one, and not once it has failed until the button is turned on again.
+  const announcerMuted = muted || !props.narration || unavailable
   useEffect(() => {
-    narration.setMuted(muted)
-  }, [narration, muted])
+    narration.setMuted(announcerMuted)
+  }, [narration, announcerMuted])
   useEffect(() => {
     narration.setPaused(state.paused)
   }, [narration, state.paused])
@@ -404,6 +481,48 @@ function ReplayView(props: {
     // `saidSince` reads `rewinds`, which the dependencies name.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [narration, shownKey, shownCount, sentence, hurrying, rewinds])
+  // The stadium crowd under it all while the sound is on, and a cheer for
+  // each play a step completes, once a pass: a step that grows after its
+  // play, or a correction that shows it again, does not cheer again, and a
+  // rewind starts a new pass. A live view opens on a step already shown,
+  // and a rewind on one it passes over.
+  // The murmur stops once the replay is over, a cheer still sounding plays
+  // out, and a rewind starts it again.
+  const crowd = useCrowd({
+    on: !muted,
+    paused: state.paused,
+    over: state.final
+  })
+  const { cheer } = crowd
+  const cheered = useRef(new Set<string>())
+  const cheeredStep = useRef(`${shownKey}#${shownCount}`)
+  const { shown } = state
+  const { session: shownSession } = state.scoring
+  // A rewind lands on the step before the half, the last play of the half
+  // before it: that play is the past, and is not cheered on the way, as the
+  // announcer does not read it. Declared before the effect that cheers the
+  // shown step, so it runs first.
+  const cheerRewound = useRef(rewinds)
+  useEffect(() => {
+    if (cheerRewound.current === rewinds) return
+    cheerRewound.current = rewinds
+    cheeredStep.current = `${shownKey}#${shownCount}`
+    // Only a new rewind does this; the step shown is as it left it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rewinds])
+  useEffect(() => {
+    const id = `${shownKey}#${shownCount}`
+    if (shown == null || cheeredStep.current === id) return
+    cheeredStep.current = id
+    const size = cheerForStep(shownSession, shown)
+    const play = `${shown.atBatIndex}#${rewinds}`
+    if (size == null || cheered.current.has(play)) return
+    // A play hurried past is never cheered, not even when it grows later.
+    cheered.current.add(play)
+    if (!hurrying) cheer(size)
+    // The step's key and count say when it is shown; the rest is read then.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shownKey, shownCount, rewinds, cheer])
   // A replay fetches the next two sentences; a live game all it has queued,
   // or, while it is catching up, the step it will land on. A ball in play
   // the scorer has yet to place has no sentence to fetch.
@@ -425,46 +544,28 @@ function ReplayView(props: {
     narration.upcoming(upcoming)
     // The ids say everything the steps do.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [narration, upcomingIds, muted])
+  }, [narration, upcomingIds, announcerMuted])
   const toggleSound = (): void => {
     if (muted) {
       scoringAudio.unlock()
       scoringAudio.setEnabled(true)
       player.unlock()
+      crowd.unlock()
       setUnavailable(false)
     } else scoringAudio.setEnabled(false)
     setMuted(!muted)
   }
   const { width, height } = useWindowDimensions()
   const layout = replayLayout(width, height)
-  const [catcher, setCatcher] = useState<ScreenRect | null>(null)
   const surfaceStyle = useFieldSurface()
-  const [scoreboardRect, setScoreboardRect] = useState<ScreenRect | null>(null)
-  // Settled once for a window width: moving the field changes the board's
-  // measure, which must not move the field again.
-  const [offset, setOffset] = useState(0)
-  const safeTop =
-    typeof surfaceStyle.safe.paddingTop === 'number'
-      ? surfaceStyle.safe.paddingTop
-      : 0
-  const safeRight =
-    typeof surfaceStyle.safe.paddingRight === 'number'
-      ? surfaceStyle.safe.paddingRight
-      : 0
+  const insets = useFieldInsets()
+  // The scoring screen's picture: the top controls and the whole scene rise
+  // half a button into the top inset (not on Android).
+  const lift = topLift(insets.top, Platform.OS)
+  // The top controls' padding: the scoring screen's rule for its header row.
+  const topPadding = liftedSafePadding(insets, lift)
+  const [catcher, setCatcher] = useState<ScreenRect | null>(null)
   const fieldWidth = layout.side ? width - SIDE_DECK_WIDTH : width
-  // Exit sits in the field's column, inside its safe padding, and the board
-  // is measured across that column, not the window.
-  const exitEdge = fieldWidth - safeRight
-  useEffect(() => {
-    setOffset(0)
-  }, [width])
-  useEffect(() => {
-    if (offset === 0) {
-      const top = fieldTop(scoreboardRect, safeTop, exitEdge, props.narration)
-      if (top > 0) setOffset(top)
-    }
-  }, [scoreboardRect, offset, safeTop, exitEdge, props.narration])
-  const [cardBottom, setCardBottom] = useState(0)
 
   const session = state.scoring.session
   // Everyone is named as the card and the box score name them: first name
@@ -520,16 +621,30 @@ function ReplayView(props: {
       ),
     [statistics, state.applied]
   )
+  // The card's line heights, measured by hidden probes once they are laid
+  // out, and estimated from the text size until then.
+  const { heights: lineHeights, probes: lineProbes } = useCardLineHeights()
   const card = replayCard(state, {
     playBall: lstrings.replay_play_ball,
     waiting: lstrings.replay_waiting,
     paused: lstrings.replay_paused,
     changed: lstrings.replay_play_changed
   })
+  // The card's last few sentences, kept from render to render: React's own
+  // way of holding what earlier renders showed. The line is the shown step's
+  // own when it has a sentence; otherwise the card says an earlier one again.
+  const [held, setHeld] = useState<AnnouncerLines>(NO_LINES)
+  const words = nextLines(held, {
+    line: card.line,
+    step: sentence === '' ? null : (shownKey ?? null),
+    notice: state.notice != null,
+    rewinds: state.rewinds
+  })
+  if (words !== held) setHeld(words)
   const field = (
     <FieldCanvas
       {...SCORING_CAMERA}
-      bottomExtension={layout.bottomExtension}
+      bottomExtension={SCORING_BOTTOM_EXTENSION}
       view="home"
       selected=""
       onSelect={() => undefined}
@@ -557,7 +672,6 @@ function ReplayView(props: {
         })
       }}
       onCatcherBounds={setCatcher}
-      onScoreboardBounds={setScoreboardRect}
       interaction={{
         generation: state.scoring.generation,
         selectableIds: [],
@@ -565,56 +679,45 @@ function ReplayView(props: {
       }}
     />
   )
-  // The speaker alone upper left, Exit upper right.
+  // The volume button upper left, the X upper right.
   const topControls = (
     <>
-      {props.narration && (
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={
-            muted ? lstrings.replay_announcer_on : lstrings.replay_announcer_off
-          }
+      <View style={{ position: 'absolute', top: 0, left: 0 }}>
+        <VolumeButton
           testID="replay-speaker"
-          onPress={toggleSound}
-          style={{
-            position: 'absolute',
-            top: 0,
-            left: 16,
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            borderWidth: 1,
-            alignItems: 'center',
-            justifyContent: 'center',
-            backgroundColor: muted
-              ? CONTROL_COLORS.micOff.bottom
-              : CONTROL_COLORS.micOn.bottom,
-            borderColor: muted
-              ? CONTROL_COLORS.micOff.border
-              : CONTROL_COLORS.micOn.border
-          }}
-        >
-          <ButtonIcon
-            name={muted ? 'volume_off' : 'volume_up'}
-            size={1.5}
-            color={
-              muted ? CONTROL_COLORS.micOff.text : CONTROL_COLORS.micOn.text
-            }
-          />
-        </Pressable>
-      )}
-      <View
-        testID="replay-exit"
-        pointerEvents="box-none"
-        style={{ position: 'absolute', top: 0, right: 16, minWidth: 76 }}
-      >
-        <ScoringButton
-          label={lstrings.replay_exit}
-          color={surface.dangerFill}
-          shape="pill"
-          onPress={props.onExit}
+          on={!muted}
+          onToggle={toggleSound}
         />
       </View>
+      <GlassView
+        radius={24}
+        interactive
+        androidBlur
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          width: 48,
+          height: 48,
+          borderRadius: 24,
+          overflow: 'hidden'
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={lstrings.replay_close}
+          testID="replay-exit"
+          onPress={props.onExit}
+          style={{
+            width: 48,
+            height: 48,
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <ButtonIcon name="close" size={1.5} color={props.glyphColor} />
+        </Pressable>
+      </GlassView>
     </>
   )
   const pauseButton = state.final ? null : (
@@ -627,7 +730,13 @@ function ReplayView(props: {
       onPress={() => {
         dispatch({ type: state.paused ? 'PLAY' : 'PAUSE', now: clock() })
       }}
-      style={[FLOATING_BUTTON, { right: FLOATING_MARGIN }]}
+      style={[
+        FLOATING_BUTTON,
+        {
+          right: FLOATING_MARGIN + insets.right,
+          bottom: floatingBottom(insets.bottom, Platform.OS)
+        }
+      ]}
     >
       <ButtonIcon
         name={state.paused ? 'play_arrow' : 'pause'}
@@ -652,7 +761,13 @@ function ReplayView(props: {
             }
           })
         }}
-        style={[FLOATING_BUTTON, { left: FLOATING_MARGIN }]}
+        style={[
+          FLOATING_BUTTON,
+          {
+            left: FLOATING_MARGIN + insets.left,
+            bottom: floatingBottom(insets.bottom, Platform.OS)
+          }
+        ]}
       >
         <ButtonIcon
           name="skip_previous"
@@ -661,19 +776,43 @@ function ReplayView(props: {
         />
       </Pressable>
     )
-  const playCard = (
-    <FadingPlayCard
-      notice={state.notice}
-      clock={clock}
-      line={card.line}
-      detail={unavailable ? lstrings.replay_announcer_unavailable : card.detail}
-      catcher={catcher == null ? null : { ...catcher, y: catcher.y + offset }}
-      width={fieldWidth}
-      height={height}
-      onBottom={setCardBottom}
-    />
-  )
-  const deckTop = Math.max(layout.deckTop, cardBottom + 8)
+  const cardProps = {
+    notice: state.notice,
+    clock,
+    lines: words.entries,
+    detail: unavailable ? lstrings.replay_announcer_unavailable : card.detail,
+    width: fieldWidth,
+    height
+  }
+  // A tall window: the card below the catcher, the canvas's report moved up
+  // with the lifted scene, with as many lines as leave the box score DECK_MIN.
+  // With no line, the deck starts below the nameplate.
+  const lifted = catcher == null ? null : { ...catcher, y: catcher.y - lift }
+  // How tall the card's lines are drawn, as the probes measure them: so how
+  // many fit, the card's height and the deck's top.
+  const deck = tallDeck(height, lifted, lineHeights)
+  // With no card, what the card's detail must say still shows, at the deck's
+  // top: the announcer has stopped, or the replay is paused. The situation
+  // is left to the field and the box score.
+  const deckDetail =
+    !layout.side && deck.lines === 0 && (unavailable || state.paused)
+      ? cardProps.detail
+      : null
+  const deckTop =
+    deckDetail == null
+      ? deck.top
+      : deckDetailTop(deck.top, height, insets.bottom, lineHeights, Platform.OS)
+  const boxScore = (containerBottom: number): React.ReactElement =>
+    box === null ? (
+      <Text>Statistics are unavailable for this recorded play.</Text>
+    ) : (
+      <ReplayBoxScore
+        box={box}
+        players={openable}
+        onOpenPlayer={onOpenPlayer}
+        bottomInset={boxScoreInset(insets.bottom, containerBottom, Platform.OS)}
+      />
+    )
   return (
     <View
       testID="game-replay"
@@ -687,13 +826,27 @@ function ReplayView(props: {
     >
       <View style={{ flex: 1 }}>
         {player.element}
-        <View testID="replay-field" style={{ flex: 1, marginTop: offset }}>
+        {crowd.element}
+        <View testID="replay-field" style={fieldHolderStyle(-lift)}>
           {field}
         </View>
-        {playCard}
+        {!layout.side && deck.lines > 0 && (
+          <FadingPlayCard
+            {...cardProps}
+            catcher={lifted}
+            lineCount={deck.lines}
+            lineHeights={lineHeights}
+          />
+        )}
         <View
           pointerEvents="box-none"
-          style={[{ position: 'absolute', inset: 0 }, surfaceStyle.safe]}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            paddingTop: topPadding.paddingTop,
+            paddingLeft: topPadding.paddingLeft,
+            paddingRight: layout.side ? FIELD_EDGE_GAP : topPadding.paddingRight
+          }}
         >
           <View pointerEvents="box-none" style={{ flex: 1 }}>
             {topControls}
@@ -701,47 +854,41 @@ function ReplayView(props: {
         </View>
         {!layout.side && (
           <View
+            testID="replay-deck"
             style={{
               position: 'absolute',
               top: deckTop,
               left: 0,
               right: 0,
-              bottom: 0
+              bottom: 0,
+              backgroundColor: surface.canvas
             }}
           >
-            {box === null ? (
-              <Text>Statistics are unavailable for this recorded play.</Text>
-            ) : (
-              <ReplayBoxScore
-                box={box}
-                players={openable}
-                onOpenPlayer={onOpenPlayer}
-              />
-            )}
+            {deckDetail != null && <ReplayDetailStrip detail={deckDetail} />}
+            {boxScore(0)}
           </View>
         )}
+        {lineProbes}
       </View>
       {layout.side && (
-        <View style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}>
-          {box === null ? (
-            <Text>Statistics are unavailable for this recorded play.</Text>
-          ) : (
-            <ReplayBoxScore
-              box={box}
-              players={openable}
-              onOpenPlayer={onOpenPlayer}
-            />
-          )}
+        <View
+          testID="replay-side"
+          style={[{ width: SIDE_DECK_WIDTH }, surfaceStyle.safe]}
+        >
+          <FadingPlayCard
+            {...cardProps}
+            catcher={null}
+            placement="column"
+            lineHeights={lineHeights}
+          />
+          <View style={{ flex: 1, marginTop: DECK_GAP }}>
+            {boxScore(insets.bottom + FIELD_EDGE_GAP)}
+          </View>
         </View>
       )}
-      <View
-        pointerEvents="box-none"
-        style={[{ position: 'absolute', inset: 0 }, surfaceStyle.safe]}
-      >
-        <View pointerEvents="box-none" style={{ flex: 1 }}>
-          {rewindButton}
-          {pauseButton}
-        </View>
+      <View pointerEvents="box-none" style={{ position: 'absolute', inset: 0 }}>
+        {rewindButton}
+        {pauseButton}
       </View>
     </View>
   )

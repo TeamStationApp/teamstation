@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -10,6 +10,7 @@ import {
   replayContextOf,
   replayTimelineOf
 } from '../../common/replay/replayTimeline'
+import { CHEER_GAIN, CROWD_IDLE_GAIN } from './crowdCheer'
 import {
   artifactsDir,
   attachWeb,
@@ -33,14 +34,16 @@ import { stepHalfEnds } from './replayGaps'
  *   REPLAY_SCENARIO=replay [REPLAY_PITCH_MS=5000]
  *     The final game's replay from its pill: the controls, the pitch pacing
  *     (each pitch held for the node's pitch delay, REPLAY_PITCH_MS),
- *     the first home run, pause and play, the box score's pitchers, Exit,
+ *     the first home run, pause and play, the box score's pitchers, the X,
  *     the imported game with nothing to replay, and the wide layout.
  *
  *   REPLAY_SCENARIO=announcer   (the server's `speech` set)
  *     The announcer through the first half-inning: every sentence played as
  *     its step is shown, none over another, pause and play mid-sentence, and
- *     muting silencing it at once. Writes narration-first-half.log and the
- *     served audio, narration-first-half.mp3.
+ *     muting silencing it at once; the card's words three lines tall at
+ *     every sentence, the newest last. Writes narration-first-half.log, the
+ *     served audio, narration-first-half.mp3, and the card's words sliding
+ *     in, announcer-scroll.mp4.
  *
  *   REPLAY_SCENARIO=live
  *     A season member follows the game in progress from its Live pill while
@@ -60,12 +63,24 @@ import { stepHalfEnds } from './replayGaps'
  *     and then the final call are read. Writes final-announcer.log.
  *
  *   REPLAY_SCENARIO=noAnnouncer   (the server's `speech` removed)
- *     The replay offers no speaker.
+ *     The replay still offers its volume button, for the field's sounds, and
+ *     turning it on asks the server for no sentence: the page requests no
+ *     narration, nor does the server's log (REPLAY_API_LOG, when given) show
+ *     one.
  *
  *   REPLAY_SCENARIO=controls REPLAY_PHASE=before|after
  *     The replay paused at its first pitch at 402 x 874 and 1024 x 1366:
- *     replay-controls-<phase>.png and box-score-centred-<phase>.png. `after`
- *     expects the rewind button.
+ *     replay-controls-<phase>.png and box-score-centred-<phase>.png, and at
+ *     402 x 874 the box score scrolled to its end, box-score-end-<phase>.png.
+ *     `after` also opens it at 393 x 660 and 375 x 667, a phone's browser
+ *     with its toolbars (replay-controls-<size>-after.png and
+ *     box-score-end-<size>-after.png). It expects the volume button at the
+ *     top left and the X at the top right, 48 square; rewind and pause 16
+ *     from the bottom and their sides; the canvas from the window's top; on
+ *     a tall window the play card, if drawn, ending above the buttons' tops
+ *     and the deck at least DECK_MIN tall, and with no card the deck no
+ *     taller than DECK_MIN, below the plate; and the box score's last row
+ *     above both buttons.
  *
  *   REPLAY_SCENARIO=rewind
  *     Rewind in the final game's replay: from "Play ball!", after two
@@ -104,6 +119,20 @@ import { stepHalfEnds } from './replayGaps'
  *     shows the batter's and the pitcher's jersey numbers, as `#12`, before
  *     their names. Adds a ball to the scorer's at-bat in progress, so
  *     reseed before another live scenario.
+ *
+ *   REPLAY_SCENARIO=crowd
+ *     The final game's replay with the sound on, to its first home run, past
+ *     a minute: the idle crowd's two copies of its file take turns, the
+ *     second starting about 20 s after the first, the two playing together
+ *     for about 2 s with their gains crossing at equal power (g1² + g2²
+ *     within 5% of the idle gain's square, sampled every 100 ms), each
+ *     routed once through its own GainNode at volume 1; each play that
+ *     cheers plays its sound from the site's root, Judge's strikeout,
+ *     Rizzo's single, Torres's double play and Betts's home run, at gains
+ *     that rise with the play, each gain on the element's own Web Audio
+ *     GainNode with the element at volume 1 and one source per element, and
+ *     pause pauses the crowd and the cheers
+ *     still sounding, which play plays on. Writes crowd-web.log.
  *
  * The seed's game ids are fixed; REPLAY_FINAL, REPLAY_LIVE and
  * REPLAY_IMPORTED override them.
@@ -198,13 +227,20 @@ function screenRecorder(m: Device): { stop: (path: string) => Promise<void> } {
   }
 }
 
+/**
+ * What the card says now, as a page expression: its newest line, the
+ * sentence or the rewind's words, then the detail below the words. The
+ * lines said before it stay above in the words area, and are not read.
+ */
+const CARD_TEXT = `((document.querySelector('[data-testid="replay-play-card-line"]')?.textContent ?? '') + (document.querySelector('[data-testid="replay-play-card-detail"]')?.textContent ?? ''))`
+
 /** Logs every change of the card's text in the page, with its time. */
 const CARD_LOG = `
   if (!window.__cards) {
     window.__cards = [];
     let last = null;
     const read = () => {
-      const text = document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? '';
+      const text = ${CARD_TEXT};
       if (text !== last) { last = text; window.__cards.push({ t: Date.now(), text }); }
     };
     new MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
@@ -213,7 +249,7 @@ const CARD_LOG = `
   return true;
 `
 
-const CARD = `document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? ''`
+const CARD = CARD_TEXT
 
 async function openGame(m: Device, gameId: string): Promise<void> {
   await m.openBrowser({ url: `${required('REPLAY_WEB_URL')}/games/${gameId}` })
@@ -302,7 +338,7 @@ async function replay(m: Device): Promise<void> {
   assert.ok((await pillLabels(m)).includes('Replay'), 'no Replay pill')
   await m.tapOn({ text: 'Replay' })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
-  await m.assertVisible({ text: 'Exit' })
+  await m.assertVisible({ id: 'replay-exit' })
   await m.assertVisible({ id: 'replay-speaker' })
   await m.assertVisible({ id: 'replay-pause' })
   const video = join(await artifactsDir(), 'replay-first-inning-web.mp4')
@@ -401,7 +437,7 @@ async function replay(m: Device): Promise<void> {
     const deck = document.querySelector('[data-testid="replay-box-score"]');
     const text = deck.textContent;
     const after = text.slice(text.indexOf('Harbor Hawks pitching'), text.indexOf('Valley Pines batting'));
-    return { cole: after.indexOf('Gerrit C'), gil: after.indexOf('Luis Gi'), text: after.slice(0, 200) };
+    return { cole: after.indexOf('Gerrit C'), gil: after.indexOf('Luis G'), text: after.slice(0, 200) };
   `
   const deadline = Date.now() + 120000
   let order = await evalJson<{ cole: number; gil: number; text: string }>(
@@ -448,7 +484,7 @@ async function replay(m: Device): Promise<void> {
   await shot(m, 'replay-box-pitchers')
   await m.tapOn({ id: 'replay-pause' })
 
-  await m.tapOn({ text: 'Exit' })
+  await m.tapOn({ id: 'replay-exit' })
   await m.assertVisible({ text: 'Box score', timeout: 10000 })
   const path = await evalJson<string>(m, 'return location.pathname')
   assert.equal(path, `/games/${FINAL}`)
@@ -479,27 +515,36 @@ async function desktop(m: Device): Promise<void> {
     text => !text.startsWith('Play ball') && text !== '',
     20000
   )
+  // The play card heads the column, three lines of words tall, and the box
+  // score starts just below it.
   const side = await evalJson<boolean>(
     m,
     `
     const deck = document.querySelector('[data-testid="replay-box-score"]').getBoundingClientRect();
-    return deck.left > window.innerWidth / 2 && deck.top < 100;
+    const card = document.querySelector('[data-testid="replay-play-card"]').getBoundingClientRect();
+    return deck.left > window.innerWidth / 2 && card.left > window.innerWidth / 2 &&
+      card.top < 100 && deck.top >= card.bottom && deck.top < card.bottom + 20;
   `
   )
-  assert.ok(side, 'the box score is not beside the field')
+  assert.ok(side, 'the box score is not beside the field, below the card')
   await shot(m, 'replay-desktop')
 }
 
 /**
  * Records the announcer's element in the page: it is never in the document,
- * so its play, pause and end are caught on the element's prototype.
+ * so its play, pause and end are caught on the element's prototype. The
+ * field cues (data URLs) and the crowd's bed and cheers (/crowd-idle-…,
+ * /cheer-…) are not the announcer and are left out; the crowd scenario
+ * records those itself.
  */
 const MEDIA_LOG = `
   if (!window.__narrated) {
     window.__narrated = [];
-    const card = () => document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? '';
+    const card = () => ${CARD_TEXT};
     const log = (type, el) => {
-      if (String(el.src).startsWith('data:')) return;
+      const src = String(el.src);
+      if (src.startsWith('data:')) return;
+      if (/\\/(crowd-idle|cheer)-/.test(src)) return;
       window.__narrated.push({ type, t: Date.now(), src: String(el.src), card: card() });
     };
     const proto = HTMLMediaElement.prototype;
@@ -545,6 +590,44 @@ function overlaps(events: readonly MediaEvent[]): string[] {
   return problems
 }
 
+/**
+ * Logs the card's words area at every change: its height, and whether its
+ * last line is the newest, the sentence being read.
+ */
+const WORDS_LOG = `
+  if (!window.__words) {
+    window.__words = [];
+    let last = null;
+    const read = () => {
+      const words = document.querySelector('[data-testid="replay-play-card-words"]');
+      const line = document.querySelector('[data-testid="replay-play-card-line"]');
+      if (!words || !line) return;
+      const text = line.textContent;
+      if (text === last) return;
+      last = text;
+      const lines = words.firstElementChild?.children ?? [];
+      window.__words.push({
+        t: Date.now(),
+        text,
+        height: Math.round(words.getBoundingClientRect().height * 10) / 10,
+        lines: lines.length,
+        lastIsNewest: lines[lines.length - 1] === line
+      });
+    };
+    new MutationObserver(read).observe(document.body, { subtree: true, childList: true, characterData: true });
+    read();
+  }
+  return true;
+`
+
+interface WordsChange {
+  t: number
+  text: string
+  height: number
+  lines: number
+  lastIsNewest: boolean
+}
+
 async function announcer(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
   await m.openBrowser({
@@ -552,9 +635,13 @@ async function announcer(m: Device): Promise<void> {
   })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
   await evalJson<boolean>(m, MEDIA_LOG)
+  await evalJson<boolean>(m, WORDS_LOG)
   const started = Date.now()
   await m.tapOn({ id: 'replay-speaker' })
-  await m.assertVisible({ text: 'Turn announcer off' })
+  await m.assertVisible({ text: 'Mute game sounds' })
+  // The words area through the half: three lines, the new ones sliding in.
+  const out = await artifactsDir()
+  const recorder = screenRecorder(m)
 
   // Pause in the middle of the third sentence, then play.
   const deadline = Date.now() + 60000
@@ -584,9 +671,21 @@ async function announcer(m: Device): Promise<void> {
     text => text.startsWith('Mookie B steps in'),
     180000
   )
+  await recorder.stop(join(out, 'announcer-scroll.mp4'))
+  // Every sentence shown in a words area three lines tall, the newest last.
+  const words = await evalJson<WordsChange[]>(m, 'return window.__words ?? []')
+  assert.ok(words.length >= 5, `few sentences: ${words.length}`)
+  for (const change of words) {
+    assert.equal(change.height, 60, `the words were ${change.height} tall`)
+    assert.ok(change.lastIsNewest, `not the last line: ${change.text}`)
+  }
+  assert.ok(
+    words.some(change => change.lines >= 3),
+    'the words never held three sentences'
+  )
   await m.tapOn({ id: 'replay-speaker' })
   const mutedAt = Date.now()
-  await m.assertVisible({ text: 'Turn announcer on' })
+  await m.assertVisible({ text: 'Unmute game sounds' })
   await wait(6000)
   const events = await mediaEvents(m)
   const afterMute = events.filter(event => event.t > mutedAt + 300)
@@ -635,7 +734,6 @@ async function announcer(m: Device): Promise<void> {
   }
   const list = join(dir, 'list.txt')
   await writeFile(list, files.map(file => `file '${file}'`).join('\n'))
-  const out = await artifactsDir()
   const mp3 = join(out, 'narration-first-half.mp3')
   const joined = spawnSync(
     'ffmpeg',
@@ -659,6 +757,7 @@ async function announcer(m: Device): Promise<void> {
   assert.equal(joined.status, 0, 'ffmpeg joined nothing')
   const lines = [
     '$ REPLAY_SCENARIO=announcer node -r sucrase/register src/app/replay/replay.e2e.ts',
+    `# words area: ${words.length} sentences shown, every one 60 tall with the newest last -> announcer-scroll.mp4`,
     `# ${steps.length} steps in the top of the 1st; the announcer's element, seconds from unmuting:`,
     ...events.map(
       event =>
@@ -672,6 +771,419 @@ async function announcer(m: Device): Promise<void> {
     `${lines.join('\n')}\n`
   )
   console.log(lines.slice(-2).join('\n'))
+}
+
+/** How long the stand-in for the idle crowd's file runs: as long as the file. */
+const CROWD_STAND_IN_SECONDS = 22
+
+/**
+ * Records the crowd's sounds in the page: every play and pause of an `.m4a`
+ * element, with its file, whether it is a copy of the idle crowd, its
+ * volume, Web Audio gain and muting, and the card at the time. The elements
+ * are never in the document, so their prototype is watched. The crowd sets
+ * its gains on a GainNode per element, as iPhone Safari ignores `volume`, so
+ * the AudioContext's `createMediaElementSource` is watched as well: each
+ * element's source count, and the node its source connects to, whose gain
+ * is read at each play. Every 100 ms the idle crowd's copies are sampled:
+ * each one's state and gain, into `window.__crowdSamples`. The app exposes
+ * nothing for this; the test watches the browser's own API, as it does
+ * `play`.
+ *
+ * A Chromium built without AAC cannot decode the idle crowd's `.m4a`, so
+ * its copies would never move on and never cross. There, each copy is given
+ * a stand-in of the same length the browser can play, 22 s of quiet noise
+ * as a WAV, set in place of the file the page asked for, which is what is
+ * recorded and fetched.
+ */
+const CROWD_LOG = `
+  if (!window.__crowd) {
+    window.__crowd = [];
+    window.__crowdElements = [];
+    window.__crowdSamples = [];
+    const card = () => ${CARD_TEXT};
+    const asked = el => String(el.__crowdAsked ?? el.src);
+    const isBed = el => /\\/crowd-idle-[^/]*\\.m4a$/.test(asked(el));
+    const gainOf = el => el.__crowdGain ? el.__crowdGain.gain.value : null;
+    const log = (type, el) => {
+      const src = asked(el);
+      if (!src.includes('.m4a')) return;
+      if (!window.__crowdElements.includes(el)) window.__crowdElements.push(el);
+      window.__crowd.push({ type, t: Date.now(), src, bed: isBed(el), muted: el.muted, volume: el.volume, gain: gainOf(el), sources: el.__crowdSources ?? 0, card: card() });
+    };
+    const aac = document.createElement('audio').canPlayType('audio/mp4; codecs="mp4a.40.2"') !== '';
+    window.__crowdStandIn = !aac;
+    if (!aac) {
+      const seconds = ${CROWD_STAND_IN_SECONDS}, rate = 8000, n = seconds * rate;
+      const wav = new DataView(new ArrayBuffer(44 + n));
+      const text = (at, value) => { for (let i = 0; i < value.length; i++) wav.setUint8(at + i, value.charCodeAt(i)); };
+      text(0, 'RIFF'); wav.setUint32(4, 36 + n, true); text(8, 'WAVEfmt ');
+      wav.setUint32(16, 16, true); wav.setUint16(20, 1, true); wav.setUint16(22, 1, true);
+      wav.setUint32(24, rate, true); wav.setUint32(28, rate, true); wav.setUint16(32, 1, true); wav.setUint16(34, 8, true);
+      text(36, 'data'); wav.setUint32(40, n, true);
+      for (let i = 0; i < n; i++) wav.setUint8(44 + i, 128 + Math.round((Math.random() - 0.5) * 8));
+      const standIn = URL.createObjectURL(new Blob([wav], { type: 'audio/wav' }));
+      const src = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+      Object.defineProperty(HTMLMediaElement.prototype, 'src', {
+        configurable: true,
+        get() { return src.get.call(this); },
+        set(value) {
+          const url = new URL(String(value), location.href).href;
+          if (/\\/crowd-idle-[^/]*\\.m4a$/.test(url)) { this.__crowdAsked = url; value = standIn; }
+          src.set.call(this, value);
+        }
+      });
+    }
+    setInterval(() => {
+      const copies = window.__crowdElements.filter(isBed);
+      if (copies.length === 0) return;
+      window.__crowdSamples.push({ t: Date.now(), copies: copies.map(el => ({ paused: el.paused, ended: el.ended, time: el.currentTime, gain: gainOf(el), volume: el.volume })) });
+    }, 100);
+    for (const Context of [window.AudioContext, window.webkitAudioContext]) {
+      if (Context == null || Context.prototype.__crowdWatched) continue;
+      Context.prototype.__crowdWatched = true;
+      const route = Context.prototype.createMediaElementSource;
+      Context.prototype.createMediaElementSource = function (el) {
+        const source = route.call(this, el);
+        el.__crowdSources = (el.__crowdSources ?? 0) + 1;
+        const connect = source.connect;
+        source.connect = function (to) { el.__crowdGain = to; return connect.apply(this, arguments); };
+        return source;
+      };
+    }
+    const proto = HTMLMediaElement.prototype;
+    const play = proto.play, pause = proto.pause;
+    proto.play = function () { log('play', this); return play.apply(this, arguments); };
+    proto.pause = function () { log('pause', this); return pause.apply(this, arguments); };
+  }
+  return true;
+`
+
+/**
+ * Whether the browser decodes AAC. A Chromium built without the licensed
+ * codecs does not, though Chrome, Safari, Edge and Firefox do: it is asked
+ * to play the crowd and cannot, and only what the page asked is checked.
+ */
+const PLAYS_AAC = `return document.createElement('audio').canPlayType('audio/mp4; codecs="mp4a.40.2"') !== ''`
+
+/**
+ * Fetches each sound's file as the page does, into `window.__crowdFiles`:
+ * its status and size.
+ */
+const CROWD_FILES = `
+  const files = [...new Set((window.__crowd ?? []).map(event => event.src))];
+  window.__crowdFiles = null;
+  Promise.all(files.map(async src => {
+    const answer = await fetch(src);
+    return { src, status: answer.status, bytes: (await answer.arrayBuffer()).byteLength };
+  })).then(read => { window.__crowdFiles = read; }, error => { window.__crowdFiles = String(error); });
+  return true;
+`
+
+/** A sound's file as the page fetched it. */
+interface CrowdFile {
+  src: string
+  status: number
+  bytes: number
+}
+
+interface CrowdEvent {
+  type: 'play' | 'pause'
+  t: number
+  src: string
+  /** Whether it is one of the idle crowd's copies. */
+  bed: boolean
+  muted: boolean
+  volume: number
+  /** Its GainNode's gain, if its element was routed through Web Audio. */
+  gain: number | null
+  /** How many Web Audio sources were made on its element. */
+  sources: number
+  card: string
+}
+
+/** The idle crowd's copies as they stand: each one's file, gain and state. */
+const CROWD_BED = `
+  const copies = (window.__crowdElements ?? []).filter(el => /\\/crowd-idle-[^/]*\\.m4a$/.test(String(el.__crowdAsked ?? el.src)));
+  return copies.map(bed => ({ src: String(bed.__crowdAsked ?? bed.src), loop: bed.loop, volume: bed.volume, gain: bed.__crowdGain ? bed.__crowdGain.gain.value : null, sources: bed.__crowdSources ?? 0, paused: bed.paused, time: bed.currentTime, duration: bed.duration, error: bed.error?.code ?? null }));
+`
+
+interface CrowdBed {
+  src: string
+  loop: boolean
+  volume: number
+  gain: number | null
+  sources: number
+  paused: boolean
+  time: number
+  duration: number
+  error: number | null
+}
+
+/** The idle crowd's copies, sampled every 100 ms. */
+interface CrowdSample {
+  t: number
+  copies: Array<{
+    paused: boolean
+    ended: boolean
+    time: number
+    gain: number | null
+    volume: number
+  }>
+}
+
+async function crowd(m: Device): Promise<void> {
+  await signInWeb(m, LEAGUE)
+  await m.openBrowser({
+    url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
+  })
+  await m.assertVisible({ id: 'game-replay', timeout: 20000 })
+  await evalJson<boolean>(m, CROWD_LOG)
+  const started = Date.now()
+  await m.tapOn({ id: 'replay-speaker' })
+  await m.assertVisible({ text: 'Mute game sounds' })
+  const homer = await cardUntil(
+    m,
+    'the first home run',
+    text => /home run|grand slam/i.test(text),
+    180000
+  )
+  await wait(3000)
+  const aac = await evalJson<boolean>(m, PLAYS_AAC)
+  const standIn = await evalJson<boolean>(m, 'return window.__crowdStandIn')
+  const copies = await evalJson<CrowdBed[]>(m, CROWD_BED)
+  assert.equal(copies.length, 2, `${copies.length} copies of the idle crowd`)
+  const origin = new URL(required('REPLAY_WEB_URL')).origin
+  for (const copy of copies) {
+    assert.equal(copy.loop, false, 'a copy of the idle crowd loops')
+    // Through Web Audio: its node holds the gain, its element plays at 1.
+    assert.equal(
+      copy.sources,
+      1,
+      'a copy of the idle crowd was not routed once'
+    )
+    assert.equal(
+      copy.volume,
+      1,
+      "a copy of the idle crowd's element is not at 1"
+    )
+    assert.equal(
+      copy.error,
+      null,
+      `a copy of the idle crowd failed: ${copy.error}`
+    )
+    assert.match(copy.src, /\/crowd-idle-[^/]*\.m4a$/)
+    assert.ok(copy.src.startsWith(`${origin}/crowd-idle-`), copy.src)
+  }
+  assert.equal(copies[1].src, copies[0].src, 'the copies play different files')
+  const length = copies[0].duration
+  assert.ok(
+    Math.abs(length - 22) < 0.1,
+    `the idle crowd's file is ${length} s long`
+  )
+  // Past a minute, the copies have each played: the crossfades.
+  const sounding = copies.filter(copy => !copy.paused)
+  assert.ok(sounding.length >= 1, 'no copy of the idle crowd is playing')
+  // Where an AudioParam is a 32-bit float, the gains read back rounded.
+  const full = CROWD_IDLE_GAIN ** 2
+  const samples = await evalJson<CrowdSample[]>(
+    m,
+    'return window.__crowdSamples ?? []'
+  )
+  const playingIn = (sample: CrowdSample): number[] =>
+    sample.copies.flatMap((copy, i) => (copy.paused || copy.ended ? [] : [i]))
+  const power = (sample: CrowdSample): number =>
+    sample.copies.reduce(
+      (sum, copy) =>
+        copy.paused || copy.ended ? sum : sum + (copy.gain ?? 0) ** 2,
+      0
+    )
+  // Each copy's first play out loud, after the tap's muted one.
+  const bedEvents = (
+    await evalJson<CrowdEvent[]>(m, 'return window.__crowd ?? []')
+  ).filter(event => event.bed)
+  const startsOf = bedEvents.filter(
+    event => event.type === 'play' && !event.muted
+  )
+  assert.ok(startsOf.length >= 3, `${startsOf.length} starts of the idle crowd`)
+  const firstStart = startsOf[0].t
+  const secondStart = startsOf[1].t
+  const handover = (secondStart - firstStart) / 1000
+  assert.ok(
+    handover > 19 && handover < 21.5,
+    `the second copy started ${handover.toFixed(2)} s after the first`
+  )
+  // The first overlap: the samples with both copies playing.
+  const both = samples.filter(sample => playingIn(sample).length === 2)
+  assert.ok(both.length > 0, 'the copies never played together')
+  const overlaps: CrowdSample[][] = []
+  for (const sample of both) {
+    const run = overlaps.at(-1)
+    if (run != null && sample.t - run[run.length - 1].t <= 250) run.push(sample)
+    else overlaps.push([sample])
+  }
+  const firstOverlap = overlaps[0]
+  const overlapSeconds =
+    (firstOverlap[firstOverlap.length - 1].t - firstOverlap[0].t) / 1000 + 0.1
+  assert.ok(
+    overlapSeconds > 1.6 && overlapSeconds < 2.4,
+    `the copies played together for ${overlapSeconds.toFixed(2)} s`
+  )
+  // Through the overlap, the summed power holds at the idle gain's square.
+  const powers = both.map(sample => power(sample) / full)
+  const low = Math.min(...powers)
+  const high = Math.max(...powers)
+  assert.ok(
+    low > 0.95 && high < 1.05,
+    `the summed power ran ${low.toFixed(3)}–${high.toFixed(3)} of the idle gain's`
+  )
+  // And the gains crossed: one fell as the other rose.
+  const [outgoing, incoming] = [0, 1].map(i =>
+    firstOverlap.map(sample => sample.copies[i].gain ?? 0)
+  )
+  assert.ok(
+    outgoing[0] > incoming[0] &&
+      outgoing[outgoing.length - 1] < incoming[incoming.length - 1],
+    `the gains did not cross: ${outgoing.map(g => g.toFixed(2)).join(' ')} / ${incoming.map(g => g.toFixed(2)).join(' ')}`
+  )
+  // Alone, a copy plays at the idle gain.
+  const alone = samples.filter(
+    sample =>
+      playingIn(sample).length === 1 &&
+      sample.copies[playingIn(sample)[0]].time > 2.5 &&
+      sample.copies[playingIn(sample)[0]].time < length - 2.5
+  )
+  assert.ok(alone.length > 0, 'no copy played alone')
+  for (const sample of alone)
+    assert.equal(
+      sample.copies[playingIn(sample)[0]].gain,
+      Math.fround(CROWD_IDLE_GAIN),
+      'a copy alone is not at the idle gain'
+    )
+  // Pause pauses the crowd; play plays it on.
+  const asked = async (
+    type: 'play' | 'pause',
+    since: number
+  ): Promise<boolean> =>
+    (await evalJson<CrowdEvent[]>(m, 'return window.__crowd ?? []')).some(
+      event => event.bed && event.type === type && event.t >= since
+    )
+  const pausedAt = Date.now()
+  let since = pausedAt
+  await m.tapOn({ id: 'replay-pause' })
+  await wait(500)
+  assert.ok(await asked('pause', since), 'pause did not pause the crowd')
+  const paused = await evalJson<CrowdBed[]>(m, CROWD_BED)
+  assert.ok(
+    paused.every(copy => copy.paused),
+    'pause left the crowd playing'
+  )
+  const playedAt = Date.now()
+  since = playedAt
+  await m.tapOn({ id: 'replay-pause' })
+  await wait(500)
+  assert.ok(await asked('play', since), 'play did not play the crowd')
+  const playing = await evalJson<CrowdBed[]>(m, CROWD_BED)
+  assert.ok(
+    playing.some(copy => !copy.paused),
+    'play left the crowd paused'
+  )
+  // Every sound is served where the page asks for it.
+  await evalJson<boolean>(m, CROWD_FILES)
+  let fetched: CrowdFile[] | string | null = null
+  for (let i = 0; i < 50 && fetched == null; i++) {
+    await wait(100)
+    fetched = await evalJson<CrowdFile[] | string | null>(
+      m,
+      'return window.__crowdFiles ?? null'
+    )
+  }
+  assert.ok(
+    Array.isArray(fetched),
+    `the sounds were not fetched: ${JSON.stringify(fetched)}`
+  )
+  const files: CrowdFile[] = fetched
+  // The idle crowd and the three sizes of cheer heard before the home run.
+  assert.equal(files.length, 4, `${files.length} sounds fetched`)
+  for (const file of files) {
+    assert.equal(file.status, 200, `${file.src} answered ${file.status}`)
+    assert.ok(file.bytes > 10000, `${file.src} is ${file.bytes} bytes`)
+  }
+  const events = await evalJson<CrowdEvent[]>(m, 'return window.__crowd ?? []')
+  // Each cheer as it started: playing on after the pause plays the cheers
+  // still sounding again, which are not new ones.
+  const cheers = events.filter(
+    event => event.type === 'play' && !event.bed && event.t < pausedAt
+  )
+  // Pause paused the cheers sounding, and play played the same ones on.
+  const cheerFiles = (
+    type: 'play' | 'pause',
+    from: number,
+    to: number
+  ): string[] =>
+    events
+      .filter(
+        event =>
+          event.type === type && !event.bed && event.t >= from && event.t < to
+      )
+      .map(event => event.src)
+      .sort()
+  const heldCheers = cheerFiles('pause', pausedAt, playedAt)
+  const playedOn = cheerFiles('play', playedAt, playedAt + 500)
+  assert.deepEqual(
+    playedOn,
+    heldCheers,
+    'play did not play on the cheers pause held'
+  )
+  const size = (src: string): string =>
+    /\/cheer-([a-z]+)-[^/]*\.m4a$/.exec(src)?.[1] ?? src
+  const sizes = cheers.map(event => size(event.src))
+  // Judge's strikeout, Rizzo's single, Torres's double play, Betts's homer.
+  assert.deepEqual(sizes, ['small', 'small', 'medium', 'huge'])
+  for (const cheer of cheers)
+    assert.ok(cheer.src.startsWith(`${origin}/cheer-`), cheer.src)
+  // Each cheer at its size's gain on its element's node, the element at 1,
+  // each element routed once though the pool's are reused.
+  for (const cheer of cheers) {
+    const name = size(cheer.src) as keyof typeof CHEER_GAIN
+    assert.equal(
+      cheer.gain,
+      Math.fround(CHEER_GAIN[name]),
+      `${name} cheer's gain`
+    )
+    assert.equal(cheer.volume, 1, `${name} cheer's element volume`)
+    assert.equal(cheer.sources, 1, `${name} cheer's element sources`)
+  }
+  const gain = (name: string): number =>
+    cheers.find(event => size(event.src) === name)?.gain ?? NaN
+  assert.ok(
+    gain('small') < gain('medium') && gain('medium') < gain('huge'),
+    `gains ${cheers.map(event => event.gain).join(', ')}`
+  )
+  const out = await artifactsDir()
+  const lines = [
+    '$ REPLAY_SCENARIO=crowd node -r sucrase/register src/app/replay/replay.e2e.ts',
+    "# the crowd's sounds, seconds from turning the sound on:",
+    ...events.map(
+      event =>
+        `${((event.t - started) / 1000).toFixed(2).padStart(7)}s  ${event.type.padEnd(5)} ${event.src.slice(origin.length).padEnd(34)} bed=${event.bed} muted=${event.muted} volume=${event.volume.toFixed(2)} gain=${event.gain?.toFixed(2) ?? '-'} sources=${event.sources}  card: ${event.card}`
+    ),
+    `# the browser: ${aac ? 'plays AAC' : standIn ? `a Chromium without AAC: the idle crowd's copies played a ${CROWD_STAND_IN_SECONDS} s WAV stand-in for its file, so they moved on and crossed; the cheers were asked for but not heard` : 'a Chromium without AAC'}`,
+    "# the idle crowd's first crossfade, sampled every 100 ms (seconds from the sound on: each copy's position and gain, and g1² + g2² over the idle gain's square):",
+    ...firstOverlap.map(
+      sample =>
+        `${((sample.t - started) / 1000).toFixed(2).padStart(7)}s  ${sample.copies.map(copy => `${copy.time.toFixed(2).padStart(5)} s ${(copy.gain ?? 0).toFixed(3)}`).join('  ')}  power ${(power(sample) / full).toFixed(3)}`
+    ),
+    `# idle crowd: ${copies.length} copies of ${copies[0].src.slice(origin.length)}, ${length.toFixed(2)} s, loop=false, each routed once at volume 1; the second started ${handover.toFixed(2)} s after the first; ${overlaps.length} crossfades seen, the first ${overlapSeconds.toFixed(2)} s long; summed power ${low.toFixed(3)}–${high.toFixed(3)} of ${CROWD_IDLE_GAIN}² across ${both.length} samples in the overlaps; alone at gain ${Math.fround(CROWD_IDLE_GAIN)}; paused with the replay, played again on play`,
+    ...files.map(
+      file =>
+        `# served ${file.src.slice(origin.length)}: ${file.status}, ${file.bytes} bytes`
+    ),
+    `# cheers: ${sizes.join(', ')} at Web Audio gains ${cheers.map(event => event.gain).join(', ')}, element volume ${cheers.map(event => event.volume).join(', ')}`,
+    `# cheers paused with the replay and played on: ${heldCheers.length === 0 ? 'none still sounding' : heldCheers.map(src => size(src)).join(', ')}`,
+    `# home run card: ${homer}`
+  ]
+  await writeFile(join(out, 'crowd-web.log'), `${lines.join('\n')}\n`)
+  console.log(lines.slice(-3).join('\n'))
 }
 
 const SCORER = 'replay-scorer@example.test'
@@ -1133,15 +1645,36 @@ async function finalAnnouncer(m: Device): Promise<void> {
   assert.deepEqual(overlaps(media), [])
 }
 
-/** With no speech on the server, the replay has no speaker to offer. */
+/**
+ * With no speech on the server, the replay still offers its volume button,
+ * and turning it on asks for no sentence.
+ */
 async function noAnnouncer(m: Device): Promise<void> {
   await signInWeb(m, LEAGUE)
+  const log = process.env.REPLAY_API_LOG
+  const logged = async (): Promise<number> =>
+    log == null ? 0 : (await readFile(log, 'utf8')).length
   await m.openBrowser({
     url: `${required('REPLAY_WEB_URL')}/games/${FINAL}/replay`
   })
   await m.assertVisible({ id: 'game-replay', timeout: 20000 })
-  await m.assertVisible({ text: 'Exit' })
-  await m.assertNotVisible({ id: 'replay-speaker', timeout: 3000 })
+  await evalJson<boolean>(m, RESOURCE_LOG)
+  await m.assertVisible({ id: 'replay-exit' })
+  await m.assertVisible({ id: 'replay-speaker' })
+  const before = await logged()
+  await m.tapOn({ id: 'replay-speaker' })
+  await m.assertVisible({ text: 'Mute game sounds' })
+  // Long enough for the next steps' sentences to have been fetched ahead.
+  await wait(8000)
+  const requests = await evalJson<NarrationRequest[]>(m, NARRATION_REQUESTS)
+  assert.deepEqual(requests, [], 'the page asked for a sentence')
+  if (log != null) {
+    const after = (await readFile(log, 'utf8')).slice(before)
+    assert.ok(
+      !after.includes('/narrations'),
+      'the server was asked for a sentence'
+    )
+  }
   await shot(m, 'replay-no-announcer')
 }
 
@@ -1201,7 +1734,7 @@ async function tapRewind(m: Device): Promise<Card> {
   }
 }
 
-/** The card's first line: the sentence or the rewind's words. */
+/** The card's newest line: the sentence or the rewind's words. */
 const LINE = `document.querySelector('[data-testid="replay-play-card-line"]')?.textContent ?? ''`
 
 /** The card and the box score's places, and the two buttons' margins. */
@@ -1270,16 +1803,33 @@ async function controls(
   daemon: Parameters<typeof attachWeb>[0]
 ): Promise<void> {
   const phase = required('REPLAY_PHASE')
-  for (const [size, name] of [
-    ['402x874', `replay-controls-${phase}`],
-    ['1024x1366', `box-score-centred-${phase}`]
-  ] as const) {
+  const sizes: Array<readonly [string, string, string | null]> = [
+    ['402x874', `replay-controls-${phase}`, `box-score-end-${phase}`],
+    ['1024x1366', `box-score-centred-${phase}`, null]
+  ]
+  // A phone's browser with its toolbars: too short for three lines of card.
+  if (phase === 'after')
+    for (const size of ['393x660', '375x667'])
+      sizes.push([
+        size,
+        `replay-controls-${size}-after`,
+        `box-score-end-${size}-after`
+      ])
+  for (const [size, name, end] of sizes) {
     const m = await attachWeb(daemon, size, `controls${size}`)
     try {
       await signInWeb(m, LEAGUE)
       await openReplay(m, FINAL)
       await evalJson<boolean>(m, CARD_LOG)
-      await eventsAfter(m, 0, 1, 30000)
+      // A window too short for one line of the card draws none: the first
+      // pitch is then waited for by the replay's pace.
+      await wait(3000)
+      const drawn = await evalJson<boolean>(
+        m,
+        `return document.querySelector('[data-testid="replay-play-card"]') != null`
+      )
+      if (drawn) await eventsAfter(m, 0, 1, 30000)
+      else await wait(6000)
       await m.tapOn({ id: 'replay-pause' })
       await wait(1000)
       await shot(m, name)
@@ -1287,11 +1837,159 @@ async function controls(
         m,
         `return document.querySelector('[data-testid="replay-rewind"]') != null`
       )
-      assert.equal(has, phase === 'after', `rewind button on ${phase}`)
+      assert.ok(has, `rewind button on ${phase}`)
+      if (phase === 'after') await controlPlaces(m, size)
+      if (end != null) await boxScoreEnd(m, phase, end)
     } finally {
       await m.detach()
     }
   }
+}
+
+/**
+ * Where `after` puts the replay's controls, in a browser with no insets: the
+ * volume button at the top left and the X at the top right, both 48 square;
+ * rewind at the bottom left and pause at the bottom right, 16 from the
+ * bottom and their sides; and the field's canvas from the window's top.
+ * On a tall window, the play card, when it is drawn, ends above the buttons'
+ * tops, and the deck below it is at least DECK_MIN tall; with no card, the
+ * deck starts below the catcher's nameplate. The play card's and
+ * the deck's places, and the card's lines, are logged with them.
+ */
+async function controlPlaces(m: Device, size: string): Promise<void> {
+  const places = await evalJson<{
+    width: number
+    height: number
+    rects: Record<
+      string,
+      { left: number; top: number; right: number; bottom: number } | null
+    >
+  }>(
+    m,
+    `const rect = selector => {
+      const node = document.querySelector(selector)
+      if (node == null) return null
+      const { left, top, right, bottom } = node.getBoundingClientRect()
+      return { left, top, right, bottom }
+    }
+    return {
+      width: window.innerWidth,
+      height: window.innerHeight,
+      rects: {
+        speaker: rect('[data-testid="replay-speaker"]'),
+        exit: rect('[data-testid="replay-exit"]'),
+        rewind: rect('[data-testid="replay-rewind"]'),
+        pause: rect('[data-testid="replay-pause"]'),
+        canvas: rect('[data-testid="replay-field"] canvas') ??
+          rect('[data-testid="replay-field"]'),
+        card: rect('[data-testid="replay-play-card"]'),
+        words: rect('[data-testid="replay-play-card-words"]'),
+        deck: rect('[data-testid="replay-deck"]')
+      }
+    }`
+  )
+  console.log(`controls ${size}: ${JSON.stringify(places)}`)
+  const { width, height, rects } = places
+  const at = (name: string): NonNullable<(typeof rects)[string]> => {
+    const found = rects[name]
+    assert.ok(found != null, `no ${name} at ${size}`)
+    return found
+  }
+  const near = (actual: number, expected: number, what: string): void => {
+    assert.ok(
+      Math.abs(actual - expected) <= 1,
+      `${what} at ${size}: ${actual}, not ${expected}`
+    )
+  }
+  const speaker = at('speaker')
+  const exit = at('exit')
+  for (const [name, button] of [
+    ['the volume button', speaker],
+    ['the X', exit]
+  ] as const) {
+    near(button.right - button.left, 48, `${name}'s width`)
+    near(button.bottom - button.top, 48, `${name}'s height`)
+    near(button.top, 8, `${name}'s top`)
+  }
+  near(speaker.left, 8, "the volume button's left")
+  // The X ends the field's column: the window, or the window less the box
+  // score's column on a wide window or a tablet.
+  near(at('canvas').right - exit.right, 8, "the X's right")
+  const rewind = at('rewind')
+  const pause = at('pause')
+  near(rewind.left, 16, "rewind's left")
+  near(width - pause.right, 16, "pause's right")
+  near(height - rewind.bottom, 16, "rewind's bottom")
+  near(height - pause.bottom, 16, "pause's bottom")
+  near(at('canvas').top, 0, "the canvas's top")
+  const deck = rects.deck
+  if (deck == null) return
+  // A tall window: with a card, the card ends above the buttons and the box
+  // score keeps DECK_MIN; with none, the deck starts below the catcher's
+  // nameplate, under DECK_MIN, leaving the plate in view.
+  const buttons = Math.min(rewind.top, pause.top)
+  const { card, words } = rects
+  const lines =
+    words == null ? 0 : Math.round((words.bottom - words.top) / LINE_HEIGHT)
+  console.log(
+    `controls ${size}: card ${card == null ? 'none' : `${card.top}–${card.bottom}, ${lines} lines`}, deck from ${deck.top} (${height - deck.top} tall), buttons from ${buttons}`
+  )
+  if (card == null)
+    assert.ok(
+      height - deck.top <= DECK_MIN + 0.5,
+      `the deck at ${size} is ${height - deck.top} tall with no card, over ${DECK_MIN}`
+    )
+  else {
+    assert.ok(
+      height - deck.top >= DECK_MIN - 0.5,
+      `the deck at ${size} is ${height - deck.top} tall, under ${DECK_MIN}`
+    )
+    assert.ok(
+      card.bottom <= buttons,
+      `the card at ${size} ends at ${card.bottom}, below the buttons' top ${buttons}`
+    )
+    assert.ok(
+      lines >= 1 && lines <= 3,
+      `the card at ${size} has ${lines} lines`
+    )
+  }
+}
+
+/** The replay deck's least height (GameReplayScreen's DECK_MIN). */
+const DECK_MIN = 160
+/** One line of the card's words (ReplayPlayCard's ANNOUNCER_LINE_HEIGHT). */
+const LINE_HEIGHT = 20
+
+/**
+ * The box score scrolled to its end: the screenshot `name`, and the last
+ * row's bottom against the tops of rewind and pause, which `after` requires
+ * it to clear.
+ */
+async function boxScoreEnd(
+  m: Device,
+  phase: string,
+  name: string
+): Promise<void> {
+  const edges = await evalJson<{ last: number; buttons: number }>(
+    m,
+    `const box = document.querySelector('[data-testid="replay-box-score"]')
+    box.scrollTop = box.scrollHeight
+    const content = box.firstElementChild
+    const padding = parseFloat(getComputedStyle(content).paddingBottom)
+    const tops = ['replay-rewind', 'replay-pause'].map(id =>
+      document.querySelector('[data-testid="' + id + '"]').getBoundingClientRect().top)
+    return {
+      last: content.getBoundingClientRect().bottom - padding,
+      buttons: Math.min(...tops)
+    }`
+  )
+  await wait(500)
+  await shot(m, name)
+  console.log(
+    `${name}: last row bottom ${edges.last}, buttons top ${edges.buttons}`
+  )
+  if (phase === 'after')
+    assert.ok(edges.last <= edges.buttons, 'the last row clears the buttons')
 }
 
 async function board(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
@@ -1760,7 +2458,7 @@ async function rewindAnnouncer(m: Device): Promise<void> {
   await evalJson<boolean>(m, RESOURCE_LOG)
   const started = Date.now()
   await m.tapOn({ id: 'replay-speaker' })
-  await m.assertVisible({ text: 'Turn announcer off' })
+  await m.assertVisible({ text: 'Mute game sounds' })
   // Through the 1st, read aloud, to two sentences into the top of the 2nd.
   const ended = await cardUntil(
     m,
@@ -2025,6 +2723,7 @@ async function main(): Promise<void> {
     else if (scenario === 'rewindAnnouncer')
       await rewindAnnouncer((m = await attachWeb(daemon)))
     else if (scenario === 'liveInPlay') await liveInPlay(daemon)
+    else if (scenario === 'crowd') await crowd((m = await attachWeb(daemon)))
     else if (scenario === 'scorers')
       await scorers((m = await attachWeb(daemon)))
     else assert.fail(`Unknown scenario ${scenario}`)

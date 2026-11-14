@@ -152,6 +152,14 @@ describe('the replay box score', () => {
     )
   })
 
+  it('leaves its bottom inset clear under the last row', async () => {
+    await render(<ReplayBoxScore box={nine} bottomInset={64} />)
+    const content = document.querySelector<HTMLElement>(
+      '[data-testid="replay-box-score"]'
+    )?.firstElementChild as HTMLElement | null
+    expect(content?.style.paddingBottom).equals('64px')
+  })
+
   it('grows no totals line under a table with no lines', async () => {
     await render(
       <ReplayBoxScore

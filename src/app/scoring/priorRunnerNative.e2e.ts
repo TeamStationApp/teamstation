@@ -1,12 +1,20 @@
 import assert from 'node:assert/strict'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
+
+import { topLift } from '../field/fieldSafeArea'
 const { MaestroD } = require(process.env.MAESTRO_D_CLIENT_ROOT ?? 'maestro-d')
 const required = (name: string): string => {
   const value = process.env[name]
   assert(value != null && value !== '', `Missing ${name}`)
   return value
 }
+/**
+ * How far the scoring field rises into the phone's top inset (`topLift`), and
+ * with it every fixed screen point below: 24 points under an iPhone's 59
+ * point island. SCORING_TOP_INSET names another phone's inset.
+ */
+const LIFT = topLift(Number(process.env.SCORING_TOP_INSET ?? 59), 'ios')
 async function main(): Promise<void> {
   const device = required('SCORING_DEVICE_UDID')
   const artifacts = resolve(required('SCORING_ARTIFACT_DIR'))
@@ -163,8 +171,8 @@ async function main(): Promise<void> {
         bounds != null &&
         bounds.height <= 40 &&
         bounds.width <= 120 &&
-        bounds.y >= 400 &&
-        bounds.y <= 620
+        bounds.y >= 400 - LIFT &&
+        bounds.y <= 620 - LIFT
       )
     })
     return found.sort((a, b) => b.bounds!.y - a.bounds!.y)[0]?.bounds
@@ -186,12 +194,12 @@ async function main(): Promise<void> {
     y: Math.round(plate.y - 14)
   })
   const first = [
-    { x: 196, y: 452 },
-    { x: 287, y: 528 }
+    { x: 196, y: 452 - LIFT },
+    { x: 287, y: 528 - LIFT }
   ]
   const second = [
-    { x: 106, y: 520 },
-    { x: 196, y: 453 }
+    { x: 106, y: 520 - LIFT },
+    { x: 196, y: 453 - LIFT }
   ]
   console.log(
     '$ node -r sucrase/register src/app/scoring/priorRunnerNative.e2e.ts (one attached iPhone)'
@@ -209,7 +217,7 @@ async function main(): Promise<void> {
         await tap('Juan S')
         // One tap places the fielder. The next tap, with no vertical travel,
         // accepts the trajectory the play started at.
-        await gesture([{ x: 196, y: 450 }])
+        await gesture([{ x: 196, y: 450 - LIFT }])
         await waitFor(
           'The single never offered a trajectory',
           async () =>
@@ -218,7 +226,7 @@ async function main(): Promise<void> {
           20000
         )
         if (await screenHas('Drag up and down for ball trajectory'))
-          await gesture([{ x: 196, y: 420 }], 80)
+          await gesture([{ x: 196, y: 420 - LIFT }], 80)
         await waitFor(
           'The Done countdown never opened',
           async () => await screenHas('Time to edit play'),
@@ -233,7 +241,7 @@ async function main(): Promise<void> {
           'Mookie never stood still at third',
           async () => {
             const plate = await runnerPlate('Mookie')
-            if (plate == null || plate.y < 510) return false
+            if (plate == null || plate.y < 510 - LIFT) return false
             await sleep(400)
             const settled = await runnerPlate('Mookie')
             return (
@@ -351,7 +359,9 @@ async function main(): Promise<void> {
         async () => {
           const plate = await runnerPlate('Mookie')
           return (
-            (await proof()).bases[2] === 100 && plate != null && plate.y >= 510
+            (await proof()).bases[2] === 100 &&
+            plate != null &&
+            plate.y >= 510 - LIFT
           )
         },
         20000
@@ -369,14 +379,14 @@ async function main(): Promise<void> {
           const plate = await runnerPlate('Mookie')
           if (plate == null) return false
           const body = bodyOf(plate)
-          return Math.hypot(body.x - 196, body.y - 452) <= 30
+          return Math.hypot(body.x - 196, body.y - (452 - LIFT)) <= 30
         },
         15000
       )
       await gesture([
-        { x: 196, y: 452 },
-        { x: 106, y: 528 },
-        { x: 46, y: 491 }
+        { x: 196, y: 452 - LIFT },
+        { x: 106, y: 528 - LIFT },
+        { x: 46, y: 491 - LIFT }
       ])
       assert.equal((await proof()).bases[2], 100)
       console.log('S1: open return and re-advance remain immediate')

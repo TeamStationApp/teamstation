@@ -32,6 +32,7 @@ export interface Device {
   scrollUntilVisible: (params: Record<string, unknown>) => Promise<unknown>
   swipe: (params: Record<string, unknown>) => Promise<unknown>
   screenshot: () => Promise<Uint8Array>
+  hierarchy: () => Promise<unknown>
   evalBrowserScript: (params: Record<string, unknown>) => Promise<unknown>
   setNetworkConditions: (params: Record<string, unknown>) => Promise<unknown>
   startRecording: (params: Record<string, unknown>) => Promise<unknown>

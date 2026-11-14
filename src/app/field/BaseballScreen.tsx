@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Pressable, Text, View, type ViewStyle } from 'react-native'
+import { Platform, Pressable, Text, View, type ViewStyle } from 'react-native'
 
 import type { TagTarget } from '../../common/eventTags'
 import { ButtonIcon } from '../components/ButtonIcon'
@@ -39,14 +39,17 @@ import { useTheme } from '../theme/ThemeContext'
 import type { ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import {
+  bandedSafe,
   compactToastBounds,
   type MenuButtonEdges,
   menuButtonEdges,
   toastTopBelow,
+  topLift,
   WEB_MENU_BUTTON
 } from './fieldSafeArea'
 import type { BaseProjection, FieldCanvasProps } from './fieldTypes'
-import { useFieldSurface } from './useFieldSurface'
+import { useFieldInsets, useFieldSurface } from './useFieldSurface'
+import { VolumeButton } from './VolumeButton'
 
 /** The scoring screen's camera, which the replay frames its field with too. */
 export const SCORING_CAMERA = {
@@ -54,6 +57,12 @@ export const SCORING_CAMERA = {
   cameraTilt: (-11 * Math.PI) / 180,
   cameraHeight: 33
 } as const
+
+/**
+ * What the scoring camera frames below the catcher, which the replay frames
+ * with too.
+ */
+export const SCORING_BOTTOM_EXTENSION = 112
 
 export const PITCH_CONTROLS = [
   { kind: 'ball', label: 'Ball' },
@@ -132,11 +141,22 @@ export interface BaseballScreenProps {
  * The field's holder under a band across the top: moved down, keeping its
  * size, so the GL canvas never lays itself out again (a resize blanks a
  * frame) and its bottom runs under the deck, which a phone has room for.
+ * Moved up by a negative band, the lift into the top inset, it must still
+ * reach the bottom of the screen where nothing covers it, as in the replay's
+ * side layout, so it is `extend` taller (a negative bottom margin): by
+ * default the lift itself. A screen whose band comes and goes over a lift
+ * passes the full lift as `extend` whatever the band, so only the move
+ * changes and the canvas keeps its size.
  */
-export function fieldHolderStyle(band: number): ViewStyle {
-  return band === 0
-    ? { flex: 1 }
-    : { flex: 1, transform: [{ translateY: band }] }
+export function fieldHolderStyle(
+  band: number,
+  extend: number = Math.max(0, -band)
+): ViewStyle {
+  return {
+    flex: 1,
+    ...(band === 0 ? {} : { transform: [{ translateY: band }] }),
+    ...(extend > 0 ? { marginBottom: -extend } : {})
+  }
 }
 
 /**
@@ -251,24 +271,6 @@ export function useBandedReports(
   }
 }
 
-/**
- * The safe area's padding with `band` more at the top: added on a phone,
- * whose inset is a number, and through `calc()` on the web, whose inset is
- * the browser's `env()`.
- */
-export function bandedSafe(safe: ViewStyle, band: number): ViewStyle {
-  if (band === 0) return safe
-  const top = safe.paddingTop
-  return {
-    ...safe,
-    paddingTop:
-      typeof top === 'number'
-        ? top + band
-        : top == null
-          ? `${band}px`
-          : `calc(${String(top)} + ${band}px)`
-  }
-}
 /** Immersive scoring surface, with one fixed responsive camera. */
 export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const [historyBounds, setHistoryBounds] = useState<HistoryBounds | null>(null)
@@ -296,11 +298,20 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const surface = useFieldSurface()
   const theme = useTheme()
   const band = props.topBand ?? 0
+  // The top controls and the scene rise half a button into the top inset
+  // (not on Android), except under the offline band, which ☰ and the speaker must not slide
+  // under. The field and its header move by the band less that lift.
+  const insets = useFieldInsets()
+  // The holder is always the full lift taller, so the band coming or going
+  // only moves it and the canvas keeps its size.
+  const fullLift = topLift(insets.top, Platform.OS)
+  const lift = band > 0 ? 0 : fullLift
+  const offset = band - lift
   const {
     field: bandedCanvas,
     bounds,
     onScoreboardBounds
-  } = useBandedReports(props.field, band)
+  } = useBandedReports(props.field, offset)
   const [viewportHeight, setViewportHeight] = useState(0)
   const [viewportWidth, setViewportWidth] = useState(0)
   const [header, setHeader] = useState<ScoreboardBounds>()
@@ -338,12 +349,12 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
           }}
         />
       )}
-      <View style={fieldHolderStyle(band)}>
+      <View style={fieldHolderStyle(offset, fullLift)}>
         {props.suspended !== true && (
           <FieldCanvas
             {...bandedCanvas}
             {...SCORING_CAMERA}
-            bottomExtension={112}
+            bottomExtension={SCORING_BOTTOM_EXTENSION}
             onCatcherBounds={setCatcher}
             onScoreboardBounds={onScoreboardBounds}
           />
@@ -353,7 +364,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         pointerEvents="box-none"
         style={[
           { position: 'absolute', inset: 0, justifyContent: 'space-between' },
-          bandedSafe(surface.safe, band)
+          bandedSafe(surface.safe, offset)
         ]}
       >
         <View
@@ -377,44 +388,14 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
             {props.summary}
           </Text>
           {props.sound != null && (
-            <GlassView
-              radius={24}
-              interactive
-              androidBlur
-              style={{
-                width: 48,
-                height: 48,
-                borderRadius: 24,
-                overflow: 'hidden',
-                marginRight: 8
-              }}
-            >
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={
-                  props.sound.on ? 'Mute game sounds' : 'Unmute game sounds'
-                }
-                onPress={() => {
+            <View style={{ marginRight: 8 }}>
+              <VolumeButton
+                on={props.sound.on}
+                onToggle={() => {
                   props.sound?.onToggle()
                 }}
-                style={{
-                  width: 48,
-                  height: 48,
-                  alignItems: 'center',
-                  justifyContent: 'center'
-                }}
-              >
-                <ButtonIcon
-                  name={props.sound.on ? 'volume_up' : 'volume_off'}
-                  size={1.5}
-                  color={
-                    props.sound.on
-                      ? CONTROL_COLORS.micOn.text
-                      : CONTROL_COLORS.micOff.text
-                  }
-                />
-              </Pressable>
-            </GlassView>
+              />
+            </View>
           )}
           {(props.dictationLog != null || props.sound != null) && (
             <View
@@ -751,7 +732,9 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
         <RemoteScoringUpdates
           key={`${props.remoteUpdates.game.gameId}:${props.remoteUpdates.userId}`}
           {...props.remoteUpdates}
-          catcher={catcher == null ? null : { ...catcher, y: catcher.y + band }}
+          catcher={
+            catcher == null ? null : { ...catcher, y: catcher.y + offset }
+          }
           width={viewportWidth}
           height={viewportHeight}
           undoWidth={undoSize.width}

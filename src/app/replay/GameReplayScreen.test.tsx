@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { PixelRatio, Platform } from 'react-native'
 
 import {
   asGameDetail,
@@ -14,8 +15,10 @@ import {
   type WebSocketLike
 } from '../../common/gameSocket'
 import { replayTimelineOf } from '../../common/replay/replayTimeline'
+import type { ScoringAction } from '../../common/scoring/actions'
 import type { StoredGame } from '../../common/scoring/session'
 import { userIdOfGumbo } from '../../common/userId'
+import { stubFieldInsets } from '../../test/fieldInsetsStub'
 import { nativeStatistics } from '../../test/gameStatisticsFixture'
 import {
   finalGame,
@@ -27,25 +30,51 @@ import {
   replaySetup,
   scored
 } from '../../test/replayGameFixture'
+import {
+  SCORING_BOTTOM_EXTENSION,
+  SCORING_CAMERA
+} from '../field/BaseballScreen'
 import type { ScreenRect } from '../field/catcherBounds'
 import type { FieldCanvas } from '../field/FieldCanvas'
-import { ThemeProvider } from '../theme/ThemeContext'
 import {
-  CONTROLS_ROW,
-  DECK_SHARE,
-  EXIT_RESERVE,
-  fieldTop,
-  FLOATING_BUTTON,
+  FIELD_EDGE_GAP,
   FLOATING_MARGIN,
+  FLOATING_SIZE,
+  floatingBottom,
+  topLift
+} from '../field/fieldSafeArea'
+import type { Insets } from '../platform/insets'
+import { scoringAudio } from '../scoring/scoringAudio'
+import { ThemeProvider } from '../theme/ThemeContext'
+import { tsBallpark } from '../theme/tsBallpark'
+import { CHEER_GAIN, type CheerSize } from './crowdCheer'
+import {
+  boxScoreInset,
+  DECK_MIN,
+  deckDetailTop,
+  FLOATING_BUTTON,
   GameReplayScreen,
   type ReplayClient,
   replayLayout,
   type ReplaySocket,
-  SIDE_CARD_ROOM,
-  SPEAKER_RESERVE
+  SIDE_DECK_WIDTH,
+  tallDeck
 } from './GameReplayScreen'
+import {
+  ANNOUNCER_LINE_HEIGHT,
+  BELOW_NAMEPLATE,
+  cardHeightOf,
+  detailStripHeight,
+  estimatedLineHeights as est
+} from './ReplayPlayCard'
 
 type FieldProps = Parameters<typeof FieldCanvas>[0]
+/** A `#RRGGBB` colour as the browser writes it in a style. */
+const rgb = (hex: string): string =>
+  `rgb(${[1, 3, 5].map(at => Number.parseInt(hex.slice(at, at + 2), 16)).join(', ')})`
+const MUTE = 'Mute game sounds'
+const UNMUTE = 'Unmute game sounds'
+const CLOSE = 'Close replay'
 interface Fiber {
   type?: { name?: string } | string | null
   memoizedProps?: unknown
@@ -60,6 +89,8 @@ const announcer = {
   pitchSec: undefined as number | undefined,
   audio: 'ok' as 'ok' | 'fails',
   asked: [] as string[],
+  /** How often the phone's ready check was asked for: never, in a browser. */
+  readied: 0,
   /** The steps whose sentences the page played, in order. */
   played: [] as string[]
 }
@@ -91,6 +122,7 @@ function fakeClient(
       return Object.assign(new Blob(['mp3']), { stepKey: step.key })
     },
     narrationReady: async () => {
+      announcer.readied++
       throw new Error('a browser downloads the sentence')
     },
     narrationSource: (gameId, step) => ({
@@ -287,8 +319,12 @@ async function press(label: string): Promise<void> {
   })
 }
 
+const textOf = (testID: string): string =>
+  document.querySelector(`[data-testid="${testID}"]`)?.textContent ?? ''
+
+/** What the card says now: its newest line, and the detail below. */
 const card = (): string =>
-  document.querySelector('[data-testid="replay-play-card"]')?.textContent ?? ''
+  textOf('replay-play-card-line') + textOf('replay-play-card-detail')
 
 /** On to a replay's first pitch: it opens on "Play ball!" for a moment. */
 async function firstPitch(): Promise<void> {
@@ -307,6 +343,48 @@ async function showCatcher(): Promise<void> {
   })
 }
 
+/**
+ * The safe area the page's inset probe reads (`useFieldInsets`): jsdom has
+ * none, so a test says what a phone's browser would. Null: none.
+ */
+let safeArea: Insets | null = null
+let unstubSafeArea = (): void => undefined
+/** An iPhone held upright: the island and the home indicator. */
+const IPHONE: Insets = { top: 59, bottom: 34, left: 0, right: 0 }
+
+/**
+ * The crowd's sounds as the page played and paused them, by file: the idle
+ * murmur's copies (`bed`) and each cheer, with the gain each played at.
+ */
+const crowd: Array<{
+  type: 'play' | 'pause'
+  file: string
+  bed: boolean
+  volume: number
+}> = []
+/** The cheers played, by size, in order. */
+const cheers = (): string[] =>
+  crowd
+    .filter(sound => sound.type === 'play' && !sound.bed)
+    .map(sound => /cheer-([a-z]+)/.exec(sound.file)?.[1] ?? sound.file)
+/** The idle murmur's last play or pause. */
+const bed = (): (typeof crowd)[number] | undefined =>
+  crowd.filter(sound => sound.bed).at(-1)
+const heard = (media: HTMLMediaElement, type: 'play' | 'pause'): void => {
+  if (media.src.includes('.m4a'))
+    crowd.push({
+      type,
+      file: media.src.slice(media.src.lastIndexOf('/') + 1),
+      bed: media.src.includes('crowd-idle'),
+      volume: media.volume
+    })
+}
+
+/** What the replay asked of the field cues, in order. */
+const cues: string[] = []
+const setCues = scoringAudio.setEnabled
+const unlockCues = scoringAudio.unlock
+
 describe('the replay screen', function () {
   this.timeout(30000)
 
@@ -315,12 +393,25 @@ describe('the replay screen', function () {
     announcer.health = true
     announcer.audio = 'ok'
     announcer.asked = []
+    announcer.readied = 0
     announcer.played = []
+    cues.length = 0
+    crowd.length = 0
+    safeArea = null
+    unstubSafeArea = stubFieldInsets(() => safeArea)
+    scoringAudio.setEnabled = value => {
+      cues.push(value ? 'on' : 'off')
+      setCues(value)
+    }
+    scoringAudio.unlock = () => {
+      cues.push('unlock')
+    }
     // jsdom plays no media and makes no object URLs: a sentence "plays" for
     // a moment and ends, and its URL names its step.
     const values: unknown[] = [
       async function (this: HTMLMediaElement) {
         const src = this.src
+        heard(this, 'play')
         if (src.startsWith('blob:')) {
           announcer.played.push(src.slice('blob:'.length))
           setTimeout(() => {
@@ -328,7 +419,9 @@ describe('the replay screen', function () {
           }, 20)
         }
       },
-      () => undefined,
+      function (this: HTMLMediaElement) {
+        heard(this, 'pause')
+      },
       (blob: Blob & { stepKey?: string }) => `blob:${blob.stepKey ?? ''}`,
       () => undefined
     ]
@@ -342,6 +435,9 @@ describe('the replay screen', function () {
   })
 
   afterEach(async function () {
+    unstubSafeArea()
+    scoringAudio.setEnabled = setCues
+    scoringAudio.unlock = unlockCues
     for (const [target, name] of swaps()) {
       const descriptor = saved.get(name)
       if (descriptor == null) Reflect.deleteProperty(target, name)
@@ -355,25 +451,20 @@ describe('the replay screen', function () {
     root = undefined
   })
 
-  it('lays the box score below the field on a phone and beside it on a wide window', function () {
-    expect(replayLayout(402, 874)).deep.equals({
-      side: false,
-      bottomExtension: Math.round(DECK_SHARE * 874),
-      deckTop: 874 - Math.round(DECK_SHARE * 874)
-    })
-    expect(replayLayout(1440, 900)).deep.equals({
-      side: true,
-      bottomExtension: SIDE_CARD_ROOM,
-      deckTop: 900 - SIDE_CARD_ROOM
-    })
+  it('lays the box score below the field on a tall window and beside it on a wide one', function () {
+    expect(replayLayout(402, 874)).deep.equals({ side: false })
+    expect(replayLayout(1440, 900)).deep.equals({ side: true })
+    expect(replayLayout(1024, 1366)).deep.equals({ side: true })
+    expect(replayLayout(767, 1024)).deep.equals({ side: false })
   })
 
-  it('opens a finished game on the field, with Exit, the speaker muted, pause, and the box score', async function () {
+  it('opens a finished game on the field, with the X, the sound off, pause, and the box score', async function () {
     resize(402, 874)
     const shown = await show(gameOf(), finalGame())
     const text = document.body.textContent ?? ''
-    expect(text).includes('Exit')
-    expect(byLabel('Turn announcer on')).not.equals(undefined)
+    expect(byLabel(CLOSE)).not.equals(undefined)
+    expect(text).not.includes('Exit')
+    expect(byLabel(UNMUTE)).not.equals(undefined)
     expect(byLabel('Pause replay')).not.equals(undefined)
     expect(text).includes('Harbor Hawks batting')
     expect(text).includes('Valley Pines pitching')
@@ -382,7 +473,7 @@ describe('the replay screen', function () {
     await showCatcher()
     expect(card()).includes('Play ball!')
     expect(field().view).equals('home')
-    await press('Exit')
+    await press(CLOSE)
     expect(shown.exits).equals(1)
   })
 
@@ -526,99 +617,562 @@ describe('the replay screen', function () {
     expect(scoreboard?.pitcher.firstName).equals('Tyler G')
   })
 
-  it('puts the speaker upper left and Exit upper right, and the rewind and pause in the bottom corners', async function () {
-    resize(402, 874)
-    announcer.health = true
+  /** The element with `testID` in the page. */
+  const node = (testID: string): HTMLElement => {
+    const found = document.querySelector<HTMLElement>(
+      `[data-testid="${testID}"]`
+    )
+    expect(found, testID).not.equals(null)
+    return found!
+  }
+
+  for (const narration of [true, false])
+    it(`puts the volume button upper left ${narration ? 'with' : 'without'} an announcer, and the X upper right`, async function () {
+      resize(402, 874)
+      announcer.health = narration
+      const shown = await show(gameOf(), finalGame())
+      const speaker = node('replay-speaker')
+      expect(speaker.getAttribute('aria-label')).equals(UNMUTE)
+      expect(speaker.style.backgroundColor).equals('rgb(255, 255, 255)')
+      expect(speaker.parentElement?.style).deep.include({
+        position: 'absolute',
+        top: '0px',
+        left: '0px'
+      })
+      const exit = node('replay-exit')
+      expect(exit.getAttribute('aria-label')).equals(CLOSE)
+      expect(exit.textContent).equals('close')
+      // Dark on the glass, as the scoring screen's ☰: the app theme's text.
+      const glyph = [...exit.querySelectorAll<HTMLElement>('*')].find(
+        item => item.childElementCount === 0 && item.textContent === 'close'
+      )
+      expect(glyph?.style.color).equals(rgb(tsBallpark.primaryTextColor))
+      expect(exit.parentElement?.style).deep.include({
+        position: 'absolute',
+        top: '0px',
+        right: '0px',
+        width: '48px',
+        height: '48px'
+      })
+      expect(exit.parentElement?.style.left).equals('')
+      expect(document.body.textContent).not.includes('Exit')
+      await press(CLOSE)
+      expect(shown.exits).equals(1)
+      expect(flat(propsOf('replay-rewind').style)).deep.include({ left: 16 })
+      expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
+    })
+
+  const fieldBox = (): HTMLElement =>
+    document.querySelector<HTMLElement>('[data-testid="replay-field"]')!
+  const cardStyle = (): CSSStyleDeclaration | undefined =>
+    document.querySelector<HTMLElement>('[data-testid="replay-play-card"]')
+      ?.style
+  const px = (value: string | undefined): number =>
+    Number.parseFloat(value ?? 'NaN')
+
+  for (const inset of [null, IPHONE])
+    it(`frames the field as the scoring screen does, lifted ${topLift(inset?.top ?? 0, 'web')} points under a ${inset?.top ?? 0} point inset`, async function () {
+      resize(402, 874)
+      safeArea = inset
+      await show(gameOf(), finalGame())
+      const lift = topLift(inset?.top ?? 0, 'web')
+      const { zoom, cameraTilt, cameraHeight, bottomExtension } = field()
+      expect({ zoom, cameraTilt, cameraHeight }).deep.equals(SCORING_CAMERA)
+      expect(bottomExtension).equals(SCORING_BOTTOM_EXTENSION)
+      expect(bottomExtension).equals(112)
+      // The canvas fills the column from the window's top, raised by the lift.
+      expect(fieldBox().style.marginTop).equals('')
+      expect(fieldBox().style.transform).equals(
+        lift === 0 ? '' : `translateY(-${lift}px)`
+      )
+      // And as much taller, so its bottom stays on the column's.
+      expect(fieldBox().style.marginBottom).equals(
+        lift === 0 ? '' : `-${lift}px`
+      )
+      // The top controls sit the lift higher into the inset, never above
+      // the edge gap.
+      const overlay = document.querySelector('[data-testid="replay-speaker"]')
+        ?.parentElement?.parentElement?.parentElement
+      expect(px(overlay?.style.paddingTop)).equals(
+        Math.max(FIELD_EDGE_GAP, (inset?.top ?? 0) - lift)
+      )
+      // The card hangs below the catcher where the lifted canvas draws it.
+      await showCatcher()
+      expect(px(cardStyle()?.top)).equals(
+        CATCHER.y + CATCHER.height + BELOW_NAMEPLATE - lift
+      )
+    })
+
+  it('keeps the lifted field down to the bottom of its column beside the box score', async function () {
+    // An iPad held sideways: a 24 point top inset, a lift of 16, and
+    // nothing over the field column's bottom.
+    resize(1366, 1024)
+    safeArea = { top: 24, bottom: 20, left: 0, right: 0 }
     await show(gameOf(), finalGame())
-    expect(flat(propsOf('replay-speaker').style)).deep.include({
-      position: 'absolute',
-      top: 0,
-      left: 16
-    })
-    expect(flat(propsOf('replay-speaker').style)).not.have.property('right')
-    expect(flat(propsOf('replay-exit').style)).deep.include({
-      position: 'absolute',
-      top: 0,
-      right: 16,
-      minWidth: 76
-    })
-    expect(flat(propsOf('replay-exit').style)).not.have.property('left')
-    expect(flat(propsOf('replay-rewind').style)).deep.include({ left: 16 })
-    expect(flat(propsOf('replay-pause').style)).deep.include({ right: 16 })
+    expect(node('replay-side')).not.equals(null)
+    const lift = topLift(24, 'web')
+    expect(lift).equals(16)
+    expect(fieldBox().style.transform).equals(`translateY(-${lift}px)`)
+    expect(fieldBox().style.marginBottom).equals(`-${lift}px`)
+    expect(fieldBox().style.flexGrow).equals('1')
   })
 
-  it('keeps Exit and the speaker off the scoreboard and the fielders', async function () {
-    expect(SPEAKER_RESERVE).equals(68)
-    expect(EXIT_RESERVE).equals(100)
-    // Clear of both: the field starts at the top.
-    expect(
-      fieldTop(
-        { x: SPEAKER_RESERVE, y: 20, width: 1200 - 100 - 68, height: 120 },
-        47,
-        1200,
-        true
+  it('lifts nothing on Android: the top buttons and the scene stay below the status bar', async function () {
+    const os = Platform.OS
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      value: 'android'
+    })
+    try {
+      resize(402, 874)
+      safeArea = IPHONE
+      await show(gameOf(), finalGame())
+      expect(fieldBox().style.transform).equals('')
+      const overlay = document.querySelector('[data-testid="replay-speaker"]')
+        ?.parentElement?.parentElement?.parentElement
+      expect(px(overlay?.style.paddingTop)).equals(
+        Math.max(FIELD_EDGE_GAP, IPHONE.top)
       )
-    ).equals(0)
-    expect(fieldTop(null, 47, 402, true)).equals(0)
-    // Under the speaker only while there is one.
-    const left = { x: 30, y: 20, width: 300, height: 120 }
-    expect(fieldTop(left, 47, 1200, true)).equals(47 + CONTROLS_ROW)
-    expect(fieldTop(left, 47, 1200, false)).equals(0)
-    // Under Exit.
-    expect(
-      fieldTop({ x: 800, y: 20, width: 350, height: 120 }, 47, 1200, false)
-    ).equals(47 + CONTROLS_ROW)
-    // A phone's board spans the width: the field starts under the controls.
-    expect(
-      fieldTop({ x: 30, y: 50, width: 340, height: 120 }, 47, 402, true)
-    ).equals(47 + CONTROLS_ROW)
+      await showCatcher()
+      expect(px(cardStyle()?.top)).equals(
+        CATCHER.y + CATCHER.height + BELOW_NAMEPLATE
+      )
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
+    }
+  })
+
+  for (const bottom of [0, 24, 34])
+    it(`seats rewind left and pause right on a ${bottom} point bottom inset`, async function () {
+      resize(402, 874)
+      safeArea = { top: 0, bottom, left: 0, right: 0 }
+      await show(gameOf(), finalGame())
+      expect(flat(propsOf('replay-rewind').style)).deep.include({
+        left: FLOATING_MARGIN,
+        bottom: floatingBottom(bottom, 'web')
+      })
+      expect(flat(propsOf('replay-pause').style)).deep.include({
+        right: FLOATING_MARGIN,
+        bottom: floatingBottom(bottom, 'web')
+      })
+      // Measured from the window's edges: no safe padding around them.
+      const holder = node('replay-rewind').parentElement
+      expect(holder?.style.paddingBottom).equals('')
+      expect(holder?.style).deep.include({ position: 'absolute' })
+    })
+
+  it('raises rewind and pause a rem in the apps, the box score with them', async function () {
+    const os = Platform.OS
+    Object.defineProperty(Platform, 'OS', {
+      configurable: true,
+      value: 'android'
+    })
+    try {
+      resize(402, 874)
+      safeArea = { top: 0, bottom: 24, left: 0, right: 0 }
+      await show(gameOf(), finalGame())
+      const bottom = floatingBottom(24, 'web') + 16
+      expect(flat(propsOf('replay-rewind').style)).deep.include({ bottom })
+      expect(flat(propsOf('replay-pause').style)).deep.include({ bottom })
+      expect(
+        flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
+      ).equals(bottom + FLOATING_SIZE + 8)
+    } finally {
+      Object.defineProperty(Platform, 'OS', { configurable: true, value: os })
+    }
+  })
+
+  it('keeps rewind and pause beside a notch, held sideways', async function () {
+    resize(874, 402)
+    safeArea = { top: 0, bottom: 21, left: 59, right: 47 }
+    await show(gameOf(), finalGame())
+    expect(flat(propsOf('replay-rewind').style)).deep.include({
+      left: FLOATING_MARGIN + 59,
+      bottom: floatingBottom(21, 'web')
+    })
+    expect(flat(propsOf('replay-pause').style)).deep.include({
+      right: FLOATING_MARGIN + 47
+    })
+  })
+
+  it('scrolls the box score’s last row clear of the buttons', async function () {
+    // The tall deck runs to the window's bottom.
+    expect(boxScoreInset(0, 0, 'web')).equals(16 + FLOATING_SIZE + 8)
+    expect(boxScoreInset(34, 0, 'web')).equals(6 + FLOATING_SIZE + 8)
+    // The side column ends its safe padding above the window's bottom.
+    expect(boxScoreInset(21, 21 + FIELD_EDGE_GAP, 'web')).equals(
+      floatingBottom(21, 'web') + FLOATING_SIZE + 8 - 29
+    )
     resize(402, 874)
+    safeArea = IPHONE
+    await show(gameOf(), finalGame())
+    expect(
+      flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
+    ).equals(boxScoreInset(34, 0, 'web'))
+    await act(async () => {
+      root?.unmount()
+    })
+    resize(874, 402)
+    safeArea = { top: 0, bottom: 21, left: 59, right: 47 }
+    await show(gameOf(), finalGame())
+    expect(
+      flat(propsOf('replay-box-score').contentContainerStyle).paddingBottom
+    ).equals(boxScoreInset(21, 21 + FIELD_EDGE_GAP, 'web'))
+  })
+
+  /** The floating buttons' top, in a browser with no insets. */
+  const buttonsTop = (height: number): number =>
+    height - floatingBottom(0, 'web') - FLOATING_SIZE
+
+  /**
+   * A tall window with the catcher where the canvas reports it: the card
+   * below the nameplate with `lines` lines of words and the deck after it
+   * with at least DECK_MIN, or no card at all and the deck below the
+   * nameplate.
+   */
+  async function tallWindow(
+    width: number,
+    height: number,
+    catcher: ScreenRect,
+    lines: number,
+    scale = 1
+  ): Promise<void> {
+    resize(width, height)
+    await show(gameOf(), finalGame())
+    await act(async () => {
+      field().onCatcherBounds?.(catcher)
+    })
+    if (lines > 0) await firstPitch()
+    const below = catcher.y + catcher.height + BELOW_NAMEPLATE
+    const deck = node('replay-deck')
+    const deckTop = px(deck.style.top)
+    expect(tallDeck(height, catcher, est(scale))).deep.equals({
+      top: deckTop,
+      lines
+    })
+    const shown = document.querySelector<HTMLElement>(
+      '[data-testid="replay-play-card"]'
+    )
+    if (lines === 0) {
+      // Not one line fits: no card, only the sound and the field, the play
+      // at the plate left in view.
+      expect(shown).equals(null)
+      expect(deckTop).equals(Math.min(below, height))
+      return
+    }
+    expect(shown).not.equals(null)
+    expect(deck.contains(shown)).equals(false)
+    expect(px(cardStyle()?.top)).equals(below)
+    expect(cardStyle()?.position).equals('absolute')
+    expect(node('replay-play-card-words').style.height).equals(
+      `${lines * ANNOUNCER_LINE_HEIGHT * scale}px`
+    )
+    const cardBottom = below + cardHeightOf(lines, est(scale))
+    expect(deckTop).equals(cardBottom + 8)
+    expect(height - deckTop).gte(DECK_MIN)
+    expect(cardBottom).lte(buttonsTop(height) - 8)
+    // The count is the window's: more words do not change it.
+    now = 30000
+    await wait(250)
+    expect(node('replay-play-card-words').style.height).equals(
+      `${lines * ANNOUNCER_LINE_HEIGHT * scale}px`
+    )
+    expect(px(node('replay-deck').style.top)).equals(deckTop)
+  }
+
+  it('keeps the deck its least height, with no card, until the catcher is measured', async function () {
+    resize(402, 874)
+    await show(gameOf(), finalGame())
+    expect(px(node('replay-deck').style.top)).equals(874 - DECK_MIN)
+    expect(document.querySelector('[data-testid="replay-play-card"]')).equals(
+      null
+    )
+    expect(tallDeck(874, null, est(1))).deep.equals({
+      top: 874 - DECK_MIN,
+      lines: 0
+    })
+  })
+
+  it('hangs a three-line card below the catcher at 402 × 874, the box score below it', async function () {
+    await tallWindow(402, 874, CATCHER, 3)
+  })
+
+  // Below the nameplate at 362, three lines need 628 of window, two 608 and
+  // one 588.
+  it('shows two lines where three do not fit', async function () {
+    await tallWindow(402, 610, CATCHER, 2)
+  })
+
+  it('shows one line where two do not fit', async function () {
+    await tallWindow(402, 590, CATCHER, 1)
+  })
+
+  it('draws no card where not one line fits, the deck below the nameplate', async function () {
+    await tallWindow(402, 579, CATCHER, 0)
+    // The deck starts just below the nameplate.
+    expect(px(node('replay-deck').style.top)).equals(
+      CATCHER.y + CATCHER.height + BELOW_NAMEPLATE
+    )
+  })
+
+  // The catcher where the scoring framing draws it in a phone's browser with
+  // its toolbars.
+  for (const [width, height, catcher] of [
+    [375, 667, { x: 176, y: 462, width: 22, height: 30 }],
+    [393, 660, { x: 185, y: 489, width: 22, height: 30 }]
+  ] as const)
+    it(`draws no card and leaves the plate in view at ${width} × ${height}`, async function () {
+      const deck = tallDeck(height, catcher, est(1))
+      await tallWindow(width, height, catcher, deck.lines)
+      // So low a catcher leaves no line: the deck starts below its
+      // nameplate, under DECK_MIN, so it covers neither the catcher nor
+      // home plate.
+      const below = catcher.y + catcher.height + BELOW_NAMEPLATE
+      expect(deck).deep.equals({ top: below, lines: 0 })
+      expect(height - below).lessThan(DECK_MIN)
+    })
+
+  for (const scale of [1, 1.5, 2])
+    it(`never lets the card or the deck's detail reach the buttons, nor the deck cover the catcher, nor a card leave the deck under DECK_MIN, at ${scale}× text`, function () {
+      for (let height = 500; height <= 1000; height += 7)
+        for (let y = 100; y <= height - 30; y += 11) {
+          const catcher = { x: 100, y, width: 22, height: 30 }
+          const { top, lines } = tallDeck(height, catcher, est(scale))
+          const at = `${height} ${y}`
+          expect(lines).within(0, 3)
+          expect(top, at).gte(Math.min(y + 30 + BELOW_NAMEPLATE, height))
+          if (lines > 0) expect(height - top, at).gte(DECK_MIN)
+          if (lines > 0)
+            expect(
+              y + 30 + BELOW_NAMEPLATE + cardHeightOf(lines, est(scale))
+            ).lte(Math.min(top - 8, buttonsTop(height) - 8))
+          // With no card, the detail strip at the deck's top clears the
+          // buttons, the deck rising over the field only where it must.
+          const stripTop = deckDetailTop(top, height, 0, est(scale), 'web')
+          expect(stripTop, at).lte(top)
+          expect(stripTop + detailStripHeight(est(scale)), at).lte(
+            buttonsTop(height) - 8
+          )
+          if (top + detailStripHeight(est(scale)) <= buttonsTop(height) - 8)
+            expect(stripTop, at).equals(top)
+        }
+    })
+
+  describe('at a larger text size', function () {
+    // The system's text size, put back after each case.
+    const getFontScale = Object.getOwnPropertyDescriptor(
+      PixelRatio,
+      'getFontScale'
+    )!
+    beforeEach(function () {
+      PixelRatio.getFontScale = () => 1.5
+    })
+    afterEach(function () {
+      Object.defineProperty(PixelRatio, 'getFontScale', getFontScale)
+    })
+
+    it('draws each line 1.5 times as tall, and fits fewer of them', async function () {
+      // At 1× two lines fit at 610 below a nameplate at 362; at 1.5× each
+      // line and the detail are half again as tall, and only one does.
+      expect(tallDeck(610, CATCHER, est(1)).lines).equals(2)
+      expect(tallDeck(874, CATCHER, est(1.5)).lines).equals(3)
+      expect(tallDeck(610, CATCHER, est(1.5)).lines).equals(1)
+      for (let height = 500; height <= 1000; height += 7)
+        expect(tallDeck(height, CATCHER, est(1.5)).lines).lte(
+          tallDeck(height, CATCHER, est(1)).lines
+        )
+      await tallWindow(402, 610, CATCHER, 1, 1.5)
+      expect(node('replay-play-card-words').style.height).equals(
+        `${1 * 20 * 1.5}px`
+      )
+    })
+
+    it('fits the lines the probes measure, not the scale’s estimate', async function () {
+      // Android 14 draws a 20 line about 23.6 tall at 1.3×, not 26. At 648
+      // the estimate fits two lines below the nameplate at 362; the measured
+      // heights fit three, and the card and the deck use them.
+      PixelRatio.getFontScale = () => 1.3
+      const measured = { words: 23.6, detail: 19.2 }
+      expect(tallDeck(648, CATCHER, est(1.3)).lines).equals(2)
+      expect(tallDeck(648, CATCHER, measured).lines).equals(3)
+      resize(402, 648)
+      await show(gameOf(), finalGame())
+      await act(async () => {
+        field().onCatcherBounds?.(CATCHER)
+      })
+      await firstPitch()
+      // Before the probes are laid out, the estimate.
+      expect(px(node('replay-play-card-words').style.height)).closeTo(
+        2 * 26,
+        1e-9
+      )
+      expect(px(node('replay-deck').style.top)).closeTo(
+        tallDeck(648, CATCHER, est(1.3)).top,
+        1e-9
+      )
+      const layout = (part: string, height: number): void => {
+        const onLayout = propsOf(`replay-line-probe-${part}`).onLayout as (
+          event: unknown
+        ) => void
+        onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 20, height } } })
+      }
+      await act(async () => {
+        layout('words', measured.words)
+        layout('detail', measured.detail)
+      })
+      expect(px(node('replay-play-card-words').style.height)).closeTo(
+        3 * 23.6,
+        1e-9
+      )
+      const deck = tallDeck(648, CATCHER, measured)
+      expect(px(node('replay-deck').style.top)).closeTo(deck.top, 1e-9)
+      expect(deck.top).closeTo(362 + cardHeightOf(3, measured) + 8, 1e-9)
+      expect(px(cardStyle()?.top)).equals(362)
+    })
+
+    it('keeps a three-line card clear of the buttons at 402 × 874', async function () {
+      await tallWindow(402, 874, CATCHER, 3, 1.5)
+      const top = px(cardStyle()?.top)
+      expect(top + cardHeightOf(3, est(1.5))).lte(buttonsTop(874) - 8)
+      expect(node('replay-play-card-words').style.height).equals(
+        `${3 * 20 * 1.5}px`
+      )
+    })
+  })
+
+  /** What the deck's detail strip says, if it is drawn. */
+  const deckDetail = (): string | null =>
+    document.querySelector('[data-testid="replay-deck-detail"]') == null
+      ? null
+      : textOf('replay-deck-detail-text')
+
+  /** The catcher where the scoring framing draws it at 393 × 660. */
+  const LOW_CATCHER: ScreenRect = { x: 185, y: 489, width: 22, height: 30 }
+
+  /** A 393 × 660 window, a phone's browser with toolbars: no card. */
+  async function shortWindow(): Promise<void> {
+    resize(393, 660)
+    await show(gameOf(), finalGame())
+    await act(async () => {
+      field().onCatcherBounds?.(LOW_CATCHER)
+    })
+    now = 100
+    await wait(250)
+    now = 2200
+    await wait(250)
+    expect(document.querySelector('[data-testid="replay-play-card"]')).equals(
+      null
+    )
+  }
+
+  it('writes "Announcer unavailable" at the deck’s top where no card fits', async function () {
+    announcer.audio = 'fails'
+    await shortWindow()
+    // While the announcer works, the deck's top writes nothing: the
+    // situation is the field's and the box score's.
+    expect(deckDetail()).equals(null)
+    await press(UNMUTE)
+    for (let i = 0; i < 20 && deckDetail() == null; i++) {
+      now += 5000
+      await wait(150)
+    }
+    expect(announcer.asked.length).greaterThanOrEqual(3)
+    expect(deckDetail()).equals('Announcer unavailable')
+    // At the deck's top, below the nameplate, the box score below it, clear
+    // of the buttons.
+    const deck = node('replay-deck')
+    const strip = node('replay-deck-detail')
+    expect(deck.firstElementChild).equals(strip)
+    const below = LOW_CATCHER.y + LOW_CATCHER.height + BELOW_NAMEPLATE
+    expect(px(deck.style.top)).equals(below)
+    expect(below + detailStripHeight(est(1))).lte(buttonsTop(660) - 8)
+    // Off and on again tries the announcer again, and the strip goes.
+    announcer.audio = 'ok'
+    await press(MUTE)
+    await press(UNMUTE)
+    expect(deckDetail()).equals(null)
+  })
+
+  it('writes "Paused" at the deck’s top where no card fits', async function () {
+    await shortWindow()
+    expect(deckDetail()).equals(null)
+    await press('Pause replay')
+    expect(deckDetail()).equals('Paused')
+    await press('Play replay')
+    expect(deckDetail()).equals(null)
+  })
+
+  it('writes the detail on the card alone where a card fits, at 402 × 874', async function () {
+    resize(402, 874)
+    announcer.audio = 'fails'
     await show(gameOf(), finalGame())
     await showCatcher()
-    const fieldBox = (): HTMLElement | null =>
-      document.querySelector<HTMLElement>('[data-testid="replay-field"]')
-    expect(['', '0px']).includes(fieldBox()?.style.marginTop ?? '')
-    await act(async () => {
-      field().onScoreboardBounds?.({ x: 30, y: 50, width: 340, height: 120 })
-    })
-    const moved = Number.parseFloat(fieldBox()?.style.marginTop ?? '0')
-    expect(moved).greaterThanOrEqual(CONTROLS_ROW)
-    // Measured again under the controls, the board does not move it twice.
-    await act(async () => {
-      field().onScoreboardBounds?.({ x: 30, y: 10, width: 340, height: 120 })
-    })
-    expect(Number.parseFloat(fieldBox()?.style.marginTop ?? '0')).equals(moved)
-    // The card still hangs below the catcher, where the field now is.
-    const cardTop = Number.parseFloat(
-      document.querySelector<HTMLElement>('[data-testid="replay-play-card"]')
-        ?.style.top ?? '0'
-    )
-    expect(cardTop).greaterThan(CATCHER.y + CATCHER.height + moved)
+    await firstPitch()
+    await press('Pause replay')
+    expect(card()).includes('Paused')
+    expect(deckDetail()).equals(null)
+    await press('Play replay')
+    await press(UNMUTE)
+    for (let i = 0; i < 20 && !card().includes('Announcer unavailable'); i++) {
+      now += 5000
+      await wait(150)
+    }
+    expect(card()).includes('Announcer unavailable')
+    expect(deckDetail()).equals(null)
   })
 
-  it('moves the field under Exit when the board reaches the field column’s edge beside the box score', async function () {
-    // A phone on its side: the field's column is 874 - 360 = 514 wide.
+  it('puts the card at the top of the side column on a wide window, the box score below it', async function () {
     resize(874, 402)
     await show(gameOf(), finalGame())
     await showCatcher()
-    const fieldBox = (): HTMLElement | null =>
-      document.querySelector<HTMLElement>('[data-testid="replay-field"]')
-    expect(['', '0px']).includes(fieldBox()?.style.marginTop ?? '')
-    await act(async () => {
-      field().onScoreboardBounds?.({ x: 200, y: 20, width: 300, height: 100 })
-    })
+    const side = node('replay-side')
+    expect(side.style.width).equals(`${SIDE_DECK_WIDTH}px`)
+    const cards = document.querySelectorAll<HTMLElement>(
+      '[data-testid="replay-play-card"]'
+    )
+    expect(cards).length(1)
+    const [card] = cards
+    expect(side.firstElementChild).equals(card)
+    expect(card.style.position).not.equals('absolute')
+    expect(card.style.marginLeft).equals('12px')
+    expect(card.style.marginRight).equals('12px')
+    expect(card.textContent).includes('Play ball!')
+    expect(card.nextElementSibling?.contains(node('replay-box-score'))).equals(
+      true
+    )
     expect(
-      Number.parseFloat(fieldBox()?.style.marginTop ?? '0')
-    ).greaterThanOrEqual(CONTROLS_ROW)
+      (card.nextElementSibling as HTMLElement | null)?.style.marginTop
+    ).equals('8px')
+    expect(document.querySelector('[data-testid="replay-deck"]')).equals(null)
+    expect(fieldBox().parentElement?.contains(card)).equals(false)
   })
 
-  it('turns the announcer on and off', async function () {
+  it('turns the cues and the announcer on, and off again, with the volume button', async function () {
     resize(402, 874)
     await show(gameOf(), finalGame())
-    await press('Turn announcer on')
-    expect(byLabel('Turn announcer off')).not.equals(undefined)
-    await press('Turn announcer off')
-    expect(byLabel('Turn announcer on')).not.equals(undefined)
+    // The replay opens with the field cues off.
+    expect(cues).deep.equals(['off'])
+    await press(UNMUTE)
+    expect(byLabel(MUTE)).not.equals(undefined)
+    expect(cues.slice(1)).deep.equals(['unlock', 'on'])
+    // The announcer is unlocked on the tap, and fetches ahead.
+    await wait(50)
+    expect(announcer.asked).not.deep.equals([])
+    // The crowd murmurs under it all, rising from silence to its idle gain.
+    expect(bed()).deep.include({
+      type: 'play',
+      bed: true,
+      volume: 0
+    })
+    expect(bed()?.file).match(/^crowd-idle.*\.m4a$/)
+    // Readied in the tap, muted and paused again, then played.
+    expect(
+      crowd.filter(sound => sound.bed).map(sound => sound.type)
+    ).deep.equals(['play', 'pause', 'play', 'pause', 'play'])
+    await press(MUTE)
+    expect(byLabel(UNMUTE)).not.equals(undefined)
+    expect(cues.at(-1)).equals('off')
+    expect(bed()?.type).equals('pause')
   })
 
   it('puts the box score in a column beside the field on a wide window', async function () {
@@ -628,7 +1182,8 @@ describe('the replay screen', function () {
       '[data-testid="replay-box-score"]'
     )
     expect(deck).not.equals(null)
-    expect(deck?.parentElement?.style.width).equals('360px')
+    expect(node('replay-side').contains(deck)).equals(true)
+    expect(node('replay-side').style.width).equals('360px')
   })
 
   it('follows a game in progress from where it stands', async function () {
@@ -716,10 +1271,17 @@ describe('the replay screen', function () {
       expect(rewind?.textContent).equals('skip_previous')
       const rewindStyle = flat(propsOf('replay-rewind').style)
       const pauseStyle = flat(propsOf('replay-pause').style)
-      expect(rewindStyle).deep.equals({ ...FLOATING_BUTTON, left: 16 })
-      expect(pauseStyle).deep.equals({ ...FLOATING_BUTTON, right: 16 })
+      expect(rewindStyle).deep.equals({
+        ...FLOATING_BUTTON,
+        left: 16,
+        bottom: 16
+      })
+      expect(pauseStyle).deep.equals({
+        ...FLOATING_BUTTON,
+        right: 16,
+        bottom: 16
+      })
       expect(FLOATING_MARGIN).equals(16)
-      expect(FLOATING_BUTTON.bottom).equals(FLOATING_MARGIN)
     })
 
     it('stays after the end, when pause has gone', async function () {
@@ -785,6 +1347,79 @@ describe('the replay screen', function () {
       expect(line()?.textContent).includes('steps in')
     })
 
+    it('keeps the sentences said in the card’s words, and clears them for the rewind’s', async function () {
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      const words = (): string[] =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="replay-play-card-words"] [dir="auto"]'
+          )
+        ].map(item => item.textContent ?? '')
+      now = 100
+      await wait(250)
+      expect(words()).deep.equals(['Play ball!'])
+      await firstPitch()
+      // Two pitches on, each held five seconds.
+      now = 2200 + 5400
+      await wait(250)
+      now = 2200 + 10400
+      await wait(250)
+      // Each step's sentence under the last, the newest marked.
+      const said = words()
+      expect(said.length).greaterThan(2)
+      expect(said[0]).equals('Play ball!')
+      expect(new Set(said).size).equals(said.length)
+      expect(said.at(-1)).equals(line()?.textContent)
+      expect(card()).equals(
+        `${said.at(-1)}${textOf('replay-play-card-detail')}`
+      )
+      await press(REWIND)
+      expect(words()).deep.equals(['Rewind to top of first'])
+      now += 2000
+      await wait(250)
+      expect(words()).length(1)
+      expect(words()[0]).includes('steps in')
+    })
+
+    it('writes the same sentence again for a second pitch that says it: two fouls with two strikes', async function () {
+      this.timeout(60000)
+      resize(402, 874)
+      announcer.health = false
+      await show(
+        gameOf(),
+        await scored([
+          { type: 'pitch', call: 'S' },
+          { type: 'pitch', call: 'S' },
+          { type: 'pitch', call: 'F' },
+          { type: 'pitch', call: 'F' },
+          { type: 'pitch', call: 'B' }
+        ])
+      )
+      await showCatcher()
+      const words = (): string[] =>
+        [
+          ...document.querySelectorAll<HTMLElement>(
+            '[data-testid="replay-play-card-words"] [dir="auto"]'
+          )
+        ].map(item => item.textContent ?? '')
+      const fouls = (): string[] =>
+        words().filter(said => said.startsWith('Fouled off'))
+      for (
+        let i = 0;
+        i < 60 && !words().some(said => said.startsWith('Ball'));
+        i++
+      ) {
+        now += 2000
+        await wait(40)
+      }
+      // Each foul its own line, the same words; nothing drawn twice.
+      expect(fouls()).length(2)
+      expect(fouls()[0]).equals(fouls()[1])
+      expect(fouls()[0]).match(/still/)
+    })
+
     it('holds the words, then fades them, and starts again on the next tap', async function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
@@ -822,13 +1457,15 @@ describe('the replay screen', function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
       await showCatcher()
-      await press('Turn announcer on')
-      await firstPitch()
+      await press(UNMUTE)
+      // Watched from before the first pitch: its sentence ends 20 ms after
+      // it starts, which may be before the pitch's wait is over.
       const freed: string[] = []
       Object.defineProperty(URL, 'revokeObjectURL', {
         configurable: true,
         value: (url: string) => freed.push(url)
       })
+      await firstPitch()
       // The first sentence read to its end and its clip freed.
       for (let i = 0; i < 40 && !freed.includes('blob:0-0'); i++) await wait(50)
       expect(announcer.played).includes('0-0')
@@ -859,19 +1496,24 @@ describe('the replay screen', function () {
   })
 
   describe('the announcer', function () {
-    it('is offered only by a server that has one', async function () {
-      resize(402, 874)
-      announcer.health = false
-      await show(gameOf(), finalGame())
-      expect(byLabel('Turn announcer on')).equals(undefined)
-      expect(byLabel('Exit')).not.equals(undefined)
-      await act(async () => {
-        root?.unmount()
+    for (const health of [false, 'fails'] as const)
+      it(`is never asked for a sentence by a server that ${health === false ? 'has none' : 'cannot say'}, while the cues play`, async function () {
+        resize(402, 874)
+        announcer.health = health
+        await show(gameOf(), finalGame())
+        await showCatcher()
+        await press(UNMUTE)
+        expect(byLabel(MUTE)).not.equals(undefined)
+        expect(cues.slice(1)).deep.equals(['unlock', 'on'])
+        await firstPitch()
+        now += 6000
+        await wait(250)
+        expect(announcer.asked).deep.equals([])
+        expect(announcer.readied).equals(0)
+        expect(announcer.played).deep.equals([])
+        expect(cues.at(-1)).equals('on')
+        expect(bed()).deep.include({ type: 'play', bed: true })
       })
-      announcer.health = 'fails'
-      await show(gameOf(), finalGame())
-      expect(byLabel('Turn announcer on')).equals(undefined)
-    })
 
     it('reads nothing while muted, and each step once the speaker is on', async function () {
       resize(402, 874)
@@ -880,24 +1522,24 @@ describe('the replay screen', function () {
       now = 100
       await wait(250)
       expect(announcer.asked).deep.equals([])
-      await press('Turn announcer on')
-      expect(byLabel('Turn announcer off')).not.equals(undefined)
+      await press(UNMUTE)
+      expect(byLabel(MUTE)).not.equals(undefined)
       // The two steps ahead are fetched at once, and the next as each plays.
       await wait(50)
       expect(announcer.asked).deep.equals(['0-0', '0-1'])
       now = 2200
       await wait(300)
       expect(announcer.asked).deep.equals(['0-0', '0-1', '0-2'])
-      await press('Turn announcer off')
-      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      await press(MUTE)
+      expect(byLabel(UNMUTE)).not.equals(undefined)
     })
 
-    it('turns itself off and says so after three sentences fail', async function () {
+    it('says it is unavailable after three sentences fail, leaving the sound on', async function () {
       resize(402, 874)
       announcer.audio = 'fails'
       await show(gameOf(), finalGame())
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       await firstPitch()
       // Each sentence fails as its step is shown; the third turns it off.
       expect(card()).not.includes('Announcer unavailable')
@@ -911,10 +1553,22 @@ describe('the replay screen', function () {
       }
       expect(announcer.asked.length).greaterThanOrEqual(3)
       expect(card()).includes('Announcer unavailable')
-      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      // The button stays on, and so do the field cues and the crowd.
+      expect(byLabel(MUTE)).not.equals(undefined)
+      expect(cues.at(-1)).equals('on')
+      expect(bed()).deep.include({ type: 'play', bed: true })
+      // Nothing more is asked of it while it is unavailable.
+      const asked = announcer.asked.length
+      now += 10000
+      await wait(250)
+      expect(announcer.asked.length).equals(asked)
+      // Off and on again tries the announcer again.
       announcer.audio = 'ok'
-      await press('Turn announcer on')
+      await press(MUTE)
+      await press(UNMUTE)
       expect(card()).not.includes('Announcer unavailable')
+      await wait(100)
+      expect(announcer.asked.length).greaterThan(asked)
     })
 
     it('reads the final call when the replay reaches it', async function () {
@@ -922,7 +1576,7 @@ describe('the replay screen', function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       for (let i = 0; i < 1200 && !announcer.played.includes('9999-1'); i++) {
         now += 20000
         await wait(120)
@@ -944,12 +1598,214 @@ describe('the replay screen', function () {
     it('opens muted every time', async function () {
       resize(402, 874)
       await show(gameOf(), finalGame())
-      await press('Turn announcer on')
+      await press(UNMUTE)
       await act(async () => {
         root?.unmount()
       })
       await show(gameOf(), finalGame())
-      expect(byLabel('Turn announcer on')).not.equals(undefined)
+      expect(byLabel(UNMUTE)).not.equals(undefined)
+    })
+  })
+
+  /** Plays on until `done`, the field's runners arriving at once. */
+  async function playOn(done: () => boolean, step = 2000): Promise<void> {
+    for (let i = 0; i < 600 && !done(); i++) {
+      now += step
+      await wait(40)
+      // jsdom draws no field: its runners arrive at once.
+      await act(async () => {
+        for (const player of field().players)
+          if (player.motion != null && !player.motion.reported)
+            field().onMovementComplete?.(
+              player.motion.id,
+              player.motion.generation
+            )
+      })
+    }
+  }
+
+  /**
+   * A half of hits: a single, a double play, a double, a triple, a home run
+   * and a strikeout on three pitches, for `bat` against `field`.
+   */
+  function hitsHalf(bat: number[], fielders: number[]): ScoringAction[] {
+    const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const hit = (
+      eventType: 'single' | 'double' | 'triple' | 'home_run',
+      x: number,
+      z: number,
+      launchAngle: number
+    ): ScoringAction[] => [
+      { type: 'ballInPlay', contact: 'swing', launchAngle, location: { x, z } },
+      { type: 'result', eventType }
+    ]
+    return [
+      ...hit('single', -45, -75, 12),
+      close,
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        launchAngle: -8,
+        location: { x: -12, z: -32 },
+        fielder: fielders[5]
+      },
+      { type: 'result', eventType: 'field_out' },
+      {
+        type: 'runnerMovement',
+        runner: bat[0],
+        to: '2B',
+        out: true,
+        fielders: [fielders[5], fielders[3]]
+      },
+      {
+        type: 'runnerMovement',
+        runner: bat[1],
+        to: '1B',
+        out: true,
+        fielders: [fielders[3], fielders[2]]
+      },
+      close,
+      ...hit('double', 40, -110, 18),
+      close,
+      ...hit('triple', 60, -120, 20),
+      { type: 'runnerMovement', runner: bat[2], to: 'home', reason: 'Advance' },
+      close,
+      ...hit('home_run', -40, -128, 31),
+      close,
+      { type: 'pitch', call: 'S' },
+      { type: 'pitch', call: 'F' },
+      { type: 'pitch', call: 'C' },
+      close
+    ]
+  }
+
+  describe('cheers', function () {
+    const HALF = ['small', 'medium', 'medium', 'large', 'huge', 'small']
+
+    it('cheers each play by its size for either side, and no pitch that leaves its play open', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const setup = replaySetup()
+      const { away, home } = setup.sides
+      const stored = await scored(
+        [
+          ...hitsHalf(away.players, home.players),
+          ...hitsHalf(home.players, away.players)
+        ],
+        setup
+      )
+      await show(gameOf(), stored)
+      await showCatcher()
+      await press(UNMUTE)
+      await playOn(() => cheers().length >= 12)
+      await playOn(() => false, 5000)
+      // The single, the double play, the double, the triple, the home run
+      // and the strikeout, top and bottom; the strikeout's first two
+      // pitches raise nothing.
+      expect(cheers()).deep.equals([...HALF, ...HALF])
+      const gains = crowd
+        .filter(sound => sound.type === 'play' && !sound.bed)
+        .map(sound => sound.volume)
+      expect(gains.slice(0, 6)).deep.equals(
+        HALF.map(size => CHEER_GAIN[size as CheerSize])
+      )
+    })
+
+    it('pauses the crowd with the replay, and plays it on', async function () {
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press(UNMUTE)
+      expect(bed()?.type).equals('play')
+      await press('Pause replay')
+      expect(bed()?.type).equals('pause')
+      await press('Play replay')
+      expect(bed()?.type).equals('play')
+    })
+
+    it('stops the crowd once the replay is over, and starts it on a rewind', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press(UNMUTE)
+      expect(bed()?.type).equals('play')
+      await playOn(() => byLabel('Pause replay') == null)
+      expect(byLabel('Pause replay')).equals(undefined)
+      expect(bed()?.type).equals('pause')
+      await press('Rewind half an inning')
+      expect(bed()?.type).equals('play')
+    })
+
+    it('cheers nothing while the sound is off', async function () {
+      this.timeout(60000)
+      resize(402, 874)
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await playOn(() => card().includes('single'))
+      expect(crowd).deep.equals([])
+    })
+
+    it('cheers the rewound plays again', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      await show(gameOf(), finalGame())
+      await showCatcher()
+      await press(UNMUTE)
+      // Judge's strikeout, Rizzo's single and Torres's double play.
+      await playOn(() => cheers().length >= 3)
+      expect(cheers()).deep.equals(['small', 'small', 'medium'])
+      await press('Rewind half an inning')
+      await playOn(() => cheers().length >= 6)
+      expect(cheers()).deep.equals([
+        'small',
+        'small',
+        'medium',
+        'small',
+        'small',
+        'medium'
+      ])
+    })
+
+    it('cheers nothing for the half before on a rewind, until a play completes', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const setup = replaySetup()
+      const { away, home } = setup.sides
+      const stored = await scored(
+        [
+          ...hitsHalf(away.players, home.players),
+          ...hitsHalf(home.players, away.players)
+        ],
+        setup
+      )
+      await show(gameOf(), stored)
+      await showCatcher()
+      await press(UNMUTE)
+      // The top half, which ends on a strikeout, and the bottom's single,
+      // double play and double.
+      await playOn(() => cheers().length >= 9)
+      expect(cheers()).deep.equals([...HALF, 'small', 'medium', 'medium'])
+      // Back to the bottom's start: it stands on the top's strikeout, which
+      // is not cheered again.
+      await press('Rewind half an inning')
+      expect(card()).includes('Rewind to bottom of first')
+      expect(cheers()).length(9)
+      // The bottom's plays, played again, are, from its single on.
+      await playOn(() => cheers().length >= 11)
+      expect(cheers()).deep.equals([
+        ...HALF,
+        'small',
+        'medium',
+        'medium',
+        'small',
+        'medium'
+      ])
     })
   })
 
@@ -1067,7 +1923,8 @@ describe('the replay screen', function () {
       /** The teams whose players' halves each read carries. */
       halves?: string[]
     ): Promise<{
-      setStored: (count: number) => Promise<StoredGame>
+      /** The scorer's first `count` actions, or these actions. */
+      setStored: (count: number | ScoringAction[]) => Promise<StoredGame>
       /** What the server answers a read of the game now. */
       current: () => StoredGame
       reads: () => number
@@ -1093,7 +1950,12 @@ describe('the replay screen', function () {
       reads = 0
       return {
         setStored: async count => {
-          stored = asRead(await scored(actions.slice(0, count)), halves)
+          stored = asRead(
+            await scored(
+              typeof count === 'number' ? actions.slice(0, count) : count
+            ),
+            halves
+          )
           return stored
         },
         current: () => stored,
@@ -1104,7 +1966,7 @@ describe('the replay screen', function () {
       }
     }
 
-    it('subscribes on opening, plays what the scorer adds, and lets go on Exit', async function () {
+    it('subscribes on opening, plays what the scorer adds, and lets go on closing', async function () {
       resize(402, 874)
       const socket = new FakeSocket()
       const game = await following(socket)
@@ -1273,7 +2135,7 @@ describe('the replay screen', function () {
       resize(402, 874)
       const socket = new FakeSocket()
       const game = await following(socket)
-      await press('Turn announcer on')
+      await press(UNMUTE)
       // Away while the scorer finished the game; the game change was missed.
       await game.setStored(actions.length)
       await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
@@ -1296,6 +2158,60 @@ describe('the replay screen', function () {
       expect(announcer.played).deep.equals(['9999-1'])
     })
 
+    it('cheers nothing it hurries past to catch the scorer up', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const socket = new FakeSocket()
+      const game = await following(socket)
+      await press(UNMUTE)
+      // Away while the scorer finished the game: a single, a double play,
+      // two home runs and a run of strikeouts, all hurried past.
+      await game.setStored(actions.length)
+      await socket.emit({ type: 'subscribed', gameId: REPLAY_GAME_ID })
+      await playOn(() => byLabel('Pause replay') == null)
+      expect(card()).includes("That's the ballgame!")
+      expect(cheers()).deep.equals([])
+      // The murmur played on the way, and stops at the end.
+      expect(crowd.some(sound => sound.bed && sound.type === 'play')).equals(
+        true
+      )
+      expect(bed()?.type).equals('pause')
+    })
+
+    it('cheers a play once, when the scorer closes it, and not again for a correction', async function () {
+      this.timeout(120000)
+      resize(402, 874)
+      announcer.health = false
+      const socket = new FakeSocket()
+      const game = await following(socket)
+      await press(UNMUTE)
+      // Rizzo's single, placed: shown, but not yet closed.
+      const inPlay = actions.findIndex(action => action.type === 'ballInPlay')
+      expect(actions[inPlay + 1]).deep.include({ eventType: 'single' })
+      await socket.emit(change('playEdits', await game.setStored(inPlay + 2)))
+      await playOn(() => card().includes('single'), 1000)
+      expect(card()).includes('single')
+      expect(cheers()).deep.equals([])
+      // Closed: the step grows, and its play cheers.
+      await socket.emit(change('playEdits', await game.setStored(inPlay + 4)))
+      await playOn(() => cheers().length > 0, 1000)
+      expect(cheers()).deep.equals(['small'])
+      // The scorer makes it a double: the play is shown again, changed, and
+      // not cheered again.
+      const held = game.current()
+      const corrected = await game.setStored([
+        ...actions.slice(0, inPlay + 1),
+        { type: 'result', eventType: 'double' },
+        ...actions.slice(inPlay + 2, inPlay + 4)
+      ])
+      await socket.emit(change('playEdits', corrected, held))
+      await playOn(() => card().includes('Play changed'), 1000)
+      expect(card()).includes('Play changed')
+      await playOn(() => false, 1000)
+      expect(cheers()).deep.equals(['small'])
+    })
+
     it('fetches no sentence for a ball in play until the scorer places it', async function () {
       resize(402, 874)
       const inPlay = actions.findIndex(action => action.type === 'ballInPlay')
@@ -1313,7 +2229,7 @@ describe('the replay screen', function () {
         { pollMs: 60 }
       )
       await showCatcher()
-      await press('Turn announcer on')
+      await press(UNMUTE)
       for (let i = 0; i < 5; i++) {
         now += 5000
         await wait(60)
