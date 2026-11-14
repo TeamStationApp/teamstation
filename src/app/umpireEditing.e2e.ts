@@ -154,19 +154,15 @@ async function main(): Promise<void> {
     })
     // The drags are the selector's: the app counts rows from the touched
     // selector's own top, a row its height. They start from the middle of
-    // Ada's selector, not her checkbox, whose middle is 22 points from the
-    // top of an 80-point row, and go in rows.
-    const selector = async (name: string): Promise<DOMRect> =>
-      await page.$eval(`[aria-label="Select ${name}"]`, n => {
-        // No ?? in a page function: sucrase's helper is not in the page.
-        let box: Element = n
-        const drag = n.closest('[data-testid^="umpire-select-drag-"]')
-        if (drag !== null) box = drag
-        return box.getBoundingClientRect().toJSON() as DOMRect
-      })
-    const ada = await selector('Ada Lee')
+    // Ada's selector, not her checkbox, which sits 22 points from the top of
+    // an 80-point row, and go in rows. The selectors are in the list's order:
+    // Ada, Billy, Uma.
+    const [ada, billy] = await page.$$eval(
+      '[data-testid^="umpire-select-drag-"]',
+      nodes => nodes.map(n => n.getBoundingClientRect().toJSON() as DOMRect)
+    )
     const point = { x: ada.x + ada.width / 2, y: ada.y + ada.height / 2 }
-    const row = (await selector('Billy Lee')).y - ada.y
+    const row = billy.y - ada.y
     const rows = (count: number): number => Math.round(row * count)
     // What a failed drag is told: each selector's top and height.
     const layout = async (): Promise<string> =>

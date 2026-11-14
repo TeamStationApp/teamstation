@@ -323,13 +323,29 @@ export default defineE2e({
         let focused = false
         for (let press = 0; press < 80 && !focused; press++) {
           await m.pressKey({ key: 'Tab' })
+          // The pane's pill, not the sidebar's Team: navigation-scenes is an
+          // empty box that measures the pane, with the scenes drawn beside
+          // it, so the pill is told by lying inside that box.
           focused = await page.evaluate(() => {
             const active = document.activeElement
+            const pane = document.querySelector(
+              '[data-testid="navigation-scenes"]'
+            )
+            if (
+              active === null ||
+              pane === null ||
+              active.getAttribute('role') !== 'tab' ||
+              active.getAttribute('aria-label') !== 'Team' ||
+              active.closest('[data-testid="navigation-sidebar"]') !== null
+            )
+              return false
+            const r = active.getBoundingClientRect()
+            const p = pane.getBoundingClientRect()
             return (
-              active != null &&
-              active.getAttribute('role') === 'tab' &&
-              active.getAttribute('aria-label') === 'Team' &&
-              active.closest('[data-testid="navigation-scenes"]') != null
+              r.left >= p.left &&
+              r.right <= p.right &&
+              r.top >= p.top &&
+              r.bottom <= p.bottom
             )
           })
         }

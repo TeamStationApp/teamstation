@@ -426,15 +426,63 @@
       "size": 89414,
       "masks": []
     },
+    "assistant/chat/space-hold#a-tap-records-until-the-next-tap/tap-heard/web-chromium@chromium-1536x900-128": {
+      "sha256": "a12222f594eadc95c13b27efe320f36ae3a55110a728726e1b626b36e3d703c8",
+      "size": 103462,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "0"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "6"
+        }
+      ]
+    },
     "assistant/chat/space-hold#held-in-the-field-listens/heard-as-a-message/web-chromium@chromium-1280x900-128": {
       "sha256": "c8d2b1ad7b21c9a41e42bfbbee7dea6e1f6f53df71c69270312a532002cb5830",
       "size": 93492,
       "masks": []
     },
+    "assistant/chat/space-hold#held-in-the-field-listens/heard-as-a-message/web-chromium@chromium-1536x900-128": {
+      "sha256": "3bbbdbb44e3c45d52651cb02f1efb31194fc4848ff29857b4c823d11202e94c3",
+      "size": 107458,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "0"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "6"
+        }
+      ]
+    },
     "assistant/chat/space-hold#held-on-the-page-listens/heard-from-the-page/web-chromium@chromium-1280x900-128": {
       "sha256": "c8d2b1ad7b21c9a41e42bfbbee7dea6e1f6f53df71c69270312a532002cb5830",
       "size": 93492,
       "masks": []
+    },
+    "assistant/chat/space-hold#held-on-the-page-listens/heard-from-the-page/web-chromium@chromium-1536x900-128": {
+      "sha256": "3bbbdbb44e3c45d52651cb02f1efb31194fc4848ff29857b4c823d11202e94c3",
+      "size": 107458,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "0"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "6"
+        }
+      ]
     },
     "assistant/chat/space-hold#quick-press-activates-a-focused-tab/team-tab-selected/web-chromium@chromium-1280x900-128": {
       "sha256": "4abda97248083197e4852ac2e39cd3a669e5f4cb91484f744d90b7cd61d06ccd",
@@ -446,10 +494,42 @@
       "size": 85723,
       "masks": []
     },
+    "assistant/chat/space-hold#quick-press-types-a-space/field-holds-a-space/web-chromium@chromium-1536x900-128": {
+      "sha256": "3167314eff35f58da2d4a6d74c75fb5bf84a89134afc41ef73ae8a1f97be50eb",
+      "size": 100102,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "0"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "6"
+        }
+      ]
+    },
     "assistant/chat/space-hold#rolled-press-keeps-the-order/field-in-order/web-chromium@chromium-1280x900-128": {
       "sha256": "9f1262cbd5d9f32c27a1851bb50649ba5208283dcb7b3250d70f89ce640602c8",
       "size": 86684,
       "masks": []
+    },
+    "assistant/chat/space-hold#rolled-press-keeps-the-order/field-in-order/web-chromium@chromium-1536x900-128": {
+      "sha256": "8c511237628cb0a3bee65ac30ea686e9b94400fe088b9d44770435d250becb5e",
+      "size": 100925,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "0"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]",
+          "index": "6"
+        }
+      ]
     },
     "assistant/chat/split-view#back-closes-her-and-keeps-the-address/team-after-back/web-chromium@chromium-1024x900-128": {
       "sha256": "0d35cc60a8ae8c7f68a627d789847b562c24b4d1b59d834e7681ec32d4747b9a",
