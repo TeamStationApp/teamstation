@@ -24,6 +24,7 @@ import {
   MAX_FOLLOW_UPS,
   RESULT_MISSING,
   ROSTER_NOT_ASKED,
+  sentenceRules,
   systemPrompt,
   UNDO,
   UNDO_NOT_ASKED,
@@ -95,6 +96,33 @@ function config(
 ): InterpreterConfig {
   return { apiKey: 'key', model: 'grok-4.7', fetch: fetchImpl, ...more }
 }
+
+describe('rules given only to the sentences that call for them', function () {
+  const given = (transcript: string): string[] =>
+    [...sentenceRules(transcript).matchAll(/\n\n([A-Z' ]+)\n/g)].map(
+      match => match[1]
+    )
+  it('gives each rule to its own sentences and to no other', function () {
+    expect(
+      given('Double to left center, and the runner on second holds at third')
+    ).deep.equals(['A RUNNER WHO HOLDS'])
+    for (const plain of [
+      'Ball one.',
+      'Wild pitch, he steals third',
+      'Fly out to left center',
+      'Single to deep right center',
+      "Ground ball to the third baseman for a fielder's choice. The batter is safe at first.",
+      'Sky high pop fly, center field, but the center fielder drops it, and it is an error.'
+    ])
+      expect(given(plain), plain).deep.equals([])
+  })
+
+  it('works each rule as the issue reads it', function () {
+    expect(sentenceRules('the runner holds at third')).match(
+      /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/
+    )
+  })
+})
 
 describe('dictation interpreter', function () {
   for (const reason of [
@@ -509,6 +537,10 @@ describe('dictation interpreter', function () {
       '"pop up to the shortstop", "pops out to the second baseman"'
     )
     expect(system).includes('goes\n  alone, with no result')
+    // The #223 rules are each given only to the sentences that call for them.
+    expect(system).not.includes('A RUNNER WHO HOLDS')
+    expect(system).not.match(/but the batter's\s+swinging/)
+    expect(system).not.match(/Never invent a\s+direction/)
     // Only what was said, every call a tool call, undo only when asked.
     expect(system).includes('it is not a list of events')
     expect(system).includes('never call pitch once for each of its codes')

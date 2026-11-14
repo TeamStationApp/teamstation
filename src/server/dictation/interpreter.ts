@@ -372,6 +372,35 @@ export const ASK_SCORER: OpenAiTool = {
   }
 }
 
+/**
+ * Rules given only to a sentence whose words call for them, in its game
+ * message, so every other sentence is read with the same prompt as before:
+ * each is a reading the model got wrong, and as a standing rule each moved
+ * how it read sentences it had nothing to do with.
+ */
+export const SENTENCE_RULES: ReadonlyArray<{
+  name: string
+  said: (transcript: string) => boolean
+  rule: string
+}> = [
+  {
+    name: 'A RUNNER WHO HOLDS',
+    said: transcript =>
+      /\b(?:holds?|held|stays?|stayed|holding|staying)\b/i.test(transcript),
+    rule: `- A runner who "holds", "stays" or is "held up" at a base ends there: send
+  his safe runnerMovement to that base after the result, or the hit scores
+  him. "Double to left center, and the runner on second holds at third" is
+  the double and runnerMovement of the "On second" runner to 3B, not out.`
+  }
+]
+
+/** The sentence rules a sentence's words call for, each after a blank line. */
+export function sentenceRules(transcript: string): string {
+  return SENTENCE_RULES.filter(rule => rule.said(transcript))
+    .map(rule => `\n\n${rule.name}\n${rule.rule}`)
+    .join('')
+}
+
 const CHOICE_INSTRUCTIONS = `- Preserve every spoken throw on a fielder's choice, including late throws.
   Each Out runnerMovement names only the chain through that putout. A Safe
   batter runnerMovement must carry fielders for the remaining relay, starting
@@ -1192,7 +1221,7 @@ export class Interpretation {
       !(choiceRules !== '' && /\bthr(?:ows?|ew|own)\b/i.test(transcript))
         ? `\n\nBASE OUTS AND THE THIRD OUT\n${BASE_OUT_INSTRUCTIONS}`
         : ''
-    const game = `${gamePrompt(context)}${choiceRules}${baseOutRules}${placeSections(transcript)}`
+    const game = `${gamePrompt(context)}${choiceRules}${baseOutRules}${placeSections(transcript)}${sentenceRules(transcript)}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)
