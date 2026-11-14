@@ -1,4 +1,5 @@
 import type { EventLocation } from '../../common/eventInfo'
+import { eventMapCoordinate } from './eventMapCoordinate'
 import { eventMapDocument } from './eventMapDocument'
 import { WHILE_ON_SCREEN } from './pinMapDocument'
 
@@ -11,18 +12,8 @@ import { WHILE_ON_SCREEN } from './pinMapDocument'
 export function googleMapDocument(location: EventLocation): string {
   if (location.googleMapsApiKey == null || location.googleMapsApiKey === '')
     throw new Error('Google Maps is not configured.')
-  if (
-    location.latitude == null ||
-    location.longitude == null ||
-    !Number.isFinite(location.latitude) ||
-    !Number.isFinite(location.longitude) ||
-    Math.abs(location.latitude) > 90 ||
-    Math.abs(location.longitude) > 180
-  )
-    throw new Error('The address could not be located.')
   const config = JSON.stringify({
-    latitude: location.latitude,
-    longitude: location.longitude,
+    ...eventMapCoordinate(location),
     key: location.googleMapsApiKey
   }).replace(/</g, '\\u003c')
   const fallback = JSON.stringify(eventMapDocument(location)).replace(
