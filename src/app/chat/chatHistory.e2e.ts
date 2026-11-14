@@ -45,7 +45,11 @@ const VOLATILE = [
   // Linking devices, not history: a device that is not linked shows a new
   // code each time it opens, and a linked one the request's time.
   /^\d{3} \d{3}$/,
-  /^(Web|iOS|Android) · \d{1,2}\/\d{1,2}\/\d{4}, /
+  /^(Web|iOS|Android) · \d{1,2}\/\d{1,2}\/\d{4}, /,
+  // A message's time, which turns from "11:04 PM" to "Fri" once its day has
+  // passed: two passes either side of midnight read the same history.
+  /^\d{1,2}:\d{2}\s?[AP]M$/,
+  /^(Yesterday|Mon|Tue|Wed|Thu|Fri|Sat|Sun)$/
 ]
 
 /**

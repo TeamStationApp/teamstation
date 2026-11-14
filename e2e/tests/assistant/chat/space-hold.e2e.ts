@@ -37,11 +37,19 @@ function paneTab(name: string): string {
 }
 
 /**
- * The pane's tallest scroller with room to scroll: in the navigation's
- * scenes, between the sidebar and her column on the right (fb5ef504a).
+ * The pane's tallest scroller with room to scroll: the navigation's scenes,
+ * between the sidebar and her column on the right (fb5ef504a), what is in
+ * them, or what holds them short of the sidebar. On a wide window the
+ * scenes scroll as one, header and all.
  */
-const findScroller = `Array.from(document.querySelectorAll('[data-testid="navigation-scenes"] *'))
-  .filter(candidate => {
+const findScroller = `(() => {
+  const scenes = document.querySelector('[data-testid="navigation-scenes"]')
+  if (scenes == null) return undefined
+  const around = []
+  for (let node = scenes.parentElement; node != null && node.querySelector('[data-testid="navigation-sidebar"]') == null; node = node.parentElement) around.push(node)
+  return [scenes, ...around, ...Array.from(scenes.querySelectorAll('*'))]
+})()
+  ?.filter(candidate => {
     const style = getComputedStyle(candidate)
     return (
       ['auto', 'scroll'].includes(style.overflowY) &&
