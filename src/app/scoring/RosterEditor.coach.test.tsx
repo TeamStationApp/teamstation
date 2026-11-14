@@ -149,6 +149,26 @@ describe('the roster screen for a coach', function () {
       }
   })
 
+  it('runs the Roster cards from the left margin and the Lineup cards to the right, a rem apart', async function () {
+    await mount()
+    await click('Lineup')
+    const content = (name: string): HTMLElement =>
+      host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!
+        .firstElementChild as HTMLElement
+    for (const name of ['Roster players', 'Batting lineup']) {
+      const style = getComputedStyle(content(name))
+      expect(style.paddingLeft, name).equals('0px')
+      expect(style.paddingRight, name).equals('0px')
+    }
+    // The row that holds the two columns.
+    let row: HTMLElement | null = host.querySelector<HTMLElement>(
+      '[aria-label="Batting lineup"]'
+    )
+    while (row != null && getComputedStyle(row).flexDirection !== 'row')
+      row = row.parentElement
+    expect(getComputedStyle(row!).gap).equals('16px')
+  })
+
   it('names each fielder on the Defense field by the scoring field’s short name', async function () {
     const session = copyState(state.session)
     const pitcher = home.defense.P!

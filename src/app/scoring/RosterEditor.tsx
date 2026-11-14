@@ -90,7 +90,11 @@ import {
   RosterGrip,
   RosterScrollArea
 } from './RosterDrag'
-import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
+import {
+  ROSTER_CARD_GAP,
+  ROSTER_COLUMN_GAP,
+  rosterGridColumns
+} from './rosterLayout'
 import { RosterConflictBanner } from './rosterLive'
 import { RosterName } from './RosterName'
 import { byJersey } from './rosterOrder'
@@ -1183,7 +1187,8 @@ export function RosterEditor({
               flex: 1,
               minHeight: 0,
               flexDirection: defense ? 'column' : 'row',
-              gap: dense && defense ? 2 : 8
+              // Side by side, the Roster and Lineup columns are a rem apart.
+              gap: defense ? (dense ? 2 : 8) : ROSTER_COLUMN_GAP
             }}
           >
             {defense && (
@@ -1240,8 +1245,9 @@ export function RosterEditor({
               )}
               <RosterScrollArea
                 name="Roster players"
-                // Defense's two columns run from margin to margin.
-                inset={defense ? 0 : undefined}
+                // The cards run from the margin, under their header, on
+                // Lineup as on Defense.
+                inset={0}
               >
                 <RosterDrag
                   targetId="roster"
@@ -1369,7 +1375,8 @@ export function RosterEditor({
                     </Pressable>
                   )}
                 </View>
-                <RosterScrollArea name="Batting lineup">
+                {/* The cards end at the margin, under Clear and Save Rosters. */}
+                <RosterScrollArea name="Batting lineup" inset={0}>
                   <>
                     {team.battingOrder.map((id, index) => (
                       <RosterDrag
