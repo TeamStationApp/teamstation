@@ -430,6 +430,17 @@ export const SENTENCE_RULES: ReadonlyArray<{
   direction. "Flies out to the pitcher" is trajectory fly_ball, the pitcher,
   and result field_out with outBy catch, with no direction. A place he does
   say still wins.`
+  },
+  {
+    name: "A FIELDER'S CHOICE AND NO KIND OF BALL",
+    said: transcript =>
+      /\bfielder['’]?s? choice\b/i.test(transcript) &&
+      !/\b(?:ground|grounder|roller|chopper|hopper|liner|line drive|fly|flies|pop|bunt|dribbler)/i.test(
+        transcript
+      ),
+    rule: `- "Fielder's choice, runner out at second" names no kind of ball: it is
+  ballInPlay with contact swing and no trajectory, result fielders_choice,
+  and the "On first" runner out at 2B.`
   }
 ]
 

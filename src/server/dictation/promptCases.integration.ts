@@ -1609,6 +1609,41 @@ const BLAKE = 2
       )
     })
 
+    it('#223 reads a loop single as a fly ball at bloop depth', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex }),
+          'Loop single to center'
+        )
+      )
+      const dumped = JSON.stringify(actions)
+      const inPlay = ball(actions)
+      expect(inPlay.trajectory, dumped).equals('fly_ball')
+      expect(depthOf('Loop single to center', inPlay.depth), dumped).equals(
+        'bloop'
+      )
+      expect(inPlay.direction, dumped).equals('center')
+      expect(resultType(actions), dumped).equals('single')
+    })
+
+    for (const said of [
+      'Single to deep right center',
+      "Fielder's choice, runner out at second"
+    ])
+      it(`#223 sends no trajectory the words do not say: ${said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex, first: casey }),
+            said
+          )
+        )
+        expect(ball(actions).trajectory, JSON.stringify(actions)).equals(
+          undefined
+        )
+      })
+
     it('#223 keeps a runner who holds at third on a double there', async function () {
       const { actions } = decided(
         await say(

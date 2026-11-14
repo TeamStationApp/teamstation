@@ -90,9 +90,12 @@ export const DEPTH_WORDS: Record<Depth, readonly string[]> = {
     'texas leaguer',
     'dying quail',
     'duck snort',
+    'looping fly',
     'blooper',
+    'looper',
     'bloop',
-    'flare'
+    'flare',
+    'loop'
   ],
   shallow: [
     // Before an outfielder only: in front of the plate is a dribbler's.

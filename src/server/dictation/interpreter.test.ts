@@ -115,6 +115,9 @@ describe('rules given only to the sentences that call for them', function () {
     expect(given('Pop fly caught by the catcher')).deep.equals([
       'A FIELDER AND NO PLACE'
     ])
+    expect(given("Fielder's choice, runner out at second")).deep.equals([
+      "A FIELDER'S CHOICE AND NO KIND OF BALL"
+    ])
     for (const plain of [
       'Ball one.',
       'Wild pitch, he steals third',
@@ -136,6 +139,9 @@ describe('rules given only to the sentences that call for them', function () {
     )
     expect(sentenceRules('pop fly caught by the pitcher')).match(
       /"Flies out to the pitcher" is trajectory fly_ball, the pitcher,\s+and result field_out with outBy catch, with no direction/
+    )
+    expect(sentenceRules("fielder's choice")).match(
+      /ballInPlay with contact swing and no trajectory, result fielders_choice/
     )
   })
 })
@@ -2974,6 +2980,20 @@ describe('where the ball went and the pitch, in the prompt', function () {
       'Taken down the line, double.'
     ])
       expect(placeSections(plain), plain).not.includes(PITCH_INSTRUCTIONS)
+    // A loop is a bloop, whole words only; every other word a prefix.
+    for (const ball of [
+      'Loop single to center.',
+      'A looper to right, it falls in.',
+      'Looping fly to left, it drops.',
+      'He loops one into center for a single.',
+      'Looped into right, it drops.',
+      'He fouls it off down the left side.',
+      'Fouled off down the right field line.'
+    ])
+      expect(placeSections(ball), ball).includes(BALL_PLACE_INSTRUCTIONS)
+    expect(placeSections('He loops the lineup.')).not.includes(
+      BALL_PLACE_INSTRUCTIONS
+    )
   })
 
   it('offers where a ball and a pitch went only beside their sections', async function () {
