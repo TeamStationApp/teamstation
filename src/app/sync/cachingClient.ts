@@ -9,6 +9,7 @@ import {
   asSeasonGame,
   asStoredGameAnswer,
   type ClientOptions,
+  eventInfoPath,
   type GameDetail,
   type HomeLists,
   IDEMPOTENCY_HEADER,
@@ -95,6 +96,13 @@ export const OFFLINE_CREATE_MESSAGE = "Available when you're back online."
 
 /** How many prefetch reads are out at once. */
 export const PREFETCH_CONCURRENCY = 4
+
+/**
+ * The games read ahead beside the upcoming ones: those that started within
+ * this many hours. Upcoming is a game with no score whose start is still
+ * ahead, so a game under way, the one being scored at the field, is not one.
+ */
+export const PREFETCH_STARTED_HOURS = 6
 
 const asRaw: Cleaner<unknown> = raw => raw
 
@@ -742,12 +750,15 @@ export class CachingClient extends TeamStationClient {
   }
 
   /**
-   * Reads into the cache what the phone needs to score an upcoming game
-   * with no signal, beside what Home stored: the person's roles, every
+   * Reads into the cache what the phone needs to open, score and coach a
+   * game with no signal, beside what Home stored: the person's roles, every
    * team's roster (whole names only where they manage it), and for each
-   * upcoming game both sides' rosters, the game, its lineups, its plays and
-   * each side's default lineup, and the first page Schedule opens on, so that
-   * it paints without having been opened. Four at a time; a read that fails
+   * upcoming game and each that started in the last
+   * `PREFETCH_STARTED_HOURS`: both sides' rosters, the game, its event
+   * information (the game page's first tab), its box score, its lineups, its
+   * plays, each side's default lineup and, for a side the person manages,
+   * the coach's plans; and the first page Schedule opens on, so that it
+   * paints without having been opened. Four at a time; a read that fails
    * is left for the next time. One prefetch runs at a time, and none while
    * offline.
    */
@@ -950,11 +961,16 @@ export class CachingClient extends TeamStationClient {
         return undefined
       }
     }
-    const [roles, lists, fetched] = await Promise.all([
+    const [roles, lists, fetched, started] = await Promise.all([
       read<MyRoles>('/me/roles', asMyRoles),
       this.cached<HomeLists>(HOME_LISTS, asHomeLists),
-      // Every upcoming game: these choose what is stored for scoring.
+      // Every upcoming game and every one under way: these choose what is
+      // stored for scoring.
       read<SeasonGame[]>('/events?when=upcoming', asArray(asSeasonGame)),
+      read<SeasonGame[]>(
+        `/events?when=recent&lookbackHours=${PREFETCH_STARTED_HOURS}`,
+        asArray(asSeasonGame)
+      ),
       read('/events?paged=1&when=upcoming', asPage(asSeasonGame))
     ])
     // The games last stored stand in for a list that would not load.
@@ -976,11 +992,14 @@ export class CachingClient extends TeamStationClient {
         paths.add(`/teams/${id}/roster?includeFullNames=true`)
     }
     for (const summary of lists?.teams ?? []) team(summary.id)
-    for (const game of upcoming ?? []) {
+    for (const game of [...(started ?? []), ...(upcoming ?? [])]) {
       const id = encodeURIComponent(game.id)
       paths.add(`/games/${id}`)
+      paths.add(eventInfoPath(game.id))
+      paths.add(`/games/${id}/box-score`)
       paths.add(`/games/${id}/lineups`)
       paths.add(`/games/${id}/events`)
+      let coaches = false
       for (const [teamId, external] of [
         [game.homeTeamId, game.homeTeamExternal],
         [game.awayTeamId, game.awayTeamExternal]
@@ -989,7 +1008,9 @@ export class CachingClient extends TeamStationClient {
         if (external) continue
         team(teamId)
         paths.add(`/teams/${encodeURIComponent(teamId)}/default-lineup`)
+        coaches ||= managesRoster(roles, teamId)
       }
+      if (coaches) paths.add(`/games/${id}/plans`)
     }
 
     const queue = [...paths]

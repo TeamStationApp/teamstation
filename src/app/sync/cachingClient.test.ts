@@ -13,6 +13,7 @@ import {
   CachingClient,
   expiredSignature,
   PREFETCH_CONCURRENCY,
+  PREFETCH_STARTED_HOURS,
   unsignedBody,
   untilAborted
 } from './cachingClient'
@@ -809,6 +810,51 @@ describe('CachingClient', function () {
     expect(net.calls.length).equals(before)
   })
 
+  it('reads ahead a game under way and what its page, scoring and Coach Game read, so each opens offline (Started games)', async function () {
+    const started = `/events?when=recent&lookbackHours=${PREFETCH_STARTED_HOURS}`
+    const net = server({
+      '/me/roles': { body: { teams: { tem_hawks: ['coach'] } } },
+      '/events?when=upcoming': {
+        body: [upcomingGame('g2', 'tem_jays', 'tem_owls')]
+      },
+      [started]: { body: [upcomingGame('g1', 'tem_hawks', 'tem_owls')] },
+      '/games/g1': { body: { id: 'g1' } },
+      '/events/g1/info': { body: { info: 'g1' } },
+      '/games/g1/box-score': { body: { box: 'g1' } },
+      '/games/g1/plans': { body: { plans: 'g1' } }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.prefetch()
+    for (const path of [
+      started,
+      '/games/g1',
+      '/events/g1/info',
+      '/games/g1/box-score',
+      '/games/g1/lineups',
+      '/games/g1/events',
+      '/games/g1/plans',
+      '/events/g2/info',
+      '/games/g2/box-score'
+    ])
+      expect(net.calls).includes(path)
+    expect(net.calls, 'plans only where the person coaches').not.includes(
+      '/games/g2/plans'
+    )
+    expect(new Set(net.calls).size, 'each read once').equals(net.calls.length)
+
+    net.offline = true
+    expect(await rawRead(client, '/events/g1/info')).deep.equals({
+      info: 'g1'
+    })
+    expect(await rawRead(client, '/games/g1/box-score')).deep.equals({
+      box: 'g1'
+    })
+    expect(await rawRead(client, '/games/g1/plans')).deep.equals({
+      plans: 'g1'
+    })
+  })
+
   it('paints Schedule from a first page only the prefetch stored (Paged prefetch)', async function () {
     const games = [upcomingGame('g1', 'tem_hawks', 'tem_owls')]
     const net = server({
@@ -1138,8 +1184,15 @@ describe('CachingClient', function () {
         { scope: 'me', window: 'upcoming', cursor: 'list' }
       ])
       expect(
-        net.calls.filter(path => /^\/(events|teams\/[^/]+\/games)/.test(path))
-      ).deep.equals(['/events?when=upcoming', '/events?paged=1&when=upcoming'])
+        net.calls.filter(path =>
+          /^\/(events|teams\/[^/]+\/games)(\?|$)/.test(path)
+        ),
+        'the started games are a document, not a schedule page'
+      ).deep.equals([
+        '/events?when=upcoming',
+        `/events?when=recent&lookbackHours=${PREFETCH_STARTED_HOURS}`,
+        '/events?paged=1&when=upcoming'
+      ])
       expect(
         ids(await client.scheduleGames(ME_SCOPE, 'upcoming', asSeasonGame))
       ).deep.equals(['g1', 'g2'])

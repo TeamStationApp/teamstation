@@ -1,6 +1,7 @@
 import { gameFixture } from '../app/scoring/isUnscoredGame.test'
 import type { PreferenceStorage } from '../app/scoring/scoringPreferenceStore'
 import type { GumboPlay } from '../common/gumboPlay'
+import { EMPTY_PLAN_SAME_DAY } from '../common/planWarnings'
 import { playForWire, playFromWire } from '../common/scoring/wireRecord'
 import { userIdOfGumbo } from '../common/userId'
 import { scoringRoster } from './scoringSession'
@@ -50,6 +51,11 @@ export function fieldServer(stored: {
    * stale, as the server's lineups and generation checks refuse it.
    */
   staleOnSwap: boolean
+  /**
+   * While set, g1 is under way: its start has passed, so the schedule lists
+   * it among the games that started (`when=recent`), not the upcoming ones.
+   */
+  underWay: boolean
 } {
   const plays = new Map(stored.plays.map(play => [play.about.atBatIndex, play]))
   let currentPlay = stored.currentPlay
@@ -92,6 +98,24 @@ export function fieldServer(stored: {
     lineupsDigest: swapped ? 'lineups-swapped' : 'lineups-1',
     generation
   })
+  // g1 as the schedule lists it.
+  const listed = {
+    id: 'g1',
+    seasonId: null,
+    homeTeamId: 'home',
+    awayTeamId: 'away',
+    homeTeamName: 'Hawks',
+    awayTeamName: 'Owls',
+    homeTeamExternal: false,
+    awayTeamExternal: false,
+    startAt: '2026-10-22T18:00:00Z',
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'none',
+    videoCount: 0
+  }
   const routes: Record<string, () => unknown> = {
     // The scorekeeper also coaches the Hawks, for Coach Game.
     '/games/g1': () => ({
@@ -119,25 +143,37 @@ export function fieldServer(stored: {
       teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
       guardianOf: []
     }),
-    '/events?when=upcoming': () => [
-      {
-        id: 'g1',
-        seasonId: null,
-        homeTeamId: 'home',
-        awayTeamId: 'away',
-        homeTeamName: 'Hawks',
-        awayTeamName: 'Owls',
-        homeTeamExternal: false,
-        awayTeamExternal: false,
-        startAt: '2026-10-22T18:00:00Z',
-        venue: null,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        ingestStatus: 'none',
-        videoCount: 0
+    '/events?when=upcoming': () => (state.underWay ? [] : [listed]),
+    '/events?when=recent&lookbackHours=6': () =>
+      state.underWay ? [listed] : [],
+    '/events/g1/info': () => ({
+      id: 'g1',
+      eventKind: 'game',
+      title: null,
+      teamId: 'home',
+      teamName: 'Hawks',
+      startAt: '2026-10-22T18:00:00Z',
+      endAt: null,
+      timezone: 'UTC',
+      venue: null,
+      address: null,
+      latitude: null,
+      longitude: null,
+      status: 'scheduled',
+      canManage: false,
+      replyUserIds: [],
+      attendees: []
+    }),
+    '/games/g1/box-score': () => ({ batting: [], pitching: [] }),
+    '/games/g1/plans': () => ({
+      away: null,
+      home: {
+        teamId: 'home',
+        plan: null,
+        rules: null,
+        sameDay: EMPTY_PLAN_SAME_DAY
       }
-    ],
+    }),
     '/teams': () => [],
     '/teams/away/roster': () => roster('away'),
     '/teams/away/roster?includeFullNames=true': () => roster('away'),
@@ -168,6 +204,7 @@ export function fieldServer(stored: {
     refuseTags: false,
     refusePlays: false,
     staleOnSwap: false,
+    underWay: false,
     fetch: (async (url: unknown, init?: RequestInit) => {
       if (state.hold != null) {
         await state.hold
