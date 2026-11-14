@@ -1185,7 +1185,29 @@ describe('current defensive scoring setup browser', function () {
         if (route === 'lineup') {
           await click(page, 'Set Lineup')
           // Save Rosters lights for a change: the ninth batter.
-          await click(page, `Add ${roster('away')[8].shortName} to Lineup`)
+          const add = `Add ${roster('away')[8].shortName} to Lineup`
+          await click(page, add)
+          // A clean editor is drawn again as the peer's pitches come in: a
+          // tap as it is replaced lands on the one going, and the scorer taps
+          // again.
+          const nine = async (): Promise<boolean> =>
+            await page
+              .waitForFunction(
+                () =>
+                  document.querySelectorAll(
+                    '[data-roster-target^="lineup-"][data-roster-player]'
+                  ).length === 9,
+                { timeout: 1500 }
+              )
+              .then(
+                () => true,
+                () => false
+              )
+          if (
+            !(await nine()) &&
+            (await page.$(`[aria-label="${add}"]`)) != null
+          )
+            await click(page, add)
           try {
             await click(page, 'Save Rosters')
           } catch (error) {
