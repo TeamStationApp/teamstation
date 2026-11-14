@@ -80,6 +80,16 @@ export interface JudgeRuntime {
 }
 
 /** The device a checkpoint looks at, with what its checks need to know about it. */
+/** The indices, among a CSS selector's matches, of those drawn on the page. */
+async function drawnMatches(device: any, css: string): Promise<number[]> {
+  const result = (await device.evalBrowserScript({
+    script: `return JSON.stringify([...document.querySelectorAll(${JSON.stringify(css)})].map((n, i) => { const r = n.getBoundingClientRect(); return r.width > 0 && r.height > 0 ? i : -1 }).filter(i => i >= 0))`
+  })) as { data?: unknown }
+  return typeof result.data === 'string'
+    ? (JSON.parse(result.data) as number[])
+    : []
+}
+
 export interface CheckpointTarget {
   device: any
   deviceClass: string
@@ -181,7 +191,13 @@ export class Checkpoints {
         key: goldenKey(env.scenarioId, id, env.surface, target.deviceClass),
         golden: goldenOn(env.surface, spec.golden),
         manifest: readGoldenManifest(env.root),
-        store: env.settings.goldenStore
+        store: env.settings.goldenStore,
+        ...(typeof target.device.evalBrowserScript === 'function'
+          ? {
+              drawn: async (css: string) =>
+                await drawnMatches(target.device, css)
+            }
+          : {})
       })
       if (record.visual.verdict === 'fail') {
         record.failure = record.visual.detail ?? 'the screen moved'

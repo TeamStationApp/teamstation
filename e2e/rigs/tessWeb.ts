@@ -37,7 +37,8 @@ export const VIEWER_CLOSE = `${OVERLAY} [role="button"][aria-label="Close"]`
  * Team, season and league tiles, which the app tints by id (`teamTile.ts`):
  * the fixture's ids are new each run, so a golden leaves them out.
  */
-export const EMBLEMS = [{ css: '[data-testid="emblem"]' }]
+// Every one drawn: maestro-d masks one element a selector finds.
+export const EMBLEMS = [{ css: '[data-testid="emblem"]', every: true }]
 /** A golden of a screen with the fixture's groups on it. */
 export const TESS_GOLDEN = { mask: EMBLEMS }
 export const SETTINGS_BUBBLE =

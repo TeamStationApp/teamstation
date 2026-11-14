@@ -176,8 +176,9 @@ export async function tap(
     (await page.evaluate(
       (label: string, kind: string) => {
         const named = (n: Element): boolean =>
+          // No ?? here: this runs in the page, which has no helper for it.
           n.getAttribute('aria-label') === label ||
-          (n.textContent ?? '').trim() === label
+          String(n.textContent).trim() === label
         const all = [...document.querySelectorAll(`[role="${kind}"]`)].filter(
           named
         )
