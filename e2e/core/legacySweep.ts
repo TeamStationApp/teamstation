@@ -13,6 +13,7 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 
 import { chatFixtureEnv } from './chatFixture'
+import { harnessRuns, manifestScenarios, runHarness } from './harnessSweep'
 import { legacyCommand } from './legacyCommand'
 import {
   BLOCKED,
@@ -269,6 +270,52 @@ async function main(): Promise<void> {
         const line = `disabled\t-\t${file}\t${off}\t0s`
         appendFileSync(results, `${line}\n`)
         process.stdout.write(`${line}\n`)
+        continue
+      }
+      // A harness file (`e2e/tests/…`): each scenario on each surface,
+      // through `e2e run`, against this sweep's database and services.
+      if (file.startsWith('e2e/tests/')) {
+        const started = Date.now()
+        const outcomes: Array<{
+          label: string
+          status: 'passed' | 'failed' | 'blocked' | 'pending'
+          reason?: string
+        }> = []
+        for (const run of harnessRuns(file, manifestScenarios(cwd))) {
+          const label = `${run.id.split('#')[1] ?? run.id} ${run.surface}`
+          if (run.skip != null) {
+            outcomes.push({ label, status: 'pending', reason: run.skip })
+            continue
+          }
+          outcomes.push({
+            label,
+            ...(await runHarness(
+              cwd,
+              run,
+              legacyArtifacts(file),
+              { ...process.env, ...stack.env },
+              Math.max(10, run.minutes * 4) * 60 * 1000
+            ))
+          })
+        }
+        const of = (status: string): string =>
+          outcomes
+            .filter(outcome => outcome.status === status)
+            .map(o => `${o.label}: ${(o.reason ?? '').replace(/\s+/g, ' ')}`)
+            .join('; ')
+        const worst = (['failed', 'pending', 'blocked'] as const).find(status =>
+          outcomes.some(outcome => outcome.status === status)
+        )
+        const ran = outcomes.filter(outcome => outcome.status !== 'pending')
+        const line =
+          outcomes.length === 0
+            ? `error\t-\t${file}\tthe manifest lists no scenario of it`
+            : worst == null
+              ? `passed\t0\t${file}\t${outcomes.length} runs`
+              : `${worst}\t${worst === 'failed' ? 1 : worst === 'pending' ? 3 : 2}\t${file}\t${of(worst)}${worst === 'failed' ? '' : `; ${ran.filter(o => o.status === 'passed').length} of ${outcomes.length} passed`}`
+        const seconds = Math.round((Date.now() - started) / 1000)
+        appendFileSync(results, `${line}\t${seconds}s\n`)
+        process.stdout.write(`${line}\t${seconds}s\n`)
         continue
       }
       // A script may shut the shared web daemon down when it finishes.

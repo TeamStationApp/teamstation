@@ -4,7 +4,6 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import { FLOATING_SIZE, floatingBottom, topLift } from '../field/fieldSafeArea'
 import {
   artifactsDir,
   attachWeb,
@@ -17,6 +16,7 @@ import {
   signInWeb,
   visible
 } from '../../../e2e/rigs/replayKit'
+import { FLOATING_SIZE, floatingBottom, topLift } from '../field/fieldSafeArea'
 
 /**
  * The replay and the live view on a phone, filmed by the bench webcam with
