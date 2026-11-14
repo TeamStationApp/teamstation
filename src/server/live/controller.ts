@@ -71,7 +71,8 @@ import {
   resumeScan,
   type ScanCursor,
   scanNewSegments,
-  SEGMENTS_PER_SCAN
+  SEGMENTS_PER_SCAN,
+  segmentWrittenAt
 } from './wallAnchors'
 
 /**
@@ -1701,7 +1702,13 @@ async function recordWallPoints(
     const cursor =
       anchorCursors.get(videoId) ??
       (await resumeScan(current.db, videoId, hlsDir))
-    const scanned = await scanNewSegments(hlsDir, cursor)
+    const scanned = await scanNewSegments(
+      hlsDir,
+      cursor,
+      Date.now,
+      SEGMENTS_PER_SCAN,
+      segmentWrittenAt
+    )
     await storeWallPoints(current.db, videoId, scanned.points)
     anchorCursors.set(videoId, scanned.cursor)
     for (const problem of scanned.unreadable)

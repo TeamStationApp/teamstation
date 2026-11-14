@@ -45,7 +45,8 @@ import {
   resumeScan,
   SCAN_FROM_START,
   scanNewSegments,
-  SEGMENTS_PER_SCAN
+  SEGMENTS_PER_SCAN,
+  segmentWrittenAt
 } from './wallAnchors'
 
 const START = 1_700_000_000_000
@@ -226,6 +227,46 @@ describe('the wall clock of a live stream (U25)', function () {
     expect(
       after.points.map(point => [point.mediaMs, point.wallMs])
     ).deep.equals([[2000, NOW + 29_000]])
+  })
+
+  it('times an arrival from when its segment was written, not from the look that found it', async function () {
+    const live = join(dir, 'written')
+    await mkdir(live)
+    await writeLive(plain, live, { seconds: 2 })
+    // Written a second apart, the newer 300 ms before the look found both.
+    const writes = new Map([
+      ['seg000000.m4s', NOW - 1300],
+      ['seg000001.m4s', NOW - 300]
+    ])
+    const scanned = await scanNewSegments(
+      live,
+      undefined,
+      atNow,
+      undefined,
+      async path => writes.get(path.split('/').at(-1) ?? '') ?? null
+    )
+    expect(
+      scanned.points.map(point => [point.mediaMs, point.wallMs])
+    ).deep.equals([
+      [0, NOW - 2300],
+      [1000, NOW - 1300]
+    ])
+    // A write time after the look is the look's.
+    const later = await scanNewSegments(
+      live,
+      undefined,
+      atNow,
+      undefined,
+      async () => NOW + 5000
+    )
+    expect(later.points.map(point => point.wallMs)).deep.equals([
+      NOW - 1000,
+      NOW
+    ])
+    // And the file's own write time is what the controller reads.
+    const written = await segmentWrittenAt(join(live, 'seg000000.m4s'))
+    expect(written).a('number')
+    expect(await segmentWrittenAt(join(live, 'missing.m4s'))).equals(null)
   })
 
   /** Damages one listed segment of a live directory, as `withBrokenRun`. */
@@ -824,9 +865,12 @@ describe('the controller and the wall clock (U25, U26)', function () {
     const [first, second] = await anchors(videoId)
     expect(first[0]).equals(0)
     expect(second[0]).equals(1000)
-    // The first segment had all arrived by the time both were listed, so it
-    // began a second before that at the earliest.
-    expect(first[1]).at.least(listed - 1000)
+    // The first segment had all arrived when its file was last written,
+    // before it was listed: it began a second before that, never later than
+    // a second before the listing and never earlier than its write.
+    const written = (await segmentWrittenAt(join(live, 'seg000000.m4s')))!
+    expect(first[1]).at.least(Math.floor(written) - 1000)
+    expect(first[1]).at.most(listed - 1000)
     expect(second[1]).at.least(first[1] + 1000)
     expect(second[1]).at.most(Date.now())
 

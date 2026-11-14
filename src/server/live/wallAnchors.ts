@@ -92,7 +92,13 @@ export async function scanNewSegments(
   directory: string,
   cursor: ScanCursor = SCAN_FROM_START,
   now: () => number = Date.now,
-  limit: number = SEGMENTS_PER_SCAN
+  limit: number = SEGMENTS_PER_SCAN,
+  /**
+   * When a segment's file was last written, which is when its last frame
+   * arrived (`segmentWrittenAt`); null where that cannot be said, and the
+   * segment is then timed from the look that found it.
+   */
+  writtenAt: (path: string) => Promise<number | null> = async () => null
 ): Promise<{
   points: StoredWallPoint[]
   cursor: ScanCursor
@@ -180,9 +186,17 @@ export async function scanNewSegments(
       if (last != null) latest = { mediaMs: last.mediaMs, wallMs: last.wallMs }
     } else {
       const mediaMs = Math.round(startMs)
+      // Its last frame arrived when the splitter last wrote it, which is
+      // anything up to a look before the look that found it listed. Timed
+      // from the look, every stream ran up to a second late, a different
+      // amount each — and since a point never goes behind the one before it,
+      // each stream's timeline settled at the latest of its looks: angles
+      // played side by side a second apart.
+      const written = await writtenAt(join(directory, segment.uri))
+      const arrivedAt = written == null ? seenAt : Math.min(written, seenAt)
       const wallMs = Math.round(
         Math.max(
-          seenAt - lengthMs,
+          arrivedAt - lengthMs,
           latest == null ? -Infinity : latest.wallMs + mediaMs - latest.mediaMs
         )
       )
@@ -203,6 +217,12 @@ export async function scanNewSegments(
     },
     unreadable
   }
+}
+
+/** When the file at `path` was last written, or null when it cannot be read. */
+export async function segmentWrittenAt(path: string): Promise<number | null> {
+  const found = await stat(path).catch(() => undefined)
+  return found == null ? null : found.mtimeMs
 }
 
 /**
