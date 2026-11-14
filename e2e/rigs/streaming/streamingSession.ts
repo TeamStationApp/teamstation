@@ -26,6 +26,7 @@ import {
   signInToken,
   tvCodeIn
 } from './soakSignIn'
+import { SAFARI } from './surfaces/mobileSafari'
 import {
   ndiCapture,
   remoteHelper,
@@ -358,6 +359,8 @@ export async function openWorld(
 /** Attaching and addressing bench devices for one run. */
 export interface DeviceKit {
   attachIos: (role: string) => Promise<any>
+  /** An iPhone driven in Safari alone: the develop app is neither installed nor launched. */
+  attachSafari: (role: string) => Promise<any>
   attachAndroid: (role: string) => Promise<any>
   /** Hands a link to the develop app alone, on the role's device. */
   openIn: (
@@ -412,6 +415,8 @@ export function deviceKit(
         appId: DEVELOP_APP,
         appFile: settings.iosApp
       }),
+    attachSafari: async role =>
+      await recovering(role, { platform: 'ios', appId: SAFARI }),
     attachAndroid: async role =>
       await recovering(role, { platform: 'android', appId: DEVELOP_APP }),
     // The develop build and production TeamStation share the teamstation://
@@ -480,8 +485,8 @@ export function tvKit(
   return { tv, remote }
 }
 
-/** TeamStation TV past sign-in: its home or its player page. */
-const TV_SIGNED_IN = /tv-page-(home|player)/
+/** TeamStation TV past sign-in: its home (which offers Sign out) or its player. */
+const TV_SIGNED_IN = /'tv-player'|tv-page-(?:home|player)|label: 'Sign out'/
 
 /**
  * Signs TeamStation TV in as the owner, approving the code it shows. A TV

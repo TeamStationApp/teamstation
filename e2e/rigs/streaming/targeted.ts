@@ -2,13 +2,19 @@ import { appendFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { expect } from 'chai'
-
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
 import { MIN_CONFIDENCE, readingEpochMs, type TileClock } from './clockReader'
 import { type OwnerApi, ownerApi } from './ownerApi'
+import type { SoakSampler } from './soakRun'
 import { signInApp } from './soakSignIn'
+import {
+  adbSampler,
+  type CdpSender,
+  chromeSampler,
+  dropletSampler,
+  xctraceSampler
+} from './soakWiring'
 import {
   ANDROID_MAX_HOLD_MS,
   DEVELOP_APP,
@@ -24,6 +30,7 @@ import {
   tvKit
 } from './streamingSession'
 import { ChromeSurface } from './surfaces/chrome'
+import { MobileSafariSurface } from './surfaces/mobileSafari'
 import { NativeAppSurface } from './surfaces/nativeApp'
 import type { SoakSurfaceDriver } from './surfaces/surface'
 import type { TvRemote } from './surfaces/tv'
@@ -39,7 +46,14 @@ import { SyntheticPublisher } from './syntheticPublisher'
  * scenario passes when no watcher failed a step.
  */
 
-export type WatcherRole = 'iphone' | 'android' | 'ipad' | 'chrome' | 'tv'
+export type WatcherRole =
+  | 'iphone'
+  | 'android'
+  | 'ipad'
+  | 'chrome'
+  | 'tv'
+  /** The web app in an iPhone's Safari, watching one angle (`TargetedSetup.safariAngle`). */
+  | 'safari'
 
 /** What a scenario can do to a watcher beyond the soak's actions. */
 export interface TargetedDriver extends SoakSurfaceDriver {
@@ -183,6 +197,7 @@ export function verdicts(steps: StepRecord[]): Record<string, Verdict> {
 /** Records steps to `targeted.jsonl`, with a screenshot named for the step. */
 export class Recorder {
   readonly steps: StepRecord[] = []
+  private shots = 0
 
   constructor(
     private readonly file: string,
@@ -208,9 +223,10 @@ export class Recorder {
     const shoot = 'screenshot' in watcher ? watcher.screenshot : undefined
     if (shoot != null) {
       try {
+        const picture = await shoot()
         record.screenshot = this.saveShot(
-          `${step}-${watcher.role}.png`,
-          await shoot()
+          `${step}-${watcher.role}-${++this.shots}.png`,
+          picture
         )
       } catch {
         // A step's picture is evidence, not the step.
@@ -239,6 +255,15 @@ export class Recorder {
 }
 
 /** What a scenario asks of its world and watchers. */
+/**
+ * What a run came to, for the scenario's own file to judge: the watchers that
+ * failed a step, and where the steps are written.
+ */
+export interface TargetedOutcome {
+  failed: string[]
+  steps: string
+}
+
 export interface TargetedSetup {
   /** The synthetic cameras, by label: one to four. */
   synthetic: string[]
@@ -247,6 +272,10 @@ export interface TargetedSetup {
   chromeAs?: 'viewer' | 'owner'
   /** How long the cameras publish before the watchers join. */
   leadMs?: number
+  /** Sample the watchers' memory per process, and the stack's, while the scenario runs. */
+  memory?: boolean
+  /** The one camera Safari watches in the game page's player. */
+  safariAngle?: string
 }
 
 export interface TargetedSession {
@@ -267,6 +296,44 @@ export interface TargetedSession {
   now: () => number
   /** Each watcher role's address on a test network, from the local settings. */
   shapedIps: Record<string, string>
+  /** The memory samplers, when the scenario asked for them. */
+  memory?: SoakSampler[]
+  /** Writes a text file into the run directory. */
+  writeArtifact: (name: string, text: string) => void
+}
+
+/**
+ * Memory samplers for a run's watchers: Activity Monitor recordings on the iOS
+ * devices, `dumpsys meminfo` on Android, Chrome's renderer and heap through
+ * DevTools, and the stack's processes.
+ */
+export function memorySamplers(
+  ctx: E2eContext,
+  world: Pick<StreamingWorld, 'handle'>,
+  roles: WatcherRole[],
+  chrome?: { browser: CdpSender; page: CdpSender }
+): SoakSampler[] {
+  const traces = ctx.artifact('traces')
+  const out: SoakSampler[] = []
+  for (const role of roles) {
+    if (role === 'iphone' || role === 'ipad') {
+      out.push(
+        xctraceSampler({
+          name: role,
+          udid: ctx.device(role),
+          dir: traces,
+          // The iPad's all-process recording takes minutes to save.
+          ...(role === 'ipad' ? { stopMs: 10 * 60_000 } : {})
+        })
+      )
+    } else if (role === 'android') {
+      out.push(adbSampler('android', ctx.device('android')))
+    } else if (role === 'chrome' && chrome != null) {
+      out.push(chromeSampler(chrome.browser, chrome.page))
+    }
+  }
+  out.push(dropletSampler(world.handle))
+  return out
 }
 
 const realSleep = async (ms: number): Promise<void> => {
@@ -299,11 +366,6 @@ export function lookFrom(
   }
 }
 
-/**
- * Opens a targeted session, runs `body`, writes the summary and lets go of
- * everything. The scenario fails when a watcher failed a step, and is blocked
- * when every watcher was.
- */
 /** A synthetic camera as the runner drives it. */
 export interface PublisherLike {
   start: () => Promise<void>
@@ -327,6 +389,7 @@ export interface TargetedDeps {
   signInTv: typeof signInTv
   signInApp: typeof signInApp
   recordSessions: (world: StreamingWorld, file: string) => Promise<void>
+  memorySamplers: typeof memorySamplers
   publisher: (
     options: ConstructorParameters<typeof SyntheticPublisher>[0]
   ) => PublisherLike
@@ -344,19 +407,25 @@ export const realTargetedDeps: TargetedDeps = {
   recordSessions: async (world, file) => {
     await recordSessions(world, file)
   },
+  memorySamplers,
   publisher: options => new SyntheticPublisher(options),
   run: async (command, args) => await run(command, args),
   now: Date.now,
   sleep: realSleep
 }
 
+/**
+ * Opens a targeted session, runs `body`, writes the summary and lets go of
+ * everything. The scenario fails when a watcher failed a step, and is blocked
+ * when every watcher was.
+ */
 export async function runTargeted(
   ctx: E2eContext,
   cwd: string,
   setup: TargetedSetup,
   body: (session: TargetedSession) => Promise<void>,
   deps: TargetedDeps = realTargetedDeps
-): Promise<void> {
+): Promise<TargetedOutcome> {
   const world = await deps.openWorld({ ctx, cwd, synthetic: setup.synthetic })
   const kit = deps.deviceKit(ctx, world.settings)
   const record = new Recorder(ctx.artifact('targeted.jsonl'), kit.saveShot)
@@ -364,6 +433,7 @@ export async function runTargeted(
   const urlFiles: string[] = []
   const publishers = new Map<string, PublisherLike>()
   let closeBrowser: (() => Promise<void>) | undefined
+  let chromeCdp: { browser: CdpSender; page: CdpSender } | undefined
   try {
     for (const role of setup.watchers) {
       if (role === 'chrome') {
@@ -378,6 +448,12 @@ export async function runTargeted(
           link: `${world.handle.origin}/signin/${await world.link(setup.chromeAs ?? 'viewer')()}`
         })
         const cdp = await web.page.createCDPSession()
+        if (setup.memory === true) {
+          chromeCdp = {
+            browser: await web.page.browser().target().createCDPSession(),
+            page: cdp
+          }
+        }
         watchers.push({
           role,
           surface: new ChromeSurface({
@@ -401,7 +477,20 @@ export async function runTargeted(
         })
       } else if (role === 'tv') {
         const { tv, remote } = deps.tvKit(ctx, world.settings)
-        await deps.signInTv(remote, world)
+        try {
+          await deps.signInTv(remote, world)
+        } catch (error) {
+          // A TV that never gets past signing in is the TV's failure, not the
+          // run's: the other watchers carry on without it.
+          await record.step(
+            { role },
+            'sign-in',
+            'TeamStation TV opens and signs in',
+            (error as Error).message,
+            'failed'
+          )
+          continue
+        }
         watchers.push({
           role,
           surface: tv,
@@ -421,6 +510,22 @@ export async function runTargeted(
             dump: async () => await remote([`app:${TV_APP}`, 'wait:1', 'dump']),
             approve: async () => await deps.signInTv(remote, world)
           }
+        })
+      } else if (role === 'safari') {
+        const device = await kit.attachSafari(role)
+        await device.openLink({
+          link: `${world.handle.origin}/signin/${await world.link('viewer')()}`
+        })
+        watchers.push({
+          role,
+          surface: new MobileSafariSurface({
+            name: role,
+            device,
+            gameUrl: world.links.web,
+            ...(setup.safariAngle == null ? {} : { angle: setup.safariAngle }),
+            saveShot: kit.saveShot
+          }),
+          screenshot: async () => await device.screenshot()
         })
       } else {
         const platform = role === 'android' ? 'android' : 'ios'
@@ -514,6 +619,14 @@ export async function runTargeted(
       look,
       now: deps.now,
       shapedIps: world.settings.shapedIps ?? {},
+      ...(setup.memory === true
+        ? {
+            memory: deps.memorySamplers(ctx, world, setup.watchers, chromeCdp)
+          }
+        : {}),
+      writeArtifact: (name, text) => {
+        writeFileSync(ctx.artifact(name), text)
+      },
       seekTo: async (watcher, targetMs) => {
         let fraction = fractionFor(targetMs, takeStartMs, deps.now())
         let landed: number | null = null
@@ -560,11 +673,10 @@ export async function runTargeted(
       `every watcher was blocked: see ${ctx.artifact('targeted.jsonl')}`
     )
   }
-  const failed = Object.entries(summary)
-    .filter(([, state]) => state === 'failed')
-    .map(([surface]) => surface)
-  expect(
-    failed,
-    `failed steps: see ${ctx.artifact('targeted.jsonl')}`
-  ).deep.equals([])
+  return {
+    failed: Object.entries(summary)
+      .filter(([, state]) => state === 'failed')
+      .map(([surface]) => surface),
+    steps: ctx.artifact('targeted.jsonl')
+  }
 }

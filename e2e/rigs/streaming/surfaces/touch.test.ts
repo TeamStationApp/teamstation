@@ -646,3 +646,84 @@ describe('performing a schedule action', function () {
     ).match(/no surface action/)
   })
 })
+
+describe('Safari watching one angle in the game page’s player', function () {
+  /** A white landscape page with the frame of `epochMs` at half size, 100 px in and 300 down. */
+  function page(epochMs: number | null): Uint8Array {
+    const out = new PNG({ width: 1000, height: 700 })
+    out.data.fill(255)
+    if (epochMs != null) {
+      const frame = drawnPicture('SYNTHA', 2, epochMs)
+      for (let y = 0; y < frame.height; y++) {
+        for (let x = 0; x < frame.width; x++) {
+          const from = (y * frame.width + x) * 4
+          const to = ((y + 300) * out.width + x + 100) * 4
+          for (let c = 0; c < 4; c++) out.data[to + c] = frame.data[from + c]
+        }
+      }
+    }
+    return PNG.sync.write(out)
+  }
+
+  function single(shots: Uint8Array[]): {
+    surface: MobileSafariSurface
+    calls: Call[]
+  } {
+    let shot = 0
+    const { device, calls } = fakeDevice({
+      state: { foregroundApp: SAFARI },
+      screenshot: () => shots[Math.min(shot++, shots.length - 1)]
+    })
+    return {
+      surface: new MobileSafariSurface({
+        name: 'safari',
+        device,
+        gameUrl: 'https://app.example.test/games/game_0000',
+        angle: 'SynthA',
+        sleep: noSleep
+      }),
+      calls
+    }
+  }
+
+  it('picks the angle’s pill, scrolled to, upright so the whole player shows', async function () {
+    const { surface, calls } = single([page(null)])
+    await surface.join()
+    const names = calls.map(([name]) => name)
+    expect(names).includes('scrollUntilVisible')
+    const tapped = calls.filter(([name]) => name === 'tapOn').map(c => c[1])
+    expect(tapped).deep.include({ text: 'SynthA', timeout: 15000 })
+    // Upright first, where the whole player fits under the page's tabs.
+    expect(calls.map(([, arg]) => arg)).deep.include({
+      orientation: 'PORTRAIT'
+    })
+    expect(names.indexOf('setOrientation')).lessThan(
+      names.indexOf('scrollUntilVisible')
+    )
+    expect(names).not.includes('swipe')
+  })
+
+  it('finds the player on the screenshot, tells it moving or still, and reads its clock', async function () {
+    const moving = await single([
+      page(61_000_000),
+      page(61_002_000)
+    ]).surface.probe()
+    expect(moving.tiles).deep.equals([
+      { angle: 'SynthA', advancing: true, notice: null }
+    ])
+    const still = await single([
+      page(61_000_000),
+      page(61_000_000)
+    ]).surface.probe()
+    expect(still.tiles?.[0].advancing).equals(false)
+    const none = await single([page(null)]).surface.probe()
+    expect(none.tiles).deep.equals([])
+    expect(none.reason).equals('safari: no picture of SynthA on screen')
+    const clocks = await single([page(61_000_000)]).surface.readClocks()
+    expect(clocks[0].angle).equals('SynthA')
+    expect(clocks[0].reading?.label).equals('SYNTHA')
+    expect(await single([page(null)]).surface.readClocks()).deep.equals([
+      { angle: 'SynthA', reading: null }
+    ])
+  })
+})

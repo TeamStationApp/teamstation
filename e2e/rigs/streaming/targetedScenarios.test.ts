@@ -255,6 +255,7 @@ function session(
     watchers.map(w => [w, w])
   )
   const fake: TargetedSession = {
+    writeArtifact: () => undefined,
     world: {
       world: { gameId: 'g1', streams: [] },
       links: { web: 'https://app.example.test/games/g1?tab=watch' }

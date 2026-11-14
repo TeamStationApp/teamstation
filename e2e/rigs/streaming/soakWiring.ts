@@ -165,7 +165,7 @@ export function xctraceSampler(
   }
 }
 
-function adbSampler(name: string, serial: string): SoakSampler {
+export function adbSampler(name: string, serial: string): SoakSampler {
   return {
     name: `${name}-meminfo`,
     sample: async now =>
@@ -179,7 +179,7 @@ function adbSampler(name: string, serial: string): SoakSampler {
 }
 
 /** The stack's API and ingest, read over SSH: informational, never gated. */
-function dropletSampler(handle: StreamingHandle): SoakSampler {
+export function dropletSampler(handle: StreamingHandle): SoakSampler {
   const ssh: Exec = async (command, args) =>
     await exec('ssh', [...SSH_OPTIONS, handle.ssh, command, ...args])
   return {
@@ -206,6 +206,29 @@ function dropletSampler(handle: StreamingHandle): SoakSampler {
           now: () => now
         })
       ).map((row: MemorySample) => ({ ...row, device: 'stack' }))
+  }
+}
+
+/** The part of a DevTools session a memory sample sends. */
+export interface CdpSender {
+  send: (method: never) => Promise<unknown>
+}
+
+/** Chrome's renderer and JS heap, read through its browser and page DevTools sessions. */
+export function chromeSampler(
+  browserCdp: CdpSender,
+  pageCdp: CdpSender
+): SoakSampler {
+  return {
+    name: 'chrome',
+    sample: async now =>
+      await sampleChrome({
+        browser: async (method: string) =>
+          await browserCdp.send(method as never),
+        page: async (method: string) => await pageCdp.send(method as never),
+        exec,
+        now: () => now
+      })
   }
 }
 
@@ -430,17 +453,7 @@ export async function soakParts(
           ]),
       adbSampler('publisherB', ctx.device('publisherB')),
       adbSampler('android', ctx.device('android')),
-      {
-        name: 'chrome',
-        sample: async now =>
-          await sampleChrome({
-            browser: async (method: string) =>
-              await browserCdp.send(method as never),
-            page: async (method: string) => await pageCdp.send(method as never),
-            exec,
-            now: () => now
-          })
-      },
+      chromeSampler(browserCdp, pageCdp),
       dropletSampler(handle)
     ],
     provenance: {

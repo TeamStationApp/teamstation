@@ -396,7 +396,7 @@ describe('signing the TV in', function () {
     const screens = [
       'Other, identifier: tv-brand-screen',
       'Other, identifier: tv-login-panel; StaticText, label: TV login code ABCD–EFGH',
-      'Other, identifier: tv-page-home'
+      "Button, 0x5, label: 'Sign out'"
     ]
     const shown = await signInTv(
       async steps => {
@@ -419,7 +419,7 @@ describe('signing the TV in', function () {
   it('approves nothing when the TV is signed in already', async function () {
     const approved: string[] = []
     expect(
-      await signInTv(async () => 'Other, identifier: tv-page-player', {
+      await signInTv(async () => "Other, 0x1, identifier: 'tv-player'", {
         stack: stack(approved),
         ownerToken: 'owner-token'
       })

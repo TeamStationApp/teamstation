@@ -1,3 +1,5 @@
+import { expect } from 'chai'
+
 import { angleEnds } from '../../../rigs/streaming/targetedScenarios'
 import { defineTargeted } from '../../../rigs/streaming/targetedSpec'
 
@@ -12,5 +14,8 @@ export default defineTargeted({
     'A camera that ends says so and never "catching up"; the finished game seeks to its middle and plays on with no Retry',
   minutes: 12,
   covers: ['src/app/player/**', 'src/server/live/**'],
-  steps: angleEnds
+  steps: angleEnds,
+  judge: ({ failed, steps }) => {
+    expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])
+  }
 })

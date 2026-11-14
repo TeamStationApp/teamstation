@@ -183,6 +183,11 @@ describe('the clock reader', function () {
         page.data.set(frame.data.subarray(from, from + 4), to)
       }
     }
+    // A badge's edge above the frame blends to the ink's colour, a few pixels a row.
+    for (let y = 20; y < 30; y++) {
+      for (let x = 500; x < 504; x++)
+        page.data.set([255, 200, 0, 255], (y * page.width + x) * 4)
+    }
     const found = findPicture(page)!
     expect(found.x).closeTo(100, 3)
     expect(found.y).closeTo(50, 3)

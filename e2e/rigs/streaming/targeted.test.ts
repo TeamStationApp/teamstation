@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { AssertionError, expect } from 'chai'
+import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { BlockedError } from '../../core/result'
@@ -15,6 +15,7 @@ import {
   fractionFor,
   lookFrom,
   medianMs,
+  memorySamplers,
   Recorder,
   runTargeted,
   spreadMs,
@@ -156,7 +157,7 @@ describe('the targeted helpers', function () {
       false
     )
     await record.step({ role: 'chrome' }, 'join', 'opens', 'no', 'blocked')
-    expect(saved).deep.equals(['join-iphone.png'])
+    expect(saved).deep.equals(['join-iphone-1.png'])
     const lines = readFileSync(file, 'utf8')
       .trim()
       .split('\n')
@@ -167,8 +168,20 @@ describe('the targeted helpers', function () {
       ['tv', 'failed'],
       ['chrome', 'blocked']
     ])
-    expect(lines[0]).includes({ atMs: 42, screenshot: 'shots/join-iphone.png' })
+    expect(lines[0]).includes({
+      atMs: 42,
+      screenshot: 'shots/join-iphone-1.png'
+    })
     expect(lines[1]).not.have.property('screenshot')
+    // The same step again keeps its own screenshot.
+    await record.check(
+      { role: 'iphone', screenshot: async () => png(2, 2) },
+      'join',
+      'opens',
+      'opened',
+      true
+    )
+    expect(saved).deep.equals(['join-iphone-1.png', 'join-iphone-2.png'])
     const real = new Recorder(file, name => name)
     expect(
       (await real.step({ role: 'x' }, 'a', 'b', 'c', 'passed')).atMs
@@ -288,6 +301,16 @@ function rig(
             on: (event: string) => {
               log.push(`cdp on ${event}`)
             }
+          }),
+          browser: () => ({
+            target: () => ({
+              createCDPSession: async () => ({
+                send: async (method: string) => {
+                  log.push(`browser cdp ${method}`)
+                  return { processInfo: [] }
+                }
+              })
+            })
           })
         },
         close: async () => {
@@ -339,6 +362,7 @@ function rig(
     }
   } as unknown as StreamingWorld
   const deps: TargetedDeps = {
+    memorySamplers: () => [],
     openWorld: async opened => {
       log.push(`world ${(opened.synthetic ?? []).join(',')}`)
       return world
@@ -346,6 +370,10 @@ function rig(
     deviceKit: () => ({
       attachIos: async role => {
         log.push(`attach ios ${role}`)
+        return awaitable(fakeDevice({ screenshot: png(2, 2) }).device)
+      },
+      attachSafari: async role => {
+        log.push(`attach safari ${role}`)
         return awaitable(fakeDevice({ screenshot: png(2, 2) }).device)
       },
       attachAndroid: async role => {
@@ -521,36 +549,89 @@ describe('running a targeted scenario', function () {
       surface: 'android',
       observed: 'All angles is not shown',
       verdict: 'blocked',
-      screenshot: 'join-android.png'
+      screenshot: 'join-android-1.png'
     })
     expect(
       existsSync(join(tmpdir(), `targeted-rtmp-${process.pid}-SynthA`))
     ).equals(false)
   })
 
-  it('fails when a watcher failed a step, with the summary written', async function () {
-    const r = rig({ settings: { offsetMinutes: 60 }, androidJoinFails: false })
-    const error = await rejection(
-      runTargeted(
-        r.ctx,
-        '/repo',
-        { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
-        async session => {
-          expect(session.offsetMinutes).equals(60)
-          expect(session.now()).equals(T0 + 1000)
-          await session.record.check(
-            session.watchers[0],
-            'look',
-            'moving',
-            'still',
-            false
-          )
-        },
-        r.deps
-      )
+  it('samples memory for each watcher and the stack when asked, and writes into the run directory', async function () {
+    const r = rig()
+    let names: string[] = []
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { ...ALL, watchers: ['chrome', 'iphone', 'android'], memory: true },
+      async session => {
+        names = (session.memory ?? []).map(sampler => sampler.name)
+        // Chrome's sampler reads through the browser's and the page's DevTools sessions.
+        const chrome = session.memory!.find(s => s.name === 'chrome')!
+        expect(await chrome.sample!(T0)).deep.equals([])
+        session.writeArtifact('note.txt', 'hello')
+        await session.record.check(session.watchers[0], 'x', '', '', true)
+      },
+      { ...r.deps, memorySamplers }
     )
-    expect(error).instanceOf(AssertionError)
-    expect(error.message).contains('failed steps: see')
+    expect(names).deep.equals([
+      'chrome',
+      'iphone-xctrace',
+      'android-meminfo',
+      'stack'
+    ])
+    expect(readFileSync(join(r.dir, 'note.txt'), 'utf8')).equals('hello')
+    expect(r.log).includes('browser cdp SystemInfo.getProcessInfo')
+    expect(r.log).includes('cdp Performance.getMetrics')
+  })
+
+  it('takes no samplers when not asked', async function () {
+    const r = rig()
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { ...ALL, watchers: ['iphone'] },
+      async session => {
+        expect(session.memory).equals(undefined)
+        await session.record.check(session.watchers[0], 'x', '', '', true)
+      },
+      { ...r.deps, memorySamplers }
+    )
+  })
+
+  it('samples an iPad with time to save its recording, and leaves Chrome out without its sessions', function () {
+    const r = rig()
+    const samplers = memorySamplers(
+      r.ctx,
+      { handle: JSON.parse('{"ssh": "o@h"}') },
+      ['ipad', 'chrome', 'tv']
+    )
+    expect(samplers.map(s => s.name)).deep.equals(['ipad-xctrace', 'stack'])
+  })
+
+  it('hands back the watchers that failed a step, with the summary written', async function () {
+    const r = rig({ settings: { offsetMinutes: 60 }, androidJoinFails: false })
+    const outcome = await runTargeted(
+      r.ctx,
+      '/repo',
+      { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
+      async session => {
+        expect(session.offsetMinutes).equals(60)
+        expect(session.now()).equals(T0 + 1000)
+        await session.record.check(
+          session.watchers[0],
+          'look',
+          'moving',
+          'still',
+          false
+        )
+      },
+      r.deps
+    )
+    // The scenario's own file judges it: here is what it is handed.
+    expect(outcome).deep.equals({
+      failed: ['android'],
+      steps: join(r.dir, 'targeted.jsonl')
+    })
     expect(r.log).includes('publisher SynthA f rtmp://h:1936/live/key-a 60')
     expect(summary(r.dir)).deep.equals({
       verdicts: { android: 'failed' },
@@ -687,5 +768,28 @@ describe('running a targeted scenario', function () {
       expect(await session.seekTo(tv, T0 + 99 * 60_000)).equals(null)
       expect(r.scrubs).deep.equals([1])
     })
+  })
+})
+
+describe('a TV that never signs in', function () {
+  it('is a failed step, and the run goes on without it', async function () {
+    const r = rig()
+    r.deps.signInTv = async () => {
+      throw new Error('the TV is still signing in after 8 looks')
+    }
+    let roles: string[] = []
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { synthetic: ['SynthA'], watchers: ['tv', 'iphone'], leadMs: 0 },
+      async session => {
+        roles = session.watchers.map(w => w.role)
+      },
+      r.deps
+    ).catch(() => undefined)
+    expect(roles).deep.equals(['iphone'])
+    const steps = readFileSync(join(r.dir, 'targeted.jsonl'), 'utf8')
+    expect(steps).contains('"step":"sign-in","surface":"tv"')
+    expect(steps).contains('the TV is still signing in after 8 looks')
   })
 })

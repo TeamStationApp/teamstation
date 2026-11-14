@@ -227,8 +227,11 @@ export function findPicture(picture: Picture, minInk = 3): Box | null {
       }
     }
   }
-  const top = rows.findIndex(n => n >= minInk)
-  const bottom = rows.findLastIndex(n => n >= minInk)
+  // A row of the clock or the counter is a run of digits: a badge's or an
+  // icon's few edge pixels that happen to blend to the ink's colour are not.
+  const rowInk = Math.max(minInk, Math.round(picture.width * 0.02))
+  const top = rows.findIndex(n => n >= rowInk)
+  const bottom = rows.findLastIndex(n => n >= rowInk)
   const left = columns.findIndex(n => n >= minInk)
   if (top < 0 || bottom <= top || left < 0) return null
   const scale =

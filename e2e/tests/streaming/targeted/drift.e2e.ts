@@ -1,3 +1,5 @@
+import { expect } from 'chai'
+
 import { drift } from '../../../rigs/streaming/targetedScenarios'
 import { defineTargeted } from '../../../rigs/streaming/targetedSpec'
 
@@ -12,5 +14,8 @@ export default defineTargeted({
     'For 30 minutes every watcher shows the angles within 500 ms of each other, by their burned-in clocks',
   minutes: 36,
   covers: ['src/app/player/**'],
-  steps: drift
+  steps: drift,
+  judge: ({ failed, steps }) => {
+    expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])
+  }
 })

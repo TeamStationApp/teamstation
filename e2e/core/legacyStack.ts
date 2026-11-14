@@ -645,8 +645,5 @@ export async function startLegacyStack(
 
 /** Where the stack keeps its logs between scripts. */
 export function stackArtifacts(): string {
-  return join(
-    homedir(),
-    '.teamstation-e2e/legacy/_stack'
-  )
+  return join(homedir(), '.teamstation-e2e/legacy/_stack')
 }

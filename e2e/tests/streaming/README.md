@@ -4,6 +4,7 @@ The streaming suite drives a real game's live video from publishers to every kin
 
 | Scenario | What it shows | Video | Watchers | Minutes |
 | --- | --- | --- | --- | --- |
+| `streaming/basic/four-synthetic#scrub` | **Start here.** 30 minutes of live viewing and scrubbing: every angle moving, recovering within 10 s of each scrub and aligned within a second; every frame Chrome presents; memory per process | four synthetic | iPhone, Android, Chrome, TV, iPhone Safari (one angle) | 35 |
 | `streaming/soak/two-hour#six-surfaces` | Two hours of scrubs, skips, slow motion, cuts, re-entries and relaunches on every surface, with gates and memory per process | two phones and one synthetic camera | iPhone (app and Safari), Android, iPad, TV, Chrome | 135 |
 | `streaming/targeted/gap-seek#paused` | A paused seek into a camera's missing footage; resuming; a skip before the take | three synthetic | iPhone, Android, iPad, Chrome | 15 |
 | `streaming/targeted/angle-ends#finished-game` | A camera that ends; seeking the finished game | three synthetic | iPhone, Android, iPad, Chrome | 12 |
@@ -13,6 +14,10 @@ The streaming suite drives a real game's live video from publishers to every kin
 | `streaming/targeted/cold-join#grid-opens` | A cold start opening the live grid, five times per watcher | three synthetic | iPhone, Android, iPad, Chrome | 20 |
 | `streaming/targeted/owner-panel#unanswered-read` | The owner's camera panel after a read that is never answered | three synthetic | Chrome (as the owner) | 6 |
 | `streaming/targeted/tv#cameras` | TeamStation TV from a cold start: sign-in, four cameras, skips, an outage, an ended camera | four synthetic | TV | 12 |
+
+## The basic soak
+
+`streaming/basic/four-synthetic#scrub` is the suite's baseline: four synthetic cameras publish steadily (no cuts, no network shaping) and five watchers (the develop app on an iPhone and an Android phone, Chrome, TeamStation TV, and Safari on a second iPhone watching one angle, SynthA, in the game page's own player) each get a scrub every two minutes, staggered, cycling scrub back, scrub to live, rapid scrub and Jump to present. Every 30 s each watcher is looked at. Chrome also logs every frame it presents (`requestVideoFrameCallback`), reading each frame's burned-in clock in the page (`chromeFrames.ts`), so stalls and frozen pictures are found to the frame. A look whose motion cannot be told (the TV when its NDI picture is unavailable) is blocked, not failed; a missing player or a notice on a tile still fails it. Each step's screenshot is numbered, so repeated steps keep theirs. Safari's single player names no bounds, so it is found on the screenshot by the frame's burned-in ink (`findPicture` in `clockReader.ts`). A TV that never gets past signing in fails that step and the run goes on without it; the TV needs its HDMI output (the bench's NDI encoder) to draw, and with none connected its screenshots are empty. Its report is `basic-report.md` in the run directory; the raw frames are `chrome-frames.jsonl`. `SOAK_MINUTES` shortens it for a dry run, and `BASIC_WATCHERS` (a comma list, such as `iphone,android,chrome,safari`) leaves out a watcher the bench cannot offer. Safari is only looked at, never scrubbed: its single player has no full-screen transport.
 
 ## Which claims each targeted scenario tests
 
@@ -47,7 +52,7 @@ Not tested here: TV01 (needs more than four cameras; runs use at most four), IOS
 ```sh
 npm run -s e2e -- run 'streaming/targeted/<behaviour>#<scenario>' --surface web-chromium \
   --stack <stack id> \
-  --device iphone=<udid> --device android=<serial> --device ipad=<udid> --device tv=<udid> \
+  --device iphone=<udid> --device android=<serial> --device ipad=<udid> --device tv=<udid> --device safari=<udid> \
   --run-dir ~/tmp/<run>
 ```
 
@@ -55,7 +60,7 @@ Pass the `--device` roles the scenario's watchers need (the table above); Chrome
 
 ## Reading a run
 
-A targeted run's directory holds:
+A basic or targeted run's directory holds `basic-report.md` (basic soak only), and:
 
 - `targeted.jsonl`: one line per step, with the surface, what was expected, what was observed (each tile moving or still, the moment its clock shows, its notice) and the verdict (`passed`, `failed`, `blocked`), and the step's screenshot;
 - `targeted-summary.json`: each watcher's verdict;
@@ -68,7 +73,8 @@ The scenario passes when no watcher failed a step, and is blocked when every wat
 ## Where the code is
 
 - `e2e/rigs/streaming/streamingSession.ts`: the world, sign-in, device attach and the TV, shared by the soak and the targeted scenarios.
-- `e2e/rigs/streaming/targeted.ts`: the targeted runner; `targetedScenarios.ts`: the eight scenarios' steps; `targetedSpec.ts`: how each becomes a suite scenario.
+- `e2e/rigs/streaming/basicSoak.ts`: the basic soak; `chromeFrames.ts`: Chrome's every-frame log and its analysis.
+- `e2e/rigs/streaming/targeted.ts`: the runner both the basic soak and the targeted scenarios use; `targetedScenarios.ts`: the eight scenarios' steps; `targetedSpec.ts`: how each becomes a suite scenario.
 - `e2e/rigs/streaming/soakWiring.ts`, `soakRun.ts`, `soakSchedule.ts`, `soakGates.ts`, `soakMemory.ts`, `soakReport.ts`: the soak.
 - `e2e/rigs/streaming/surfaces/`: the watcher drivers (maestro-d for the apps, Safari and Chrome; the remote helper for the TV).
 - `e2e/rigs/streaming/syntheticPublisher.ts`, `syntheticFrames.ts`, `clockReader.ts`: the simulated camera and reading it back.

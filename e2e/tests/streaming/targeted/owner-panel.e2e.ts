@@ -1,3 +1,5 @@
+import { expect } from 'chai'
+
 import { ownerPanel } from '../../../rigs/streaming/targetedScenarios'
 import { defineTargeted } from '../../../rigs/streaming/targetedSpec'
 
@@ -12,5 +14,8 @@ export default defineTargeted({
     "The owner's camera panel shows a camera ended after one of its reads went unanswered for 90 s, without a reload",
   minutes: 6,
   covers: ['src/app/stream/**'],
-  steps: ownerPanel
+  steps: ownerPanel,
+  judge: ({ failed, steps }) => {
+    expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])
+  }
 })

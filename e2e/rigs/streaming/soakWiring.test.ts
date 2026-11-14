@@ -412,6 +412,7 @@ function partsRig(): {
     },
     deviceKit: () => ({
       attachIos: async role => device(role),
+      attachSafari: async role => device(role),
       attachAndroid: async role => device(role),
       openIn: (role, platform) => async () => {
         log.push(`open ${role} ${platform}`)

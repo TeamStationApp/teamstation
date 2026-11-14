@@ -14,7 +14,8 @@ describe('a targeted scenario as the suite runs it', function () {
       title: 'A paused seek into a hole',
       minutes: 15,
       covers: ['src/app/player/**'],
-      steps: gapSeek
+      steps: gapSeek,
+      judge: () => {}
     })
     expect(specProblems(spec)).deep.equals([])
     expect(spec.id).equals('streaming/targeted/gap-seek')
@@ -31,13 +32,17 @@ describe('a targeted scenario as the suite runs it', function () {
   })
 
   it('needs an Apple TV for the TV, and runs the scenario on the attached stack', async function () {
+    const judged: unknown[] = []
     const spec = defineTargeted({
       behaviour: 'tv',
       scenario: 'four-cameras',
       title: 'The TV with four cameras',
       minutes: 20,
       covers: ['src/app/tv/**'],
-      steps: tvCameras
+      steps: tvCameras,
+      judge: outcome => {
+        judged.push(outcome)
+      }
     })
     expect(spec.surfaces['web-chromium']!.devices).deep.equals([
       { role: 'tv', needs: ['apple-tv'], hardware: 'required' }
@@ -51,5 +56,7 @@ describe('a targeted scenario as the suite runs it', function () {
     )
     expect(error).instanceOf(BlockedError)
     expect(error!.message).contains('needs an attached stack')
+    // A run that never got going is not judged.
+    expect(judged).deep.equals([])
   })
 })
