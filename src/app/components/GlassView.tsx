@@ -3,7 +3,7 @@ import { View } from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import { tsDark } from '../theme/tsDark'
-import { canBlur, glassStyle } from './glass'
+import { canBlur, glassStyle, webStyle } from './glass'
 import type { GlassViewProps } from './glassViewProps'
 
 export type { GlassViewProps }
@@ -24,6 +24,7 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
     fallbackFill = true,
     dark = false,
     backdropBlur: _backdropBlur,
+    subtleBlur = false,
     ...rest
   } = props
   const appTheme = useTheme()
@@ -33,7 +34,18 @@ export function GlassView(props: GlassViewProps): React.ReactElement {
   // browser *can* blur there is no fallback to skip, so nothing changes.
   const plain = !fallbackFill && !opaque && !canBlur
   return (
-    <View {...rest} style={[style, !plain && glassStyle(theme, opaque)]}>
+    <View
+      {...rest}
+      style={[
+        style,
+        subtleBlur && !opaque && canBlur
+          ? webStyle({
+              backdropFilter: 'blur(8px)',
+              WebkitBackdropFilter: 'blur(8px)'
+            })
+          : !plain && glassStyle(theme, opaque)
+      ]}
+    >
       {children}
     </View>
   )

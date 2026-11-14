@@ -107,7 +107,7 @@ describe('live-pitch', function () {
     expect(answer.keys).deep.equals([
       'edits',
       'currentPlay',
-      'scoringUpdates',
+      'scoringAuthorship',
       'scoringMutation',
       'lineupsDigest',
       'playsDigest',

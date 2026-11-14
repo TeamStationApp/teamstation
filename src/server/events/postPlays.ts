@@ -14,6 +14,12 @@ import type {
   GumboPlay,
   PostEventsBody
 } from '../../common/gumboPlay'
+import type { ScoringAction } from '../../common/scoring/actions'
+import {
+  type ScoringAuthorship,
+  stampAuthorship,
+  storedAuthorship
+} from '../../common/scoring/authorship'
 import {
   FINAL_INDEX,
   recordOf,
@@ -35,12 +41,6 @@ import {
 import type { StoredGame } from '../../common/scoring/session'
 import { pregameRecord } from '../../common/scoring/sideSwap'
 import { withoutNames } from '../../common/scoring/storedNames'
-import {
-  SCORING_UPDATE_LIMIT,
-  type ScoringUpdate,
-  scoringUpdateLines,
-  storedScoringUpdates
-} from '../../common/scoring/updates'
 import { teamsOfRow } from '../../common/teamLists'
 import { lockPlayerEdits } from '../admin/people'
 import type { ValkeyCache } from '../cache/valkeyCache'
@@ -81,7 +81,7 @@ import {
   upsertGameEvents
 } from './eventWrite'
 import { radarReadings, scheduleRadarRefresh } from './radarSpeeds'
-import { namedScoringUpdates } from './scoringUpdates'
+import { namedScoringAuthorship } from './scoringAuthorship'
 import {
   keepLineups,
   storedLineupGame,
@@ -109,7 +109,7 @@ export type PostAnswer = 'edits' | 'all'
 
 /** What every post's answer says of the game it leaves. */
 export interface PostedDigests {
-  scoringUpdates?: ScoringUpdate[]
+  scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
   superseded?: boolean
   /**
@@ -304,6 +304,7 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         'lineups_digest',
         'play_generation',
         'scoring_mutation',
+        'scoring_authorship',
         // The rest of what a list shows of the game (`listFieldsChanged`).
         'linescore',
         'start_at',
@@ -442,9 +443,9 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
         lineupsDigest: lineupsBefore,
         generation: game.play_generation,
         scoringMutation: priorMutation,
-        scoringUpdates: await namedScoringUpdates(
+        scoringAuthorship: await namedScoringAuthorship(
           trx,
-          game.scoring_mutation,
+          game.scoring_authorship,
           options.answer === 'edits' ? undefined : options.listFullNamesFor
         ),
         superseded: !equal
@@ -854,45 +855,50 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     const status = live
       ? statusAfterLivePost(game.status, stored, hasStarted)
       : statusAfterPost(game.status, posted, hasStarted)
-    const scoringUpdates = storedScoringUpdates(game.scoring_mutation)
-    if (
-      live &&
-      system === 'teamstation' &&
-      options.scoringUserId != null &&
-      acceptedMutation != null
-    ) {
-      const lines = scoringUpdateLines(
-        [
-          ...priorRows.map(row => row.gumbo as GumboPlay),
-          priorCurrent as CurrentPlay | null
-        ],
-        [
-          ...stored.map(row => row.gumbo as GumboPlay),
-          currentPlay as CurrentPlay | null
-        ]
-      )
-      if (lines.length > 0) {
-        scoringUpdates.push({
-          id: randomUUID(),
-          sequence: (scoringUpdates.at(-1)?.sequence ?? 0) + 1,
-          userId: options.scoringUserId,
-          lines
-        })
-        scoringUpdates.splice(
-          0,
-          Math.max(0, scoringUpdates.length - SCORING_UPDATE_LIMIT)
-        )
+    // Who added each stored action, kept beside the records with every write.
+    const recordsByAtBat = (
+      plays: readonly unknown[]
+    ): Map<number, ScoringAction[]> => {
+      const out = new Map<number, ScoringAction[]>()
+      for (const play of plays) {
+        const index = (play as Partial<GumboPlay> | null)?.about?.atBatIndex
+        const record = storedRecordOf(play)
+        if (typeof index === 'number' && record != null)
+          out.set(index, [...record.actions])
       }
+      return out
     }
+    const priorAuthorship = storedAuthorship(game.scoring_authorship)
+    // The at-bat in progress as readers see it, before the first pitch the
+    // stored pregame lineups, so their authors carry over like any other.
+    const scoringAuthorship = stampAuthorship(
+      priorAuthorship,
+      recordsByAtBat([
+        ...priorRows.map(row => row.gumbo),
+        atBatOf(game, priorRows.length > 0)
+      ]),
+      recordsByAtBat([
+        ...stored.map(row => row.gumbo),
+        live && body.currentPlay !== undefined
+          ? currentPlay
+          : atBatOf(game, stored.length > 0)
+      ]),
+      live && system === 'teamstation' ? options.scoringUserId : undefined,
+      randomUUID
+    )
+    const authorshipMoved =
+      JSON.stringify(scoringAuthorship) !== JSON.stringify(priorAuthorship)
     await trx
       .updateTable('games')
       .set({
+        ...(authorshipMoved
+          ? { scoring_authorship: { ...scoringAuthorship } }
+          : {}),
         ...(acceptedMutation == null
           ? {}
           : {
               scoring_mutation: {
                 ...acceptedMutation,
-                updates: scoringUpdates,
                 fingerprint:
                   mutation != null || authorsScoring
                     ? fingerprint
@@ -989,16 +995,15 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     )
     const editsOf = (named: NamedPlays): PlayEdit[] =>
       playEditsOf(taggedStored, named, removed, sides)
+    const answeredAuthorship = await namedScoringAuthorship(
+      trx,
+      scoringAuthorship,
+      options.answer === 'edits' ? undefined : options.listFullNamesFor
+    )
     const digests: PostedDigests = {
-      ...(scoringUpdates.length === 0
+      ...(answeredAuthorship == null
         ? {}
-        : {
-            scoringUpdates: await namedScoringUpdates(
-              trx,
-              { updates: scoringUpdates },
-              options.answer === 'edits' ? undefined : options.listFullNamesFor
-            )
-          }),
+        : { scoringAuthorship: answeredAuthorship }),
       ...(acceptedMutation == null
         ? {}
         : { scoringMutation: acceptedMutation }),

@@ -40,7 +40,7 @@ import { drain } from '../statsBuilder/builder'
 import { atBatOf } from './atBatInProgress'
 import { pregameFold } from './currentPlay'
 import { gamePlaysDigest, postGamePlays, readPlays } from './postPlays'
-import { namedScoringUpdates } from './scoringUpdates'
+import { namedScoringAuthorship } from './scoringAuthorship'
 import { storedLineupsDigest } from './teamLineups'
 
 describe('scoring mutation ordering', function () {
@@ -835,8 +835,12 @@ describe('scoring mutation ordering', function () {
         plays,
         currentPlay: atBatOf(game, plays.length > 0) as CurrentPlay | null
       })
+      const scoringAuthorship = await namedScoringAuthorship(
+        db,
+        game.scoring_authorship
+      )
       return {
-        scoringUpdates: await namedScoringUpdates(db, game.scoring_mutation),
+        ...(scoringAuthorship == null ? {} : { scoringAuthorship }),
         plays: resolveNames
           ? plays.map(play =>
               withNames(play, id => context.setup.players[id]?.fullName)
@@ -2221,7 +2225,7 @@ describe('scoring mutation ordering', function () {
     )
   })
 
-  it('resolves renamed and merged update authors without persisting names', async () => {
+  it('resolves renamed and merged authors for each reader without persisting names', async () => {
     const { open, load, gameId, hooks, requests } = await sessions()
     await insertFixtureUsers(db, [
       {
@@ -2237,11 +2241,13 @@ describe('scoring mutation ordering', function () {
         last_name: 'Betts'
       }
     ])
+    const nameOf = (game: StoredGame): string =>
+      Object.values(game.scoringAuthorship!.names)[0]
     hooks.scoringUserId = userIdOfGumbo(900001)
     const scorer = await open()
     apply(scorer, { type: 'pitch', call: 'B' })
     await scorer.flush()
-    expect((await load()).scoringUpdates![0].name).equals('Mike T')
+    expect(nameOf(await load())).equals('Mike T')
     for (const answer of ['all', 'edits'] as const) {
       const body = asPostEventsBody({
         ...requests[0],
@@ -2265,7 +2271,7 @@ describe('scoring mutation ordering', function () {
             listFullNamesFor: { userId: hooks.scoringUserId, isAdmin: true }
           }
         )
-        expect(posted.scoringUpdates![0].name).equals(
+        expect(Object.values(posted.scoringAuthorship!.names)[0]).equals(
           answer === 'edits' ? 'Mike T' : 'Mike Trout'
         )
       }
@@ -2279,26 +2285,218 @@ describe('scoring mutation ordering', function () {
       })
       .where('id', '=', hooks.scoringUserId)
       .execute()
-    expect((await load()).scoringUpdates![0].name).equals('Aaron J')
+    expect(nameOf(await load())).equals('Aaron J')
     await db
       .updateTable('users')
       .set({ merged_into: userIdOfGumbo(900002) })
       .where('id', '=', hooks.scoringUserId)
       .execute()
-    expect((await load()).scoringUpdates![0].name).equals('Mookie B')
-    expect((await load()).scoringUpdates![0].userId).equals(
+    expect(nameOf(await load())).equals('Mookie B')
+    expect((await load()).scoringAuthorship!.plays['0'][0]).equals(
       userIdOfGumbo(900002)
     )
     const raw = await db
       .selectFrom('games')
-      .select('scoring_mutation')
+      .select(['scoring_mutation', 'scoring_authorship'])
       .where('id', '=', gameId)
       .executeTakeFirstOrThrow()
-    expect(JSON.stringify(raw.scoring_mutation)).not.matches(
+    expect(JSON.stringify(raw)).not.matches(
       /Mike|Trout|Aaron|Judge|Mookie|Betts|"name"/
     )
   })
-  it('keeps accepted authors and Undo descriptions across retries, stale conflicts and reload', async () => {
+  it('credits each scorer with the actions their accepted saves added', async () => {
+    const { open, load, hooks } = await sessions()
+    const actors = await db.selectFrom('users').select('id').limit(2).execute()
+    const a = await open()
+    hooks.scoringUserId = actors[0].id
+    apply(a, { type: 'pitch', call: 'B' })
+    await a.flush()
+    const b = await open()
+    hooks.scoringUserId = actors[1].id
+    apply(b, { type: 'pitch', call: 'C' })
+    await b.flush()
+    hooks.scoringUserId = actors[0].id
+    await a.reload()
+    apply(a, { type: 'pitch', call: 'B' })
+    await a.flush()
+    const read = await load()
+    expect(read.scoringAuthorship!.plays['0']).deep.equals([
+      actors[0].id,
+      actors[1].id,
+      actors[0].id
+    ])
+    const observer = await open()
+    expect(observer.accepted!.authors).deep.equals([
+      actors[0].id,
+      actors[1].id,
+      actors[0].id
+    ])
+    expect(observer.accepted!.actions).lengthOf(3)
+    expect(observer.accepted!.state).equals(observer.state)
+  })
+  it('keeps each pregame lineup edit’s author through the first pitch', async () => {
+    const { open, load, hooks } = await sessions()
+    const actors = await db.selectFrom('users').select('id').limit(2).execute()
+    const edit = async (userId: string | undefined): Promise<void> => {
+      hooks.scoringUserId = userId
+      const editor = await open()
+      const setup = setupOf(editor.state)
+      ;[setup.sides.away.battingOrder[1], setup.sides.away.battingOrder[2]] = [
+        setup.sides.away.battingOrder[2],
+        setup.sides.away.battingOrder[1]
+      ]
+      apply(editor, {
+        type: 'lineup',
+        kind: 'roster',
+        side: 'away',
+        setup,
+        keepSlot: true
+      })
+      await editor.flush()
+    }
+    // Before the first pitch the at-bat is the stored pregame lineups.
+    await edit(actors[1].id)
+    await edit(undefined)
+    expect((await load()).scoringAuthorship!.plays['0']).deep.equals([
+      actors[1].id,
+      null
+    ])
+    hooks.scoringUserId = actors[0].id
+    const scorer = await open()
+    apply(scorer, { type: 'pitch', call: 'B' })
+    await scorer.flush()
+    expect((await load()).scoringAuthorship!.plays['0']).deep.equals([
+      actors[1].id,
+      null,
+      actors[0].id
+    ])
+  })
+  it('stamps a superseded scorer only for what it saves after its rebase', async () => {
+    const { open, load, hooks } = await sessions()
+    const actors = await db.selectFrom('users').select('id').limit(2).execute()
+    const a = await open()
+    const b = await open()
+    hooks.scoringUserId = actors[0].id
+    apply(a, { type: 'pitch', call: 'C' })
+    await a.flush()
+    // b pitched from the same version: the first accepted pitch stands, and
+    // b's competing pitch is dropped by its rebase, credited to nobody.
+    hooks.scoringUserId = actors[1].id
+    apply(b, { type: 'pitch', call: 'B' })
+    await b.flush()
+    expect((await load()).scoringAuthorship!.plays['0']).deep.equals([
+      actors[0].id
+    ])
+    // The rebase's read reached the superseded session's accepted picture.
+    expect(b.accepted!.authors).deep.equals([actors[0].id])
+    apply(b, { type: 'pitch', call: 'B' })
+    await b.flush()
+    expect((await load()).scoringAuthorship!.plays['0']).deep.equals([
+      actors[0].id,
+      actors[1].id
+    ])
+  })
+  it('records an Undo as a removal by the scorer who made it', async () => {
+    const { open, load, hooks } = await sessions()
+    const actors = await db.selectFrom('users').select('id').limit(2).execute()
+    const a = await open()
+    hooks.scoringUserId = actors[0].id
+    apply(a, { type: 'pitch', call: 'B' })
+    apply(a, { type: 'pitch', call: 'C' })
+    await a.flush()
+    // Only a read confirms what a's own save left: its plays are unchanged,
+    // so the reload takes up just the authorship.
+    expect(a.accepted!.actions).lengthOf(0)
+    await a.reload()
+    expect(a.accepted!.authors).deep.equals([actors[0].id, actors[0].id])
+    const b = await open()
+    hooks.scoringUserId = actors[1].id
+    expect(b.undo().problems).deep.equals([])
+    await b.flush()
+    const authorship = (await load()).scoringAuthorship!
+    expect(authorship.plays['0']).deep.equals([actors[0].id])
+    expect(authorship.removals).lengthOf(1)
+    expect(authorship.removals[0]).include({
+      userId: actors[1].id,
+      atBatIndex: 0
+    })
+    expect(authorship.removals[0].actions).deep.equals([
+      { type: 'pitch', call: 'C' }
+    ])
+    // Nothing moved in a's plays but the removal: a reload still tells it.
+    hooks.scoringUserId = actors[0].id
+    const seen = a.accepted
+    await a.reload()
+    expect(a.accepted).not.equals(seen)
+    expect(a.accepted!.removals.map(removal => removal.userId)).deep.equals([
+      actors[1].id
+    ])
+    // The surviving Ball keeps its object across the reload.
+    expect(a.accepted!.actions[0]).equals(seen!.actions[0])
+  })
+  it('keeps alignment through a write no scorer makes', async () => {
+    const { open, load, hooks, gameId, requests } = await sessions()
+    const actors = await db.selectFrom('users').select('id').limit(1).execute()
+    hooks.scoringUserId = actors[0].id
+    const a = await open()
+    apply(a, { type: 'pitch', call: 'B' })
+    await a.flush()
+    hooks.scoringUserId = undefined
+    const coach = await open()
+    apply(coach, { type: 'pitch', call: 'C' })
+    await coach.flush()
+    const authorship = (await load()).scoringAuthorship!
+    expect(authorship.plays['0']).deep.equals([actors[0].id, null])
+    expect(authorship.removals).deep.equals([])
+    const raw = await db
+      .selectFrom('games')
+      .select('scoring_authorship')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(JSON.stringify(raw.scoring_authorship)).not.matches(/"lines"|Ball/)
+    expect(requests.length).greaterThan(0)
+  })
+  it('names merged authors by their survivors without storing a name', async () => {
+    const { open, load, hooks, gameId } = await sessions()
+    await insertFixtureUsers(db, [
+      {
+        id: 900011,
+        display_name: 'Ann Alpha',
+        first_name: 'Ann',
+        last_name: 'Alpha'
+      },
+      {
+        id: 900012,
+        display_name: 'Bea Beta',
+        first_name: 'Bea',
+        last_name: 'Beta'
+      }
+    ])
+    hooks.scoringUserId = userIdOfGumbo(900011)
+    const a = await open()
+    apply(a, { type: 'pitch', call: 'B' })
+    await a.flush()
+    expect((await load()).scoringAuthorship!.names).deep.equals({
+      [userIdOfGumbo(900011)]: 'Ann A'
+    })
+    await db
+      .updateTable('users')
+      .set({ merged_into: userIdOfGumbo(900012) })
+      .where('id', '=', userIdOfGumbo(900011))
+      .execute()
+    const read = (await load()).scoringAuthorship!
+    expect(read.plays['0']).deep.equals([userIdOfGumbo(900012)])
+    expect(read.names).deep.equals({ [userIdOfGumbo(900012)]: 'Bea B' })
+    const raw = await db
+      .selectFrom('games')
+      .select('scoring_authorship')
+      .where('id', '=', gameId)
+      .executeTakeFirstOrThrow()
+    expect(JSON.stringify(raw.scoring_authorship)).not.matches(
+      /Ann|Alpha|Bea|Beta|"name"/
+    )
+  })
+  it('keeps accepted authors and removals across retries, stale conflicts and reload', async () => {
     const { open, load, gameId, hooks, requests } = await sessions()
     const actors = await db.selectFrom('users').select('id').limit(2).execute()
     const a = await open()
@@ -2306,9 +2504,6 @@ describe('scoring mutation ordering', function () {
     hooks.scoringUserId = actors[0].id
     apply(a, { type: 'pitch', call: 'B' })
     await a.flush()
-    expect(a.scoringUpdates).length(1)
-    expect(a.scoringUpdates[0].userId).equals(actors[0].id)
-    expect(a.scoringUpdates[0].lines).deep.equals(['Top 1: Ball'])
     const retry = asPostEventsBody({
       ...requests[0],
       mode: 'live',
@@ -2318,27 +2513,32 @@ describe('scoring mutation ordering', function () {
       scoringAuthor: true,
       scoringUserId: actors[0].id
     })
-    expect((await load()).scoringUpdates).length(1)
+    // A retried request credits nobody twice.
+    expect((await load()).scoringAuthorship!.plays['0']).deep.equals([
+      actors[0].id
+    ])
     hooks.scoringUserId = actors[1].id
     apply(stale, { type: 'pitch', call: 'C' })
     await stale.flush()
-    expect((await load()).scoringUpdates).length(1)
-    expect(stale.scoringUpdates[0].userId).equals(actors[0].id)
+    // The stale pitch is dropped by its rebase and credits nobody.
+    expect((await load()).scoringAuthorship!.plays['0']).deep.equals([
+      actors[0].id
+    ])
     const b = await open()
     apply(b, { type: 'pitch', call: 'C' })
     await b.flush()
     b.undo()
     await b.flush()
-    const updates = (await load()).scoringUpdates!
-    expect(updates.map(update => update.userId)).deep.equals([
-      actors[0].id,
-      actors[1].id,
-      actors[1].id
+    const authorship = (await load()).scoringAuthorship!
+    expect(authorship.plays['0']).deep.equals([actors[0].id])
+    expect(
+      authorship.removals.map(removal => [removal.userId, removal.sequence])
+    ).deep.equals([[actors[1].id, 1]])
+    expect(authorship.removals[0].actions).deep.equals([
+      { type: 'pitch', call: 'C' }
     ])
-    expect(updates.at(-1)!.lines).deep.equals(['Undo — Top 1: Called strike'])
-    expect(updates.map(update => update.sequence)).deep.equals([1, 2, 3])
     await a.reload()
-    expect(a.scoringUpdates).deep.equals(updates)
+    expect(a.accepted!.removals).deep.equals(authorship.removals)
   })
 
   it('clears the ordering barrier on reset and refuses the old generation', async () => {

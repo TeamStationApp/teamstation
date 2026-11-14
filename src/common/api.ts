@@ -141,6 +141,7 @@ import {
   type Problem,
   type ScoringAction
 } from './scoring/actions'
+import { asScoringAuthorship } from './scoring/authorship'
 import type { BoardLine } from './scoring/boardLineTypes'
 import {
   asDefaultLineup,
@@ -169,7 +170,6 @@ import type {
 } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import { SCORING_FEATURE_HEADER, SCORING_FEATURES } from './scoring/teamRecord'
-import { asScoringUpdates, type ScoringUpdate } from './scoring/updates'
 import {
   asScheduleSetup,
   asSeasonScheduleSettings,
@@ -1587,7 +1587,7 @@ export type RosterEntry = Omit<
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
-  scoringUpdates: asOptional(asScoringUpdates),
+  scoringAuthorship: asOptional(asScoringAuthorship),
   scoringMutation: asOptional(asNullable(asScoringMutation)),
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
@@ -1619,9 +1619,9 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     stored.readerNames
   )
   return {
-    ...(stored.scoringUpdates == null
+    ...(stored.scoringAuthorship == null
       ? {}
-      : { scoringUpdates: stored.scoringUpdates }),
+      : { scoringAuthorship: stored.scoringAuthorship }),
     ...(stored.scoringMutation == null
       ? {}
       : { scoringMutation: stored.scoringMutation }),
@@ -1650,7 +1650,6 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
  * the game was left with, each only when the answer has it.
  */
 export interface PostedEdits {
-  scoringUpdates?: ScoringUpdate[]
   scoringMutation?: ScoringMutation
   superseded?: boolean
   playsDigest?: string
@@ -1660,7 +1659,6 @@ export interface PostedEdits {
 }
 
 const asPostedFields = asObject({
-  scoringUpdates: asOptional(asScoringUpdates),
   scoringMutation: asOptional(asNullable(asScoringMutation)),
   superseded: asOptional(asBoolean),
   playsDigest: asOptional(asNullable(asString)),
@@ -1682,9 +1680,6 @@ const asPostedFields = asObject({
 export function asPostedEdits(raw: unknown): PostedEdits {
   const posted = asPostedFields(raw)
   return {
-    ...(posted.scoringUpdates == null
-      ? {}
-      : { scoringUpdates: posted.scoringUpdates }),
     ...(posted.scoringMutation == null
       ? {}
       : { scoringMutation: posted.scoringMutation }),

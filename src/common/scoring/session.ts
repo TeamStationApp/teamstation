@@ -11,9 +11,15 @@ import {
   tagTargets
 } from '../eventTags'
 import type { CurrentPlay, GumboPlay } from '../gumboPlay'
+import { actionFingerprint, actionKey } from './actionChain'
 import type { Problem, ScoringAction } from './actions'
 import { keyOf, matchTimes, REPLACED_KEEPS_TIME_MS } from './actionTimes'
 import { type Applied, applyAction } from './apply'
+import {
+  alignAuthors,
+  type RemovalRecord,
+  type ScoringAuthorship
+} from './authorship'
 import { fenceOf, foldInputsOf, type PlayFolder } from './document'
 import {
   FINAL_INDEX,
@@ -49,7 +55,6 @@ import {
   type Side
 } from './state'
 import { namesIn, withoutNames } from './storedNames'
-import type { ScoringUpdate } from './updates'
 
 /** The identities and positions to which an authored play gives credit. */
 function attributionOf(play: GamePlay): string {
@@ -131,7 +136,8 @@ export function upcoming(session: GameState): {
 }
 
 export interface StoredGame {
-  scoringUpdates?: ScoringUpdate[]
+  /** Who authored each stored action, and who removed which (`authorship`). */
+  scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
   superseded?: boolean
   plays: GumboPlay[]
@@ -494,9 +500,58 @@ export function storedChange(change: SaveChange): SaveChange {
   }
 }
 
+/**
+ * The history the server last confirmed, as this session read it: the
+ * actions on `opening` that make `state`, who authored each, and the
+ * removals it records. Never this session's unsaved actions.
+ */
+export interface AcceptedPicture {
+  opening: GameState
+  actions: readonly ScoringAction[]
+  authors: ReadonlyArray<string | null>
+  state: GameState
+  removals: readonly RemovalRecord[]
+  names: Readonly<Record<string, string>>
+}
+
+/** Whether two pictures hold the same actions, authors and removals. */
+function sameAccepted(
+  a: AcceptedPicture | undefined,
+  b: AcceptedPicture | undefined
+): boolean {
+  if (a == null || b == null) return a === b
+  if (
+    a.actions.length !== b.actions.length ||
+    a.removals.length !== b.removals.length ||
+    a.removals.some((removal, i) => removal.id !== b.removals[i].id) ||
+    JSON.stringify(a.names) !== JSON.stringify(b.names)
+  )
+    return false
+  return a.actions.every(
+    (action, i) =>
+      actionKey(action, a.authors[i]) === actionKey(b.actions[i], b.authors[i])
+  )
+}
+
+/** `next`, keeping `previous`'s object for each unchanged action. */
+function reusedActions(
+  previous: AcceptedPicture | undefined,
+  next: AcceptedPicture | undefined
+): AcceptedPicture | undefined {
+  if (previous == null || next == null) return next
+  const actions = next.actions.map((action, i) => {
+    const before = previous.actions[i]
+    return before != null &&
+      actionFingerprint(before) === actionFingerprint(action)
+      ? before
+      : action
+  })
+  return { ...next, actions }
+}
+
 export class ScoringSession {
   /** Server-accepted descriptions, never synthesized by optimistic writes. */
-  scoringUpdates: readonly ScoringUpdate[] = []
+  private acceptedPicture: AcceptedPicture | undefined
   private mutationPending = false
   private knownMutation: ScoringMutation | undefined
   private authoredMutation: ScoringMutation | undefined
@@ -837,7 +892,6 @@ export class ScoringSession {
           },
       options
     )
-    session.scoringUpdates = loaded.scoringUpdates ?? []
     session.knownMutation = loaded.scoringMutation
     session.context = loaded.context ?? context
     session.lineupsBase = loaded.lineupsDigest
@@ -885,6 +939,21 @@ export class ScoringSession {
     session.rebuild()
     if (replayed.problems.length === 0) session.reconcileCurrent()
     session.savedLog = [...session.log]
+    session.acceptedPicture = {
+      opening: session.base,
+      actions: session.savedLog,
+      authors: alignAuthors(
+        replayed.segments.map(segment => ({
+          atBatIndex: segment.atBatIndex,
+          count: segment.actions.length
+        })),
+        loaded.scoringAuthorship?.plays,
+        session.savedLog.length
+      ),
+      state: session.game,
+      removals: loaded.scoringAuthorship?.removals ?? [],
+      names: loaded.scoringAuthorship?.names ?? {}
+    }
     session.savedTimes = [...session.actionTimes]
     session.savedPlaybackTimes = [...session.playbackTimes]
     for (const play of loaded.plays)
@@ -903,6 +972,11 @@ export class ScoringSession {
 
   get state(): GameState {
     return this.game
+  }
+
+  /** The last server-confirmed history (`AcceptedPicture`), once read. */
+  get accepted(): AcceptedPicture | undefined {
+    return this.acceptedPicture
   }
 
   /** Every action this session has applied, in order. */
@@ -1574,9 +1648,16 @@ export class ScoringSession {
       // An acknowledgment or competing reload can land during the read.
       if (snapshot === this.tagSnapshot) break
     }
-    const updatesMoved =
-      this.scoringUpdates.at(-1)?.id !== fresh.scoringUpdates.at(-1)?.id
-    this.scoringUpdates = fresh.scoringUpdates
+    // Plays unchanged, but who is credited with them, or a removal, moved.
+    const authorshipMoved = !sameAccepted(
+      this.acceptedPicture,
+      fresh.acceptedPicture
+    )
+    if (authorshipMoved)
+      this.acceptedPicture = reusedActions(
+        this.acceptedPicture,
+        fresh.acceptedPicture
+      )
     this.knownMutation = fresh.knownMutation
     this.lineupsBase = fresh.lineupsBase
     this.heldPlays = fresh.heldPlays
@@ -1591,7 +1672,7 @@ export class ScoringSession {
       JSON.stringify(fresh.game) === JSON.stringify(this.game) &&
       JSON.stringify(fresh.eventTargets) === JSON.stringify(this.eventTargets)
     ) {
-      if (swapMoved || updatesMoved) this.notify()
+      if (swapMoved || authorshipMoved) this.notify()
       return false
     }
     this.adopt(fresh)
@@ -1601,7 +1682,10 @@ export class ScoringSession {
 
   /** Takes up everything `fresh`, a new read of the same game, holds. */
   private adopt(fresh: ScoringSession): void {
-    this.scoringUpdates = fresh.scoringUpdates
+    this.acceptedPicture = reusedActions(
+      this.acceptedPicture,
+      fresh.acceptedPicture
+    )
     this.knownMutation = fresh.knownMutation
     this.authoredMutation = undefined
     this.unconfirmedScoring = []
@@ -2669,8 +2753,6 @@ export class ScoringSession {
       this.unconfirmedScoring = []
       if (this.authoredMutation === attempt.mutation)
         this.mutationPending = false
-      if (answer?.scoringUpdates != null)
-        this.scoringUpdates = answer.scoringUpdates
       if (answer?.scoringMutation != null)
         this.knownMutation = answer.scoringMutation
       if (answer?.lineupsDigest !== undefined) {

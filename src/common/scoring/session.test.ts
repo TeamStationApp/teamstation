@@ -2,6 +2,11 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
+  describeLogSpans,
+  newLogDescriptionCache
+} from '../../app/scoring/playDescription'
+import { readableFor } from '../../app/scoring/remoteLog'
+import {
   initialScoringState,
   scoringReducer
 } from '../../app/scoring/scoringMachine'
@@ -220,6 +225,45 @@ async function open(
 }
 
 describe('a scoring session', function () {
+  it('reads a store with no authorship as an unattributed confirmed history', async () => {
+    const { session: writer, store } = await open()
+    for (const action of [ball, strike]) writer.apply(action)
+    await writer.flush()
+    const { session } = await open(store)
+    expect(session.accepted!.actions).lengthOf(2)
+    expect(session.accepted!.authors).deep.equals([null, null])
+    expect(session.accepted!.removals).deep.equals([])
+    expect(session.accepted!.names).deep.equals({})
+    expect(session.accepted!.state).equals(session.state)
+  })
+  it('reuses remote log replay states through real reload adoption', async () => {
+    const { session: writer, store } = await open()
+    for (const action of [strike, strike, strike]) writer.apply(action)
+    writer.apply({ type: 'gameFlow', kind: 'closePlay' })
+    await writer.flush()
+    const { session: observer } = await open(store)
+    const cache = newLogDescriptionCache()
+    const spans = (
+      cached?: ReturnType<typeof newLogDescriptionCache>
+    ): ReturnType<typeof describeLogSpans> =>
+      describeLogSpans(
+        observer.opening,
+        observer.actions,
+        observer.actions.map(() => null),
+        readableFor(observer.state).readable,
+        cached
+      )
+    spans(cache)
+    const opening = observer.opening
+    const checkpoint = cache.runs!.find(run => run.to === 4)?.after
+    expect(checkpoint).not.equals(undefined)
+    writer.apply(ball)
+    await writer.flush()
+    expect(await observer.reload()).equals(true)
+    expect(observer.opening).not.equals(opening)
+    expect(spans(cache)).deep.equals(spans())
+    expect(cache.runs!.find(run => run.to === 4)?.after).equals(checkpoint)
+  })
   it('orders later local inputs after an observed version despite downward clock calibration', async () => {
     let now = 2000
     const clock = new Clock()

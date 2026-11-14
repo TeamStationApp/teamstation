@@ -16,7 +16,8 @@ import ts from 'typescript'
  * player to a dictation model, `depth` names how far a ball went, and
  * `baseOutWords` reads the words that say a fielder took a base for an out.
  * `playsLost` counts what a reset of the game would delete, as the server
- * counts it; it changes nothing.
+ * counts it; it changes nothing. `actionChain` hashes a log's actions to
+ * tell which prefix of it is unchanged; it changes nothing.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -31,7 +32,8 @@ export const APP_MAY_IMPORT = [
   'depth',
   'pitchType',
   'baseOutWords',
-  'playsLost'
+  'playsLost',
+  'actionChain'
 ]
 const LIBRARY = 'src/common/scoring'
 

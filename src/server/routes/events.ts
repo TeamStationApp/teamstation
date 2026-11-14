@@ -21,6 +21,7 @@ import {
   type GumboPlay
 } from '../../common/gumboPlay'
 import { usesOverrideSlots } from '../../common/scoring/actions'
+import type { ScoringAuthorship } from '../../common/scoring/authorship'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
 import {
@@ -32,7 +33,6 @@ import {
   SCORING_FEATURE_HEADER,
   SCORING_FEATURES
 } from '../../common/scoring/teamRecord'
-import type { ScoringUpdate } from '../../common/scoring/updates'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
@@ -61,7 +61,7 @@ import {
   type StoredPlay
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
-import { namedScoringUpdates } from '../events/scoringUpdates'
+import { namedScoringAuthorship } from '../events/scoringAuthorship'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
 import { swapOrReset } from '../games/resetSwap'
@@ -655,7 +655,7 @@ interface LivePostDigests {
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */
 interface StoredGameAnswer {
-  scoringUpdates?: ScoringUpdate[]
+  scoringAuthorship?: ScoringAuthorship
   scoringMutation?: ScoringMutation
   plays: unknown[]
   currentPlay: unknown
@@ -708,6 +708,7 @@ async function storedGameRead(
       'lineups_digest',
       'play_generation',
       'scoring_mutation',
+      'scoring_authorship',
       'status',
       'cancellation_reason'
     ])
@@ -728,13 +729,13 @@ async function storedGameRead(
     { halves: lineups, gameId, listFullNamesFor: reader }
   )
   const teams = teamsOfRow(game)
-  const scoringUpdates = await namedScoringUpdates(
+  const scoringAuthorship = await namedScoringAuthorship(
     db,
-    game.scoring_mutation,
+    game.scoring_authorship,
     reader
   )
   const answer: StoredGameAnswer = {
-    ...(scoringUpdates.length === 0 ? {} : { scoringUpdates }),
+    ...(scoringAuthorship == null ? {} : { scoringAuthorship }),
     plays: stored.map((row, index) => ({
       ...playJson(row),
       gumbo: playForWire(resolved.plays[index], teams)
