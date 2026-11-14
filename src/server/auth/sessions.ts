@@ -311,8 +311,24 @@ export async function actorsForTokens(
   return actors
 }
 
-/** Writes `last_used_at` on whichever credential this actor came through. */
-async function recordCredentialUse(
+/**
+ * How long a sign-in goes unused before its next use starts a new device
+ * session. A gap of exactly this long starts one.
+ */
+export const DEVICE_SESSION_GAP_MS = 3_600_000
+
+/**
+ * Writes `last_used_at` on whichever credential this actor came through.
+ *
+ * A sign-in is one browser or app install, so its uses are one device's. Its
+ * first use, and its first after `DEVICE_SESSION_GAP_MS` or more without
+ * one, start a device session, written in the same statement. The gap is
+ * measured from the last use written, and a use is written at most once in
+ * `USE_GRANULARITY_MS`, so it reads that much long at worst. The row lock
+ * keeps two requests at once from starting two sessions. Machine tokens and
+ * API keys are not devices, and start none.
+ */
+export async function recordCredentialUse(
   db: Kysely<Database>,
   actor: Actor,
   now: Date
@@ -324,14 +340,24 @@ async function recordCredentialUse(
       .where('id', '=', actor.apiKey.id)
       .where(staleUse(now))
       .execute()
-  else if (actor.sessionId != null)
-    await db
-      .updateTable('auth_sessions')
-      .set({ last_used_at: now })
-      .where('id', '=', actor.sessionId)
-      .where(staleUse(now))
-      .execute()
-  else if (actor.apiTokenId != null)
+  else if (actor.sessionId != null) {
+    const stale = new Date(now.getTime() - USE_GRANULARITY_MS)
+    const gap = new Date(now.getTime() - DEVICE_SESSION_GAP_MS)
+    await sql`
+      with prior as (
+        select id, user_id, last_used_at from auth_sessions
+        where id = ${actor.sessionId}
+          and (last_used_at is null or last_used_at < ${stale})
+        for update
+      ), used as (
+        update auth_sessions s set last_used_at = ${now}
+        from prior where s.id = prior.id
+        returning prior.id, prior.user_id, prior.last_used_at as before
+      )
+      insert into device_sessions (id, auth_session_id, user_id, started_at)
+      select ${makeId('deviceSession')}, id, user_id, ${now} from used
+      where before is null or before <= ${gap}`.execute(db)
+  } else if (actor.apiTokenId != null)
     await db
       .updateTable('api_tokens')
       .set({ last_used_at: now })

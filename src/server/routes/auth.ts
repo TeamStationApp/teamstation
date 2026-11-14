@@ -51,9 +51,22 @@ import { withAsync } from '../middleware/withErrors'
 import { recordOutcome } from '../observability/outcomes'
 import { gumboIdOf } from '../users/insertUser'
 
+/**
+ * What make of device a sign-in is on, as the native app reads it from the
+ * system ("iPhone", "Samsung SM-S911B", "Apple TV"). Node administrators see
+ * it in User Management; a browser sends none, and is read from its agent.
+ */
+export function asDeviceModel(raw: unknown): string {
+  const model = asString(raw).trim()
+  if (model.length < 1 || model.length > 80)
+    throw new TypeError('A device model is 1 to 80 characters')
+  return model
+}
+
 const asPasswordLogin = asObject({
   email: asString,
-  clientHash: asClientHash
+  clientHash: asClientHash,
+  deviceModel: asOptional(asDeviceModel)
 })
 
 const asCodeRequest = asObject({
@@ -82,20 +95,23 @@ const asLinkLogin = asObject({
    * The sign-in request the spender is itself polling for, when it asked for
    * this link: that request is not approved a second time.
    */
-  requestId: asOptional(asString)
+  requestId: asOptional(asString),
+  deviceModel: asOptional(asDeviceModel)
 })
 
 const asRequestClaim = asObject({
   requestId: asString,
   clientSecret: asString,
   /** Set by a device signing itself in, and it is what it will be called. */
-  deviceName: asOptional(asString)
+  deviceName: asOptional(asString),
+  deviceModel: asOptional(asDeviceModel)
 })
 
 const asCodeLogin = asObject({
   email: asString,
   code: asString,
-  deviceName: asOptional(asString)
+  deviceName: asOptional(asString),
+  deviceModel: asOptional(asDeviceModel)
 })
 
 /**
@@ -108,11 +124,20 @@ const asCodeLogin = asObject({
  */
 const DEVICE_SESSION_DAYS = 180
 
-function sessionOptionsFor(deviceName: string | undefined): {
+/**
+ * A named device lasts a season. A device model only says what the sign-in
+ * is on: it is stored where the name would be, and the session lasts what a
+ * browser's does.
+ */
+function sessionOptionsFor(
+  deviceName: string | undefined,
+  deviceModel?: string
+): {
   days?: number
   deviceName?: string
 } {
-  if (deviceName == null || deviceName.trim() === '') return {}
+  if (deviceName == null || deviceName.trim() === '')
+    return deviceModel == null ? {} : { deviceName: deviceModel }
   return { days: DEVICE_SESSION_DAYS, deviceName: deviceName.trim() }
 }
 
@@ -480,7 +505,12 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
           current.merged_into != null
         )
           throw unauthorized('Your password changed. Please sign in again')
-        return await createSession(tx, user.id, req.header('user-agent'))
+        return await createSession(
+          tx,
+          user.id,
+          req.header('user-agent'),
+          sessionOptionsFor(undefined, body.deviceModel)
+        )
       })
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
@@ -590,7 +620,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         db,
         user.id,
         req.header('user-agent'),
-        sessionOptionsFor(body.deviceName)
+        sessionOptionsFor(body.deviceName, body.deviceModel)
       )
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
@@ -650,7 +680,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         db,
         user.id,
         req.header('user-agent'),
-        sessionOptionsFor(body.deviceName)
+        sessionOptionsFor(body.deviceName, body.deviceModel)
       )
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(
@@ -704,7 +734,7 @@ export function authRoutes(db: Kysely<Database>, options: AuthOptions): Router {
         db,
         user.id,
         req.header('user-agent'),
-        sessionOptionsFor(body.deviceName)
+        sessionOptionsFor(body.deviceName, body.deviceModel)
       )
       setSessionCookie(res, session.token, session.expiresAt, secureCookie)
       res.json(

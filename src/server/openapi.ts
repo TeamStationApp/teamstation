@@ -244,6 +244,17 @@ const argonParameters = {
     salt: { type: 'string', pattern: '^[0-9a-f]{32}$' }
   }
 }
+/** What make of device a sign-in is on, from the native app (`asDeviceModel`). */
+const deviceModelSchema = {
+  type: 'string',
+  minLength: 1,
+  maxLength: 80,
+  description:
+    'The device the native app is signing in on ("iPhone", "Samsung ' +
+    'SM-S911B", "Apple TV"). Stored as the session’s device name, which ' +
+    'node administrators see in User Management; the session still lasts ' +
+    'a browser’s 30 days. A `deviceName` beside it wins'
+}
 const clientHashSchema = {
   type: 'string',
   pattern: '^[0-9a-f]{64}$',
@@ -3745,7 +3756,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   required: ['email', 'clientHash'],
                   properties: {
                     email: { type: 'string' },
-                    clientHash: clientHashSchema
+                    clientHash: clientHashSchema,
+                    deviceModel: deviceModelSchema
                   }
                 }
               }
@@ -3830,7 +3842,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   required: ['email', 'code'],
                   properties: {
                     email: { type: 'string' },
-                    code: { type: 'string' }
+                    code: { type: 'string' },
+                    deviceModel: deviceModelSchema
                   }
                 }
               }
@@ -10748,7 +10761,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                         'The sign-in request the spender is itself polling ' +
                         'for. When it is this link’s, the poll is not ' +
                         'approved as well, so the spender gets one session'
-                    }
+                    },
+                    deviceModel: deviceModelSchema
                   }
                 }
               }
@@ -11058,7 +11072,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   properties: {
                     requestId: { type: 'string' },
                     clientSecret: { type: 'string' },
-                    deviceName: { type: 'string' }
+                    deviceName: { type: 'string' },
+                    deviceModel: deviceModelSchema
                   }
                 }
               }

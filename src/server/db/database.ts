@@ -586,6 +586,17 @@ export interface AuthSessionsTable {
   revoked_at: Timestamp | null
 }
 
+/**
+ * One device session: a sign-in used after an hour or more of no use, or for
+ * the first time (118deviceSessions). Written by `recordCredentialUse`.
+ */
+export interface DeviceSessionsTable {
+  id: string
+  auth_session_id: string
+  user_id: string
+  started_at: Timestamp
+}
+
 export interface ApiTokensTable {
   id: string
   user_id: string
@@ -1671,6 +1682,7 @@ export interface Database {
   game_play_archives: GamePlayArchivesTable
   tv_login_requests: TvLoginRequestsTable
   auth_sessions: AuthSessionsTable
+  device_sessions: DeviceSessionsTable
   chat_user_blocks: {
     blocker_user_id: string
     blocked_user_id: string
