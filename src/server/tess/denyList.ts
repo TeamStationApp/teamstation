@@ -42,7 +42,9 @@ const ANY_METHOD: readonly RegExp[] = [
   /^\/me\/api-keys(\/|$)/,
   /^\/me\/onboarding(\/|$)/,
   /^\/me\/builds(\/|$)/,
-  /^\/device-event-control(\/|$)/
+  /^\/device-event-control(\/|$)/,
+  // Who signed in where and when: for a node administrator's own eyes.
+  /^\/node\/(logins|sessions)(\/|$)/
 ]
 
 /**

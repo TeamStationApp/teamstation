@@ -220,6 +220,7 @@ import type {
 } from './umpireSchedule'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
+import type { ActivityRow } from './userManagement'
 import {
   asVenueDetail,
   asVenueSummary,
@@ -3497,6 +3498,9 @@ export interface ClientOptions {
   passwordCosts?: ClientPasswordCosts
   passwordTargetMs?: number
 }
+
+/** A page of recent sessions, which says since when they were recorded. */
+export type ActivityPage = Page<ActivityRow> & { recordedSince?: string | null }
 
 export type { DefaultLineup, Lineup, LineupChange, LineupPerson, SideLineups }
 

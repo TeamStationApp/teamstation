@@ -1072,6 +1072,89 @@ const userIdsBody = {
   }
 }
 
+/** One login or device session, as User Management lists them. */
+const activityRowSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'id',
+    'at',
+    'userId',
+    'displayName',
+    'email',
+    'avatarUrl',
+    'lastActiveAt',
+    'device',
+    'appType'
+  ],
+  properties: {
+    id: { type: 'string' },
+    at: {
+      type: 'string',
+      format: 'date-time',
+      description: 'When they signed in, or when the session started'
+    },
+    userId: { type: 'string' },
+    displayName: { type: 'string' },
+    email: {
+      type: ['string', 'null'],
+      description: 'The verified primary address, else the oldest'
+    },
+    avatarUrl: { type: ['string', 'null'] },
+    lastActiveAt: {
+      type: ['string', 'null'],
+      format: 'date-time',
+      description:
+        'The account’s latest use of any sign-in, token or key, to the minute: the same on every row of one person'
+    },
+    device: {
+      type: 'string',
+      description:
+        'The name the device signed in with, the name it gave chat, or what its user agent says; `Unknown device` otherwise'
+    },
+    appType: {
+      type: 'string',
+      enum: ['Web', 'iOS', 'Android', 'tvOS', 'Unknown']
+    }
+  }
+}
+const activityParameters = [
+  {
+    name: 'limit',
+    in: 'query',
+    required: false,
+    schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 }
+  },
+  {
+    name: 'cursor',
+    in: 'query',
+    required: false,
+    description: 'A `nextCursor` this list answered',
+    schema: { type: 'string' }
+  }
+]
+const activityPage = (recordedSince: boolean): object => ({
+  type: 'object',
+  additionalProperties: false,
+  required: ['items', 'nextCursor', 'prevCursor', 'anchorId', 'counts'],
+  properties: {
+    items: { type: 'array', items: activityRowSchema },
+    nextCursor: { type: ['string', 'null'] },
+    prevCursor: { type: 'null' },
+    anchorId: { type: 'null' },
+    counts: { type: 'null' },
+    ...(recordedSince
+      ? {
+          recordedSince: {
+            type: ['string', 'null'],
+            format: 'date-time',
+            description:
+              'On a first page: when device sessions began to be recorded. There are none before it'
+          }
+        }
+      : {})
+  }
+})
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -6989,6 +7072,49 @@ export function openApiDocument(version: string): OpenApiDocument {
             400: errorResponse,
             401: errorResponse,
             403: errorResponse
+          }
+        }
+      },
+      '/node/logins': {
+        get: {
+          summary:
+            'Every stored sign-in, newest first, for a node administrator',
+          description:
+            'Each sign-in is a login, so one person signing in three times is three rows; a restored session or a refreshed token is none. ' +
+            'Pages walk down from a cursor, so sign-ins that arrive meanwhile never repeat or skip a row. Anything but `limit` and `cursor` is a 400. ' +
+            'Signed-in node administrators only: machines, API keys and Tess get 403.',
+          security: [{ bearer: [] }],
+          parameters: activityParameters,
+          responses: {
+            200: {
+              description: 'A page of logins',
+              content: { 'application/json': { schema: activityPage(false) } }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            429: errorResponse
+          }
+        }
+      },
+      '/node/sessions': {
+        get: {
+          summary:
+            'Every device session, newest start first, for a node administrator',
+          description:
+            'A device session starts when a sign-in is used for the first time, or after an hour or more without use; each sign-in is one device. ' +
+            'Paged as `/node/logins` is. The first page carries `recordedSince`.',
+          security: [{ bearer: [] }],
+          parameters: activityParameters,
+          responses: {
+            200: {
+              description: 'A page of sessions',
+              content: { 'application/json': { schema: activityPage(true) } }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            429: errorResponse
           }
         }
       },
