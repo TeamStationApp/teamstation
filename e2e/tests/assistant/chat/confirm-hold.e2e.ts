@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { eventually } from '../../../core/readback'
 import { defineE2e } from '../../../core/spec'
 import {
+  EMBLEMS,
   pause,
   TESS_WEB_SPEC,
   type TessWeb,
@@ -88,7 +89,7 @@ export default defineE2e({
         })
         await ctx.checkpoint('change-card', {
           expect: [{ id: 'Tess change' }],
-          golden: { mask: CARD_IDS }
+          golden: { mask: [...CARD_IDS, ...EMBLEMS] }
         })
       })
     },
@@ -144,7 +145,7 @@ export default defineE2e({
               expect(await gamesOfTeam(web)).equals(gamesBefore + 1)
             },
             golden: {
-              mask: [{ css: '[data-testid="Tess thought"]' }]
+              mask: [{ css: '[data-testid="Tess thought"]' }, ...EMBLEMS]
             }
           })
         },

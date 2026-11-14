@@ -33,6 +33,13 @@ export const OPEN_FULL_SCREEN = '[role="button"][aria-label="Open full screen"]'
 export const OVERLAY = '[data-testid="Tess overlay"]'
 export const VIEWER = `${OVERLAY} [data-testid="Tess rich viewer"]`
 export const VIEWER_CLOSE = `${OVERLAY} [role="button"][aria-label="Close"]`
+/**
+ * Team, season and league tiles, which the app tints by id (`teamTile.ts`):
+ * the fixture's ids are new each run, so a golden leaves them out.
+ */
+export const EMBLEMS = [{ css: '[data-testid="emblem"]' }]
+/** A golden of a screen with the fixture's groups on it. */
+export const TESS_GOLDEN = { mask: EMBLEMS }
 export const SETTINGS_BUBBLE =
   '[role="link"][aria-label="Go to Home, Demo Hawks, Settings"]'
 

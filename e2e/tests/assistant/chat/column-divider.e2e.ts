@@ -5,6 +5,7 @@ import { defineE2e } from '../../../core/spec'
 import {
   COLUMN,
   DIVIDER,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
   withTess
@@ -30,7 +31,8 @@ async function dragBy(web: TessWeb, dx: number): Promise<void> {
   await web.m.dragAndDrop({
     from: { css: DIVIDER },
     to: {
-      point: `${Math.round(Math.max(0, from + dx))}, ${Math.round(grab!.y + grab!.height / 2)}`
+      // Kept inside the window, as a mouse is.
+      point: `${Math.round(Math.min(1535, Math.max(0, from + dx)))}, ${Math.round(grab!.y + grab!.height / 2)}`
     },
     holdDuration: 1,
     duration: 480
@@ -70,7 +72,7 @@ export default defineE2e({
         await breakpointIs(web, 'tablet')
         await ctx.checkpoint('column-wider', {
           expect: [{ text: 'Ask Tess' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
         await dragBy(web, -600)
         expect(await web.rectOf(COLUMN)).deep.include({ width: 720 })
@@ -91,7 +93,7 @@ export default defineE2e({
         expect(await web.paneRect()).deep.include({ x: 256, width: 760 })
         await ctx.checkpoint('width-after-reload', {
           expect: [{ text: 'Ask Tess' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -113,7 +115,7 @@ export default defineE2e({
         ).equals('432')
         await ctx.checkpoint('column-moved-by-keys', {
           expect: [{ text: 'Ask Tess' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     }

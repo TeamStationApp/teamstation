@@ -4,6 +4,7 @@ import { expect } from 'chai'
 import { eventually } from '../../../core/readback'
 import { defineE2e } from '../../../core/spec'
 import {
+  EMBLEMS,
   FIELD,
   TESS_WEB_SPEC,
   type TessWeb,
@@ -14,7 +15,7 @@ import {
 const LIVE = '[data-testid="Tess live reply"]'
 const THOUGHT_ROW = '[data-testid="Tess thought"] [role="button"]'
 /** Her thought's row says how long it took, so a golden leaves the row out. */
-const THOUGHT_MASK = { mask: [{ css: THOUGHT_ROW }] }
+const THOUGHT_MASK = { mask: [{ css: THOUGHT_ROW }, ...EMBLEMS] }
 
 interface Seen {
   thinking: string

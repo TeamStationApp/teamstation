@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 
 import { defineE2e } from '../../../core/spec'
-import { TESS_WEB_SPEC, withTess } from '../../../rigs/tessWeb'
+import { TESS_GOLDEN, TESS_WEB_SPEC, withTess } from '../../../rigs/tessWeb'
 
 export default defineE2e({
   ...TESS_WEB_SPEC,
@@ -31,7 +31,7 @@ export default defineE2e({
             { text: 'I can only help with finding' },
             { text: 'Demo League A' }
           ],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -58,7 +58,7 @@ export default defineE2e({
             { text: 'I cannot record plays' },
             { id: 'Tess change', absent: true }
           ],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     }

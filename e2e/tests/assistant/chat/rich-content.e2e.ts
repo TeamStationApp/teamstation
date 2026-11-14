@@ -5,6 +5,7 @@ import {
   FIELD,
   OPEN_FULL_SCREEN,
   OVERLAY,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   VIEWER,
   VIEWER_CLOSE,
@@ -34,7 +35,7 @@ export default defineE2e({
         await web.see('[data-testid="Tess rich block"]')
         await ctx.checkpoint('chart-card', {
           expect: [{ id: 'Tess rich block' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
         await web.tap(OPEN_FULL_SCREEN)
         await web.see(VIEWER)
@@ -46,7 +47,7 @@ export default defineE2e({
         await web.clearField()
         await ctx.checkpoint('chart-over-pane', {
           expect: [{ id: 'Tess rich viewer' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
         await web.tap(VIEWER_CLOSE)
         await web.gone(VIEWER)

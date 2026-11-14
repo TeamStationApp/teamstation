@@ -8,6 +8,7 @@ import {
   LAYER,
   pause,
   TESS_BUTTON,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
   withTess
@@ -48,7 +49,7 @@ export default defineE2e({
             { text: 'Ask Tess' },
             { text: 'Demo Hawks' }
           ],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -63,7 +64,7 @@ export default defineE2e({
         })
         await ctx.checkpoint('team-beside-tess', {
           expect: [{ text: 'Demo Hawks' }, { text: 'Ask Tess' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -148,7 +149,7 @@ export default defineE2e({
           expect(shown).greaterThan(0)
           await ctx.checkpoint('full-window', {
             expect: [{ text: "Your team's settings are here" }],
-            golden: {}
+            golden: TESS_GOLDEN
           })
           // The same conversation across the width where her layout changes. No
           // checkpoint while resized: maestro-d captures at the window's own size.
@@ -170,7 +171,7 @@ export default defineE2e({
           await web.gone(CHAT)
           await ctx.checkpoint('closed-at-narrow-width', {
             expect: [{ text: 'Your Home' }],
-            golden: {}
+            golden: TESS_GOLDEN
           })
         },
         { width: 1024, height: 900 }
@@ -194,7 +195,7 @@ export default defineE2e({
         expect(await page.evaluate(() => location.href)).equals(address)
         await ctx.checkpoint('team-after-back', {
           expect: [{ text: 'Demo Hawks' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -241,7 +242,7 @@ export default defineE2e({
         }, 15000)
         await ctx.checkpoint('dj-beside-tess', {
           expect: [{ text: 'Demo Hawks' }, { text: 'Ask Tess' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     }

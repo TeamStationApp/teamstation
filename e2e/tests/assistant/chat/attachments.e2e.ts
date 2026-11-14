@@ -4,7 +4,12 @@ import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
 import { defineE2e } from '../../../core/spec'
-import { TESS_WEB_SPEC, type TessWeb, withTess } from '../../../rigs/tessWeb'
+import {
+  TESS_GOLDEN,
+  TESS_WEB_SPEC,
+  type TessWeb,
+  withTess
+} from '../../../rigs/tessWeb'
 
 /** A 2 × 2 PNG, for the Choose files step. */
 const PNG = Buffer.from(
@@ -45,7 +50,7 @@ export default defineE2e({
         await web.see(DROP_ZONE)
         await ctx.checkpoint('attach-panel', {
           expect: [{ id: 'Tess drop zone' }, { text: 'Choose files' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
         // Chromium only sends a real drop from the operating system's own drag, so
         // this is the event the panel listens for.
@@ -96,7 +101,7 @@ export default defineE2e({
         expect(String(blocks[3].text)).match(/^\(Sent .*Beside this chat/)
         await ctx.checkpoint('files-sent', {
           expect: [{ text: 'I have your CSV and your picture' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     }

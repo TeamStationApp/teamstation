@@ -9,6 +9,7 @@ import {
   pause,
   type Rect,
   SETTINGS_BUBBLE,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
   VIEWER,
@@ -71,14 +72,14 @@ export default defineE2e({
             { id: 'Go to Home, Demo Hawks, Settings' },
             { text: 'Demo League A' }
           ],
-          golden: {}
+          golden: TESS_GOLDEN
         })
         await web.tap(SETTINGS_BUBBLE)
         await web.pathIs(web.t.links.teamSettings)
         await web.see(COLUMN)
         await ctx.checkpoint('settings-beside-chat', {
           expect: [{ text: 'Team Settings' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -127,7 +128,7 @@ export default defineE2e({
         expect(await web.rectOf(COLUMN)).deep.include({ x: 1136, width: 400 })
         await ctx.checkpoint('settings-after-chart', {
           expect: [{ text: 'Team Settings' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -157,7 +158,7 @@ export default defineE2e({
           expect(closeOnTop, 'the X over the angle view').equals(true)
           await ctx.checkpoint('chart-over-angle', {
             expect: [{ id: 'Tess rich viewer' }],
-            golden: {}
+            golden: TESS_GOLDEN
           })
           await web.tap(VIEWER_CLOSE)
           await web.gone(VIEWER)
@@ -180,14 +181,14 @@ export default defineE2e({
           text: 'Tony G',
           color: 'rgb(21, 101, 192)'
         })
-        await ctx.checkpoint('player-link', { golden: {} })
+        await ctx.checkpoint('player-link', { golden: TESS_GOLDEN })
         await web.tap(REPLY_LINK)
         await web.pathIs(`/players/${t.players.visible}`)
         await web.see(COLUMN)
         await web.see('[aria-label="Player sections"]')
         await ctx.checkpoint('player-profile', {
           expect: [{ text: 'Tony G' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -207,7 +208,7 @@ export default defineE2e({
               text: 'You don’t have access to this player’s profile, or it no longer exists.'
             }
           ],
-          golden: {}
+          golden: TESS_GOLDEN
         })
         // A link from Tess opens a page on its own, as an address does, so Back, like
         // the header's, goes to the tab's first page.
@@ -217,7 +218,7 @@ export default defineE2e({
         await web.see(COLUMN)
         await ctx.checkpoint('back-at-home', {
           expect: [{ text: 'Your Home' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     }

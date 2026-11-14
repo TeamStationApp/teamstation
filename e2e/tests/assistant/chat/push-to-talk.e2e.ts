@@ -2,7 +2,13 @@ import { expect } from 'chai'
 
 import { eventually } from '../../../core/readback'
 import { defineE2e } from '../../../core/spec'
-import { MIC, TESS_WEB_SPEC, THINKING, withTess } from '../../../rigs/tessWeb'
+import {
+  MIC,
+  TESS_GOLDEN,
+  TESS_WEB_SPEC,
+  THINKING,
+  withTess
+} from '../../../rigs/tessWeb'
 
 export default defineE2e({
   ...TESS_WEB_SPEC,
@@ -48,7 +54,7 @@ export default defineE2e({
           expect(t.dictation.heard.filter(heard => heard === HEARD)).length(2)
           await ctx.checkpoint('two-messages-heard', {
             expect: [{ text: "Your team's settings are here" }],
-            golden: {}
+            golden: TESS_GOLDEN
           })
         },
         { liveClock: true }

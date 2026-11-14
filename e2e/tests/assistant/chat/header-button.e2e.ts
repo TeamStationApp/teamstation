@@ -5,6 +5,7 @@ import {
   ASK_TESS,
   MARK_MENU,
   NOTIFICATIONS,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
   withTess
@@ -72,7 +73,7 @@ export default defineE2e({
                 { text: 'Notifications' },
                 { text: 'Ask Tess', absent: true }
               ],
-              golden: {}
+              golden: TESS_GOLDEN
             })
           }
         },
@@ -91,7 +92,7 @@ export default defineE2e({
           await web.see(NOTIFICATIONS)
           await ctx.checkpoint('header-without-tess', {
             expect: [{ text: 'Notifications' }],
-            golden: {}
+            golden: TESS_GOLDEN
           })
         },
         { ...HEADER, fixture: { tess: false } }

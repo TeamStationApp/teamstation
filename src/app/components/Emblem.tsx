@@ -63,6 +63,9 @@ export function Emblem(props: EmblemProps): React.ReactElement {
   if (uri == null || uri === '' || failedUri === uri) {
     return (
       <View
+        // Tinted by the group's id: an end-to-end golden masks it, since a
+        // fixture's ids, and so its colours, are new each run.
+        testID="emblem"
         style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
       >
         {icon != null ? (

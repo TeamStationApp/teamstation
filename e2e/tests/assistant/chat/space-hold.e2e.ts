@@ -7,6 +7,7 @@ import {
   FIELD,
   MIC,
   pause,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
   THINKING,
@@ -71,8 +72,9 @@ async function paneScrollTop(web: TessWeb): Promise<number> {
 
 /**
  * The team's Schedule tab, long enough to scroll, beside her microphone.
- * The header's Schedule tab is the same label, and it leaves the team, so
- * the press is the pill in the page, the one whose words are Schedule.
+ * The header's and the navigation sidebar's Schedule are the same label,
+ * and they leave the team, so the press is the pill in the page, the one
+ * whose words are Schedule.
  */
 async function schedule(web: TessWeb): Promise<void> {
   await web.open('/')
@@ -90,6 +92,7 @@ async function schedule(web: TessWeb): Promise<void> {
         return (
           box.y > 120 &&
           box.width > 0 &&
+          node.closest('[data-testid="navigation-sidebar"]') == null &&
           (text === 'Schedule' || label === 'Schedule')
         )
       })
@@ -230,7 +233,7 @@ export default defineE2e({
         expect(t.dictation.begun, 'no utterance started').equals(begun)
         await ctx.checkpoint('field-holds-a-space', {
           expect: [{ id: 'Dictate' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -253,7 +256,7 @@ export default defineE2e({
         await pause(600)
         expect(await web.dictationStatus()).equals('Off')
         expect(t.dictation.begun, 'no utterance started').equals(begun)
-        await ctx.checkpoint('field-in-order', { golden: {} })
+        await ctx.checkpoint('field-in-order', { golden: TESS_GOLDEN })
       })
     },
     'held-in-the-field-listens': async ctx => {
@@ -266,7 +269,7 @@ export default defineE2e({
         expect(await web.fieldValue()).equals('')
         await ctx.checkpoint('heard-as-a-message', {
           expect: [{ text: "Your team's settings are here" }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -319,7 +322,7 @@ export default defineE2e({
         expect(t.dictation.begun, 'no utterance started').equals(begun)
         await ctx.checkpoint('team-tab-selected', {
           expect: [{ id: 'Dictate' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -335,7 +338,7 @@ export default defineE2e({
         expect(await paneScrollTop(web), 'the hold scrolled nothing').equals(0)
         await ctx.checkpoint('heard-from-the-page', {
           expect: [{ text: HEARD }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -353,7 +356,7 @@ export default defineE2e({
         expect(await web.userBubbles(HEARD), 'a tap does not send').equals(0)
         await ctx.checkpoint('tap-heard', {
           expect: [{ text: HEARD }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     }

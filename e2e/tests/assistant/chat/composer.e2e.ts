@@ -4,6 +4,7 @@ import { eventually } from '../../../core/readback'
 import { defineE2e } from '../../../core/spec'
 import {
   FIELD,
+  TESS_GOLDEN,
   TESS_WEB_SPEC,
   type TessWeb,
   THINKING,
@@ -40,16 +41,24 @@ export default defineE2e({
             const rect = node.getBoundingClientRect()
             return [rect.x, rect.y, rect.width, rect.height]
           }
+          const column = document
+            .querySelector('[data-testid="Tess column"]')!
+            .getBoundingClientRect()
           return {
             title: title.textContent,
             titleBox: box(title),
             icon: icon.textContent,
-            iconBox: box(icon)
+            iconBox: box(icon),
+            columnLeft: column.x
           }
         })
         expect(header.title).equals('Ask Tess')
         expect(header.icon).equals('auto_awesome')
-        expect(header.iconBox[0], 'the icon at the left').lessThan(40)
+        // At the left of her column, which is on the right (fb5ef504a).
+        expect(
+          header.iconBox[0] - header.columnLeft,
+          'the icon at the left'
+        ).lessThan(40)
         expect(header.iconBox[1], 'at the top').lessThan(40)
         expect(header.iconBox[0] + header.iconBox[2]).lessThan(
           header.titleBox[0]
@@ -75,7 +84,7 @@ export default defineE2e({
         })
         await ctx.checkpoint('header-and-composer', {
           expect: [{ text: 'Ask Tess' }, { id: 'Attach a file' }],
-          golden: {}
+          golden: TESS_GOLDEN
         })
       })
     },
@@ -92,7 +101,7 @@ export default defineE2e({
         expect(await web.fieldValue()).equals('a\nb')
         expect(oneLine).equals(48)
         expect(await fieldHeight(web), 'two lines').equals(70)
-        await ctx.checkpoint('two-lines', { golden: {} })
+        await ctx.checkpoint('two-lines', { golden: TESS_GOLDEN })
         const callsBefore = t.model.calls.length
         await m.pressKey({ key: 'Enter' })
         await eventually(async () => {
