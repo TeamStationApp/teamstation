@@ -61,7 +61,8 @@ const pending = (id: string): PreviewRow => ({
   status: 'building',
   published_option: null,
   published_at: null,
-  removed_games: null
+  removed_games: null,
+  result_hash: null
 })
 
 /** A storage-boundary stub; transactions and query generation still run through Kysely. */
@@ -287,6 +288,26 @@ describe('device preview state transitions without a database', () => {
           ])
         }
       )
+    }
+  })
+  it('refuses a repeated or reserved game key, which publishing could not store', async () => {
+    authorize()
+    for (const games of [
+      [game, game],
+      [{ ...game, key: 'replaced:gam_one' }]
+    ]) {
+      const row = pending('new')
+      await stored(new Map([['new', row]]), async db => {
+        const error = await completePreview(
+          db,
+          actor,
+          'new',
+          { ...result, options: [{ ...result.options[0], games }] },
+          clock
+        ).catch((caught: unknown) => caught)
+        expect(String(error)).includes('its own key')
+        expect(row.status).equals('building')
+      })
     }
   })
   it('stores the device’s options as sent, summaries and all, for publication to check', async () => {

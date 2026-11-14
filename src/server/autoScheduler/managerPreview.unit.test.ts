@@ -256,6 +256,19 @@ describe('manager-aware preview decisions without a database', () => {
   })
   it('a recalculation retains its saved manager setting and kept matchups', async () => {
     const old = { ...row, input: { ...snap, avoidHeadCoachConflicts: false } }
+    // The kept game's season still selects its field.
+    mock.method(setup, 'seasonRows', async () => [])
+    mock.method(
+      setup,
+      'settingsOf',
+      async () =>
+        new Map([
+          [
+            game.seasonId,
+            { saved: true, settings: { fieldIds: [game.fieldId] } }
+          ]
+        ])
+    )
     mock.method(rights, 'requireGroupAdmin', async () => undefined)
     mock.method(rescheduling, 'gamesToReschedule', async () => [])
     const capture = mock.method(

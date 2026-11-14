@@ -79,7 +79,16 @@ export function schedulePreviewRoutes(
     requireActor,
     // Only an admin of the preview's league gets the large body read.
     withAsync(async (req, _res, next) => {
-      await previewFor(db, actor(req), param(req.params.previewId))
+      const preview = await db
+        .selectFrom('schedule_previews')
+        .select('league_id')
+        .where('id', '=', param(req.params.previewId))
+        .executeTakeFirst()
+      if (preview == null) throw notFound()
+      await requireGroupAdmin(db, actor(req), {
+        kind: 'league',
+        id: preview.league_id
+      })
       next()
     }),
     scheduleResultBody,

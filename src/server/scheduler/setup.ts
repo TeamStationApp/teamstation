@@ -96,6 +96,42 @@ function seasonDates(
   return { ...(windowRange(windows) ?? { startsOn, endsOn }), windows }
 }
 
+/**
+ * The live fields each league chose for its runs before seasons chose
+ * their own, by league, in id order as migration 117 gave saved seasons.
+ */
+async function legacyFieldsOf(
+  db: Db,
+  seasons: SeasonRow[]
+): Promise<Map<string, Array<{ id: string; sizes: string[] }>>> {
+  const leagueIds = [
+    ...new Set(seasons.flatMap(season => season.league_id ?? []))
+  ]
+  if (leagueIds.length === 0) return new Map()
+  const setups = await db
+    .selectFrom('league_schedule_setups')
+    .select(['league_id', 'field_ids'])
+    .where('league_id', 'in', leagueIds)
+    .execute()
+  const ids = [...new Set(setups.flatMap(setup => setup.field_ids))]
+  const fields =
+    ids.length === 0
+      ? []
+      : await db
+          .selectFrom('venue_fields')
+          .select(['id', 'sizes'])
+          .where('id', 'in', ids)
+          .where('deleted_at', 'is', null)
+          .orderBy('id')
+          .execute()
+  return new Map(
+    setups.map(setup => [
+      setup.league_id,
+      fields.filter(field => setup.field_ids.includes(field.id))
+    ])
+  )
+}
+
 /** The settings of seasons, saved or their defaults. */
 export async function settingsOf(
   db: Db,
@@ -113,22 +149,31 @@ export async function settingsOf(
             seasons.map(season => season.id)
           )
           .execute()
+  const legacy = await legacyFieldsOf(
+    db,
+    seasons.filter(season => !rows.some(row => row.season_id === season.id))
+  )
   return new Map(
     seasons.map(
       (season): [string, { saved: boolean; settings: ScheduleSettings }] => {
         const row = rows.find(item => item.season_id === season.id)
-        if (row == null)
+        if (row == null) {
+          const settings = defaultScheduleSettings({
+            startsOn: calendarDateText(season.starts_on),
+            endsOn: calendarDateText(season.ends_on),
+            year: season.year
+          })
+          // A season never saved keeps the fields its league chose for runs
+          // before seasons chose their own, as a saved one was migrated to.
+          const fieldIds = (legacy.get(season.league_id ?? '') ?? []).flatMap(
+            field =>
+              field.sizes.includes(settings.fieldSize) ? [field.id] : []
+          )
           return [
             season.id,
-            {
-              saved: false,
-              settings: defaultScheduleSettings({
-                startsOn: calendarDateText(season.starts_on),
-                endsOn: calendarDateText(season.ends_on),
-                year: season.year
-              })
-            }
+            { saved: false, settings: { ...settings, fieldIds } }
           ]
+        }
         return [
           season.id,
           {
@@ -647,12 +692,28 @@ async function writeScheduleSetup(
     if (own.length !== choice.seasonIds.length)
       throw badRequest('Choose seasons of this league')
   }
+  // The fields added from other venues. A client that names what it
+  // removes changes only those, so a list it read before another admin's
+  // change can't drop that admin's field; an older one sends the whole list.
+  const before = await db
+    .selectFrom('league_schedule_setups')
+    .select('added_field_ids')
+    .where('league_id', '=', leagueId)
+    .executeTakeFirst()
+  const removed = choice.removedFieldIds ?? []
+  const added =
+    choice.removedFieldIds != null
+      ? [
+          ...new Set([
+            ...(before?.added_field_ids ?? []),
+            ...(choice.addedFieldIds ?? [])
+          ])
+        ].filter(id => !removed.includes(id))
+      : choice.addedFieldIds
   // The chosen fields must exist. The added ones are remembered rows, not a
   // choice: their owners can delete them while the setup is open, and every
   // save resends the list, so a deleted or unknown one is dropped instead.
-  const listed = [
-    ...new Set([...(choice.fieldIds ?? []), ...(choice.addedFieldIds ?? [])])
-  ]
+  const listed = [...new Set([...(choice.fieldIds ?? []), ...(added ?? [])])]
   const live = new Set(
     listed.length === 0
       ? []
@@ -667,31 +728,20 @@ async function writeScheduleSetup(
   )
   if (choice.fieldIds?.some(id => !live.has(id)) === true)
     throw badRequest('Choose fields that exist')
-  // A field taken off the list is no season's any more, so no other season
-  // keeps scheduling on a field the setup no longer shows. A field of the
-  // league's own venues stays listed, and stays chosen.
-  if (choice.addedFieldIds != null) {
-    const before = await db
-      .selectFrom('league_schedule_setups')
-      .select('added_field_ids')
-      .where('league_id', '=', leagueId)
-      .executeTakeFirst()
-    const removed = (before?.added_field_ids ?? []).filter(
-      id => !choice.addedFieldIds!.includes(id)
-    )
+  // A field named as taken off the list is no season's any more, so no
+  // other season keeps scheduling on a field the setup no longer shows. A
+  // field of the league's own venues stays listed, and stays chosen.
+  if (removed.length > 0) {
     const owned = await ownedVenueIds(db, leagueId, clock)
-    const dropped =
-      removed.length === 0
-        ? []
-        : (
-            await db
-              .selectFrom('venue_fields')
-              .select(['id', 'venue_id'])
-              .where('id', 'in', removed)
-              .execute()
-          )
-            .filter(field => !owned.includes(field.venue_id))
-            .map(field => field.id)
+    const dropped = (
+      await db
+        .selectFrom('venue_fields')
+        .select(['id', 'venue_id'])
+        .where('id', 'in', removed)
+        .execute()
+    )
+      .filter(field => !owned.includes(field.venue_id))
+      .map(field => field.id)
     if (dropped.length > 0)
       await db
         .updateTable('season_schedule_settings')
@@ -717,12 +767,10 @@ async function writeScheduleSetup(
     ...(choice.avoidHeadCoachConflicts == null
       ? {}
       : { avoid_head_coach_conflicts: choice.avoidHeadCoachConflicts }),
-    ...(choice.addedFieldIds == null
+    ...(added == null
       ? {}
       : {
-          added_field_ids: [...new Set(choice.addedFieldIds)].filter(id =>
-            live.has(id)
-          )
+          added_field_ids: [...new Set(added)].filter(id => live.has(id))
         }),
     updated_at: new Date()
   }

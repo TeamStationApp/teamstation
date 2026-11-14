@@ -554,11 +554,33 @@ describe('scheduling setup routes', function () {
         )
       )
     }
+    // Another admin, holding a list read before the field was added, adds
+    // a field of its own: the first field stays listed and chosen.
+    const later = await venue('ven_later', null)
+    const stale = await json<ScheduleSetup>(
+      await f.h.request(
+        'PUT',
+        path,
+        {
+          seasonIds: [],
+          fieldIds: [],
+          addedFieldIds: [later],
+          removedFieldIds: []
+        },
+        101
+      )
+    )
+    expect(stale.addedFieldIds).to.include.members([added, own, later])
     await json(
       await f.h.request(
         'PUT',
         path,
-        { seasonIds: [], fieldIds: [], addedFieldIds: [] },
+        {
+          seasonIds: [],
+          fieldIds: [],
+          addedFieldIds: [],
+          removedFieldIds: [added, own, later]
+        },
         101
       )
     )

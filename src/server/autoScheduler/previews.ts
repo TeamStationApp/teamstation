@@ -26,7 +26,7 @@ import { atomic } from '../db/atomic'
 import type { Database, SchedulePreviewsTable } from '../db/database'
 import type { Clock } from '../groups/requests'
 import { requireGroupAdmin } from '../groups/rights'
-import { chosenSeasonIds } from '../scheduler/setup'
+import { chosenSeasonIds, seasonRows, settingsOf } from '../scheduler/setup'
 import { occupancy } from '../venues/occupancy'
 import { noticeTeams, type Tallies } from './cancel'
 import { holdingOf, requireKeepsRules } from './placementChecks'
@@ -133,7 +133,9 @@ export async function previewView(
       // Its first day, where the preview's Week 1 starts.
       startsOn: season.settings.startsOn,
       participants: season.participants,
-      exhibitionTeams: season.exhibitionTeams
+      exhibitionTeams: season.exhibitionTeams,
+      // The fields its games may go on, for the add-game picker.
+      fieldIds: season.settings.fieldIds ?? []
     })),
     // Each field's zone, which its games' times are placed and read in.
     fields: snap.fields.map(field => ({
@@ -176,7 +178,21 @@ export async function preparePreview(
       existing = earlierSnap.existing
       teamIds = earlierSnap.teamIds
       const edits = editsOf(earlier)
-      keep = editedGames(option, edits, request.option ?? 0)
+      const edited = editedGames(option, edits, request.option ?? 0)
+      // A game on a field its season no longer selects can't be kept where
+      // it is, or publishing would refuse it; it is placed again with the
+      // rejected ones.
+      const selected = await settingsOf(
+        trx,
+        await seasonRows(trx, [...new Set(edited.map(game => game.seasonId))])
+      )
+      const unselected = edited.filter(
+        game =>
+          !(selected.get(game.seasonId)?.settings.fieldIds ?? []).includes(
+            game.fieldId
+          )
+      )
+      keep = edited.filter(game => !unselected.includes(game))
       // Only the rejected games are placed again, and not where they were.
       const rejected =
         edits.option === (request.option ?? 0)
@@ -184,7 +200,7 @@ export async function preparePreview(
               edits.rejectedGameKeys.includes(game.key)
             )
           : []
-      required = rejected.map(game => ({
+      required = [...rejected, ...unselected].map(game => ({
         key: game.key,
         seasonId: game.seasonId,
         homeTeamId: game.homeTeamId,
@@ -314,6 +330,32 @@ function resultHash(result: EngineResult): string {
   return createHash('sha256').update(JSON.stringify(result)).digest('hex')
 }
 
+/** Keys the server makes, and acts on, for games it holds or places. */
+const RESERVED_KEY = /^(kept|replaced|listed|rejected|added|busy|weekly):/
+
+/**
+ * A device's game keys as storage needs them: each once in its option, and
+ * none of the server's own unless the run asked for that game by it. A
+ * repeated key would break publishing, and a reserved one would be read as
+ * the server's.
+ */
+function requireStorableKeys(engine: EngineInput, result: EngineResult): void {
+  const required = new Set((engine.required ?? []).map(game => game.key))
+  for (const option of result.options) {
+    const keys = new Set<string>()
+    for (const game of option.games) {
+      if (
+        game.key === '' ||
+        game.key.length > 300 ||
+        keys.has(game.key) ||
+        (RESERVED_KEY.test(game.key) && !required.has(game.key))
+      )
+        throw badRequest('Give each game of an option its own key')
+      keys.add(game.key)
+    }
+  }
+}
+
 /**
  * Complete a prepared preview with a device result `asPreviewResult` has
  * cleaned; a retry of the same result is idempotent.
@@ -338,16 +380,16 @@ export async function completePreview(
       const snap = snapshotOf(row)
       const preparation = snap.preparation
       if (row.status !== 'building') {
-        if (preparation?.resultHash === hash) {
+        if (row.result_hash === hash) {
           // A retry of a result already taken answers as the first did.
           if (row.status !== 'discarded')
             return await previewView(trx, row, clock)
-          if (preparation.blocked != null)
-            return { blocked: preparation.blocked }
+          if (row.blocking != null) return { blocked: row.blocking }
         }
         throw conflict('This preview is no longer waiting for a device result')
       }
       if (preparation == null) throw conflict('Prepare the schedule again')
+      requireStorableKeys(snap.engine, result)
       if (preparation.earlier != null) {
         const earlier = await previewFor(trx, actor, preparation.earlier.id, {
           forUpdate: true
@@ -367,23 +409,22 @@ export async function completePreview(
               ...option,
               games: withKept(preparation.keep!, option.games)
             }))
-      preparation.resultHash = hash
       // A recalculation that places nothing again leaves the preview it
       // recalculated as it was, edits and all, and says why.
       if (preparation.earlier != null && options.length === 0) {
-        preparation.blocked = result.blocking ?? ''
+        const blocked = result.blocking ?? ''
         await trx
           .updateTable('schedule_previews')
-          .set({ status: 'discarded', input: JSON.stringify(snap) })
+          .set({ status: 'discarded', result_hash: hash, blocking: blocked })
           .where('id', '=', row.id)
           .execute()
-        return { blocked: preparation.blocked }
+        return { blocked }
       }
       await trx
         .updateTable('schedule_previews')
         .set({
           status: 'open',
-          input: JSON.stringify(snap),
+          result_hash: hash,
           options: JSON.stringify(options),
           blocking: result.blocking
         })

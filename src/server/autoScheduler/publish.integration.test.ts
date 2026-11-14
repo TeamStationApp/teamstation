@@ -55,6 +55,52 @@ describe('publishing a schedule preview', function () {
     await w?.close()
   })
 
+  it('places again, rather than keeps, a game on a field its season has since deselected', async () => {
+    const { f } = w.fx
+    const harbor = await seedHarborField(w.fx)
+    const settingsPath = `/seasons/${f.seasonA}/schedule-settings`
+    expect(
+      (
+        await w.call(101, 'PUT', `/leagues/${f.leagueA}/schedule-setup`, {
+          seasonIds: [f.seasonA],
+          fieldIds: [w.fieldId],
+          addedFieldIds: [harbor]
+        })
+      ).status
+    ).equals(200)
+    const choose = async (fieldIds: string[]): Promise<void> => {
+      const current = await w.call<{ settings: Record<string, unknown> }>(
+        101,
+        'GET',
+        settingsPath
+      )
+      expect(
+        (
+          await w.call(101, 'PUT', settingsPath, {
+            ...current.body.settings,
+            fieldIds
+          })
+        ).status
+      ).equals(200)
+    }
+    await choose([w.fieldId, harbor])
+    const built = await build({ mode: 'full', existing: 'workAround' })
+    expect(built.status).equals(201)
+    const onHarbor = built.body.options[0].games.filter(
+      game => game.fieldId === harbor
+    )
+    expect(onHarbor.length).greaterThan(0)
+    await choose([w.fieldId])
+    const recalculated = await build({
+      mode: 'partial',
+      fromPreviewId: built.body.id,
+      option: 0
+    })
+    expect(recalculated.status).equals(201)
+    for (const option of recalculated.body.options)
+      expect(option.games.some(game => game.fieldId === harbor)).equals(false)
+  })
+
   it('rejects a submitted key that collides with a booking created after preparation', async () => {
     const { f, teams } = w.fx
     const response = await f.h.request(

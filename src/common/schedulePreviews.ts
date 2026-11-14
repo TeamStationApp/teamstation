@@ -251,7 +251,12 @@ export const asSchedulePreview = asObject({
        */
       startsOn: asOptional(asString),
       participants: asArray(asString),
-      exhibitionTeams: asArray(asString)
+      exhibitionTeams: asArray(asString),
+      /**
+       * The fields the season selected. Optional, so an answer from a server
+       * that does not send it yet still reads; every field is offered then.
+       */
+      fieldIds: asOptional(asArray(asString))
     })
   ),
   fields: asArray(
@@ -265,7 +270,11 @@ export const asSchedulePreview = asObject({
     })
   )
 })
-export type SchedulePreview = ReturnType<typeof asSchedulePreview>
+type WireSchedulePreview = ReturnType<typeof asSchedulePreview>
+type WirePreviewSeason = WireSchedulePreview['seasons'][number]
+export type SchedulePreview = Omit<WireSchedulePreview, 'seasons'> & {
+  seasons: Array<Omit<WirePreviewSeason, 'fieldIds'> & { fieldIds?: string[] }>
+}
 
 /**
  * An option's games as they stand after its edits: its own games less the
@@ -301,7 +310,9 @@ export const asPublication = asObject({
   /** Upcoming games the build replaced. */
   removed: asNumber
 })
-export type Publication = ReturnType<typeof asPublication>
+export type Publication = Omit<ReturnType<typeof asPublication>, 'preview'> & {
+  preview: SchedulePreview
+}
 
 /** Why a published game is listed for rescheduling. */
 export type RescheduleReason =

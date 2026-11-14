@@ -961,13 +961,21 @@ function AddGameSheet({
       {picking === 'field' && (
         <ChoiceSheet
           title="Field"
-          choices={preview.fields.map(item => ({
-            label: `${item.name}, ${item.venueName}`,
-            onPress: () => {
-              setFieldId(item.id)
-              setSize(item.sizes.length === 1 ? item.sizes[0] : undefined)
-            }
-          }))}
+          // Only the fields the game's season selected take its games.
+          choices={preview.fields
+            .filter(
+              item =>
+                preview.seasons
+                  .find(each => each.id === seasonId)
+                  ?.fieldIds?.includes(item.id) ?? true
+            )
+            .map(item => ({
+              label: `${item.name}, ${item.venueName}`,
+              onPress: () => {
+                setFieldId(item.id)
+                setSize(item.sizes.length === 1 ? item.sizes[0] : undefined)
+              }
+            }))}
           onClose={() => {
             setPicking(undefined)
           }}

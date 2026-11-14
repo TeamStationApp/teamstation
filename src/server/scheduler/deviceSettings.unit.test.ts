@@ -12,7 +12,11 @@ import { withQueryReplies } from '../../test/queryReplies'
 import { fieldFacts } from '../venues/fieldWarnings'
 import * as ownership from '../venues/ownership'
 import { updateField, updateVenue, type VenueServices } from '../venues/venues'
-import { saveSeasonScheduleSettings, scheduleSetup } from './setup'
+import {
+  saveSeasonScheduleSettings,
+  scheduleSetup,
+  seasonScheduleSettings
+} from './setup'
 
 const hours = [{ weekday: 6, start: '08:00', end: '18:00' }]
 const windows = weeklyWindow(hours)
@@ -220,6 +224,7 @@ describe('device scheduling persistence boundaries', () => {
           return []
         }
         if (query.sql.includes('from "season_schedule_settings"')) return []
+        if (query.sql.includes('from "league_schedule_setups"')) return []
         if (query.sql.includes('from "seasons"'))
           return [
             {
@@ -331,6 +336,39 @@ describe('device scheduling persistence boundaries', () => {
           windows: [{ ...windows[0], until: '2027-08-31' }]
         })
         expect(wrote).equals(2)
+      }
+    )
+  })
+  it('gives a season never saved the fields its league chose for runs, in its size', async () => {
+    await withQueryReplies(
+      query => {
+        if (query.sql.includes('from "season_schedule_settings"')) return []
+        if (query.sql.includes('from "league_schedule_setups"'))
+          return [
+            { league_id: 'lea_demo', field_ids: ['fld_big', 'fld_small'] }
+          ]
+        if (query.sql.includes('from "venue_fields"'))
+          return [
+            { id: 'fld_big', sizes: ['60/90'] },
+            { id: 'fld_small', sizes: ['46/60'] }
+          ]
+        if (query.sql.includes('from "seasons"'))
+          return [
+            {
+              id: 'sea_demo',
+              league_id: 'lea_demo',
+              year: 2027,
+              starts_on: '2027-03-01',
+              ends_on: '2027-06-30'
+            }
+          ]
+        throw new Error(query.sql)
+      },
+      async db => {
+        const found = await seasonScheduleSettings(db, 'sea_demo')
+        expect(found.saved).equals(false)
+        // The default size is 60/90, so only that field.
+        expect(found.settings.fieldIds).deep.equals(['fld_big'])
       }
     )
   })

@@ -1179,6 +1179,8 @@ export interface SchedulePreviewsTable {
   published_at: Timestamp | null
   /** How many upcoming games its publication replaced. */
   removed_games: number | null
+  /** The completed device result's hash, so a retry of it is recognized. */
+  result_hash: string | null
 }
 
 /** A game a publication proposed. */

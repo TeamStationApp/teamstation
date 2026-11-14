@@ -268,12 +268,10 @@ describe('api client scheduling setup', () => {
     ])
   })
 
-  it('sends the same result again while offline, and stops at any refusal', async () => {
+  it('sends the same result again while offline or the server fails, and stops at a refusal of the result', async () => {
     const engine = input({ seasons: [], fields: [] })
-    const refusal = (code: string): Response =>
-      new Response(JSON.stringify({ code, message: 'Took too long.' }), {
-        status: 503
-      })
+    const refusal = (code: string, status: number): Response =>
+      new Response(JSON.stringify({ code, message: 'Refused.' }), { status })
     const preview = { id: 'spv/1' }
     let dropped = false
     let offlinePuts = 0
@@ -298,14 +296,26 @@ describe('api client scheduling setup', () => {
       .catch(() => undefined)
     expect(dropped).equals(true)
     expect(offlinePuts).equals(2)
+    // A failing server is asked again too, and a gateway's bare 502.
+    const failing = client([
+      { id: 'spv/1', input: engine },
+      refusal('unavailable', 503),
+      new Response('Bad gateway', { status: 502 }),
+      preview
+    ])
+    await failing.api
+      .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
+      .catch(() => undefined)
+    expect(failing.calls.filter(([method]) => method === 'PUT')).has.length(3)
+    // A refusal of the result itself is final.
     const final = client([
       { id: 'spv/1', input: engine },
-      refusal('unavailable')
+      refusal('badRequest', 400)
     ])
     const error = await final.api
       .buildSchedulePreview('lea', { mode: 'full' }, [0, 0])
       .catch((caught: unknown) => caught)
-    expect(String(error)).includes('Took too long.')
+    expect(String(error)).includes('Refused.')
     expect(final.calls.filter(([method]) => method === 'PUT')).has.length(1)
   })
 
