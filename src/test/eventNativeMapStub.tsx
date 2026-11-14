@@ -4,6 +4,16 @@ export let nativeMapProps: {
   onMapLoaded?: () => void
   provider?: string
   mapType?: string
+  testID?: string
+  accessibilityLabel?: string
+  initialRegion?: {
+    latitude: number
+    longitude: number
+    latitudeDelta: number
+    longitudeDelta: number
+  }
+  rotateEnabled?: boolean
+  pitchEnabled?: boolean
 }
 export const PROVIDER_GOOGLE = 'google'
 export default function MapView(
@@ -13,6 +23,8 @@ export default function MapView(
   return <div data-testid="native-google-map">{props.children}</div>
 }
 export let markerProps: {
+  coordinate?: { latitude: number; longitude: number }
+  title?: string
   draggable?: boolean
   onDragEnd?: (event: {
     nativeEvent: { coordinate: { latitude: number; longitude: number } }

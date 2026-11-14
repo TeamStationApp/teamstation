@@ -4,6 +4,7 @@ import MapView, { Marker, PROVIDER_GOOGLE } from 'react-native-maps'
 
 import type { EventLocation } from '../../common/eventInfo'
 import { EventMap as WebEventMap } from './EventMap.native'
+import { eventMapCoordinate } from './eventMapCoordinate'
 
 /** Native Google Maps SDK; its Android-restricted key lives in the built manifest. */
 export function EventMap({
@@ -11,23 +12,12 @@ export function EventMap({
 }: {
   location: EventLocation
 }): React.ReactElement {
-  if (
-    location.latitude == null ||
-    location.longitude == null ||
-    !Number.isFinite(location.latitude) ||
-    !Number.isFinite(location.longitude) ||
-    Math.abs(location.latitude) > 90 ||
-    Math.abs(location.longitude) > 180
-  )
-    throw new Error('The address could not be located.')
+  const coordinate = eventMapCoordinate(location)
   return (
     <NativeGoogleMap
-      key={`${location.latitude}/${location.longitude}`}
+      key={`${coordinate.latitude}/${coordinate.longitude}`}
       location={location}
-      coordinate={{
-        latitude: location.latitude,
-        longitude: location.longitude
-      }}
+      coordinate={coordinate}
     />
   )
 }
