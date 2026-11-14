@@ -7,6 +7,7 @@ import app.teamstation.app.cues.CueSoundsPackage
 import app.teamstation.app.feedback.HapticsPackage
 import app.teamstation.app.glass.GlassPackage
 import app.teamstation.app.navigation.PredictiveBackPackage
+import app.teamstation.app.network.StalledConnections
 import app.teamstation.app.orientation.OrientationPackage
 import app.teamstation.app.qrscanner.QrScannerPackage
 import app.teamstation.app.stream.PhoneStreamPackage
@@ -56,6 +57,8 @@ class MainApplication : Application(), ReactApplication {
     registerFonts()
     // Live viewers wait out a phone's absence instead of failing (LivePlaylistPatience).
     LivePlaylistPatience.register()
+    // Requests leave a connection a stalled link left unanswering (StalledConnections).
+    StalledConnections.register()
     loadReactNative(this)
   }
 

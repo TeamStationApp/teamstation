@@ -21,6 +21,7 @@ import { spaceObjectStore, startChatPurge } from './chat/attachments'
 import { startChatReconciler } from './chat/reconciler'
 import { makeDatabase } from './db/database'
 import { purgeExpiredKeys } from './db/syncIdempotency'
+import { requestRecorder } from './dev/requestRecorder'
 import { modelsOf } from './dictation/models'
 import { attachDictation } from './dictation/route'
 import { dictationScopes } from './dictation/scopes'
@@ -43,6 +44,7 @@ import { livingWorkers } from './livingWorkers'
 import { eventGeocoder } from './location/eventGeocoder'
 import { googlePlaces } from './location/googlePlaces'
 import { FeedHolder, type MediaContext } from './media/mediaContext'
+import { republishOwnedImages, settlesWithin } from './media/republishImages'
 import { spaceConfigured } from './media/spacesHls'
 import { withApiKeyCeiling } from './middleware/apiKeyCeiling'
 import { withAudit } from './middleware/withAudit'
@@ -659,6 +661,9 @@ function runWorker(): void {
   app.set('trust proxy', 'loopback')
   app.disable('x-powered-by')
   app.use(requestLogs)
+  // Development scenarios read which requests arrived: off unless set.
+  const recorder = requestRecorder()
+  if (recorder != null) app.use(recorder)
   app.use(withCors(serverConfig.corsOrigins))
 
   // Who is calling, and the ceiling of an API key, then their body, which
@@ -1042,5 +1047,53 @@ if (cluster.isPrimary && eventControlProblem != null) {
   )
 }
 
-if (cluster.isPrimary && workerCount > 1) runPrimary(workerCount)
-else runWorker()
+/**
+ * Moves the pictures stored before names were random to public ones, by the
+ * process that starts the rest, so no two processes copy one picture. It
+ * waits at most `REPUBLISH_WAIT_MS` before it forks or listens, and the rest
+ * goes on in this process after the server is up: each prefix's rows move in
+ * one transaction and the old objects outlive the move by a day, so a request
+ * that reads a row mid-move still draws its picture. A failure is logged and
+ * the server serves those pictures signed.
+ */
+const REPUBLISH_WAIT_MS = 10_000
+
+async function republishBeforeStart(): Promise<void> {
+  const db = makeDatabase(requestDatabaseUrl(serverConfig), {
+    role: 'primary'
+  })
+  const work = republishOwnedImages(db, serverConfig.space, message => {
+    console.error(`pictures: ${message}`)
+  })
+    .then(
+      ({ moved, skipped, failed }) => {
+        if (moved > 0 || failed > 0)
+          console.log(
+            `pictures: ${moved} made public, ${failed} failed, ${skipped} left alone`
+          )
+      },
+      (error: unknown) => {
+        console.error('pictures: republishing failed', error)
+      }
+    )
+    .finally(async () => {
+      await db.destroy()
+    })
+  if (!(await settlesWithin(work, REPUBLISH_WAIT_MS)))
+    console.log(
+      `pictures: still republishing after ${REPUBLISH_WAIT_MS / 1000} s; starting, and the rest goes on`
+    )
+}
+
+function start(): void {
+  if (cluster.isPrimary && workerCount > 1) runPrimary(workerCount)
+  else runWorker()
+}
+
+// With no Space there is nothing to move, and the server starts at once.
+if (cluster.isPrimary && spaceConfigured(serverConfig.space))
+  republishBeforeStart().then(start, (error: unknown) => {
+    console.error('pictures: republishing failed', error)
+    start()
+  })
+else start()

@@ -294,6 +294,15 @@ export function appliedEvents(
   }
   const named = (play: unknown): unknown =>
     play == null ? play : withHalves(withNames(play, nameOf), halves, formats)
+  // Each at-bat as the server's answer left it, for its authorship.
+  const before = new Map<number, unknown>()
+  for (const raw of arrayOf(stored.plays)) {
+    const gumbo = objectOf(raw).gumbo
+    const index = indexOf(gumbo)
+    if (index != null) before.set(index, gumbo)
+  }
+  const storedCurrent = indexOf(stored.currentPlay)
+  if (storedCurrent != null) before.set(storedCurrent, stored.currentPlay)
   const rows = new Map<number, Json>()
   for (const raw of arrayOf(stored.plays)) {
     const row = objectOf(raw)
@@ -327,13 +336,27 @@ export function appliedEvents(
   }
   const snapshot = { ...stored }
   delete snapshot.superseded
+  const currentPlay =
+    body.currentPlay === undefined
+      ? (stored.currentPlay ?? null)
+      : named(body.currentPlay)
+  const after = new Map<number, unknown>()
+  for (const [index, row] of rows) after.set(index, row.gumbo)
+  const current = indexOf(currentPlay)
+  if (current != null) after.set(current, currentPlay)
   return {
     ...snapshot,
     plays: [...rows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
-    currentPlay:
-      body.currentPlay === undefined
-        ? (stored.currentPlay ?? null)
-        : named(body.currentPlay),
+    currentPlay,
+    ...(stored.scoringAuthorship == null
+      ? {}
+      : {
+          scoringAuthorship: keptAuthorship(
+            stored.scoringAuthorship,
+            before,
+            after
+          )
+        }),
     ...(Object.keys(listed).length === 0
       ? {}
       : { readerNames: { ...reader, ...listed } }),
@@ -344,6 +367,46 @@ export function appliedEvents(
     playsDigest: game.plays,
     lineupsDigest: game.lineups
   }
+}
+
+/**
+ * The server's authorship (`scoringAuthorship`) of the at-bats as the phone
+ * now holds them: an at-bat it did not touch keeps its authors, one it
+ * rewrote keeps them only for its leading actions left as they were, and one
+ * it removed keeps none. The phone's own unsent actions are credited to
+ * nobody, never by position to whoever scored the actions they replaced
+ * (`AcceptedPicture`: never this session's unsaved actions).
+ */
+function keptAuthorship(
+  authorship: unknown,
+  before: ReadonlyMap<number, unknown>,
+  after: ReadonlyMap<number, unknown>
+): unknown {
+  const held = objectOf(authorship)
+  const plays = objectOf(held.plays)
+  const kept: Record<string, unknown> = {}
+  for (const [key, authors] of Object.entries(plays)) {
+    if (!Array.isArray(authors)) continue
+    const index = Number(key)
+    const now = after.get(index)
+    if (now === undefined) continue
+    const was = before.get(index)
+    if (now === was) {
+      kept[key] = authors
+      continue
+    }
+    const old = storedRecordOf(was)?.actions ?? []
+    const actions = storedRecordOf(now)?.actions ?? []
+    let same = 0
+    while (
+      same < old.length &&
+      same < actions.length &&
+      JSON.stringify(old[same]) === JSON.stringify(actions[same])
+    )
+      same++
+    if (same > 0) kept[key] = authors.slice(0, same)
+  }
+  return { ...held, plays: kept }
 }
 
 /**

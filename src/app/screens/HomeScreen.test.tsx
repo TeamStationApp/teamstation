@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -18,11 +22,14 @@ import { asPublicGroup, type PublicGroup } from '../../common/publicGroups'
 import { userIdOfGumbo } from '../../common/userId'
 import { confirmedChatAgeHooks } from '../../test/chatAgeTesting'
 import { playedFromStart } from '../../test/liveJoin'
+import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { App } from '../App'
 import { SceneShownProvider } from '../components/sceneShown'
 import { parseRoute, routePath } from '../navigation/routes'
 import { currentRoute, showRoute } from '../navigation/useAddressBar'
 import { LIVE_DELAY_SEC } from '../player/liveDelay'
+import { cacheFileName, openCacheStore } from '../sync/cacheStore'
+import { CachingClient } from '../sync/cachingClient'
 import { ThemeProvider } from '../theme/ThemeContext'
 import { HomeScreen } from './HomeScreen'
 
@@ -30,6 +37,45 @@ import { HomeScreen } from './HomeScreen'
 const JUST_AFTER = (): number => Date.parse('2026-05-20T18:00:00.000Z')
 
 let root: Root | undefined
+
+/**
+ * A phone whose file holds the `/me/home` answer it read with signal, the
+ * signal now gone: every request fails to leave the device.
+ */
+async function storedHomePhone(
+  home: unknown
+): Promise<{ client: CachingClient; done: () => Promise<void> }> {
+  const dir = mkdtempSync(join(tmpdir(), 'teamstation-home-'))
+  const executors: Array<ReturnType<typeof nodeSqliteExecutor>> = []
+  const net = { offline: false }
+  const client = new CachingClient({
+    baseUrl: 'http://x/api/v1',
+    fetch: async (url: unknown) => {
+      if (net.offline) throw new TypeError('Load failed')
+      const path = String(url).replace('http://x/api/v1', '')
+      return path === '/me/home'
+        ? new Response(JSON.stringify(home), { status: 200 })
+        : new Response(JSON.stringify({ code: 'notFound', message: 'No' }), {
+            status: 404
+          })
+    },
+    openCache: async userId => {
+      const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+      executors.push(executor)
+      return await openCacheStore(executor)
+    }
+  })
+  client.openFor('usr_1')
+  await client.home()
+  net.offline = true
+  return {
+    client,
+    done: async () => {
+      for (const executor of executors) await executor.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
 
 const delay = async (ms: number): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
@@ -1443,5 +1489,59 @@ describe('followed team identity on Home', () => {
     const row = labelled('Winter Wolves')
     expect(row.textContent).includes('WW')
     expect(row.querySelector('[role="img"]')).equals(null)
+  })
+})
+
+describe('the home screen with no signal', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    document.body.replaceChildren()
+  })
+
+  it('draws the lists from the stored /me/home answer', async function () {
+    const team = (id: string, name: string): unknown => ({
+      ...asTeamSummary({
+        id,
+        name,
+        shortName: null,
+        logoPath: null,
+        logoUrl: null
+      }),
+      direct: true,
+      source: 'member'
+    })
+    const phone = await storedHomePhone({
+      teams: [team('tem_sox', 'Sox'), team('tem_owls', 'Owls')],
+      seasons: [],
+      leagues: []
+    })
+    try {
+      const host = document.body.appendChild(document.createElement('div'))
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <HomeScreen
+              client={phone.client}
+              now={JUST_AFTER}
+              onOpenTeam={() => undefined}
+              onOpenSeason={() => undefined}
+              onOpenGame={() => undefined}
+            />
+          </ThemeProvider>
+        )
+      })
+      await act(async () => {
+        await delay(30)
+      })
+      expect(phone.client.offline).equals(true)
+      expect(text()).includes('Sox')
+      expect(text()).includes('Owls')
+    } finally {
+      await phone.done()
+    }
   })
 })

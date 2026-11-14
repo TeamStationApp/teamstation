@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { createHash } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { request as httpRequest } from 'node:http'
@@ -23,8 +23,9 @@ const run = promisify(execFile)
  * An import hands these out as short-lived presigned URLs, so a picture is
  * fetched and stored at once or not at all — nothing is ever kept as a link
  * back to them. What lands in the Space is a normalised copy at two fixed
- * sizes, named by a hash of its own bytes, so re-running an import uploads
- * nothing unless the picture itself changed.
+ * sizes, public under a name nobody can guess. The row keeps a hash of its
+ * bytes, so re-running an import uploads nothing unless the picture itself
+ * changed.
  *
  * FFmpeg does the normalising rather than an image library, because the
  * pinned build is already here, already version-checked, and already the one
@@ -82,18 +83,26 @@ export interface NormalisedImage {
 /**
  * The key prefix a row stores: the size and extension are appended on read.
  *
- * Named by entity id rather than by date or source, for the reason video
- * directories are: the id is the only part that cannot change.
+ * 16 random bytes and nothing else. The object is public, so its name is the
+ * only thing keeping it from anybody who has not been given the URL: no
+ * entity id and no hash of the bytes, which could be enumerated or guessed.
  */
-export function imagePathPrefix(
-  kind: ImageKind,
-  entityId: string,
-  sha256: string
-): string {
-  return `images/${kind}/${entityId}/${sha256.slice(0, 8)}`
+export function imagePathPrefix(kind: ImageKind): string {
+  return `images/${kind}/${randomBytes(16).toString('hex')}`
 }
 
-/** `images/user/usr_1/1f4c2a90-96.png`. */
+const PUBLIC_IMAGE_PREFIX =
+  /^images\/(?:team|league|user|venue|field)\/[0-9a-f]{32}$/
+
+/**
+ * Whether a prefix is one `imagePathPrefix` makes, so its objects are public.
+ * A catalog picture and a prefix written before names were random are not.
+ */
+export function isPublicImagePrefix(prefix: string): boolean {
+  return PUBLIC_IMAGE_PREFIX.test(prefix)
+}
+
+/** `images/user/1f4c2a90…-96.png`. */
 export function imageKey(prefix: string, size: ImageSize): string {
   return `${prefix}-${size}.png`
 }
@@ -780,7 +789,9 @@ export interface StoredImage {
 }
 
 /**
- * Normalise, hash, and upload — unless the hash says we already have it.
+ * Normalise, hash, and upload as public objects — unless the hash says we
+ * already have it. When a size fails to upload, the sizes already put under
+ * the new prefix are deleted before the failure is thrown.
  *
  * `knownSha256` is the value already on the row. When it matches, nothing is
  * uploaded and nothing is written: an import that runs nightly should cost
@@ -790,25 +801,50 @@ export async function storeImage(options: {
   ffmpegPath: string
   space: SpaceSettings
   kind: ImageKind
-  entityId: string
   source: Buffer
   knownSha256?: string | null
 }): Promise<StoredImage | undefined> {
-  const { ffmpegPath, space, kind, entityId, source, knownSha256 } = options
+  const { ffmpegPath, space, kind, source, knownSha256 } = options
 
   const image = await normaliseImage({ ffmpegPath, source, kind })
   if (knownSha256 != null && knownSha256 === image.sha256) return undefined
 
-  const pathPrefix = imagePathPrefix(kind, entityId, image.sha256)
+  const pathPrefix = imagePathPrefix(kind)
+  const uploaded: string[] = []
   let bytesUploaded = 0
-  for (const [size, bytes] of image.bySize) {
-    await putObject({
-      space,
-      key: imageKey(pathPrefix, size),
-      body: bytes,
-      contentType: 'image/png'
-    })
-    bytesUploaded += bytes.length
+  try {
+    for (const [size, bytes] of image.bySize) {
+      const key = imageKey(pathPrefix, size)
+      await putObject({
+        space,
+        key,
+        body: bytes,
+        contentType: 'image/png',
+        acl: 'public-read'
+      })
+      uploaded.push(key)
+      bytesUploaded += bytes.length
+    }
+  } catch (error) {
+    // No row will ever name this prefix, so nothing else would remove the
+    // sizes already up: public copies of the picture that deleting the photo
+    // or the account would never reach.
+    await releaseUploaded(space, uploaded)
+    throw error
   }
   return { pathPrefix, sha256: image.sha256, bytesUploaded }
+}
+
+/** Deletes each key, saying (not throwing) what it could not remove. */
+async function releaseUploaded(
+  space: SpaceSettings,
+  keys: readonly string[]
+): Promise<void> {
+  for (const key of keys) {
+    try {
+      await deleteObject({ space, key })
+    } catch (error) {
+      console.error(`pictures: releasing ${key}: ${String(error)}`)
+    }
+  }
 }

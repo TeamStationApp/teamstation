@@ -120,7 +120,8 @@ import type { GameRecording } from '../stream/gameRecording'
 import { playById } from '../stream/playById'
 import { StreamFooter } from '../stream/StreamFooter'
 import { useGameRecording } from '../stream/useGameRecording'
-import { gameKey } from '../sync/documentKeys'
+import { StoredFirst } from '../sync/storedFirst'
+import { usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, useTheme } from '../theme/ThemeContext'
 import type { Theme } from '../theme/types'
 import { BoxScore } from './BoxScore'
@@ -523,6 +524,11 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     },
     [gameId]
   )
+  /**
+   * The game's stored paint, which every answer of the game beats: a read's,
+   * and a read the cameras or a video's play make of it.
+   */
+  const storedGame = useRef(new StoredFirst())
   const refreshGame = useCallback(
     async (refreshPermissions = true): Promise<void> => {
       if (live.current && currentGameId.current === gameId)
@@ -530,7 +536,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       if (refreshPermissions) permissionRefreshOwed.current = gameId
       const request = ++gameRequest.current
       try {
-        showGame(await client.game(gameId), request)
+        const found = await client.game(gameId)
+        storedGame.current.answered()
+        showGame(found, request)
       } catch (error) {
         if (
           live.current &&
@@ -542,11 +550,21 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     },
     [client, gameId, showGame]
   )
-  /** The game as the phone last stored it, until the read returns. */
+  /**
+   * The game as the phone last stored it, until the read returns. A read
+   * that went out after the paint began does not hold it back: with no
+   * signal that read waits out its deadline, and the screen would be empty
+   * until then. Only a read that has answered since keeps it off.
+   */
   const paintGame = useCallback(async (): Promise<void> => {
-    const request = ++gameRequest.current
-    const stored = await client.cached(gameKey(gameId), asGameDetail)
-    if (stored != null) showGame(stored, request)
+    await storedGame.current.paint(
+      client,
+      `/games/${encodeURIComponent(gameId)}`,
+      asGameDetail,
+      stored => {
+        showGame(stored, gameRequest.current)
+      }
+    )
   }, [client, gameId, showGame])
   /**
    * `refreshGame` once the event's scope allows: after its acknowledgement
@@ -738,6 +756,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     () => new Map()
   )
   const [playback, setPlayback] = useState<Playback | undefined>(undefined)
+  /** A phone whose requests are not leaving it: no playback will come. */
+  const offline = usePhoneOffline(client)
   /**
    * Which video the current playback URL belongs to.
    *
@@ -977,6 +997,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       .game(forGame)
       .then(found => {
         if (gameIdRef.current !== forGame) return
+        storedGame.current.answered()
         setGame(current =>
           current == null || sameVideos(current.videos, found.videos)
             ? current
@@ -1061,12 +1082,19 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
   // checks membership while it looks, so asking is the only way to find out.
   /** How many times a live video without files has been asked for again. */
   const [playbackAsks, setPlaybackAsks] = useState(0)
+  /**
+   * The video whose playback could not be read (no signal: the address is
+   * never stored): its poster is drawn, from the phone's file, in place of
+   * a spinner that would never end.
+   */
+  const [playbackFailedFor, setPlaybackFailedFor] = useState<string>()
   useEffect(() => {
     if (videoId == null || nonMemberView || props.signedIn !== true) return
     const forVideoId = videoId
     let live = true
     setPlayback(undefined)
     setPlaybackFor(undefined)
+    setPlaybackFailedFor(undefined)
     // Each video's asks back off from the first wait, not from where the
     // last video's had got to.
     setPlaybackAsks(0)
@@ -1078,7 +1106,9 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         setPlaybackFor(forVideoId)
       })
       .catch(() => {
-        if (live) setPlayback(undefined)
+        if (!live) return
+        setPlayback(undefined)
+        setPlaybackFailedFor(forVideoId)
       })
     return () => {
       live = false
@@ -2141,6 +2171,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       reread: async () => {
         const found = await client.game(forGame)
         if (gameIdRef.current !== forGame) return undefined
+        storedGame.current.answered()
         setGame(current =>
           current == null || sameVideos(current.videos, found.videos)
             ? current
@@ -2226,9 +2257,29 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
         >
           {isLive && <LivePill />}
           {playback == null ? (
-            <View style={styles.inPlace}>
-              <ActivityIndicator color={theme.primaryTextColor} />
-            </View>
+            // Offline, or the address could not be read: the poster the
+            // phone keeps, not a spinner that never ends.
+            offline || playbackFailedFor === videoId ? (
+              <View
+                testID="gameVideoPosterOffline"
+                pointerEvents="none"
+                style={styles.inPlace}
+              >
+                <VideoPoster
+                  uri={playing?.posterUrl}
+                  size="hero"
+                  time={
+                    playing?.durationSec == null
+                      ? undefined
+                      : timecode(playing.durationSec)
+                  }
+                />
+              </View>
+            ) : (
+              <View style={styles.inPlace}>
+                <ActivityIndicator color={theme.primaryTextColor} />
+              </View>
+            )
           ) : playback.url == null ? (
             // The row says there is a video and its files are not there. Saying
             // so beats a player that shows black and never explains itself.

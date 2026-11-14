@@ -83,18 +83,35 @@ export function useGameReplaced(
 
 /**
  * What the scorer is told once the game opens again. `lost` counts the
- * changes it had not saved, which are not kept; a phone's queue given up
- * counts as one, since it cannot tell how many it held.
+ * changes it had not saved, which are not kept; each save a phone's queue
+ * gave up counts as one. `unsure` counts those sent with no answer that the
+ * server's copy does not tell of: they may or may not have been kept, and
+ * the scorer is not told they were lost, to score them again.
  */
-export function replacedNotice(change: GameReplaced, lost: number): string {
+export function replacedNotice(
+  change: GameReplaced,
+  lost: number,
+  unsure = 0
+): string {
   if (!change.reset)
     return lost > 0
-      ? 'Home and away were swapped, so changes not yet saved before the swap were not kept.'
-      : 'Home and away were swapped.'
+      ? unsure > 0
+        ? 'Home and away were swapped, so changes not yet saved before the swap were not kept, and others may not have been.'
+        : 'Home and away were swapped, so changes not yet saved before the swap were not kept.'
+      : unsure > 0
+        ? 'Home and away were swapped, so changes not yet saved before the swap may not have been kept.'
+        : 'Home and away were swapped.'
   const what = change.swapped
     ? 'Home and away were swapped and the game was reset'
     : 'This game was reset'
-  if (lost === 0) return `${what}.`
-  const changes = lost === 1 ? '1 change' : `${lost} changes`
-  return `${what}, so ${changes} not yet saved before the reset ${lost === 1 ? 'was' : 'were'} not kept.`
+  const changes = (count: number): string =>
+    count === 1 ? '1 change' : `${count} changes`
+  if (lost === 0)
+    return unsure === 0
+      ? `${what}.`
+      : `${what}, so ${changes(unsure)} not yet saved before the reset may not have been kept.`
+  const kept = `${what}, so ${changes(lost)} not yet saved before the reset ${lost === 1 ? 'was' : 'were'} not kept`
+  return unsure === 0
+    ? `${kept}.`
+    : `${kept}, and ${unsure} more may not have been.`
 }
