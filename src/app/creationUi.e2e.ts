@@ -168,10 +168,12 @@ async function main(): Promise<void> {
       'PASS: name-first league and season creation, initials preview, persisted creation, blue wrapped calendar with white dates'
     )
     const admin = await login(101)
+    // Wide, the navigation is the sidebar (develop 30f330991, a0db231a9):
+    // its tabs down the left in order, the account at its foot below them.
     const desktop = await navigation(admin)
     for (let index = 1; index < desktop.length; index++) {
-      expect(desktop[index - 1].right).at.most(desktop[index].left)
-      expect(desktop[index].top).lessThan(60)
+      expect(desktop[index - 1].bottom).at.most(desktop[index].top)
+      expect(desktop[index].right).lessThan(260)
     }
     await shot(admin, 'populated-home')
     expect(await admin.evaluate(() => document.body.textContent)).not.includes(

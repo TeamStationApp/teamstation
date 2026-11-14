@@ -1437,7 +1437,20 @@ async function main(): Promise<void> {
     await open(`/games/${gameId}?tab=info`)
     assert.equal(await selected(), 'Info')
     await m.openBrowser({ url: f.h.origin + `/games/${gameId}?tab=watch` })
-    await m.assertVisible({ text: 'No videos', timeout: 15000 })
+    // A visible copy: a hidden page can hold one too, which the first
+    // match by text may be. Every copy, where and how drawn, if none is.
+    const noVideos = `[...document.querySelectorAll('*')].filter(n => n.childElementCount === 0 && n.textContent.trim() === 'No videos').map(n => { const r = n.getBoundingClientRect(); let hidden = ''; for (let e = n; e != null; e = e.parentElement) { const c = getComputedStyle(e); if (c.visibility === 'hidden' || c.display === 'none' || c.opacity === '0') hidden = hidden || e.tagName + ' ' + c.visibility + '/' + c.display + '/' + c.opacity } return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), hidden, shown: r.width > 0 && r.x >= 0 && r.x < innerWidth && hidden === '' } })`
+    const until = Date.now() + 15000
+    let copies: Array<{ shown: boolean }> = []
+    while (Date.now() < until) {
+      copies = await evaluate<Array<{ shown: boolean }>>(noVideos)
+      if (copies.some(copy => copy.shown)) break
+      await new Promise(resolve => setTimeout(resolve, 300))
+    }
+    assert.ok(
+      copies.some(copy => copy.shown),
+      `No videos shown: ${JSON.stringify(copies)}`
+    )
     await m.openBrowser({ url: f.h.origin + `/games/${gameId}?tab=boxScore` })
     await m.assertVisible({
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
@@ -1448,7 +1461,12 @@ async function main(): Promise<void> {
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
       timeout: 15000
     })
-    await tap({ css: '[role="tab"][aria-label="Videos"]' }, 'UP')
+    await tap(
+      {
+        css: '[role="tab"][aria-label="Videos"]:not([data-testid="navigation-sidebar"] *)'
+      },
+      'UP'
+    )
     await m.assertVisible({ text: 'No videos' })
     await m.back()
     await m.assertVisible({

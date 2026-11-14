@@ -548,6 +548,11 @@ describe('two scorekeepers on one game', function () {
       await a.tap('Cancel')
     } finally {
       await a.page.setOfflineMode(false)
+      // A request made offline can hang there rather than fail: the offline
+      // phase's page goes too, as the held phase's does, so L5 starts from a
+      // fresh load.
+      await a.page.goto('about:blank')
+      inFlight.get(a.page)?.clear()
     }
   })
 

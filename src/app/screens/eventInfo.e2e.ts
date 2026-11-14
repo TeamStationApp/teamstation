@@ -252,7 +252,7 @@ async function main(): Promise<void> {
     await m.assertVisible({ text: 'Are you going?', timeout: 10000 })
     assert.equal(
       await evaluate(
-        `document.querySelector('[role="tab"][aria-selected="true"]')?.textContent`
+        `document.querySelector('[role="tab"][aria-selected="true"]:not([data-testid="navigation-sidebar"] *)')?.textContent`
       ),
       'Info'
     )
@@ -564,7 +564,7 @@ async function main(): Promise<void> {
     }
     const selectedTab = async (): Promise<string> =>
       await evaluate(
-        `document.querySelector('[role="tab"][aria-selected="true"]')?.textContent`
+        `document.querySelector('[role="tab"][aria-selected="true"]:not([data-testid="navigation-sidebar"] *)')?.textContent`
       )
     await open(`/games/${gameId}`)
     const scoring = await f.h.request('POST', `/games/${gameId}/events`, {
@@ -616,7 +616,9 @@ async function main(): Promise<void> {
       css: '[role="tab"][aria-selected="true"][aria-label="Box score"]',
       timeout: 10000
     })
-    await m.tapOn({ css: '[role="tab"][aria-label="Videos"]' })
+    await m.tapOn({
+      css: '[role="tab"][aria-label="Videos"]:not([data-testid="navigation-sidebar"] *)'
+    })
     await m.assertVisible({ text: 'No videos', timeout: 10000 })
     await m.back()
     await m.assertVisible({

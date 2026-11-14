@@ -40,6 +40,17 @@ async function login(page: Page, f: GroupFixture, user: number): Promise<void> {
 }
 /** The picture opens its menu, whatever else its label says, then the row. */
 async function openNotifications(page: Page): Promise<void> {
+  // Wide, the navigation sidebar holds Notifications ("Notifications
+  // waiting" while one waits), and the account opens its page (develop
+  // a0db231a9); narrower, Notifications is in the account's menu.
+  const sidebar =
+    '[data-testid="sidebar-account-footer"] [aria-label^="Notifications"]'
+  if ((await page.$(sidebar)) != null) {
+    await page.$eval(sidebar, node => {
+      ;(node as HTMLElement).click()
+    })
+    return
+  }
   const picture = '[role="button"][aria-label^="Account, "]'
   await page.waitForSelector(picture)
   await page.$eval(picture, node => {

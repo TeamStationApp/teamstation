@@ -139,8 +139,18 @@ async function closeDevice(person: string, n = 1): Promise<void> {
   open.delete(key)
 }
 
+/**
+ * The page's words, without the navigation sidebar's: its account row names
+ * the signed-in person (develop a0db231a9), whom a list must not offer.
+ */
 async function bodyText(page: Page): Promise<string> {
-  return await page.evaluate(() => document.body.innerText)
+  return await page.evaluate(() => {
+    const text = document.body.innerText
+    const sidebar = document.querySelector<HTMLElement>(
+      '[data-testid="navigation-sidebar"]'
+    )
+    return sidebar == null ? text : text.replace(sidebar.innerText, '')
+  })
 }
 
 async function waitForText(page: Page, words: string): Promise<void> {

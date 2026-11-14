@@ -652,6 +652,30 @@ export const RECIPES: Record<string, Recipe> = {
       }
     ]
   },
+  // The replay seed's season and team, and the stats tables seed's player
+  // and games, whose ids the script reads from the seed's JSON (TEST_SEED).
+  'src/app/screens/statsKeys.e2e.ts': async context => {
+    seedReplay(context.cwd)
+    const seeded = spawnSync(
+      process.execPath,
+      ['-r', 'sucrase/register', 'src/server/dev/statsTablesSeed.ts'],
+      { cwd: context.cwd, encoding: 'utf8' }
+    )
+    if (seeded.status !== 0)
+      throw new Error(`statsTablesSeed failed: ${seeded.stderr.slice(-2000)}`)
+    // Its JSON, without whatever the server's modules logged before it.
+    const json = seeded.stdout.slice(seeded.stdout.indexOf('{'))
+    const file = join(mkdtempSync(join(tmpdir(), 'stats-keys-')), 'seed.json')
+    writeFileSync(file, json)
+    return [
+      {
+        env: {
+          TEST_SEED: file,
+          REPLAY_ARTIFACTS: '{legacy:statsKeys.e2e}'
+        }
+      }
+    ]
+  },
   // A fresh fixture in the stack's database, at the path the script reads.
   'scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts': existingPlayer(
     'scripts/e2e/existingPlayer/existingPlayer.native.e2e.ts'

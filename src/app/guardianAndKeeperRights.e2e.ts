@@ -2362,13 +2362,14 @@ async function home(run: Run): Promise<void> {
   await contains(guardian.page, 'Career')
   await settle(guardian)
   const stats = await page(guardian)
-  // Both teams' games, a row each and a total, as PA AB H AVG: the Comets'
-  // 3 at-bats, the Hawks' 4, 7 together.
+  // Both teams' games, a row each and a total, as GP PA AB AVG, the career
+  // table's first columns (develop 3e0e1d4a7): the Comets' game of 3 at-bats,
+  // the Hawks' of 4, 2 games and 7 together.
   expect(stats).includes('2 games · Career')
-  expect(stats).includes('Demo CometsDemo HawksTotalPAABHAVG')
-  expect(stats).includes('331.333')
-  expect(stats).includes('442.500')
-  expect(stats).includes('773.429')
+  expect(stats).includes('Demo CometsDemo HawksTotalGPPAABAVG')
+  expect(stats).includes('133.333')
+  expect(stats).includes('144.500')
+  expect(stats).includes('277.429')
 
   // Teams: the Comets he has left are still on his page.
   await guardian.m.tapOn({ text: 'Teams', role: 'tab', timeout: 15000 })

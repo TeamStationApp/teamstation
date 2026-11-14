@@ -167,12 +167,48 @@ export async function tap(
   text: string,
   role = 'button'
 ): Promise<void> {
+  // Wide, the navigation sidebar's tabs share their names with a page's own
+  // (Home, Videos, Schedule…; develop 30f330991): where both are on screen,
+  // the page's is the one meant.
+  const page = browserPages.get(m)
+  const marked =
+    page != null &&
+    (await page.evaluate(
+      (label: string, kind: string) => {
+        const named = (n: Element): boolean =>
+          n.getAttribute('aria-label') === label ||
+          (n.textContent ?? '').trim() === label
+        const all = [...document.querySelectorAll(`[role="${kind}"]`)].filter(
+          named
+        )
+        const inSidebar = (n: Element): boolean =>
+          n.closest('[data-testid="navigation-sidebar"]') != null
+        const own = all.find(
+          n => !inSidebar(n) && n.getBoundingClientRect().width > 0
+        )
+        if (own == null || !all.some(inSidebar)) return false
+        own.setAttribute('data-e2e-tap', 'page')
+        return true
+      },
+      text,
+      role
+    ))
+  if (marked) {
+    try {
+      await m.tapOn({ css: '[data-e2e-tap="page"]', timeout: 15000 })
+    } finally {
+      await page.evaluate(() => {
+        for (const n of document.querySelectorAll('[data-e2e-tap]'))
+          n.removeAttribute('data-e2e-tap')
+      })
+    }
+    return
+  }
   try {
     await m.tapOn({ text, role, timeout: 15000 })
   } catch (error) {
     // Every element with this label, where it is, and what hides it: a match
     // in a hidden tab pane or a scene behind the top one is the usual cause.
-    const page = browserPages.get(m)
     if (page != null) {
       const found = await page.evaluate(
         (label: string) =>
