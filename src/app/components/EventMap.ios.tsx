@@ -14,5 +14,10 @@ export function EventMap({
 }: {
   location: EventLocation
 }): React.ReactElement {
-  return <NativeEventMapView coordinate={eventMapCoordinate(location)} />
+  return (
+    <NativeEventMapView
+      coordinate={eventMapCoordinate(location)}
+      pitchEnabled={false}
+    />
+  )
 }

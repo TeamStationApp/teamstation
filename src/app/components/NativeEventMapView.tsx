@@ -5,15 +5,18 @@ import MapView, { Marker, type PROVIDER_GOOGLE } from 'react-native-maps'
 /**
  * The native event map both platforms draw: a 260-high rounded frame on the
  * event's point, with its marker. iOS passes no provider, which is Apple
- * Maps; Android passes Google's and listens for the first load.
+ * Maps, and keeps it flat; Android passes Google's and listens for the
+ * first load.
  */
 export function NativeEventMapView({
   coordinate,
   provider,
+  pitchEnabled,
   onMapLoaded
 }: {
   coordinate: { latitude: number; longitude: number }
   provider?: typeof PROVIDER_GOOGLE
+  pitchEnabled?: boolean
   onMapLoaded?: () => void
 }): React.ReactElement {
   return (
@@ -40,7 +43,7 @@ export function NativeEventMapView({
         scrollEnabled
         zoomEnabled
         rotateEnabled={false}
-        pitchEnabled={false}
+        pitchEnabled={pitchEnabled}
         toolbarEnabled={false}
       >
         <Marker coordinate={coordinate} title="Event location" />

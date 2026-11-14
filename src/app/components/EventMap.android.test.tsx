@@ -59,6 +59,7 @@ describe('Android Google map with OSM fallback', () => {
   it('keeps the native Google map after load and cancels its deadline in StrictMode', async () => {
     await render()
     expect(nativeMapProps.provider).equals('google')
+    expect(nativeMapProps.pitchEnabled).equals(undefined)
     expect(timers.size).equals(1)
     await act(async () => {
       nativeMapProps.onMapLoaded!()
