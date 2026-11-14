@@ -391,6 +391,17 @@ export const SENTENCE_RULES: ReadonlyArray<{
   his safe runnerMovement to that base after the result, or the hit scores
   him. "Double to left center, and the runner on second holds at third" is
   the double and runnerMovement of the "On second" runner to 3B, not out.`
+  },
+  {
+    name: 'A SWING ON A WILD PITCH',
+    said: transcript =>
+      /\b(?:wild pitch|passed ball)\b/i.test(transcript) &&
+      /\b(?:swing|swings|swinging|swung)\b/i.test(transcript),
+    rule: `- A swing said with a wild pitch or a passed ball — "but the batter's
+  swinging" — is pitch S, and the wild pitch stays; a steal on a wild pitch
+  is its advance, not baseRunning, and never a question. "Wild pitch, he
+  steals third, but the batter's swinging", runner on second, is pitch S,
+  then batteryEvent wild_pitch of the "On second" runner to 3B.`
   }
 ]
 

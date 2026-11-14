@@ -1523,6 +1523,57 @@ const BLAKE = 2
       expect(actions.some(action => action.type === 'pitch')).equals(false)
     })
 
+    for (const said of [
+      "Wild pitch, he steals third, but the batter's swinging",
+      "Steals third on a wild pitch, but the batter's still swinging"
+    ])
+      it(`#223 scores a swing on a wild pitch as pitch S and the advance: ${said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex, second: casey }),
+            said
+          )
+        )
+        const dumped = JSON.stringify(actions)
+        const pitches = actions.filter(action => action.type === 'pitch')
+        expect(pitches, dumped).has.length(1)
+        expect(ofType(pitches[0], 'pitch').call, dumped).equals('S')
+        expect(running(actions), dumped).deep.equals([])
+        const battery = ofType(
+          actions.find(action => action.type === 'batteryEvent'),
+          'batteryEvent'
+        )
+        expect(battery.kind, dumped).equals('wild_pitch')
+        expect(battery.advances, dumped).deep.equals([
+          { runner: CASEY, to: '3B' }
+        ])
+      })
+
+    it('#223 keeps a wild pitch with no swing a ball and the advance', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, second: casey }),
+          'Wild pitch, he steals third'
+        )
+      )
+      const dumped = JSON.stringify(actions)
+      const pitch = ofType(
+        actions.find(action => action.type === 'pitch'),
+        'pitch'
+      )
+      expect(pitch.call, dumped).equals('B')
+      expect(running(actions), dumped).deep.equals([])
+      expect(
+        actions.some(
+          action =>
+            action.type === 'batteryEvent' && action.kind === 'wild_pitch'
+        ),
+        dumped
+      ).equals(true)
+    })
+
     it('#223 keeps a runner who holds at third on a double there', async function () {
       const { actions } = decided(
         await say(

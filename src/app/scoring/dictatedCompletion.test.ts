@@ -2877,6 +2877,28 @@ describe('strike three in a sentence', function () {
   })
 })
 
+describe('a swing on a wild pitch', function () {
+  it('is a swinging strike and the wild pitch moves the runner, with nothing asked', function () {
+    const state = settle(
+      sayAs(
+        "Wild pitch, he steals third, but the batter's swinging",
+        game({ second: 6 }),
+        { type: 'pitch', call: 'S' },
+        {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 6, to: '3B' }]
+        }
+      )
+    )
+    const linescore = state.session.liveData.linescore
+    expect([linescore.balls, linescore.strikes]).deep.equals([0, 1])
+    expect(bases(state)).deep.equals([null, null, 6])
+    expect(state.dictationQuestion).equals(undefined)
+    expect(state.dictation?.problem).equals(undefined)
+  })
+})
+
 describe('a runner who holds', function () {
   const holdSaid =
     'Double to left center, and the runner on second holds at third'

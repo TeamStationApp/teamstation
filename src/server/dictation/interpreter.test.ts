@@ -106,6 +106,9 @@ describe('rules given only to the sentences that call for them', function () {
     expect(
       given('Double to left center, and the runner on second holds at third')
     ).deep.equals(['A RUNNER WHO HOLDS'])
+    expect(
+      given("Wild pitch, he steals third, but the batter's swinging")
+    ).deep.equals(['A SWING ON A WILD PITCH'])
     for (const plain of [
       'Ball one.',
       'Wild pitch, he steals third',
@@ -120,6 +123,9 @@ describe('rules given only to the sentences that call for them', function () {
   it('works each rule as the issue reads it', function () {
     expect(sentenceRules('the runner holds at third')).match(
       /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/
+    )
+    expect(sentenceRules("wild pitch, the batter's swinging")).match(
+      /"Wild pitch, he\s+steals third, but the batter's swinging", runner on second, is pitch S,\s+then batteryEvent wild_pitch of the "On second" runner to 3B/
     )
   })
 })
