@@ -243,6 +243,15 @@ describe('the native app surface', function () {
     ])
   })
 
+  it("pauses and plays with a tap on the grid's centre square", async function () {
+    const { surface, calls } = appSurface()
+    await surface.togglePause()
+    // The second column of the second row over the 1024 × 700 block of videos.
+    expect(
+      calls.filter(call => call[0] === 'tapOnPoint').map(call => call[1])
+    ).deep.equals([{ x: 384, y: 263 }])
+  })
+
   it('brings hidden controls back with a tap on the view, and says when they never come', async function () {
     let reads = 0
     const hidden: HierarchyNode = {

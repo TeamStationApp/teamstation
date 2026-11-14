@@ -36,6 +36,19 @@ export function fakeDevice(
   return { device, calls }
 }
 
+/**
+ * A fake device as an async function hands it back: the device's proxy answers
+ * every name, `then` too, so an `await` would take it for a promise.
+ */
+export function awaitable<T extends object>(device: T): T {
+  return new Proxy(device, {
+    get: (target, name) =>
+      name === 'then'
+        ? undefined
+        : (target as Record<string | symbol, unknown>)[name]
+  })
+}
+
 /** A grey screenshot; `bright` regions (in pixels) drawn white. */
 export function png(
   width: number,

@@ -323,6 +323,12 @@ export class ChromeSurface implements SoakSurfaceDriver {
     }
   }
 
+  /** Pauses or plays: a click on the grid's centre squares, the toggle. */
+  async togglePause(): Promise<void> {
+    const block = await this.player()
+    await this.device.tapOnPoint(this.gridPoint(block, 1, 1))
+  }
+
   /** Ten-second steps: clicks on the grid's back and forward squares, as on a phone. */
   async skip(steps: number[] = DEFAULT_SKIPS): Promise<void> {
     const block = await this.player()

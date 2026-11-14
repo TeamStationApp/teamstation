@@ -1,5 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { mkdtempSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -7,7 +7,9 @@ import { expect } from 'chai'
 
 import type { FixtureAccount } from '../../../src/server/dev/fixtures/accounts'
 import { BlockedError } from '../../core/result'
+import type { E2eContext } from '../../core/spec'
 import type { StreamingHandle } from '../../core/streamingStack'
+import type { SoakSchedule } from './soakSchedule'
 import {
   APP_PROCESS,
   gameLinks,
@@ -15,11 +17,15 @@ import {
   rtmpUrl,
   SIGN_IN_AS,
   soakAccounts,
+  soakParts,
+  type SoakPartsDeps,
   soakServerConfig,
   soakSettings,
   xctraceSampler
 } from './soakWiring'
-import { fixture } from './surfaces/fakes.test'
+import type { StreamingWorld } from './streamingSession'
+import { awaitable, fakeDevice, fixture } from './surfaces/fakes.test'
+import type { SoakSurfaceDriver } from './surfaces/surface'
 
 const HANDLE: StreamingHandle = {
   version: 1,
@@ -115,6 +121,26 @@ describe('the soak wiring', function () {
     expect(error).instanceOf(BlockedError)
     expect(error.message).includes(
       'no tvRemote.command, ndiCapture.command, tvJoinSteps, ffmpeg, iosApp'
+    )
+  })
+
+  it('keeps the shaped addresses that are strings and drops the rest', function () {
+    const base = {
+      tvRemote: { command: ['r'] },
+      ndiCapture: { command: ['n'] },
+      tvJoinSteps: [],
+      ffmpeg: 'f',
+      iosApp: 'a'
+    }
+    expect(
+      soakSettings({
+        ...base,
+        shapedIps: { iphone: '192.0.2.20', android: 7, ipad: null }
+      }).shapedIps
+    ).deep.equals({ iphone: '192.0.2.20' })
+    expect(soakSettings(base)).not.have.property('shapedIps')
+    expect(soakSettings({ ...base, shapedIps: 'x' })).not.have.property(
+      'shapedIps'
     )
   })
 
@@ -308,5 +334,214 @@ describe('the soak wiring', function () {
       )
       expect(await sampler.stop!()).deep.equals([])
     })
+  })
+})
+
+/** Fakes for every piece `soakParts` reaches outside this process. */
+function partsRig(): {
+  ctx: E2eContext
+  deps: SoakPartsDeps
+  log: string[]
+  dir: string
+  tv: SoakSurfaceDriver
+} {
+  const dir = mkdtempSync(join(tmpdir(), 'soak-parts-'))
+  const log: string[] = []
+  const cdp = {
+    send: async (method: string) => {
+      log.push(`cdp ${method}`)
+      return {}
+    }
+  }
+  const chrome = fakeDevice()
+  const ctx = {
+    artifact: (name: string) => join(dir, name),
+    device: (role: string) => `id-${role}`,
+    browser: async () => ({
+      m: chrome.device,
+      page: {
+        evaluate: async () => null,
+        createCDPSession: async () => cdp,
+        browser: () => ({
+          target: () => ({ createCDPSession: async () => cdp })
+        })
+      },
+      close: async () => {
+        log.push('browser closed')
+      }
+    })
+  } as unknown as E2eContext
+  const world = {
+    handle: HANDLE,
+    settings: {
+      tvRemote: { command: ['r'], env: {} },
+      ndiCapture: { command: ['n'] },
+      tvJoinSteps: [],
+      ffmpeg: '/opt/ffmpeg',
+      iosApp: 'a',
+      offsetMinutes: -480
+    },
+    world: {
+      gameId: 'g1',
+      streams: [{ label: 'Synthetic', id: 's3', videoId: 'v3', key: 'key-s' }],
+      accounts: {}
+    },
+    emails: { owner: 'o@example.test', viewer: 'v@example.test' },
+    links: gameLinks(HANDLE.origin, 'g1'),
+    stack: { api: HANDLE.api, serverLog: '/log' },
+    ownerToken: 'o',
+    link: (who: string) => async () => `tok-${who}`,
+    close: async () => {
+      log.push('world closed')
+    }
+  } as unknown as StreamingWorld
+  const device = (role: string): unknown =>
+    awaitable(
+      fakeDevice({
+        openLink: (arg: unknown) => {
+          log.push(`${role} opens ${(arg as { link: string }).link}`)
+          return { status: 'passed' }
+        }
+      }).device
+    )
+  const tv = { name: 'tv' } as unknown as SoakSurfaceDriver
+  const deps: SoakPartsDeps = {
+    openWorld: async options => {
+      log.push(`world ${options.cwd}`)
+      return world
+    },
+    deviceKit: () => ({
+      attachIos: async role => device(role),
+      attachAndroid: async role => device(role),
+      openIn: (role, platform) => async () => {
+        log.push(`open ${role} ${platform}`)
+      },
+      saveShot: name => name
+    }),
+    tvKit: () => ({ tv, remote: async () => '' }),
+    signInTv: async () => {
+      log.push('tv signed in')
+      return true
+    },
+    signInApp: async (_device, _app, link) => {
+      log.push(`signed in ${await link()}`)
+    },
+    recordSessions: async (_world, file) => {
+      log.push(`sessions ${file}`)
+    }
+  }
+  return { ctx, deps, log, dir, tv }
+}
+
+describe('building the soak parts', function () {
+  const schedule = {
+    seed: 'seed-1',
+    layout: 'compressed'
+  } as unknown as SoakSchedule
+
+  it('signs every surface in and gives the run its surfaces, publishers and samplers', async function () {
+    const before = process.env.SOAK_TV_MEMORY
+    delete process.env.SOAK_TV_MEMORY
+    try {
+      const r = partsRig()
+      const { parts, cleanup } = await soakParts(
+        { ctx: r.ctx, schedule, cwd: '/repo' },
+        r.deps
+      )
+      expect(Object.keys(parts.surfaces)).deep.equals([
+        'iphone-app',
+        'iphone-safari',
+        'android',
+        'ipad',
+        'tv',
+        'chrome'
+      ])
+      expect(parts.surfaces.tv).equals(r.tv)
+      expect(parts.surfaces.android.name).equals('android')
+      expect(parts.iphone.surface).equals('iphone-app')
+      expect(
+        Object.values(parts.publishers)
+          .map(
+            publisher =>
+              (
+                publisher as unknown as {
+                  options: { angle?: string; label?: string }
+                }
+              ).options
+          )
+          .map(options => options.angle ?? options.label)
+      ).deep.equals(['PhoneA', 'PhoneB', 'Synthetic'])
+      expect(parts.samplers.map(sampler => sampler.name)).deep.equals([
+        'publisherA-xctrace',
+        'iphone-xctrace',
+        'ipad-xctrace',
+        'tv-xctrace',
+        'publisherB-meminfo',
+        'android-meminfo',
+        'chrome',
+        'stack'
+      ])
+      expect(parts.runDir).equals(join(r.dir, 'soak'))
+      expect(parts.provenance).deep.equals({
+        stack: 'streamtest-1',
+        origin: HANDLE.origin,
+        build: process.env.SOAK_BUILD ?? null,
+        schedule: { seed: 'seed-1', layout: 'compressed' }
+      })
+      expect(r.log.filter(line => line.startsWith('signed in'))).deep.equals([
+        'signed in tok-owner',
+        'signed in tok-owner',
+        'signed in tok-viewer',
+        'signed in tok-viewer',
+        'signed in tok-viewer'
+      ])
+      expect(r.log).includes(
+        'iphone opens https://streamtest.example.test//signin/tok-viewer'
+      )
+      expect(r.log).includes('tv signed in')
+      expect(r.log).includes(`sessions ${join(r.dir, 'sessions.json')}`)
+      const urlFile = join(tmpdir(), `soak-rtmp-${process.pid}`)
+      expect(readFileSync(urlFile, 'utf8')).equals(
+        'rtmp://203.0.113.7:1935/live/key-s'
+      )
+      await cleanup()
+      expect(r.log.slice(-2)).deep.equals(['world closed', 'browser closed'])
+      expect(existsSync(urlFile)).equals(false)
+    } finally {
+      if (before == null) delete process.env.SOAK_TV_MEMORY
+      else process.env.SOAK_TV_MEMORY = before
+    }
+  })
+
+  it("leaves the TV's memory out with SOAK_TV_MEMORY=off, and needs a Synthetic camera", async function () {
+    const before = process.env.SOAK_TV_MEMORY
+    process.env.SOAK_TV_MEMORY = 'off'
+    try {
+      const r = partsRig()
+      const { parts, cleanup } = await soakParts(
+        { ctx: r.ctx, schedule, cwd: '/repo' },
+        r.deps
+      )
+      expect(parts.samplers.map(sampler => sampler.name)).not.includes(
+        'tv-xctrace'
+      )
+      expect(parts.samplers).length(7)
+      await cleanup()
+      const bare = partsRig()
+      const opened = await bare.deps.openWorld({ ctx: bare.ctx, cwd: '/' })
+      bare.deps.openWorld = async () => ({
+        ...opened,
+        world: { ...opened.world, streams: [] }
+      })
+      expect(
+        await soakParts({ ctx: bare.ctx, schedule, cwd: '/' }, bare.deps).then(
+          () => '',
+          (error: unknown) => (error as Error).message
+        )
+      ).equals('the soak world has no Synthetic camera')
+    } finally {
+      if (before == null) delete process.env.SOAK_TV_MEMORY
+      else process.env.SOAK_TV_MEMORY = before
+    }
   })
 })

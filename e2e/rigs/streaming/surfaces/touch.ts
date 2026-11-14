@@ -211,6 +211,16 @@ export abstract class TouchSurface implements SoakSurfaceDriver {
     }
   }
 
+  /**
+   * Pauses or plays: a press on the grid's centre squares, the toggle
+   * (`src/app/player/pressGrid.ts`). Only a scenario that means to pause
+   * calls this; revealing the controls never presses there.
+   */
+  async togglePause(): Promise<void> {
+    const { block } = await this.player()
+    await this.device.tapOnPoint(this.gridPoint(block, 1, 1))
+  }
+
   /** Ten-second steps: taps on the grid's back and forward squares, which act unseen. */
   async skip(steps: number[] = DEFAULT_SKIPS): Promise<void> {
     const { block } = await this.player()

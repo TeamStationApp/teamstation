@@ -292,6 +292,13 @@ describe('the Chrome surface', function () {
     ).equals('Element not found')
   })
 
+  it("pauses and plays with a click on the grid's centre square", async function () {
+    const { surface, calls } = chrome([read()])
+    await surface.togglePause()
+    // The second column of the second row over the 1440 × 810 block of videos.
+    expect(calls).deep.equals([['tapOnPoint', { x: 540, y: 304 }]])
+  })
+
   it('rejoins a player it finds closed, notes it, and says when it stays closed', async function () {
     // The game page: no angle tiles, then the player once rejoined.
     const { surface, calls } = chrome([read({}, { tiles: [] }), read()])
