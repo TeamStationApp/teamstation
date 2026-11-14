@@ -20,6 +20,8 @@ const suites = [
   'src/app/components/EventVenueFields.test.tsx',
   'src/app/components/EventMap.native.test.tsx',
   'src/app/components/EventMap.android.test.tsx',
+  'src/app/components/EventMap.ios.test.tsx',
+  'src/app/components/eventMapCoordinate.test.ts',
   'src/app/screens/gameDraft.test.ts',
   'src/app/screens/EventSettingsScreen.test.tsx',
   'src/app/screens/eventAttendance.test.tsx',
