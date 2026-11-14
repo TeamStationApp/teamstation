@@ -8,6 +8,7 @@ import {
   runSoakFixture,
   seedSoakFixture,
   type SoakFixtureDeps,
+  syntheticLabels,
   WORLD
 } from './soakFixture'
 
@@ -164,6 +165,19 @@ describe('the soak fixture', function () {
     })
     expect(urls).deep.equals(['postgres://soak@db.example.test/soak'])
     expect(manifest.streams).length(1)
+    const several = await runSoakFixture({
+      databaseUrl: 'postgres://soak@db.example.test/soak',
+      mailbox: 'qa@example.test',
+      sessionSecret: 'secret',
+      live: LIVE,
+      makeDatabase: () => fakeDb().db,
+      deps: fakeDeps().deps,
+      syntheticAngles: ['SynthA', 'SynthB']
+    })
+    expect(several.streams.map(stream => stream.label)).deep.equals([
+      'SynthA',
+      'SynthB'
+    ])
     expect(destroyed()).equals(true)
     const failing = fakeDb()
     const deps = fakeDeps().deps
@@ -197,10 +211,68 @@ describe('the soak fixture', function () {
     ).match(/session secret/)
   })
 
+  it('seeds every synthetic camera it is asked for over RTMP, by slot, with its own label', async function () {
+    const { db, rows } = fakeDb()
+    const { deps, calls } = fakeDeps()
+    const manifest = await seedSoakFixture(
+      {
+        db,
+        mailbox: 'qa@example.test',
+        sessionSecret: 's',
+        live: LIVE,
+        syntheticAngles: ['SynthA', 'SynthB', 'SynthC']
+      },
+      deps
+    )
+    expect(
+      calls
+        .filter(call => call[0] === 'stream')
+        .map(call => [call[1], call[2], call[4]])
+    ).deep.equals([
+      ['SynthA', 1, 'rtmp'],
+      ['SynthB', 2, 'rtmp'],
+      ['SynthC', 3, 'rtmp']
+    ])
+    expect(manifest.streams.map(stream => stream.label)).deep.equals([
+      'SynthA',
+      'SynthB',
+      'SynthC'
+    ])
+    expect(manifest.ids['stream:SynthB']).equals('stream_2')
+    expect(Object.keys(manifest.accounts)).deep.equals(['owner', 'viewer'])
+    expect(rows.some(row => row[0] === 'scope_roles')).equals(false)
+  })
+
+  it('refuses a camera list it cannot seed', function () {
+    expect(syntheticLabels()).deep.equals(['Synthetic'])
+    expect(() => syntheticLabels([])).throws(/1 to 4/)
+    expect(syntheticLabels(['A', 'B', 'C', 'D'])).length(4)
+    expect(() => syntheticLabels(['A', 'B', 'C', 'D', 'E'])).throws(/not 5/)
+    expect(() => syntheticLabels(['Synth A'])).throws(/letters and digits/)
+    expect(() => syntheticLabels(['SynthA', 'SynthA'])).throws(/repeat/)
+  })
+
   it('runs as a command only where test settings are on, and prints the manifest', async function () {
     expect(parseArgs(['--json', '--mailbox', 'qa@example.test'])).deep.equals({
       mailbox: 'qa@example.test'
     })
+    expect(
+      parseArgs([
+        '--mailbox',
+        'qa@example.test',
+        '--synthetic',
+        'SynthA,SynthB'
+      ])
+    ).deep.equals({
+      mailbox: 'qa@example.test',
+      syntheticAngles: ['SynthA', 'SynthB']
+    })
+    expect(() =>
+      parseArgs(['--mailbox', 'qa@example.test', '--synthetic'])
+    ).throws(/comma-separated/)
+    expect(() =>
+      parseArgs(['--mailbox', 'qa@example.test', '--synthetic', '--json'])
+    ).throws(/comma-separated/)
     expect(() => parseArgs(['--json'])).throws(/Usage/)
     const said: string[] = []
     const out = {

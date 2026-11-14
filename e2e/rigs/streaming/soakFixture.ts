@@ -21,7 +21,7 @@ import { ANGLES, SYNTHETIC_ANGLE } from './soakSchedule'
  * The manifest carries the account's password and each camera's stream key. It goes to
  * stdout and to the scenario's memory, never to a file in the repository or a log.
  *
- *   node -r sucrase/register e2e/rigs/streaming/soakFixture.ts --json --mailbox <mailbox>
+ *   node -r sucrase/register e2e/rigs/streaming/soakFixture.ts --json --mailbox <mailbox> [--synthetic A,B,C]
  *
  * The command runs where the stack's server configuration is (its database, session
  * secret and live settings), and refuses unless `testSettings` is true.
@@ -36,6 +36,33 @@ const OWNER: Person = { first: 'Alex', last: 'Lee' }
  * stray tap would reach (`canFilm`, `CameraAnglesPanel`).
  */
 const VIEWER: Person = { first: 'Sam', last: 'Park' }
+/** A person's cameras on one game (`MAX_CAMERAS` in `streamKeys.ts`); a world seeds at most these. */
+const MAX_SYNTHETIC = 4
+
+/**
+ * The synthetic cameras a world seeds, by label. The soak's is the one
+ * `Synthetic` beside the two phones; a targeted run seeds only synthetic ones,
+ * each burning its own label into its frames.
+ */
+export function syntheticLabels(asked?: string[]): string[] {
+  const labels = asked ?? [SYNTHETIC_ANGLE]
+  if (labels.length === 0 || labels.length > MAX_SYNTHETIC) {
+    throw new Error(
+      `a soak world seeds 1 to ${MAX_SYNTHETIC} synthetic cameras, not ${labels.length}`
+    )
+  }
+  for (const label of labels) {
+    if (!/^[A-Za-z0-9]{1,24}$/.test(label)) {
+      throw new Error(
+        `a synthetic camera's label is letters and digits: "${label}"`
+      )
+    }
+  }
+  if (new Set(labels).size !== labels.length) {
+    throw new Error(`synthetic camera labels repeat: ${labels.join(', ')}`)
+  }
+  return labels
+}
 
 export interface SoakStream {
   label: string
@@ -97,6 +124,8 @@ export interface SoakFixtureInput {
   live: LiveSettings
   now?: () => Date
   nonce?: string
+  /** The synthetic cameras to seed, by label; the soak's one `Synthetic` when omitted. */
+  syntheticAngles?: string[]
 }
 
 export async function seedSoakFixture(
@@ -164,21 +193,25 @@ export async function seedSoakFixture(
     })
     .execute()
   const streams: SoakStream[] = []
+  const labels = syntheticLabels(input.syntheticAngles)
   // The phones make their own cameras through Record Video, as a person
-  // filming does; only the synthetic one publishes over RTMP with a key.
-  for (const [index, label] of ANGLES.entries()) {
-    if (label !== SYNTHETIC_ANGLE) continue
+  // filming does; the synthetic ones publish over RTMP with a key.
+  for (const [index, label] of labels.entries()) {
     const made = await deps.createLiveStream(db, {
       gameId,
       teamId: home.id,
       startAt: now,
       userId: owner.userId,
-      slot: index + 1,
+      // The soak's Synthetic keeps the third slot, after the two phones.
+      slot:
+        input.syntheticAngles == null
+          ? ANGLES.indexOf(SYNTHETIC_ANGLE) + 1
+          : index + 1,
       label,
       live: input.live,
       sessionSecret: input.sessionSecret,
       videoTitle: GAME_TITLE,
-      ...(label === 'Synthetic' ? { source: 'rtmp' as const } : {})
+      source: 'rtmp'
     })
     streams.push({
       label,
@@ -263,6 +296,7 @@ export interface RunSoakFixture {
   live: LiveSettings
   makeDatabase: (url: string) => Kysely<Database>
   deps?: SoakFixtureDeps
+  syntheticAngles?: string[]
 }
 
 /** Seeds the world into the database at `databaseUrl`, and always lets go of it. */
@@ -281,7 +315,10 @@ export async function runSoakFixture(
         db,
         mailbox: options.mailbox,
         sessionSecret: options.sessionSecret,
-        live: options.live
+        live: options.live,
+        ...(options.syntheticAngles == null
+          ? {}
+          : { syntheticAngles: options.syntheticAngles })
       },
       options.deps ?? serverDeps()
     )
@@ -290,13 +327,24 @@ export async function runSoakFixture(
   }
 }
 
-export function parseArgs(argv: string[]): { mailbox: string } {
+export function parseArgs(argv: string[]): {
+  mailbox: string
+  syntheticAngles?: string[]
+} {
   const at = argv.indexOf('--mailbox')
   const mailbox = at < 0 ? undefined : argv[at + 1]
   if (mailbox?.includes('@') !== true) {
-    throw new Error('Usage: soakFixture.ts --json --mailbox <mailbox>')
+    throw new Error(
+      'Usage: soakFixture.ts --json --mailbox <mailbox> [--synthetic <label,label,…>]'
+    )
   }
-  return { mailbox }
+  const synthetic = argv.indexOf('--synthetic')
+  if (synthetic < 0) return { mailbox }
+  const list = argv[synthetic + 1]
+  if (list == null || list.startsWith('--')) {
+    throw new Error('--synthetic takes a comma-separated list of labels')
+  }
+  return { mailbox, syntheticAngles: syntheticLabels(list.split(',')) }
 }
 
 interface ServerConfigLike {
@@ -316,7 +364,7 @@ export async function runCli(
   out: Pick<Console, 'log' | 'error'> = console
 ): Promise<number> {
   try {
-    const { mailbox } = parseArgs(argv)
+    const { mailbox, syntheticAngles } = parseArgs(argv)
     const { config, makeDatabase } = load()
     if (!config.testSettings) {
       throw new Error(
@@ -328,7 +376,8 @@ export async function runCli(
       mailbox,
       sessionSecret: config.sessionSecret,
       live: config.live,
-      makeDatabase
+      makeDatabase,
+      ...(syntheticAngles == null ? {} : { syntheticAngles })
     })
     out.log(JSON.stringify(manifest))
     return 0
