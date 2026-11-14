@@ -289,9 +289,9 @@ export async function preparePreview(
     return { snap, keep, earlier }
   })
   const { snap, keep, earlier } = plan
-  // A build whose device never sent its result is dropped after a day, with
-  // the snapshot it held: any league's, so one that never builds again
-  // leaves none behind.
+  // A build whose device never sent its result expires after a day (and
+  // completing one is refused then); its row and snapshot are swept here,
+  // any league's, so one that never builds again leaves none behind.
   await db
     .deleteFrom('schedule_previews')
     .where('status', '=', 'building')
@@ -330,29 +330,31 @@ function resultHash(result: EngineResult): string {
   return createHash('sha256').update(JSON.stringify(result)).digest('hex')
 }
 
-/** Keys the server makes, and acts on, for games it holds or places. */
-const RESERVED_KEY = /^(kept|replaced|listed|rejected|added|busy|weekly):/
-
 /**
- * A device's game keys as storage needs them: each once in its option, and
- * none of the server's own unless the run asked for that game by it. A
- * repeated key would break publishing, and a reserved one would be read as
- * the server's.
+ * A device's games under keys the server makes. Storage needs each key once
+ * in its option, and the server acts on its own key prefixes, so only a game
+ * the run asked for by its key keeps it (once); every other game gets a
+ * fresh one, whatever the device called it.
  */
-function requireStorableKeys(engine: EngineInput, result: EngineResult): void {
+function serverKeyed(engine: EngineInput, result: EngineResult): EngineResult {
   const required = new Set((engine.required ?? []).map(game => game.key))
-  for (const option of result.options) {
-    const keys = new Set<string>()
-    for (const game of option.games) {
-      if (
-        game.key === '' ||
-        game.key.length > 300 ||
-        keys.has(game.key) ||
-        (RESERVED_KEY.test(game.key) && !required.has(game.key))
-      )
-        throw badRequest('Give each game of an option its own key')
-      keys.add(game.key)
-    }
+  return {
+    ...result,
+    options: result.options.map(option => {
+      const kept = new Set<string>()
+      return {
+        ...option,
+        games: option.games.map(game => {
+          if (required.has(game.key)) {
+            if (kept.has(game.key))
+              throw badRequest('Place each requested game once')
+            kept.add(game.key)
+            return game
+          }
+          return { ...game, key: `placed:${makeId('game')}` }
+        })
+      }
+    })
   }
 }
 
@@ -389,7 +391,10 @@ export async function completePreview(
         throw conflict('This preview is no longer waiting for a device result')
       }
       if (preparation == null) throw conflict('Prepare the schedule again')
-      requireStorableKeys(snap.engine, result)
+      // A device that waited past the sweep's day is too late to complete.
+      if (row.created_at.getTime() < clock.now().getTime() - BUILD_EXPIRY_MS)
+        throw conflict('Prepare the schedule again')
+      const placed = serverKeyed(snap.engine, result)
       if (preparation.earlier != null) {
         const earlier = await previewFor(trx, actor, preparation.earlier.id, {
           forUpdate: true
@@ -404,8 +409,8 @@ export async function completePreview(
       }
       const options =
         preparation.keep == null
-          ? result.options
-          : result.options.map(option => ({
+          ? placed.options
+          : placed.options.map(option => ({
               ...option,
               games: withKept(preparation.keep!, option.games)
             }))

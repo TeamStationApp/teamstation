@@ -123,7 +123,12 @@ describe('device preview lifecycle', function () {
       expect(accepted.status, await accepted.clone().text()).equals(200)
       const preview = (await accepted.json()) as SchedulePreview
       expect(preview.status).equals('open')
-      expect(preview.options[0].games).deep.equals(result.options[0].games)
+      // Stored as sent, under keys the server made.
+      const unkeyed = (games: Array<{ key: string }>): unknown[] =>
+        games.map(({ key: _key, ...game }) => game)
+      expect(unkeyed(preview.options[0].games)).deep.equals(
+        unkeyed(result.options[0].games)
+      )
       expect(preview.options[0].fairness).deep.equals(
         result.options[0].fairness
       )

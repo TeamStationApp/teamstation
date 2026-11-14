@@ -1,5 +1,5 @@
 import { seasonZones } from '../../common/autoScheduler/seasonZones'
-import type { EngineInput, PlannedGame } from '../../common/autoScheduler/types'
+import type { PlannedGame } from '../../common/autoScheduler/types'
 import { badRequest } from '../../common/errors'
 import { gameCalendarDay } from '../../common/gameTime'
 import { fieldSizeLabel } from '../../common/venues'
@@ -76,33 +76,6 @@ export function requireKeepsRules(
   headCoaches?: Record<string, string>,
   weeklyOthers?: Holding[]
 ): void {
-  const required = snap.engine.required?.find(
-    required =>
-      required.key === game.key &&
-      required.seasonId === game.seasonId &&
-      required.homeTeamId === game.homeTeamId &&
-      required.awayTeamId === game.awayTeamId &&
-      required.exhibition === game.exhibition
-  )
-  requireKeepsRulesIn(snap, game, now, required, {
-    ...ruleContext(snap, others, headCoaches),
-    weeklyOthers
-  })
-}
-
-type RequiredMatchup = NonNullable<EngineInput['required']>[number]
-
-/**
- * The same checks in a rule context built once for many games; `required`
- * is the run's required matchup the game places, when it places one.
- */
-function requireKeepsRulesIn(
-  snap: Snapshot,
-  game: PlannedGame,
-  now: Date,
-  required: RequiredMatchup | undefined,
-  context: RuleContext
-): void {
   const season = snap.engine.seasons.find(each => each.id === game.seasonId)
   if (season == null) throw badRequest('Choose a season of this run')
   if (Date.parse(game.startAt) <= now.getTime())
@@ -119,10 +92,6 @@ function requireKeepsRulesIn(
       `${season.name} plays on ${fieldSizeLabel(season.settings.fieldSize)} fields`
     )
   const teams = new Set([...season.participants, ...season.exhibitionTeams])
-  if (required != null) {
-    teams.add(required.homeTeamId)
-    teams.add(required.awayTeamId)
-  }
   if (!teams.has(game.homeTeamId) || !teams.has(game.awayTeamId))
     throw badRequest(`Choose two of ${season.name}’s teams`)
   const problem = ruleProblem(
@@ -132,7 +101,7 @@ function requireKeepsRulesIn(
       size: game.size,
       seasonId: game.seasonId
     },
-    context
+    { ...ruleContext(snap, others, headCoaches), weeklyOthers }
   )
   if (problem != null) throw badRequest(problem)
 }

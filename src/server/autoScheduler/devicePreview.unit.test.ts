@@ -165,7 +165,11 @@ describe('device preview state transitions without a database', () => {
         result,
         clock
       )
-      expect(complete.options[0].games).deep.equals([game])
+      // Stored under a key the server made, otherwise as sent.
+      const { key: _key, ...placed } = complete.options[0].games[0]
+      const { key: _sent, ...sent } = game
+      expect(placed).deep.equals(sent)
+      expect(complete.options[0].games[0].key).matches(/^placed:/)
       expect(complete.status).equals('open')
       expect(
         await completePreview(db, actor, prepared.id, result, clock)
@@ -282,33 +286,79 @@ describe('device preview state transitions without a database', () => {
             clock
           )
           expect(old.status).equals('discarded')
-          expect(completed.options[0].games.map(game => game.key)).deep.equals([
-            'one',
-            'kept'
-          ])
+          expect(
+            completed.options[0].games.map(game =>
+              game.key.startsWith('placed:') ? 'placed' : game.key
+            )
+          ).deep.equals(['placed', 'kept'])
         }
       )
     }
   })
-  it('refuses a repeated or reserved game key, which publishing could not store', async () => {
+  it('keys the device’s games itself, and refuses a requested game placed twice', async () => {
     authorize()
-    for (const games of [
-      [game, game],
-      [{ ...game, key: 'replaced:gam_one' }]
-    ]) {
-      const row = pending('new')
-      await stored(new Map([['new', row]]), async db => {
-        const error = await completePreview(
-          db,
-          actor,
-          'new',
-          { ...result, options: [{ ...result.options[0], games }] },
-          clock
-        ).catch((caught: unknown) => caught)
-        expect(String(error)).includes('its own key')
-        expect(row.status).equals('building')
-      })
-    }
+    const row = pending('new')
+    await stored(new Map([['new', row]]), async db => {
+      // Repeated keys and the server's own prefixes come back as its keys.
+      const completed = await completePreview(
+        db,
+        actor,
+        'new',
+        {
+          ...result,
+          options: [
+            {
+              ...result.options[0],
+              games: [game, { ...game, key: 'replaced:gam_one' }]
+            }
+          ]
+        },
+        clock
+      )
+      const keys = completed.options[0].games.map(each => each.key)
+      expect(new Set(keys).size).equals(2)
+      for (const key of keys) expect(key).matches(/^placed:/)
+    })
+    const twice = pending('twice')
+    ;(twice.input as Snapshot).engine.required = [
+      {
+        key: 'listed:one',
+        seasonId: game.seasonId,
+        homeTeamId: game.homeTeamId,
+        awayTeamId: game.awayTeamId,
+        exhibition: false
+      }
+    ]
+    await stored(new Map([['twice', twice]]), async db => {
+      const requested = { ...game, key: 'listed:one' }
+      const error = await completePreview(
+        db,
+        actor,
+        'twice',
+        {
+          ...result,
+          options: [{ ...result.options[0], games: [requested, requested] }]
+        },
+        clock
+      ).catch((caught: unknown) => caught)
+      expect(String(error)).includes('Place each requested game once')
+      expect(twice.status).equals('building')
+    })
+  })
+  it('refuses to complete a build left waiting past its day', async () => {
+    authorize()
+    const row = { ...pending('old'), created_at: new Date('2026-12-30') }
+    await stored(new Map([['old', row]]), async db => {
+      const error = await completePreview(
+        db,
+        actor,
+        'old',
+        result,
+        clock
+      ).catch((caught: unknown) => caught)
+      expect(String(error)).includes('Prepare the schedule again')
+      expect(row.status).equals('building')
+    })
   })
   it('stores the device’s options as sent, summaries and all, for publication to check', async () => {
     authorize()

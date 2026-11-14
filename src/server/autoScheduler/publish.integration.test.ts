@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, it } from 'mocha'
 import { buildOptions } from '../../common/autoScheduler'
 import {
   asPreparedPreview,
+  asSchedulePreview,
   type Publication,
   type SchedulePreview
 } from '../../common/schedulePreviews'
@@ -101,7 +102,7 @@ describe('publishing a schedule preview', function () {
       expect(option.games.some(game => game.fieldId === harbor)).equals(false)
   })
 
-  it('rejects a submitted key that collides with a booking created after preparation', async () => {
+  it('stores games under its own keys, so a device key naming a later booking collides with nothing, and the booking’s time still blocks', async () => {
     const { f, teams } = w.fx
     const response = await f.h.request(
       'POST',
@@ -135,9 +136,14 @@ describe('publishing a schedule preview', function () {
       101
     )
     expect(completed.status, await completed.clone().text()).equals(200)
+    const stored = asSchedulePreview(await completed.json())
+    expect(stored.options[0].games.some(each => each.key === game.key)).equals(
+      false
+    )
+    // The booking holds the game's time and team, which publishing checks.
     const rejected = await publish(prepared.id)
     expect(rejected.status).equals(409)
-    expect(JSON.stringify(rejected.body)).includes('identifier now matches')
+    expect(JSON.stringify(rejected.body)).not.includes('identifier now matches')
     expect(
       (
         await f.h.db
