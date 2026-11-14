@@ -5,7 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { GestureResponderEvent, ViewProps } from 'react-native'
 
 import type { LineupPlayer } from '../../../common/api'
-import type { GamePlan, PlanCell } from '../../../common/gamePlan'
+import {
+  DEFAULT_PLAN_INNINGS,
+  type GamePlan,
+  type PlanCell
+} from '../../../common/gamePlan'
 import { EMPTY_PLAN_SAME_DAY } from '../../../common/planWarnings'
 import {
   DEFAULT_PLAYING_TIME_RULES,
@@ -13,7 +17,12 @@ import {
 } from '../../../common/playingTimeRules'
 import { ThemeProvider } from '../../theme/ThemeContext'
 import { PLAN_REFUSAL_MS } from './PlanCell'
-import { PLAN_COLUMN_WIDTH, planPickerTop } from './planLayout'
+import {
+  PLAN_COLUMN_WIDTH,
+  PLAN_PLAYER_WIDTH,
+  PLAN_SLOT_WIDTH,
+  planPickerTop
+} from './planLayout'
 import { type PlanContext, PlanTab } from './PlanTab'
 
 const LINEUP: LineupPlayer[] = [
@@ -274,6 +283,57 @@ describe('the game plan tab', function () {
     expect(cells().map(row => row.length)).deep.equals([7, 7, 7])
     expect(byId('Plan inning 7')).not.equals(null)
     expect(cell(3, 7)).not.equals(null)
+  })
+
+  it('opens a new plan with five innings, and a player column an inning wider, each name a non-selectable ticker', async function () {
+    await mount({
+      plan: {
+        enabled: false,
+        innings: DEFAULT_PLAN_INNINGS,
+        rows: LINEUP.map(player => ({ player, cells: blank(5) }))
+      }
+    })
+    expect(
+      [...document.querySelectorAll('[data-testid^="Plan inning "]')].map(
+        node => node.textContent
+      )
+    ).deep.equals(['1', '2', '3', '4', '5'])
+    expect(byId('Plan cell 1-5')).not.equals(null)
+    expect(byId('Plan cell 1-6')).equals(null)
+    // 24 for the slot and 164 for the player: 160 before, and one inning more.
+    expect(PLAN_PLAYER_WIDTH).equals(136 + PLAN_COLUMN_WIDTH)
+    let column: HTMLElement | null = byId('Plan player 1')
+    while (
+      column != null &&
+      getComputedStyle(column).borderRightWidth !== '1px'
+    )
+      column = column.parentElement
+    expect(getComputedStyle(column!).width).equals(
+      `${PLAN_SLOT_WIDTH + PLAN_PLAYER_WIDTH}px`
+    )
+    expect(PLAN_SLOT_WIDTH + PLAN_PLAYER_WIDTH).equals(188)
+    const ticker = byId('Plan player 1')!.querySelector<HTMLElement>(
+      '[data-testid="ticker-text"]'
+    )!
+    expect(ticker.getAttribute('aria-label')).equals('Babe Ruth #3')
+    const text = ticker.querySelector<HTMLElement>(
+      '[data-testid="ticker-text-content"]'
+    )!
+    expect(text.textContent).equals('Babe Ruth #3')
+    // A mouse drag of the row selects no text.
+    expect(getComputedStyle(text).userSelect).equals('none')
+  })
+
+  it('draws the sixth inning of a plan saved with six as an added one', async function () {
+    await mount()
+    const red = getComputedStyle(
+      byId('Plan clear')!.querySelector('[dir="auto"]')!
+    ).color
+    const number = byId('Plan inning 6')!
+    expect(number.getAttribute('role')).equals('button')
+    expect(number.getAttribute('aria-label')).equals('Delete inning 6')
+    expect(getComputedStyle(number.firstElementChild!).color).equals(red)
+    expect(byId('Plan inning 5')!.getAttribute('role')).not.equals('button')
   })
 
   it('stops adding innings at twelve', async function () {
@@ -954,7 +1014,8 @@ describe('the game plan tab', function () {
     ).color
     const number = (inning: number): HTMLElement =>
       byId(`Plan inning ${inning}`)!
-    for (const inning of [1, 6]) {
+    // A plan opens with five innings: the sixth on is added.
+    for (const inning of [1, 5]) {
       expect(number(inning).getAttribute('role'), `${inning}`).not.equals(
         'button'
       )
@@ -962,7 +1023,7 @@ describe('the game plan tab', function () {
         getComputedStyle(number(inning).firstElementChild!).color
       ).not.equals(red)
     }
-    for (const inning of [7, 8]) {
+    for (const inning of [6, 7, 8]) {
       expect(number(inning).getAttribute('role')).equals('button')
       expect(number(inning).getAttribute('aria-label')).equals(
         `Delete inning ${inning}`

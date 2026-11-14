@@ -6,6 +6,8 @@
  * where a drop lands agree.
  */
 export const ROSTER_CARD_GAP = 16
+/** The space between the Roster and Lineup columns side by side: a rem. */
+export const ROSTER_COLUMN_GAP = 16
 
 /**
  * Defense's two roster columns in a grid `width` wide: the left card's left

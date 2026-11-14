@@ -7,7 +7,6 @@ import React, {
   useState
 } from 'react'
 import {
-  Platform,
   Pressable,
   ScrollView,
   Text,
@@ -55,7 +54,7 @@ import type { Insets } from '../platform/insets'
 import { useInsets } from '../platform/safeArea'
 import { useTheme } from '../theme/ThemeContext'
 import { BatIcon } from './BatIcon'
-import { withRosterDetails } from './currentSetup'
+import { shortPlayerNames, withRosterDetails } from './currentSetup'
 import { DefensiveField } from './DefensiveField'
 import { EditRosterList } from './EditRosterList'
 import { ExistingPlayerSheet } from './ExistingPlayerSheet'
@@ -91,8 +90,13 @@ import {
   RosterGrip,
   RosterScrollArea
 } from './RosterDrag'
-import { ROSTER_CARD_GAP, rosterGridColumns } from './rosterLayout'
+import {
+  ROSTER_CARD_GAP,
+  ROSTER_COLUMN_GAP,
+  rosterGridColumns
+} from './rosterLayout'
 import { RosterConflictBanner } from './rosterLive'
+import { RosterName } from './RosterName'
 import { byJersey } from './rosterOrder'
 import { RosterRemoveButton } from './RosterRemoveButton'
 import { RosterSelector } from './RosterSelector'
@@ -197,23 +201,6 @@ export interface RosterEditorDraft {
    */
   base?: ScoringSessionState
 }
-/**
- * A roster, lineup or defence card's name, on one line. A phone scales text
- * by the reader's text size (the iPhone 13 Pro on the bench reads 12% larger
- * than the web), which wrapped "1. #27 Trey H" after "Trey" in a column
- * 159 points wide; the phone shrinks the line to fit instead, down to three
- * quarters. The web keeps its wrap, as a browser cannot shrink to fit.
- */
-export const rosterNameProps = (
-  os: string
-): {
-  numberOfLines?: number
-  adjustsFontSizeToFit?: boolean
-  minimumFontScale?: number
-} =>
-  os === 'web'
-    ? {}
-    : { numberOfLines: 1, adjustsFontSizeToFit: true, minimumFontScale: 0.75 }
 /** The complete field takes priority when a wrapping error leaves less list room. */
 export function defenseRosterMinimum(
   areaHeight: number,
@@ -774,8 +761,13 @@ export function RosterEditor({
         : withRosterDetails(readable, rosters).gameData.players,
     [readable, rosters]
   )
-  const display = (id: number): string =>
-    `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
+  // The field's cards name each player as the scoring screen's field does.
+  const fieldNames = useMemo(
+    () => shortPlayerNames(Object.values(names)),
+    [names]
+  )
+  const fieldName = (id: number): string =>
+    fieldNames.get(id) ?? names[id].fullName
   const assigned = defense ? Object.values(team.defense) : team.battingOrder
   // The plan's rows: his side's batting order, each batter by who he is.
   const planBatters = useMemo(() => {
@@ -913,7 +905,6 @@ export function RosterEditor({
     fontFamily: theme.regularTextFont,
     fontSize: 14
   }
-  const nameProps = rosterNameProps(Platform.OS)
   const row = scoringPlayerCardStyle(theme)
   const teamId = draft.gameData.teams[side].id
   const heldRoster = rosters?.[teamId] ?? []
@@ -1196,14 +1187,19 @@ export function RosterEditor({
               flex: 1,
               minHeight: 0,
               flexDirection: defense ? 'column' : 'row',
-              gap: dense && defense ? 2 : 8
+              // Side by side, the Roster and Lineup columns are a rem apart.
+              gap: defense ? (dense ? 2 : 8) : ROSTER_COLUMN_GAP
             }}
           >
             {defense && (
               <DefensiveField
                 defense={team.defense}
                 compact={height < 500}
-                display={display}
+                display={fieldName}
+                // Short on the card, in full to a screen reader.
+                spoken={id =>
+                  `${names[id].jersey === '' ? '' : `#${names[id].jersey} `}${names[id].fullName}`
+                }
                 onPlace={(player, position) => {
                   if (!team.players.includes(player)) return
                   edit(next => {
@@ -1249,8 +1245,9 @@ export function RosterEditor({
               )}
               <RosterScrollArea
                 name="Roster players"
-                // Defense's two columns run from margin to margin.
-                inset={defense ? 0 : undefined}
+                // The cards run from the margin, under their header, on
+                // Lineup as on Defense.
+                inset={0}
               >
                 <RosterDrag
                   targetId="roster"
@@ -1301,13 +1298,7 @@ export function RosterEditor({
                                 label={`Drag ${names[id].fullName}`}
                                 color={text.color}
                               />
-                              <Text
-                                selectable={false}
-                                {...nameProps}
-                                style={{ ...text, flex: 1 }}
-                              >
-                                {display(id)}
-                              </Text>
+                              <RosterName player={names[id]} style={text} />
                             </View>
                           </RosterDrag>
                         )
@@ -1384,7 +1375,8 @@ export function RosterEditor({
                     </Pressable>
                   )}
                 </View>
-                <RosterScrollArea name="Batting lineup">
+                {/* The cards end at the margin, under Clear and Save Rosters. */}
+                <RosterScrollArea name="Batting lineup" inset={0}>
                   <>
                     {team.battingOrder.map((id, index) => (
                       <RosterDrag
@@ -1411,13 +1403,11 @@ export function RosterEditor({
                             label={`Drag ${names[id].fullName}`}
                             color={text.color}
                           />
-                          <Text
-                            selectable={false}
-                            {...nameProps}
-                            style={{ ...text, flex: 1 }}
-                          >
-                            {index + 1}. {display(id)}
-                          </Text>
+                          <RosterName
+                            player={names[id]}
+                            prefix={`${index + 1}.`}
+                            style={text}
+                          />
                           {!locked ? (
                             <RosterRemoveButton
                               label={`Remove ${names[id].fullName}`}

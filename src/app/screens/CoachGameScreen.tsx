@@ -226,7 +226,7 @@ interface Opened {
   rosters: Record<string, RosterEntry[]>
 }
 
-/** A side with no plan saved yet: six blank innings, not followed. */
+/** A side with no plan saved yet: five blank innings, not followed. */
 const NO_PLAN: GamePlan = {
   enabled: false,
   innings: DEFAULT_PLAN_INNINGS,

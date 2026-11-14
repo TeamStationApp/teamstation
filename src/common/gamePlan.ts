@@ -40,7 +40,7 @@ export const PLAN_CELLS = [
 ] as const
 /** `''` is an inning on the bench. */
 export type PlanCell = (typeof PLAN_CELLS)[number] | ''
-export const DEFAULT_PLAN_INNINGS = 6
+export const DEFAULT_PLAN_INNINGS = 5
 export const MAX_PLAN_INNINGS = 12
 
 export interface GamePlanRow {

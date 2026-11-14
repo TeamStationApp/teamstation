@@ -101,6 +101,105 @@ describe('the roster screen for a coach', function () {
     expect(node(`Remove ${name(home.battingOrder[0])}`)).not.equals(null)
   })
 
+  it('draws a long name as its first and last name, each a line of its own at full size', async function () {
+    const session = copyState(state.session)
+    // Every player of this game bats, so the second is taken out of the
+    // lineup to show a roster card.
+    const [batter, benched] = home.battingOrder
+    Object.assign(session.gameData.players[batter], {
+      fullName: 'Ke Bryan Hayes',
+      firstName: 'Ke Bryan',
+      lastName: 'Hayes',
+      jersey: '3'
+    })
+    Object.assign(session.gameData.players[benched], {
+      fullName: 'Christian Encarnacion-Strand',
+      firstName: 'Christian',
+      lastName: 'Encarnacion-Strand',
+      jersey: '4'
+    })
+    await mount({ state: initialScoringState(session) })
+    await click('Lineup')
+    await click('Remove Christian Encarnacion-Strand')
+    // A name's two lines: the slot, jersey and first name, then the last.
+    const linesOf = (card: Element): string[] =>
+      [
+        ...card.querySelectorAll<HTMLElement>(
+          '[data-testid="Roster name"] [dir="auto"]'
+        )
+      ].map(text => String(text.textContent))
+    const lineupCard = host.querySelector('[data-roster-target="lineup-0"]')!
+    expect(linesOf(lineupCard)).deep.equals(['1. #3 Ke Bryan ', 'Hayes'])
+    // Read whole, the card still says the name as it always did.
+    expect(lineupCard.textContent).includes('1. #3 Ke Bryan Hayes')
+    const rosterCard = host.querySelector(`[data-roster-player="${benched}"]`)!
+    expect(linesOf(rosterCard)).deep.equals([
+      '#4 Christian ',
+      'Encarnacion-Strand'
+    ])
+    for (const card of [lineupCard, rosterCard])
+      for (const text of card.querySelectorAll<HTMLElement>(
+        '[data-testid="Roster name"] [dir="auto"]'
+      )) {
+        const style = getComputedStyle(text)
+        // One line each, at the cards' own 14 points: nothing shrinks.
+        expect(style.whiteSpace).equals('nowrap')
+        expect(style.textOverflow).equals('ellipsis')
+        expect(style.fontSize).equals('14px')
+      }
+  })
+
+  it('runs the Roster cards from the left margin and the Lineup cards to the right, a rem apart', async function () {
+    await mount()
+    await click('Lineup')
+    const content = (name: string): HTMLElement =>
+      host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!
+        .firstElementChild as HTMLElement
+    for (const name of ['Roster players', 'Batting lineup']) {
+      const style = getComputedStyle(content(name))
+      expect(style.paddingLeft, name).equals('0px')
+      expect(style.paddingRight, name).equals('0px')
+    }
+    // The row that holds the two columns.
+    let row: HTMLElement | null = host.querySelector<HTMLElement>(
+      '[aria-label="Batting lineup"]'
+    )
+    while (row != null && getComputedStyle(row).flexDirection !== 'row')
+      row = row.parentElement
+    expect(getComputedStyle(row!).gap).equals('16px')
+  })
+
+  it('names each fielder on the Defense field by the scoring field’s short name', async function () {
+    const session = copyState(state.session)
+    const pitcher = home.defense.P!
+    Object.assign(session.gameData.players[pitcher], {
+      fullName: 'Christian Encarnacion-Strand',
+      firstName: 'Christian',
+      lastName: 'Encarnacion-Strand',
+      jersey: '4'
+    })
+    await mount({ state: initialScoringState(session) })
+    await click('Defense')
+    // How much the card shows follows the field's measured height; the name
+    // is the same in its text or, on a card too short for it, its label.
+    const said = [
+      ...host
+        .querySelector('[data-testid="Defense P card"]')!
+        .querySelectorAll<HTMLElement>('[dir="auto"]')
+    ].flatMap(text => [
+      String(text.textContent),
+      text.getAttribute('aria-label') ?? ''
+    ])
+    expect(said.some(text => text.endsWith('Christian E'))).equals(true)
+    expect(said.join(' ')).not.includes('Encarnacion')
+    // A screen reader hears him in full.
+    expect(
+      host
+        .querySelector('[data-roster-target="defense-P"]')!
+        .getAttribute('aria-description')
+    ).equals('#4 Christian Encarnacion-Strand')
+  })
+
   it('discards a tapped change on Cancel, reloads and is clean again', async function () {
     let reloads = 0
     let cancels = 0

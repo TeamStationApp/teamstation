@@ -979,12 +979,18 @@ async function main(): Promise<void> {
       const fieldBottom = Math.max(
         ...[...cards.values()].map(card => card.y + card.height)
       )
+      const fieldTop = Math.min(...[...cards.values()].map(card => card.y))
+      // A fielder's short name: any text among the cards but a position and
+      // the field's Help and Clear, chosen by where it starts, not by the
+      // card it should lie in, so one that spills out of its card fails.
       const shown = nodes.filter(
         n =>
           n.type === 'StaticText' &&
           n.bounds != null &&
+          n.bounds.y >= fieldTop &&
           n.bounds.y < fieldBottom &&
-          /^#\d+ /.test(label(n))
+          !POSITIONS.includes(label(n)) &&
+          !['Help', 'Clear'].includes(label(n))
       )
       check(shown.length > 0, 'the hierarchy shows a fielder’s name')
       for (const text of shown) {
