@@ -1,6 +1,10 @@
 import type { EventLocation } from '../../common/eventInfo'
 
-/** The event's point for a native map, or the error the Info tab shows. */
+/**
+ * The event's point, checked before any map draws it. The Info tab already
+ * shows its own error for a location the server could not find, so this
+ * throw is a render guard for a malformed point.
+ */
 export function eventMapCoordinate(location: EventLocation): {
   latitude: number
   longitude: number
