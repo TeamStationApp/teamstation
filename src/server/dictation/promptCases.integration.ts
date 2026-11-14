@@ -1522,5 +1522,142 @@ const BLAKE = 2
       expect(resultType(actions), JSON.stringify(actions)).equals('intent_walk')
       expect(actions.some(action => action.type === 'pitch')).equals(false)
     })
+
+    for (const said of [
+      "Wild pitch, he steals third, but the batter's swinging",
+      "Steals third on a wild pitch, but the batter's still swinging"
+    ])
+      it(`#223 scores a swing on a wild pitch as pitch S and the advance: ${said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex, second: casey }),
+            said
+          )
+        )
+        const dumped = JSON.stringify(actions)
+        const pitches = actions.filter(action => action.type === 'pitch')
+        expect(pitches, dumped).has.length(1)
+        expect(ofType(pitches[0], 'pitch').call, dumped).equals('S')
+        expect(running(actions), dumped).deep.equals([])
+        const battery = ofType(
+          actions.find(action => action.type === 'batteryEvent'),
+          'batteryEvent'
+        )
+        expect(battery.kind, dumped).equals('wild_pitch')
+        expect(battery.advances, dumped).deep.equals([
+          { runner: CASEY, to: '3B' }
+        ])
+      })
+
+    it('#223 keeps a wild pitch with no swing a ball and the advance', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, second: casey }),
+          'Wild pitch, he steals third'
+        )
+      )
+      const dumped = JSON.stringify(actions)
+      const pitch = ofType(
+        actions.find(action => action.type === 'pitch'),
+        'pitch'
+      )
+      expect(pitch.call, dumped).equals('B')
+      expect(running(actions), dumped).deep.equals([])
+      expect(
+        actions.some(
+          action =>
+            action.type === 'batteryEvent' && action.kind === 'wild_pitch'
+        ),
+        dumped
+      ).equals(true)
+    })
+
+    for (const [said, fielder, trajectories] of [
+      ['Flies out to the pitcher', RIO_ID, ['fly_ball']],
+      ['Pop fly caught by the catcher', CAM, ['popup', 'fly_ball']]
+    ] as const)
+      it(`#223 sends no direction for a fielder said with no place: ${said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex }),
+            said
+          )
+        )
+        const dumped = JSON.stringify(actions)
+        const inPlay = ball(actions)
+        expect(inPlay.direction, dumped).equals(undefined)
+        expect(inPlay.fielder, dumped).equals(fielder)
+        expect(trajectories, dumped).includes(inPlay.trajectory)
+        const result = resultOf(actions)
+        expect(result.eventType, dumped).equals('field_out')
+        expect(result.outBy, dumped).equals('catch')
+      })
+
+    it('#223 keeps the place said with a fly out to left center', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex }),
+          'Fly out to left center'
+        )
+      )
+      expect(ball(actions).direction, JSON.stringify(actions)).equals(
+        'left_center'
+      )
+    })
+
+    it('#223 reads a loop single as a fly ball at bloop depth', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex }),
+          'Loop single to center'
+        )
+      )
+      const dumped = JSON.stringify(actions)
+      const inPlay = ball(actions)
+      expect(inPlay.trajectory, dumped).equals('fly_ball')
+      expect(depthOf('Loop single to center', inPlay.depth), dumped).equals(
+        'bloop'
+      )
+      expect(inPlay.direction, dumped).equals('center')
+      expect(resultType(actions), dumped).equals('single')
+    })
+
+    for (const said of [
+      'Single to deep right center',
+      "Fielder's choice, runner out at second"
+    ])
+      it(`#223 sends no trajectory the words do not say: ${said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex, first: casey }),
+            said
+          )
+        )
+        expect(ball(actions).trajectory, JSON.stringify(actions)).equals(
+          undefined
+        )
+      })
+
+    it('#223 keeps a runner who holds at third on a double there', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex, second: casey }),
+          'Double to left center, and the runner on second holds at third'
+        )
+      )
+      const dumped = JSON.stringify(actions)
+      expect(resultType(actions), dumped).equals('double')
+      const held = movements(actions).filter(move => move.runner === CASEY)
+      expect(held, dumped).has.length(1)
+      expect(held[0].to, dumped).equals('3B')
+      expect(held[0].out === true, dumped).equals(false)
+    })
   }
 )

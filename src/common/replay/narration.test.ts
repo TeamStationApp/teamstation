@@ -66,6 +66,51 @@ const inPlay = (
   location
 })
 
+describe('a dictated hit whose words name no flight', function () {
+  it('is told plainly, never as a grounder or a liner', function () {
+    const text = say(
+      game(),
+      {
+        type: 'ballInPlay',
+        contact: 'swing',
+        direction: 'left_center',
+        location: { x: -20, z: -70 }
+      },
+      { type: 'result', eventType: 'single' }
+    ).text
+    expect(text).not.match(/grounds|lines/)
+    expect(text).match(/single/)
+    // A catch with no flight is a fly out.
+    expect(
+      say(
+        game(),
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          fielder: F.CF,
+          direction: 'center'
+        },
+        { type: 'result', eventType: 'field_out', outBy: 'catch' }
+      ).text
+    ).match(/flies out/)
+    // An out with no flight is still a ground out.
+    expect(
+      say(
+        game(),
+        { type: 'ballInPlay', contact: 'swing', fielder: F.SS },
+        { type: 'result', eventType: 'field_out', outBy: 'throw' },
+        {
+          type: 'runnerMovement',
+          runner: 1,
+          to: '1B',
+          out: true,
+          fielders: [F.SS, F['1B']]
+        }
+      ).text
+    ).match(/grounds out/)
+  })
+})
+
 describe('runners who score together', function () {
   this.timeout(20000)
 

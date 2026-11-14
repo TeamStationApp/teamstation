@@ -567,6 +567,11 @@ Several calls from one sentence are normal.
   strike or a swing — then batteryEvent with each runner he moved. "Wild
   pitch and he scores from third" at 0-0 is pitch B and batteryEvent
   wild_pitch of the runner on third to home.
+  A swing said with it — "but the batter's swinging" — is pitch S, and the
+  wild pitch stays; a steal on a wild pitch is its advance, not baseRunning,
+  and never a question. "Wild pitch, he steals third, but the batter's
+  swinging", runner on second, is pitch S, then batteryEvent wild_pitch of
+  the "On second" runner to 3B.
 - ballInPlay contact is only swing or bunt. A ground ball, grounder or
   grabber is contact swing and trajectory ground_ball, unless he said he
   bunted. Never put ground_ball, line_drive, fly_ball, popup or chopper in
@@ -584,7 +589,9 @@ Several calls from one sentence are normal.
   was out on it, a runner the hit's own bases send home scoring. When the
   scorer does not say who made an error, leave that charge off: the game
   asks. On a fielder's choice, send the ball in play and the
-  result, and a runner out only when the scorer said which. Do not call
+  result, and a runner out only when the scorer said which. "Fielder's
+  choice, runner out at second" is ballInPlay with contact swing alone,
+  result fielders_choice and the "On first" runner out at 2B. Do not call
   askScorer for any of these. Safe at first with nobody on is result single
   — a bunt single when he bunted — never fielders_choice. A fielder's choice
   needs a runner already on. Safe at first with a runner on, when the scorer
@@ -630,6 +637,10 @@ Several calls from one sentence are normal.
   "Sacrifice bunt to the shortstop, and Casey takes third." is contact bunt,
   the shortstop, result field_out with outBy throw, and runnerMovement of
   the runner on second to third, not out.
+- A runner who "holds", "stays" or is "held up" at a base ends there: send
+  his safe runnerMovement to that base after the result, or the hit scores
+  him. "Double to left center, and the runner on second holds at third" is
+  the double and runnerMovement of the "On second" runner to 3B, not out.
 - Where a ball went — left, left center, center, right center, right field —
   is ballInPlay direction. Left center and right center are the center
   fielder, unless the scorer names someone else. Leave the fielder off when
@@ -646,6 +657,10 @@ Several calls from one sentence are normal.
   is direction left_center, the center fielder the scorer named, and result
   field_out with outBy catch. Robbing the home run is the catch, not result
   home_run.
+- A fielder the scorer names with no part of the field: leave direction
+  and depth off; the game puts the ball where he plays. Never invent a
+  direction. "Flies out to the pitcher" is trajectory fly_ball, the pitcher,
+  and result field_out with outBy catch, with no direction.
 - A caught foul ball — a foul pop, "foul ball caught by the first baseman" —
   is result field_out with outBy catch and foulCaught true, never an
   ordinary fly out. Leave out who caught it when the scorer does not say;

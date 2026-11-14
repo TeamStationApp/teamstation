@@ -212,8 +212,9 @@ function inPlaySentence(
     action.fielder == null ? '' : positionOf(before, action.fielder)
   const toFielder = fielder === '' ? '' : ` to ${FIELDERS[fielder] ?? fielder}`
   const angle = action.launchAngle
-  const flight =
-    angle == null ? (action.trajectory ?? 'ground_ball') : trajectoryOf(angle)
+  // A dictated ball whose words named no flight has none: a hit is told
+  // plainly, a caught out flies out, and any other out grounds out.
+  const flight = angle == null ? action.trajectory : trajectoryOf(angle)
   const scored = transitions.filter(t => t.type === 'runScored').length
   if (type === 'home_run') {
     const kind =
@@ -285,10 +286,15 @@ function inPlaySentence(
           parts: [`${batter} puts it in play${hitTo}.`],
           excited: false
         }
+      // A catch whose words named no flight is a fly out, as the box score
+      // names it; any other out with none is a ground out.
+      const byCatch = actions.some(
+        action => action.type === 'result' && action.outBy === 'catch'
+      )
       const caught =
         flight === 'popup'
           ? 'pops out'
-          : flight === 'fly_ball'
+          : flight === 'fly_ball' || (flight == null && byCatch)
             ? 'flies out'
             : flight === 'line_drive'
               ? 'lines out'

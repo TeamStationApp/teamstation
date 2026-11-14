@@ -1253,7 +1253,7 @@ describe('dictation, end to end', function () {
       // saved coordinates being MLB's, with home at (125, 204).
       const spray = (
         play: Record<string, any>
-      ): { angle: number; fair: boolean; trajectory: string } => {
+      ): { angle: number; fair: boolean; trajectory?: string } => {
         const hit = (play.playEvents as Array<Record<string, any>>).find(
           event => event.hitData != null
         )!.hitData
@@ -1262,7 +1262,8 @@ describe('dictation, end to end', function () {
         return {
           angle: (Math.atan2(x, y) * 180) / Math.PI,
           fair: Math.abs(x) <= y,
-          trajectory: String(hit.trajectory)
+          trajectory:
+            hit.trajectory == null ? undefined : String(hit.trajectory)
         }
       }
       const undoText = async (page: Page): Promise<string> =>
@@ -1278,14 +1279,14 @@ describe('dictation, end to end', function () {
         )
         try {
           expect(reply.kind, JSON.stringify(reply)).equals('actions')
-          expect(await undoText(page)).includes(
-            'line drive single to left center'
-          )
+          // "Single to left center." names no trajectory, and gets none.
+          expect(await undoText(page)).includes('single to left center')
+          expect(await undoText(page)).not.includes('line drive')
           await finishAtBat(page)
           await waitSaved(page)
           const hit = spray(await playOf(scorer, gameId, 'single'))
           expect(hit.angle).within(-20, -10)
-          expect(hit.trajectory).equals('line_drive')
+          expect(hit.trajectory).equals(undefined)
         } finally {
           await browser.close()
         }

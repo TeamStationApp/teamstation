@@ -509,6 +509,30 @@ describe('dictation interpreter', function () {
       '"pop up to the shortstop", "pops out to the second baseman"'
     )
     expect(system).includes('goes\n  alone, with no result')
+    // A swing on a wild pitch is a swinging strike, and the wild pitch stays.
+    expect(system).match(
+      /"Wild pitch, he steals third, but the batter's\s+swinging", runner on second, is pitch S, then batteryEvent wild_pitch of\s+the "On second" runner to 3B/
+    )
+    expect(system).match(
+      /a steal on a wild pitch is its advance, not baseRunning/
+    )
+    // A hit's trajectory only from the words that say how it travelled.
+    // Only in the section a sentence about where its ball went is given.
+    expect(system).not.match(
+      /"Single\s+to deep right center" has no trajectory/
+    )
+    expect(BALL_PLACE_INSTRUCTIONS).match(
+      /"Single\s+to deep right center" has no trajectory/
+    )
+    // A named fielder, and no place, is that fielder's spot.
+    expect(system).match(
+      /"Flies out to the pitcher" is trajectory fly_ball, the pitcher,\s+and result field_out with outBy catch, with no direction/
+    )
+    expect(system).match(/Never invent a\s+direction\./)
+    // A runner who holds short of the hit ends at the base he held.
+    expect(system).match(
+      /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/
+    )
     // Only what was said, every call a tool call, undo only when asked.
     expect(system).includes('it is not a list of events')
     expect(system).includes('never call pitch once for each of its codes')
@@ -2926,6 +2950,20 @@ describe('where the ball went and the pitch, in the prompt', function () {
       'Taken down the line, double.'
     ])
       expect(placeSections(plain), plain).not.includes(PITCH_INSTRUCTIONS)
+    // A loop is a bloop, whole words only; every other word a prefix.
+    for (const ball of [
+      'Loop single to center.',
+      'A looper to right, it falls in.',
+      'Looping fly to left, it drops.',
+      'He loops one into center for a single.',
+      'Looped into right, it drops.',
+      'He fouls it off down the left side.',
+      'Fouled off down the right field line.'
+    ])
+      expect(placeSections(ball), ball).includes(BALL_PLACE_INSTRUCTIONS)
+    expect(placeSections('He loops the lineup.')).not.includes(
+      BALL_PLACE_INSTRUCTIONS
+    )
   })
 
   it('offers where a ball and a pitch went only beside their sections', async function () {
