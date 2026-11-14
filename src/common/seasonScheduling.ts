@@ -419,12 +419,18 @@ export type ScheduleSetupChoice =
       seasonIds: string[]
       fieldIds: string[]
       addedFieldIds?: string[]
+      /**
+       * Added fields to take off the list. Given, `addedFieldIds` only adds
+       * to the list; left out, it replaces the list, as older clients send it.
+       */
+      removedFieldIds?: string[]
     }
   | {
       avoidHeadCoachConflicts: boolean
       seasonIds?: never
       fieldIds?: never
       addedFieldIds?: never
+      removedFieldIds?: never
     }
 
 export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
@@ -433,6 +439,7 @@ export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
     raw.seasonIds === undefined &&
     raw.fieldIds === undefined &&
     raw.addedFieldIds === undefined &&
+    raw.removedFieldIds === undefined &&
     raw.avoidHeadCoachConflicts !== undefined
   )
     return { avoidHeadCoachConflicts: asBoolean(raw.avoidHeadCoachConflicts) }
@@ -447,7 +454,24 @@ export function asScheduleSetupChoice(raw: unknown): ScheduleSetupChoice {
       'added fields',
       MAX_SETUP_FIELDS
     )(raw.addedFieldIds)
+  if (raw.removedFieldIds != null)
+    choice.removedFieldIds = asIdList(
+      'removed fields',
+      MAX_SETUP_FIELDS
+    )(raw.removedFieldIds)
   return choice
+}
+
+/** The fields any of the seasons selected, in the setup's order. */
+export function selectedFields<F extends { id: string }>(
+  fields: readonly F[],
+  seasons: ReadonlyArray<{ settings: { fieldIds?: string[] } }>
+): F[] {
+  return fields.filter(field =>
+    seasons.some(
+      season => season.settings.fieldIds?.includes(field.id) === true
+    )
+  )
 }
 
 /** The setup's chosen fields that still exist, as the server accepts them. */

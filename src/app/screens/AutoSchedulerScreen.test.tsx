@@ -418,7 +418,9 @@ describe('the Auto-Scheduler setup', () => {
     expect(fake.choices.at(-1)).deep.equals({
       seasonIds: ['sea_a', 'sea_c'],
       fieldIds: ['fld_one'],
-      addedFieldIds: []
+      // Choosing seasons adds and removes no field.
+      addedFieldIds: [],
+      removedFieldIds: []
     })
     expect(text()).includes(
       'Must fix: Demo Fall has no chosen field that sets up as 55/80.'

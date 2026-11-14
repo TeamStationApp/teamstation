@@ -23,6 +23,7 @@ import {
   type ScheduleSettings,
   type ScheduleSetup,
   type ScheduleSetupChoice,
+  selectedFields,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
@@ -161,11 +162,7 @@ export function AutoSchedulerScreen({
           ...item,
           ...stored.current.get(item.id)
         }))
-        const fields = setup.fields.filter(field =>
-          seasons.some(
-            season => season.settings.fieldIds?.includes(field.id) === true
-          )
-        )
+        const fields = selectedFields(setup.fields, seasons)
         if (!buildable(schedulingChecks(seasons, fields))) return
       }
       const preview = await client.buildSchedulePreview(leagueId, request)
@@ -331,11 +328,7 @@ export function AutoSchedulerScreen({
       </Screen>
     )
   const seasons = chosenSeasons(setup)
-  const fields = setup.fields.filter(field =>
-    seasons.some(
-      season => season.settings.fieldIds?.includes(field.id) === true
-    )
-  )
+  const fields = selectedFields(setup.fields, seasons)
   const checks = schedulingChecks(seasons, fields)
   const editedSeason =
     editing == null
@@ -412,7 +405,9 @@ export function AutoSchedulerScreen({
             onToggle={seasonId => {
               choose({
                 fieldIds: liveFieldIds(setup),
-                addedFieldIds: setup.addedFieldIds,
+                // Adds and removes nothing, whatever this screen last read.
+                addedFieldIds: [],
+                removedFieldIds: [],
                 seasonIds: setup.seasonIds.includes(seasonId)
                   ? setup.seasonIds.filter(id => id !== seasonId)
                   : [...setup.seasonIds, seasonId]

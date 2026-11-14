@@ -482,9 +482,8 @@ export function ScheduleSeasonScreen({
                           fieldIds: liveFieldIds(setup).filter(
                             id => id !== field.id
                           ),
-                          addedFieldIds: setup.addedFieldIds.filter(
-                            id => id !== field.id
-                          )
+                          // Named, so another admin's added field stays.
+                          removedFieldIds: [field.id]
                         })
                         if (active.current && currentKey.current === screenKey)
                           setSetup(next)
@@ -555,7 +554,8 @@ export function ScheduleSeasonScreen({
               const next = await client.saveScheduleSetup(leagueId, {
                 seasonIds: setup.seasonIds,
                 fieldIds: liveFieldIds(setup),
-                addedFieldIds: [...new Set([...setup.addedFieldIds, chosen.id])]
+                addedFieldIds: [chosen.id],
+                removedFieldIds: []
               })
               if (active.current && currentKey.current === screenKey)
                 setSetup(next)
