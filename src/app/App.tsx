@@ -169,6 +169,7 @@ import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
 import { AddPlayerScene } from './screens/AddPlayerScene'
+import { AdminAccountScreen } from './screens/AdminAccountScreen'
 import { AutoSchedulerScreen } from './screens/AutoSchedulerScreen'
 import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
@@ -215,6 +216,7 @@ import {
   TeamStationTvScreen,
   TvBrowserHandoff
 } from './screens/TeamStationTvScreen'
+import { UserManagementScreen } from './screens/UserManagementScreen'
 import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
@@ -3114,9 +3116,47 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'promoteExternal', id: group.id })
         }}
       />
+    ) : top.name === 'userManagement' ? (
+      <UserManagementScreen
+        client={client}
+        allowed={session?.user.isAdmin === true}
+        tab={top.tab}
+        onTab={next => {
+          replace({
+            name: 'userManagement',
+            ...(next === 'logins' ? {} : { tab: next })
+          })
+        }}
+        onEditAccount={userId => {
+          push({ name: 'adminAccount', userId })
+        }}
+        onOpenGroup={group => {
+          push({ name: 'group', ...group })
+        }}
+      />
+    ) : top.name === 'adminAccount' && session != null ? (
+      <AdminAccountScreen
+        client={client}
+        session={session}
+        allowed={session.user.isAdmin}
+        userId={top.userId}
+        onAccountChanged={user => {
+          setSession(current =>
+            current?.user.id !== user.id ? current : { ...current, user }
+          )
+        }}
+      />
     ) : top.name === 'nodeAdministration' ? (
       <NodeAdministrationScreen
         client={client}
+        // Offered only where it opens: to a node administrator.
+        onUserManagement={
+          session?.user.isAdmin === true
+            ? () => {
+                push({ name: 'userManagement' })
+              }
+            : undefined
+        }
         onChanged={userId => {
           refreshRoles()
           if (session?.user.id === userId)

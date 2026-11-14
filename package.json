@@ -105,6 +105,7 @@
     "validate-gumbo": "node -r sucrase/register src/server/dev/validateGumbo.ts",
     "coverage.dbLoad": "c8 --all --reporter=text --check-coverage --lines 90 --include 'tools/dbLoad/**/*.ts' --exclude '**/*.test.ts' mocha -r sucrase/register --extension ts --exit --timeout 60000 --spec 'tools/dbLoad/**/*.test.ts' --spec src/server/scopeAgreement.integration.test.ts",
     "coverage.account": "node scripts/account-coverage.mjs",
+    "coverage.userManagement": "node scripts/user-management-coverage.mjs",
     "coverage.password": "node scripts/password-coverage.mjs",
     "coverage.playbackProbe": "c8 --all --check-coverage --lines 90 --reporter=text --include 'scripts/e2e/playbackReliability/*.ts' --exclude '**/*.test.ts' --exclude '**/*.e2e.ts' mocha -r sucrase/register --extension ts --timeout 60000 --spec 'scripts/e2e/playbackReliability/*.test.ts'",
     "test.eventControl": "tsc -p tsconfig.eventControl.json && c8 --all --reporter=text --reporter=json --report-dir coverage/eventControl --include 'tools/eventControl/**/*.ts' --exclude '**/*.test.ts' --check-coverage --lines 90 mocha -r sucrase/register --extension ts --exit --timeout 15000 --spec 'tools/eventControl/**/*.test.ts' && node scripts/checkEventControlContract.cjs",

@@ -14,12 +14,15 @@ export function HeroCard({
   uri,
   onEdit,
   disabled = false,
+  end,
   ...identity
 }: {
   name: string
   secondary?: string | null
   uri?: string | null
   onEdit?: () => void
+  /** At the card's far edge, such as the gear that opens its settings. */
+  end?: React.ReactNode
   disabled?: boolean
 } & (
   | {
@@ -72,6 +75,7 @@ export function HeroCard({
         <Text style={styles.name}>{name}</Text>
         {secondary != null && <Text style={styles.secondary}>{secondary}</Text>}
       </View>
+      {end}
     </Card>
   )
 }
