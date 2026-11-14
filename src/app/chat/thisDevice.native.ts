@@ -22,3 +22,13 @@ export function thisDevice(): ThisDevice {
     Platform.OS === 'ios' && Platform.constants.interfaceIdiom === 'pad'
   return { name: pad ? 'iPad' : 'iPhone', platform: 'ios' }
 }
+
+/**
+ * What the device is, sent with a sign-in so node administrators can tell
+ * devices apart: a TV by its kind, a phone or tablet as it names itself for
+ * chat. The browser's twin sends nothing.
+ */
+export function signInDeviceModel(): string | undefined {
+  if (Platform.isTV) return Platform.OS === 'ios' ? 'Apple TV' : 'Android TV'
+  return thisDevice().name
+}

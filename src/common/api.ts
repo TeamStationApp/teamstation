@@ -220,7 +220,14 @@ import type {
 } from './umpireSchedule'
 import { asUnrostered } from './unroster'
 import { asGumboId, asUserId } from './userId'
-import type { ActivityRow } from './userManagement'
+import {
+  type ActivityRow,
+  asActivityRow,
+  asDirectoryPeople,
+  asPersonAdministration,
+  type DirectoryPerson,
+  type PersonAdministration
+} from './userManagement'
 import {
   asVenueDetail,
   asVenueSummary,
@@ -2139,6 +2146,11 @@ export function asPage<T>(asItem: Cleaner<T>): Cleaner<Page<T>> {
   return asObject(pageShape(asItem))
 }
 
+export const asActivityPage: Cleaner<ActivityPage> = asObject({
+  ...pageShape(asActivityRow),
+  recordedSince: asOptional(asNullable(asString))
+})
+
 /**
  * The umpire schedule a page at a time. `positions` are the columns of the
  * whole filtered list, so a table's columns and headers hold as rows arrive.
@@ -3497,6 +3509,25 @@ export interface ClientOptions {
   passwordKdf?: PasswordKdf
   passwordCosts?: ClientPasswordCosts
   passwordTargetMs?: number
+  /**
+   * The device a native app runs on ("iPhone", "Samsung SM-S911B", "Apple
+   * TV"), sent with every sign-in so node administrators can tell devices
+   * apart. A browser sends none; the server reads its user agent.
+   */
+  deviceModel?: string
+}
+
+/**
+ * The name and photo of one account, as the Account page reads and writes
+ * them: the signed-in person's own (`TeamStationClient` itself), or another
+ * person's for a node administrator (`accountOf`).
+ */
+export interface AccountApi {
+  accountSettings: () => Promise<AccountSettings>
+  setAccountName: (displayName: string) => Promise<AccountSettings>
+  setAccountPhoto: (image: AccountPicture) => Promise<AccountSettings>
+  clearAccountPhoto: () => Promise<AccountSettings>
+  chooseCatalogPicture: (catalogId: string) => Promise<void>
 }
 
 /** A page of recent sessions, which says since when they were recorded. */
@@ -4170,6 +4201,66 @@ export class TeamStationClient {
     )
   }
 
+  /** Every stored sign-in, newest first, for a node administrator. */
+  async recentLogins(cursor?: string | null): Promise<ActivityPage> {
+    return await this.request(
+      'GET',
+      `/node/logins${cursor == null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`,
+      asActivityPage
+    )
+  }
+
+  /** Every device session, newest start first, for a node administrator. */
+  async recentSessions(cursor?: string | null): Promise<ActivityPage> {
+    return await this.request(
+      'GET',
+      `/node/sessions${cursor == null ? '' : `?cursor=${encodeURIComponent(cursor)}`}`,
+      asActivityPage
+    )
+  }
+
+  /** Up to ten people whose name or any address holds `q`. */
+  async directory(q: string): Promise<DirectoryPerson[]> {
+    return await this.request(
+      'GET',
+      `/users?view=directory&q=${encodeURIComponent(q)}`,
+      asDirectoryPeople
+    )
+  }
+
+  /** One account, its addresses and its affiliations, for a node administrator. */
+  async personAdministration(userId: string): Promise<PersonAdministration> {
+    return await this.request(
+      'GET',
+      `/users/${encodeURIComponent(userId)}/administration`,
+      asPersonAdministration
+    )
+  }
+
+  /** Another person's name and photo, as their node administrator changes them. */
+  accountOf(userId: string): AccountApi {
+    const base = `/users/${encodeURIComponent(userId)}/account`
+    return {
+      accountSettings: async () =>
+        await this.request('GET', base, asAccountSettings),
+      setAccountName: async displayName =>
+        await this.request('PUT', `${base}/name`, asAccountSettings, {
+          displayName
+        }),
+      setAccountPhoto: async image =>
+        await this.request('PUT', `${base}/photo`, asAccountSettings, {
+          image
+        }),
+      clearAccountPhoto: async () =>
+        await this.request('DELETE', `${base}/photo`, asAccountSettings),
+      chooseCatalogPicture: async catalogId => {
+        await this.request('PUT', `${base}/catalog-picture`, asUnknownOk, {
+          catalogId
+        })
+      }
+    }
+  }
+
   async changeNodeAccount(
     userId: string,
     change: NodeAccountChange
@@ -4217,6 +4308,7 @@ export class TeamStationClient {
   readonly baseUrl: string
   private readonly doFetch: typeof fetch
   private readonly newStreamingRequest?: () => StreamingRequest
+  private readonly deviceModel?: string
   private readonly passwordKdf?: PasswordKdf
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
@@ -4276,6 +4368,7 @@ export class TeamStationClient {
     this.token = options.token
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
+    this.deviceModel = options.deviceModel
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -4511,7 +4604,8 @@ export class TeamStationClient {
     const clientHash = asClientHash(await derive(password, parameters))
     const session = await this.request('POST', '/auth/password', asSession, {
       email,
-      clientHash
+      clientHash,
+      deviceModel: this.deviceModel
     })
     this.token = session.token
     return session
@@ -4593,7 +4687,8 @@ export class TeamStationClient {
     const session = await this.request('POST', '/auth/link/verify', asSession, {
       token,
       deviceName,
-      requestId: deviceName == null ? undefined : this.askedSignIn
+      requestId: deviceName == null ? undefined : this.askedSignIn,
+      deviceModel: this.deviceModel
     })
     this.token = session.token
     this.askedSignIn = undefined
@@ -4610,7 +4705,11 @@ export class TeamStationClient {
       'POST',
       '/auth/request/claim',
       asMaybeSession,
-      { requestId: wait.requestId, clientSecret: wait.clientSecret }
+      {
+        requestId: wait.requestId,
+        clientSecret: wait.clientSecret,
+        deviceModel: this.deviceModel
+      }
     )
     if (!('token' in answer)) return undefined
     this.token = answer.token
@@ -4622,7 +4721,7 @@ export class TeamStationClient {
       'POST',
       '/auth/email-code/verify',
       asSession,
-      { email, code }
+      { email, code, deviceModel: this.deviceModel }
     )
     this.token = session.token
     return session

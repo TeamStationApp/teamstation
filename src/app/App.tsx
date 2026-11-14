@@ -69,7 +69,7 @@ import { entityChats, entityPreviewLoader } from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
-import { thisDevice } from './chat/thisDevice'
+import { signInDeviceModel, thisDevice } from './chat/thisDevice'
 import {
   AppHeader,
   AppNav,
@@ -501,12 +501,14 @@ function Shell(props: AppProps): React.ReactElement {
         ? new TeamStationClient({
             baseUrl: apiBaseUrl,
             token: initialToken,
-            passwordKdf
+            passwordKdf,
+            deviceModel: signInDeviceModel()
           })
         : new CachingClient({
             baseUrl: apiBaseUrl,
             token: initialToken,
             passwordKdf,
+            deviceModel: signInDeviceModel(),
             openCache: documentCache
           }),
     [apiBaseUrl, initialToken, documentCache]

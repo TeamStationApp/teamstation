@@ -41,3 +41,11 @@ export function thisDevice(): ThisDevice {
     platform: 'web'
   }
 }
+
+/**
+ * What the device is, sent with a sign-in so node administrators can tell
+ * devices apart. A browser sends nothing: the server reads its user agent.
+ */
+export function signInDeviceModel(): string | undefined {
+  return undefined
+}

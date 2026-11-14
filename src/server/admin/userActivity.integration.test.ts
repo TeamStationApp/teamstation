@@ -2,7 +2,7 @@ import { expect } from 'chai'
 import { sql } from 'kysely'
 import { afterEach, beforeEach, describe, it } from 'mocha'
 
-import type { Page } from '../../common/api'
+import { type Page, TeamStationClient } from '../../common/api'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import type { ActivityRow } from '../../common/userManagement'
@@ -246,6 +246,30 @@ describe('node activity: recent logins and sessions', function () {
       `/node/sessions?limit=1&cursor=${(await read('/node/sessions?limit=1')).body.nextCursor!}`
     )
     expect(later.body).not.to.have.property('recordedSince')
+  })
+
+  it('names the device model a native app signs in with', async () => {
+    // The app on an iPhone: React Native's requests go out through CFNetwork.
+    const phone = new TeamStationClient({
+      baseUrl: f.h.origin + '/api/v1',
+      deviceModel: 'iPhone',
+      fetch: async (url, init) => {
+        const headers = new Headers(init?.headers)
+        headers.set('user-agent', userAgents.nativeApple)
+        return await fetch(url, { ...init, headers })
+      }
+    })
+    await phone.requestEmailCode('fixture104@example.com')
+    const signedIn = await phone.signInWithCode(
+      'fixture104@example.com',
+      f.h.mail.get('fixture104@example.com')!
+    )
+    const row = (await read('/node/logins?limit=1')).body.items[0]
+    expect(row).to.include({
+      userId: signedIn.user.id,
+      device: 'iPhone',
+      appType: 'iOS'
+    })
   })
 
   it('answers one address a minute’s worth of pages, then 429', async () => {
