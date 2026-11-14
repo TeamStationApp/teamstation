@@ -392,6 +392,9 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           publishes: [app],
           buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
+          // Gradle reads it from the environment into the manifest's
+          // com.google.android.geo.API_KEY for the native event map.
+          secrets: ['GOOGLE_MAPS_ANDROID_API_KEY'],
           run: compileAndroid
         },
         {
