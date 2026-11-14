@@ -10,7 +10,7 @@ interface PitchDetails {
   isBall?: unknown
 }
 
-function pitchCode(details: PitchDetails): string | undefined {
+export function pitchCode(details: PitchDetails): string | undefined {
   return [details.call?.code, details.code].find(
     (code): code is string => typeof code === 'string'
   )

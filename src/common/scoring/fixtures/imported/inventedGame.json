@@ -1,0 +1,2162 @@
+[
+ {
+  "about": {
+   "atBatIndex": 0,
+   "inning": 1,
+   "halfInning": "top",
+   "isScoringPlay": false,
+   "hasOut": false,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:03:40.000Z",
+   "endTime": "2026-05-02T18:03:50.000Z"
+  },
+  "result": {
+   "eventType": "single",
+   "event": "Single",
+   "awayScore": 0,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": false
+  },
+  "count": {
+   "outs": 0,
+   "balls": 0,
+   "strikes": 1
+  },
+  "matchup": {
+   "batter": {
+    "id": 1000
+   },
+   "pitcher": {
+    "id": 1010
+   },
+   "splits": {
+    "menOnBase": "Empty"
+   },
+   "postOnFirst": {
+    "id": 1000
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": "1B",
+     "isOut": false,
+     "originBase": null,
+     "outBase": null,
+     "outNumber": null
+    },
+    "details": {
+     "eventType": "single",
+     "runner": {
+      "id": 1000
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 22
+    },
+    "credits": [
+     {
+      "player": {
+       "id": 1008
+      },
+      "position": {
+       "code": "8",
+       "name": "Outfielder",
+       "type": "Outfielder",
+       "abbreviation": "CF"
+      },
+      "credit": "f_fielded_ball"
+     }
+    ]
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:00:10.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "set_teams",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:00:20.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:00:30.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 3,
+    "startTime": "2026-05-02T18:00:40.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 4,
+    "startTime": "2026-05-02T18:00:50.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 5,
+    "startTime": "2026-05-02T18:01:00.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 6,
+    "startTime": "2026-05-02T18:01:10.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 7,
+    "startTime": "2026-05-02T18:01:20.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 8,
+    "startTime": "2026-05-02T18:01:30.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 9,
+    "startTime": "2026-05-02T18:01:40.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_lineup_index",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 10,
+    "startTime": "2026-05-02T18:01:50.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 11,
+    "startTime": "2026-05-02T18:02:00.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 12,
+    "startTime": "2026-05-02T18:02:10.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 13,
+    "startTime": "2026-05-02T18:02:20.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 14,
+    "startTime": "2026-05-02T18:02:30.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 15,
+    "startTime": "2026-05-02T18:02:40.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 16,
+    "startTime": "2026-05-02T18:02:50.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 17,
+    "startTime": "2026-05-02T18:03:00.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 18,
+    "startTime": "2026-05-02T18:03:10.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 19,
+    "startTime": "2026-05-02T18:03:20.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "fill_position",
+     "eventType": "game_advisory",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   },
+   {
+    "index": 20,
+    "startTime": "2026-05-02T18:03:30.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "C",
+     "call": {
+      "code": "C",
+      "description": "Called Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    }
+   },
+   {
+    "index": 21,
+    "startTime": "2026-05-02T18:03:40.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "D",
+     "call": {
+      "code": "D",
+      "description": "In play, no out"
+     },
+     "isInPlay": true,
+     "isStrike": false,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    },
+    "hitData": {
+     "trajectory": "line_drive",
+     "location": "8",
+     "coordinates": {
+      "coordX": 122.69,
+      "coordY": 149.52
+     },
+     "totalDistance": 131
+    }
+   },
+   {
+    "index": 22,
+    "startTime": "2026-05-02T18:03:50.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "ball_in_play",
+     "eventType": "single",
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": {
+      "id": 1000
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1000
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 1,
+   "inning": 1,
+   "halfInning": "top",
+   "isScoringPlay": true,
+   "hasOut": false,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:04:10.000Z",
+   "endTime": "2026-05-02T18:04:20.000Z"
+  },
+  "result": {
+   "eventType": "home_run",
+   "event": "Home Run",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 2,
+   "isOut": false
+  },
+  "count": {
+   "outs": 0,
+   "balls": 1,
+   "strikes": 0
+  },
+  "matchup": {
+   "batter": {
+    "id": 1001
+   },
+   "pitcher": {
+    "id": 1010
+   },
+   "splits": {
+    "menOnBase": "Men_On"
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": "score",
+     "isOut": false,
+     "originBase": null,
+     "outBase": null,
+     "outNumber": null
+    },
+    "details": {
+     "eventType": "home_run",
+     "runner": {
+      "id": 1001
+     },
+     "movementReason": null,
+     "isScoringEvent": true,
+     "playIndex": 2,
+     "responsiblePitcher": {
+      "id": 1010
+     },
+     "earned": true,
+     "rbi": true
+    },
+    "credits": [
+     {
+      "player": {
+       "id": null
+      },
+      "position": {
+       "code": "7",
+       "name": "Outfielder",
+       "type": "Outfielder",
+       "abbreviation": "LF"
+      },
+      "credit": "f_fielded_ball"
+     }
+    ]
+   },
+   {
+    "movement": {
+     "start": "1B",
+     "end": "score",
+     "isOut": false,
+     "originBase": "1B",
+     "outBase": null,
+     "outNumber": null
+    },
+    "details": {
+     "eventType": "home_run",
+     "runner": {
+      "id": 1000
+     },
+     "movementReason": "r_adv_play",
+     "isScoringEvent": true,
+     "playIndex": 2,
+     "responsiblePitcher": {
+      "id": 1010
+     },
+     "earned": true,
+     "rbi": true
+    }
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:04:00.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "B",
+     "call": {
+      "code": "B",
+      "description": "Ball"
+     },
+     "isInPlay": false,
+     "isStrike": false,
+     "isBall": true,
+     "isOut": false,
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 1,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": {
+      "id": 1000
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:04:10.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "E",
+     "call": {
+      "code": "E",
+      "description": "In play, run(s)"
+     },
+     "isInPlay": true,
+     "isStrike": false,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 0,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 1,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": {
+      "id": 1000
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    },
+    "hitData": {
+     "trajectory": "fly_ball",
+     "location": "7"
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:04:20.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "ball_in_play",
+     "eventType": "home_run",
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1001
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 2,
+   "inning": 1,
+   "halfInning": "top",
+   "isScoringPlay": false,
+   "hasOut": true,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:04:50.000Z",
+   "endTime": "2026-05-02T18:04:50.000Z"
+  },
+  "result": {
+   "eventType": "strikeout",
+   "event": "Strikeout",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": true
+  },
+  "count": {
+   "outs": 1,
+   "balls": 0,
+   "strikes": 3
+  },
+  "matchup": {
+   "batter": {
+    "id": 1002
+   },
+   "pitcher": {
+    "id": 1010
+   },
+   "splits": {
+    "menOnBase": "Empty"
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": null,
+     "isOut": true,
+     "originBase": null,
+     "outBase": "1B",
+     "outNumber": 1
+    },
+    "details": {
+     "eventType": "strikeout",
+     "runner": {
+      "id": 1002
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 2
+    }
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:04:30.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:04:40.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 2,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:04:50.000Z",
+    "pitchNumber": 3,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "C",
+     "call": {
+      "code": "C",
+      "description": "Called Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": true,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 1
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 3,
+   "inning": 1,
+   "halfInning": "top",
+   "isScoringPlay": false,
+   "hasOut": true,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:05:00.000Z",
+   "endTime": "2026-05-02T18:05:10.000Z"
+  },
+  "result": {
+   "eventType": "field_out",
+   "event": "Field Out",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": true
+  },
+  "count": {
+   "outs": 2,
+   "balls": 0,
+   "strikes": 0
+  },
+  "matchup": {
+   "batter": {
+    "id": 1003
+   },
+   "pitcher": {
+    "id": 1010
+   },
+   "splits": {
+    "menOnBase": "Empty"
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": null,
+     "isOut": true,
+     "originBase": null,
+     "outBase": "1B",
+     "outNumber": 2
+    },
+    "details": {
+     "eventType": "field_out",
+     "runner": {
+      "id": 1003
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 1
+    },
+    "credits": [
+     {
+      "player": {
+       "id": 1006
+      },
+      "position": {
+       "code": "6",
+       "name": "Shortstop",
+       "type": "Infielder",
+       "abbreviation": "SS"
+      },
+      "credit": "f_fielded_ball"
+     },
+     {
+      "player": {
+       "id": 1006
+      },
+      "position": {
+       "code": "6",
+       "name": "Shortstop",
+       "type": "Infielder",
+       "abbreviation": "SS"
+      },
+      "credit": "f_assist"
+     },
+     {
+      "player": {
+       "id": 1007
+      },
+      "position": {
+       "code": "3",
+       "name": "First Base",
+       "type": "Infielder",
+       "abbreviation": "1B"
+      },
+      "credit": "f_putout"
+     }
+    ]
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:05:00.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "X",
+     "call": {
+      "code": "X",
+      "description": "In play, out(s)"
+     },
+     "isInPlay": true,
+     "isStrike": false,
+     "isBall": false,
+     "isOut": true,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 1
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    },
+    "hitData": {
+     "trajectory": "ground_ball",
+     "location": "6"
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:05:10.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "ball_in_play",
+     "eventType": "field_out",
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 2
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1003
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 4,
+   "inning": 1,
+   "halfInning": "top",
+   "isScoringPlay": false,
+   "hasOut": true,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:05:30.000Z",
+   "endTime": "2026-05-02T18:05:40.000Z"
+  },
+  "result": {
+   "eventType": "field_out",
+   "event": "Field Out",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": true
+  },
+  "count": {
+   "outs": 3,
+   "balls": 0,
+   "strikes": 1
+  },
+  "matchup": {
+   "batter": {
+    "id": 1000
+   },
+   "pitcher": {
+    "id": 1010
+   },
+   "splits": {
+    "menOnBase": "Empty"
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": null,
+     "isOut": true,
+     "originBase": null,
+     "outBase": "1B",
+     "outNumber": 3
+    },
+    "details": {
+     "eventType": "field_out",
+     "runner": {
+      "id": 1000
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 2
+    },
+    "credits": [
+     {
+      "player": {
+       "id": 1008
+      },
+      "position": {
+       "code": "8",
+       "name": "Outfielder",
+       "type": "Outfielder",
+       "abbreviation": "CF"
+      },
+      "credit": "f_fielded_ball"
+     },
+     {
+      "player": {
+       "id": 1008
+      },
+      "position": {
+       "code": "8",
+       "name": "Outfielder",
+       "type": "Outfielder",
+       "abbreviation": "CF"
+      },
+      "credit": "f_putout"
+     }
+    ]
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:05:20.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "F",
+     "call": {
+      "code": "F",
+      "description": "Foul"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 2
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:05:30.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "X",
+     "call": {
+      "code": "X",
+      "description": "In play, out(s)"
+     },
+     "isInPlay": true,
+     "isStrike": false,
+     "isBall": false,
+     "isOut": true,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 2
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1010
+    },
+    "hitData": {
+     "trajectory": "fly_ball",
+     "location": "8"
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:05:40.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "ball_in_play",
+     "eventType": "field_out",
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 3
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 5,
+   "inning": 1,
+   "halfInning": "bottom",
+   "isScoringPlay": false,
+   "hasOut": false,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:05:50.000Z",
+   "endTime": "2026-05-02T18:06:00.000Z"
+  },
+  "result": {
+   "eventType": "single",
+   "event": "Single",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": false
+  },
+  "count": {
+   "outs": 0,
+   "balls": 0,
+   "strikes": 0
+  },
+  "matchup": {
+   "batter": {
+    "id": 1005
+   },
+   "pitcher": {
+    "id": 1004
+   },
+   "splits": {
+    "menOnBase": "Empty"
+   },
+   "postOnFirst": {
+    "id": 1005
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": "1B",
+     "isOut": false,
+     "originBase": null,
+     "outBase": null,
+     "outNumber": null
+    },
+    "details": {
+     "eventType": "single",
+     "runner": {
+      "id": 1005
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 1
+    },
+    "credits": [
+     {
+      "player": {
+       "id": 1001
+      },
+      "position": {
+       "code": "6",
+       "name": "Shortstop",
+       "type": "Infielder",
+       "abbreviation": "SS"
+      },
+      "credit": "f_fielded_ball"
+     }
+    ]
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:05:50.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "D",
+     "call": {
+      "code": "D",
+      "description": "In play, no out"
+     },
+     "isInPlay": true,
+     "isStrike": false,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    },
+    "hitData": {
+     "trajectory": "ground_ball",
+     "location": "6"
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:06:00.000Z",
+    "isPitch": false,
+    "type": "action",
+    "details": {
+     "code": "ball_in_play",
+     "eventType": "single",
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 0
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1005
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 6,
+   "inning": 1,
+   "halfInning": "bottom",
+   "isScoringPlay": false,
+   "hasOut": true,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:06:30.000Z",
+   "endTime": "2026-05-02T18:06:30.000Z"
+  },
+  "result": {
+   "eventType": "strikeout",
+   "event": "Strikeout",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": true
+  },
+  "count": {
+   "outs": 1,
+   "balls": 0,
+   "strikes": 3
+  },
+  "matchup": {
+   "batter": {
+    "id": 1006
+   },
+   "pitcher": {
+    "id": 1004
+   },
+   "splits": {
+    "menOnBase": "Men_On"
+   },
+   "postOnFirst": {
+    "id": 1005
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": null,
+     "isOut": true,
+     "originBase": null,
+     "outBase": "1B",
+     "outNumber": 1
+    },
+    "details": {
+     "eventType": "strikeout",
+     "runner": {
+      "id": 1006
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 2
+    }
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:06:10.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "C",
+     "call": {
+      "code": "C",
+      "description": "Called Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 0
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:06:20.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 2,
+     "outs": 0
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:06:30.000Z",
+    "pitchNumber": 3,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": true,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 1
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 7,
+   "inning": 1,
+   "halfInning": "bottom",
+   "isScoringPlay": false,
+   "hasOut": true,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:07:00.000Z",
+   "endTime": "2026-05-02T18:07:00.000Z"
+  },
+  "result": {
+   "eventType": "strikeout",
+   "event": "Strikeout",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": true
+  },
+  "count": {
+   "outs": 2,
+   "balls": 0,
+   "strikes": 3
+  },
+  "matchup": {
+   "batter": {
+    "id": 1007
+   },
+   "pitcher": {
+    "id": 1004
+   },
+   "splits": {
+    "menOnBase": "Men_On"
+   },
+   "postOnFirst": {
+    "id": 1005
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": null,
+     "isOut": true,
+     "originBase": null,
+     "outBase": "1B",
+     "outNumber": 2
+    },
+    "details": {
+     "eventType": "strikeout",
+     "runner": {
+      "id": 1007
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 2
+    }
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:06:40.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "C",
+     "call": {
+      "code": "C",
+      "description": "Called Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 1
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:06:50.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 2,
+     "outs": 1
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:07:00.000Z",
+    "pitchNumber": 3,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": true,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 8,
+   "inning": 1,
+   "halfInning": "bottom",
+   "isScoringPlay": false,
+   "hasOut": false,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:07:40.000Z",
+   "endTime": "2026-05-02T18:07:40.000Z"
+  },
+  "result": {
+   "eventType": "walk",
+   "event": "Walk",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": false
+  },
+  "count": {
+   "outs": 2,
+   "balls": 4,
+   "strikes": 0
+  },
+  "matchup": {
+   "batter": {
+    "id": 1008
+   },
+   "pitcher": {
+    "id": 1004
+   },
+   "splits": {
+    "menOnBase": "Men_On"
+   },
+   "postOnFirst": {
+    "id": 1008
+   },
+   "postOnSecond": {
+    "id": 1005
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": "1B",
+     "isOut": false,
+     "originBase": null,
+     "outBase": null,
+     "outNumber": null
+    },
+    "details": {
+     "eventType": "walk",
+     "runner": {
+      "id": 1008
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 3
+    }
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:07:10.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "B",
+     "call": {
+      "code": "B",
+      "description": "Ball"
+     },
+     "isInPlay": false,
+     "isStrike": false,
+     "isBall": true,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 1,
+     "strikes": 0,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:07:20.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "B",
+     "call": {
+      "code": "B",
+      "description": "Ball"
+     },
+     "isInPlay": false,
+     "isStrike": false,
+     "isBall": true,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 2,
+     "strikes": 0,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:07:30.000Z",
+    "pitchNumber": 3,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "B",
+     "call": {
+      "code": "B",
+      "description": "Ball"
+     },
+     "isInPlay": false,
+     "isStrike": false,
+     "isBall": true,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 3,
+     "strikes": 0,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1005
+     },
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 3,
+    "startTime": "2026-05-02T18:07:40.000Z",
+    "pitchNumber": 4,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "B",
+     "call": {
+      "code": "B",
+      "description": "Ball"
+     },
+     "isInPlay": false,
+     "isStrike": false,
+     "isBall": true,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1008
+     },
+     "second": {
+      "id": 1005
+     },
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   }
+  ]
+ },
+ {
+  "about": {
+   "atBatIndex": 9,
+   "inning": 1,
+   "halfInning": "bottom",
+   "isScoringPlay": false,
+   "hasOut": true,
+   "isComplete": true,
+   "startTime": "2026-05-02T18:08:10.000Z",
+   "endTime": "2026-05-02T18:08:10.000Z"
+  },
+  "result": {
+   "eventType": "strikeout",
+   "event": "Strikeout",
+   "awayScore": 2,
+   "homeScore": 0,
+   "rbi": 0,
+   "isOut": true
+  },
+  "count": {
+   "outs": 3,
+   "balls": 0,
+   "strikes": 3
+  },
+  "matchup": {
+   "batter": {
+    "id": 1009
+   },
+   "pitcher": {
+    "id": 1004
+   },
+   "splits": {
+    "menOnBase": "RISP"
+   }
+  },
+  "runners": [
+   {
+    "movement": {
+     "start": null,
+     "end": null,
+     "isOut": true,
+     "originBase": null,
+     "outBase": "1B",
+     "outNumber": 3
+    },
+    "details": {
+     "eventType": "strikeout",
+     "runner": {
+      "id": 1009
+     },
+     "movementReason": null,
+     "isScoringEvent": false,
+     "playIndex": 2
+    }
+   }
+  ],
+  "playEvents": [
+   {
+    "index": 0,
+    "startTime": "2026-05-02T18:07:50.000Z",
+    "pitchNumber": 1,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "C",
+     "call": {
+      "code": "C",
+      "description": "Called Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 1,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1008
+     },
+     "second": {
+      "id": 1005
+     },
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 1,
+    "startTime": "2026-05-02T18:08:00.000Z",
+    "pitchNumber": 2,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": false,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 2,
+     "outs": 2
+    },
+    "offense": {
+     "first": {
+      "id": 1008
+     },
+     "second": {
+      "id": 1005
+     },
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   },
+   {
+    "index": 2,
+    "startTime": "2026-05-02T18:08:10.000Z",
+    "pitchNumber": 3,
+    "isPitch": true,
+    "type": "pitch",
+    "details": {
+     "code": "S",
+     "call": {
+      "code": "S",
+      "description": "Swinging Strike"
+     },
+     "isInPlay": false,
+     "isStrike": true,
+     "isBall": false,
+     "isOut": true,
+     "awayScore": 2,
+     "homeScore": 0
+    },
+    "count": {
+     "balls": 0,
+     "strikes": 0,
+     "outs": 3
+    },
+    "offense": {
+     "first": null,
+     "second": null,
+     "third": null
+    },
+    "player": {
+     "id": 1004
+    }
+   }
+  ]
+ }
+]
