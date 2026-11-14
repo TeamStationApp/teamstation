@@ -15,7 +15,7 @@ afterEach(async () => {
   document.body.replaceChildren()
 })
 describe('native event map adapter', () => {
-  it('uses Google when configured while allowing SDK subframes and external map attribution', async () => {
+  it('draws OpenStreetMap even when the location carries a Google key, and opens no Google page', async () => {
     const host = document.createElement('div')
     document.body.append(host)
     root = createRoot(host)
@@ -32,14 +32,9 @@ describe('native event map adapter', () => {
       )
     })
     expect(webViewProps.source?.html)
-      .includes('window.initEventMap')
-      .and.includes('gm_authFailure')
-    expect(
-      webViewProps.onShouldStartLoadWithRequest!({
-        url: 'https://maps.google.com/map-frame',
-        isTopFrame: false
-      })
-    ).equals(true)
+      .includes('L.map')
+      .and.not.includes('window.initEventMap')
+      .and.not.includes('placeholder-key')
     const opened: string[] = []
     Linking.openURL = async url => {
       opened.push(url)
@@ -49,18 +44,7 @@ describe('native event map adapter', () => {
         url: 'https://www.google.com/maps/@34,12'
       })
     ).equals(false)
-    expect(opened).deep.equals(['https://www.google.com/maps/@34,12'])
-    expect(
-      webViewProps.onShouldStartLoadWithRequest!({
-        url: 'https://maps.google.com/maps?ll=34,12'
-      })
-    ).equals(false)
-    expect(
-      webViewProps.onShouldStartLoadWithRequest!({
-        url: 'https://www.google.com/intl/en_US/help/terms_maps.html'
-      })
-    ).equals(false)
-    expect(opened).length(3)
+    expect(opened).deep.equals([])
   })
   it('renders the shared SDK document, identifies tile requests and restricts navigation', async () => {
     const host = document.createElement('div')

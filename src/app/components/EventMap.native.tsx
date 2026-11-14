@@ -4,20 +4,18 @@ import { WebView } from 'react-native-webview'
 
 import type { EventLocation } from '../../common/eventInfo'
 import { eventMapDocument } from './eventMapDocument'
-import { googleMapDocument } from './googleMapDocument'
 
+/**
+ * The OpenStreetMap map in a WebView: Android's fallback when Google's map
+ * does not load. iOS draws Apple Maps (`EventMap.ios.tsx`), and a Google key
+ * on the location is not used here.
+ */
 export function EventMap({
   location
 }: {
   location: EventLocation
 }): React.ReactElement {
-  const html = useMemo(
-    () =>
-      location.googleMapsApiKey == null || location.googleMapsApiKey === ''
-        ? eventMapDocument(location)
-        : googleMapDocument(location),
-    [location]
-  )
+  const html = useMemo(() => eventMapDocument(location), [location])
   return (
     <View
       style={{
@@ -42,12 +40,7 @@ export function EventMap({
             request.url.startsWith('https://app.teamstation.app/')
           )
             return true
-          if (
-            request.url === 'https://www.openstreetmap.org/copyright' ||
-            /^https:\/\/(?:maps\.google\.com\/|(?:www\.)?google\.com\/(?:maps(?:[/?]|$)|intl\/[^/]+\/help\/terms_maps\.html(?:[?#]|$)))/.test(
-              request.url
-            )
-          )
+          if (request.url === 'https://www.openstreetmap.org/copyright')
             Linking.openURL(request.url).catch(() => undefined)
           return false
         }}
