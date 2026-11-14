@@ -39,8 +39,9 @@ export default defineE2e({
       await withTess(ctx, async web => {
         await web.open('/')
         await web.openChat()
-        expect(await web.rectOf(COLUMN)).deep.include({ x: 0, width: 400 })
-        expect(await web.paneRect()).deep.include({ x: 400, width: 880 })
+        // On the right, beside the pane, past the navigation (fb5ef504a).
+        expect(await web.rectOf(COLUMN)).deep.include({ x: 1136, width: 400 })
+        expect(await web.paneRect()).deep.include({ x: 256, width: 880 })
         await ctx.checkpoint('split', {
           expect: [
             { text: 'Your Home' },
@@ -151,9 +152,12 @@ export default defineE2e({
           })
           // The same conversation across the width where her layout changes. No
           // checkpoint while resized: maestro-d captures at the window's own size.
-          await session.resize({ width: 1280, height: 900 })
+          await session.resize({ width: 1536, height: 900 })
           await web.see(COLUMN)
-          expect(await web.rectOf(COLUMN)).deep.include({ x: 0, width: 400 })
+          expect(await web.rectOf(COLUMN)).deep.include({
+            x: 1136,
+            width: 400
+          })
           await eventually(async () => {
             expect(await messageCount()).greaterThanOrEqual(shown)
           })

@@ -24,7 +24,8 @@ export const NOTIFICATIONS = '[role="button"][aria-label="Notifications"]'
 export const COLUMN = '[data-testid="Tess column"]'
 export const LAYER = '[data-testid="Tess layer"]'
 export const CHAT = '[data-testid="Tess chat"]'
-export const FIELD = '[aria-label="Ask Tess"]'
+// The text field: the sidebar's Ask Tess (develop 30f330991) is a button.
+export const FIELD = 'textarea[aria-label="Ask Tess"]'
 export const THINKING = '[data-testid="Tess thinking"]'
 export const MIC = '[role="button"][aria-label="Dictate"]'
 export const DIVIDER = '[data-testid="Tess divider"]'
@@ -185,7 +186,9 @@ export async function withTess(
       .execute()
     const origin = await ctx.stack.adopt(t.f.h.origin)
     const session = await ctx.browser(
-      { width: options.width ?? 1280, height: options.height ?? 900 },
+      // Wide enough for the navigation sidebar, her column and an 880-point
+      // pane beside it, as develop's own Tess script draws it (fb5ef504a).
+      { width: options.width ?? 1536, height: options.height ?? 900 },
       {
         timeZone: 'America/Los_Angeles',
         ...(options.liveClock === true ? {} : { clock: PINNED_CLOCK }),
@@ -209,7 +212,7 @@ export async function withTess(
       await m.inputText({ text: words })
     }
     const fieldValue: TessWeb['fieldValue'] = async () =>
-      await page.$eval(FIELD, node => (node as HTMLTextAreaElement).value)
+      await page.$eval(FIELD, node => node.value)
     const web: TessWeb = {
       t,
       session,
@@ -249,7 +252,18 @@ export async function withTess(
       },
       tap,
       openChat: async (opens = COLUMN) => {
-        await tap(MARK_MENU)
+        // Wide, the sidebar holds Ask Tess; narrower, the mark's menu does.
+        await eventually(async () => {
+          expect(
+            await page.evaluate(
+              () =>
+                window.innerWidth >= 1216 ===
+                (document.querySelector('[data-testid="navigation-sidebar"]') !=
+                  null)
+            )
+          ).equals(true)
+        }, 20000)
+        if ((await page.$(MARK_MENU)) != null) await tap(MARK_MENU)
         await tap(ASK_TESS)
         await see(opens)
         // The microphone comes up once its socket has: a screen and a Space key depend
@@ -283,9 +297,12 @@ export async function withTess(
           return { x: box.x, y: box.y, width: box.width, height: box.height }
         }, selector),
       paneRect: async () =>
+        // The pane between the navigation and her column on the right.
         await page.evaluate(column => {
-          const left = document.querySelector(column)
-          const pane = left == null ? null : left.nextElementSibling
+          const pane =
+            document.querySelector(column) == null
+              ? null
+              : document.querySelector('[data-testid="navigation-scenes"]')
           if (pane == null) return null
           const box = pane.getBoundingClientRect()
           return { x: box.x, y: box.y, width: box.width, height: box.height }

@@ -63,23 +63,24 @@ export default defineE2e({
           await page.$eval(DIVIDER, node => getComputedStyle(node).cursor)
         ).equals('col-resize')
         await breakpointIs(web, 'tablet')
-        await dragBy(web, 120)
-        expect(await web.rectOf(COLUMN)).deep.include({ x: 0, width: 520 })
-        expect(await web.paneRect()).deep.include({ x: 520, width: 760 })
+        // Her column is on the right (fb5ef504a): leftward widens it.
+        await dragBy(web, -120)
+        expect(await web.rectOf(COLUMN)).deep.include({ x: 1016, width: 520 })
+        expect(await web.paneRect()).deep.include({ x: 256, width: 760 })
         await breakpointIs(web, 'tablet')
         await ctx.checkpoint('column-wider', {
           expect: [{ text: 'Ask Tess' }],
           golden: {}
         })
-        await dragBy(web, 600)
+        await dragBy(web, -600)
         expect(await web.rectOf(COLUMN)).deep.include({ width: 720 })
-        expect(await web.paneRect()).deep.include({ x: 720, width: 560 })
+        expect(await web.paneRect()).deep.include({ x: 256, width: 560 })
         await breakpointIs(web, 'phone')
-        await dragBy(web, -1000)
+        await dragBy(web, 1000)
         expect(await web.rectOf(COLUMN)).deep.include({ width: 320 })
-        expect(await web.paneRect()).deep.include({ x: 320, width: 960 })
+        expect(await web.paneRect()).deep.include({ x: 256, width: 960 })
         await breakpointIs(web, 'tablet')
-        await dragBy(web, 200)
+        await dragBy(web, -200)
         await m.openBrowser({ url: page.url() })
         await web.open('/')
         await web.openChat()
@@ -87,7 +88,7 @@ export default defineE2e({
         await eventually(async () => {
           expect((await web.rectOf(COLUMN))?.width).equals(520)
         }, 10000)
-        expect(await web.paneRect()).deep.include({ x: 520, width: 760 })
+        expect(await web.paneRect()).deep.include({ x: 256, width: 760 })
         await ctx.checkpoint('width-after-reload', {
           expect: [{ text: 'Ask Tess' }],
           golden: {}
@@ -101,8 +102,9 @@ export default defineE2e({
         await m.evalBrowserScript({
           script: `document.querySelector(${JSON.stringify(DIVIDER)}).focus()`
         })
-        await m.pressKey({ key: 'Right' })
-        await m.pressKey({ key: 'Right' })
+        // Leftward widens her, on the right.
+        await m.pressKey({ key: 'Left' })
+        await m.pressKey({ key: 'Left' })
         await eventually(async () => {
           expect((await web.rectOf(COLUMN))?.width).equals(432)
         }, 10000)

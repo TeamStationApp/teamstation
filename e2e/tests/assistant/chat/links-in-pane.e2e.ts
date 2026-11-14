@@ -99,7 +99,7 @@ export default defineE2e({
           })
           const box = await waitForAngleView(web)
           expect(box).deep.equals(await web.paneRect())
-          expect(await web.rectOf(COLUMN)).deep.include({ x: 0, width: 400 })
+          expect(await web.rectOf(COLUMN)).deep.include({ x: 1136, width: 400 })
           await pause(1500)
           await ctx.checkpoint('angle-over-pane', {
             expect: [{ text: 'Ask Tess' }],
@@ -124,7 +124,7 @@ export default defineE2e({
         await web.tap(SETTINGS_BUBBLE)
         await web.pathIs(web.t.links.teamSettings)
         await web.gone(OVERLAY)
-        expect(await web.rectOf(COLUMN)).deep.include({ x: 0, width: 400 })
+        expect(await web.rectOf(COLUMN)).deep.include({ x: 1136, width: 400 })
         await ctx.checkpoint('settings-after-chart', {
           expect: [{ text: 'Team Settings' }],
           golden: {}
