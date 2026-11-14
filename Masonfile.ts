@@ -620,19 +620,22 @@ export async function releaseIos(ctx: Stage): Promise<void> {
 
 const APK_GLOB = 'android/app/build/outputs/apk/release/*.apk'
 const MAPS_KEY_SECRET = 'GOOGLE_MAPS_ANDROID_API_KEY'
+const MAPS_KEY = `$${MAPS_KEY_SECRET}`
 /**
  * Fails the compile when the release APK's manifest does not carry the Maps
- * key, which leaves the native event map blank. `grep -q` keeps the key out
- * of the log.
+ * key, which leaves the native event map blank. Each failure names its own
+ * cause, and `grep -q` keeps the key out of the log.
  */
-const MAPS_KEY_CHECK = [
-  'aapt2="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)aapt2"',
-  `if [ -n "$${MAPS_KEY_SECRET}" ] && "$aapt2" dump xmltree --file AndroidManifest.xml app/build/outputs/apk/release/*.apk | grep -A 1 -F com.google.android.geo.API_KEY | grep -qF "\\"$${MAPS_KEY_SECRET}\\""; then`,
-  "  echo 'The release APK carries the Google Maps key.'",
-  'else',
-  "  echo 'The release APK has no Google Maps key' >&2",
-  '  exit 1',
-  'fi'
+export const MAPS_KEY_CHECK = [
+  'fail() { echo "$1" >&2; exit 1; }',
+  `[ -n "${MAPS_KEY}" ] || fail 'The ${MAPS_KEY_SECRET} secret is empty'`,
+  'set -- app/build/outputs/apk/release/*.apk',
+  `[ $# -eq 1 ] && [ -f "$1" ] || fail 'Expected one release APK to check for the Google Maps key'`,
+  'tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -n 1)"',
+  `[ -n "$ANDROID_HOME" ] && [ -x "\${tools}aapt2" ] || fail 'No build-tools aapt2 to check the release APK with'`,
+  `manifest="$("\${tools}aapt2" dump xmltree --file AndroidManifest.xml "$1")" || fail 'aapt2 could not read the release APK manifest'`,
+  `printf '%s\\n' "$manifest" | grep -A 1 -F com.google.android.geo.API_KEY | grep -qF "\\"${MAPS_KEY}\\"" || fail 'The release APK has no Google Maps key'`,
+  "echo 'The release APK carries the Google Maps key.'"
 ].join('\n')
 const AAB_GLOB = 'android/app/build/outputs/bundle/release/*.aab'
 const PLAY_ARCHITECTURES = 'arm64-v8a,armeabi-v7a'
