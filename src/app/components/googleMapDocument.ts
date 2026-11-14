@@ -12,10 +12,8 @@ import { WHILE_ON_SCREEN } from './pinMapDocument'
 export function googleMapDocument(location: EventLocation): string {
   if (location.googleMapsApiKey == null || location.googleMapsApiKey === '')
     throw new Error('Google Maps is not configured.')
-  eventMapCoordinate(location)
   const config = JSON.stringify({
-    latitude: location.latitude,
-    longitude: location.longitude,
+    ...eventMapCoordinate(location),
     key: location.googleMapsApiKey
   }).replace(/</g, '\\u003c')
   const fallback = JSON.stringify(eventMapDocument(location)).replace(
