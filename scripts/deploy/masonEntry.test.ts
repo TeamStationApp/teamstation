@@ -368,6 +368,7 @@ describe('TeamStation pipeline Masonfile', () => {
         androidLicenses?: string
       }
       publishes?: string[]
+      secrets?: string[]
     }>
     assert.equal(ios[0]?.name, 'archive')
     assert.equal(ios[0]?.on.type, 'nomac')
@@ -410,6 +411,8 @@ describe('TeamStation pipeline Masonfile', () => {
       'ndk;27.1.12297006',
       'cmake;3.22.1'
     ])
+    assert.deepEqual(android[0]?.secrets, ['GOOGLE_MAPS_ANDROID_API_KEY'])
+    assert.equal(android[1]?.secrets, undefined)
     assert.equal(android[1]?.name, 'sign')
     assert.equal(android[1]?.on.type, 'macos-arm64')
     assert.deepEqual(android[1]?.on.labels, ['android-signing'])
@@ -542,6 +545,23 @@ describe('TeamStation pipeline Masonfile', () => {
       /--init-script mason-version\.gradle :app:bundleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a/
     )
     assert.equal(log.includes('-PversionCode'), false)
+    const assemble = commands.findIndex(line =>
+      line.endsWith(':app:assembleRelease')
+    )
+    const mapsCheck = commands.findIndex(line =>
+      line.includes('com.google.android.geo.API_KEY')
+    )
+    const bundle = commands.findIndex(line =>
+      line.includes(':app:bundleRelease')
+    )
+    assert.ok(assemble >= 0 && assemble < mapsCheck && mapsCheck < bundle)
+    assert.match(commands[mapsCheck] ?? '', /build-tools\/\*\/ \| sort -V/)
+    assert.match(commands[mapsCheck] ?? '', /aapt2" dump xmltree/)
+    assert.match(
+      commands[mapsCheck] ?? '',
+      /grep -qF "\\"\$GOOGLE_MAPS_ANDROID_API_KEY\\""/
+    )
+    assert.equal(log.includes('AIza'), false)
     assert.match(log, /stash:ios-adhoc:build\/TeamStation\.ipa/)
     assert.match(
       log,
@@ -610,18 +630,22 @@ describe('TeamStation pipeline Masonfile', () => {
         params: { seat: '3' }
       },
       async sh(
-        _command: string,
+        command: string,
         options?: { env?: { TS_API_BASE_URL?: string } }
       ) {
         if (options?.env?.TS_API_BASE_URL != null)
           apis.push(`gradle:${options.env.TS_API_BASE_URL}`)
+        if (command.includes('com.google.android.geo.API_KEY'))
+          apis.push('maps-key-check')
         return { code: 0, stdout: '', stderr: '' }
       },
       getBuildNumber(key: string) {
         published.push(key)
         return '26110301'
       },
-      async stash() {},
+      async stash(name: string) {
+        apis.push(`stash:${name}`)
+      },
       artifacts: {
         async save() {}
       },
@@ -644,7 +668,10 @@ describe('TeamStation pipeline Masonfile', () => {
       await compileAndroid(ctx)
       assert.deepEqual(apis, [
         'xcode:https://develop3.teamstation.app/api/v1',
-        'gradle:https://develop3.teamstation.app/api/v1'
+        'stash:ios-adhoc',
+        'gradle:https://develop3.teamstation.app/api/v1',
+        'maps-key-check',
+        'stash:android-release'
       ])
       assert.deepEqual(published, [DEVELOP_APP, DEVELOP_APP, DEVELOP_APP])
       assert.match(
@@ -654,6 +681,41 @@ describe('TeamStation pipeline Masonfile', () => {
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }
+  })
+
+  it('fails the Android compile when the APK has no Google Maps key', async () => {
+    const commands: string[] = []
+    const ctx = {
+      run: {
+        branch: 'master',
+        commit: '0123456789abcdef0123456789abcdef01234567',
+        params: { seat: 'production' }
+      },
+      async sh(command: string) {
+        commands.push(command)
+        if (command.includes('com.google.android.geo.API_KEY'))
+          throw new Error('The release APK has no Google Maps key')
+        return { code: 0, stdout: '', stderr: '' }
+      },
+      getBuildNumber() {
+        return '26103101'
+      },
+      async stash(name: string) {
+        commands.push(`stash:${name}`)
+      }
+    }
+    await assert.rejects(
+      compileAndroid(ctx as unknown as Parameters<typeof compileAndroid>[0]),
+      /The release APK has no Google Maps key/
+    )
+    assert.equal(
+      commands.some(line => line.startsWith('stash:')),
+      false
+    )
+    assert.equal(
+      commands.some(line => line.includes(':app:bundleRelease')),
+      false
+    )
   })
 
   it('signs a Play bundle only for the stable app, after the APK is out', async () => {

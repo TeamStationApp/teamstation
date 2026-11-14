@@ -392,6 +392,9 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           publishes: [app],
           buildNumbers: [app],
           cache: [{ key: 'npm', paths: ['~/.npm'] }],
+          // Gradle reads it from the environment into the manifest's
+          // com.google.android.geo.API_KEY for the native event map.
+          secrets: [MAPS_KEY_SECRET],
           run: compileAndroid
         },
         {
@@ -616,6 +619,21 @@ export async function releaseIos(ctx: Stage): Promise<void> {
 }
 
 const APK_GLOB = 'android/app/build/outputs/apk/release/*.apk'
+const MAPS_KEY_SECRET = 'GOOGLE_MAPS_ANDROID_API_KEY'
+/**
+ * Fails the compile when the release APK's manifest does not carry the Maps
+ * key, which leaves the native event map blank. `grep -q` keeps the key out
+ * of the log.
+ */
+const MAPS_KEY_CHECK = [
+  'aapt2="$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -n 1)aapt2"',
+  `if [ -n "$${MAPS_KEY_SECRET}" ] && "$aapt2" dump xmltree --file AndroidManifest.xml app/build/outputs/apk/release/*.apk | grep -A 1 -F com.google.android.geo.API_KEY | grep -qF "\\"$${MAPS_KEY_SECRET}\\""; then`,
+  "  echo 'The release APK carries the Google Maps key.'",
+  'else',
+  "  echo 'The release APK has no Google Maps key' >&2",
+  '  exit 1',
+  'fi'
+].join('\n')
 const AAB_GLOB = 'android/app/build/outputs/bundle/release/*.aab'
 const PLAY_ARCHITECTURES = 'arm64-v8a,armeabi-v7a'
 
@@ -667,6 +685,7 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
     ].join('\n'),
     { cwd: 'android', env: gradleEnv }
   )
+  await ctx.sh(MAPS_KEY_CHECK, { cwd: 'android' })
   if (app !== STABLE_APP) {
     await ctx.stash('android-release', [APK_GLOB])
     return
