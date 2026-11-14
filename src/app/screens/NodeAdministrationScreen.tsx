@@ -5,7 +5,6 @@ import type { TeamStationClient } from '../../common/api'
 import type { NodeAccount } from '../../common/nodeAdministration'
 import {
   Button,
-  initialsOf,
   ListCard,
   ListRow,
   Screen,
@@ -136,9 +135,10 @@ export function NodeAdministrationScreen({
         title={account.displayName}
         subtitle={account.email ?? undefined}
         subtitleNumberOfLines={2}
-        emblem={initialsOf(account.displayName)}
-        emblemUri={account.avatarUrl}
-        emblemShape="circle"
+        person={{
+          userId: account.userId,
+          uri: account.avatarUrl
+        }}
         end={
           <Button
             label={account.isNodeAdmin ? 'Revoke' : 'Add'}

@@ -463,6 +463,8 @@ describe('TeamStation pipeline Masonfile', () => {
       fs: {
         async glob(pattern: string) {
           commands.push(`glob:${pattern}`)
+          if (pattern.endsWith('.aab'))
+            return ['android/app/build/outputs/bundle/release/app-release.aab']
           return ['android/app/build/outputs/apk/release/app-release.apk']
         }
       },
@@ -533,15 +535,27 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.match(log, /build-number:26103101/)
     assert.match(
       log,
-      /--init-script mason-version\.gradle :app:assembleRelease/
+      /--init-script mason-version\.gradle :app:assembleRelease\n/
+    )
+    assert.match(
+      log,
+      /--init-script mason-version\.gradle :app:bundleRelease -PreactNativeArchitectures=arm64-v8a,armeabi-v7a/
     )
     assert.equal(log.includes('-PversionCode'), false)
     assert.match(log, /stash:ios-adhoc:build\/TeamStation\.ipa/)
-    assert.match(log, /stash:android-release/)
+    assert.match(
+      log,
+      /stash:android-release:.*apk\/release\/\*\.apk,.*bundle\/release\/\*\.aab/
+    )
     assert.match(log, /unstash:android-release/)
     assert.match(log, /teamstation-sign-release-apk/)
+    assert.match(
+      log,
+      /teamstation-sign-release-aab" android\/app\/build\/outputs\/bundle\/release/
+    )
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
+    assert.match(log, /save:android-aab/)
     // Production is explicit, even without injected client configuration.
     assert.match(log, /api:https:\/\/app.teamstation.app\/api\/v1/)
     const recorded = commands
@@ -557,7 +571,8 @@ describe('TeamStation pipeline Masonfile', () => {
             builtAt: string
           }
       )
-    assert.equal(recorded.length, 2)
+    // The iOS archive, the Android APK and the Play bundle.
+    assert.equal(recorded.length, 3)
     for (const info of recorded) {
       assert.equal(info.app, 'TeamStation')
       assert.equal(info.version, version)
@@ -639,6 +654,56 @@ describe('TeamStation pipeline Masonfile', () => {
     } finally {
       rmSync(workspace, { recursive: true, force: true })
     }
+  })
+
+  it('signs a Play bundle only for the stable app, after the APK is out', async () => {
+    const androidRun = (
+      branch: string,
+      bundles: string[]
+    ): { ctx: Parameters<typeof signAndroid>[0]; commands: string[] } => {
+      const commands: string[] = []
+      const ctx = {
+        run: { branch, params: { seat: 'production' } },
+        async sh(command: string) {
+          commands.push(command)
+          return { code: 0, stdout: '', stderr: '' }
+        },
+        async unstash() {},
+        artifacts: {
+          async save(name: string) {
+            commands.push(`save:${name}`)
+          }
+        },
+        fs: {
+          async glob(pattern: string) {
+            if (pattern.endsWith('.aab')) return bundles
+            return ['android/app/build/outputs/apk/release/app-release.apk']
+          }
+        },
+        async publish(options: { app: string }) {
+          commands.push(`publish:${options.app}`)
+        }
+      }
+      return { ctx, commands }
+    }
+
+    const develop = androidRun('develop', [])
+    await signAndroid(develop.ctx)
+    assert.deepEqual(develop.commands.slice(1), [
+      'save:android-apk',
+      `publish:${DEVELOP_APP}`
+    ])
+
+    const missing = androidRun('master', [])
+    await assert.rejects(
+      signAndroid(missing.ctx),
+      /No release bundle was signed/
+    )
+    assert.deepEqual(missing.commands.slice(1, 3), [
+      'save:android-apk',
+      'publish:app.teamstation.app'
+    ])
+    assert.match(missing.commands[3] ?? '', /teamstation-sign-release-aab/)
   })
 
   it('refuses a bundle that has no branch or commit to show', () => {
@@ -1100,6 +1165,7 @@ describe('request-only Apple TV workflow', () => {
   for (const [branch, seat, host] of [
     ['master', 'production', 'app'],
     ['develop', 'production', 'develop'],
+    ['feature', '5', 'develop5'],
     ['master', '2', 'develop2']
   ]) {
     it(`archives a standalone TV app for ${branch}/${seat}`, async () => {
@@ -1142,6 +1208,11 @@ describe('request-only Apple TV workflow', () => {
             assert.equal(options.scheme, 'TeamStationTV')
             assert.equal(options.configuration, 'Release')
             assert.equal(options.buildNumber, '26110601')
+            const info = JSON.parse(options.env!.TS_BUILD_INFO)
+            assert.equal(info.branch, branch)
+            assert.equal(info.commit, '0'.repeat(40))
+            assert.equal(info.version, options.version)
+            assert.equal(info.buildNumber, options.buildNumber)
             assert.match(options.version ?? '', /^\d+(\.\d+){0,2}$/)
             assert.deepEqual(options.xcargs, [
               'SWIFT_ENABLE_EXPLICIT_MODULES=NO',
@@ -1178,6 +1249,23 @@ describe('request-only Apple TV workflow', () => {
       assert.ok(published)
     })
   }
+
+  it('rejects missing TV provenance before installing dependencies', async () => {
+    for (const run of [
+      { branch: '', commit: '0'.repeat(40) },
+      { branch: 'master', commit: '' }
+    ]) {
+      const context = {
+        run,
+        getBuildNumber: () => '1',
+        sh: async () => assert.fail('must validate before installing')
+      }
+      await assert.rejects(
+        buildTv(context as Parameters<typeof buildTv>[0]),
+        /branch|commit/
+      )
+    }
+  })
 
   it('does not publish when tvOS export fails', async () => {
     await assert.rejects(

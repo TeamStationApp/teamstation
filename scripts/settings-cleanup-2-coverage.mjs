@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
@@ -144,7 +145,7 @@ if (!reportOnly) {
       'process.env.TS_SENTRY_DSN': JSON.stringify(''),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+    loader: ASSET_LOADER
   })
   run(
     'node_modules/.bin/mocha',
@@ -166,8 +167,8 @@ if (!reportOnly) {
       'sucrase/register',
       '--timeout',
       '60000',
-      'src/server/admin/nodeAdministration.test.ts',
-      'src/server/email/accountMail.test.ts',
+      'src/server/admin/nodeAdministration.integration.test.ts',
+      'src/server/email/accountMail.integration.test.ts',
       'src/server/openapi.test.ts',
       'src/common/api.test.ts',
       'src/app/components/pinnedHead.test.ts',

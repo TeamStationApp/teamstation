@@ -23,7 +23,12 @@ import { asLiteral } from './asLiteral'
 import { asChatAge, type ChatAge, type ChatAgeSource } from './chatAge'
 import { asChatBoxCursor } from './chatHistory'
 import { type Approval, asApproval, asBuildsLink } from './distribution'
-import { type ApiError, asApiError, HttpError } from './errors'
+import {
+  type ApiError,
+  asApiError,
+  HttpError,
+  isUpdateRequired
+} from './errors'
 import {
   asEventInfo,
   asEventLocation,
@@ -45,6 +50,8 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
+import { asGamePlan, type GamePlan } from './gamePlan'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
   asGroupRef,
@@ -93,6 +100,7 @@ import {
   type ResetAuthorization
 } from './passwordProtocol'
 import type { AvailablePicture } from './pictureCatalog'
+import type { PlanSameDay } from './planWarnings'
 import {
   asPlayerNamePrivacy,
   type PlayerNamePrivacy
@@ -104,6 +112,7 @@ import type {
   PlayerSettings
 } from './playerSettings'
 import { asStatSplit, asStatSplitBy } from './playerStatSplits'
+import { asPlayingTimeRules, type PlayingTimeRules } from './playingTimeRules'
 import {
   asGroupDetail,
   asPublicGame,
@@ -132,6 +141,7 @@ import {
   type Problem,
   type ScoringAction
 } from './scoring/actions'
+import { asScoringAuthorship } from './scoring/authorship'
 import type { BoardLine } from './scoring/boardLineTypes'
 import {
   asDefaultLineup,
@@ -143,12 +153,23 @@ import {
   type SideLineups
 } from './scoring/lineupHistory'
 import { asSwapEffect } from './scoring/playsLost'
+import { withReaderNames } from './scoring/readerNames'
 import {
   asSaidRosterCommand,
   type SaidRosterCommand
 } from './scoring/rosterCommands'
-import type { SaveChange, StoredGame } from './scoring/session'
+import {
+  asScoringMutation,
+  type ScoringMutation
+} from './scoring/scoringMutation'
+import type {
+  LineupRecovery,
+  SaveChange,
+  SessionLog,
+  StoredGame
+} from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
+import { SCORING_FEATURE_HEADER, SCORING_FEATURES } from './scoring/teamRecord'
 import {
   asScheduleSetup,
   asSeasonScheduleSettings,
@@ -400,6 +421,13 @@ export const asChatConversation = asObject({
   /** The scope's own identity; absent on older servers and for DMs. */
   avatarName: asOptional(asNullable(asString), null),
   avatarUrl: asOptional(asNullable(asString), null),
+  /**
+   * A season chat's league, whose colour its tile takes, and the league's
+   * signed picture, drawn when the season has none; null for the rest and
+   * absent on older servers.
+   */
+  leagueId: asOptional(asNullable(asString), null),
+  leaguePictureUrl: asOptional(asNullable(asString), null),
   lastSeq: asNumber,
   /** When the newest message was posted, ISO; null before the first. */
   lastMessageAt: asNullable(asString),
@@ -429,12 +457,23 @@ export const asChatConversation = asObject({
 export type ChatConversation = ReturnType<typeof asChatConversation>
 
 /** One member of a chat, from `GET /chat/conversations/:id/members`. */
-export const asChatMember = asObject({
+const cleanChatMember = asObject({
   userId: asUserId,
   shortName: asString,
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the reader writes to others, such as a mention's label.
+   */
+  compactName: asOptional(asString),
   avatarUrl: asNullable(asString),
   /** How they stand in the chat, such as "Coach · Guardian". */
   label: asString,
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, ''),
   isModerator: asBoolean,
   isApprover: asBoolean,
   /** Has an identity and is not waiting for reset approval here. */
@@ -445,7 +484,13 @@ export const asChatMember = asObject({
   /** Their current per-user key generation. */
   generation: asNullable(asNumber)
 })
-export type ChatMember = ReturnType<typeof asChatMember>
+export type ChatMember = Omit<
+  ReturnType<typeof cleanChatMember>,
+  'compactName'
+> & {
+  compactName?: string
+}
+export const asChatMember: Cleaner<ChatMember> = cleanChatMember
 
 /**
  * One row of a chat's hash-chained membership log. `prevHash` and `hash` are
@@ -464,12 +509,29 @@ export const asChatLogRow = asObject({
 export type ChatLogRow = ReturnType<typeof asChatLogRow>
 
 /** Somebody the caller may name in a DM, from `GET /chat/dm-candidates`. */
-export const asChatPerson = asObject({
+const cleanChatPerson = asObject({
   userId: asUserId,
   shortName: asString,
-  avatarUrl: asNullable(asString)
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the reader writes to others, such as a mention's label.
+   */
+  compactName: asOptional(asString),
+  avatarUrl: asNullable(asString),
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, '')
 })
-export type ChatPerson = ReturnType<typeof asChatPerson>
+export type ChatPerson = Omit<
+  ReturnType<typeof cleanChatPerson>,
+  'compactName'
+> & {
+  compactName?: string
+}
+export const asChatPerson: Cleaner<ChatPerson> = cleanChatPerson
 
 export const asChatBlock = asObject({
   userId: asUserId,
@@ -487,9 +549,19 @@ export type ChatBlock = ReturnType<typeof asChatBlock>
 export const asIncludedAdult = asObject({
   userId: asUserId,
   shortName: asString,
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the reader writes to others, such as a mention's label.
+   */
+  compactName: asOptional(asString),
   label: asString
 })
-export type IncludedAdult = ReturnType<typeof asIncludedAdult>
+export type IncludedAdult = Omit<
+  ReturnType<typeof asIncludedAdult>,
+  'compactName'
+> & {
+  compactName?: string
+}
 
 /** How far one member has read, from `GET /chat/conversations/:id/reads`. */
 export const asChatRead = asObject({ userId: asUserId, seq: asNumber })
@@ -1241,6 +1313,7 @@ export const asBattingRow = asObject({
   sf: asOptional(asNumber, 0),
   /** Sacrifice bunts. */
   sh: asOptional(asNumber, 0),
+  kl: asOptional(asNullable(asNumber), null),
   roe: asOptional(asNullable(asNumber), null),
   fc: asOptional(asNullable(asNumber), null),
   pik: asOptional(asNullable(asNumber), null),
@@ -1291,6 +1364,7 @@ export const asPitchingRow = asObject({
   k: asNumber,
   gs: asOptional(asNullable(asNumber), null),
   pitches: asOptional(asNullable(asNumber), null),
+  strikes: asOptional(asNullable(asNumber), null),
   kl: asOptional(asNullable(asNumber), null),
   lob: asOptional(asNullable(asNumber), null),
   bk: asOptional(asNullable(asNumber), null),
@@ -1421,14 +1495,20 @@ const cleanRosterEntry = asObject({
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   /**
-   * The public name: first name, last initial, unless the team has chosen
-   * another format. The field is named for what it is so a stored full name
-   * cannot be shipped here by accident — the compiler visits every call site,
-   * where a reviewer might not.
+   * The name as this reader reads it: the full name for somebody the reader
+   * may read in full (`mayViewFullNames`), and otherwise the public name, first
+   * name and last initial unless the team has chosen another format.
    */
   shortName: asString,
-  /** The public format of `shortName`, unless it is the built-in one. */
+  /** The format of `shortName`, unless it is the built-in one. */
   nameFormat: asOptional(asPlayerNamePrivacy),
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what a compact surface such as the scoring field draws.
+   */
+  compactName: asOptional(asString),
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat: asOptional(asPlayerNamePrivacy),
   avatarUrl: asOptional(asNullable(asString), null),
   jersey: asNullable(asString),
   positions: asArray(asString),
@@ -1474,15 +1554,23 @@ const cleanRosterEntry = asObject({
   teamNames: asOptional(asArray(asString)),
   /**
    * Under a family member, the players on this list they are a guardian of,
-   * by their short names; absent for everybody else.
+   * by the names the list gives them; absent for everybody else.
    */
-  guardianOf: asOptional(asArray(asString))
+  guardianOf: asOptional(asArray(asString)),
+  /**
+   * Their affiliation line, as the reader may see it: `Guardian of …`,
+   * `Guardians: …` and their teams, joined by ` · `; empty when nothing is
+   * visible.
+   */
+  affiliations: asOptional(asString, '')
 })
 export type RosterEntry = Omit<
   ReturnType<typeof cleanRosterEntry>,
   | 'teamNames'
   | 'guardianOf'
   | 'nameFormat'
+  | 'compactName'
+  | 'compactFormat'
   | 'pool'
   | 'ownIdentity'
   | 'isHeadCoach'
@@ -1491,12 +1579,16 @@ export type RosterEntry = Omit<
   teamNames?: string[]
   guardianOf?: string[]
   nameFormat?: PlayerNamePrivacy
+  compactName?: string
+  compactFormat?: PlayerNamePrivacy
   pool?: boolean
   ownIdentity?: boolean
 }
 export const asRosterEntry: (raw: unknown) => RosterEntry = cleanRosterEntry
 
 const asStoredGame = asObject({
+  scoringAuthorship: asOptional(asScoringAuthorship),
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
   plays: asArray(
     asObject({ id: asString, gameId: asString, gumbo: asGumboPlay })
   ),
@@ -1508,14 +1600,33 @@ const asStoredGame = asObject({
   generation: asOptional(asNullable(asNumber), null),
   swap: asSwapEffect,
   modelNames: asOptional(asObject(asString)),
-  halves: asOptional(asArray(asString))
+  halves: asOptional(asArray(asString)),
+  readerNames: asOptional(asObject(asString))
 })
 
 /** A game's plays as a session reads them, with the digests that were sent. */
+/** A game's plays as `GET /games/:gameId/events` answers them, kept or read. */
+export const asStoredGameAnswer: Cleaner<StoredGame> = raw =>
+  storedGameOf(asStoredGame(raw))
+
 function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
+  // The game's players as this reader reads them; its plays as everyone does.
+  const { plays, currentPlay } = withReaderNames(
+    {
+      plays: stored.plays.map(row => row.gumbo),
+      currentPlay: stored.currentPlay
+    },
+    stored.readerNames
+  )
   return {
-    plays: stored.plays.map(row => row.gumbo),
-    currentPlay: stored.currentPlay,
+    ...(stored.scoringAuthorship == null
+      ? {}
+      : { scoringAuthorship: stored.scoringAuthorship }),
+    ...(stored.scoringMutation == null
+      ? {}
+      : { scoringMutation: stored.scoringMutation }),
+    plays,
+    currentPlay,
     ...(stored.playsDigest == null ? {} : { playsDigest: stored.playsDigest }),
     ...(stored.priorPlaysDigest == null
       ? {}
@@ -1529,7 +1640,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
     ...(stored.modelNames == null ? {} : { modelNames: stored.modelNames }),
     ...(stored.halves == null || stored.halves.length === 0
       ? {}
-      : { halves: stored.halves })
+      : { halves: stored.halves }),
+    ...(stored.readerNames == null ? {} : { readerNames: stored.readerNames })
   }
 }
 
@@ -1538,6 +1650,8 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
  * the game was left with, each only when the answer has it.
  */
 export interface PostedEdits {
+  scoringMutation?: ScoringMutation
+  superseded?: boolean
   playsDigest?: string
   priorPlaysDigest?: string
   lineupsDigest?: string
@@ -1545,6 +1659,8 @@ export interface PostedEdits {
 }
 
 const asPostedFields = asObject({
+  scoringMutation: asOptional(asNullable(asScoringMutation)),
+  superseded: asOptional(asBoolean),
   playsDigest: asOptional(asNullable(asString)),
   priorPlaysDigest: asOptional(asNullable(asString)),
   lineupsDigest: asOptional(asNullable(asString)),
@@ -1564,6 +1680,12 @@ const asPostedFields = asObject({
 export function asPostedEdits(raw: unknown): PostedEdits {
   const posted = asPostedFields(raw)
   return {
+    ...(posted.scoringMutation == null
+      ? {}
+      : { scoringMutation: posted.scoringMutation }),
+    ...(posted.superseded === undefined
+      ? {}
+      : { superseded: posted.superseded }),
     ...(posted.playsDigest == null ? {} : { playsDigest: posted.playsDigest }),
     ...(posted.priorPlaysDigest == null
       ? {}
@@ -1582,6 +1704,15 @@ export function asPostedEdits(raw: unknown): PostedEdits {
 export function liveEventsBody(change: SaveChange): Record<string, unknown> {
   return {
     mode: 'live',
+    ...(change.scoringHistory == null
+      ? {}
+      : { scoringHistory: change.scoringHistory }),
+    ...(change.scoringBase === undefined
+      ? {}
+      : { scoringBase: change.scoringBase }),
+    ...(change.scoringMutation == null
+      ? {}
+      : { scoringMutation: change.scoringMutation }),
     source: { system: 'teamstation' },
     plays: change.plays,
     remove: change.remove,
@@ -1658,9 +1789,12 @@ export type PlayerTeam = ReturnType<typeof asPlayerTeam>
 /**
  * One person, for their own page.
  *
- * `name` is **always** the short form — `Jordan P` — for everybody, on every
- * screen. The whole name is never part of it: it is fetched separately, by
- * `playerName`, when somebody who may change it opens the name field.
+ * `name` is the person's full name for a reader who may read it
+ * (`mayViewFullNames`: a guardian, the player, the staff of a team they play
+ * on, a people manager of a level whose people list holds them), and the
+ * public short form — `Jordan P` — for everybody else. The halves are
+ * fetched separately, by `playerName`, when somebody who may change them
+ * opens the name field.
  *
  * No jersey number on the person: a number belongs to a player *on a team*,
  * and travels only in a `teams` row of `PlayerDetail`, beside its team.
@@ -1837,7 +1971,12 @@ export const asSeasonSummary = asObject({
    * The season's mark, from the organisation it was imported from. Signed and
    * short-lived, like every other picture the app is given.
    */
-  logoUrl: asOptional(asNullable(asString), null)
+  logoUrl: asOptional(asNullable(asString), null),
+  /**
+   * The league's picture, signed, which the season is drawn with when it has
+   * none of its own; null without a league. Absent on older servers.
+   */
+  leaguePictureUrl: asOptional(asNullable(asString), null)
 })
 export type SeasonSummary = ReturnType<typeof asSeasonSummary>
 
@@ -2058,32 +2197,49 @@ export interface RosterCandidate {
   gumboId: number | null
   externalIds: string[]
   shortName: string
+  /** The format of `shortName`, unless it is the built-in one. */
+  nameFormat?: PlayerNamePrivacy
+  /**
+   * The public name, when `shortName` is full only because of the reader:
+   * what the field, the board strip and the lineup QR draw.
+   */
+  compactName?: string
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat?: PlayerNamePrivacy
   shortParts: { first: string; last: string }
   avatarUrl: string | null
   bats: 'left' | 'right' | 'switch' | null
   throws: 'left' | 'right' | null
   teams: Array<{ teamId: string; name: string }>
+  /** Their affiliation line, as the reader may see it; empty for nothing. */
+  affiliations: string
   tier: 'mine' | 'season' | 'league' | 'other'
-  cursor: string
 }
-export const asRosterCandidate: Cleaner<RosterCandidate> = asObject({
+const cleanRosterCandidate = asObject({
   userId: asString,
   gumboId: asNullable(asNumber),
   externalIds: asArray(asString),
   shortName: asString,
+  nameFormat: asOptional(asPlayerNamePrivacy),
+  compactName: asOptional(asString),
+  compactFormat: asOptional(asPlayerNamePrivacy),
   shortParts: asObject({ first: asString, last: asString }),
   avatarUrl: asNullable(asString),
   bats: asBats,
   throws: asThrows,
   teams: asArray(asObject({ teamId: asString, name: asString })),
+  affiliations: asOptional(asString, ''),
   tier: asEither(
     asLiteral('mine'),
     asLiteral('season'),
     asLiteral('league'),
     asLiteral('other')
-  ),
-  cursor: asString
+  )
 })
+export const asRosterCandidate: Cleaner<RosterCandidate> = cleanRosterCandidate
+
+/** The most rows one roster search answers: there are no further pages. */
+export const ROSTER_CANDIDATE_MAX = 100
 
 /**
  * An existing player's add: their entry, with the notice their side was sent
@@ -2125,7 +2281,7 @@ const cleanUserMatch = asObject({
   userId: asUserId,
   gumboId: asOptional(asNullable(asGumboId), null),
   externalIds: asArray(asString),
-  /** `Jordan P`, told apart from anybody else in the same answer. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: asOptional(asString),
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: asOptional(asNullable(asString), null)
@@ -2209,8 +2365,9 @@ export function canDeleteCameraVideo(stream: {
 const cleanLiveStream = asObject({
   id: asString,
   gameId: asString,
-  /** Whose camera it is, and what they are called. */
+  /** Whose camera it is. */
   userId: asUserId,
+  /** What the reader calls them: whole only for whom they may read in full. */
   ownerName: asString,
   /** Which of that person's four, and what they call it. */
   slot: asNumber,
@@ -2385,6 +2542,9 @@ export const asLiveNow = asObject({
   videoId: asString,
   gameId: asString,
   title: asString,
+  /** The teams' ids, for their tiles' colours; absent on older servers. */
+  homeTeamId: asOptional(asString, ''),
+  awayTeamId: asOptional(asString, ''),
   homeTeamName: asString,
   awayTeamName: asString,
   startedAt: asNullable(asString),
@@ -2538,7 +2698,7 @@ export type RoleGrant = ReturnType<typeof asRoleGrant>
  * and who also joined the league holds two, and an administrator who removes
  * one and sees nothing change has been told a half-truth.
  */
-export const asScopePerson = asObject({
+const cleanScopePerson = asObject({
   userId: asUserId,
   displayName: asString,
   emails: asArray(asString),
@@ -2569,6 +2729,7 @@ export const asScopePerson = asObject({
   lastSignInAt: asNullable(asString),
   lastSeenAt: asNullable(asString)
 })
+export const asScopePerson = cleanScopePerson
 type ScopePersonFromPage = ReturnType<typeof asScopePerson>
 export type ScopePerson = Omit<
   ScopePersonFromPage,
@@ -3266,6 +3427,13 @@ export interface RequestOptions {
    * of the game reads named before the server answers.
    */
   deviceNames?: Record<string, string>
+  /** Original lineup baseline kept only in the device outbox. */
+  deviceLineupRecovery?: LineupRecovery
+  /**
+   * A live post's session log (`SaveChange.log`): never sent, but kept on the
+   * device beside a queued post, for a newer build to play again.
+   */
+  deviceLog?: SessionLog
   /**
    * The screen does not wait for the server: the phone's client queues the
    * write and answers its own answer at once, sending it in the background.
@@ -3466,6 +3634,43 @@ export const asSaveLineupsBody: Cleaner<SaveLineupsBody> = raw => {
   }
 }
 
+/**
+ * One side's game plan, as `GET /games/:gameId/plans` answers it to whoever
+ * may save that side's lineup: the plan (null before one is saved), the
+ * Playing Time Rules its warnings are judged by (null for none), and the
+ * team's other games that day, by `planPlayerKey`. An older server's
+ * `history` is ignored.
+ */
+export interface SidePlan {
+  teamId: string
+  plan: GamePlan | null
+  rules: PlayingTimeRules | null
+  sameDay: PlanSameDay
+}
+
+/** Both sides' plans in a game; a side the caller may not plan is null. */
+export interface GamePlansResponse {
+  away: SidePlan | null
+  home: SidePlan | null
+}
+
+const asPlanSameDay: Cleaner<PlanSameDay> = asObject({
+  before: asObject({ catcherInnings: asObject(asNumber) }),
+  laterPitched: asObject(asBoolean)
+})
+
+export const asSidePlan: Cleaner<SidePlan> = asObject({
+  teamId: asString,
+  plan: asNullable(asGamePlan),
+  rules: asNullable(asPlayingTimeRules),
+  sameDay: asPlanSameDay
+})
+
+export const asGamePlansResponse: Cleaner<GamePlansResponse> = asObject({
+  away: asNullable(asSidePlan),
+  home: asNullable(asSidePlan)
+})
+
 /** One batter in DJ Game's list: a placeholder has no user id and no song. */
 export const asDjBatter = asObject({
   userId: asNullable(asUserId),
@@ -3571,7 +3776,7 @@ export const asBoardTimelineWindow: Cleaner<BoardTimelineWindow> = asObject({
   steps: asArray(asObject({ at: asNumber, state: asScoreboardState }))
 })
 
-export const asGameStatistics: Cleaner<GameStatistics> = asObject({
+const asStatisticsAnswer = asObject({
   version: asString,
   board: asBoardTimelineWindow,
   line: asLineScoreTimeline,
@@ -3590,8 +3795,20 @@ export const asGameStatistics: Cleaner<GameStatistics> = asObject({
     plays: asArray(asGumboPlay),
     currentPlay: asNullable(asCurrentPlay),
     generation: asNumber
-  })
+  }),
+  readerNames: asOptional(asObject(asString))
 })
+
+/**
+ * A playback answer with its replay documents as their reader reads them:
+ * the players `readerNames` names in full so, each keeping his public label
+ * beside it for the replay diamond and the card's sentences (which the
+ * announcer reads from the public record), as the events read does.
+ */
+export const asGameStatistics: Cleaner<GameStatistics> = raw => {
+  const { readerNames, source, ...rest } = asStatisticsAnswer(raw)
+  return { ...rest, source: withReaderNames(source, readerNames) }
+}
 
 function statisticsPath(
   gameId: string,
@@ -4041,6 +4258,11 @@ export class TeamStationClient {
    * refused (`POST /auth/...`) is not that.
    */
   onSessionRefused?: () => void
+  /**
+   * Told when a call is refused because this build is older than the server
+   * reads (`updateRequired`), so the app can say to update it.
+   */
+  onUpdateRequired?: () => void
 
   constructor(options: ClientOptions) {
     this.baseUrl = options.baseUrl.replace(/\/+$/, '')
@@ -4706,6 +4928,11 @@ export class TeamStationClient {
     fields: Partial<Omit<CreateGroup, 'kind' | 'parent' | 'idempotencyKey'>> & {
       /** Null goes back to Default. */
       playerNamePrivacy?: PlayerNamePrivacy | null
+      /**
+       * A season's or team's whole set. Null is none on a season, and on a
+       * team follows its season's again.
+       */
+      playingTimeRules?: PlayingTimeRules | null
     }
   ): Promise<PublicGroup> {
     return await this.request(
@@ -4949,21 +5176,31 @@ export class TeamStationClient {
     })
   }
 
-  async onboarding(): Promise<{ displayName: string; onboarding: Onboarding }> {
+  async onboarding(): Promise<{
+    displayName: string
+    onboarding: Onboarding
+  }> {
     return await this.request(
       'GET',
       '/me/onboarding',
-      asObject({ displayName: asString, onboarding: asOnboarding })
+      asObject({
+        displayName: asString,
+        onboarding: asOnboarding
+      })
     )
   }
 
-  async saveOnboardingName(
+  async saveOnboardingName(displayName: string): Promise<{
     displayName: string
-  ): Promise<{ displayName: string; onboarding: Onboarding }> {
+    onboarding: Onboarding
+  }> {
     return await this.request(
       'PUT',
       '/me/onboarding/name',
-      asObject({ displayName: asString, onboarding: asOnboarding }),
+      asObject({
+        displayName: asString,
+        onboarding: asOnboarding
+      }),
       { displayName }
     )
   }
@@ -5814,6 +6051,33 @@ export class TeamStationClient {
     )
   }
 
+  /**
+   * Both sides' game plans in a game, each with the rules, season history and
+   * same-day load its warnings are judged by; a side the caller may not save
+   * the lineup of is null.
+   */
+  async gamePlans(gameId: string): Promise<GamePlansResponse> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/plans`,
+      asGamePlansResponse
+    )
+  }
+
+  /** Saves one team's game plan in a game, and answers that side's plan. */
+  async saveGamePlan(
+    gameId: string,
+    teamId: string,
+    plan: GamePlan
+  ): Promise<SidePlan> {
+    return await this.request(
+      'PUT',
+      `/games/${encodeURIComponent(gameId)}/plans/${encodeURIComponent(teamId)}`,
+      asSidePlan,
+      plan
+    )
+  }
+
   /** Both sides' batters and their walk-up songs, for DJ Game. */
   async djGame(gameId: string): Promise<DjGame> {
     return await this.request(
@@ -5971,7 +6235,11 @@ export class TeamStationClient {
       `/games/${encodeURIComponent(gameId)}/events?answer=edits`,
       asPostedEdits,
       liveEventsBody(change),
-      change.names == null ? undefined : { deviceNames: change.names }
+      {
+        deviceNames: change.names,
+        deviceLineupRecovery: change.deviceLineupRecovery,
+        deviceLog: change.log
+      }
     )
   }
 
@@ -6115,20 +6383,24 @@ export class TeamStationClient {
 
   /**
    * The players a roster manager may add to a team, or to its side of a
-   * game, nearest first, a page at a time (`GET /users?forTeam=`).
+   * game, nearest first (`GET /users?forTeam=`): one answer per search, of
+   * at most `ROSTER_CANDIDATE_MAX`, with no further pages. `capped` sends
+   * `capped=1`: the caller tells the user when the answer is full, so the
+   * server reads its `limit`. Without it the server answers the whole
+   * `ROSTER_CANDIDATE_MAX`, as installed builds that page on need.
    */
   async rosterCandidates(ask: {
     teamId: string
     gameId?: string
     q?: string
-    after?: string
     limit?: number
+    capped?: boolean
     signal?: AbortSignal
   }): Promise<RosterCandidate[]> {
     const params = new URLSearchParams({ forTeam: ask.teamId })
     if (ask.gameId != null) params.set('forGame', ask.gameId)
     if (ask.q != null && ask.q !== '') params.set('q', ask.q)
-    if (ask.after != null) params.set('after', ask.after)
+    if (ask.capped === true) params.set('capped', '1')
     if (ask.limit != null) params.set('limit', String(ask.limit))
     return await this.request(
       'GET',
@@ -7268,8 +7540,45 @@ export class TeamStationClient {
     return await observeApi(
       method,
       path,
-      async () =>
-        await this.requestUnobserved(method, path, cleaner, body, options),
+      async () => {
+        // Keep recovery ancestry in the durable request, but upload only the
+        // delta normally. A definitive refusal may need the original history
+        // to distinguish scoring-derived lineup changes from a coach's edits.
+        // Retrying that original body also recovers a pre-upgrade request whose
+        // full body already owns its key after a lost acknowledgment.
+        if (
+          method === 'POST' &&
+          /^\/games\/[^/]+\/events(?:\?|$)/.test(path) &&
+          Array.isArray((body as SaveChange | undefined)?.scoringHistory)
+        ) {
+          const { scoringHistory: _history, ...delta } = body as SaveChange
+          const owner = this.token
+          try {
+            return await this.requestUnobserved(
+              method,
+              path,
+              cleaner,
+              delta,
+              options
+            )
+          } catch (error) {
+            if (
+              this.token !== owner ||
+              !(error instanceof HttpError) ||
+              (error.code !== 'conflict' &&
+                error.code !== 'idempotencyKeyReused')
+            )
+              throw error
+          }
+        }
+        return await this.requestUnobserved(
+          method,
+          path,
+          cleaner,
+          body,
+          options
+        )
+      },
       this.captureAnalytics
     )
   }
@@ -7383,7 +7692,7 @@ export class TeamStationClient {
       if (xhr.status === 401) this.onSessionRefused?.()
       if (!ok()) {
         settle(() => {
-          throw errorFrom(xhr.status, xhr.responseText)
+          throw this.refusal(errorFrom(xhr.status, xhr.responseText))
         })
         return
       }
@@ -7418,6 +7727,7 @@ export class TeamStationClient {
       xhr.setRequestHeader('content-type', 'application/json')
     if (this.analyticsApp != null)
       xhr.setRequestHeader('x-teamstation-app', this.analyticsApp)
+    xhr.setRequestHeader(PROTOCOL_HEADER, String(GAME_SOCKET_PROTOCOL))
     if (this.token != null)
       xhr.setRequestHeader('authorization', `Bearer ${this.token}`)
     xhr.send(body === undefined ? undefined : JSON.stringify(body))
@@ -7432,7 +7742,8 @@ export class TeamStationClient {
   ): Promise<T> {
     const headers: Record<string, string> = {
       ...options.headers,
-      accept: 'application/json'
+      accept: 'application/json',
+      [SCORING_FEATURE_HEADER]: SCORING_FEATURES
     }
     // Bytes (an attachment's part) go as they are; anything else as JSON.
     const bytes = body instanceof Uint8Array ? body : undefined
@@ -7442,6 +7753,7 @@ export class TeamStationClient {
     }
     if (this.analyticsApp != null)
       headers['x-teamstation-app'] = this.analyticsApp
+    headers[PROTOCOL_HEADER] = String(GAME_SOCKET_PROTOCOL)
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
 
     // `fetch` rejects with a bare TypeError when the request never leaves the
@@ -7491,13 +7803,13 @@ export class TeamStationClient {
     try {
       text = await response.text()
     } catch {
-      if (!response.ok) throw errorFrom(response.status, '')
+      if (!response.ok) throw this.refusal(errorFrom(response.status, ''))
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
-    if (!response.ok) throw errorFrom(response.status, text)
+    if (!response.ok) throw this.refusal(errorFrom(response.status, text))
     if (text === '') return cleaner(undefined)
 
     let parsed: unknown
@@ -7507,6 +7819,12 @@ export class TeamStationClient {
       throw new HttpError('internal', 'The server sent something unreadable')
     }
     return cleaner(parsed)
+  }
+
+  /** A refusal, after telling `onUpdateRequired` of one this build is too old for. */
+  private refusal(error: HttpError): HttpError {
+    if (isUpdateRequired(error)) this.onUpdateRequired?.()
+    return error
   }
 }
 

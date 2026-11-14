@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import type {
+  NativeCameraFocus,
   NativePhoneLens,
   NativePhoneRecording,
   NativePhoneStreamRequest,
@@ -33,6 +34,9 @@ export interface PhoneStreamCapabilities {
 export type PhoneStreamRequest = NativePhoneStreamRequest
 
 export interface PhoneStreamStatus {
+  focus?: NativeCameraFocus
+  videoWidth?: number
+  videoHeight?: number
   phase: PhoneStreamPhase
   /** While `retrying`, how long until the next redial. */
   retryInSeconds: number | null
@@ -265,6 +269,9 @@ export function toStatus(event: NativePhoneStreamStatus): PhoneStreamStatus {
       : 'cool',
     recordingSeconds: event.recordingSeconds,
     isRecording: event.isRecording,
+    ...(event.focus == null ? {} : { focus: { ...event.focus } }),
+    ...(event.videoWidth == null ? {} : { videoWidth: event.videoWidth }),
+    ...(event.videoHeight == null ? {} : { videoHeight: event.videoHeight }),
     error: orNull(event.error)
   }
 }
@@ -405,6 +412,7 @@ export interface PhoneStream {
   interruptedSession: () => Promise<InterruptedSession | null>
   resumeInterrupted: (request: PhoneStreamRequest) => Promise<boolean>
   setZoom: (displayed: number) => void
+  setFocus: (command: string) => void
   pinch: (scale: number, ended?: boolean) => void
   zoomScale: () => Promise<PhoneZoomScale>
   lenses: () => Promise<PhoneLens[]>
@@ -588,6 +596,9 @@ export function makePhoneStream(
       await call(async () => await need().resumeInterrupted(request)),
     setZoom: displayed => {
       module?.setZoom(displayed)
+    },
+    setFocus: command => {
+      module?.setFocus(command)
     },
     pinch: (scale, ended = false) => {
       module?.pinch(scale, ended)

@@ -22,6 +22,13 @@ const daemonName = process.env.TS_NAVBAR_DAEMON ?? 'navbarPop'
 async function main(): Promise<void> {
   await mkdir(artifacts!, { recursive: true })
   const f = await groupFixture(resolve('dist'))
+  // The account harness also has a Hawks team; give it a distinct label so
+  // Home opens the team whose game and player this scenario creates.
+  await f.h.db
+    .updateTable('teams')
+    .set({ name: 'Demo Falcons' })
+    .where('id', '=', 'tem_account')
+    .execute()
   const daemon = await maestro(daemonName)
   const { m, page, browser } = await browserSession(
     daemon,
@@ -162,8 +169,8 @@ async function main(): Promise<void> {
       await tapCss('[role="link"][aria-label="Demo Hawks"]')
       await settle('Demo Hawks')
       await tapCss('[aria-label="Team sections"] [aria-label="Team"]')
-      await tap(m, 'Alex L')
-      await settle('Alex L')
+      await tap(m, 'Alex Lee')
+      await settle('Alex Lee')
     }
     const popped = async (
       tab: string,
@@ -243,7 +250,7 @@ async function main(): Promise<void> {
       await openPlayerFromGame()
       await tapTab('Videos')
       await tapTab('Home')
-      await settle('Alex L')
+      await settle('Alex Lee')
       const path = await pathOf()
       await note(`switch pathname ${path}`)
       assert.ok(path.startsWith('/players/'))
@@ -258,7 +265,7 @@ async function main(): Promise<void> {
     }
   } finally {
     await m.detach()
-    await browser.disconnect()
+    await browser.close()
     await daemon.shutdown()
     await f.h.close()
   }

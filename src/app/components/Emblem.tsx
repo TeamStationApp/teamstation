@@ -30,9 +30,10 @@ export interface EmblemProps {
   /** In rem, like every other size. */
   size?: number
   /**
-   * The tile's own colour, with white letters on it, for a team: each team
-   * keeps one colour of its own (`teamTint`). Without it the tile is the
-   * theme's pale container with letters in the active colour.
+   * The tile's own colour, with white letters on it, for a team, league,
+   * season or person: each keeps one colour of its own (`teamTint`,
+   * `personTint`). Without it the tile is the theme's pale container with
+   * letters in the active colour.
    */
   tint?: string
 }
@@ -65,12 +66,12 @@ export function Emblem(props: EmblemProps): React.ReactElement {
         style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
       >
         {icon != null ? (
-          <Icon name={icon} size={size / 2} color={theme.activeColor} />
+          <Icon name={icon} size={size / 2} color={theme.emblemColor} />
         ) : props.fitInitials === true ? (
           <FittedInitials
             letters={fallback}
             size={size}
-            color={tint != null ? '#FFFFFF' : theme.activeColor}
+            color={tint != null ? '#FFFFFF' : theme.emblemColor}
           />
         ) : (
           <Text
@@ -83,7 +84,7 @@ export function Emblem(props: EmblemProps): React.ReactElement {
               // the same margin round them as the larger default.
               tint != null && {
                 ...styles.lettersOnTint,
-                fontSize: theme.rem(size * 0.4)
+                fontSize: theme.rem(props.initialsSize ?? size * 0.4)
               }
             ]}
             numberOfLines={1}
@@ -117,7 +118,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1),
     fontWeight: '700',
-    color: theme.activeColor
+    color: theme.emblemColor
   },
   lettersOnTint: {
     color: '#FFFFFF'

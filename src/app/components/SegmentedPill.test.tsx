@@ -6,7 +6,7 @@ import { Animated, View } from 'react-native'
 
 import { recordAnimationStarts, responderDrag } from '../../test/responderDrag'
 import { ThemeProvider } from '../theme/ThemeContext'
-import { SegmentedPill } from './SegmentedPill'
+import { pillIndexAt, SegmentedPill } from './SegmentedPill'
 
 const OPTIONS = [
   { id: 'inSeason', label: 'In-Season' },
@@ -53,6 +53,58 @@ async function render(
     )
   })
   return selected
+}
+/** A pill of any two to four choices, numbered or named. */
+async function renderMany<Id extends string | number>(
+  options: ReadonlyArray<{ id: Id; label: string }>,
+  initial: Id,
+  fit?: 'fill' | 'content'
+): Promise<Id[]> {
+  const selected: Id[] = []
+  function Harness(): React.ReactElement {
+    const [value, setValue] = useState<Id>(initial)
+    return (
+      <SegmentedPill
+        options={options}
+        selected={value}
+        accessibilityLabel="Choices"
+        fit={fit}
+        onSelect={next => {
+          selected.push(next)
+          setValue(next)
+        }}
+      />
+    )
+  }
+  host = document.createElement('div')
+  document.body.append(host)
+  root = createRoot(host)
+  await act(async () => {
+    root!.render(
+      <ThemeProvider>
+        <Harness />
+      </ThemeProvider>
+    )
+  })
+  return selected
+}
+/** Lays a content-width pill's choices out side by side at these widths. */
+async function measureChoices(widths: number[]): Promise<void> {
+  const tabs = [...host.querySelectorAll('[role="tab"]')] as unknown as Array<{
+    __reactLayoutHandler: (event: {
+      nativeEvent: { layout: { x: number; width: number } }
+    }) => void
+  }>
+  let x = 0
+  await act(async () => {
+    tabs.forEach((tab, at) => {
+      tab.__reactLayoutHandler({
+        nativeEvent: { layout: { x, width: widths[at] } }
+      })
+      x += widths[at]
+    })
+  })
+  await measure(x)
 }
 async function measure(width: number): Promise<void> {
   // JSDOM's ResizeObserver does not measure. Deliver the actual RN web layout callback.
@@ -227,6 +279,125 @@ describe('one sliding standings capsule', () => {
     expect(host.querySelector('[aria-selected="true"]')!.textContent).equals(
       'Include Exhibitions'
     )
+  })
+  it('slides among three and four equal choices, by tap and by drag', async () => {
+    const three = await renderMany(
+      [
+        { id: 3, label: '3' },
+        { id: 6, label: '6' },
+        { id: 9, label: '9' }
+      ],
+      6
+    )
+    await measure(300)
+    expect(getComputedStyle(fill()).width).equals('33.333333333333336%')
+    expect(fill().style.transform).equals('translateX(100px)')
+    await select('9')
+    await finishAnimation()
+    expect(fill().style.transform).equals('translateX(200px)')
+    expect(three).deep.equals([9])
+    await act(async () => root?.unmount())
+    root = undefined
+    document.body.replaceChildren()
+
+    const four = await renderMany<number | 'none'>(
+      [
+        { id: 3, label: '3rd' },
+        { id: 4, label: '4th' },
+        { id: 5, label: '5th' },
+        { id: 'none', label: 'n/a' }
+      ],
+      3
+    )
+    await measure(400)
+    expect(getComputedStyle(fill()).width).equals('25%')
+    const animations = recordAnimationStarts()
+    restoreAnimation = animations.restore
+    // 160 px past where it took the drag is 1.6 choices of 100: let go
+    // there, it settles on the third.
+    await responderDrag(host.querySelector<HTMLElement>('[role="tab"]')!, [
+      [20, 10],
+      [40, 12],
+      [120, 14],
+      [200, 16]
+    ])
+    expect(four).deep.equals([5])
+    expect(animations.starts[0]).closeTo(1.6, 0.01)
+    await finishAnimation()
+    expect(fill().style.transform).equals('translateX(200px)')
+    // A drag past the last choice stops on it.
+    await responderDrag(host.querySelector<HTMLElement>('[role="tab"]')!, [
+      [20, 10],
+      [40, 12],
+      [600, 14]
+    ])
+    expect(four).deep.equals([5, 'none'])
+    await finishAnimation()
+    expect(fill().style.transform).equals('translateX(300px)')
+  })
+  it('fits its labels with fit="content", each clear of the round ends, and slides between unequal choices', async () => {
+    const selected = await renderMany<number | 'none'>(
+      [
+        { id: 3, label: '3' },
+        { id: 4, label: '4' },
+        { id: 5, label: '5' },
+        { id: 'none', label: 'Disable' }
+      ],
+      'none',
+      'content'
+    )
+    const track = host.querySelector<HTMLElement>('[role="tablist"]')!
+    const tabs = [...track.querySelectorAll<HTMLElement>('[role="tab"]')]
+    // Not stretched to the row: as wide as its choices, none of which grows.
+    expect(getComputedStyle(track).width).equals('auto')
+    expect(getComputedStyle(track).flexShrink).equals('0')
+    for (const tab of tabs) {
+      const style = getComputedStyle(tab)
+      // 26 points high, in 12-point type, its target 48.
+      expect(style.height).equals('26px')
+      expect(
+        getComputedStyle(tab.querySelector('[dir="auto"]')!).fontSize
+      ).equals('12px')
+      expect(style.flexGrow, tab.textContent!).not.equals('1')
+      expect(parseFloat(style.paddingLeft)).greaterThanOrEqual(
+        parseFloat(style.height) / 2
+      )
+      expect(parseFloat(style.paddingRight)).greaterThanOrEqual(
+        parseFloat(style.height) / 2
+      )
+    }
+    // The selected region is the measured choice's width, at its place.
+    await measureChoices([40, 40, 40, 90])
+    expect(fill().style.width).equals('90px')
+    expect(fill().style.transform).equals('translateX(120px)')
+    await select('4')
+    await finishAnimation()
+    expect(fill().style.width).equals('40px')
+    expect(fill().style.transform).equals('translateX(40px)')
+    // Dragged 80 px right from 4's left edge at 40, the fill's edge is at
+    // 120, Disable's: it lets go on Disable.
+    const animations = recordAnimationStarts()
+    restoreAnimation = animations.restore
+    await responderDrag(tabs[1], [
+      [60, 10],
+      [80, 12],
+      [140, 14],
+      [160, 16]
+    ])
+    expect(animations.starts[0]).equals(3)
+    expect(selected).deep.equals([4, 'none'])
+    await finishAnimation()
+    expect(fill().style.width).equals('90px')
+  })
+  it('reads a fill edge between unequal choices as a fraction of the way', () => {
+    const offsets = [0, 40, 80, 120]
+    expect(pillIndexAt(offsets, -10)).equals(0)
+    expect(pillIndexAt(offsets, 0)).equals(0)
+    expect(pillIndexAt(offsets, 20)).equals(0.5)
+    expect(pillIndexAt(offsets, 100)).equals(2.5)
+    expect(pillIndexAt(offsets, 120)).equals(3)
+    expect(pillIndexAt(offsets, 500)).equals(3)
+    expect(pillIndexAt([0, 60, 200], 130)).equals(1.5)
   })
   it('stops superseded and unmounted animations instead of leaving their timers running', async () => {
     const original = Animated.timing

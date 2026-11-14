@@ -158,7 +158,15 @@ export function RosterCardSlot({
     marginBottom: bottom.value
   }))
   return (
-    <Animated.View style={layout.animated ? style : undefined}>
+    // A slot that starts or stops animating is a new view. A phone keeps the
+    // last height Reanimated wrote on a view for as long as the view lives,
+    // so the slot a fielder was dragged out of, closed to 0 while he was
+    // lifted, would stay 0 tall once empty: its card would draw over it, but
+    // only a sliver along its top would take a drop.
+    <Animated.View
+      key={layout.animated ? 'animated' : 'still'}
+      style={layout.animated ? style : undefined}
+    >
       <View
         onLayout={event => {
           setHeight(event.nativeEvent.layout.height)

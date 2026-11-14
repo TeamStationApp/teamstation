@@ -287,7 +287,11 @@ describe('the phone session with no signal', () => {
     })
     await settle(50)
     expect(users).deep.equals([
-      { id: ICHIRO.id, displayName: 'Ichiro Suzuki', isAdmin: false }
+      {
+        id: ICHIRO.id,
+        displayName: 'Ichiro Suzuki',
+        isAdmin: false
+      }
     ])
     // Settled: the next foreground does not ask again.
     let asked = 0

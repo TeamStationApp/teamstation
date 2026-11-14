@@ -7,10 +7,15 @@ import {
   type PostedEdits,
   TeamStationClient
 } from '../../common/api'
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import type { PitchCall } from '../../common/scoring/actions'
 import { type EventStore, ScoringSession } from '../../common/scoring/session'
 import { startingSetup, teamsOf } from '../../common/scoring/startingSetup'
 import type { GameState } from '../../common/scoring/state'
+import {
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 
 /**
  * Scores one pitch on a game being played, through the scoring screen's own
@@ -109,6 +114,8 @@ export async function livePitch(
         method: 'POST',
         headers: {
           'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
+          [SCORING_FEATURE_HEADER]: SCORING_FEATURES,
           authorization: `Bearer ${options.token}`
         },
         body: JSON.stringify(liveEventsBody(change))

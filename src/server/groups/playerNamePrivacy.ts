@@ -1,7 +1,12 @@
 import type { Kysely } from 'kysely'
 
 import type { GroupRef } from '../../common/groupCreation'
-import { formatNames, type NamedPerson } from '../../common/names'
+import {
+  formatName,
+  formatNames,
+  modelLabel,
+  type NamedPerson
+} from '../../common/names'
 import {
   asStoredPlayerNamePrivacy,
   DEFAULT_PLAYER_NAME_PRIVACY,
@@ -18,7 +23,7 @@ import { isWithdrawnKey } from '../games/withdrawn'
 import { openAddsOf } from '../openAdds'
 import { followMerges } from '../teams/followMerges'
 import { survivors } from '../teams/teamStaff'
-import { isSpoken } from '../users/readerNames'
+import { fullNamesFor, isSpoken, type Reader } from '../users/readerNames'
 
 /**
  * A level's player name privacy, read from what manages it. Inheritance
@@ -345,14 +350,14 @@ export async function currentFormats(
 }
 
 /**
- * `formatNames` for this read: collisions broken, unless its names go to a
- * model, which never gets a letter past first name and last initial.
+ * `formatNames` for this read: each name in its format alone, and as a model
+ * is given it (`modelLabel`) when its names go to a model.
  */
 export function formatForReader(
   entries: Parameters<typeof formatNames>[0],
   spoken = isSpoken()
 ): ReturnType<typeof formatNames> {
-  return formatNames(entries, { lengthen: !spoken })
+  return formatNames(entries, { spoken })
 }
 
 /** Somebody a surface names outside a game. */
@@ -366,18 +371,77 @@ export interface PublicPerson {
   candidate?: boolean
 }
 
+/** Whom a list of names is for. */
+export interface ReaderOptions {
+  /** Anybody this reader may read in full (`fullNamesFor`) is shown so. */
+  reader?: Reader
+  /**
+   * Whom of these people the caller has already found `reader` may read in
+   * full (its own `mayViewFullNames`), so that nobody asks again (`fullNamesFor`).
+   */
+  readsFull?: Iterable<string>
+}
+
+/**
+ * The format each of these people is shown in for the public (`shown`) and
+ * for `options.reader` (`formats`): the second is the first, but `'full'` for
+ * anybody the reader may read in full. A withdrawn player is neither's.
+ */
+async function readerFormats(
+  db: Db,
+  people: readonly PublicPerson[],
+  options: ReaderOptions
+): Promise<{
+  shown: Map<string | number, PlayerNamePrivacy>
+  formats: Map<string | number, PlayerNamePrivacy>
+  full: Set<string>
+}> {
+  // A withdrawn player's line reads as its placeholder, for every reader.
+  const full = await fullNamesFor(
+    db,
+    options.reader,
+    people.flatMap(entry =>
+      isWithdrawnKey(String(entry.person.id)) ? [] : [String(entry.person.id)]
+    ),
+    options.readsFull == null ? {} : { known: options.readsFull }
+  )
+  const shown = await shownFormats(db, people)
+  const formats =
+    full.size === 0
+      ? shown
+      : new Map(
+          [...shown].map(([id, format]) => [
+            id,
+            full.has(String(id)) ? 'full' : format
+          ])
+        )
+  return { shown, formats, full }
+}
+
 /**
  * The format each of these people is shown in: their team's, or with no
  * single team the teams they play for now (`currentFormats`). Staff names are
  * not this setting's: anyone shown as something else stays the built-in format.
+ * Anybody the reader may read in full (`fullNamesFor`) is shown in full.
  */
 export async function publicFormats(
+  db: Db,
+  people: readonly PublicPerson[],
+  options: ReaderOptions = {}
+): Promise<Map<string | number, PlayerNamePrivacy>> {
+  return (await readerFormats(db, people, options)).formats
+}
+
+/** `publicFormats` with no reader: as the public reads these people. */
+async function shownFormats(
   db: Db,
   people: readonly PublicPerson[]
 ): Promise<Map<string | number, PlayerNamePrivacy>> {
   // A withdrawn player's line reads as its placeholder, which is no name.
+  const withdrawn = (entry: PublicPerson): boolean =>
+    isWithdrawnKey(String(entry.person.id))
   const named = (entry: PublicPerson): boolean =>
-    entry.player !== false && !isWithdrawnKey(String(entry.person.id))
+    entry.player !== false && !withdrawn(entry)
   const players = people.filter(named)
   const teams = await teamFormats(
     db,
@@ -420,13 +484,83 @@ export async function publicFormats(
   return formats
 }
 
-/** Public names for these people, with collisions broken across them. */
+/**
+ * Public names for these people, each in their format alone, and those the
+ * reader may read in full written whole.
+ */
 export async function publicNames(
   db: Db,
-  people: readonly PublicPerson[]
+  people: readonly PublicPerson[],
+  options: ReaderOptions = {}
 ): Promise<Map<string | number, string>> {
-  const formats = await publicFormats(db, people)
+  const formats = await publicFormats(db, people, options)
   return formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )
+}
+
+/** A list's names for one reader, and the public label beside a full one. */
+export interface ReaderNaming {
+  /** Each person as this reader reads them. */
+  names: Map<string | number, string>
+  /** The format of each of `names`: `'full'` for anyone read in full. */
+  formats: Map<string | number, PlayerNamePrivacy>
+  /**
+   * Each person as the public reads them (`formatName` in their format, or
+   * `modelLabel` when the read's names go to a model).
+   */
+  compact: Map<string | number, string>
+  /** The public format of each of `compact`. */
+  compactFormats: Map<string | number, PlayerNamePrivacy>
+  /**
+   * Whom of these people the reader reads in full (`fullNamesFor`), for a
+   * caller to hand on as `readsFull` rather than ask again.
+   */
+  readsFull: Set<string>
+}
+
+/**
+ * `publicFormats` for these people, with the ones `reader` may read in full
+ * (`fullNamesFor`) named in full, and everyone's public label kept beside.
+ */
+export async function readerNaming(
+  db: Db,
+  people: readonly PublicPerson[],
+  reader: Reader | undefined
+): Promise<ReaderNaming> {
+  const { shown, formats, full } = await readerFormats(db, people, { reader })
+  const names = formatForReader(
+    people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
+  )
+  // As a model is given it on a read whose names go to one, as `names` is.
+  const write = isSpoken() ? modelLabel : formatName
+  const compact = new Map(
+    people.map(({ person }) => [
+      person.id,
+      write(person, shown.get(person.id)!)
+    ])
+  )
+  return { names, formats, compact, compactFormats: shown, readsFull: full }
+}
+
+/**
+ * Beside a name this reader reads in another format than everyone else (in
+ * full, where the public reads it short), the label everyone else reads
+ * (`compactName`) and its format unless it is the built-in one
+ * (`compactFormat`); nothing for anyone read as the public reads them. A
+ * label the list did not write falls back to the public short name, never the
+ * stored one.
+ */
+export function compactFields(
+  naming: ReaderNaming,
+  person: NamedPerson
+): { compactName?: string; compactFormat?: PlayerNamePrivacy } {
+  const format = naming.compactFormats.get(person.id)
+  if (format == null || naming.formats.get(person.id) === format) return {}
+  const compactName =
+    naming.compact.get(person.id) ?? formatName(person, format)
+  return {
+    compactName,
+    ...(format === DEFAULT_PLAYER_NAME_PRIVACY ? {} : { compactFormat: format })
+  }
 }

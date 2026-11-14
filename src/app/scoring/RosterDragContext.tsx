@@ -28,6 +28,11 @@ export const RosterContext = createContext<RosterGesture | null>(null)
 export const RosterClipContext = createContext<
   (() => Promise<RosterRect>) | undefined
 >(undefined)
+/**
+ * Told by a phone's RosterGrip that a touch has started on it, just before
+ * the touch reaches the grip's card, which then picks the card up at once.
+ */
+export const RosterGripContext = createContext<() => void>(() => undefined)
 export function useRosterGesture(): RosterGesture {
   const value = useContext(RosterContext)
   if (value == null) throw new Error('RosterDrag requires RosterDragGroup')
@@ -174,10 +179,13 @@ export function RosterDragGroup({
 export function RosterScrollArea({
   name,
   height,
+  inset = 8,
   children
 }: {
   name: string
   height?: number
+  /** The space either side of the cards. */
+  inset?: number
   children: React.ReactNode
 }): React.ReactElement {
   const engine = useRosterGesture()
@@ -235,7 +243,7 @@ export function RosterScrollArea({
           }}
           scrollEventThrottle={16}
           contentContainerStyle={{
-            paddingHorizontal: 8,
+            paddingHorizontal: inset,
             paddingVertical: 8,
             gap: ROSTER_CARD_GAP
           }}

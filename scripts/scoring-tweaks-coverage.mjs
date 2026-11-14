@@ -15,6 +15,8 @@ import { fileURLToPath } from 'node:url'
 
 import ts from 'typescript'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
+
 const require = createRequire(import.meta.url)
 const {
   coverageSource,
@@ -101,20 +103,20 @@ if (!process.argv.includes('--report-only')) {
     'src/server/stats/engineStats.test.ts',
     'src/server/stats/expandedStats.test.ts',
     'src/server/stats/gumboStats.test.ts',
-    'src/server/events/radarSpeeds.test.ts',
-    'src/server/events/events.test.ts',
-    'src/server/events/actionTimes.test.ts',
-    'src/server/events/playEventTimes.test.ts',
+    'src/server/events/radarSpeeds.integration.test.ts',
+    'src/server/events/events.integration.test.ts',
+    'src/server/events/actionTimes.integration.test.ts',
+    'src/server/events/playEventTimes.integration.test.ts',
     'src/server/events/eventWrite.test.ts',
-    'src/server/scoreboard/scoreboardLog.test.ts',
-    'src/server/scoreboard/scoreboardStore.test.ts',
-    'src/server/scoreboard/boardTimeline.test.ts',
-    'src/server/scoreboard/gameSource.test.ts',
-    'src/server/nodeSettings.test.ts',
+    'src/server/scoreboard/scoreboardLog.integration.test.ts',
+    'src/server/scoreboard/scoreboardStore.integration.test.ts',
+    'src/server/scoreboard/boardTimeline.integration.test.ts',
+    'src/server/scoreboard/gameSource.integration.test.ts',
+    'src/server/nodeSettings.integration.test.ts',
     'src/common/nodeSettings.test.ts',
     'src/common/gumbo/validate.test.ts',
     'src/server/openapi.test.ts',
-    'src/server/dev/refoldScoredGames.test.ts'
+    'src/server/dev/refoldScoredGames.integration.test.ts'
   ].filter(existsSync)
   run(
     'node_modules/.bin/mocha',
@@ -143,7 +145,7 @@ if (!process.argv.includes('--report-only')) {
       format: 'cjs',
       sourcemap: true,
       jsx: 'automatic',
-      loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' },
+      loader: ASSET_LOADER,
       external: [
         'react',
         'react-dom',

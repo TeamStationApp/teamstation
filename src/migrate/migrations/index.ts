@@ -126,6 +126,11 @@ import { migration111LiveChanges } from './111liveChanges'
 import { migration111ScheduleWeekParts } from './111scheduleWeekParts'
 import { migration112VideoSpaceSecret } from './112videoSpaceSecret'
 import { migration113ChatHistoryRecovery } from './113chatHistoryRecovery'
+import { migration113PlayingTimeRules } from './113playingTimeRules'
+import { migration114GamePlans } from './114gamePlans'
+import { migration115ScoringMutation } from './115scoringMutation'
+import { migration116PitchingStrikes } from './116pitchingStrikes'
+import { migration117ScoringAuthorship } from './117scoringAuthorship'
 
 /** Every migration, in the order they were written. */
 export const migrations: Migration[] = [
@@ -255,5 +260,10 @@ export const migrations: Migration[] = [
   migration111LiveChanges,
   migration111ScheduleWeekParts,
   migration112VideoSpaceSecret,
-  migration113ChatHistoryRecovery
+  migration113ChatHistoryRecovery,
+  migration113PlayingTimeRules,
+  migration114GamePlans,
+  migration115ScoringMutation,
+  migration116PitchingStrikes,
+  migration117ScoringAuthorship
 ]

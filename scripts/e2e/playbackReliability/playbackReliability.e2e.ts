@@ -290,7 +290,7 @@ describe('playback reliability on a phone', function () {
       if (settings!.target.platform === 'android')
         await device!.hideKeyboard().catch(() => undefined)
     }
-    await tapNode(await waitFor('Use a password instead', 'Button'))
+    await tapNode(await waitFor('Use a password instead'))
     await waitFor(/^PASSWORD$/i)
     await fieldUnder(/^E-MAIL ADDRESS$/i)
     await device!.inputText({ text: account.email })
@@ -298,11 +298,15 @@ describe('playback reliability on a phone', function () {
     await fieldUnder(/^PASSWORD$/i)
     // Only into the password field, and with the daemon's artifacts off, so
     // no screenshot or log holds it.
-    const label = await waitFor(/^PASSWORD$/i)
     // Focus follows the tap a moment later; give it three seconds to arrive.
     let ready = false
     for (let tries = 0; tries < 6 && !ready; tries++) {
-      ready = passwordField(await device!.hierarchy(), label.rect) != null
+      // Opening the keyboard moves the form; use its current label position.
+      const label = await waitFor(/^PASSWORD$/i)
+      ready =
+        page != null
+          ? await page.passwordFocused()
+          : passwordField(await device!.hierarchy(), label.rect) != null
       if (!ready) await pause(500)
     }
     if (!ready) {
@@ -312,8 +316,17 @@ describe('playback reliability on a phone', function () {
     }
     await device!.inputText({ text: await passwordOf(account) })
     await hide()
-    await tapNode(await waitFor('Sign in', 'Button'))
-    await waitFor(/^RECENT GAME$/i, undefined, 30_000)
+    if (page != null) {
+      const buttons = findExact(await tree(), 'Sign in').sort(
+        (a, b) => b.rect.y - a.rect.y
+      )
+      await tapNode(buttons[0])
+    } else await tapNode(await waitFor('Sign in', 'Button'))
+    const until = Date.now() + 30_000
+    while (findExact(await tree(), /^E-MAIL ADDRESS$/i).length > 0) {
+      if (Date.now() > until) throw new Error('Sign-in did not finish')
+      await pause(500)
+    }
   }
 
   /** The debug readout's lines, as the screen's text shows them. */
@@ -627,7 +640,10 @@ describe('playback reliability on a phone', function () {
       step: name,
       content: CONTENT,
       tiles,
-      readout: windowed.length >= 2 ? judgeReadout(windowed) : undefined,
+      readout:
+        windowed.length >= 2
+          ? judgeReadout(windowed, undefined, landing != null)
+          : undefined,
       readoutStartMs,
       frames,
       // Filmed by the camera with no readout (the app), nothing can say where
@@ -697,7 +713,7 @@ describe('playback reliability on a phone', function () {
 
   /**
    * The bottom row of the grid is the scrub line's: a tap there calls the
-   * line up — on its own — and seeks to where it lands on it.
+   * controls up together; only a later visible gesture can seek.
    */
   const callBar = async (): Promise<void> => {
     await device!.tapOn({ point: await gridRow(3) })
@@ -1005,6 +1021,10 @@ describe('playback reliability on a phone', function () {
           // scroll is taken as the player's own; the grid opens on a second.
           for (let tries = 0; tries < 3; tries++) {
             await tapNode(player)
+            // A hidden fullscreen target reveals first. Check promptly so
+            // the second touch arrives before the shared two-second expiry.
+            await pause(100)
+            if ((await tileRegions()).length === 0) await tapNode(player)
             await pause(1000)
             await dismissSystemCards()
             const opened = await waitFor(/ angle$/, undefined, 3000).then(
@@ -1049,7 +1069,16 @@ describe('playback reliability on a phone', function () {
           await tapNode(extra)
           await pause(300)
         }
-        const go = await waitFor('Watch')
+        // Chrome's DOM also contains the Watch label on the page behind
+        // the picker. Use the visible dialog label, not that offscreen one.
+        const go =
+          page == null
+            ? await waitFor('Watch', 'Button')
+            : findExact(await tree(), 'Watch').findLast(
+                node =>
+                  node.rect.y >= 0 && node.rect.y + node.rect.h <= screenHeight
+              )
+        if (go == null) throw new Error('no visible Watch action in the picker')
         await watch(`${count}: ${count} angles`, tileRegions, async () => {
           await tapNode(go)
           await pause(1000)
@@ -1059,7 +1088,7 @@ describe('playback reliability on a phone', function () {
       }
       // Six real drags along the scrub bar, forward and back, each played
       // 10 s. The track and the game's length are read once: the bar hides
-      // three seconds after it is called up, and reading an iPhone's screen
+      // two seconds after it is called up, and reading an iPhone's screen
       // takes longer than that, so each drag follows its tap at once.
       const bar = await showBar()
       const track = bar.rect
@@ -1084,7 +1113,12 @@ describe('playback reliability on a phone', function () {
       const firstNodes = await tree()
       let from = knobFraction(firstNodes, track) ?? 0
       const total = findExact(firstNodes, /^\d+(:\d\d){1,2}$/)
-        .filter(node => node.rect.x >= track.x + track.w - 1)
+        .filter(
+          node =>
+            node.rect.x >= track.x + track.w - 1 &&
+            node.rect.y < track.y + track.h &&
+            node.rect.y + node.rect.h > track.y
+        )
         .map(node => clockSeconds(node.text) ?? 0)[0]
       // A live game's bar runs to now, so it grows as the steps go.
       const totalReadAt = Date.now()
@@ -1096,9 +1130,12 @@ describe('playback reliability on a phone', function () {
         await watch(
           `${count}: scrub ${index + 1} to ${Math.round(target * 100)} %`,
           pictureAboveBar,
-          // A drag along the bottom row is the scrub, wherever the line is
-          // showing: the bar is drawn on that row.
+          // Reveal immediately before the drag; a hidden drag only reveals.
           async () => {
+            await callControls()
+            // The reveal's pointer-up is not the drag's release. Android's
+            // swipe returns early, so watch must wait for the new release.
+            if (page != null) await page.pointers()
             await device!.swipe(
               dragAlong(track, from, target, {
                 width: screenWidth,

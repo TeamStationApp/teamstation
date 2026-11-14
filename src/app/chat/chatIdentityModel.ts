@@ -1,6 +1,11 @@
 import { compareUserIds } from '../../common/chatCrypto/userId'
 import { initialsOf } from '../components/initials'
-import { teamInitialsOf, teamTint } from '../components/teamTile'
+import {
+  groupTile,
+  groupTint,
+  personTile,
+  teamTint
+} from '../components/teamTile'
 import { lstrings } from '../locales/strings'
 import type { ConversationListItem, MemberView } from './engine/engine'
 
@@ -8,7 +13,8 @@ export interface ChatIdentityTile {
   key: string
   name: string
   initials: string
-  tint: string
+  /** None for the theme's neutral tile. */
+  tint: string | undefined
   uri: string | null
 }
 
@@ -17,21 +23,40 @@ export interface ChatIdentity {
   tiles: ChatIdentityTile[]
 }
 
-/** A current person's tile is the same in every chat surface. */
+/**
+ * A current person's tile is the one they have everywhere else
+ * (`PersonEmblem`): the initials of the name the chat shows on the colour of
+ * their id (`personTint`). A former member keeps one tile of their own.
+ */
 export function memberIdentity(
   member: Pick<MemberView, 'userId' | 'shortName' | 'avatarUrl'> | undefined
 ): ChatIdentity {
-  const name = member?.shortName ?? lstrings.chat_former_member
-  const key = member == null ? 'former-member' : String(member.userId)
+  if (member == null) {
+    const name = lstrings.chat_former_member
+    return {
+      label: name,
+      tiles: [
+        {
+          key: 'former-member',
+          name,
+          initials: initialsOf(name),
+          tint: teamTint('former-member'),
+          uri: null
+        }
+      ]
+    }
+  }
+  const userId = String(member.userId)
+  const tile = personTile({ userId, name: member.shortName })
   return {
-    label: name,
+    label: member.shortName,
     tiles: [
       {
-        key,
-        name,
-        initials: initialsOf(name),
-        tint: teamTint(key),
-        uri: member?.avatarUrl ?? null
+        key: userId,
+        name: member.shortName,
+        initials: tile.initials,
+        tint: tile.tint,
+        uri: member.avatarUrl ?? null
       }
     ]
   }
@@ -40,19 +65,27 @@ export function memberIdentity(
 /** Scope subgroups share their scope's tile; a DM shows its current people. */
 export function conversationIdentity(chat: ConversationListItem): ChatIdentity {
   if (chat.kind !== 'dm' && chat.scope != null) {
+    const { scope } = chat
     const name = chat.avatarName ?? chat.scopeName ?? chat.title
+    // The tile a team, league or season has everywhere else (`GroupEmblem`).
+    const group = {
+      kind: scope.type,
+      id: scope.id,
+      leagueId: chat.leagueId,
+      name,
+      uri: chat.avatarUrl,
+      leagueUri: chat.leaguePictureUrl
+    }
+    const tile = groupTile(group)
     return {
       label: name,
       tiles: [
         {
-          key: `${chat.scope.type}:${chat.scope.id}`,
+          key: `${scope.type}:${scope.id}`,
           name,
-          initials:
-            chat.scope.type === 'team'
-              ? teamInitialsOf(name)
-              : initialsOf(name),
-          tint: teamTint(chat.scope.id),
-          uri: chat.avatarUrl ?? null
+          initials: tile.initials,
+          tint: groupTint(group),
+          uri: tile.uri
         }
       ]
     }

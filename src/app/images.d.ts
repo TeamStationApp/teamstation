@@ -15,3 +15,12 @@ declare module '*.svg' {
   const uri: string
   export default uri
 }
+/**
+ * A sound, a file beside the bundle (`'.m4a': 'file'`): its root-relative
+ * address on the web. Metro hands React Native an asset id instead, which
+ * `crowdPlayer.native.tsx` reads through `require`.
+ */
+declare module '*.m4a' {
+  const uri: string
+  export default uri
+}

@@ -409,6 +409,110 @@ describe('expanded game statistics', function () {
       })
     }
   })
+  it('counts strikes thrown and batting called strikeouts independently', function () {
+    const counted = lines([
+      play('strikeout', {
+        playEvents: ['B', 'C', 'F', 'F', 'S'].map((code, index) =>
+          pitch(index, code)
+        )
+      })
+    ])
+    expect(counted.get(11)!.extra).includes({ pitches: 5, strikes: 4, kl: 0 })
+    expect(counted.get(1)!.extra.battingKl).equals(0)
+    expect(lines([play('strikeout')]).get(1)!.extra.battingKl).equals(1)
+    const unknown = lines([play('strikeout', { playEvents: undefined })])
+    expect(unknown.get(1)!.extra.battingKl).equals(null)
+    expect(unknown.get(11)!.extra.strikes).equals(null)
+    for (const code of ['K', '?'])
+      expect(
+        lines([play('strikeout', { playEvents: [pitch(0, code)] })]).get(1)!
+          .extra.battingKl
+      ).equals(null)
+    expect(
+      lines([play('single', { playEvents: [pitch(0, '?')] })]).get(11)!.extra
+        .strikes
+    ).equals(null)
+  })
+  it('does not count non-deliveries even when imported as pitches', function () {
+    const calls = [
+      'C',
+      'N',
+      'PSO',
+      '.',
+      '1',
+      '2',
+      '3',
+      '+1',
+      '+2',
+      '+3',
+      'A',
+      'AC',
+      'AB',
+      'VB',
+      'VC',
+      'VP',
+      'VS'
+    ]
+    const result = lines([
+      play('strikeout', {
+        playEvents: calls.map((code, index) => pitch(index, code))
+      })
+    ])
+    expect(result.get(11)!.extra).includes({ pitches: 1, strikes: 1, kl: null })
+  })
+  it('preserves dropped-third-strike ambiguity after scoring and storage', function () {
+    const result = recorded(false, [
+      { type: 'pitch', call: 'C' },
+      { type: 'pitch', call: 'C' },
+      { type: 'result', eventType: 'strikeout' },
+      { type: 'runnerMovement', runner: 1, to: '1B' },
+      close
+    ])
+    expect(result.get(101)!).includes({ k: 1 })
+    expect(result.get(101)!.extra.battingKl).equals(null)
+    expect(result.get(201)!.extra).includes({
+      pitches: 3,
+      strikes: 3,
+      kl: null
+    })
+  })
+  it('preserves unknown looking status for a scorer-recorded dropped third strike', function () {
+    const result = lines([
+      play('strikeout', {
+        playEvents: [
+          {
+            isPitch: true,
+            index: 0,
+            details: {
+              call: { code: 'S', description: 'Dropped Third Strike' },
+              code: 'S',
+              description: 'Dropped Third Strike'
+            }
+          }
+        ]
+      })
+    ])
+    expect(result.get(1)!.extra.battingKl).equals(null)
+    expect(result.get(11)!.extra).includes({ pitches: 1, strikes: 1, kl: null })
+  })
+  it('keeps batting and pitching looking totals consistent for terminal calls', function () {
+    for (const [code, expected] of [
+      ['C', 1],
+      ['S', 0],
+      ['AC', 0],
+      ['AB', 0],
+      ['A', 0],
+      ['K', null],
+      ['?', null],
+      ['B', null]
+    ] as const) {
+      const result = lines([
+        play('strikeout', { playEvents: [pitch(0, code)] })
+      ])
+      expect(result.get(1)!.extra.battingKl, code).equals(expected)
+      expect(result.get(11)!.extra.kl, code).equals(expected)
+    }
+  })
   it('uses the terminal called strike and marks missing detail unknown', function () {
     expect(lines([play('strikeout')]).get(11)!.extra.kl).equals(1)
     expect(
@@ -453,6 +557,36 @@ describe('expanded game statistics', function () {
     expect(result.get(11)!.extra).includes({ gs: 1, lob: 0 })
   })
 
+  it('keeps a starter who appeared only for an automatic penalty before replacement', function () {
+    const result = lines([
+      play('single', {
+        matchup: { batter: { id: 1 }, pitcher: { id: 12 } },
+        playEvents: [
+          { ...pitch(0, 'VP'), player: { id: 11 } },
+          {
+            index: 1,
+            details: { eventType: 'pitching_substitution' },
+            player: { id: 12 },
+            replacedPlayer: { id: 11 }
+          },
+          { ...pitch(2, 'D'), player: { id: 12 } }
+        ]
+      })
+    ])
+    expect(result.get(11)!.extra).includes({
+      appeared: true,
+      gs: 1,
+      pitches: 0,
+      strikes: 0,
+      lob: null
+    })
+    expect(result.get(12)!.extra).includes({
+      appeared: true,
+      gs: 0,
+      pitches: 1,
+      strikes: 1
+    })
+  })
   it('keeps a pitcher who threw but completed no batter or out', function () {
     const result = lines([
       play('single', {
@@ -476,6 +610,7 @@ describe('expanded game statistics', function () {
     })
     expect(result.get(11)!.extra).includes({
       pitches: 1,
+      strikes: 1,
       appeared: true,
       gs: 1
     })
@@ -513,6 +648,8 @@ describe('expanded game statistics', function () {
     ])
     expect(result.get(11)!.extra.pitches).equals(2)
     expect(result.get(3)!.extra.firstPa).equals(1)
+    expect(result.get(3)!.extra.battingKl).equals(1)
+    expect(result.get(2)).equals(undefined)
   })
   it('counts runner steals, combined pickoff/CS and errors once', function () {
     const stolen = movement('stolen_base_2b')

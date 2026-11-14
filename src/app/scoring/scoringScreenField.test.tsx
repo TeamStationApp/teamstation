@@ -15,6 +15,7 @@ import { baseIds, freshGame, overrideOf } from '../../common/scoring/rules'
 import { applyAction, ScoringSession } from '../../common/scoring/session'
 import { setupOf } from '../../common/scoring/state'
 import { userIdOfGumbo } from '../../common/userId'
+import { stubFieldInsets } from '../../test/fieldInsetsStub'
 import { mintedRosterEntry } from '../../test/mintedRosterEntry'
 import {
   priorRunnerFixture,
@@ -22,14 +23,16 @@ import {
 } from '../../test/priorRunnerFixture'
 import { F } from '../../test/scoringGames'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
-import type { BaseballScreen } from '../field/BaseballScreen'
-import type { FieldPlacement } from '../field/fieldTypes'
+import { BaseballScreen } from '../field/BaseballScreen'
+import { topLift } from '../field/fieldSafeArea'
+import type { BaseProjection, FieldPlacement } from '../field/fieldTypes'
 import { ThemeProvider } from '../theme/ThemeContext'
 import webMusic from '../walkup/walkUpMusic'
 import type { WalkUpMusic } from '../walkup/walkUpMusicTypes'
 import type { UseDictationOptions } from './dictationTypes'
 import type { EventTagEditor } from './EventTagEditor'
 import { gameFixture } from './isUnscoredGame.test'
+import type { RemoteScoringUpdatesProps } from './RemoteScoringUpdates'
 import { scoringClock } from './scoringClock'
 import { ScoringScreen } from './ScoringScreen'
 import {
@@ -37,6 +40,7 @@ import {
   memoryStore,
   type ScoringSource
 } from './scoringSource'
+import { SCORING_OFFLINE_BAND } from './scoringStatusPlacement'
 import { POSITIONS } from './scoringTypes'
 
 type Props = Parameters<typeof BaseballScreen>[0]
@@ -776,6 +780,267 @@ describe('scoring screen field wiring', function () {
     ).equals('12')
     expect(field().scoreboard?.batterJersey).equals('12')
   })
+  describe('a team whose full names its reader may no longer read', function () {
+    // The game names two players in full for a coach of both teams; then
+    // he loses both roles, and the screen returns to their public labels.
+    const named = {
+      1: ['Mookie Betts', 'Mookie B'],
+      2: ['Aaron Judge', 'Aaron J'],
+      10: ['Shohei Ohtani', 'Shohei O']
+    } as const
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const heldRoles = TeamStationClient.prototype.myRoles
+    let roles: Awaited<ReturnType<TeamStationClient['myRoles']>>
+    afterEach(function () {
+      TeamStationClient.prototype.myRoles = heldRoles
+    })
+    const click = async (label: string): Promise<void> => {
+      const nodes = document.querySelectorAll<HTMLElement>(
+        `[aria-label="${label}"]`
+      )
+      expect(nodes.length, label).greaterThan(0)
+      await step(() => {
+        nodes.item(nodes.length - 1).click()
+      })
+    }
+    const fullNamesShown = (): string[] =>
+      Object.values(named)
+        .map(([full]) => full)
+        .filter(full => document.body.innerHTML.includes(full))
+    /** Opens `live` as a coach of both teams, then takes the roles away. */
+    const openThenRevoke = async (
+      live: ScoringSession,
+      source: Partial<ScoringSource> = {},
+      rosters?: Record<string, RosterEntry[]>
+    ): Promise<void> => {
+      roles = {
+        teams: { away: ['coach'], home: ['coach'] },
+        guardianOf: []
+      }
+      TeamStationClient.prototype.myRoles = async () => roles
+      const render = await mount(
+        {
+          persistent: false,
+          open: async () => live,
+          ...source
+        },
+        rosters
+      )
+      roles = { teams: {}, guardianOf: [] }
+      await render({ active: false })
+      await render({ active: true })
+      await step(() => undefined)
+    }
+    const session = (): ReturnType<typeof scoringSession> => {
+      const initial = scoringSession(gameFixture)
+      for (const [id, [full, label]] of Object.entries(named)) {
+        const person = initial.gameData.players[Number(id)]
+        person.local = false
+        person.fullName = full
+        person.nameFormat = 'full'
+        person.compactName = label
+      }
+      return initial
+    }
+    it('draws the runner decision and the steps it takes by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session(), {
+        requireCurrentSetup: true
+      })
+      expect(live.state.liveData.linescore.offense.batter?.id).equals(1)
+      live.apply({ type: 'pitch', call: 'C' })
+      live.apply({ type: 'pitch', call: 'C' })
+      await openThenRevoke(live)
+      const more = props().moreControl as React.ReactElement<{
+        onChoose: (input: { action: string }) => void
+      }>
+      await step(() => {
+        more.props.onChoose({ action: 'Dropped Third Strike' })
+      })
+      await settle()
+      expect(
+        document.querySelector('[aria-label="Runner decision for Mookie B"]')
+      ).not.equals(null)
+      await click('Out')
+      await settle()
+      expect(fullNamesShown()).deep.equals([])
+      expect(live.state.gameData.players[1].fullName).equals('Mookie Betts')
+    })
+    it('draws the error credit sheet by public labels, and credits the player', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session())
+      await openThenRevoke(live)
+      const outcome = props().ballInPlayControl as React.ReactElement<{
+        onChoose: (outcome: string, contact?: string) => void
+      }>
+      await step(() => {
+        outcome.props.onChoose('Error')
+      })
+      const fielder = players().find(
+        player => player.playerId === 10 && player.team !== 'offense'
+      )!
+      await step(() => field().onLandingPreview?.({ x: 0, z: -30 }))
+      await step(() => field().onFieldPlacement?.(placement(fielder.id)))
+      await step(() => field().onTrajectoryAccepted?.(25, 0))
+      await settle()
+      await step(() => field().onFieldPlacement?.(placement(fielder.id)))
+      await step(() => props().onFinish?.())
+      expect(
+        document.querySelector('[aria-label="Error by 1 Shohei O"]')
+      ).not.equals(null)
+      expect(fullNamesShown()).deep.equals([])
+      await click('Error by 1 Shohei O')
+      await settle()
+      expect(
+        document.querySelector('[aria-label="Error by 1 Shohei O"]')
+      ).equals(null)
+      expect(fullNamesShown()).deep.equals([])
+      expect(live.state.gameData.players[10].fullName).equals('Shohei Ohtani')
+    })
+    it('logs a dictated play by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session())
+      await openThenRevoke(live)
+      await step(() => {
+        dictate('Strike three', [
+          { type: 'pitch', call: 'C' },
+          { type: 'pitch', call: 'C' },
+          { type: 'pitch', call: 'C' }
+        ])
+      })
+      await settle()
+      // The dictation log's lines, as the panel holds them.
+      const panel = find(
+        (
+          container as unknown as Record<
+            string,
+            Fiber & { stateNode?: { current?: Fiber } }
+          >
+        )[
+          Object.keys(container ?? {}).find(name =>
+            name.startsWith('__reactContainer$')
+          )!
+        ].stateNode?.current,
+        'ScoringPanel'
+      )!
+      const lines: string[] = []
+      for (let hook = panel.memoizedState; hook != null; hook = hook.next) {
+        const value: unknown = hook.memoizedState
+        if (
+          Array.isArray(value) &&
+          value.some(
+            (entry: unknown) =>
+              (entry as { kind?: string } | null)?.kind === 'play'
+          )
+        )
+          for (const entry of value as Array<{ kind: string; text: string }>)
+            if (entry.kind === 'play') lines.push(entry.text)
+      }
+      expect(lines.join(' ')).includes('Mookie B')
+      expect(lines.join(' ')).not.includes('Mookie Betts')
+      expect(live.state.gameData.players[1].fullName).equals('Mookie Betts')
+    })
+    it('draws a per-event History row by public labels', async function () {
+      const live = ScoringSession.start(memoryStore(), 'g1', session(), {
+        requireCurrentSetup: true
+      })
+      live.apply({
+        type: 'gameFlow',
+        kind: 'placeRunner',
+        runner: 2,
+        base: '1B'
+      })
+      live.apply({ type: 'baseRunning', kind: 'steal', runner: 2, to: '2B' })
+      await openThenRevoke(live, {
+        saveTag: async (_game, targetId, tag) => ({
+          targetId,
+          tag,
+          revision: '1'
+        })
+      })
+      await step(() => {
+        props().onHistoryOpen?.()
+      })
+      const rows = props().historyRows ?? []
+      const stolen = rows.find(row => row.title.includes('Aaron'))
+      expect(stolen, JSON.stringify(rows)).not.equals(undefined)
+      expect(stolen!.title).includes('Aaron J')
+      expect(JSON.stringify(rows)).not.includes('Aaron Judge')
+      await step(() => {
+        props().onTagSelect?.(stolen!)
+      })
+      expect(fullNamesShown()).deep.equals([])
+      expect(live.state.gameData.players[2].fullName).equals('Aaron Judge')
+    })
+    it('draws the Overrides batter and field pitcher lists by public labels', async function () {
+      const initial = session()
+      initial.liveData.boxscore.teams.home.defense.P = null
+      const live = ScoringSession.start(memoryStore(), 'g1', initial, {
+        requireCurrentSetup: true
+      })
+      const publicNames = new Map(
+        Object.entries(named).map(([id, [, label]]) => [Number(id), label])
+      )
+      const roster = (first: number): RosterEntry[] =>
+        scoringRoster(first).map(row => ({
+          ...row,
+          shortName: publicNames.get(row.gumboId ?? 0) ?? row.shortName
+        }))
+      await openThenRevoke(live, {}, { away: roster(1), home: roster(10) })
+      await click('Open scoring menu')
+      await click('Overrides')
+      await click('Batter')
+      expect(document.querySelector('[aria-label^="1. Mookie B"]')).not.equals(
+        null
+      )
+      expect(fullNamesShown()).deep.equals([])
+      await click('Cancel')
+      await click('Cancel')
+      await step(() => field().onPlayerTap?.('empty-P'))
+      expect(
+        document.querySelector(
+          '[aria-label^="Assign P "][aria-label$=" Shohei O"]'
+        )
+      ).not.equals(null)
+      expect(fullNamesShown()).deep.equals([])
+    })
+  })
+  it('keeps the short name on the diamond and the board for a batter its reader reads in full', async function () {
+    const initial = scoringSession(gameFixture)
+    const batter = initial.liveData.linescore.offense.batter
+    if (batter == null) throw new Error('Missing batter')
+    const person = initial.gameData.players[batter.id]
+    person.local = false
+    person.fullName = 'Mookie B'
+    const live = ScoringSession.start(memoryStore(), 'g1', initial)
+    await mount(
+      { open: async () => live },
+      {
+        [person.teamId]: [
+          asRosterEntry({
+            userId: userIdOfGumbo(batter.id),
+            gumboId: batter.id,
+            shortName: 'Mookie Betts',
+            nameFormat: 'full',
+            compactName: 'Mookie B',
+            jersey: person.jersey,
+            positions: [],
+            isPlayer: true,
+            role: 'member',
+            section: 'player',
+            staffRoles: [],
+            inheritedFrom: null
+          })
+        ]
+      }
+    )
+    const drawn = field().players.find(player => player.playerId === batter.id)
+    expect(drawn?.displayName).equals('Mookie B')
+    expect(field().scoreboard?.batter).deep.equals({
+      firstName: 'Mookie',
+      lastName: 'B'
+    })
+    // The spoken summary names him as the lineup does.
+    expect(props().accessibilitySummary).includes('Batter Mookie Betts')
+    expect(live.state.gameData.players[batter.id].fullName).equals('Mookie B')
+  })
   for (const route of ['menu', 'lineup'] as const)
     for (const jersey of ['99', null])
       it(`keeps saved player details when saving ${route} with current jersey ${String(jersey)}`, async function () {
@@ -1384,6 +1649,166 @@ describe('scoring screen field wiring', function () {
     HTMLCanvasElement.prototype.getContext = getContext
     container?.remove()
     container = undefined
+  })
+
+  for (const top of [0, 59])
+    for (const band of [0, SCORING_OFFLINE_BAND])
+      it(`moves the canvas and every point it reports by band − lift: inset ${top}, band ${band}`, async function () {
+        const restore = stubFieldInsets(() =>
+          top === 0 ? null : { top, bottom: 34, left: 0, right: 0 }
+        )
+        try {
+          const lift = band > 0 ? 0 : topLift(top, 'web')
+          const offset = band - lift
+          expect(lift).equals(band === 0 && top === 59 ? 24 : 0)
+          const bases: BaseProjection[] = []
+          const game = {
+            gameId: 'g1',
+            accepted: undefined,
+            subscribe: () => () => undefined
+          } as unknown as RemoteScoringUpdatesProps['game']
+          container = document.createElement('div')
+          document.body.append(container)
+          root = createRoot(container)
+          await act(async () => {
+            root!.render(
+              <ThemeProvider>
+                <BaseballScreen
+                  field={{
+                    players: [],
+                    selected: '',
+                    onSelect: () => undefined,
+                    view: 'home',
+                    zoom: 1,
+                    onBaseProjection: projection => bases.push(projection)
+                  }}
+                  remoteUpdates={{ game, userId: 'me' }}
+                  onMenu={() => undefined}
+                  onUndo={() => undefined}
+                  onPitch={() => undefined}
+                  canPitch
+                  summary="Game"
+                  topBand={band}
+                  instruction="Tap a fielder"
+                />
+              </ThemeProvider>
+            )
+          })
+          const moved = [...container.querySelectorAll<HTMLElement>('div')]
+            .map(node => node.style.transform)
+            .filter(transform => transform.startsWith('translateY('))
+          expect(moved).deep.equals(
+            offset === 0 ? [] : [`translateY(${offset}px)`]
+          )
+          // The holder is the full lift taller, band or no band, so the
+          // canvas still reaches the bottom and never resizes as the band
+          // comes and goes.
+          const holder = [
+            ...container.querySelectorAll<HTMLElement>('div')
+          ].find(node => node.style.transform.startsWith('translateY('))
+          const full = topLift(top, 'web')
+          expect(holder?.style.marginBottom ?? '').equals(
+            full > 0 ? `${-full}px` : ''
+          )
+          const canvas = componentProps<FieldProps>('FieldCanvas')
+          const point = { x: 100, y: 400 }
+          await act(async () => {
+            canvas.onBaseProjection?.({
+              width: 402,
+              height: 874,
+              bases: [point, point, point, point]
+            })
+            canvas.onScoreboardBounds?.({
+              x: 20,
+              y: 60,
+              width: 300,
+              height: 90
+            })
+            canvas.onCatcherBounds?.({ x: 190, y: 500, width: 20, height: 30 })
+          })
+          expect(bases.at(-1)?.bases[0]).deep.equals({
+            x: 100,
+            y: 400 + offset
+          })
+          expect(
+            componentProps<{ bounds?: { y: number } }>('InstructionToast')
+              .bounds?.y
+          ).equals(60 + offset)
+          expect(
+            componentProps<RemoteScoringUpdatesProps>('RemoteScoringUpdates')
+              .catcher?.y
+          ).equals(500 + offset)
+        } finally {
+          restore()
+        }
+      })
+
+  it('keeps the lifted holder as tall with and without the band', async function () {
+    const restore = stubFieldInsets(() => ({
+      top: 59,
+      bottom: 34,
+      left: 0,
+      right: 0
+    }))
+    try {
+      const game = {
+        gameId: 'g1',
+        accepted: undefined,
+        subscribe: () => () => undefined
+      } as unknown as RemoteScoringUpdatesProps['game']
+      container = document.createElement('div')
+      document.body.append(container)
+      root = createRoot(container)
+      const holderAt = async (
+        band: number
+      ): Promise<{ transform: string; marginBottom: string }> => {
+        await act(async () => {
+          root!.render(
+            <ThemeProvider>
+              <BaseballScreen
+                field={{
+                  players: [],
+                  selected: '',
+                  onSelect: () => undefined,
+                  view: 'home',
+                  zoom: 1
+                }}
+                remoteUpdates={{ game, userId: 'me' }}
+                onMenu={() => undefined}
+                onUndo={() => undefined}
+                onPitch={() => undefined}
+                canPitch
+                summary="Game"
+                topBand={band}
+                instruction="Tap a fielder"
+              />
+            </ThemeProvider>
+          )
+        })
+        const holder = [
+          ...container!.querySelectorAll<HTMLElement>('div')
+        ].find(node => node.style.transform.startsWith('translateY('))
+        return {
+          transform: holder?.style.transform ?? '',
+          marginBottom: holder?.style.marginBottom ?? ''
+        }
+      }
+      const lifted = await holderAt(0)
+      const banded = await holderAt(SCORING_OFFLINE_BAND)
+      const again = await holderAt(0)
+      expect(lifted).deep.equals({
+        transform: 'translateY(-24px)',
+        marginBottom: '-24px'
+      })
+      // Only the move follows the band; the extra height stays.
+      expect(banded).deep.equals({
+        transform: `translateY(${SCORING_OFFLINE_BAND}px)`,
+        marginBottom: '-24px'
+      })
+      expect(again).deep.equals(lifted)
+    } finally {
+      restore()
+    }
   })
 
   for (const change of ['close', 'reselect', 'account', 'unmount'] as const)

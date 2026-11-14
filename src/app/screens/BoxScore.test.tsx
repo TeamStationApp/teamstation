@@ -148,7 +148,12 @@ async function boxScore(
     root?.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen client={client} gameId="g1" initialTab="boxScore" />
+          <GameScreen
+            signedIn
+            client={client}
+            gameId="g1"
+            initialTab="boxScore"
+          />
         </GestureHandlerRootView>
       </ThemeProvider>
     )
@@ -201,7 +206,12 @@ async function nonMemberBoxScore(): Promise<{
     root?.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen client={client} gameId="g1" initialTab="boxScore" />
+          <GameScreen
+            signedIn
+            client={client}
+            gameId="g1"
+            initialTab="boxScore"
+          />
         </GestureHandlerRootView>
       </ThemeProvider>
     )
@@ -509,6 +519,34 @@ describe('the box score module (U24)', function () {
       teamId: 'home'
     })
   ]
+
+  for (const layout of [
+    { sideBySide: false },
+    { sideBySide: true },
+    { first: 'away' as const, sideBySide: true }
+  ])
+    it(`places one complete key after both teams (${JSON.stringify(layout)})`, async function () {
+      const text = await moduleBoxScore({
+        box: { batting: rows, pitching, stats: undefined },
+        ...layout
+      })
+      const keys = document.querySelectorAll('[data-testid="box-stats-key"]')
+      expect(keys).has.length(1)
+      for (const definition of [
+        'AB - At bats',
+        'AVG - Batting average',
+        'BF - Batters faced',
+        'ER - Earned runs',
+        '#P - Number of pitches',
+        'S - Strikes',
+        'E - Errors'
+      ]) {
+        expect(keys[0].textContent).includes(definition)
+        expect(text.indexOf(definition)).greaterThan(
+          text.lastIndexOf('Pitching —')
+        )
+      }
+    })
 
   it('puts a coach’s side first: his batters, his pitchers, then the opponent’s', async function () {
     const text = await moduleBoxScore({
@@ -943,7 +981,9 @@ describe('box score totals', function () {
       '2',
       '4',
       '0',
-      '0'
+      '0',
+      '—',
+      '—'
     ])
   })
 

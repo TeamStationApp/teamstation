@@ -7,8 +7,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { AppRegistry, BackHandler, NativeModules } from 'react-native'
 
 import { asSession, asVideoGame, TeamStationClient } from '../../common/api'
+import type { BuildInfo } from '../../common/distribution'
 import { userIdOfGumbo } from '../../common/userId'
-import { TvApp } from './TvApp'
+import { TvApp, tvLoginScale, tvLoginServer } from './TvApp'
 
 require('../../../appletv/index.js')
 
@@ -30,7 +31,7 @@ const original = {
 const pause = async (ms = 20): Promise<void> => {
   await new Promise(resolve => setTimeout(resolve, ms))
 }
-async function render(probeUrls?: string): Promise<void> {
+async function render(probeUrls?: string, info?: BuildInfo): Promise<void> {
   BackHandler.addEventListener = (_name, handler) => {
     onBack = () => handler({ type: 'hardwareBackPress', timeStamp: Date.now() })
     return {
@@ -44,7 +45,11 @@ async function render(probeUrls?: string): Promise<void> {
   root = createRoot(host)
   await act(async () => {
     root!.render(
-      <TvApp apiBaseUrl="https://example.test/api/v1" probeUrls={probeUrls} />
+      <TvApp
+        apiBaseUrl="https://example.test/api/v1"
+        probeUrls={probeUrls}
+        info={info}
+      />
     )
     await pause()
   })
@@ -101,6 +106,97 @@ afterEach(async () => {
   NativeModules.TVSession = original.store
 })
 describe('TV app presentation', () => {
+  for (const branch of ['master', 'develop', 'refs/heads/master', 'feature']) {
+    it(`shows the login version and limits the server label for ${branch}`, async () => {
+      setup()
+      await render(undefined, {
+        app: 'TeamStation',
+        version: '1.2.3',
+        buildNumber: '26111201',
+        branch,
+        commit: '0'.repeat(40),
+        builtAt: '2026-01-01T00:00:00Z'
+      })
+      const footer = document.querySelector<HTMLElement>(
+        '[data-testid="tv-login-build"]'
+      )!
+      expect(footer.textContent).contains('v1.2.3 (26111201)')
+      expect(getComputedStyle(footer).position).equals('absolute')
+      expect(getComputedStyle(footer).right).equals('70px')
+      expect(getComputedStyle(footer).bottom).equals('24px')
+      const server = document.querySelector('[data-testid="tv-login-server"]')
+      if (branch === 'feature') expect(server?.textContent).equals('example')
+      else expect(server).equals(null)
+    })
+  }
+  it('uses only the API hostname prefix, independently of the sign-in host', () => {
+    expect(
+      tvLoginServer('https://develop5.example.test/api/v1', 'feature')
+    ).equals('develop5')
+    expect(
+      tvLoginServer(
+        'https://develop5.example.test/api/v1',
+        'refs/heads/develop'
+      )
+    ).equals('')
+    expect(tvLoginServer('invalid', 'feature')).equals('')
+  })
+  it('fits the complete pairing panel inside smaller viewports with safe margins', () => {
+    expect(tvLoginScale(1920, 1080)).equals(1)
+    for (const [width, height] of [
+      [1280, 720],
+      [1920, 1080],
+      [3840, 2160]
+    ]) {
+      const scale = tvLoginScale(width, height)
+      expect(1600 * scale).at.most(width - 140)
+      expect(940 * scale).at.most(height - 140)
+      expect(scale).at.most(1)
+    }
+    expect(tvLoginScale(0, 0)).equals(0)
+  })
+  it('applies the smaller viewport scale to the rendered pairing panel', async () => {
+    const viewport = document.documentElement
+    const priorWidth = Object.getOwnPropertyDescriptor(viewport, 'clientWidth')
+    const priorHeight = Object.getOwnPropertyDescriptor(
+      viewport,
+      'clientHeight'
+    )
+    Object.defineProperty(viewport, 'clientWidth', {
+      configurable: true,
+      value: 1280
+    })
+    Object.defineProperty(viewport, 'clientHeight', {
+      configurable: true,
+      value: 720
+    })
+    try {
+      window.dispatchEvent(new window.Event('resize'))
+      setup()
+      await render()
+      const panel = document.querySelector<HTMLElement>(
+        '[data-testid="tv-login-panel"]'
+      )!
+      const scale = Number(/scale\(([\d.]+)\)/.exec(panel.style.transform)?.[1])
+      expect(scale).greaterThan(0)
+      expect(parseFloat(getComputedStyle(panel).width) * scale).at.most(
+        1280 - 140
+      )
+      expect(parseFloat(getComputedStyle(panel).height) * scale).at.most(
+        720 - 140
+      )
+    } finally {
+      if (priorWidth != null)
+        Object.defineProperty(viewport, 'clientWidth', priorWidth)
+      else Reflect.deleteProperty(viewport, 'clientWidth')
+      if (priorHeight != null)
+        Object.defineProperty(viewport, 'clientHeight', priorHeight)
+      else Reflect.deleteProperty(viewport, 'clientHeight')
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+    }
+  })
   it('registers the native entry point', () => {
     expect(AppRegistry.getAppKeys()).contains('TeamStationTV')
   })
@@ -108,6 +204,17 @@ describe('TV app presentation', () => {
     setup()
     await render()
     expect(document.body.textContent).contains('ABCD–EFGH')
+    const qr = document.querySelector('[aria-label="Scan to sign in"]')!
+    expect(qr.getAttribute('width')).equals('620')
+    expect(qr.getAttribute('height')).equals('620')
+    const brand = document.querySelector<HTMLElement>(
+      '[data-testid="tv-brand-screen"]'
+    )!
+    expect(brand.style.width).equals('88px')
+    expect(brand.parentElement?.style.width).equals('360px')
+    expect(brand.parentElement?.style.height).equals('260px')
+    const title = brand.parentElement?.nextElementSibling as HTMLElement
+    expect(title.style.fontSize).equals('90px')
     expect(document.querySelector('svg path')).not.equals(null)
     TeamStationClient.prototype.claimTvLogin = async () => session
     await act(async () => {
@@ -116,6 +223,9 @@ describe('TV app presentation', () => {
     expect(document.body.textContent)
       .contains('Welcome, Babe')
       .and.not.contains('Welcome, Babe Ruth')
+    expect(document.querySelector('[data-testid="tv-login-build"]')).equals(
+      null
+    )
     await press('Sign out')
     expect(document.body.textContent).contains('ABCD–EFGH')
   })

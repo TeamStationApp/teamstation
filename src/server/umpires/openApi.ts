@@ -201,6 +201,16 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
       }
     }
   }
+  // Each person is `{ id, name, avatarUrl, affiliations, certifications }`.
+  for (const path of [
+    '/leagues/{leagueId}/umpire-candidates',
+    '/leagues/{leagueId}/umpires'
+  ])
+    (paths[path] as Record<string, Record<string, unknown>>).get.description =
+      'Each of `people` is `{ id, name, avatarUrl, affiliations, ' +
+      'certifications }`. `affiliations` is the line under the name: the ' +
+      'guarded players, guardians and league teams the caller may see, ' +
+      'named as the caller may read them, empty when none is visible.'
   const collection = paths['/leagues/{leagueId}/umpires'] as Record<
     string,
     Record<string, unknown>
@@ -249,6 +259,10 @@ export function umpirePaths(errorResponse: unknown): Record<string, unknown> {
   const requirementsPath = paths[
     '/leagues/{leagueId}/umpire-requirements'
   ] as Record<string, Record<string, unknown>>
+  requirementsPath.get.description =
+    'Each of `seasons` is `{ id, name, logoUrl, leagueId, leaguePictureUrl, ' +
+    'requirement }`. `leaguePictureUrl` is the league\u2019s signed picture, ' +
+    'or null, which a season with no `logoUrl` is drawn with.'
   requirementsPath.put.requestBody = {
     required: true,
     content: {

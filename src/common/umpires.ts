@@ -35,6 +35,10 @@ export interface UmpireSeason {
   id: string
   name: string
   logoUrl: string | null
+  /** The season's league, whose colour its tile takes. */
+  leagueId: string
+  /** The league's signed picture, drawn when the season has none. */
+  leaguePictureUrl: string | null
   requirement: UmpireRequirement | null
 }
 export interface UmpirePerson {

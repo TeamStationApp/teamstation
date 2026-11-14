@@ -146,7 +146,7 @@ const hold = process.env.TS_STREAM_HOLD
 const outageIp = process.env.TS_STREAM_OUTAGE_IP
 const conditioner = process.env.TS_STREAM_CONDITIONER
 const webcam = process.env.TS_STREAM_WEBCAM_URL
-const APP = 'app.teamstation.app'
+const APP = process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
 // A simulator's UDID; a real iPhone's is not of this shape.
 const isSimulator = /^[0-9A-F]{8}-[0-9A-F]{4}-/.test(device)
 // E11 on the iPhone keeps a frame of the overlay over the live camera, which
@@ -897,8 +897,14 @@ async function main(): Promise<void> {
       'Record Video asks for the angle’s name'
     )
     await shot('angle-name-prompt')
-    say(`$ inputText ${angle}`)
-    await m.inputText({ text: angle })
+    const suggestion = `angle-suggestion-${angle}`
+    if ((await find(byId(suggestion), 1000)) != null) {
+      say(`$ tapOn ${suggestion}`)
+      await m.tapOn({ id: suggestion })
+    } else {
+      say(`$ inputText ${angle}`)
+      await m.inputText({ text: angle })
+    }
     say('$ tapOn Record with this phone')
     await m.tapOn({ text: 'Record with this phone' })
     const badge = await find(

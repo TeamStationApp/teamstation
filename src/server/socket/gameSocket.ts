@@ -9,9 +9,12 @@ import { asLiteral } from '../../common/asLiteral'
 import {
   type GameSocketErrorCode,
   type GameSocketReply,
+  MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
+  minimumProtocolOf,
   type ScreenScopeName,
   TYPING_INTERVAL_MS
 } from '../../common/gameSocket'
+import { usesOverrideSlots } from '../../common/scoring/actions'
 import {
   canSeeGame,
   type GameScope,
@@ -103,7 +106,7 @@ export interface GameSocketOptions {
   /**
    * The oldest `GAME_SOCKET_PROTOCOL` a game or scope subscribe may name. One
    * naming an older one, or none, is refused as `forbidden` with the reason
-   * `updateRequired`. 3 unless given.
+   * `updateRequired`. Never below `MINIMUM_GAME_SOCKET_PROTOCOL`.
    */
   minimumProtocol?: number
   /** Where a request that failed is reported. `console.error` unless given. */
@@ -197,6 +200,7 @@ interface Connection {
   ws: WebSocket
   actor: Actor
   games: Set<string>
+  gameProtocols: Map<string, number>
   /**
    * The games this socket holds places for under the cap, as of the last
    * request it sent: each maps to the subscribe that claimed it. A subscribe
@@ -322,7 +326,7 @@ export function attachGameSocket(
   const resyncSpreadMs = options.resyncSpreadMs ?? RESYNC_SPREAD_MS
   const screenNoticeSpreadMs =
     options.screenNoticeSpreadMs ?? SCREEN_NOTICE_SPREAD_MS
-  const minimumProtocol = options.minimumProtocol ?? 3
+  const minimumProtocol = minimumProtocolOf(options.minimumProtocol)
   /** A resync's closes and frames, and notices' frames, still to come. */
   const spreadTimers = new Set<ReturnType<typeof setTimeout>>()
   const connections = new Set<Connection>()
@@ -540,7 +544,8 @@ export function attachGameSocket(
     connection: Connection,
     gameId: string,
     id: string,
-    claimed: number | undefined
+    claimed: number | undefined,
+    protocol: number
   ): Promise<void> => {
     if (claimed == null) {
       refuse(
@@ -553,6 +558,7 @@ export function attachGameSocket(
       return
     }
     if (connection.games.has(gameId)) {
+      connection.gameProtocols.set(gameId, protocol)
       reply(connection, { type: 'subscribed', gameId, id })
       return
     }
@@ -564,12 +570,14 @@ export function attachGameSocket(
       )
       if (scope != null && connections.has(connection)) {
         connection.games.add(gameId)
+        connection.gameProtocols.set(gameId, protocol)
         fanout.watch(gameId, scope, connection.subscriber)
       }
     } catch (error: unknown) {
       // Nothing half done is kept: the game is not watched for this socket.
       scope = undefined
       connection.games.delete(gameId)
+      connection.gameProtocols.delete(gameId)
       throw error
     } finally {
       // A game it cannot see, or could not check, gives its place back,
@@ -590,6 +598,7 @@ export function attachGameSocket(
     id: string
   ): void => {
     connection.games.delete(gameId)
+    connection.gameProtocols.delete(gameId)
     fanout.unwatch(gameId, connection.subscriber)
     reply(connection, { type: 'unsubscribed', gameId, id })
   }
@@ -898,7 +907,13 @@ export function attachGameSocket(
       const claimed = claim(connection, gameId)
       await inTurn(connection, gameId, async () => {
         await answered(async () => {
-          await subscribe(connection, gameId, requestId, claimed)
+          await subscribe(
+            connection,
+            gameId,
+            requestId,
+            claimed,
+            request.protocol ?? 0
+          )
         })
       })
     } else {
@@ -965,6 +980,7 @@ export function attachGameSocket(
       ws,
       actor,
       games: new Set(),
+      gameProtocols: new Map(),
       claims: new Map(),
       sequence: 0,
       turns: new Map(),
@@ -978,6 +994,36 @@ export function attachGameSocket(
       screenResyncDue: false,
       subscriber: {
         send: message => {
+          // Older scorers must reread through the protocol-gated HTTP resource;
+          // never deliver newer action documents directly in a socket frame.
+          if (
+            message.kind === 'playEdits' &&
+            (connection.gameProtocols.get(message.gameId) ?? 0) <
+              MINIMUM_OVERRIDE_REPLAY_PROTOCOL &&
+            [
+              message.data.currentPlay,
+              ...(message.data.edits ?? []).flatMap(edit =>
+                edit.op === 'put' ? [edit.play.gumbo] : []
+              )
+            ].some(play => {
+              const actions = (
+                play as { teamStation?: { actions?: unknown } } | null
+              )?.teamStation?.actions
+              return Array.isArray(actions) && actions.some(usesOverrideSlots)
+            })
+          ) {
+            reply(connection, {
+              ...message,
+              data: {
+                generation: message.data.generation,
+                digest: message.data.digest,
+                namesDigest: message.data.namesDigest,
+                fromDigest: null,
+                edits: null
+              }
+            })
+            return
+          }
           reply(connection, message)
         },
         token,

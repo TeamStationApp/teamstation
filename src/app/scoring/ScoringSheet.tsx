@@ -21,6 +21,7 @@ import {
 } from 'react-native'
 import {
   initialWindowMetrics,
+  SafeAreaInsetsContext,
   SafeAreaProvider,
   SafeAreaView
 } from 'react-native-safe-area-context'
@@ -189,6 +190,7 @@ function SheetContent({
   onBackdropPress,
   onClose,
   keyboardVerticalOffset,
+  footer,
   children
 }: {
   visible?: boolean
@@ -224,6 +226,8 @@ function SheetContent({
    * negative offset lets content that floats at the bottom sit on it.
    */
   keyboardVerticalOffset?: number
+  /** A pinned action; scroll padding keeps the final row above it. */
+  footer?: React.ReactNode
   children: React.ReactNode
 }): React.ReactElement {
   const theme = useTheme()
@@ -233,6 +237,8 @@ function SheetContent({
   const fullScreen = fullScreenAsked && !narrowed
   const tall = tallAsked || narrowed
   const scoring = appearance === 'scoring'
+  const bottomDocked = placement === 'bottom' && !fullScreen
+  const [footerHeight, setFooterHeight] = useState(0)
   const [contentHeight, setContentHeight] = useState<number>()
   const Content = scroll ? ScrollView : View
   const contentScroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
@@ -296,165 +302,220 @@ function SheetContent({
           }
         }
       >
-        <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-          keyboardVerticalOffset={keyboardVerticalOffset}
-          style={
-            Platform.OS === 'web'
-              ? { height: '100dvh', width: '100%' }
-              : { flex: 1 }
-          }
-        >
-          <SheetArea
-            edges={
-              fullScreen || tall || placement !== 'bottom'
-                ? ['top', 'bottom', 'left', 'right']
-                : ['bottom', 'left', 'right']
-            }
-            style={{
-              flex: 1,
-              justifyContent:
-                placement === 'center'
-                  ? 'center'
-                  : placement === 'top'
-                    ? 'flex-start'
-                    : 'flex-end',
-              backgroundColor: fullScreen ? theme.backgroundColor : undefined
-            }}
-          >
-            {!fullScreen && (
-              <Pressable
-                accessibilityLabel="Dismiss sheet"
-                onPress={() => {
-                  ;(onBackdropPress ?? onClose)()
-                }}
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  backgroundColor: theme.overlayBackgroundColor
-                }}
-              />
-            )}
-            <Animated.View
-              testID="Scoring sheet"
-              accessibilityViewIsModal
-              style={{
-                transform: [{ translateY: pulled }],
-                ...(maxWidth == null
-                  ? {}
-                  : { width: '100%', maxWidth, alignSelf: 'center' }),
-                maxHeight: fullScreen || tall ? undefined : '92%',
-                flex: fullScreen || tall ? 1 : undefined,
-                height,
-                marginHorizontal: placement === 'center' ? 12 : undefined,
-                marginVertical: placement === 'center' ? 24 : undefined,
-                marginTop: tall ? 8 : undefined,
-                backgroundColor: scoring
-                  ? theme.scoringSurface.background
-                  : theme.backgroundColor,
-                borderWidth: scoring && !fullScreen ? 1 : 0,
-                borderColor: scoring ? theme.scoringSurface.border : undefined,
-                borderTopLeftRadius: fullScreen
-                  ? 0
-                  : theme.rem(theme.radiusLargeRem),
-                borderTopRightRadius: fullScreen
-                  ? 0
-                  : theme.rem(theme.radiusLargeRem),
-                borderBottomLeftRadius:
-                  placement === 'center' ? theme.rem(theme.radiusLargeRem) : 0,
-                borderBottomRightRadius:
-                  placement === 'center' ? theme.rem(theme.radiusLargeRem) : 0,
-                padding: compact ? 12 : 16,
-                paddingBottom: headerless ? 0 : 16,
-                gap: compact ? 8 : 12
-              }}
+        <SafeAreaInsetsContext.Consumer>
+          {insets => (
+            <KeyboardAvoidingView
+              behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+              keyboardVerticalOffset={keyboardVerticalOffset}
+              style={
+                Platform.OS === 'web'
+                  ? { height: '100dvh', width: '100%' }
+                  : { flex: 1 }
+              }
             >
-              {!headerless && (
-                <View
-                  {...(swipeToDismiss ? pull.panHandlers : {})}
-                  style={{ gap: compact ? 8 : 12 }}
-                >
-                  {swipeToDismiss && (
-                    <View
-                      accessibilityLabel="Pull down to close"
-                      style={{
-                        alignSelf: 'center',
-                        width: 40,
-                        height: 5,
-                        borderRadius: 3,
-                        marginTop: -6,
-                        backgroundColor: theme.secondaryTextColor
-                      }}
-                    />
-                  )}
-                  <View
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      gap: 12
+              <SheetArea
+                edges={
+                  fullScreen || tall || placement !== 'bottom'
+                    ? bottomDocked
+                      ? ['top', 'left', 'right']
+                      : ['top', 'bottom', 'left', 'right']
+                    : ['left', 'right']
+                }
+                style={{
+                  flex: 1,
+                  // The panel owns the bottom inset so its fill reaches the screen edge.
+                  paddingBottom: bottomDocked ? 0 : undefined,
+                  justifyContent:
+                    placement === 'center'
+                      ? 'center'
+                      : placement === 'top'
+                        ? 'flex-start'
+                        : 'flex-end',
+                  backgroundColor: fullScreen
+                    ? theme.backgroundColor
+                    : undefined
+                }}
+              >
+                {!fullScreen && (
+                  <Pressable
+                    accessibilityLabel="Dismiss sheet"
+                    onPress={() => {
+                      ;(onBackdropPress ?? onClose)()
                     }}
-                  >
-                    <Text
-                      accessibilityRole="header"
-                      style={{
-                        fontFamily: theme.boldTextFont,
-                        fontSize: compact ? 18 : 22,
-                        color: scoring
-                          ? theme.scoringSurface.text
-                          : theme.primaryTextColor,
-                        flex: 1
-                      }}
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      backgroundColor: theme.overlayBackgroundColor
+                    }}
+                  />
+                )}
+                <Animated.View
+                  testID="Scoring sheet"
+                  accessibilityViewIsModal
+                  style={{
+                    transform: [{ translateY: pulled }],
+                    ...(maxWidth == null
+                      ? {}
+                      : { width: '100%', maxWidth, alignSelf: 'center' }),
+                    maxHeight: fullScreen || tall ? undefined : '92%',
+                    flex: fullScreen || tall ? 1 : undefined,
+                    height,
+                    marginHorizontal: placement === 'center' ? 12 : undefined,
+                    marginVertical: placement === 'center' ? 24 : undefined,
+                    marginTop: tall ? 8 : undefined,
+                    backgroundColor: scoring
+                      ? theme.scoringSurface.background
+                      : theme.backgroundColor,
+                    borderWidth: scoring && !fullScreen ? 1 : 0,
+                    borderBottomWidth: bottomDocked ? 0 : undefined,
+                    borderColor: scoring
+                      ? theme.scoringSurface.border
+                      : undefined,
+                    borderTopLeftRadius: fullScreen
+                      ? 0
+                      : theme.rem(theme.radiusLargeRem),
+                    borderTopRightRadius: fullScreen
+                      ? 0
+                      : theme.rem(theme.radiusLargeRem),
+                    borderBottomLeftRadius:
+                      placement === 'center'
+                        ? theme.rem(theme.radiusLargeRem)
+                        : 0,
+                    borderBottomRightRadius:
+                      placement === 'center'
+                        ? theme.rem(theme.radiusLargeRem)
+                        : 0,
+                    padding: compact ? 12 : 16,
+                    paddingBottom:
+                      bottomDocked && Platform.OS === 'web'
+                        ? `calc(${headerless ? 0 : 16}px + env(safe-area-inset-bottom, 0px))`
+                        : (headerless ? 0 : 16) +
+                          (bottomDocked ? (insets?.bottom ?? 0) : 0),
+                    gap: compact ? 8 : 12
+                  }}
+                >
+                  {!headerless && (
+                    <View
+                      {...(swipeToDismiss ? pull.panHandlers : {})}
+                      style={{ gap: compact ? 8 : 12 }}
                     >
-                      {title}
-                    </Text>
-                    {done ? null : textCancel ? (
-                      <Pressable
-                        accessibilityRole="button"
-                        accessibilityLabel="Cancel"
-                        onPress={onClose}
+                      {swipeToDismiss && (
+                        <View
+                          accessibilityLabel="Pull down to close"
+                          style={{
+                            alignSelf: 'center',
+                            width: 40,
+                            height: 5,
+                            borderRadius: 3,
+                            marginTop: -6,
+                            backgroundColor: theme.secondaryTextColor
+                          }}
+                        />
+                      )}
+                      <View
                         style={{
-                          minHeight: compact ? 32 : 44,
-                          paddingHorizontal: 10,
-                          justifyContent: 'center'
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 12
                         }}
                       >
                         <Text
+                          accessibilityRole="header"
                           style={{
-                            fontFamily: theme.semiBoldTextFont,
-                            color: theme.dangerColor
+                            fontFamily: theme.boldTextFont,
+                            fontSize: compact ? 18 : 22,
+                            color: scoring
+                              ? theme.scoringSurface.text
+                              : theme.primaryTextColor,
+                            flex: 1
                           }}
                         >
-                          Cancel
+                          {title}
                         </Text>
-                      </Pressable>
-                    ) : (
-                      <ScoringButton label="Cancel" onPress={onClose} />
+                        {done ? null : textCancel ? (
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Cancel"
+                            onPress={onClose}
+                            style={{
+                              minHeight: compact ? 32 : 44,
+                              paddingHorizontal: 10,
+                              justifyContent: 'center'
+                            }}
+                          >
+                            <Text
+                              style={{
+                                fontFamily: theme.semiBoldTextFont,
+                                color: theme.dangerColor
+                              }}
+                            >
+                              Cancel
+                            </Text>
+                          </Pressable>
+                        ) : (
+                          <ScoringButton label="Cancel" onPress={onClose} />
+                        )}
+                      </View>
+                    </View>
+                  )}
+                  <View
+                    style={{
+                      flexShrink: 1,
+                      minHeight: 0,
+                      flex: fullScreen || tall || height != null ? 1 : undefined
+                    }}
+                  >
+                    <Content
+                      testID="Scoring sheet content"
+                      ref={scroll ? contentScroll : undefined}
+                      style={{
+                        flex:
+                          fullScreen || tall || height != null ? 1 : undefined,
+                        minHeight: 0,
+                        paddingBottom:
+                          !scroll && footer != null
+                            ? footerHeight + 12
+                            : undefined
+                      }}
+                      onLayout={event => {
+                        setContentHeight(event.nativeEvent.layout.height)
+                      }}
+                      keyboardShouldPersistTaps="handled"
+                      contentContainerStyle={{
+                        gap: 0,
+                        paddingBottom: footer == null ? 0 : footerHeight + 12
+                      }}
+                    >
+                      <ScoringSheetHeight.Provider value={contentHeight}>
+                        {children}
+                      </ScoringSheetHeight.Provider>
+                    </Content>
+                    {footer != null && (
+                      <View
+                        testID="Scoring sheet footer"
+                        onLayout={event => {
+                          setFooterHeight(event.nativeEvent.layout.height)
+                        }}
+                        style={{
+                          position: 'absolute',
+                          bottom: 0,
+                          left: 0,
+                          right: 0,
+                          paddingTop: 12,
+                          backgroundColor: theme.scoringSurface.background
+                        }}
+                      >
+                        {footer}
+                      </View>
                     )}
                   </View>
-                </View>
-              )}
-              <Content
-                testID="Scoring sheet content"
-                ref={scroll ? contentScroll : undefined}
-                style={{
-                  flex: fullScreen || tall || height != null ? 1 : undefined,
-                  minHeight: 0
-                }}
-                onLayout={event => {
-                  setContentHeight(event.nativeEvent.layout.height)
-                }}
-                keyboardShouldPersistTaps="handled"
-                contentContainerStyle={{ gap: 0 }}
-              >
-                <ScoringSheetHeight.Provider value={contentHeight}>
-                  {children}
-                </ScoringSheetHeight.Provider>
-              </Content>
-              {done && <ScoringButton label="Done" onPress={onClose} />}
-            </Animated.View>
-          </SheetArea>
-        </KeyboardAvoidingView>
+                  {done && <ScoringButton label="Done" onPress={onClose} />}
+                </Animated.View>
+              </SheetArea>
+            </KeyboardAvoidingView>
+          )}
+        </SafeAreaInsetsContext.Consumer>
       </SafeAreaProvider>
     </Modal>
   )

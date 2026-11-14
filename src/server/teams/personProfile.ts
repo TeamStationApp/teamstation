@@ -7,8 +7,7 @@ import { ROLES } from '../../common/roles'
 import {
   guardedPlayers,
   levelsAboveTeam,
-  mayEditName,
-  openAddTeams,
+  mayViewFullNames,
   settledTeams,
   teamsPlayedOnNow,
   teamsUnder
@@ -21,6 +20,7 @@ import { canAdminister, canManagePeople, currentActor } from '../groups/rights'
 import { canHoldRoles, groupName, heldAt } from '../invites/grants'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
+import { readerOf } from '../users/readerNames'
 import { teamHeadCoach } from './teamHeadCoach'
 import { followersOf, onPeopleList } from './teamRoster'
 
@@ -28,8 +28,10 @@ import { followersOf, onPeopleList } from './teamRoster'
  * One person as a team, a season or a league sees them, for the profile its
  * administrators, coaches and assistants open from its people list.
  *
- * - **Who**: their photo and short name, and their whole name for a viewer
- *   who manages the level's people or may read it anyway (`mayEditName`).
+ * - **Who**: their photo, their name as the viewer reads it, and their whole
+ *   name, both for a viewer who may see it (`mayViewFullNames`: whoever may
+ *   change it, and whoever manages the people of a level whose list holds
+ *   them, as this one does unless only an open add puts them on it).
  * - **Parent/Guardian of**: the players they guard who play now on a team
  *   this level reaches: the team itself, any team of the season, any team
  *   of the league.
@@ -91,15 +93,15 @@ export async function personProfile(
     part => part != null && part.trim() !== ''
   )
   const whole = parts.length === 0 ? person.displayName : parts.join(' ')
-  // Not while every team of theirs here holds them only by an add that may
-  // be rejected.
-  const rows = (await onePerson(db, userId)).userIds
-  const under = await teamsUnder(db, ref)
-  const here = (await teamsPlayedOnNow(db, rows)).filter(id => under.has(id))
-  const holding = await openAddTeams(db, rows)
-  const held = here.length > 0 && here.every(id => holding.includes(id))
-  const readsName =
-    (manages && !held) || (await mayEditName(db, fresh.userId, userId, fresh))
+  // One answer for the person and the players they guard, asked once: it
+  // answers the name field and names every label below.
+  const children = await guardedPlayers(db, userId)
+  const readsFull = await mayViewFullNames(
+    db,
+    fresh.userId,
+    [userId, ...children],
+    fresh
+  )
 
   return {
     context: { kind: ref.kind, id: ref.id, name },
@@ -107,22 +109,26 @@ export async function personProfile(
       userId,
       shortName:
         (
-          await publicNames(db, [
-            {
-              person,
-              teamId:
-                ref.kind === 'team' &&
-                (await teamsPlayedOnNow(db, [userId])).includes(ref.id)
-                  ? ref.id
-                  : undefined
-            }
-          ])
+          await publicNames(
+            db,
+            [
+              {
+                person,
+                teamId:
+                  ref.kind === 'team' &&
+                  (await teamsPlayedOnNow(db, [userId])).includes(ref.id)
+                    ? ref.id
+                    : undefined
+              }
+            ],
+            { reader: readerOf(viewer), readsFull }
+          )
         ).get(userId) ?? person.displayName,
-      fullName: readsName ? whole : null,
+      fullName: readsFull.has(userId) ? whole : null,
       avatarUrl: space == null ? null : imageUrl(space, person.avatarPath),
       canHoldRoles: await canHoldRoles(db, userId)
     },
-    guardianOf: await guardianRows(db, space, ref, userId),
+    guardianOf: await guardianRows(db, space, ref, children, viewer, readsFull),
     sections: await sections(db, ref, userId, editable),
     viewer: { manages: editable, admin: editable && admin, self }
   }
@@ -155,9 +161,10 @@ async function guardianRows(
   db: Kysely<Database>,
   space: MediaContext['space'] | undefined,
   ref: GroupRef,
-  userId: string
+  children: readonly string[],
+  viewer: Actor,
+  readsFull: ReadonlySet<string>
 ): Promise<PersonProfile['guardianOf']> {
-  const children = await guardedPlayers(db, userId)
   if (children.length === 0) return []
   const reach = await teamsUnder(db, ref)
   const found: Array<{ userId: string; teamId: string }> = []
@@ -194,7 +201,8 @@ async function guardianRows(
     found.map(row => ({
       person: people.find(one => one.id === row.userId)!,
       teamId: row.teamId
-    }))
+    })),
+    { reader: readerOf(viewer), readsFull }
   )
   return found
     .map(row => {

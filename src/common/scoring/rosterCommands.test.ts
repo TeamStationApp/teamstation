@@ -560,6 +560,16 @@ describe('the roster prompt (U2)', function () {
     expect(both.at(-1)).equals('  Arenado #11 — bench')
     expect(both[12]).equals('  Cole #2 — bats 1st')
     expect(rosterPrompt(state, ['home'])).not.include('AWAY')
+    // A player named in full for this reader goes to the model by the label
+    // everyone reads.
+    Object.assign(state.gameData.players[id('Lindor')], {
+      fullName: 'Francisco Lindor',
+      nameFormat: 'full',
+      compactName: 'Lindor'
+    })
+    expect(rosterPrompt(state, ['away']).split('\n').at(-1)).equals(
+      '  Lindor #11 — plays SS'
+    )
     // Once the game has begun, the game line says who is at bat; the
     // rosters are listed the same way.
     const top = rosterPrompt(live(), ['away', 'home'])

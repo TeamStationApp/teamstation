@@ -16,6 +16,7 @@ import type {
   UserMatch,
   VideoGame
 } from '../../common/api'
+import { viewerTimezone } from '../../common/eventTime'
 import { TsMark } from '../components/TsMark'
 import { useMotionPreference } from '../components/useMotionPreference'
 import {
@@ -683,6 +684,7 @@ function BrowsePage({
   const [heroDetailsHeight, setHeroDetailsHeight] = useState(0)
   const [firstTile, setFirstTile] = useState<FocusNode | null>(null)
   const key = pageKey(page)
+  const timeZone = viewerTimezone()
   useEffect(() => {
     if (!active) return
     registerWatch(key, watchNode)
@@ -796,7 +798,7 @@ function BrowsePage({
       id={`${prefix}-${game.id}`}
       image={game.posterUrl}
       title={`${game.awayTeamName} at ${game.homeTeamName}`}
-      detail={gameDate(game)}
+      detail={gameDate(game, timeZone)}
       width={tileWidth}
       preferred={active && restoringFocus && focus === `${prefix}-${game.id}`}
       onFocus={rememberFocus}
@@ -910,7 +912,7 @@ function BrowsePage({
           )}
           {hero !== null && (
             <>
-              <Text style={styles.copy}>{gameDate(hero)}</Text>
+              <Text style={styles.copy}>{gameDate(hero, timeZone)}</Text>
               {hero.venue !== null && (
                 <Text style={styles.copy}>{hero.venue}</Text>
               )}
@@ -941,10 +943,10 @@ function BrowsePage({
       </FocusGuide>
     )
     if (page.kind === 'team') {
-      for (const [index, section] of monthSections([
-        ...collection.recent,
-        ...collection.remaining
-      ]).entries()) {
+      for (const [index, section] of monthSections(
+        [...collection.recent, ...collection.remaining],
+        timeZone
+      ).entries()) {
         sticky.push(children.length)
         children.push(
           <View
@@ -1004,7 +1006,7 @@ function BrowsePage({
                   onPreviewFocus={previewFocusChanged}
                   id={`clip-${clip.game.id}-${clip.eventId}`}
                   title={clip.title}
-                  detail={gameDate(clip.game)}
+                  detail={gameDate(clip.game, timeZone)}
                   image={clip.stillUrl}
                   width={tileWidth}
                   preferred={

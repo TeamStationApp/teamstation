@@ -12,7 +12,7 @@ import {
 } from './tessLayout'
 
 /**
- * The right edge of Tess's column on an iPad or a wide tablet: see
+ * The left edge of Tess's column on an iPad or a wide tablet: see
  * `TessDivider.tsx`. A finger drags it with a PanResponder, at most once a
  * frame; VoiceOver and TalkBack adjust it 16 points a swipe.
  */
@@ -31,7 +31,7 @@ export function TessDivider({
       latest.current.onResize(next, false)
     })
     const widthAt = (dx: number): number =>
-      clampTessWidth(from + dx, latest.current.max)
+      clampTessWidth(from - dx, latest.current.max)
     const end = (dx: number): void => {
       throttled.cancel()
       latest.current.onResize(widthAt(dx), true)
@@ -81,13 +81,13 @@ export function TessDivider({
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
-  // As on the web: a 12-point grab area centred on the column's last two
+  // As on the web: a 12-point grab area centred on the column's first two
   // points.
   divider: {
     position: 'absolute',
     top: 0,
     bottom: 0,
-    right: -5,
+    left: -5,
     width: 12,
     zIndex: 2
   },

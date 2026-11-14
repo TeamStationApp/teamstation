@@ -23,6 +23,7 @@ import type { SpaceSettings } from '../media/spacesHls'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { peopleCandidates, peopleQueryOf } from '../users/peopleCandidates'
+import { type Reader, readerOf } from '../users/readerNames'
 import { candidateQueryOf, rosterCandidates } from '../users/rosterCandidates'
 import { teamsOf } from './players'
 import { externalIdsAsked } from './seasons'
@@ -32,7 +33,7 @@ export interface UserMatch {
   userId: string
   gumboId: number | null
   externalIds: string[]
-  /** `Jordan P`, told apart from anybody else in the same answer. */
+  /** `Jordan P`, the short name in its format alone. */
   shortName: string
   /** Their picture, signed and short-lived; null when they have none. */
   avatarUrl: string | null
@@ -53,8 +54,10 @@ export interface UserMatch {
  * (`guardedPlayers`), by short name: what Home lists as "Your Players". Only
  * `me` is accepted, and never beside `externalId`.
  *
- * `forTeam=<teamId>`, with `forGame`, `q`, `limit` and `after`, asks for the
- * players a roster manager may add to that team (`rosterCandidates`).
+ * `forTeam=<teamId>`, with `forGame`, `q` and `limit`, asks for the players a
+ * roster manager may add to that team (`rosterCandidates`): one answer of at
+ * most 100, with no further pages, so `after` answers nothing. `limit` is
+ * read only beside `capped=1`, which the current client sends.
  */
 export function userRoutes(
   db: Kysely<Database>,
@@ -73,7 +76,13 @@ export function userRoutes(
         req.query.forGroupId !== undefined
       ) {
         res.json(
-          await peopleCandidates(db, actor, peopleQueryOf(req.query), space)
+          await peopleCandidates(
+            db,
+            actor,
+            peopleQueryOf(req.query),
+            space,
+            await visibleScopes(db, actor.userId, actor.isAdmin)
+          )
         )
         return
       }
@@ -89,7 +98,8 @@ export function userRoutes(
         const people = await describe(
           db,
           space,
-          ids.map(userId => ({ userId, externalIds: [] }))
+          ids.map(userId => ({ userId, externalIds: [] })),
+          readerOf(actor)
         )
         res.json(
           people
@@ -113,7 +123,15 @@ export function userRoutes(
       }
       if (req.query.forTeam !== undefined) {
         const ask = candidateQueryOf(req.query)
-        res.json(await rosterCandidates(db, actor, ask, space))
+        res.json(
+          await rosterCandidates(
+            db,
+            actor,
+            ask,
+            space,
+            await visibleScopes(db, actor.userId, actor.isAdmin)
+          )
+        )
         return
       }
       const guardedBy = req.query.guardedBy
@@ -126,7 +144,8 @@ export function userRoutes(
         const people = await describe(
           db,
           space,
-          guarded.map(userId => ({ userId, externalIds: [] }))
+          guarded.map(userId => ({ userId, externalIds: [] })),
+          readerOf(actor)
         )
         res.json(
           people.sort((a, b) => {
@@ -151,18 +170,22 @@ export function userRoutes(
         actor.userId,
         system
       )
-      res.json(await describe(db, space, matches))
+      res.json(await describe(db, space, matches, readerOf(actor)))
     })
   )
 
   return router
 }
 
-/** Each person's short name and picture, beside what was already known. */
+/**
+ * Each person's name, in full for those `reader` may read in full, and
+ * picture, beside what was already known.
+ */
 async function describe(
   db: Kysely<Database>,
   space: SpaceSettings | undefined,
-  people: Array<Pick<UserMatch, 'userId' | 'externalIds'>>
+  people: Array<Pick<UserMatch, 'userId' | 'externalIds'>>,
+  reader: Reader | undefined
 ): Promise<UserMatch[]> {
   if (people.length === 0) return []
   const rows = await db
@@ -184,7 +207,8 @@ async function describe(
     .execute()
   const names = await publicNames(
     db,
-    rows.map(person => ({ person }))
+    rows.map(person => ({ person })),
+    { reader }
   )
   const byId = new Map(rows.map(row => [row.id, row]))
   return people.map(person => {

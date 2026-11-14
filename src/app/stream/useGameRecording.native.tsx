@@ -26,6 +26,7 @@ interface Camera {
 export function useGameRecording(
   client: TeamStationClient,
   gameId: string,
+  signedIn: boolean | null,
   phone: PhoneStream = phoneStream,
   deviceId: () => Promise<string> = installId,
   Screen = StreamingScreen,
@@ -67,19 +68,20 @@ export function useGameRecording(
     setBusy(false)
     working.current = false
     // Unsupported devices never ask for the protected cameras collection.
-    phone
-      .capabilities()
-      .then(async capabilities => {
-        if (!live || !capabilities.supported) return
-        await client.liveStreams(gameId)
-        if (live) setAvailable({ client, gameId })
-      })
-      .catch(() => {})
+    if (signedIn === true)
+      phone
+        .capabilities()
+        .then(async capabilities => {
+          if (!live || !capabilities.supported) return
+          await client.liveStreams(gameId)
+          if (live) setAvailable({ client, gameId })
+        })
+        .catch(() => {})
     return () => {
       live = false
       generation.current += 1
     }
-  }, [client, gameId, phone])
+  }, [client, gameId, phone, signedIn])
 
   const cancel = (): void => {
     generation.current += 1
@@ -226,7 +228,9 @@ export function useGameRecording(
 
   return {
     open:
-      available?.client === client && available.gameId === gameId
+      signedIn === true &&
+      available?.client === client &&
+      available.gameId === gameId
         ? open
         : undefined,
     busy,

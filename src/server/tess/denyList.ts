@@ -56,7 +56,10 @@ export const ALLOWED_PERSON_ROUTES: readonly string[] = [
   // City search: a machine gets the built-in catalogue, not Google's
   // suggestions, which are paid for per person.
   'GET /locations',
-  'GET /locations/{id}'
+  'GET /locations/{id}',
+  // Replay reads exempt machines from the installed app's protocol floor.
+  'GET /games/{gameId}/events',
+  'GET /games/{gameId}/box-score'
 ]
 
 /**
@@ -85,6 +88,8 @@ const WRITES: readonly RegExp[] = [
  * neither, so a new scoring route cannot slip through by being new.
  */
 export const ALLOWED_GAME_WRITES: readonly string[] = [
+  // A coach's plan, which the scoring screen applies itself between innings.
+  'PUT /games/{gameId}/plans/{teamId}',
   'DELETE /games/{gameId}/tags/{targetId}',
   'PUT /games/{gameId}/tags/{targetId}',
   'POST /games/{gameId}/umpire-slots',

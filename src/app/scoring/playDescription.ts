@@ -1,9 +1,11 @@
+import { chainOf, stateFingerprint } from '../../common/scoring/actionChain'
 import {
   type BallInPlayAction,
   BASES,
   type Destination,
   type Direction,
   drawnName,
+  keepsAtBat,
   type ScoringAction
 } from '../../common/scoring/actions'
 import { overrideOf, trajectoryOf } from '../../common/scoring/rules'
@@ -208,12 +210,14 @@ function runnerWords(
 
 /**
  * The two lines for one edit. `before` is the game the actions were applied
- * to, `after` the game they made.
+ * to, `after` the game they made. Omit the secondary pitch clause when a
+ * caller presents the pitch sequence separately.
  */
 export function describePlay(
   before: GameState,
   actions: readonly ScoringAction[],
-  after: GameState
+  after: GameState,
+  includePitchClause = true
 ): PlayDescription | undefined {
   if (actions.length === 0) return undefined
   const words = new Words(before)
@@ -326,7 +330,7 @@ export function describePlay(
     } else if (result.eventType === 'manual_placement')
       primary = `${name} placed on ${result.base == null ? 'base' : BASE_WORDS[result.base]}`
     else primary = `${name} out`
-    if (pitches.length > 0)
+    if (includePitchClause && pitches.length > 0)
       secondary.unshift(`after ${pitchWords(pitches).toLowerCase()}`)
   }
 
@@ -397,7 +401,7 @@ export function describePlay(
         secondary.push(event)
       } else {
         primary = event
-        if (pitches.length > 0)
+        if (includePitchClause && pitches.length > 0)
           secondary.push(`on ${pitchWords(pitches).toLowerCase()}`)
       }
     } else if (pitches.length > 0) {
@@ -409,7 +413,7 @@ export function describePlay(
       const ending = batter == null ? undefined : pitchEnding(count, pitches)
       if (ending != null && batter != null) {
         primary = `${words.name(batter)} ${ending}`
-        if (pitches.length > 1)
+        if (includePitchClause && pitches.length > 1)
           secondary.push(`on ${pitchWords(pitches).toLowerCase()}`)
       } else primary = pitchWords(pitches)
     } else if (lineup?.type === 'lineup') {
@@ -539,19 +543,26 @@ export function lastPlaySpan(
  * applied, so the next batter's first pitch or ball in play starts his run.
  * A closing belongs to the run before it.
  */
+interface BatterRun {
+  from: number
+  to: number
+  before: GameState
+  after: GameState
+  atBatIndex: number
+}
+
 function batterRuns(
   before: GameState,
-  actions: readonly ScoringAction[]
-): Array<{ from: number; to: number; before: GameState; after: GameState }> {
-  const runs: Array<{
-    from: number
-    to: number
-    before: GameState
-    after: GameState
-  }> = []
-  let state = before
-  let open: number | undefined
-  actions.forEach((action, index) => {
+  actions: readonly ScoringAction[],
+  resume?: { runs: readonly CachedRun[]; state: GameState; index: number }
+): CachedRun[] {
+  const runs: CachedRun[] = resume?.runs.map(run => ({ ...run })) ?? []
+  let state = resume?.state ?? before
+  const resumed = runs.at(-1)
+  let open: number | undefined =
+    resumed == null || resumed.atBatIndex < 0 ? undefined : resumed.atBatIndex
+  for (let index = resume?.index ?? 0; index < actions.length; index++) {
+    const action = actions[index]
     const prior = state
     state = applyAction(state, action, { replay: true }).state
     const last = runs.at(-1)
@@ -559,12 +570,280 @@ function batterRuns(
     if (last != null && (closesPlay(action) || atBat === open)) {
       last.to = index + 1
       last.after = state
-      return
+      continue
     }
     open = atBat
-    runs.push({ from: index, to: index + 1, before: prior, after: state })
-  })
+    runs.push({
+      from: index,
+      to: index + 1,
+      before: prior,
+      after: state,
+      atBatIndex: atBat ?? -(index + 1)
+    })
+  }
   return runs
+}
+
+/** Every run with its games, as the Undo label reads them. */
+function fullRuns(
+  before: GameState,
+  actions: readonly ScoringAction[]
+): BatterRun[] {
+  // With no resume point, every run is replayed and keeps both games.
+  return batterRuns(before, actions) as BatterRun[]
+}
+
+/** A run as the cache keeps it: older runs without their games. */
+type CachedRun = Omit<BatterRun, 'before' | 'after'> & {
+  before?: GameState
+  after?: GameState
+}
+
+/**
+ * How many of the latest runs keep their before and after games. Each game
+ * holds the whole game so far, so keeping one per run would make the cache
+ * grow with the square of the game's length; a correction older than these
+ * replays the log once from the opening.
+ */
+const RUNS_WITH_STATES = 8
+
+export interface LogDescriptionCache {
+  opening?: GameState
+  openingKey?: string
+  /** The prefix hash chain (`actionChain`) of the log last described. */
+  chain: readonly string[]
+  /** Every run's bounds; only the latest `RUNS_WITH_STATES` keep games. */
+  runs?: CachedRun[]
+  /** `from:to` → a span's words, null where it has none. */
+  spans: Map<string, { to: number; text: string | null }>
+}
+
+export function newLogDescriptionCache(): LogDescriptionCache {
+  return { chain: [], spans: new Map() }
+}
+
+/** Same object first; the fingerprint only when a reload replaced it. */
+function sameOpening(cache: LogDescriptionCache, opening: GameState): boolean {
+  if (cache.opening === opening) return true
+  const key = stateFingerprint(opening)
+  const same = key === cache.openingKey
+  cache.opening = opening
+  cache.openingKey = key
+  return same
+}
+
+/** The cache brought up to `log`, and the batter runs it holds. */
+function cachedRuns(
+  opening: GameState,
+  log: readonly ScoringAction[],
+  authors: ReadonlyArray<string | null>,
+  cache: LogDescriptionCache | undefined,
+  chain: readonly string[] | undefined
+): { runs: CachedRun[]; full: () => Map<number, BatterRun> } {
+  let resume: { runs: CachedRun[]; state: GameState; index: number } | undefined
+  if (cache != null) {
+    // The chain the caller passes covers authors; so must the one built here.
+    const logChain = chain ?? chainOf(log, authors)
+    let common = 0
+    if (sameOpening(cache, opening)) {
+      const shared = Math.min(log.length, cache.chain.length - 1)
+      while (
+        common < shared &&
+        cache.chain[common + 1] === logChain[common + 1]
+      )
+        common++
+    }
+    const kept = (cache.runs ?? []).filter(run => run.to <= common)
+    // Resume after the latest kept run that still has its game.
+    let at = kept.length - 1
+    while (at >= 0 && kept[at].after == null) at--
+    if (at >= 0)
+      resume = {
+        runs: kept.slice(0, at + 1),
+        state: kept[at].after!,
+        index: kept[at].to
+      }
+    for (const [key, span] of cache.spans)
+      if (span.to > common) cache.spans.delete(key)
+    cache.chain = logChain
+  }
+  const runs = batterRuns(opening, log, resume)
+  if (cache != null)
+    cache.runs = runs.map((run, index) =>
+      index < runs.length - RUNS_WITH_STATES
+        ? { from: run.from, to: run.to, atBatIndex: run.atBatIndex }
+        : run
+    )
+  // An older run with no games, whose words are not cached, is described
+  // from one replay of the whole log, made only when it is needed.
+  let replayed: Map<number, BatterRun> | undefined
+  const full = (): Map<number, BatterRun> =>
+    (replayed ??= new Map(fullRuns(opening, log).map(run => [run.from, run])))
+  return { runs, full }
+}
+
+/** The run with its games, from the cache or from one full replay. */
+function withGames(
+  run: CachedRun,
+  full: () => Map<number, BatterRun>
+): BatterRun {
+  return run.before != null && run.after != null
+    ? (run as BatterRun)
+    : full().get(run.from)!
+}
+
+/**
+ * The words for `log[from, to)`, played from `before` to `after`: the pitch
+ * row, then each event before contact, then the outcome with no pitch clause.
+ * Nothing for actions only lineups or closes, or that `describePlay` cannot
+ * describe.
+ */
+function describeSpan(
+  log: readonly ScoringAction[],
+  from: number,
+  to: number,
+  before: GameState,
+  after: GameState,
+  readable: (game: GameState) => GameState
+): string | undefined {
+  const sourceActions = log.slice(from, to)
+  const actions = sourceActions.filter(action => !closesPlay(action))
+  if (actions.every(action => action.type === 'lineup')) return undefined
+  // The pitch history has its own row. Like Undo's last-play span, begin
+  // the outcome at contact, with the preceding pitches already applied.
+  const outcomeStart = sourceActions.findIndex(
+    action => action.type === 'ballInPlay' || action.type === 'result'
+  )
+  const prefix = sourceActions.slice(0, Math.max(0, outcomeStart))
+  const start = prefix.filter(action => !closesPlay(action)).length
+  let beforePlay = before
+  const earlierEvents: string[] = []
+  for (const action of prefix) {
+    const next = applyAction(beforePlay, action, { replay: true }).state
+    if (
+      action.type !== 'pitch' &&
+      action.type !== 'lineup' &&
+      !closesPlay(action)
+    ) {
+      const earlier = describePlay(
+        readable(beforePlay),
+        [action],
+        readable(next)
+      )
+      if (earlier != null)
+        earlierEvents.push(
+          [earlier.primary, earlier.secondary].filter(Boolean).join(', ')
+        )
+    }
+    beforePlay = next
+  }
+  const description = describePlay(
+    readable(beforePlay),
+    actions.slice(start),
+    readable(after),
+    false
+  )
+  if (description == null) return undefined
+  const pitches = actions.filter(
+    (action): action is Extract<ScoringAction, { type: 'pitch' }> =>
+      action.type === 'pitch'
+  )
+  const pitchLine = pitches.length === 0 ? '' : pitchWords(pitches)
+  const playLine = [description.primary, description.secondary]
+    .filter(Boolean)
+    .join(', ')
+  return [
+    ...(pitchLine === '' || description.primary === pitchLine
+      ? []
+      : [pitchLine]),
+    ...earlierEvents,
+    playLine
+  ].join('\n')
+}
+
+/** One author's consecutive actions within one batter's run. */
+export interface LogSpan {
+  /** The at-bat, or a negative key for actions while none is open. */
+  atBatIndex: number
+  from: number
+  to: number
+  /** The first action's place among its at-bat's actions. */
+  position: number
+  author: string | null
+  /** The span's words, or undefined where they cannot be told. */
+  text: string | undefined
+}
+
+/**
+ * Each batter's run split into maximal spans with one author, each described
+ * from its own before and after games. A closing joins the span before it,
+ * whoever recorded it.
+ */
+export function describeLogSpans(
+  opening: GameState,
+  log: readonly ScoringAction[],
+  authors: ReadonlyArray<string | null>,
+  readable: (game: GameState) => GameState,
+  cache?: LogDescriptionCache,
+  chain?: readonly string[]
+): LogSpan[] {
+  const spans: LogSpan[] = []
+  const positions = new Map<number, number>()
+  const { runs, full } = cachedRuns(opening, log, authors, cache, chain)
+  for (const run of runs) {
+    // The run's games, fetched only when one of its spans needs words.
+    let games: BatterRun | undefined
+    let state: GameState | undefined
+    let from = run.from
+    const at = (index: number): GameState => {
+      games ??= withGames(run, full)
+      state ??= games.before
+      while (from < index) {
+        state = applyAction(state, log[from], { replay: true }).state
+        from++
+      }
+      return state
+    }
+    let start = run.from
+    for (let index = run.from; index < run.to; index++) {
+      const next = index + 1
+      // A game-flow event (End of the half, Game over, a placed runner, a
+      // correction) is a span of its own, so its words are never folded
+      // into the pitches before it.
+      const flow = (action: ScoringAction | undefined): boolean =>
+        action?.type === 'gameFlow' && !closesPlay(action)
+      const ends =
+        next === run.to ||
+        flow(log[index]) ||
+        flow(log[next]) ||
+        (!closesPlay(log[next]) && authors[next] !== authors[start])
+      if (!ends) continue
+      const key = `${start}:${next}`
+      let text = cache?.spans.get(key)?.text
+      if (text === undefined) {
+        try {
+          const before = at(start)
+          const after = next === run.to ? withGames(run, full).after : at(next)
+          text = describeSpan(log, start, next, before, after, readable) ?? null
+        } catch {
+          text = undefined
+        }
+        if (text !== undefined) cache?.spans.set(key, { to: next, text })
+      }
+      const position = positions.get(run.atBatIndex) ?? 0
+      positions.set(run.atBatIndex, position + (next - start))
+      spans.push({
+        atBatIndex: run.atBatIndex,
+        from: start,
+        to: next,
+        position,
+        author: authors[start] ?? null,
+        text: text ?? undefined
+      })
+      start = next
+    }
+  }
+  return spans
 }
 
 /**
@@ -579,7 +858,7 @@ export function describeEntryPlays(
   const entry = past.at(-1)
   if (entry == null) return []
   const from = entry.logLength
-  return batterRuns(gameAt(from), log.slice(from)).flatMap(run => {
+  return fullRuns(gameAt(from), log.slice(from)).flatMap(run => {
     const actions = log
       .slice(from + run.from, from + run.to)
       .filter(action => !closesPlay(action))
@@ -605,7 +884,7 @@ export function describeLastPlay(
   // Actions about two batters — one sentence, or a reload's last play — are
   // the last batter's.
   let { start } = span
-  const runs = batterRuns(gameAt(start), log.slice(start, span.end))
+  const runs = fullRuns(gameAt(start), log.slice(start, span.end))
   if (runs.length > 1) start += runs.at(-1)!.from
   return describePlay(gameAt(start), log.slice(start, span.end), after)
 }
@@ -623,22 +902,64 @@ export function describeCompletedPlays(
     index >= 0 && out.size < indexes.size;
     index--
   ) {
-    if (!closesPlay(log[index])) continue
+    const action = log[index]
+    // An end of the half that keeps the at-bat saves it as a play of its own,
+    // described by the actions before it: the end of the half is no part of it.
+    const endedHalf = keepsAtBat(action)
+    if (!closesPlay(action) && !endedHalf) continue
     const after = gameAt(index + 1)
     const play = after.liveData.plays.allPlays.at(-1)
     if (
       play == null ||
+      (endedHalf &&
+        after.liveData.plays.allPlays.length ===
+          gameAt(index).liveData.plays.allPlays.length) ||
       !indexes.has(play.about.atBatIndex) ||
       out.has(play.about.atBatIndex)
     )
       continue
-    const description = describeLastPlay(
-      log.slice(0, index + 1),
-      [],
-      after,
-      gameAt
-    )
+    const description = endedHalf
+      ? describeKeptAtBat(log, index, gameAt)
+      : describeLastPlay(log.slice(0, index + 1), [], after, gameAt)
     if (description != null) out.set(play.about.atBatIndex, description)
   }
   return out
+}
+
+/**
+ * The at-bat an end of the half at `index` kept: every action taken while it
+ * was the at-bat in progress, the running play it was saved as among them,
+ * read against the game just before the half ended, whose bases still hold
+ * the runners it left on. Which at-bat each action left in progress says
+ * where it began, as no closing action does when the half before ended on a
+ * third out between pitches.
+ */
+function describeKeptAtBat(
+  log: readonly ScoringAction[],
+  index: number,
+  gameAt: (logLength: number) => GameState
+): PlayDescription | undefined {
+  const kept = gameAt(index).liveData.plays.currentPlay?.about.atBatIndex
+  const atBat = (state: GameState): number | undefined =>
+    state.liveData.plays.currentPlay?.about.atBatIndex
+  // An action is the kept at-bat's when it was taken in it, or when it is the
+  // pitch that closed the play ahead and began it, in the same half: a third
+  // out between pitches begins it too, but in the half after its own.
+  const its = (at: number): boolean => {
+    const before = gameAt(at)
+    const after = gameAt(at + 1)
+    return (
+      atBat(before) === kept ||
+      (atBat(after) === kept &&
+        before.liveData.linescore.isTopInning ===
+          after.liveData.linescore.isTopInning)
+    )
+  }
+  let start = index
+  while (start > 0 && !closesPlay(log[start - 1]) && its(start - 1)) start--
+  const actions = log.slice(start, index)
+  // A play closed by its next pitch leaves no closePlay: the last batter's.
+  const runs = fullRuns(gameAt(start), actions)
+  if (runs.length > 1) start += runs.at(-1)!.from
+  return describePlay(gameAt(start), log.slice(start, index), gameAt(index))
 }

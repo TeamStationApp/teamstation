@@ -11,11 +11,10 @@ import {
 import type { UmpireGameBlock } from '../../common/umpireSchedule'
 import {
   Button,
+  ButtonIcon,
   Card,
-  Emblem,
-  Icon,
-  initialsOf,
   ListRow,
+  PersonEmblem,
   SectionHeader
 } from '../components'
 import { EventMap } from '../components/EventMap'
@@ -250,10 +249,10 @@ export function EventInfoTab({
                     style={[styles.replyRow, index > 0 && styles.replyDivider]}
                     testID={`event-reply-row-${row.userId}`}
                   >
-                    <Emblem
+                    <PersonEmblem
+                      userId={row.userId}
+                      name={row.name}
                       uri={row.avatarUrl}
-                      fallback={initialsOf(row.name)}
-                      shape="circle"
                       size={1.5}
                     />
                     <Text
@@ -324,7 +323,7 @@ export function EventInfoTab({
                 </View>
               </View>
               <View style={styles.chevron} pointerEvents="none">
-                <Icon
+                <ButtonIcon
                   name="chevron_right"
                   size={1.5}
                   color={theme.primaryTextColor}
@@ -430,9 +429,10 @@ export function EventInfoTab({
                       title={row.name}
                       subtitleNumberOfLines={0}
                       subtitle={subtitle === '' ? undefined : subtitle}
-                      emblem={initialsOf(row.name)}
-                      emblemUri={row.avatarUrl}
-                      emblemShape="circle"
+                      person={{
+                        userId: row.userId,
+                        uri: row.avatarUrl
+                      }}
                     />
                   </Card>
                 )

@@ -489,14 +489,15 @@ async function main(): Promise<void> {
                 node => getComputedStyle(node.parentElement!).backgroundColor
               )
           })
-          const expected = teamTint('Winter Wolves')
+          // Winter Wolves is the fixture's team A: its tile hashes its id.
+          const expected = teamTint(f.teamA)
           assert(
             actual.includes(
               `rgb(${[1, 3, 5].map(i => parseInt(expected.slice(i, i + 2), 16)).join(', ')})`
             ),
-            name + ' uses shared name tint'
+            name + ' uses the team id tint'
           )
-          await note('E8 PASS ' + name + ': matching initials and name hash')
+          await note('E8 PASS ' + name + ': matching initials and team id hash')
         }
         if (!before && name.endsWith('-gear')) {
           const label = name.startsWith('game-')

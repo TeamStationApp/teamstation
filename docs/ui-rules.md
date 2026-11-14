@@ -72,7 +72,7 @@ it is changed.
 
 ## Header menus
 
-The header's actions live in two small menus rather than as loose icons. The
+At window widths below the 60rem content maximum plus a 16rem sidebar, the header's actions live in two small menus rather than as loose icons. The
 TeamStation mark opens About TeamStation and features such as Ask Tess, and the
 person's picture opens Account and Notifications. Each is a `HeaderMenu`: a
 dropdown lined up with its button's edge, with a blurred background and a drop
@@ -80,6 +80,17 @@ shadow. With no picture and no Tess, as when signed out, the mark opens About
 directly. A new header action is a row in one of these, not a new icon in the
 bar. In the signed-in app the mark is drawn only on tab roots, so an action that
 pushed screens need goes on the picture's menu.
+
+Signed-out users have no sidebar at any width. For signed-in users at that width
+and above, navigation occupies a 16rem left sidebar beneath the continuous primary
+header, ordered Home, Videos, Schedule, Search, Messages, About TeamStation.
+Ask Tess appears at the right of the primary header when available. Tess opens
+in her own full-height panel on the right, outside that header, with a resize
+divider on her left edge. At narrow widths Tess fills the screen until closed.
+The top-left mark has no action. Notifications and its pending indicator sit above
+a bottom-pinned account row in the sidebar. The account row shows the avatar and
+display name; its whole area opens Account directly. The header account menu
+remains available when the sidebar is absent.
 
 ## Cards and collections
 
@@ -100,6 +111,16 @@ and every text column at the same left edge, regardless of the number of lines.
   teams, seasons or leagues in one `ListCard`, with padded rows and hairline
   dividers. Relationship lists with independent actions use `ActionList bounded`
   and `GroupRelationshipRow`. Each category may have its own shared card.
+  League Teams, including kept placeholder teams, is one such collection:
+  keep its heading, count and Add/Create actions outside the shared card,
+  even when the list is large. An empty collection has no empty card shell.
+  `ActionList bounded` keeps the colours its rows read from the theme readable
+  on a theme whose card surface matches its canvas text. Only colours read
+  inside the list are remapped: a style a screen builds from its own theme, or
+  a colour it passes into a row, keeps the outer value, so read it inside the
+  card instead, for example through a small child component. A shared card
+  built directly from `ListCard`, outside `ActionList`, wraps its contents in
+  `CardThemeScope` for the same colours.
 
 Navigation and a trailing action such as Follow remain separate touch targets.
 Do not nest the action inside the navigation button. Empty, loading and error
@@ -107,6 +128,48 @@ states remain outside the result cards. Editable location fields may still expla
 that a location has not been set.
 
 ## Buttons
+
+### Icons use shared placement
+
+Use `ButtonIcon` for artwork inside a button or tab, including icon-and-label
+buttons and custom vector glyphs. It keeps web artwork in place and centers
+native icons. The existing control owns its touch target, accessibility label
+and action. Pass custom web text as its child with the matching icon name;
+pass vector artwork as a child without a name. Paired input-row icons and
+editable/read-only variants use the same placement so their artwork stays
+aligned. Leading artwork representing the action of a pressable row, including
+field/location selection, attachment open/play and disclosure actions, also uses
+`ButtonIcon`. Keep unrelated decorative/status icons on `Icon`. Screens do not add baseline nudges.
+
+For a named native icon, the supplied Text child's family and weight determine
+its original layout metrics, not the replacement artwork's stroke weight.
+Named native artwork uses the bundled Material Symbols weight or the shared
+custom geometry. Web keeps the original Text, including its family and weight.
+Use a nameless vector child when a specific custom stroke shape must be retained.
+
+The native gallery checks painted glyph bounds against their circular targets
+within one point, at default and large sizes. It derives target geometry from
+a separate capture with artwork hidden and rejects ink outside those bounds. Build it with
+`TS_ICON_FIXTURE_DIR=<output> node scripts/build-button-icons-native.mjs ios gallery`
+(or `android gallery`); use `principal` for the navigation, hero and scoring-control fixture.
+The broader screen-fixture gallery is web-only. iOS requires
+installed pods and builds a simulator app with bundle ID
+`app.teamstation.app.icons` and display name `Icon Fixture`; Android requires the SDK and uses
+a local debug keystore. Its separate iconFixture variant uses the host ABI
+(arm64-v8a or x86_64; override with TS_ICON_ANDROID_ABI), an `.icons` application
+ID suffix, and a separate APK output. It does not replace the normal app or
+release APK. Install the printed app on your selected simulator/emulator, then run
+`node -r sucrase/register src/test/buttonIcons.gallery.e2e.ts` with
+`TS_ICON_SURFACE`, `TS_ICON_APP_ID`, `TS_ICON_ARTIFACTS`, `MAESTRO_DEVICE`, and
+a task-specific `MAESTRO_D`, plus `TS_MAESTRO_D_CLIENT` and `MAESTRO_D_BIN`
+pointing to the locally built Maestro D client and executable. The runner
+checks placement, action targets and disabled states, saves screenshots, and shuts down its own daemon.
+It also opens the font-glyph page for replay controls, chevrons and Text-child
+scaling cases. After the default capture, set the selected device's actual
+system font scale to at least 1.8x, restart the fixture and rerun with
+`TS_ICON_FONT_ONLY=1` in the same artifact directory. This compares painted
+sizes against the default capture, including a 1.5x cap and scaling opt-out,
+and checks centering and clipping. Restore the device setting afterward.
 
 ### Game hero actions stay compact
 
@@ -125,7 +188,7 @@ Coach green, DJ dark purple, and Record red.
 
 Whenever a collection lets the user enable or disable, join or leave, add or
 revoke, or end a relationship, render a proper list with one row per item.
-Use a leading image, name-hashed initials tile or appropriate icon when available;
+Use a leading image, initials (a team, league or season on the colour its id gives it, through `GroupEmblem`; a person on the colour their account id gives them, through `PersonEmblem` or `ListRow`'s `person`; every tile's colour is a hash of its entity's unique id, and names choose only the initials) or an appropriate icon when available;
 put the name above quieter details in the flexible middle and a compact action
 at the right. Use short visible labels such as **Add**, **Leave**, **Revoke** or
 **End**, with an accessible label that also names the affected item.
@@ -160,6 +223,10 @@ touch target stay large enough. Dense tab strips reduce gaps and scroll.
   beneath a red destructive primary, red text otherwise. Header and toolbar Cancels
   retain their header alignment; the team picker places its visible text on the
   right content margin. Cancel is never a filled or pale button.
+- **Exception: the roster editor's footer.** Its bar reads Cancel, the
+  microphone, Save Rosters: a red filled Cancel and a green filled Save Rosters,
+  each with white text, the same height and width, either side of the
+  microphone, on the coach's screen and the scorekeeper's sheet alike.
 - **A long label gets smaller type, not a smaller target.** Use
   `Button small`, which keeps the 48-point height.
 

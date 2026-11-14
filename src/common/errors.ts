@@ -130,6 +130,26 @@ export const forbidden = (
   details?: unknown
 ): HttpError => new HttpError('forbidden', message, details)
 
+/**
+ * This build of the app is older than the server reads: an `unavailable`
+ * whose details name the reason. A build that predates the reason reads a
+ * 503 as a save to try again, so it keeps what it has not saved and shows
+ * the message, where a refusal it took as final would throw that away.
+ */
+export const updateRequired = (message: string): HttpError =>
+  new HttpError('unavailable', message, { reason: 'updateRequired' })
+
+/** A refusal `updateRequired` made. */
+export function isUpdateRequired(error: unknown): boolean {
+  if (!(error instanceof HttpError)) return false
+  const details = error.details
+  return (
+    details != null &&
+    typeof details === 'object' &&
+    (details as { reason?: unknown }).reason === 'updateRequired'
+  )
+}
+
 export const notFound = (message = 'Not found'): HttpError =>
   new HttpError('notFound', message)
 

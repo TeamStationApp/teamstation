@@ -339,29 +339,23 @@ describe("the grid beside Tess's chat", function () {
         document.dispatchEvent(event)
       })
     }
-    // Over the block's middle, in the window: the controls, not the bar.
+    // Hovering anywhere in the block reveals the icons and bar together.
     const midX = frame.x + (left + right) / 2
     await hover(midX, frame.y + (top + bottom) / 2)
-    expect(barHidden(), 'above the bottom row').equals(true)
+    expect(barHidden(), 'above the bottom row').equals(false)
     expect(exitShown(), 'the controls above it').equals(true)
-    // Over its bottom row: the bar, and the controls put away at once.
     await hover(midX, frame.y + bottom - (bottom - top) * 0.1)
     expect(barHidden(), 'over the bottom row').equals(false)
-    expect(exitShown(), 'the controls, put away').equals(false)
-    // And back up: the controls, the bar put away.
+    expect(exitShown(), 'controls stay visible').equals(true)
     await hover(midX, frame.y + (top + bottom) / 2)
-    expect(exitShown(), 'the controls again').equals(true)
-    expect(barHidden(), 'the bar, put away').equals(true)
-    // Off the block — Tess's chat, left of the pane — nothing changes.
+    expect(barHidden()).equals(false)
+    // Off-block movement and dragging leave both groups as they were.
     await hover(frame.x - 100, frame.y + (top + bottom) / 2)
-    expect(exitShown(), 'still the controls').equals(true)
-    await hover(frame.x - 100, frame.y + bottom - (bottom - top) * 0.1)
-    expect(barHidden(), 'the bar still put away').equals(true)
-    // A mouse with its button down is dragging, not hovering: the bottom row
-    // under it brings no bar up.
+    expect(exitShown()).equals(true)
+    expect(barHidden()).equals(false)
     await hover(midX, frame.y + bottom - (bottom - top) * 0.1, 1)
-    expect(barHidden(), 'a drag over the bottom row').equals(true)
-    expect(exitShown(), 'the controls, left up').equals(true)
+    expect(barHidden()).equals(false)
+    expect(exitShown()).equals(true)
     // With the keyboard in the bar, a mouse over the squares leaves it up:
     // hidden, it is inert, and the focus would go with it.
     await hover(midX, frame.y + bottom - (bottom - top) * 0.1)

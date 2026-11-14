@@ -29,10 +29,9 @@ import { type ChatLink, ChatLinks } from '../chat/ChatLinks'
 import {
   Button,
   Card,
-  Emblem,
   GameRow,
+  GroupEmblem,
   HandoffView,
-  initialsOf,
   ManageGear,
   PillTabs,
   ScheduleRow,
@@ -45,7 +44,6 @@ import {
   usePaneWidth
 } from '../components'
 import { ActionList } from '../components/ActionRow'
-import { Badge } from '../components/Badge'
 import { ChoiceSheet } from '../components/ChoiceSheet'
 import { FollowButton } from '../components/FollowButton'
 import { PagedList } from '../components/PagedList'
@@ -60,12 +58,19 @@ import { useStableCallback } from '../hooks/useStableCallback'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { clock, matchupLines, shortDate, shortTime } from './format'
+import {
+  clock,
+  matchupLines,
+  matchupTitle,
+  shortDate,
+  shortTime
+} from './format'
 import { type GameListOpenOptions, gameListOptions } from './gameListOptions'
 import { GroupRelationshipRow } from './GroupRelationshipRow'
 import { LevelPeopleTab } from './LevelPeopleTab'
 import { SeasonStandings } from './SeasonStandings'
 import { battingColumns, pitchingColumns } from './statColumns'
+import { StatsKey } from './StatsKey'
 import { useBreakParent } from './useBreakParent'
 import { countFor, type When } from './whenFilter'
 
@@ -134,6 +139,42 @@ const EXHIBITION_TABS = [
 /** A list of the season's: one of the Schedule's pills, or Videos. */
 type ListId = When | 'videos'
 
+/** The public and private projections share exactly what a schedule row needs. */
+type ScheduleGame = Pick<
+  SeasonGame,
+  | 'id'
+  | 'homeTeamId'
+  | 'awayTeamId'
+  | 'homeTeamName'
+  | 'awayTeamName'
+  | 'startAt'
+  | 'venue'
+  | 'status'
+  | 'awayScore'
+  | 'homeScore'
+  | 'videoCount'
+  | 'pendingApproval'
+  | 'pendingRequestId'
+  | 'cancellationReason'
+  | 'withdrawnByTeamName'
+  | 'isGameLive'
+  | 'isUmpire'
+  | 'eventKind'
+  | 'eventType'
+  | 'title'
+> &
+  Partial<Pick<SeasonGame, 'isLive'>>
+
+function publicScheduleGame(game: PublicGame): ScheduleGame {
+  return {
+    ...game,
+    homeTeamId: game.homeTeam.id,
+    awayTeamId: game.awayTeam.id,
+    homeTeamName: game.homeTeam.name,
+    awayTeamName: game.awayTeam.name
+  }
+}
+
 /** Each list's own filter, nearest to now first in both directions. */
 const LIST_QUERY: Record<ListId, GamesPageQuery> = {
   past: { when: 'past', order: 'desc' },
@@ -143,7 +184,7 @@ const LIST_QUERY: Record<ListId, GamesPageQuery> = {
 }
 
 /** A row's height before it has been measured, as each list draws them. */
-const ROW_HEIGHT = { schedule: 140, public: 150, videos: 130 }
+const ROW_HEIGHT = { schedule: 140, videos: 130 }
 
 const gameId = (game: { id: string }): string => game.id
 
@@ -238,9 +279,12 @@ export function SeasonPresentation(
     `member:${season.id}`,
     async query => await client.seasonGamesPage(season.id, query)
   )
-  const publicLists = useSeasonLists<PublicGame>(
+  const publicLists = useSeasonLists<ScheduleGame>(
     `public:${season.id}`,
-    async query => await client.publicGamesPage('season', season.id, query)
+    async query => {
+      const page = await client.publicGamesPage('season', season.id, query)
+      return { ...page, items: page.items.map(publicScheduleGame) }
+    }
   )
   // The latest handler under one identity, so the schedule's cards, kept
   // built across pill changes, are not drawn again for a new one.
@@ -269,17 +313,39 @@ export function SeasonPresentation(
   const handoff = useHandoff(headerHeight)
   const progress = handoff.progress
   const mark = publicDetail?.group.imageUrl ?? season.logoUrl
+  // The season's tile: its league's colour, and its league's picture when it
+  // has none of its own.
+  const leagueId = publicDetail?.group.leagueId ?? season.leagueId
+  const leagueMark =
+    publicDetail?.group.leaguePictureUrl ?? season.leaguePictureUrl
   useHeaderHandoff(
     useMemo(
       () => (
         <HandoffView progress={progress} style={styles.headerHandoff}>
-          <Emblem uri={mark} fallback={initialsOf(season.name)} size={1.75} />
+          <GroupEmblem
+            kind="season"
+            id={season.id}
+            leagueId={leagueId}
+            name={season.name}
+            uri={mark}
+            leagueUri={leagueMark}
+            size={1.75}
+          />
           <Text style={styles.headerName} numberOfLines={1}>
             {season.name}
           </Text>
         </HandoffView>
       ),
-      [mark, progress, season.name, styles.headerHandoff, styles.headerName]
+      [
+        leagueId,
+        leagueMark,
+        mark,
+        progress,
+        season.id,
+        season.name,
+        styles.headerHandoff,
+        styles.headerName
+      ]
     )
   )
 
@@ -579,7 +645,15 @@ export function SeasonPresentation(
       hero={
         <Card style={styles.identity} ref={handoff.ref}>
           <View style={styles.identityTop}>
-            <Emblem uri={mark} fallback={initialsOf(season.name)} size={2.25} />
+            <GroupEmblem
+              kind="season"
+              id={season.id}
+              leagueId={leagueId}
+              name={season.name}
+              uri={mark}
+              leagueUri={leagueMark}
+              size={2.25}
+            />
             <Text style={styles.seasonName}>{season.name}</Text>
             {props.onSettings != null && publicDetail == null ? (
               <ManageGear
@@ -733,19 +807,13 @@ export function SeasonPresentation(
                         : gameCountLabel(countFor(counts, when))
                     }
                   />
-                  {mayView ? (
-                    <SeasonGames
-                      list={memberLists[when]}
-                      footer={props.scheduleActions}
-                      onOpenGame={openGame}
-                    />
-                  ) : (
-                    <PublicGames
-                      list={publicLists[when]}
-                      footer={props.scheduleActions}
-                      onOpenGame={openGame}
-                    />
-                  )}
+                  <SeasonGames
+                    key={mayView ? 'member' : 'public'}
+                    list={mayView ? memberLists[when] : publicLists[when]}
+                    nonMemberView={!mayView}
+                    footer={props.scheduleActions}
+                    onOpenGame={openGame}
+                  />
                 </View>
               </TabPages>
             </View>
@@ -789,6 +857,7 @@ export function SeasonPresentation(
                         columns={battingColumns}
                         onOpen={openPlayer}
                       />
+                      <StatsKey kind="batting" />
                     </Card>
                   )}
                   <SectionHeader
@@ -808,6 +877,7 @@ export function SeasonPresentation(
                         columns={pitchingColumns}
                         onOpen={openPlayer}
                       />
+                      <StatsKey kind="pitching" />
                     </Card>
                   )}
                 </>
@@ -981,22 +1051,38 @@ export function SeasonPresentation(
   )
 }
 
-/** A pill's list of a season's games, for those who may see all of it. */
+/** A pill's list of a season's games, from either access projection. */
 function SeasonGames(props: {
-  list: PagedRows<SeasonGame>
+  list: Pick<
+    PagedRows<ScheduleGame>,
+    | 'rows'
+    | 'loadMore'
+    | 'loading'
+    | 'empty'
+    | 'error'
+    | 'refresh'
+    | 'loadingMore'
+    | 'failed'
+    | 'failedWay'
+    | 'retry'
+  >
+  nonMemberView: boolean
   footer: React.ReactNode
   onOpenGame: SeasonPresentationProps['onOpenGame']
 }): React.ReactElement {
-  const { list, footer, onOpenGame } = props
+  const { list, footer, onOpenGame, nonMemberView } = props
   const { rows, loadMore } = list
   const styles = getStyles(useTheme())
   const renderRow = useCallback(
-    (game: SeasonGame) => (
-      <View style={styles.row}>
+    (game: ScheduleGame) => (
+      <View
+        style={styles.row}
+        testID={nonMemberView ? `public-game-${game.id}` : undefined}
+      >
         <SeasonGameCard game={game} onOpenGame={onOpenGame} />
       </View>
     ),
-    [onOpenGame, styles.row]
+    [onOpenGame, styles.row, nonMemberView]
   )
   return (
     <PagedList
@@ -1011,54 +1097,12 @@ function SeasonGames(props: {
           loadingLabel="Loading games"
           saysFailure={false}
           none={
-            <Card>
-              <Text style={styles.muted}>Nothing here yet.</Text>
-            </Card>
+            nonMemberView ? null : (
+              <Card>
+                <Text style={styles.muted}>Nothing here yet.</Text>
+              </Card>
+            )
           }
-        />
-      }
-      footer={
-        <>
-          <PagedListEnd list={list} />
-          {footer}
-        </>
-      }
-      onEndReached={() => {
-        loadMore().catch(() => undefined)
-      }}
-    />
-  )
-}
-
-/** A pill's list of a season's games, as the public reads them. */
-function PublicGames(props: {
-  list: PagedRows<PublicGame>
-  footer: React.ReactNode
-  onOpenGame: SeasonPresentationProps['onOpenGame']
-}): React.ReactElement {
-  const { list, footer, onOpenGame } = props
-  const { rows, loadMore } = list
-  const styles = getStyles(useTheme())
-  const renderRow = useCallback(
-    (game: PublicGame) => (
-      <View style={styles.row} testID={`public-game-${game.id}`}>
-        <PublicGameCard game={game} onOpenGame={onOpenGame} />
-      </View>
-    ),
-    [onOpenGame, styles.row]
-  )
-  return (
-    <PagedList
-      data={rows}
-      keyOf={gameId}
-      renderItem={renderRow}
-      estimatedItemSize={ROW_HEIGHT.public}
-      empty={
-        <PagedListEmpty
-          list={list}
-          loadingLabel="Loading games"
-          saysFailure={false}
-          none={null}
         />
       }
       footer={
@@ -1135,75 +1179,11 @@ const SeasonVideoCard = memo(function SeasonVideoCard(props: {
         posterUrl={game.posterUrl ?? undefined}
         badgeLabel={game.pendingApproval ? 'Pending approval' : undefined}
         onPress={() => {
-          onOpenGame(game.id, `${lines.first} ${lines.second}`, {
+          onOpenGame(game.id, matchupTitle(lines), {
             autoPlay: true
           })
         }}
       />
-    </Card>
-  )
-})
-
-/** A game on the public schedule, with what a visitor may do with it. */
-const PublicGameCard = memo(function PublicGameCard(props: {
-  game: PublicGame
-  onOpenGame: SeasonPresentationProps['onOpenGame']
-}): React.ReactElement {
-  const { game, onOpenGame } = props
-  const styles = getStyles(useTheme())
-  const options = gameListOptions(game, 'schedule')
-  return (
-    <Card>
-      <View style={styles.publicGameHeader}>
-        <Text style={[styles.name, styles.publicGameMatchup]}>
-          {game.awayTeam.name} at {game.homeTeam.name}
-        </Text>
-        {game.isUmpire === true && game.status !== 'cancelled' && (
-          <Badge label="UMP" tone="umpire" />
-        )}
-        {game.isGameLive === true && game.status !== 'cancelled' && (
-          <Badge label="LIVE" tone="live" />
-        )}
-        {game.pendingApproval && (
-          <Text
-            accessibilityLabel={`Pending approval for ${game.awayTeam.name} at ${game.homeTeam.name}`}
-            style={styles.muted}
-          >
-            Pending approval
-          </Text>
-        )}
-      </View>
-      <Text style={styles.muted}>
-        {shortDate(game.startAt)}
-        {shortTime(game.startAt) === '' ? '' : ` · ${shortTime(game.startAt)}`}
-        {game.venue == null ? '' : ` · ${game.venue}`}
-      </Text>
-      {options?.pendingRequestId != null && (
-        <Button
-          label="Open game proposal"
-          accessibilityLabel={`Open game proposal for ${game.awayTeam.name} at ${game.homeTeam.name}`}
-          kind="secondary"
-          onPress={() => {
-            onOpenGame(
-              game.id,
-              `${game.awayTeam.name} at ${game.homeTeam.name}`,
-              options
-            )
-          }}
-        />
-      )}
-      {!game.pendingApproval && (
-        <Text style={styles.muted}>
-          {game.status === 'cancelled'
-            ? game.cancellationReason === 'withdrawal'
-              ? `Canceled — ${game.withdrawnByTeamName ?? 'A team'} withdrew`
-              : 'Canceled'
-            : game.status}
-          {game.homeScore == null || game.awayScore == null
-            ? ''
-            : ` · ${game.awayScore}–${game.homeScore}`}
-        </Text>
-      )}
     </Card>
   )
 })
@@ -1214,7 +1194,7 @@ const PublicGameCard = memo(function PublicGameCard(props: {
  * worth of rows drawn on every one would hold the next tap up.
  */
 const SeasonGameCard = memo(function SeasonGameCard(props: {
-  game: SeasonGame
+  game: ScheduleGame
   onOpenGame: SeasonPresentationProps['onOpenGame']
 }): React.ReactElement {
   const { game, onOpenGame } = props
@@ -1241,7 +1221,7 @@ const SeasonGameCard = memo(function SeasonGameCard(props: {
           options == null
             ? undefined
             : () => {
-                onOpenGame(game.id, `${lines.first} ${lines.second}`, options)
+                onOpenGame(game.id, matchupTitle(lines), options)
               }
         }
       />
@@ -1284,17 +1264,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.secondaryTextColor
   },
   section: { gap: theme.rem(theme.spaceMdRem) },
-  publicGameHeader: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: theme.rem(theme.spaceSmRem)
-  },
-  publicGameMatchup: { flex: 1 },
-  name: {
-    fontFamily: theme.semiBoldTextFont,
-    fontSize: theme.rem(1),
-    color: theme.primaryTextColor
-  },
   muted: {
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(0.9375),

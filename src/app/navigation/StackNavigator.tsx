@@ -95,6 +95,9 @@ export interface StackNavigatorProps {
    * springing back and running out again once it lands.
    */
   popPending?: () => boolean
+  /** Navigation below the shared header, beside the clipped scenes. */
+  sidebar?: React.ReactNode
+  sidebarWidth?: number
   headerHeight: number
   /** The floating navbar's height, for every scene's screen. */
   navigationHeight?: number
@@ -754,12 +757,22 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
   return (
     <View
       style={styles.container}
-      onLayout={onLayout}
       dataSet={{
         swipeBack: String(onSwipeBack != null),
         predictiveBack: String(gestureBack)
       }}
     >
+      <View style={styles.body}>
+        {props.sidebar != null && (
+          <View style={{ paddingTop: headerHeight }}>{props.sidebar}</View>
+        )}
+        <View
+          testID="navigation-scenes"
+          pointerEvents="none"
+          style={styles.measure}
+          onLayout={onLayout}
+        />
+      </View>
       {ordered.map(({ scene, role, place }) => (
         <SceneFrame
           key={`${scene.key}~${instances.current.get(scene.key) ?? 0}`}
@@ -770,6 +783,7 @@ export function StackNavigator(props: StackNavigatorProps): React.ReactElement {
           q={drag?.progress ?? transition?.progress ?? resting}
           width={width}
           height={height}
+          left={props.sidebarWidth ?? 0}
           z={zOf(place)}
           swipe={role === 'top' && swipeEnabled}
           controls={controls}
@@ -810,6 +824,7 @@ interface SceneFrameProps {
   q: SharedValue<number>
   width: number
   height: number
+  left: number
   z: number
   /** The edge pan, on the top scene of a phone when a drag back is allowed. */
   swipe: boolean
@@ -912,13 +927,20 @@ function SceneFrame(props: SceneFrameProps): React.ReactElement {
       {place === 'lower' && <Animated.View style={[styles.dim, dim]} />}
     </Animated.View>
   )
-  // On the scene itself rather than a view over its edge, which would take a
-  // scroll or a tap that starts there from the content beneath. The browser
-  // owns its edges; there is no edge pan on the web.
-  return Platform.OS === 'web' ? (
-    frame
-  ) : (
-    <GestureDetector gesture={pan}>{frame}</GestureDetector>
+  // Each clip is a sibling of the chrome, so an immersive cover can rise
+  // above it while the outgoing scene stays below. A shared clipping parent
+  // would trap both scenes in one stacking context on web and native.
+  return (
+    <View
+      pointerEvents={inactive ? 'none' : 'box-none'}
+      style={[styles.sceneClip, { left: props.left, zIndex: z }]}
+    >
+      {Platform.OS === 'web' ? (
+        frame
+      ) : (
+        <GestureDetector gesture={pan}>{frame}</GestureDetector>
+      )}
+    </View>
   )
 }
 
@@ -934,6 +956,9 @@ const styles = StyleSheet.create({
     flex: 1,
     overflow: 'hidden'
   },
+  body: { flex: 1, flexDirection: 'row', zIndex: 0 },
+  measure: { flex: 1 },
+  sceneClip: { ...StyleSheet.absoluteFill, overflow: 'hidden' },
   scene: {
     ...StyleSheet.absoluteFill
   },

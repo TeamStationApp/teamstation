@@ -218,7 +218,8 @@ async function main(): Promise<void> {
     await contains(page, 'Confirm')
     await capture(m, artifacts, 'signup-after.png')
     await tap(m, 'Confirm')
-    await page.waitForSelector(`[aria-label="Uma L, ${first.id}:1"]`)
+    // Uma reads her own assignment in full.
+    await page.waitForSelector(`[aria-label="Uma Lee, ${first.id}:1"]`)
     await open('/games/gam_umpire_g1', 'UMPIRES')
     await page.evaluate(() => {
       document

@@ -3,7 +3,7 @@ import { Pressable, Switch, Text, View } from 'react-native'
 
 import type { PublicGroup } from '../../common/publicGroups'
 import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
-import { Emblem, initialsOf, SectionHeader } from '../components'
+import { GroupEmblem, SectionHeader } from '../components'
 import { RadioMark } from '../components/RadioMark'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 
@@ -94,9 +94,11 @@ export function ParentChooser(props: {
                 }}
                 style={({ pressed }) => [styles.row, pressed && styles.pressed]}
               >
-                <Emblem
+                <GroupEmblem
+                  kind="league"
+                  id={league.id}
+                  name={league.name}
                   uri={league.imageUrl}
-                  fallback={initialsOf(league.name)}
                 />
                 <Text style={styles.name}>{league.name}</Text>
                 <RadioMark on={on} />
@@ -127,9 +129,13 @@ export function ParentChooser(props: {
                   pressed && styles.pressed
                 ]}
               >
-                <Emblem
+                <GroupEmblem
+                  kind="season"
+                  id={season.id}
+                  leagueId={season.leagueId}
+                  name={season.name}
                   uri={season.imageUrl}
-                  fallback={initialsOf(season.name)}
+                  leagueUri={season.leaguePictureUrl}
                 />
                 <View style={styles.text}>
                   <Text style={styles.name}>{season.name}</Text>

@@ -83,6 +83,12 @@ export function after(
 export const ball: ScoringAction = { type: 'pitch', call: 'B' }
 export const strike: ScoringAction = { type: 'pitch', call: 'C' }
 export const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+/** The scorer ending the half by hand, as the scoring screen sends it. */
+export const endHalf: ScoringAction = {
+  type: 'gameFlow',
+  kind: 'endHalf',
+  keepAtBat: true
+}
 
 /** Closes a decided play, as the scorer's next action would. */
 export function closed(state: GameState): GameState {

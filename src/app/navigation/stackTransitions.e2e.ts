@@ -267,6 +267,8 @@ async function main(): Promise<void> {
       for (const s of samples)
         await note(`  t=${s.t} ${s.role} ${s.key} x=${s.x} y=${s.y}`)
       assert.ok(held, `${label}: never reached half way`)
+      if (extra != null)
+        assert.ok(!/false|missing/.test(extra), `${label}: ${extra}`)
       tests++
       return samples
     }
@@ -285,12 +287,12 @@ async function main(): Promise<void> {
       await tapCss('[role="button"][aria-label^="Demo Hawks"]')
       await settle('Demo Hawks')
       await tapCss('[aria-label="Team sections"] [aria-label="Team"]')
-      await settle('Alex L')
+      await settle('Alex Lee')
       return await measured(
         'W1 push team → player',
         scenes,
         async () => {
-          await tap(m, 'Alex L')
+          await tap(m, 'Alex Lee')
         },
         before ? 'web-push-before.png' : 'web-push-after.png'
       )
@@ -298,7 +300,7 @@ async function main(): Promise<void> {
 
     if (chosen.has('W1') || chosen.has('W2')) {
       const push = await openTeamPlayer()
-      await settle('Alex L')
+      await settle('Alex Lee')
       if (!before) {
         const incoming = of(push, 'incoming').map(s => s.x)
         const outgoing = of(push, 'outgoing').map(s => s.x)
@@ -339,7 +341,7 @@ async function main(): Promise<void> {
         await tapCss('[role="button"][aria-label^="Demo Hawks"]')
         await settle('Demo Hawks')
         await tapCss('[aria-label="Team sections"] [aria-label="Team"]')
-        await settle('Alex L')
+        await settle('Alex Lee')
         check = async held =>
           await held.evaluate(() => {
             const nav = document.querySelector(
@@ -354,7 +356,7 @@ async function main(): Promise<void> {
             return `wide nav on top=${hit != null && nav.contains(hit)}`
           })
         await measured('W1 push at 1280×800', scenes, async () => {
-          await tap(m, 'Alex L')
+          await tap(m, 'Alex Lee')
         })
         await page.setViewport({
           width: 402,

@@ -36,7 +36,6 @@ import {
 import { MultiCamBar } from './MultiCamBar'
 import { playableHere } from './playable'
 import type { PlayIntent } from './playIntent'
-import { zoneAt, zoneGroup } from './pressGrid'
 import {
   GridScoreboard,
   useGridBoard
@@ -191,8 +190,6 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
     setTrackRect,
     showBar,
     showControls,
-    hideBar,
-    hideControls,
     moveTile,
     dropTile,
     takeElement,
@@ -234,25 +231,13 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         y > over.y + over.h
       )
         return
-      const zone = zoneAt(x, y, over, held.shown ? held.icons : null)
-      // One group at a time, as a tap shows them: moving from the squares
-      // onto the bottom row puts the controls away, and back again the line.
-      // Not while the keyboard is in the bar: hidden, it is inert, and the
-      // focus would go with it.
-      const typing = barRoot.current?.contains(document.activeElement) === true
-      if (zoneGroup(zone) === 'scrub') {
-        showBar()
-        if (!typing) hideControls()
-      } else {
-        showControls()
-        if (!typing) hideBar()
-      }
+      showControls()
     }
     document.addEventListener('pointermove', hover)
     return () => {
       document.removeEventListener('pointermove', hover)
     }
-  }, [showBar, showControls, hideBar, hideControls, frameLeft, frameTop])
+  }, [showControls, frameLeft, frameTop])
 
   /**
    * The keyboard calls the bar up too, and Tab takes the focus into it.
@@ -497,6 +482,7 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
         right={blockRight + gap + (mc.controlsShown ? exitClearance(theme) : 0)}
       />
       <ExitButton
+        onPressStateChange={mc.handleControlsPressed}
         visible={mc.controlsShown}
         onPress={close}
         top={exitTop - gap}
@@ -544,6 +530,8 @@ export function MultiCamView(props: MultiCamViewProps): React.ReactElement {
 
       {mc.take != null && mc.atWallMs != null ? (
         <MultiCamBar
+          onJumpToPresent={mc.anyLive ? mc.jumpToPresent : undefined}
+          onPressStateChange={mc.handleControlsPressed}
           window={mc.take}
           atMs={mc.atWallMs}
           angles={barAngles(mc.take)}

@@ -18,6 +18,7 @@ import { teamEventSchedule } from '../events/eventInfo'
 import type { SchedulePageAsk } from '../events/eventListQuery'
 import { gameIsLive } from '../games/gameLive'
 import { hasScoringEventsSql } from '../games/scoringActivity'
+import { leaguePictures } from '../groups/leaguePictures'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import {
@@ -151,6 +152,11 @@ export function seasonRoutes(
         }
       }
 
+      const leagueLogos = await leaguePictures(
+        db,
+        media.space,
+        seasons.map(season => season.league_id)
+      )
       res.json(
         seasons.map(season => ({
           id: season.id,
@@ -164,6 +170,10 @@ export function seasonRoutes(
           startsOn: season.startsOn,
           endsOn: season.endsOn,
           logoUrl: imageUrl(media.space, season.logo_path),
+          leaguePictureUrl:
+            season.league_id == null
+              ? null
+              : (leagueLogos.get(season.league_id) ?? null),
           ...(counts.get(season.id) ?? { teams: 0, games: 0, videos: 0 })
         }))
       )

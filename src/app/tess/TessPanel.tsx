@@ -19,7 +19,7 @@ export interface TessPanelProps {
   onClose: () => void
   /** An app path from a link or a way bubble in the chat. */
   onNavigate: (path: string) => void
-  /** What the right pane shows, sent with each message on a wide screen. */
+  /** Content beside Tess, sent with each message on a wide screen. */
   screen?: () => TessScreen | undefined
   /**
    * The microphone's socket, audio and timings, replaced in tests; `tapMs`

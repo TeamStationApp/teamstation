@@ -17,6 +17,7 @@ import {
   asPlayerNamePrivacy,
   DEFAULT_PLAYER_NAME_PRIVACY
 } from './playerNamePrivacy'
+import { asPlayingTimeRules } from './playingTimeRules'
 import { asRole } from './roles'
 
 const nullable =
@@ -35,7 +36,13 @@ export const asPublicGroup = asObject({
   external: asOptional(asBoolean, false),
   parentNames: asOptional(asArray(asString), []),
   /** A season's or team's parent league, so a picker can keep to one. */
-  leagueId: asOptional(nullable(asString), null)
+  leagueId: asOptional(nullable(asString), null),
+  /**
+   * A season's league's picture, signed, which the season is drawn with when
+   * it has none of its own; null for a team or a league, and absent on older
+   * servers.
+   */
+  leaguePictureUrl: asOptional(nullable(asString), null)
 })
 export type PublicGroup = ReturnType<typeof asPublicGroup>
 /**
@@ -77,6 +84,11 @@ export const asPublicGame = withEventMetadata(
 )
 export type PublicGame = ReturnType<typeof asPublicGame>
 const cleanPublicStaff = asObject({
+  /**
+   * Their account, whose id picks their tile's colour (`personTint`); empty
+   * from an older server, which sent none.
+   */
+  userId: asOptional(asString, ''),
   name: asString,
   roles: asArray(asString),
   avatarUrl: asOptional(nullable(asString), null),
@@ -154,6 +166,24 @@ export const asGroupDetail = asObject({
       })
     ),
     () => []
+  ),
+  /**
+   * A season's or team's own Playing Time Rules, for its administrators
+   * only: null is none on a season, and on a team follows its season's.
+   */
+  playingTimeRules: asOptional(nullable(asPlayingTimeRules), null),
+  /**
+   * For a team's administrators: the rules of the managing season it
+   * follows, the latest-starting one that has rules, or null for none.
+   */
+  seasonPlayingTimeRules: asOptional(
+    nullable(
+      asObject({
+        season: asObject({ id: asString, name: asString }),
+        rules: asPlayingTimeRules
+      })
+    ),
+    null
   )
 })
 export type GroupDetail = ReturnType<typeof asGroupDetail>

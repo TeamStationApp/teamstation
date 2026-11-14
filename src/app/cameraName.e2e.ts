@@ -309,20 +309,28 @@ describe('web camera management on Videos', function () {
   })
   it('E11 reads the server game limit and frees a slot after End', async function () {
     const game = games[2]
-    for (const client of [owner, second])
-      for (let n = 0; n < 3; n++)
-        await client.addLiveStream(
-          game,
-          `${client === owner ? 'Home' : 'Third'} ${n}`,
-          { source: 'rtmp' }
-        )
+    const { maxGameCameras, mine, others } = await owner.liveStreams(game)
+    expect(maxGameCameras).to.be.a('number')
+    expect([...mine, ...others], 'an empty game').deep.equals([])
+    // Both people add cameras in turn up to the game's limit.
+    for (let n = 0; n < maxGameCameras!; n++) {
+      const client = n % 2 === 0 ? owner : second
+      await client.addLiveStream(
+        game,
+        `${client === owner ? 'Home' : 'Third'} ${Math.floor(n / 2)}`,
+        { source: 'rtmp' }
+      )
+    }
+    const listed = await owner.liveStreams(game)
+    expect(listed.gameCanAdd).equals(0)
+    expect(listed.others, 'cameras of more than one person').not.deep.equals([])
     const page = await open(browser, owner, game)
     pages.push(page)
-    await waitForCameraLimit(page, true)
+    await waitForCameraLimit(page, maxGameCameras)
     await shot(page, 'full-after')
     const camera = (await owner.liveStreams(game)).mine[0]
     await owner.endLiveStream(game, camera.id)
-    await waitForCameraLimit(page, false)
+    await waitForCameraLimit(page, undefined)
     await click(page, 'record-video')
     await page.waitForSelector(id('angle-name-prompt'))
   })

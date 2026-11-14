@@ -41,13 +41,13 @@ run('node_modules/.bin/mocha', [
   './src/test/scoringDomSetup.cjs',
   'lib/builds-tests.cjs',
   'src/common/distribution.test.ts',
-  'src/common/buildInfoGenerator.test.ts',
+  'src/common/buildInfoGenerator.integration.test.ts',
   'src/app/navigation/routes.test.ts'
 ])
 run('node_modules/.bin/mocha', [
   '-r',
   'sucrase/register',
-  'src/server/oauth/oauth.test.ts',
+  'src/server/oauth/oauth.integration.test.ts',
   'src/server/openapi.test.ts'
 ])
 // Migration tests run separately: application database setup changes pg's
@@ -55,8 +55,8 @@ run('node_modules/.bin/mocha', [
 run('node_modules/.bin/mocha', [
   '-r',
   'sucrase/register',
-  'src/migrate/runner.test.ts',
-  'src/migrate/upgrade.test.ts'
+  'src/migrate/runner.integration.test.ts',
+  'src/migrate/upgrade.integration.test.ts'
 ])
 for (const file of readdirSync(temp)) {
   const location = resolve(temp, file)

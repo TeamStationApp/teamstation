@@ -1,5 +1,7 @@
-// Runs the unit tests, as `npm test` does: every `src/**/*.test.ts` file and
-// the app's `.test.tsx` files. Arguments after the script go to mocha
+// Runs one tier of the mocha suites (scripts/testTiers.mjs): `--tier unit`, the
+// default and what `npm test` runs, or `--tier integration`, what
+// `npm run test.integration` runs. Each tier is its `.test.ts` files and the
+// app's `.test.tsx` files of that tier. Other arguments go to mocha
 // (`--grep` …).
 //
 // The files are split into groups of about GROUP_BYTES of test source, each a
@@ -13,11 +15,17 @@
 // default); TS_TEST_JOBS=1 runs one group at a time. A group's output prints
 // when it ends, and the run ends with the totals and the groups that failed.
 //
-// The files in SERIAL time real FFmpeg writers against the wall clock, so they
-// run after the rest, alone, on a machine nothing else is loading.
+// The integration files in SERIAL time real FFmpeg writers against the wall
+// clock, so they run after the rest, alone, on a machine nothing else is
+// loading.
 import { spawn, spawnSync } from 'node:child_process'
-import { globSync, readFileSync, statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { availableParallelism, totalmem } from 'node:os'
+
+import { specFiles, tierOptions, withoutTier } from './testTiers.mjs'
+
+const tier = tierOptions(process.argv.slice(2))
+const mochaArgs = withoutTier(process.argv.slice(2))
 
 const jobs = Number(
   process.env.TS_TEST_JOBS ?? Math.max(1, availableParallelism() - 1)
@@ -28,24 +36,19 @@ if (!Number.isInteger(jobs) || jobs < 1)
 /** A group's test source: small groups share out evenly and stay light. */
 const GROUP_BYTES = 400_000
 
-const SERIAL = [
-  'src/server/live/codecHold.test.ts',
-  'src/server/live/mismatchedPublish.test.ts'
-]
-
 const built = spawnSync(
   process.execPath,
-  ['scripts/build-scoring-tests.mjs', `--chunk-bytes=${GROUP_BYTES}`],
+  [
+    'scripts/build-scoring-tests.mjs',
+    `--chunk-bytes=${GROUP_BYTES}`,
+    `--tier=${tier.tier}`
+  ],
   { stdio: 'inherit' }
 )
 if (built.status !== 0) process.exit(built.status ?? 1)
 
 const chunks = JSON.parse(readFileSync('lib/scoring-tests-chunks.json', 'utf8'))
-const specs = globSync('src/**/*.test.ts', {
-  exclude: path => path.split(/[\\/]/).includes('node_modules')
-})
-  .filter(file => !SERIAL.includes(file))
-  .sort()
+const specs = specFiles(tier.tier)
 
 /** Consecutive files, about GROUP_BYTES of them to a group. */
 const groups = []
@@ -82,7 +85,7 @@ const heapMb = Math.min(
   Math.max(2048, Math.floor(((totalmem() / 2 ** 20) * 0.6) / jobs))
 )
 const env = {
-  ...process.env,
+  ...tier.env,
   NODE_OPTIONS: [
     ...(process.env.NODE_OPTIONS ?? '')
       .split(/\s+/)
@@ -108,7 +111,8 @@ async function runGroup(task) {
       'sucrase/register',
       '-r',
       './src/test/scoringDomSetup.cjs',
-      ...process.argv.slice(2),
+      ...tier.require.flatMap(module => ['-r', module]),
+      ...mochaArgs,
       ...task.files
     ],
     { env, stdio: ['ignore', 'pipe', 'pipe'] }
@@ -138,11 +142,15 @@ await Promise.all(
       await runGroup(task)
   })
 )
-await runGroup({ name: `run alone: ${SERIAL.join(', ')}`, files: SERIAL })
+if (tier.serial.length > 0)
+  await runGroup({
+    name: `run alone: ${tier.serial.join(', ')}`,
+    files: tier.serial
+  })
 
 process.stdout.write(
-  `\n${totals.passing} passing, ${totals.failing} failing, ` +
-    `${totals.pending} pending, in ${tasks.length + 1} groups\n`
+  `\n${tier.tier}: ${totals.passing} passing, ${totals.failing} failing, ` +
+    `${totals.pending} pending, in ${tasks.length + (tier.serial.length > 0 ? 1 : 0)} groups\n`
 )
 for (const line of failed) process.stdout.write(`failed: ${line}\n`)
 process.exit(failed.length === 0 ? 0 : 1)

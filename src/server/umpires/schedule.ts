@@ -31,9 +31,11 @@ import { canAdminister, requireGroupAdmin } from '../groups/rights'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
 import { inListOrder, pageAround, pageOfHeld } from '../schedule/scheduleCursor'
+import type { Reader } from '../users/readerNames'
 import { levels } from './admin'
 import { umpireAffiliations } from './affiliations'
 import {
+  readerUmpireNames,
   umpireFamily,
   type UmpireIdentity,
   umpireIdentity,
@@ -114,12 +116,17 @@ export async function involvedSeasons(
     .distinct()
     .execute()
 }
+/**
+ * The league's umpire schedule as `actor` sees it. The people it names are
+ * short, except those a `reader` (passed by a read alone) may read in full.
+ */
 export async function schedule(
   db: Kysely<Database>,
   actor: Actor,
   leagueId: string,
   view: 'umpire' | 'league' | 'schedule',
-  filters: UmpireFilters
+  filters: UmpireFilters,
+  reader?: Reader
 ): Promise<UmpireSchedule> {
   const isAdmin = await umpireAccess(db, actor, leagueId, view)
   if (filters.priorSeasons != null && view !== 'schedule')
@@ -467,6 +474,23 @@ export async function schedule(
       })
     rows.push(row)
   }
+  const names = await readerUmpireNames(
+    db,
+    reader,
+    [...allPeople.values()].map(p => p.named)
+  )
+  if (names.size > 0)
+    for (const row of rows) {
+      const named = <T extends { userId: string; name: string }>(p: T): T => ({
+        ...p,
+        name: names.get(p.userId) ?? p.name
+      })
+      for (const [slot, held] of Object.entries(row.assignments))
+        row.assignments[slot] = named(held)
+      row.conflicts = row.conflicts.map(named)
+      for (const [slot, choices] of Object.entries(row.choices))
+        row.choices[slot] = choices.map(named)
+    }
   return {
     settings: {
       management: league.umpire_management,
@@ -496,9 +520,17 @@ export async function umpireSchedulePage(
   leagueId: string,
   view: 'umpire' | 'schedule',
   filters: UmpireFilters,
-  ask: Pick<ParsedEventList, 'cursor' | 'around' | 'limit'>
+  ask: Pick<ParsedEventList, 'cursor' | 'around' | 'limit'>,
+  reader?: Reader
 ): Promise<UmpireSchedulePage> {
-  const { games, ...head } = await schedule(db, actor, leagueId, view, filters)
+  const { games, ...head } = await schedule(
+    db,
+    actor,
+    leagueId,
+    view,
+    filters,
+    reader
+  )
   const rows = inListOrder(games, 'asc')
   // `paged` always has one.
   const limit = ask.limit!

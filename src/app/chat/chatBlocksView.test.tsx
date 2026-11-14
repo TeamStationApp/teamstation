@@ -6,7 +6,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import type { ChatBlock } from '../../common/api'
 import type { ChatSocketListener } from '../../common/gameSocket'
 import { userIdOfGumbo } from '../../common/userId'
-import { ThemeProvider } from '../theme/ThemeContext'
+import { rowTextColor } from '../../test/gameFormDom'
+import { ScopedThemeProvider, ThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import { BlockedPeople } from './BlockedPeople'
 import {
   ChatBlockConfirmation,
@@ -365,6 +367,36 @@ describe('block and report controls', () => {
     expect(reads).equals(3)
     expect(document.body.textContent).contains('You have not blocked anyone')
     expect(document.body.textContent).not.contains(person.shortName)
+  })
+  it('keeps blocked people and the profile row readable on a dark card', async () => {
+    await render(
+      <ScopedThemeProvider theme={tsDark}>
+        <BlockedPeople
+          client={{
+            chatBlocks: async () => [person],
+            setChatBlock: async () => []
+          }}
+          onClose={() => {}}
+        />
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor(person.shortName)).equals('rgb(31, 36, 24)')
+    await render(
+      <ScopedThemeProvider theme={tsDark}>
+        <SafetyNumberScreen
+          engine={{
+            safetyNumber: async () => undefined,
+            isBlocked: () => false,
+            setBlocked: async () => {}
+          }}
+          userId={person.userId}
+          name={person.shortName}
+          onDone={() => {}}
+        />
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor(person.shortName)).equals('rgb(31, 36, 24)')
+    expect(button('Block Fixture Peer')).not.equals(undefined)
   })
   it('offers block and unblock from the chat person profile', async () => {
     let blocked = false

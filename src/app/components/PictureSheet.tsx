@@ -7,12 +7,13 @@ import type { pickAccountPhoto } from '../platform/pickAccountPhoto'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 import { CancelAction } from './CancelAction'
-import { GroupPictureChooser } from './GroupPictureChooser'
+import { GroupPictureChooser, type PictureOwner } from './GroupPictureChooser'
 
 export function PictureSheet({
   client,
   name,
-  team = false,
+  group,
+  person,
   fitInitials = false,
   allowCatalog = false,
   pickPhoto,
@@ -21,13 +22,12 @@ export function PictureSheet({
 }: {
   client: TeamStationClient
   name: string
-  team?: boolean
   fitInitials?: boolean
   allowCatalog?: boolean
   pickPhoto?: typeof pickAccountPhoto
   onSave: (choice: GroupPicture) => Promise<void>
   onClose: () => void
-}): React.ReactElement {
+} & PictureOwner): React.ReactElement {
   const styles = getStyles(useTheme())
   const [choice, setChoice] = useState<GroupPicture>()
   const [busy, setBusy] = useState(false)
@@ -73,7 +73,7 @@ export function PictureSheet({
             <GroupPictureChooser
               client={client}
               name={name}
-              team={team}
+              {...(person != null ? { person } : { group })}
               fitInitials={fitInitials}
               allowCatalog={allowCatalog}
               pickPhoto={pickPhoto}

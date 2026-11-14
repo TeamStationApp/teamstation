@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Text, View } from 'react-native'
 
 import type { ManagePage, TeamStationClient } from '../../common/api'
-import { DangerText, Emblem, initialsOf, SectionHeader } from '../components'
+import { DangerText, PersonEmblem, SectionHeader } from '../components'
 import { ActionList, ActionRow } from '../components/ActionRow'
 import { useConfirmedAction } from '../components/useConfirmedAction'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -64,10 +64,10 @@ export function ManagePlayers({
             title={person.displayName}
             detail={person.emails.join(' · ')}
             leading={
-              <Emblem
+              <PersonEmblem
+                userId={person.userId}
+                name={person.displayName}
                 uri={pictures[String(person.userId)]}
-                fallback={initialsOf(person.displayName)}
-                shape="circle"
               />
             }
             end={

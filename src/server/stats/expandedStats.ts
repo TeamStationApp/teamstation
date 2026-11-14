@@ -1,6 +1,15 @@
 import { normalizeEventType } from '../../common/gumboEventTypes'
 import type { GumboPlay } from '../../common/gumboPlay'
-import { emptyStatExtras, type StatExtras } from '../../common/statExtras'
+import {
+  isRecordedPitch,
+  pitchStrike,
+  strikeoutLooking
+} from '../../common/pitchStrike'
+import {
+  addStatCount,
+  emptyStatExtras,
+  type StatExtras
+} from '../../common/statExtras'
 import { battingTeamForHalf, type GameTeams } from '../events/eventWrite'
 import {
   type ChargedPlay,
@@ -39,7 +48,11 @@ export function expandedGameStatLines(
 ):
   | { kind: 'lines'; lines: ExpandedGameLine[] }
   | { kind: 'incomplete'; detail: string } {
-  const base = gameStatLines(plays, teams, knownGumboIds, charged)
+  const charges = new Map<GumboPlay, ChargedPlay>()
+  const base = gameStatLines(plays, teams, knownGumboIds, entry => {
+    charges.set(plays[entry.playIndex], entry)
+    charged?.(entry)
+  })
   if (base.kind === 'incomplete') return base
   const lines = new Map<number, ExpandedGameLine>(
     base.lines.map(line => [
@@ -197,16 +210,27 @@ export function expandedGameStatLines(
     if (counts?.ab === true && pitcher?.pitchAb != null) pitcher.pitchAb++
     for (const event of pitches) {
       const extra = appear(idOf(event.player) ?? moundAt(event.index))
+      if (!isRecordedPitch(doc(event.details))) continue
       if (extra?.pitches != null) extra.pitches++
+      if (extra != null)
+        extra.strikes = addStatCount(
+          extra.strikes,
+          pitchStrike(doc(event.details))
+        )
     }
-    if (!Array.isArray(play.playEvents) && pitcher != null)
+    if (!Array.isArray(play.playEvents) && pitcher != null) {
       pitcher.pitches = null
-    if (counts?.k === true && pitcher != null) {
-      const last = pitches[pitches.length - 1]
-      const details = doc(last?.details)
-      const call = doc(details.call).code ?? details.code
-      if (typeof call !== 'string') pitcher.kl = null
-      else if (call === 'C' && pitcher.kl != null) pitcher.kl++
+      pitcher.strikes = null
+    }
+    if (counts?.k === true) {
+      const looking = strikeoutLooking(
+        doc(pitches[pitches.length - 1]?.details),
+        play.result.description
+      )
+      const owner = lines.get(charges.get(play)?.batterId ?? -1)?.extra
+      if (owner != null)
+        owner.battingKl = addStatCount(owner.battingKl, looking)
+      if (pitcher != null) pitcher.kl = addStatCount(pitcher.kl, looking)
     }
 
     const battery = new Set<string>()

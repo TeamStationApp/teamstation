@@ -112,6 +112,10 @@ export async function createDictatedPlayers(
       ...player,
       fullName: entry.shortName,
       ...(entry.nameFormat == null ? {} : { nameFormat: entry.nameFormat }),
+      ...(entry.compactName == null ? {} : { compactName: entry.compactName }),
+      ...(entry.compactFormat == null
+        ? {}
+        : { compactFormat: entry.compactFormat }),
       local: command.placeholder === true
     })
   }

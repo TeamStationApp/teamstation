@@ -1,8 +1,9 @@
 import { asArray } from 'cleaners'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import {
   asRosterCandidate,
+  ROSTER_CANDIDATE_MAX,
   type RosterCandidate,
   type TeamStationClient
 } from '../../common/api'
@@ -10,26 +11,26 @@ import { HttpError } from '../../common/errors'
 import { candidatesKey } from '../sync/documentKeys'
 import { useDebouncedValue } from './useDebouncedValue'
 
-/** Rows asked for at a time; a shorter page is the last. */
-export const CANDIDATE_PAGE = 30
 /** How long typing must pause before the server is asked. */
 export const CANDIDATE_DEBOUNCE_MS = 500
 
 export interface RosterCandidates {
   rows: RosterCandidate[]
-  /** The first page of the current search is on its way. */
+  /** The current search's answer is on its way, with nothing shown yet. */
   loading: boolean
-  /** A further page is on its way. */
-  loadingMore: boolean
-  /** Why the last page failed; the rows already shown stay. */
+  /** The server's answer is on its way under the phone's rows. */
+  updating: boolean
+  /** Why the search failed; the phone's rows shown stay. */
   error?: string
-  /** Every row the search has is shown. */
-  ended: boolean
+  /**
+   * The server answered as many as one search answers
+   * (`ROSTER_CANDIDATE_MAX`): more may match, and typing more narrows them.
+   */
+  capped: boolean
   /** The client cannot reach the server, so nothing is asked. */
   offline: boolean
   /** The settled search the rows answer. */
   query: string
-  loadMore: () => void
   retry: () => void
 }
 
@@ -118,7 +119,8 @@ function problemOf(error: unknown): string {
 /**
  * The players a roster manager may add to `teamId` (and, with `gameId`, to
  * its side of that game), nearest first, searched by `query` once typing
- * pauses for half a second, 30 at a time. Both the scoring sheet and the
+ * pauses for half a second: one request per search, whose answer of at most
+ * `ROSTER_CANDIDATE_MAX` is the list, with no further pages. Both the scoring sheet and the
  * team's Add Player scene draw it.
  *
  * Each settled search aborts the one before it, and an answer for anything
@@ -130,8 +132,8 @@ function problemOf(error: unknown): string {
  * once, and the server's matches join them when they come. With no signal
  * the phone's are the list, and the search is not `offline`. Nobody in
  * `excluded` (by user id: those already on the team's roster or in the
- * game) is listed, since the phone's kept rows, and a server page read
- * before an add landed, may still hold him.
+ * game) is listed, since the phone's kept rows, and an answer read before an
+ * add landed, may still hold him.
  */
 export function useRosterCandidates({
   client,
@@ -182,8 +184,6 @@ export function useRosterCandidates({
   const cachedRows = cacheFirst
     ? kept.filter(candidate => candidateMatches(candidate, typed))
     : []
-  /** The cursor of the server's last row, which a further page follows. */
-  const serverCursor = useRef<string | undefined>(undefined)
   useEffect(() => {
     setOffline(client.offline)
     return client.subscribeOffline(setOffline)
@@ -191,81 +191,54 @@ export function useRosterCandidates({
 
   const [rows, setRows] = useState<RosterCandidate[]>([])
   const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string>()
-  const [failedPage, setFailedPage] = useState<'first' | 'more'>()
-  const [ended, setEnded] = useState(false)
   const [attempt, setAttempt] = useState(0)
-  /** The search in flight; a page for any other is dropped. */
-  const current = useRef<AbortController | null>(null)
-  const more = useRef(false)
-  /** The current search's first page is still on its way. */
-  const first = useRef(false)
-  const latest = useRef({ rows, ended, settled })
-  latest.current = { rows, ended, settled }
 
   useEffect(() => {
     if (offline) return
     if (cacheFirst && phoneOffline) {
       // The phone's people are the whole list until the signal is back.
-      current.current = null
       setRows([])
       setLoading(false)
-      setLoadingMore(false)
       setError(undefined)
-      setEnded(true)
       return
     }
     const controller = new AbortController()
-    current.current = controller
-    more.current = false
-    // A further page follows this search's own rows, never the last one's.
-    serverCursor.current = undefined
-    first.current = true
+    let current = true
     setLoading(true)
-    setLoadingMore(false)
     setError(undefined)
-    setFailedPage(undefined)
     setRows([])
-    setEnded(false)
     client
       .rosterCandidates({
         teamId,
         gameId,
         q: settled,
-        limit: CANDIDATE_PAGE,
+        // It draws `capped` when the answer is full.
+        capped: true,
         signal: controller.signal
       })
       .then(
-        page => {
-          if (current.current !== controller) return
-          first.current = false
-          keepFound(client, teamId, page)
-          serverCursor.current = page[page.length - 1]?.cursor
-          setRows(page)
-          setEnded(page.length < CANDIDATE_PAGE)
+        found => {
+          if (!current) return
+          keepFound(client, teamId, found)
+          setRows(found)
           setLoading(false)
         },
         (caught: unknown) => {
-          if (current.current !== controller) return
-          first.current = false
+          if (!current) return
+          setLoading(false)
           // With the phone's people shown, no signal is no failure.
           if (
             cacheFirst &&
             caught instanceof HttpError &&
             caught.code === 'offline'
-          ) {
-            setEnded(true)
-            setLoading(false)
+          )
             return
-          }
           setError(problemOf(caught))
-          setFailedPage('first')
-          setLoading(false)
         }
       )
     return () => {
-      if (current.current === controller) current.current = null
+      current = false
       controller.abort()
     }
   }, [
@@ -279,59 +252,9 @@ export function useRosterCandidates({
     phoneOffline
   ])
 
-  const loadMore = useCallback((): void => {
-    const controller = current.current
-    const { rows: shown, ended: done, settled: q } = latest.current
-    const after = cacheFirst
-      ? serverCursor.current
-      : shown[shown.length - 1]?.cursor
-    if (
-      controller == null ||
-      first.current ||
-      more.current ||
-      done ||
-      after == null
-    )
-      return
-    more.current = true
-    setLoadingMore(true)
-    setError(undefined)
-    setFailedPage(undefined)
-    client
-      .rosterCandidates({
-        teamId,
-        gameId,
-        q,
-        after,
-        limit: CANDIDATE_PAGE,
-        signal: controller.signal
-      })
-      .then(
-        page => {
-          if (current.current !== controller) return
-          keepFound(client, teamId, page)
-          if (page.length > 0)
-            serverCursor.current = page[page.length - 1].cursor
-          setRows(previous => [...previous, ...page])
-          setEnded(page.length < CANDIDATE_PAGE)
-        },
-        (caught: unknown) => {
-          if (current.current !== controller) return
-          setError(problemOf(caught))
-          setFailedPage('more')
-        }
-      )
-      .finally(() => {
-        if (current.current !== controller) return
-        more.current = false
-        setLoadingMore(false)
-      })
-  }, [client, teamId, gameId, cacheFirst])
-
   const retry = useCallback((): void => {
-    if (failedPage === 'more') loadMore()
-    else setAttempt(count => count + 1)
-  }, [failedPage, loadMore])
+    setAttempt(count => count + 1)
+  }, [])
 
   // The server's rows first, nearest first, then the phone's it has not
   // listed; the phone's alone while the server's are on their way.
@@ -343,13 +266,12 @@ export function useRosterCandidates({
   return {
     rows: shownRows,
     loading: loading && shownRows.length === 0,
-    // The server's first page still coming under the phone's rows.
-    loadingMore: loadingMore || (loading && shownRows.length > 0),
+    // The server's answer still coming under the phone's rows.
+    updating: loading && shownRows.length > 0,
     error,
-    ended,
+    capped: !loading && rows.length >= ROSTER_CANDIDATE_MAX,
     offline,
     query: settled,
-    loadMore,
     retry
   }
 }

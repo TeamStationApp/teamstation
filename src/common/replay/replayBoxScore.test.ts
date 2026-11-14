@@ -45,7 +45,7 @@ describe('replay box score', function () {
       'Anthony R',
       'Gleyber T',
       'Anthony V',
-      'Luis Ga',
+      'Luis G',
       'Jose T',
       'Harrison B',
       'Gerrit C'
@@ -63,6 +63,32 @@ describe('replay box score', function () {
     expect(box.from).equals(null)
   })
 
+  it('keeps strikes unknown when pitch totals include unrecorded starting pitches', async function () {
+    const timeline = replayTimelineOf(await finalGame(), context)
+    const empty = structuredClone(timeline.start)
+    const id = home(8)
+    empty.liveData.boxscore.teams.home.pitchCounts[id] = 40
+    const seeded = replayBoxScore(empty)
+    expect(seeded.home.pitching.find(line => line.id === id)).includes({
+      pc: 40,
+      strikes: null
+    })
+    expect(pitchingTotals(seeded.home.pitching).strikes).equals(null)
+
+    const played = structuredClone(timeline.end)
+    const recorded = replayBoxScore(played).home.pitching.find(
+      line => line.id === id
+    )!
+    expect(recorded.strikes).a('number').greaterThan(0)
+    played.liveData.boxscore.teams.home.pitchCounts[id] += 40
+    const partial = replayBoxScore(played)
+    expect(partial.home.pitching.find(line => line.id === id)).includes({
+      pc: recorded.pc! + 40,
+      strikes: null
+    })
+    expect(pitchingTotals(partial.home.pitching).strikes).equals(null)
+  })
+
   it('puts substitutes under the slot they entered and pitchers in the order they pitched', async function () {
     const timeline = replayTimelineOf(await finalGame(), context)
     const box = replayBoxScore(timeline.end)
@@ -73,11 +99,11 @@ describe('replay box score', function () {
       ['Harrison B', false],
       ['Giancarlo S', true],
       ['Gerrit C', false],
-      ['Luis Gi', true]
+      ['Luis G', true]
     ])
     // Gil got more outs than Cole and is still listed after him; Stanton
     // never pitched and is not listed as a pitcher.
-    expect(names(box.away.pitching)).deep.equals(['Gerrit C', 'Luis Gi'])
+    expect(names(box.away.pitching)).deep.equals(['Gerrit C', 'Luis G'])
     expect(box.away.pitching.map(line => line.ip)).deep.equals(['0.2', '1.1'])
     // Volpe's run, after Betts's error, is unearned to Glasnow.
     expect(box.home.pitching[0]).includes({
@@ -140,28 +166,30 @@ describe('replay box score', function () {
       'Anthony R',
       'Gleyber T',
       'Anthony V',
-      'Luis Ga',
+      'Luis G',
       'Jose T',
       'Harrison B',
       'Giancarlo S',
       'Gerrit C',
-      'Luis Gi'
+      'Luis G'
     ])
     expect(names(box.away.batting.filter(line => line.sub))).deep.equals([
       'Giancarlo S',
-      'Luis Gi'
+      'Luis G'
     ])
     expect(names(box.away.pitching)).deep.equals([
       'Gerrit C',
-      'Luis Gi',
-      'Luis Ga'
+      'Luis G',
+      'Luis G'
     ])
   })
 
-  it('tells two players with the same short name apart', async function () {
+  it('writes two players who share a short name the same, each on his own line', async function () {
     const timeline = replayTimelineOf(await finalGame(), context)
     const box = replayBoxScore(timeline.end)
-    expect(names(box.away.batting)).to.include.members(['Luis Ga', 'Luis Gi'])
+    const twins = box.away.batting.filter(line => line.name === 'Luis G')
+    expect(twins).length(2)
+    expect(new Set(twins.map(line => line.id)).size).equals(2)
   })
 
   it('marks who is at the plate and on the mound in the middle of a game', async function () {
@@ -240,6 +268,8 @@ describe('the replay box score totals', function () {
     bb: 1,
     k: 2,
     pc: 20,
+    hbp: 1,
+    strikes: 12,
     current: false,
     ...figures
   })
@@ -262,6 +292,17 @@ describe('the replay box score totals', function () {
     })
   })
 
+  it('keeps zero counts and propagates unavailable totals independently', function () {
+    expect(pitchingTotals([])).includes({ pc: 0, strikes: 0, hbp: 0 })
+    expect(
+      pitchingTotals([pitcher(1, 0), pitcher(2, 0, { strikes: null })])
+    ).includes({ pc: 40, strikes: null, hbp: 2 })
+    expect(pitchingTotals([pitcher(1, 0, { pc: null, hbp: null })])).includes({
+      pc: null,
+      strikes: 12,
+      hbp: null
+    })
+  })
   it('adds innings as outs, and the other pitching columns as they are', function () {
     expect(
       pitchingTotals([pitcher(1, 4), pitcher(2, 5, { er: 1, pc: 31 })])
@@ -273,7 +314,9 @@ describe('the replay box score totals', function () {
       er: 1,
       bb: 2,
       k: 4,
-      pc: 51
+      pc: 51,
+      hbp: 2,
+      strikes: 24
     })
   })
 })

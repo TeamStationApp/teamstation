@@ -11,10 +11,13 @@ import { narrationsFor } from '../server/replay/narrationAudio'
 import { groupFixture } from '../test/groupFixtures'
 import {
   COACH,
+  PARENT,
   SCOREKEEPER,
   seedPrivacyGame,
+  SPRING_COACH,
   STRANGER,
-  TEAMMATE
+  TEAMMATE,
+  TROUT
 } from '../test/playerNamePrivacyFixture'
 import {
   absent,
@@ -34,10 +37,21 @@ import {
 
 /**
  * The finished app: an administrator sets player name privacy from the wheel
- * on each level's settings, and the public names follow it.
+ * on each level's settings, and the public names follow it. A reader who may
+ * read a player's full name reads it in full — Demo Hawks' coach on the
+ * roster, the box score and his game screen, Alex's parent on Alex's page —
+ * while a stranger, the scoring diamond and everything that leaves the
+ * reader (the board, Tess, narration) keep the short name (E1–E5). Spring's
+ * coach reads Mike Trout, a member of Spring who plays on none of its teams,
+ * in full, and is still refused the name's halves, which are for editing
+ * (P1).
  *
  * Run once with `TS_PRIVACY_BEFORE=1` on the base branch for the before
- * screenshots, and again without it.
+ * screenshots, and again without it:
+ *
+ *   npm run build.web
+ *   MAESTRO_D_BIN=... TS_MAESTRO_D_CLIENT=... TS_CREATION_ARTIFACTS=<dir> \
+ *     node -r sucrase/register src/app/playerNamePrivacy.e2e.ts
  */
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Set TS_CREATION_ARTIFACTS')
@@ -88,6 +102,12 @@ async function main(): Promise<void> {
     await open(path, text)
     await capture(m, artifacts!, file)
   }
+  /** What a teammate, who may read no full name, sees; then the admin again. */
+  const publicly = async (read: () => Promise<void>): Promise<void> => {
+    await signIn(TEAMMATE)
+    await read()
+    await signIn(101)
+  }
   const LEAGUE = `/groups/league/${f.leagueA}/settings`
   const SPRING = `/groups/season/${f.seasonA}/settings`
   const FALL = `/groups/season/${f.playoffs}/settings`
@@ -95,6 +115,14 @@ async function main(): Promise<void> {
   const TEAM = `/groups/team/${f.teamA}/settings`
   const ROSTER = `/teams/${f.teamA}?tab=team`
   const PLAYER = `/players/${userIdOfGumbo(ALEX)}`
+  const BOX = `/games/${gameId}?tab=boxScore`
+  /** The coach's own game screen, on its Lineup tab: `1. <name>` bats first. */
+  const coachGame = async (name: string, file: string): Promise<void> => {
+    await open(`/games/${gameId}/coach/${f.teamA}`, 'Batting — Demo Hawks')
+    await m.tapOn({ css: '[aria-label="Lineup"]' })
+    await contains(page, `1. ${name}`)
+    await capture(m, artifacts!, file)
+  }
 
   /** The wheel of the settings page open: spins to `stop` and presses Use. */
   const choose = async (row: string, stop: number): Promise<void> => {
@@ -115,6 +143,8 @@ async function main(): Promise<void> {
     await contains(page, text)
   }
 
+  /** The status of the last `logged` read. */
+  let lastStatus = 0
   /** One read, as a `$` line and its answer, with no secrets. */
   const logged = async (
     file: string,
@@ -132,26 +162,31 @@ async function main(): Promise<void> {
       }
     })
     const body = await answer.text()
+    lastStatus = answer.status
     await appendFile(
       join(artifacts!, file),
       `$ ${line}\n${answer.status} ${body}\n\n`
     )
     return body
   }
+  /**
+   * The public names, as a teammate, who may read no full name, reads them:
+   * the team's staff now read Alex in full whatever the format.
+   */
   const publicNames = async (label: string): Promise<void> => {
     await appendFile(join(artifacts!, 'public-names.log'), `# ${label}\n`)
-    const scorer = '-H "authorization: Bearer $SCOREKEEPER"'
+    const teammate = '-H "authorization: Bearer $TEAMMATE"'
     await logged(
       'public-names.log',
-      `curl -s ${scorer} "$BASE/players/$ALEX?forTeam=$HAWKS"`,
+      `curl -s ${teammate} "$BASE/players/$ALEX?forTeam=$HAWKS"`,
       `/players/${userIdOfGumbo(ALEX)}?forTeam=${f.teamA}`,
-      SCOREKEEPER
+      TEAMMATE
     )
     await logged(
       'public-names.log',
-      `curl -s ${scorer} "$BASE/games/$GAME/box-score"`,
-      `/games/${gameId}/box-score`,
-      SCOREKEEPER
+      `curl -s ${teammate} "$BASE/teams/$HAWKS/roster"`,
+      `/teams/${f.teamA}/roster`,
+      TEAMMATE
     )
     await logged(
       'public-names.log',
@@ -176,6 +211,11 @@ async function main(): Promise<void> {
       await shoot(PLAYER, 'Alex L', 'player-page-before.png')
       await signIn(COACH)
       await shoot(TEAM, 'administrator', 'coach-settings-before.png')
+      await shoot(ROSTER, 'Alex L', 'coach-roster-before.png')
+      await shoot(BOX, 'Alex L', 'coach-box-score-before.png')
+      await coachGame('Alex L', 'coach-game-before.png')
+      await signIn(PARENT)
+      await shoot(PLAYER, 'Alex L', 'parent-player-before.png')
       console.log('before screenshots captured')
       return
     }
@@ -183,10 +223,192 @@ async function main(): Promise<void> {
       'public-names.log',
       'model-name.log',
       'full-name-read.log',
-      'spoken-names.log'
+      'spoken-names.log',
+      'reader-names.log',
+      'outbound-names.log',
+      'view-not-edit.log'
     ])
       await rm(join(artifacts!, log), { force: true })
     await publicNames('Nothing configured')
+
+    // E1. The coach reads Alex Lee in full on the roster, the box score and
+    // his game screen.
+    const reader = 'reader-names.log'
+    const hawks = `/teams/${f.teamA}/roster`
+    const boxScore = `/games/${gameId}/box-score`
+    const gameEvents = `/games/${gameId}/events`
+    const asCoach = '-H "authorization: Bearer $COACH"'
+    const asStranger = '-H "authorization: Bearer $STRANGER"'
+    await signIn(COACH)
+    await shoot(ROSTER, 'Alex Lee', 'coach-roster-after.png')
+    await shoot(BOX, 'Alex Lee', 'coach-box-score-after.png')
+    await coachGame('Alex Lee', 'coach-game-after.png')
+    const coachRoster = await logged(
+      reader,
+      `curl -s ${asCoach} "$BASE/teams/$HAWKS/roster"`,
+      hawks,
+      COACH
+    )
+    expect(coachRoster).include('"shortName":"Alex Lee"')
+    expect(coachRoster).include('"compactName":"Alex L"')
+    expect(
+      await logged(
+        reader,
+        `curl -s ${asCoach} "$BASE/games/$GAME/box-score"`,
+        boxScore,
+        COACH
+      )
+    ).include('Alex Lee')
+    const coachEvents = await logged(
+      reader,
+      `curl -s ${asCoach} "$BASE/games/$GAME/events"`,
+      gameEvents,
+      COACH
+    )
+    expect(coachEvents).include('"readerNames"')
+    expect(coachEvents).include('Alex Lee')
+    console.log('E1 PASS: the coach reads Alex Lee on roster, box score, game')
+
+    // E2. Alex's parent reads Alex in full, and a teammate he has no link to
+    // by the public label.
+    await signIn(PARENT)
+    await shoot(PLAYER, 'Alex Lee', 'parent-player-after.png')
+    await open(ROSTER, 'Mookie B')
+    await contains(page, 'Alex Lee')
+    await absent(page, 'Mookie Betts')
+    const parentPlayer = await logged(
+      reader,
+      'curl -s -H "authorization: Bearer $PARENT" "$BASE/players/$ALEX"',
+      `/players/${userIdOfGumbo(ALEX)}`,
+      PARENT
+    )
+    expect(parentPlayer).include('Alex Lee')
+    console.log('E2 PASS: the parent reads Alex Lee, and Mookie B')
+
+    // E3. A stranger reads the public label.
+    await signIn(STRANGER)
+    await shoot(ROSTER, 'Alex L', 'stranger-roster-after.png')
+    await absent(page, 'Alex Lee')
+    // A stranger's box score names nobody: it asks him to join a team.
+    await open(BOX, 'member of one of these teams')
+    await absent(page, 'Alex Lee')
+    const strangerRoster = await logged(
+      reader,
+      `curl -s ${asStranger} "$BASE/teams/$HAWKS/roster"`,
+      hawks,
+      STRANGER
+    )
+    expect(strangerRoster).include('"shortName":"Alex L"')
+    for (const [line, route] of [
+      [`curl -s ${asStranger} "$BASE/games/$GAME/box-score"`, boxScore],
+      [`curl -s ${asStranger} "$BASE/games/$GAME/events"`, gameEvents]
+    ])
+      expect(await logged(reader, line, route, STRANGER)).not.include('Lee')
+    expect(strangerRoster).not.include('Lee')
+    console.log('E3 PASS: the stranger reads Alex L')
+
+    // P1. Spring's coach reads Mike Trout, a member of Spring who plays on no
+    // team of it, in full on Spring's people list and on his profile opened
+    // from it, and still may not change his name. No player page: he plays
+    // on no team the coach can see.
+    await signIn(SPRING_COACH)
+    await open(`/groups/season/${f.seasonA}?tab=people`, 'Mike Trout')
+    await capture(m, artifacts!, 'spring-people-after.png')
+    await m.tapOn({ text: 'Mike Trout' })
+    await page.waitForFunction(() => location.pathname.includes('/people/'))
+    await contains(page, 'Mike Trout')
+    await capture(m, artifacts!, 'spring-profile-after.png')
+    const view = 'view-not-edit.log'
+    const asSpringCoach = '-H "authorization: Bearer $SPRING_COACH"'
+    const trout = userIdOfGumbo(TROUT)
+    expect(
+      await logged(
+        view,
+        `curl -s ${asSpringCoach} "$BASE/seasons/$SPRING/people"`,
+        `/seasons/${f.seasonA}/people`,
+        SPRING_COACH
+      )
+    ).include('"shortName":"Mike Trout"')
+    expect(
+      await logged(
+        view,
+        `curl -s ${asSpringCoach} "$BASE/seasons/$SPRING/people/$TROUT"`,
+        `/seasons/${f.seasonA}/people/${trout}`,
+        SPRING_COACH
+      )
+    ).include('"fullName":"Mike Trout"')
+    await logged(
+      view,
+      `curl -s ${asSpringCoach} "$BASE/players/$TROUT/name"`,
+      `/players/${trout}/name`,
+      SPRING_COACH
+    )
+    expect(lastStatus, 'the name halves are for editing').equals(404)
+    console.log('P1 PASS: Spring’s coach reads Mike Trout, and may not edit it')
+
+    // E5. Whatever leaves the reader stays short, after the coach's reads.
+    const outbound = 'outbound-names.log'
+    for (const [line, route, userId, headers] of [
+      ['curl -s "$BASE/scoreboard/$GAME"', `/scoreboard/${gameId}`],
+      [
+        `curl -s ${asCoach} "$BASE/games/$GAME/box-score?view=board"`,
+        `${boxScore}?view=board`,
+        COACH
+      ],
+      [
+        `curl -s ${asCoach} -H "${TESS_HEADER}: 1" "$BASE/teams/$HAWKS/roster"`,
+        hawks,
+        COACH,
+        { [TESS_HEADER]: '1' }
+      ]
+    ] as const) {
+      const body = await logged(outbound, line, route, userId, headers)
+      expect(body, line).not.include('Lee')
+    }
+    const narrated = JSON.stringify([
+      ...(await narrationsFor(db, gameId)).values()
+    ])
+    await appendFile(
+      join(artifacts!, outbound),
+      `$ narrationsFor $GAME  # in process, after the coach's reads\n${narrated}\n\n`
+    )
+    expect(narrated).include('Alex L')
+    expect(narrated).not.include('Lee')
+    console.log('E5 PASS: board, board view, Tess and narration stay short')
+
+    // E4. The scorekeeper walks Alex: on first, the diamond names him by the
+    // public label, while the lineup sheet reads him in full.
+    await signIn(SCOREKEEPER)
+    await open(`/games/${gameId}/score`, 'BUNT')
+    await page.waitForSelector('canvas[data-field-ready="true"]')
+    for (let ball = 0; ball < 3; ball++) {
+      await m.tapOn({ css: '[aria-label="Ball"]' })
+      await m.waitForAnimationToEnd()
+    }
+    const plates = async (): Promise<string[]> =>
+      await page.evaluate(() =>
+        // Written for the page, where the test's own helpers are not.
+        Array.from(document.querySelectorAll('[data-nameplate]')).map(plate =>
+          String(plate.textContent)
+        )
+      )
+    await page.waitForFunction(() =>
+      Array.from(document.querySelectorAll('[data-nameplate]')).some(
+        plate => plate.textContent === 'Alex L'
+      )
+    )
+    expect((await plates()).filter(plate => plate.includes('Lee'))).deep.equals(
+      []
+    )
+    await capture(m, artifacts!, 'scoring-overlay-after.png')
+    await m.tapOn({ css: '[aria-label="Open scoring menu"]' })
+    await tap(m, 'Set Team Rosters')
+    await m.tapOn({ css: '[aria-label="Away Team"]' })
+    await m.tapOn({ css: '[aria-label="Lineup"]' })
+    await contains(page, '1. Alex Lee')
+    await capture(m, artifacts!, 'scoring-lineup-after.png')
+    console.log('E4 PASS: the diamond reads Alex L, the lineup sheet Alex Lee')
+    await signIn(101)
 
     // 1. A league on Default has nothing to inherit from.
     await shoot(LEAGUE, 'Player Name Privacy', 'settings-league-after.png')
@@ -231,7 +453,9 @@ async function main(): Promise<void> {
     await open(SPRING, 'Full name, inherited from Lakeshore')
     await setOn(SPRING, 'Default', 1, 'First name, last initial')
     await open(TEAM, 'First name, last initial, inherited from Spring')
-    await open(ROSTER, 'Alex L')
+    await publicly(async () => {
+      await open(ROSTER, 'Alex L')
+    })
     console.log('5 PASS: a managing season replaces the league')
 
     // 6. The more restrictive of two managing seasons wins.
@@ -242,8 +466,10 @@ async function main(): Promise<void> {
       'First initial, last initial, inherited from Fall',
       'settings-team-after.png'
     )
-    await shoot(ROSTER, 'A L', 'roster-after.png')
-    await shoot(PLAYER, 'A L', 'player-page-after.png')
+    await publicly(async () => {
+      await shoot(ROSTER, 'A L', 'roster-after.png')
+      await shoot(PLAYER, 'A L', 'player-page-after.png')
+    })
     await publicNames('Demo Hawks inherits First initial, last initial')
     console.log('6 PASS: the stricter managing season wins')
 
@@ -262,7 +488,9 @@ async function main(): Promise<void> {
     await open(TEAM, 'Player Name Privacy')
     await choose('Default', 4)
     await contains(page, 'Full name')
-    await open(ROSTER, 'Alex Lee')
+    await publicly(async () => {
+      await open(ROSTER, 'Alex Lee')
+    })
     await publicNames('Demo Hawks set to Full name')
     console.log('8 PASS: an explicit team value wins')
 
@@ -349,7 +577,9 @@ async function main(): Promise<void> {
       SCOREKEEPER
     )
     expect(managed).include('"lastName":"Lee"')
-    expect(managed).include('"shortName":"A L"')
+    // The scorekeeper may read him in full; the public label rides beside it.
+    expect(managed).include('"shortName":"Alex Lee"')
+    expect(managed).include('"compactName":"A L"')
     expect(
       await logged(reads, 'curl -s "$BASE/players/$ALEX/name"', nameRoute)
     ).include('unauthorized')

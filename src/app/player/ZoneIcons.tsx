@@ -1,7 +1,8 @@
 import React from 'react'
 import { View } from 'react-native'
 
-import { Icon, type IconName } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
+import type { IconName } from '../components/Icon'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import type { GridZone, PlacedIcon } from './pressGrid'
 
@@ -73,7 +74,7 @@ export function ZoneIcons(props: {
               }
             ]}
           >
-            <Icon
+            <ButtonIcon
               name={shown}
               size={(icon.r * 2 * 7) / 12 / theme.rem(1)}
               color="rgba(255, 255, 255, 0.9)"

@@ -24,9 +24,9 @@ import { seasonPeriodLabel } from '../../common/seasonTimeFrames'
 import { creationIcons } from '../assets'
 import {
   Button,
+  ButtonIcon,
   Card,
   GameHeroCard,
-  initialsOf,
   ListCard,
   ListRow,
   LivePill,
@@ -43,7 +43,13 @@ import { HOME_GUARDED, HOME_LISTS, HOME_RECENT } from '../sync/documentKeys'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { UmpireMaskDrawing } from '../umpires/UmpireMaskDrawing'
-import { gameStatusLine, matchupLines, shortDate, winnerOf } from './format'
+import {
+  gameStatusLine,
+  matchupLines,
+  matchupTitle,
+  shortDate,
+  winnerOf
+} from './format'
 import type { GameListOpenOptions } from './gameListOptions'
 import {
   type HomeListExpanded,
@@ -405,7 +411,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
   const followedRow = (group: PublicGroup): React.ReactElement => (
     <ListRow
       title={group.name}
-      teamName={group.kind === 'team' ? group.name : undefined}
+      group={{
+        kind: group.kind,
+        id: group.id,
+        leagueId: group.leagueId,
+        name: group.name,
+        uri: group.imageUrl,
+        leagueUri: group.leaguePictureUrl
+      }}
       subtitle={
         group.kind === 'season'
           ? seasonPeriodLabel(group.startsOn, group.endsOn)
@@ -414,8 +427,6 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               ? undefined
               : localityLabel(group.locality)))
       }
-      emblem={initialsOf(group.name)}
-      emblemUri={group.imageUrl}
       badgeLabel="Following"
       badgeTone="neutral"
       onPress={() => {
@@ -515,7 +526,11 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 ]
                   .filter(part => part != null)
                   .join(' · ')}
-                teamName={game.homeTeamName}
+                group={{
+                  kind: 'team',
+                  id: game.homeTeamId,
+                  name: game.homeTeamName
+                }}
                 badgeLabel="live"
                 badgeTone="live"
                 onPress={() => {
@@ -543,6 +558,8 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
               </Text>
             )}
             <GameHeroCard
+              awayTeamId={recent.awayTeamId}
+              homeTeamId={recent.homeTeamId}
               awayName={recent.awayTeamName}
               homeName={recent.homeTeamName}
               awayScore={recent.awayScore}
@@ -617,8 +634,10 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 <ListRow
                   key={player.userId}
                   title={name}
-                  emblem={initialsOf(name)}
-                  emblemUri={player.avatarUrl}
+                  person={{
+                    userId: player.userId,
+                    uri: player.avatarUrl
+                  }}
                   onPress={() => {
                     props.onOpenPlayer?.(player.userId, name)
                   }}
@@ -636,10 +655,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
             <ListRow
               title="Umpire Schedule"
               leading={
-                <UmpireMaskDrawing
-                  size={theme.rem(1.6)}
-                  color={theme.primaryTextColor}
-                />
+                <ButtonIcon>
+                  <UmpireMaskDrawing
+                    size={theme.rem(1.6)}
+                    color={theme.primaryTextColor}
+                  />
+                </ButtonIcon>
               }
               onPress={props.onOpenUmpireSchedule}
             />
@@ -661,8 +682,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   key={team.id}
                   title={team.name}
                   subtitle={subtitleFor(team)}
-                  teamName={team.name}
-                  emblemUri={team.logoUrl}
+                  group={{
+                    kind: 'team',
+                    id: team.id,
+                    name: team.name,
+                    uri: team.logoUrl
+                  }}
                   onPress={() => {
                     onOpenTeam(team)
                   }}
@@ -690,8 +715,14 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                   key={season.id}
                   title={season.name}
                   subtitle={`${season.teams} teams · ${season.games} games · ${season.videos} videos`}
-                  emblemIcon="event"
-                  emblemUri={season.logoUrl}
+                  group={{
+                    kind: 'season',
+                    id: season.id,
+                    leagueId: season.leagueId,
+                    name: season.name,
+                    uri: season.logoUrl,
+                    leagueUri: season.leaguePictureUrl
+                  }}
                   badgeLabel={season.term ?? undefined}
                   badgeTone="neutral"
                   onPress={() => {
@@ -723,8 +754,12 @@ export function HomeScreen(props: HomeScreenProps): React.ReactElement {
                 <ListRow
                   key={row.id}
                   title={row.name}
-                  emblem={initialsOf(row.name)}
-                  emblemUri={row.imageUrl}
+                  group={{
+                    kind: 'league',
+                    id: row.id,
+                    name: row.name,
+                    uri: row.imageUrl
+                  }}
                   onPress={() => {
                     props.onOpenGroup?.({ kind: 'league', id: row.id })
                   }}
@@ -778,7 +813,7 @@ function startedAtLabel(startedAt: string): string {
 /** `Alta Hawks @ Bay Stars`, the way the row in a list reads. */
 function matchup(game: SeasonGame): string {
   const lines = matchupLines(game)
-  return `${lines.first} ${lines.second}`
+  return matchupTitle(lines)
 }
 
 /** `QPLL Spring 2026 · 12–3`, or whichever half of that we know. */

@@ -25,10 +25,13 @@ export {
 } from './AppNav'
 export { Badge, type BadgeTone } from './Badge'
 export { Button, type ButtonKind } from './Button'
+export { ButtonIcon, type ButtonIconProps } from './ButtonIcon'
 export { Card, CardContent, CardDivider } from './Card'
 export { ListCard } from './ListCard'
 export { Emblem, type EmblemProps } from './Emblem'
-export { TeamEmblem } from './TeamEmblem'
+export { GroupEmblem, type GroupEmblemProps } from './GroupEmblem'
+export { PersonEmblem, type PersonEmblemProps } from './PersonEmblem'
+export { TeamEmblem, type TeamEmblemProps } from './TeamEmblem'
 export {
   GameHeroCard,
   type TeamStatLine,
@@ -44,7 +47,7 @@ export { ScheduleRow, type ScheduleRowProps } from './ScheduleRow'
 export { RsvpScheduleRow, type RsvpScheduleRowProps } from './RsvpScheduleRow'
 export { SideCamera } from './SideCamera'
 export { Icon, type IconName } from './Icon'
-export { initialsOf } from './initials'
+export { initialsOf, personInitialsOf } from './initials'
 export { ListRow } from './ListRow'
 export { ManageGear, type ManageGearProps } from './ManageGear'
 export { SettingsGear } from './SettingsGear'

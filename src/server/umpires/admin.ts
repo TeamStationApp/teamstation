@@ -12,12 +12,14 @@ import {
   type UmpireSeason,
   type UmpireTypeCount
 } from '../../common/umpires'
+import type { VisibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Database, UmpireLevelsTable } from '../db/database'
-import { publicNames } from '../groups/playerNamePrivacy'
+import { publicNames, type PublicPerson } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { MediaContext } from '../media/mediaContext'
-import { affiliationText } from '../users/personAffiliations'
+import { personAffiliations } from '../users/personAffiliations'
+import { fullNamesFor, type Reader } from '../users/readerNames'
 import { requireType, types } from './types'
 
 export async function levels(
@@ -117,10 +119,12 @@ export async function requirements(
     .selectFrom('seasons')
     .leftJoin('season_umpire_requirements as r', 'r.season_id', 'seasons.id')
     .leftJoin('umpire_levels as l', 'l.id', 'r.level_id')
+    .innerJoin('leagues', 'leagues.id', 'seasons.league_id')
     .select([
       'seasons.id',
       'seasons.name',
       'seasons.logo_path',
+      'leagues.logo_path as league_logo_path',
       'seasons.ends_on',
       'seasons.timezone',
       'r.level_id',
@@ -158,6 +162,9 @@ export async function requirements(
       id: row.id,
       name: row.name,
       logoUrl: media == null ? null : imageUrl(media.space, row.logo_path),
+      leagueId,
+      leaguePictureUrl:
+        media == null ? null : imageUrl(media.space, row.league_logo_path),
       requirement:
         row.level_id == null
           ? null
@@ -254,12 +261,19 @@ export async function applyRequirements(
     await deletion.execute()
   }
 }
-/** Resolve aliases before unioning affiliation and role rows. Names leave here abbreviated. */
+/**
+ * Resolve aliases before unioning affiliation and role rows. Names leave here
+ * abbreviated, except those `reader` may read in full, and `query` matches
+ * the name each row shows, and the stored names only of those.
+ */
 export async function people(
   db: Kysely<Database>,
   leagueId: string,
   query?: string,
-  media?: MediaContext
+  media?: MediaContext,
+  reader?: Reader,
+  /** What the reader may see, for the affiliation lines; none leaves them empty. */
+  scopes?: VisibleScopes
 ): Promise<UmpirePerson[]> {
   if (query?.trim() === '') return []
   const users = await db
@@ -352,46 +366,68 @@ export async function people(
         .execute()
     ).map(r => canon(r.user_id))
   )
-  const rows = users.filter(
+  const pool = users.filter(
     u =>
       u.merged_into == null &&
       u.disabled_at == null &&
       (query == null
         ? roles.has(u.id)
-        : population.has(u.id) &&
-          !roles.has(u.id) &&
-          [u.first_name, u.last_name, u.display_name].some(
-            n => n?.toLowerCase().includes(query.trim().toLowerCase()) === true
-          ))
+        : population.has(u.id) && !roles.has(u.id))
   )
-  // The list's people and those it names beside them: a player is shown in
-  // their format, the adults in the built-in one.
-  const listed = new Set(rows.map(u => u.id))
-  const named = new Set(listed)
-  for (const l of links) {
-    if (l.kind !== 'guardian') continue
-    if (listed.has(canon(l.user_id))) named.add(canon(l.related_user_id))
-    if (listed.has(canon(l.related_user_id))) named.add(canon(l.user_id))
-  }
   const players = new Set([
     ...links
       .filter(l => l.kind === 'guardian')
       .map(l => canon(l.related_user_id)),
     ...members.filter(m => m.is_player).map(m => canon(m.user_id))
   ])
-  const names = await publicNames(
+  const asPerson = (u: (typeof pool)[number]): PublicPerson => ({
+    person: {
+      id: u.id,
+      firstName: u.first_name,
+      lastName: u.last_name,
+      displayName: u.display_name
+    },
+    player: players.has(u.id)
+  })
+  const holds = (name: string | null | undefined, typed: string): boolean =>
+    name?.toLowerCase().includes(typed) === true
+  // A search matches the name the row shows, and the stored names only of
+  // those the reader reads in full: a hidden surname finds nobody. The
+  // public label is read for the whole pool, and who reads in full only for
+  // the rows the search can match, so a keystroke asks about a handful.
+  const typed = query?.trim().toLowerCase()
+  let matching = pool
+  /** Found by a stored name alone: kept only if the reader reads it. */
+  const byStored = new Set<string>()
+  if (typed != null) {
+    const shown = await publicNames(db, pool.map(asPerson))
+    matching = pool.filter(u => {
+      if (holds(shown.get(u.id), typed)) return true
+      if (
+        ![u.first_name, u.last_name, u.display_name].some(n => holds(n, typed))
+      )
+        return false
+      byStored.add(u.id)
+      return true
+    })
+  }
+  const full = await fullNamesFor(
     db,
-    users
-      .filter(u => u.merged_into == null && named.has(u.id))
-      .map(u => ({
-        person: {
-          id: u.id,
-          firstName: u.first_name,
-          lastName: u.last_name,
-          displayName: u.display_name
-        },
-        player: players.has(u.id)
-      }))
+    reader,
+    matching.map(u => u.id)
+  )
+  const rows = matching.filter(u => !byStored.has(u.id) || full.has(u.id))
+  // The list's people, each in the built-in format or their own as a
+  // player, and in full for whoever may read them so.
+  const names = await publicNames(db, rows.map(asPerson), {
+    reader,
+    readsFull: full
+  })
+  // Their affiliation lines name only the league's teams.
+  const affiliations = await personAffiliations(
+    db,
+    rows.map(u => u.id),
+    { reader, scopes, teams: new Set(teams.map(t => t.id)), readsFull: full }
   )
   const certifications = await db
     .selectFrom('umpire_certifications as c')
@@ -401,27 +437,6 @@ export async function people(
     .execute()
   return rows
     .map(u => {
-      const children = links
-        .filter(l => l.kind === 'guardian' && canon(l.user_id) === u.id)
-        .map(l => canon(l.related_user_id))
-      const guardians = links
-        .filter(l => l.kind === 'guardian' && canon(l.related_user_id) === u.id)
-        .map(l => canon(l.user_id))
-      const ids = new Set([u.id, ...children])
-      const teamNames = teams
-        .filter(t =>
-          members.some(m => m.team_id === t.id && ids.has(canon(m.user_id)))
-        )
-        .map(t => t.name)
-      const affiliations = affiliationText(
-        teamNames,
-        [...new Set(children)].flatMap(id =>
-          names.has(id) ? [names.get(id)!] : []
-        ),
-        [...new Set(guardians)].flatMap(id =>
-          names.has(id) ? [names.get(id)!] : []
-        )
-      )
       const certs = new Map<string, UmpireCertification>()
       for (const c of certifications.filter(c => canon(c.user_id) === u.id)) {
         const key = JSON.stringify([c.level_id, c.type_id])
@@ -436,7 +451,7 @@ export async function people(
         id: u.id,
         name: String(names.get(u.id)),
         avatarUrl: media == null ? null : imageUrl(media.space, u.avatar_path),
-        affiliations,
+        affiliations: affiliations.get(u.id) ?? '',
         certifications: [...certs.values()]
       }
     })
@@ -466,10 +481,15 @@ export async function grant(
     .where('user_id', 'in', person.userIds)
     .executeTakeFirst()
   if (held != null) return
+  // Asked as a reader of every name: the check answers nobody, and the
+  // search must find them by the whole name stored.
   if (
-    !(await people(db, leagueId, user.display_name)).some(
-      p => p.id === person.userId
-    )
+    !(
+      await people(db, leagueId, user.display_name, undefined, {
+        userId: actorId,
+        isAdmin: true
+      })
+    ).some(p => p.id === person.userId)
   )
     throw badRequest('Choose a person affiliated with this league')
   await db

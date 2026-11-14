@@ -23,6 +23,7 @@ import { freshGame } from './lineup'
 import {
   appearedBySide,
   appearedIn,
+  gameRosterEntries,
   reconcileRoster
 } from './rosterAvailability'
 import {
@@ -131,6 +132,97 @@ describe('the lineups a game starts from (U4b)', function () {
     expect(setup.sides.away.defense.P).equals(null)
     expect(setup.sides.away.defense.C).equals(102)
     expect(setup.sides.away.players).includes(110)
+  })
+
+  it('keeps the public label beside a roster name full only for its reader, as a guest’s', () => {
+    const full = (
+      row: RosterEntry,
+      name: string,
+      compact: string
+    ): RosterEntry => ({
+      ...row,
+      shortName: name,
+      nameFormat: 'full',
+      compactName: compact
+    })
+    const named = [full(away[0], 'Mookie Betts', 'Mookie B'), ...away.slice(1)]
+    const setup = startingSetup(game, named, home)
+    expect(setup.players[101]).include({
+      fullName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'Mookie B'
+    })
+    expect(setup.players[102]).not.have.property('compactName')
+    const guest = full(roster([901])[0], 'Shohei Ohtani', 'Shohei O')
+    const next = reconcileRoster(
+      setup,
+      teamsOf(game),
+      { away: named, home },
+      { away: [guest], home: [] },
+      { away: [], home: [] }
+    )
+    expect(next.players[901]).include({
+      fullName: 'Shohei Ohtani',
+      compactName: 'Shohei O',
+      local: true
+    })
+  })
+
+  it('keeps the public label of a guest named in full when an availability change moves him', () => {
+    const guest: RosterEntry = {
+      ...roster([901])[0],
+      shortName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const held = startingSetup(
+      { ...game, guestPlayers: { away: [guest], home: [] } },
+      away,
+      home
+    )
+    const state = freshGame('g1', teamsOf(game), held)
+    const guests = gameRosterEntries(state, 'away', true)
+    expect(guests).deep.equals([
+      {
+        gumboId: 901,
+        shortName: 'Shohei Ohtani',
+        nameFormat: 'full',
+        compactName: 'Shohei O',
+        jersey: '1',
+        positions: [],
+        bats: 'right',
+        throws: null,
+        isPlayer: true
+      }
+    ])
+    // The roster players, read back with no roster to hand, are not guests.
+    expect(gameRosterEntries(state, 'away', false).map(row => row.gumboId))
+      .length(away.length)
+      .and.not.include(901)
+    // Fielded by the other side now, he is rebuilt from his entry there.
+    const moved = reconcileRoster(
+      setupOf(state),
+      teamsOf(game),
+      { away, home },
+      { away: [], home: guests },
+      { away: [], home: [] }
+    )
+    expect(moved.players[901]).include({
+      teamId: teamsOf(game).home.id,
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O',
+      local: true
+    })
+    // A guest held by his public label alone carries no format or label.
+    const plain = startingSetup(
+      { ...game, guestPlayers: { away: roster([902]), home: [] } },
+      away,
+      home
+    )
+    expect(
+      gameRosterEntries(freshGame('g1', teamsOf(game), plain), 'away', true)[0]
+    ).not.have.any.keys('nameFormat', 'compactName')
   })
 
   it('reconciles a saved subset, removes unavailable placements and preserves the due batter', () => {

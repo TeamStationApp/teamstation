@@ -9,10 +9,11 @@ import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered, type Unrostered } from '../../common/unroster'
 import type { Database } from '../db/database'
 import { readPlays } from '../events/postPlays'
-import { formatForReader, publicFormats } from '../groups/playerNamePrivacy'
+import { compactFields, readerNaming } from '../groups/playerNamePrivacy'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { teamRoster } from '../teams/teamRoster'
 import { withdrawnLabels } from '../users/nameBook'
+import type { Reader } from '../users/readerNames'
 import { withdrawnUserId } from './withdrawn'
 
 /** Both teams' rosters only when asked for: `null` otherwise. */
@@ -26,7 +27,9 @@ export interface GameAvailability<Rostered extends boolean = boolean> {
 /**
  * Both membership and game-only identities are read through their surviving
  * accounts. A reader that shows the game, not its lineups, passes
- * `roster: false` and reads neither team's roster.
+ * `roster: false` and reads neither team's roster. The guests `options.reader`
+ * may read in full are named in full, with the public label beside
+ * (`compactName`, `compactFormat`); a write passes no reader.
  */
 export async function gameAvailability<Rostered extends boolean>(
   db: Kysely<Database>,
@@ -39,7 +42,7 @@ export async function gameAvailability<Rostered extends boolean>(
     currentPlay: unknown
     pregame?: unknown
   },
-  options: { roster: Rostered }
+  options: { roster: Rostered; reader?: Reader }
 ): Promise<GameAvailability<Rostered>> {
   const guests = storedGuests(game.guests, teamsOfRow(game))
   const unrostered = storedUnrostered(game.unrostered, teamsOfRow(game))
@@ -109,10 +112,8 @@ export async function gameAvailability<Rostered extends boolean>(
     },
     teamId: teamOf.get(user.gumbo_id)
   }))
-  const formats = await publicFormats(db, people)
-  const names = formatForReader(
-    people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
-  )
+  const naming = await readerNaming(db, people, options.reader)
+  const { names, formats } = naming
   // A rejected pool player who played stays a guest, under the placeholder.
   const withdrawn =
     (await withdrawnLabels(db, [game.id])).get(game.id) ??
@@ -141,6 +142,14 @@ export async function gameAvailability<Rostered extends boolean>(
             formats.get(user.id) === DEFAULT_PLAYER_NAME_PRIVACY
               ? undefined
               : formats.get(user.id),
+          ...(label != null
+            ? {}
+            : compactFields(naming, {
+                id: user.id,
+                displayName: user.display_name,
+                firstName: user.first_name,
+                lastName: user.last_name
+              })),
           jersey: detail?.jersey ?? held?.jersey ?? null,
           positions: detail?.positions ?? held?.positions ?? [],
           bats: label == null ? user.bats : null,

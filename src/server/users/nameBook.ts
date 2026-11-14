@@ -21,20 +21,23 @@ import {
 } from '../groups/playerNamePrivacy'
 import { openAddsOf } from '../openAdds'
 import { playerTeamsIn, scoringIdsIn } from '../scoring/projection'
-import { isSpoken } from './readerNames'
+import { fullNamesFor, isSpoken, type Reader } from './readerNames'
 import { survivorsOf } from './survivors'
 
 /**
  * Names read from `users`, a response at a time. A **name book** answers the
  * name of each gumbo id it was built for: one query of `gumbo_ids` joined to
  * `users` for every id of a response, merged accounts followed to their
- * survivor, and short names computed over a **scope**, the people one
- * surface shows together, so two players in the same game never read the
- * same. Each player is written in the public format of the team they appear
- * for, and somebody with no team here in the format of the teams they play
- * for now (`currentFormats`). A book never carries first or last names:
- * general reads feed public scoreboards. `nameHalves` answers them, for
- * whoever may correct them.
+ * survivor, and names written over a **scope**, the people one surface
+ * shows together, each name in its format alone: two players whose names
+ * format the same read the same. Each player is written in the public format
+ * of the team they appear for, and somebody with no team here in the format of the teams they play
+ * for now (`currentFormats`). A book carries a full name the formats do not
+ * show only when it is built for a reader: then everyone that reader may read
+ * in full (`fullNamesFor`) is written in full, unless its names go to a
+ * model. A book built for nobody is what public scoreboards, the live board
+ * and stored documents read. A book never carries first or last names:
+ * `nameHalves` answers them, for whoever may correct them.
  */
 
 /** A scope's names, and what they were made from. */
@@ -43,6 +46,11 @@ export interface NameBook {
   nameOf: NameOf
   /** The format this player was written in, or undefined outside the book. */
   formatOf: (id: number) => PlayerNamePrivacy | undefined
+  /**
+   * The account the book names this player from, its survivor's when
+   * merged, or undefined outside the book or for a placeholder.
+   */
+  personOf: (id: number) => Readonly<Person> | undefined
   /**
    * A digest of every account the book can name: each account, its display,
    * first and last names and its format, whichever of its ids the scope
@@ -73,7 +81,7 @@ const scopeOfIds = (ids: Iterable<number>): GameScope => ({
 type Db = Kysely<Database>
 
 /** An account as a name book reads it. */
-interface Person {
+export interface Person {
   userId: string
   displayName: string
   firstName: string | null
@@ -188,10 +196,12 @@ function bookOf(
       inScope.has(id) ? labels.get(people.get(id)!.userId) : undefined,
     formatOf: id =>
       inScope.has(id) ? formats.get(people.get(id)!.userId) : undefined,
+    personOf: id => (inScope.has(id) ? people.get(id) : undefined),
     digest: createHash('md5')
       .update(
         JSON.stringify(
-          // A list going to a model is not lengthened, whatever its formats.
+          // A list going to a model is written as a model is given it
+          // (`modelLabel`), whatever its formats.
           [
             spoken ?? isSpoken(),
             ...[...accounts.values()]
@@ -256,6 +266,7 @@ function labelled(
     nameOf: id => labels.get(id) ?? book.nameOf(id),
     // A placeholder is no name to format.
     formatOf: id => (labels.has(id) ? undefined : book.formatOf(id)),
+    personOf: id => (labels.has(id) ? undefined : book.personOf(id)),
     digest: createHash('md5')
       .update(book.digest)
       .update(JSON.stringify([...labels].sort(([a], [b]) => a - b)))
@@ -274,12 +285,14 @@ export async function withWithdrawn(
 
 /**
  * A book for each scope, read in one query for all of them: what a response
- * that shows several games, each named over its own players, reads.
+ * that shows several games, each named over its own players, reads. The
+ * people `options.reader` may read in full are written in full, unless the
+ * book is `spoken`.
  */
 export async function booksOver<K>(
   db: Db,
   scopes: ReadonlyMap<K, GameScope | Iterable<number>>,
-  options: { spoken?: boolean } = {}
+  options: { spoken?: boolean; reader?: Reader } = {}
 ): Promise<Map<K, NameBook>> {
   const lists = new Map(
     [...scopes].map(([key, scope]) => [
@@ -323,6 +336,11 @@ export async function booksOver<K>(
       )
     )
   )
+  const full = await fullNamesFor(
+    db,
+    options.spoken === true ? undefined : options.reader,
+    [...people.values()].map(person => person.userId)
+  )
   return new Map(
     [...lists].map(([key, scope]) => [
       key,
@@ -330,6 +348,7 @@ export async function booksOver<K>(
         people,
         scope.ids,
         (id, person) => {
+          if (full.has(person.userId)) return 'full'
           const team = teamOf(scope, id)
           const own = current.get(person.userId)
           const format =
@@ -507,13 +526,15 @@ export async function scopeUnder(
 
 /**
  * Each game's book: its players (`scopeOf`), every game of a response read
- * at once, and its names in one query. The games' stamps are read first: a
- * game whose scope is kept under its stamp reads no document, and the
- * others' documents are read together, and their scopes kept.
+ * at once, and its names in one query, for `options.reader` (`booksOver`).
+ * The games' stamps are read first: a game whose scope is kept under its
+ * stamp reads no document, and the others' documents are read together, and
+ * their scopes kept.
  */
 export async function gameNames(
   db: Db,
-  gameIds: Iterable<string>
+  gameIds: Iterable<string>,
+  options: { reader?: Reader } = {}
 ): Promise<Map<string, NameBook>> {
   const wanted = [...new Set(gameIds)]
   if (wanted.length === 0) return new Map()
@@ -539,7 +560,7 @@ export async function gameNames(
       scopes.set(row.id, scope)
     }
   }
-  const books = await booksOver(db, scopes)
+  const books = await booksOver(db, scopes, options)
   const labels = await withdrawnLabels(db, wanted)
   return new Map(
     [...books].map(([id, book]) => [id, labelled(book, labels.get(id))])
@@ -578,12 +599,14 @@ export async function gameNamesDigest(db: Db, gameId: string): Promise<string> {
 
 /**
  * A team's names: public names over the team's members, as its roster
- * shows them, with `gumboIds` (anyone else the answer names) among them.
+ * shows them, with `gumboIds` (anyone else the answer names) among them, for
+ * `options.reader` (`booksOver`).
  */
 export async function teamNames(
   db: Db,
   teamId: string,
-  gumboIds: Iterable<number> = []
+  gumboIds: Iterable<number> = [],
+  options: { reader?: Reader } = {}
 ): Promise<NameOf> {
   const members = await db
     .selectFrom('memberships')
@@ -593,7 +616,8 @@ export async function teamNames(
     .execute()
   const ids = [...members.map(row => Number(row.gumboId)), ...gumboIds]
   const scope = { ids, teams: new Map(ids.map(id => [id, teamId])) }
-  return (await booksOver(db, new Map([[teamId, scope]]))).get(teamId)!.nameOf
+  return (await booksOver(db, new Map([[teamId, scope]]), options)).get(teamId)!
+    .nameOf
 }
 
 /**
@@ -703,10 +727,13 @@ export async function userNames(
 /**
  * Each user's public name, merged accounts read as their survivor: the name
  * a notice gives the player it is about, who is shown with no single team.
+ * Those `options.reader` may read in full are named in full: with
+ * `readsFull`, those of them the caller found already (`fullNamesFor`).
  */
 export async function shortNamesOf(
   db: Db,
-  userIds: Iterable<string>
+  userIds: Iterable<string>,
+  options: { reader?: Reader; readsFull?: Iterable<string> } = {}
 ): Promise<Map<string, string>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
@@ -725,8 +752,17 @@ export async function shortNamesOf(
     db,
     rows.map(row => row.id)
   )
+  const full = await fullNamesFor(
+    db,
+    options.reader,
+    rows.map(row => row.id),
+    options.readsFull == null ? {} : { known: options.readsFull }
+  )
   const names = formatForReader(
-    rows.map(person => ({ person, format: formats.get(person.id)! }))
+    rows.map(person => ({
+      person,
+      format: full.has(person.id) ? 'full' : formats.get(person.id)!
+    }))
   )
   return new Map(
     wanted.map(id => [id, names.get(survivors.get(id)!) ?? ''] as const)

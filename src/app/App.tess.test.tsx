@@ -207,13 +207,17 @@ describe("Tess in the app's shell", () => {
   }
   const markMenu = 'TeamStation menu'
   const openTess = async (): Promise<void> => {
-    await tap(button(markMenu)!)
-    await settle(30)
+    if (byTestId('navigation-sidebar') == null) {
+      await tap(button(markMenu)!)
+      await settle(30)
+    }
     await tap(button('Ask Tess')!)
     await settle(60)
   }
   /** Whether the mark's menu has her row. It always has About. */
   const offersTess = async (): Promise<boolean> => {
+    if (byTestId('navigation-sidebar') != null)
+      return button('Ask Tess') != null
     await tap(button(markMenu)!)
     await settle(30)
     const offered = button('Ask Tess') != null
@@ -269,6 +273,19 @@ describe("Tess in the app's shell", () => {
       await settle(100)
       expect(button(markMenu)).equals(null)
       expect(byTestId('Tess chat')).equals(null)
+      expect(byTestId('navigation-sidebar')).equals(null)
+    })
+
+    it('has no sidebar on signed-out sign-in or public discovery at wide widths', async () => {
+      signedIn = false
+      await open(1440, { name: 'signIn' })
+      expect(byTestId('navigation-sidebar')).equals(null)
+      await unmount()
+      await restoreWindow?.()
+      restoreWindow = undefined
+      await open(1440, { name: 'discover' })
+      expect(byTestId('navigation-sidebar')).equals(null)
+      expect(button('Ask Tess')).equals(null)
     })
   })
 
@@ -356,7 +373,6 @@ describe("Tess in the app's shell", () => {
       await openTess()
       await press('Account, Babe Ruth')
       await settle(30)
-      await press('Account')
       await settle(60)
       expect(currentRoute().name).equals('account')
       const index = window.history.state?.tsRouteIndex as number
@@ -462,16 +478,18 @@ describe("Tess in the app's shell", () => {
 
     it('puts the chat in a column beside the pane, which lays out at its own width', async () => {
       await open(1280)
-      expect(breakpoint(), 'closed: the whole window').equals('desktop')
+      expect(breakpoint(), 'closed: the 1024-point content pane').equals(
+        'desktop'
+      )
       expect(byTestId('Tess column')).equals(null)
       await openTess()
       expect(byTestId('Tess column')).not.equals(null)
       expect(byTestId('Tess layer')).equals(null)
-      expect(breakpoint(), 'open: the 880-point pane').equals('tablet')
+      expect(breakpoint(), 'open: the 624-point pane').equals('tablet')
       expect(document.activeElement?.getAttribute('aria-label')).equals(
         'Ask Tess'
       )
-      // Open already, the mark's menu has only About.
+      // The open panel owns its Close action; the launcher is hidden.
       expect(await offersTess()).equals(false)
       // Her own Close closes it again, and the pane is the window.
       await tap(button('Close Tess')!)
@@ -502,25 +520,25 @@ describe("Tess in the app's shell", () => {
       }
       expect(column().style.width).equals('400px')
       expect(divider().getAttribute('aria-valuenow')).equals('400')
-      expect(breakpoint(), 'an 880-point pane').equals('tablet')
-      // As far as it goes: the pane keeps 560, a phone's width.
-      await drag(400, 1100)
-      expect(column().style.width).equals('720px')
-      expect(breakpoint(), 'a 560-point pane').equals('phone')
+      expect(breakpoint(), 'a 624-point pane').equals('tablet')
+      // As far as it goes: the pane keeps 520 points.
+      await drag(400, -300)
+      expect(column().style.width).equals('504px')
+      expect(breakpoint(), 'a 520-point pane').equals('phone')
       await act(async () => {
         divider().dispatchEvent(
           new window.KeyboardEvent('keydown', {
-            key: 'ArrowLeft',
+            key: 'ArrowRight',
             bubbles: true,
             cancelable: true
           })
         )
       })
       await settle(60)
-      expect(column().style.width).equals('704px')
-      await drag(704, 100)
+      expect(column().style.width).equals('488px')
+      await drag(488, 876)
       expect(column().style.width).equals('320px')
-      expect(breakpoint(), 'a 960-point pane').equals('tablet')
+      expect(breakpoint(), 'a 704-point pane').equals('tablet')
       expect(window.localStorage.getItem('tess.columnWidth')).equals('320')
       // Closed and opened again, the column is as wide as it was left.
       await tap(button('Close Tess')!)
@@ -699,7 +717,7 @@ describe("Tess in the app's shell", () => {
       await settle(60)
       await fill('Ask Tess', 'And chart these')
       const field = (): HTMLTextAreaElement =>
-        document.querySelector('[aria-label="Ask Tess"]')!
+        document.querySelector('textarea[aria-label="Ask Tess"]')!
       const chips = (): string[] =>
         [...document.querySelectorAll('[data-testid="Tess attachment"]')].map(
           chip => chip.textContent ?? ''
@@ -884,10 +902,10 @@ describe("Tess in the app's shell", () => {
       expect(byTestId('Tess column')).not.equals(null)
     })
 
-    it('offers no Tess on a pushed screen, where there is no mark', async () => {
+    it('keeps Tess in the header on a pushed screen without a mark', async () => {
       await open(1280, { name: 'account' })
       expect(button(markMenu)).equals(null)
-      expect(button('Ask Tess')).equals(null)
+      expect(button('Ask Tess')).not.equals(null)
     })
   })
 })

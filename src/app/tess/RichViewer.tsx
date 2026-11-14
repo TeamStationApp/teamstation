@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react'
 import { Modal, Pressable, View } from 'react-native'
 
-import { Icon } from '../components/Icon'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -15,8 +15,8 @@ export interface RichViewerProps {
 
 /**
  * A table or chart at full size, scrollable both ways, with a floating X.
- * Over the right pane when the Shell provides a place for it, otherwise
- * full screen.
+ * Over the content pane beside the right-hand Tess column when the Shell
+ * provides a place for it, otherwise full screen.
  */
 export function RichViewer({
   html,
@@ -67,7 +67,7 @@ function ViewerLayer({ html, onClose }: RichViewerProps): React.ReactElement {
           pressed && styles.pressed
         ]}
       >
-        <Icon name="close" size={1.5} />
+        <ButtonIcon name="close" size={1.5} />
       </Pressable>
     </View>
   )

@@ -103,7 +103,10 @@ describe('dictation interpreter', function () {
     'Fielder’s choice',
     'Out at first',
     'Out at second',
-    'Out at third'
+    'Out at third',
+    'Safe at first',
+    'Safe at second',
+    'Safe at third'
   ])
     it(`keeps the FC runner call when the model labels its optional reason ${reason}`, async function () {
       const out = reason.startsWith('Out')
@@ -1887,6 +1890,23 @@ describe('dictation interpreter, a model that makes one call a reply', function 
     expect(sent[1].body.messages.at(-2)?.content).includes(
       `"runner":"${tagOf(3)}"`
     )
+  })
+
+  it('keeps the at-bat in progress on a said end of the half, as the button does', async function () {
+    const { fetch } = provider(
+      [call('c1', 'gameFlow', { kind: 'endHalf' })],
+      []
+    )
+    const turn = await new Interpretation(
+      config(fetch, { followUp: true }),
+      '',
+      "That's the end of the half."
+    ).start()
+    expect(turn).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'gameFlow', kind: 'endHalf', keepAtBat: true }],
+      dropped: []
+    })
   })
 
   it('tells the model everything recorded so far, so a call said twice counts', async function () {

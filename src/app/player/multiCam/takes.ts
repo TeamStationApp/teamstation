@@ -28,7 +28,11 @@ export interface AngleCandidate {
   startAt?: string | null
 }
 
-/** Four angles at once, as the Distributor's own layout caps it. */
+/**
+ * Four angles at once, as the Distributor's own layout caps it. The server
+ * holds a game to as many active cameras (`MAX_GAME_CAMERAS` in
+ * `src/server/live/streamKeys.ts`); change both together.
+ */
 export const MAX_ANGLES = 4
 
 /** How far two takes' lengths may differ and still be one take. */

@@ -1,3 +1,4 @@
+import type { GamePlansResponse } from '../../common/api'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
 import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import type { HomeRunKind, Override } from '../../common/scoring/rules'
@@ -7,7 +8,8 @@ import type {
   GamePlayer,
   GameSide,
   GameState,
-  GameTeam
+  GameTeam,
+  Side as GameSideName
 } from '../../common/scoring/state'
 import type { GroundPoint } from '../field/fieldModel'
 import type { MoreAction, MoreInput } from './moreActions'
@@ -31,7 +33,10 @@ export type ScoringSessionState = GameState
 export type ScoringPlayer = GamePlayer
 export type ScoringTeam = GameTeam
 export type ScoringSide = GameSide
-export type OverrideDraft = Override
+export interface OverrideDraft extends Override {
+  /** Staged bench player replacing the selected batter on Apply. */
+  pinchHitter?: number
+}
 
 export type ScoringPhase =
   | 'ready'
@@ -197,6 +202,26 @@ export interface ScoringSnapshot {
    * sentence is not applied until it is answered.
    */
   dictationQuestion?: DictationQuestion
+  /**
+   * Both sides' game plans as `GET /games/:gameId/plans` last answered,
+   * absent until they load. They are the coaches', not the game's: an Undo
+   * or a reset keeps them, and only a `PLANS` event replaces them.
+   */
+  plans?: GamePlansResponse
+  /** What the last inning shift did, until the next action is applied. */
+  planNotice?: PlanNotice
+}
+/**
+ * An inning shift: the inning whose plan columns were applied, the sides
+ * that moved, the playing-time warnings of the plans applied
+ * (`warningSummary`'s text, empty for none), and each side whose column was
+ * not applied, with why.
+ */
+export interface PlanNotice {
+  inning: number
+  sides: GameSideName[]
+  summary: string
+  refused: Array<{ side: GameSideName; reason: string }>
 }
 /**
  * A question the screen asks about a dictated sentence: one answer among
@@ -239,9 +264,13 @@ export interface Beat {
 }
 /**
  * The screen without the game: the step, what is drawn, the drafts. It is
- * what an Undo restores beside the game, which is rebuilt from the log.
+ * what an Undo restores beside the game, which is rebuilt from the log. The
+ * game plans are not the screen's, and stay as they are.
  */
-export type ScoringScreenState = Omit<ScoringSnapshot, 'session' | 'log'>
+export type ScoringScreenState = Omit<
+  ScoringSnapshot,
+  'session' | 'log' | 'plans'
+>
 
 /**
  * Where a runner or More draft began: the Undo history's length, the log's
@@ -376,6 +405,8 @@ export type ScoringEvent =
   | { type: 'UNDO' }
   | {
       type: 'CLOSE_PLAY'
+      /** Explicit Finish input, even when guarded by a generation. */
+      authored?: boolean
       generation?: number
       revision?: number
       sequence?: number
@@ -385,11 +416,15 @@ export type ScoringEvent =
   | { type: 'PRESENTATION'; enabled: boolean }
   | {
       type: 'RESET'
+      /** Display a peer's progress without automatically closing their play. */
+      following?: boolean
       session: ScoringSessionState
       log: ScoringAction[]
       readOnly?: boolean
     }
   | { type: 'SWITCH_SIDE'; side: BatSide }
+  /** Both sides' game plans, read again: they replace the ones held. */
+  | { type: 'PLANS'; plans: GamePlansResponse }
   /** The scorer's answer to `dictationQuestion`: an option, or the runners picked. */
   | {
       type: 'DICTATION_ANSWER'

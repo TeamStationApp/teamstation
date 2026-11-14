@@ -24,6 +24,7 @@ import {
   heldByOpenAdd,
   mayEditName,
   mayManagePlayer,
+  mayViewFullName,
   openAddTeams,
   roleScopes,
   teamsPlayedOnNow,
@@ -71,6 +72,7 @@ import { teamRoster } from '../teams/teamRoster'
 import { refuseDeleted } from '../users/deleted'
 import { gumboIdOf } from '../users/insertUser'
 import { gameNames } from '../users/nameBook'
+import { readerOf } from '../users/readerNames'
 
 /**
  * One person: their picture, their name, how they bat and throw, and the teams
@@ -164,9 +166,17 @@ export function playerRoutes(
           : undefined
       }
 
-      // The public format, for everybody, whoever is asking. The whole name is
-      // never in this answer: it is only behind `/name` below, for the person
-      // editing it, which `mayEditName` decides.
+      // In full for whoever may see it in full (`mayViewFullName`), and the
+      // public format for everybody else. Whether the name field is offered
+      // is `mayEditName`, which seeing never grants: the halves are only
+      // behind `/name` below, for the person editing them.
+      const mayView = await mayViewFullName(
+        db,
+        actor.userId,
+        userId,
+        { isAdmin: actor.isAdmin },
+        new Map([[userId, person]])
+      )
       const mayEdit = await mayEditName(
         db,
         actor.userId,
@@ -189,16 +199,21 @@ export function playerRoutes(
         userId,
         gumboId: await gumboIdOf(db, userId),
         name: (
-          await publicNames(db, [
-            {
-              person: { ...user, id: userId },
-              teamId: await teamForPage(
-                typeof req.query.forTeam === 'string'
-                  ? req.query.forTeam
-                  : undefined
-              )
-            }
-          ])
+          await publicNames(
+            db,
+            [
+              {
+                person: { ...user, id: userId },
+                teamId: await teamForPage(
+                  typeof req.query.forTeam === 'string'
+                    ? req.query.forTeam
+                    : undefined
+                )
+              }
+            ],
+            // Whether the actor reads this name in full is `mayView`.
+            { reader: readerOf(actor), readsFull: mayView ? [userId] : [] }
+          )
         ).get(userId),
         /** Whether to offer this person the name field at all. */
         canEditName: mayEdit,
@@ -509,7 +524,8 @@ export function playerRoutes(
         // its own players, as the game's own highlights name them.
         const books = await gameNames(
           db,
-          usable.map(row => row.gameId)
+          usable.map(row => row.gameId),
+          { reader: readerOf(actor) }
         )
         const names = await teamNames(
           db,
@@ -675,9 +691,8 @@ export function playerRoutes(
       const asked = cleanBody(asRosterPlayerBody, req.body)
       const call = idempotentCallOf(req, actor.userId)
       if ('existing' in asked) {
-        // An existing player, by their user id. The entry carries only the
-        // short name: a roster manager who added them reads more on the
-        // roster, as for any player of theirs.
+        // An existing player, by their user id. The entry names them as the
+        // caller may read them; the halves are the roster's to read.
         const existingEntry = async (result: ExistingAdd): Promise<Answer> => {
           if (result.kind === 'pending')
             return {
@@ -690,7 +705,9 @@ export function playerRoutes(
             teamId,
             false,
             undefined,
-            rosterCache
+            rosterCache,
+            readerOf(actor),
+            await visibleScopes(db, actor.userId, actor.isAdmin)
           )
           const entry = roster.find(row => row.userId === result.userId)
           if (entry == null) throw notFound()
@@ -747,7 +764,9 @@ export function playerRoutes(
           teamId,
           true,
           undefined,
-          rosterCache
+          rosterCache,
+          readerOf(actor),
+          await visibleScopes(db, actor.userId, actor.isAdmin)
         )
         const entry = roster.find(row => row.userId === userId)
         if (entry == null) throw notFound()
@@ -942,7 +961,9 @@ export function playerRoutes(
         teamId,
         true,
         actor,
-        rosterCache
+        rosterCache,
+        readerOf(actor),
+        await visibleScopes(db, actor.userId, actor.isAdmin)
       )
       const entry = roster.find(row => row.userId === userId)
       if (entry == null) throw notFound()

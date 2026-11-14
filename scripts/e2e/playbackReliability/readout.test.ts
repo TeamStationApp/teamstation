@@ -124,6 +124,16 @@ describe('playback probe: readout', function () {
     assert.match(long.reasons.join(), /held for/)
   })
 
+  it('ignores the pre-seek playing readout only for the first second after a seek', function () {
+    const reads = snapshots([80, 80, 20, 20.5, 21, 21.5, 22])
+    assert.equal(judgeReadout(reads, undefined, true).pass, true)
+    assert.equal(judgeReadout(reads).pass, false)
+    const lateRewind = snapshots([80, 80, 81, 81.5, 20, 20.5, 21])
+    assert.equal(judgeReadout(lateRewind, undefined, true).pass, false)
+    const frozen = snapshots(Array(12).fill(20))
+    assert.equal(judgeReadout(frozen, undefined, true).pass, false)
+  })
+
   it('fails slow playback and a grid held across two reads', function () {
     const slow = judgeReadout(snapshots([100, 100.2, 100.4, 100.6, 100.8]))
     assert.match(slow.reasons.join(), /0\.40× real time/)

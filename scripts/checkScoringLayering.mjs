@@ -16,7 +16,8 @@ import ts from 'typescript'
  * player to a dictation model, `depth` names how far a ball went, and
  * `baseOutWords` reads the words that say a fielder took a base for an out.
  * `playsLost` counts what a reset of the game would delete, as the server
- * counts it; it changes nothing.
+ * counts it; it changes nothing. `actionChain` hashes a log's actions to
+ * tell which prefix of it is unchanged; it changes nothing.
  */
 export const APP_MAY_IMPORT = [
   'state',
@@ -31,7 +32,8 @@ export const APP_MAY_IMPORT = [
   'depth',
   'pitchType',
   'baseOutWords',
-  'playsLost'
+  'playsLost',
+  'actionChain'
 ]
 const LIBRARY = 'src/common/scoring'
 
@@ -52,9 +54,18 @@ function sources(dir) {
 // These exports only inspect a game. Other exports in these modules mutate it.
 // `storedNames` reads the names a document carries and names a copy of one,
 // as a phone's copy of a game is named; making the stored form is the
-// session's and the server's.
+// session's and the server's. `rosterAvailability`'s `gameRosterEntries`
+// reads a side's players back as roster rows. `readerNames`'
+// `withoutReaderNames` names a copy of a game by its players' public labels,
+// for a reader who may no longer read their full names.
 const READ_ONLY_EXPORTS = {
+  // The cache inspects a stored play and compares accepted identities; it
+  // never constructs a stored scoring record or applies scoring actions.
+  gumbo: ['storedRecordOf', 'FINAL_INDEX'],
+  scoringMutation: ['sameScoringMutation'],
   lineup: ['ordinal', 'begun', 'pitchThrown'],
+  readerNames: ['withoutReaderNames'],
+  rosterAvailability: ['gameRosterEntries'],
   lineupHistory: ['revealedSides', 'confirmedSides'],
   storedNames: ['namesIn', 'withNames']
 }

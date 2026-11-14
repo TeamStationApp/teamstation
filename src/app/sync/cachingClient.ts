@@ -1,10 +1,13 @@
 import { asArray, type Cleaner } from 'cleaners'
 
 import {
+  asGameDetail,
   asHomeLists,
   asMyRoles,
   asPage,
+  asRosterEntry,
   asSeasonGame,
+  asStoredGameAnswer,
   type ClientOptions,
   type HomeLists,
   IDEMPOTENCY_HEADER,
@@ -15,6 +18,11 @@ import {
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import { managesRoster } from '../../common/roles'
+import {
+  defaultsOf,
+  olderSaveFoldsAlike,
+  rebuildGameEvents
+} from '../scoring/scoringSource'
 import type { DocumentStore, StoredDocument } from './cacheStore'
 import {
   CANDIDATES_KEPT,
@@ -123,6 +131,66 @@ export class CachingClient extends TeamStationClient {
       read: async path => {
         await this.request('GET', path, asRaw)
       },
+      // The game and its rosters from the phone's copy; its plays from the
+      // server, past this client, which answers the phone's copy while a save
+      // of them is queued.
+      rebuildEvents: async (gameId, log) => {
+        const kept = async <T>(
+          path: string,
+          cleaner: Cleaner<T>
+        ): Promise<T | undefined> => {
+          const key = documentKeyOf(path)
+          return key == null ? undefined : await this.cached(key, cleaner)
+        }
+        const id = encodeURIComponent(gameId)
+        return await rebuildGameEvents(gameId, log, {
+          game: async () => await kept(`/games/${id}`, asGameDetail),
+          roster: async teamId => {
+            const path = `/teams/${encodeURIComponent(teamId)}/roster`
+            return (
+              (await kept(
+                `${path}?includeFullNames=true`,
+                asArray(asRosterEntry)
+              )) ?? (await kept(path, asArray(asRosterEntry)))
+            )
+          },
+          defaults: async game => await defaultsOf(this, game),
+          server: async () =>
+            await super.request(
+              'GET',
+              `/games/${id}/events`,
+              asStoredGameAnswer
+            )
+        })
+      },
+      olderSave: async (gameId, foldVersion) => {
+        const id = encodeURIComponent(gameId)
+        const key = documentKeyOf(`/games/${id}/events`)
+        return await olderSaveFoldsAlike(foldVersion, {
+          held: async () =>
+            key == null
+              ? undefined
+              : await this.cached(key, asStoredGameAnswer),
+          server: async () =>
+            await super.request(
+              'GET',
+              `/games/${id}/events`,
+              asStoredGameAnswer
+            )
+        })
+      },
+      readCanonical: async gameId => ({
+        game: await super.request(
+          'GET',
+          `/games/${encodeURIComponent(gameId)}`,
+          asRaw
+        ),
+        events: await super.request(
+          'GET',
+          `/games/${encodeURIComponent(gameId)}/events`,
+          asRaw
+        )
+      }),
       ...options.outbox
     })
   }
@@ -357,7 +425,16 @@ export class CachingClient extends TeamStationClient {
     const queued =
       opened == null
         ? undefined
-        : queuedCallOf(method, path, body, options?.deviceNames, background)
+        : queuedCallOf(
+            method,
+            path,
+            body,
+            options?.deviceNames,
+            background,
+            options?.deviceLog
+          )
+    if (queued?.kind === 'events')
+      queued.lineupRecovery = options?.deviceLineupRecovery
     if (queued != null)
       return cleaner(
         background

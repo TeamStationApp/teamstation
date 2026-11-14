@@ -7,10 +7,10 @@ import { lstrings, sprintf } from '../locales/strings'
 import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { BuildInfoModal } from './BuildInfoModal'
-import { Emblem } from './Emblem'
+import { ButtonIcon } from './ButtonIcon'
 import { GlassView } from './GlassView'
 import { HeaderMenu, type HeaderMenuItem } from './HeaderMenu'
-import { Icon } from './Icon'
+import { PersonEmblem } from './PersonEmblem'
 import { TsMark } from './TsMark'
 import { useBreakpoint } from './useBreakpoint'
 
@@ -24,6 +24,8 @@ export interface AppHeaderProps {
    * else the screen says what it is.
    */
   showMark?: boolean
+  /** About is in the wide sidebar; Tess opens from the right of the header. */
+  sidebar?: boolean
   onBack?: () => void
   /**
    * What has scrolled out of view, handed up to the header.
@@ -41,6 +43,7 @@ export interface AppHeaderProps {
   navMinWidth?: number
   /** The signed-in person, whose picture at the right opens their menu. */
   account?: {
+    userId: string
     name: string
     avatarUrl?: string | null
     onPress: () => void
@@ -98,16 +101,18 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   // whichever is wider — the design's, or the corner's.
   const insets = useInsets()
   const margin = theme.rem(edgeMarginRem(theme, wide ? 'tablet' : 'phone'))
+  const handleTessPress = props.tess?.onPress
   const pending = props.notifications?.pending === true
   const openAbout = (): void => {
     setAbout(true)
   }
   const picture = account != null && (
-    <Emblem
+    // The account's id, so its tile is the colour its rows are.
+    <PersonEmblem
       key={account.avatarUrl}
+      userId={account.userId}
+      name={account.name}
       uri={account.avatarUrl}
-      fallback={initials(account.name)}
-      shape="circle"
       size={2}
     />
   )
@@ -130,7 +135,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                     : undefined,
                   icon: (
                     <View>
-                      <Icon
+                      <ButtonIcon
                         name="notifications"
                         size={1.5}
                         color={theme.headerTextColor}
@@ -145,7 +150,11 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
   const markRows: HeaderMenuItem[] = [
     {
       label: lstrings.about_title,
-      icon: <TsMark size={1.5} />,
+      icon: (
+        <ButtonIcon>
+          <TsMark size={1.5} />
+        </ButtonIcon>
+      ),
       onPress: openAbout
     },
     ...(props.tess == null
@@ -155,7 +164,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             label: lstrings.tess_ask,
             detail: lstrings.tess_ask_detail,
             icon: (
-              <Icon
+              <ButtonIcon
                 name="auto_awesome"
                 size={1.5}
                 color={theme.headerTextColor}
@@ -206,7 +215,7 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
             >
               {/* `size` is in rem, like every other size in the app: 2.5 is
                 double the 1.25 default. */}
-              <Icon
+              <ButtonIcon
                 name="chevron_left"
                 size={2.5}
                 color={theme.headerTextColor}
@@ -216,7 +225,13 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           {showMark &&
             // A menu wherever the header has a picture or Tess, however short.
             // Otherwise there is nothing else to offer, so it opens About.
-            (account != null || props.tess != null ? (
+            (props.sidebar === true ? (
+              <View style={markStyle} testID="sidebar-header-mark">
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
+              </View>
+            ) : account != null || props.tess != null ? (
               <HeaderMenu
                 label={lstrings.header_menu_teamstation}
                 align="left"
@@ -228,7 +243,9 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                   pressed && styles.pressed
                 ]}
               >
-                <TsMark size={1.75} />
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
               </HeaderMenu>
             ) : (
               <Pressable
@@ -237,7 +254,9 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                 onPress={openAbout}
                 style={({ pressed }) => [markStyle, pressed && styles.pressed]}
               >
-                <TsMark size={1.75} />
+                <ButtonIcon>
+                  <TsMark size={1.75} />
+                </ButtonIcon>
               </Pressable>
             ))}
           {handoff != null ? (
@@ -263,7 +282,18 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
           ]}
         >
           {nav}
-          {account != null && (
+          {props.sidebar === true && props.tess != null && (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={lstrings.tess_ask}
+              onPress={handleTessPress}
+              style={({ pressed }) => [styles.tess, pressed && styles.pressed]}
+            >
+              <ButtonIcon name="auto_awesome" color={theme.headerTextColor} />
+              <Text style={styles.tessLabel}>{lstrings.tess_ask}</Text>
+            </Pressable>
+          )}
+          {account != null && props.sidebar !== true && (
             <HeaderMenu
               label={
                 pending
@@ -320,16 +350,19 @@ function PendingDot(props: { testID: string }): React.ReactElement {
   )
 }
 
-/** Local rather than imported, to keep the header free of a component cycle. */
-function initials(name: string): string {
-  const words = name.split(/[\s-]+/).filter(word => word.length > 0)
-  return words
-    .slice(0, 2)
-    .map(word => word[0]?.toUpperCase() ?? '')
-    .join('')
-}
-
 const getStyles = cacheStyles((theme: Theme) => ({
+  tess: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    minHeight: theme.rem(3),
+    paddingHorizontal: theme.rem(0.75),
+    gap: theme.rem(0.375)
+  },
+  tessLabel: {
+    color: theme.headerTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875)
+  },
   header: {
     flexDirection: 'row',
     alignItems: 'center',

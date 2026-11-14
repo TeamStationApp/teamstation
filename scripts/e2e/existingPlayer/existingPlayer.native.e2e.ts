@@ -268,7 +268,7 @@ async function n1(): Promise<void> {
   await shot('roster-bottom-after')
   await tap('Add Existing Player')
   await m.assertVisible({ text: 'Choose Aaron J', timeout: 15000 })
-  // Each card is one control to VoiceOver; its pills show in the shot.
+  // Each card is one control to VoiceOver; its affiliation line shows in the shot.
   await shot('existing-player-list')
   await tap('Search players')
   check(
@@ -277,7 +277,8 @@ async function n1(): Promise<void> {
   )
   // The scoring caret is the surface's accent.
   await caretShot('existing-player-keyboard', [[52, 211, 153]])
-  await m.inputText({ text: 'bet' })
+  // The coach reads him short, so he is found by the name shown, not his surname.
+  await m.inputText({ text: 'mookie' })
   await m.assertVisible({ text: 'Choose Mookie B', timeout: 15000 })
   await m.hideKeyboard()
   await tap('Choose Mookie B')
@@ -301,7 +302,7 @@ async function n1(): Promise<void> {
   await m.scrollUntilVisible({ element: { text: 'Add Existing Player' } })
   await tap('Add Existing Player')
   await tap('Search players')
-  await m.inputText({ text: 'freeman' })
+  await m.inputText({ text: 'freddie' })
   await m.assertVisible({ text: 'Choose Freddie F', timeout: 15000 })
   await m.hideKeyboard()
   await tap('Choose Freddie F')

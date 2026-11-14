@@ -13,6 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
@@ -23,37 +24,37 @@ mkdirSync(report, { recursive: true })
 const suites = [
   ...globSync('src/server/groups/**/*.test.ts'),
   ...globSync('src/server/notifications/*.test.ts'),
-  ...globSync('src/server/socket/fanout.test.ts'),
-  ...globSync('src/server/socket/gameSocket.test.ts'),
-  ...globSync('src/server/admin/nodeAdministration.test.ts'),
-  ...globSync('src/server/invites/personRequests.test.ts'),
-  ...globSync('src/migrate/runner.test.ts'),
+  ...globSync('src/server/socket/fanout.integration.test.ts'),
+  ...globSync('src/server/socket/gameSocket.integration.test.ts'),
+  ...globSync('src/server/admin/nodeAdministration.integration.test.ts'),
+  ...globSync('src/server/invites/personRequests.integration.test.ts'),
+  ...globSync('src/migrate/runner.integration.test.ts'),
   ...globSync('src/server/schedule/**/*.test.ts'),
-  ...globSync('src/server/routes/schedule.test.ts'),
-  ...globSync('src/server/events/events.test.ts'),
-  ...globSync('src/server/events/eventInfo.test.ts'),
-  ...globSync('src/server/routes/events.test.ts'),
-  ...globSync('src/server/access.test.ts'),
-  ...globSync('src/server/routes/teams.test.ts'),
-  ...globSync('src/server/routes/players.test.ts'),
-  ...globSync('src/server/routes/users.test.ts'),
-  ...globSync('src/server/teams/teamRoster.test.ts'),
-  ...globSync('src/server/routes/seasons.test.ts'),
-  ...globSync('src/server/scoreboard/scoreboardHub.test.ts'),
-  ...globSync('src/server/jsonBody.test.ts'),
-  ...globSync('src/server/routes/lineups.test.ts'),
-  ...globSync('src/server/live/sync.test.ts'),
-  ...globSync('src/server/live/splitter.test.ts'),
-  ...globSync('src/server/live/finishStream.test.ts'),
-  ...globSync('src/server/admin/mergeTeams.test.ts'),
-  ...globSync('src/server/routes/manage.test.ts'),
-  ...globSync('src/migrate/creationHierarchy.test.ts'),
+  ...globSync('src/server/routes/schedule.integration.test.ts'),
+  ...globSync('src/server/events/events.integration.test.ts'),
+  ...globSync('src/server/events/eventInfo.integration.test.ts'),
+  ...globSync('src/server/routes/events.integration.test.ts'),
+  ...globSync('src/server/access.integration.test.ts'),
+  ...globSync('src/server/routes/teams.integration.test.ts'),
+  ...globSync('src/server/routes/players.integration.test.ts'),
+  ...globSync('src/server/routes/users.integration.test.ts'),
+  ...globSync('src/server/teams/teamRoster.integration.test.ts'),
+  ...globSync('src/server/routes/seasons.integration.test.ts'),
+  ...globSync('src/server/scoreboard/scoreboardHub.integration.test.ts'),
+  ...globSync('src/server/jsonBody.integration.test.ts'),
+  ...globSync('src/server/routes/lineups.integration.test.ts'),
+  ...globSync('src/server/live/sync.integration.test.ts'),
+  ...globSync('src/server/live/splitter.integration.test.ts'),
+  ...globSync('src/server/live/finishStream.integration.test.ts'),
+  ...globSync('src/server/admin/mergeTeams.integration.test.ts'),
+  ...globSync('src/server/routes/manage.integration.test.ts'),
+  ...globSync('src/migrate/creationHierarchy.integration.test.ts'),
   ...globSync('src/server/location/**/*.test.ts'),
-  ...globSync('src/server/media/pictureCatalog.test.ts'),
-  ...globSync('src/server/routes/pictures.test.ts'),
-  ...globSync('src/server/routes/location.test.ts'),
-  ...globSync('src/server/routes/cityLookup.test.ts'),
-  ...globSync('src/server/routes/googleEventLookup.test.ts'),
+  ...globSync('src/server/media/pictureCatalog.integration.test.ts'),
+  ...globSync('src/server/routes/pictures.integration.test.ts'),
+  ...globSync('src/server/routes/location.integration.test.ts'),
+  ...globSync('src/server/routes/cityLookup.integration.test.ts'),
+  ...globSync('src/server/routes/googleEventLookup.integration.test.ts'),
   ...globSync('src/app/components/googleMapDocument.test.ts'),
   ...globSync('src/common/publicStaffName.test.ts'),
   ...globSync('src/common/seasonTimeFrames.test.ts'),
@@ -62,13 +63,13 @@ const suites = [
   ...globSync('src/app/components/iconFont.test.ts'),
   ...globSync('src/server/teams/storeTeamPictures.test.ts'),
   ...globSync('src/server/openapi.test.ts'),
-  ...globSync('src/server/auth/settleAccount.test.ts'),
-  ...globSync('src/server/auth/codeDelivery.test.ts'),
-  ...globSync('src/server/admin/people.test.ts'),
-  ...globSync('src/server/routes/signup.test.ts'),
-  ...globSync('src/server/routes/invites.test.ts'),
-  ...globSync('src/server/auth/emailCodes.test.ts'),
-  ...globSync('src/server/auth/signInLink.test.ts')
+  ...globSync('src/server/auth/settleAccount.integration.test.ts'),
+  ...globSync('src/server/auth/codeDelivery.integration.test.ts'),
+  ...globSync('src/server/admin/people.integration.test.ts'),
+  ...globSync('src/server/routes/signup.integration.test.ts'),
+  ...globSync('src/server/routes/invites.integration.test.ts'),
+  ...globSync('src/server/auth/emailCodes.integration.test.ts'),
+  ...globSync('src/server/auth/signInLink.integration.test.ts')
 ]
 const paths = [...globSync('src/server/groups/**/*.ts')]
   .filter(file => !file.endsWith('.test.ts'))
@@ -220,7 +221,7 @@ if (!reportOnly)
       TS_API_BASE_URL: JSON.stringify('/api/v1'),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.svg': 'dataurl' }
+    loader: ASSET_LOADER
   })
 if (paths.length === 0 || suites.length === 0)
   throw new Error('No creation runtime paths or tests')

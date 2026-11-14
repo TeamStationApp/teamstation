@@ -137,6 +137,9 @@ export interface ConversationListItem {
   previewRetrying?: boolean
   avatarUrl?: string | null
   avatarName?: string | null
+  /** A season chat's league, whose colour and picture its tile falls back on. */
+  leagueId?: string | null
+  leaguePictureUrl?: string | null
   people?: ChatConversation['people']
   unread: number
   canPost: boolean
@@ -684,6 +687,8 @@ export class ChatEngine {
       preferences: summary.preferences,
       avatarUrl: summary.avatarUrl,
       avatarName: summary.avatarName,
+      leagueId: summary.leagueId,
+      leaguePictureUrl: summary.leaguePictureUrl,
       people:
         summary.kind !== 'dm'
           ? []

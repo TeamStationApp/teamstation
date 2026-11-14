@@ -6,10 +6,16 @@ import {
   badRequest,
   membersOnly,
   notFound,
-  unauthorized
+  unauthorized,
+  updateRequired
 } from '../../common/errors'
 import type { PlayerRsvpCounts } from '../../common/eventInfo'
+import {
+  MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
+  PROTOCOL_HEADER
+} from '../../common/gameSocket'
 import { scoreboardOpen } from '../../common/scoreboard'
+import { usesOverrideSlots } from '../../common/scoring/actions'
 import { inningsPitched } from '../../common/statExtras'
 import { asUserId } from '../../common/userId'
 import {
@@ -30,6 +36,7 @@ import {
   visibleScopes
 } from '../access'
 import { onePerson } from '../admin/people'
+import { isMachine } from '../auth/sessions'
 import type { ValkeyCache } from '../cache/valkeyCache'
 import type { Database } from '../db/database'
 import { isRealVideo } from '../db/realVideos'
@@ -98,6 +105,7 @@ import { followMerges } from '../teams/followMerges'
 import { teamRoster } from '../teams/teamRoster'
 import { gameUmpires } from '../umpires/assignments'
 import { gameNames } from '../users/nameBook'
+import { readerOf } from '../users/readerNames'
 import { publicGamesRoute } from './publicGames'
 import {
   externalIdsAsked,
@@ -702,11 +710,13 @@ export function teamRoutes(
           ? undefined
           : await givenRolesOnTeams(db, [game.away_team_id, game.home_team_id])
       const availability = await gameAvailability(db, game, {
-        roster: false
+        roster: false,
+        // The guests are shown only to a member.
+        reader: nonMemberView ? undefined : readerOf(actor)
       })
       const answer = {
         id: game.id,
-        umpires: await gameUmpires(db, game.id, media),
+        umpires: await gameUmpires(db, game.id, media, readerOf(actor)),
         guests: availability.guests,
         unrostered: availability.unrostered,
         guestPlayers:
@@ -913,7 +923,9 @@ export function teamRoutes(
       )
       // Each credit names its people by id, read from the game's book.
       const gameId = video.gameId ?? ''
-      const book = (await gameNames(db, [gameId])).get(gameId)
+      const book = (
+        await gameNames(db, [gameId], { reader: readerOf(req.actor) })
+      ).get(gameId)
       const nameOf = book?.nameOf ?? ((): undefined => undefined)
       const teams = await teamStandings(db)
 
@@ -1014,20 +1026,26 @@ export function teamRoutes(
             teamId,
             fullNames === 'true',
             actor,
-            rosterCache
+            rosterCache,
+            readerOf(actor),
+            scopes
           )
         )
         return
       }
       if (!(await nonMemberTeam(db, actor, scopes, teamId))) throw notFound()
-      // Staff imagery is public; other people's faces and family links are not.
+      // Staff imagery is public; other people's faces and family links are
+      // not, nor the affiliation line, which on a team's own list names only
+      // family. No scopes, so no line is read; the blanking below guards it.
       const roster = await teamRoster(
         db,
         media.space,
         teamId,
         false,
         actor,
-        rosterCache
+        rosterCache,
+        readerOf(actor),
+        undefined
       )
       res.json(
         roster.map(entry => ({
@@ -1036,7 +1054,8 @@ export function teamRoutes(
             entry.section === 'admin' || entry.section === 'staff'
               ? entry.avatarUrl
               : null,
-          guardianOf: undefined
+          guardianOf: undefined,
+          affiliations: ''
         }))
       )
     })
@@ -1077,7 +1096,8 @@ export function teamRoutes(
             displayName: row.displayName
           },
           teamId
-        }))
+        })),
+        { reader: readerOf(actor) }
       )
 
       if (req.query.kind === 'pitching') {
@@ -1128,14 +1148,36 @@ export function teamRoutes(
       if (!canSeeGame(scopes, scope)) throw membersOnly()
 
       const historical = statisticsQuery(req.query)
+      // The board and line are the public timelines, whoever reads them;
+      // playback names its reader's players as the box score does.
       if (historical !== null) {
-        const read =
+        const answer =
           req.query.view === 'board'
-            ? playbackBoard
+            ? await playbackBoard(db, gameId, historical)
             : req.query.view === 'line'
-              ? playbackLine
-              : gameStatistics
-        res.json(await read(db, gameId, historical))
+              ? await playbackLine(db, gameId, historical)
+              : await gameStatistics(db, gameId, historical, {
+                  reader: readerOf(actor)
+                })
+        // An old replay can poll after its socket is refused. Gate the action
+        // documents themselves while retaining server-rendered line/board views.
+        if (
+          actor.apiKey == null &&
+          !isMachine(actor) &&
+          'source' in answer &&
+          [...answer.source.plays, answer.source.currentPlay].some(play => {
+            const actions = (
+              play?.teamStation as { actions?: unknown } | undefined
+            )?.actions
+            return Array.isArray(actions) && actions.some(usesOverrideSlots)
+          }) &&
+          !(
+            Number(req.header(PROTOCOL_HEADER)) >=
+            MINIMUM_OVERRIDE_REPLAY_PROTOCOL
+          )
+        )
+          throw updateRequired('Update TeamStation to replay this game.')
+        res.json(answer)
         return
       }
 
@@ -1150,7 +1192,8 @@ export function teamRoutes(
             displayName: row.displayName
           },
           teamId: row.teamId
-        }))
+        })),
+        { reader: readerOf(actor) }
       )
 
       // The average beside a name is read as what kind of hitter somebody is,

@@ -14,11 +14,11 @@ import type { ChatKeyStore } from '../chat/keyRecord'
 import { keyStore } from '../chat/keyStore'
 import {
   Button,
+  ButtonIcon,
   Card,
   CardContent,
   DangerText,
   HeroCard,
-  Icon,
   ListCard,
   ListRow,
   PictureSheet,
@@ -257,7 +257,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   return (
     <Screen>
       <HeroCard
-        person
+        // The account's id, so its tile is the colour its rows are.
+        person={{ userId: user.id }}
         name={user.displayName}
         secondary={user.email}
         uri={user.avatarUrl}
@@ -271,6 +272,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         <PictureSheet
           client={client}
           name={user.displayName}
+          person={{ userId: user.id }}
           allowCatalog={sportsPicturesEnabled}
           pickPhoto={pickPhoto}
           onClose={() => {
@@ -731,7 +733,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               <Text style={styles.settingLabel}>
                 {lstrings.account_walkup_apple_music}
               </Text>
-              <Icon
+              <ButtonIcon
                 name="chevron_right"
                 size={1.25}
                 color={theme.secondaryTextColor}

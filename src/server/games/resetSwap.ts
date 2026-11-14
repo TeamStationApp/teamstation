@@ -155,6 +155,9 @@ export async function swapOrReset(
       // Worked out again from the lineups the game is rewound to.
       lineups_digest: null,
       play_generation: sql<number>`play_generation + 1`,
+      scoring_mutation: null,
+      // The rewound game starts with nobody credited and no removals.
+      scoring_authorship: null,
       updated_at: new Date()
     })
     .where('id', '=', gameId)

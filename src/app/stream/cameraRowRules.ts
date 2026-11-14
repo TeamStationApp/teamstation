@@ -5,7 +5,6 @@ import {
   type GameLiveStreams,
   type LiveStream
 } from '../../common/api'
-import { shortName } from '../../common/names'
 import { lstrings, sprintf } from '../locales/strings'
 
 /** One camera on the game, marked whether it is the caller's own. */
@@ -22,7 +21,10 @@ export type CameraTap = 'details' | 'play' | 'rtmp' | 'camera' | 'none'
  * notice. A closing camera keeps `publishing` until then, and is over all the
  * same, since nothing can bring it back.
  */
-export function isEnded(stream: LiveStream): boolean {
+export function isEnded(stream: {
+  state: string
+  closesAt?: string | null
+}): boolean {
   return stream.state === 'ended' || stream.closesAt != null
 }
 
@@ -50,15 +52,16 @@ function usingWords(stream: LiveStream): string {
  * The line under a row's angle. An own row with no `deviceId` is external,
  * website and older Director cameras among them. Rows in `others` never carry
  * a `deviceId`, so they are told apart by `mine` and are never external. Only
- * a camera that is neither live nor over is waiting for video.
+ * a camera that is neither live nor over is waiting for video. Somebody
+ * else's row names its owner as the server wrote them for this reader: whole
+ * to one who may read it, otherwise their public label in its own format.
  */
 export function cameraSubtitle(stream: LiveStream, mine: boolean): string {
   const waiting = angleState(stream) === 'idle'
   if (!mine) {
-    const name = shortName({ id: stream.userId, displayName: stream.ownerName })
     return sprintf(
       waiting ? lstrings.stream_row_waiting : lstrings.stream_row_other,
-      name
+      stream.ownerName
     )
   }
   if (stream.deviceId == null) return usingWords(stream)
@@ -133,6 +136,27 @@ export function orderAngles(streams: GameLiveStreams | undefined): {
     active: all.filter(({ stream }) => !isEnded(stream)),
     ended: all.filter(({ stream }) => isEnded(stream))
   }
+}
+
+/**
+ * Why Record Video is off, or `undefined` while a camera can be added. A game
+ * left above its limit, from when it was higher, says how many it really
+ * holds.
+ */
+export function cameraLimit(
+  streams: GameLiveStreams | undefined
+): string | undefined {
+  if (streams == null) return undefined
+  if (streams.gameCanAdd === 0) {
+    const active = orderAngles(streams).active.length
+    return sprintf(
+      lstrings.stream_limit_game,
+      Math.max(streams.maxGameCameras ?? 0, active)
+    )
+  }
+  if (streams.canAdd === 0)
+    return sprintf(lstrings.stream_limit_person, streams.maxCameras)
+  return undefined
 }
 
 /** Video is arriving and nobody has ended it. */

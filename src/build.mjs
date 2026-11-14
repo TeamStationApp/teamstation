@@ -14,6 +14,7 @@ import {
   withCsp,
   withIntegrity
 } from './buildCsp.mjs'
+import { ASSET_LOADER } from './esbuildLoaders.mjs'
 
 /**
  * Everything below is written relative to the repository root, and this is
@@ -197,7 +198,11 @@ const options = {
     // `global is not defined` and takes the screen with it.
     global: 'globalThis'
   },
-  loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+  // Pictures inline; the crowd's sounds as files beside the bundle, which an
+  // import names from the site's root, so they load from any address,
+  // `/games/:id/replay` too.
+  loader: ASSET_LOADER,
+  publicPath: '/'
 }
 
 await mkdir(out, { recursive: true })

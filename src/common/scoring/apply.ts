@@ -9,6 +9,7 @@ import {
   DESTINATIONS,
   type FieldingPlayAction,
   type GameFlowAction,
+  keepsAtBat,
   type LineupAction,
   PITCH_CALL_NAMES,
   type PitchAction,
@@ -39,12 +40,15 @@ import {
   applyRoster,
   baseIds,
   battingSide,
+  begun,
   canSwitchBatter,
   courtesyRunnerSaid,
   fieldingSide,
+  isDefensiveLineupEvent,
   lineupChanges,
   ordinal,
   playerRef,
+  recordsOverrideReplacement,
   saidNames,
   startAppearance
 } from './lineup'
@@ -75,11 +79,13 @@ import {
 } from './rules'
 import {
   BASE_KEYS,
+  copyGame,
   copyState,
   type FielderRef,
   type GamePlay,
   type GameState,
   isPosition,
+  lineupSideKey,
   lineupsOf,
   type Movement,
   type PitchData,
@@ -92,6 +98,7 @@ import {
   type RouteHop,
   type RunnerCredit,
   setupOf,
+  type Side,
   withoutUndefined
 } from './state'
 import type { Transition } from './transitions'
@@ -440,8 +447,9 @@ function closePlay(ctx: Ctx): void {
     atBatIndex: play.about.atBatIndex,
     eventType: play.result.eventType
   })
-  const lineup = state.liveData.boxscore.teams[battingSide(state)]
-  lineup.battingIndex = (lineup.battingIndex + 1) % lineup.battingOrder.length
+  const battingLineup = state.liveData.boxscore.teams[battingSide(state)]
+  battingLineup.battingIndex =
+    (battingLineup.battingIndex + 1) % battingLineup.battingOrder.length
   state.pending = null
   state.homeQueue = []
   if (line(ctx).outs >= 3) nextHalf(ctx)
@@ -453,6 +461,25 @@ function closePlay(ctx: Ctx): void {
       type: 'batterChanged',
       batter: line(ctx).offense.batter?.id ?? null
     })
+  }
+  const deferred = ctx.state.deferredLineups ?? []
+  delete ctx.state.deferredLineups
+  for (const action of deferred) {
+    const next: Ctx = {
+      ...ctx,
+      state: copyGame(ctx.state),
+      out: [],
+      charges: new Map(ctx.charges)
+    }
+    try {
+      lineup(next, action)
+      ctx.state = next.state
+      ctx.charges = next.charges
+      ctx.out.push(...next.out)
+    } catch (error) {
+      if (!(error instanceof Refused)) throw error
+      ctx.state.lineupWarning = `A coach lineup change could not follow the corrected play: ${error.problem.message}`
+    }
   }
 }
 
@@ -543,6 +570,121 @@ function betweenEventType(reason: string, from: number, to: number): string {
 /** The base a steal was headed for, as MLB's event types name it. */
 function stealTarget(base: number): string {
   return base >= 4 ? 'home' : `${Math.max(2, base)}b`
+}
+
+/**
+ * The event type of a runner's own action, when that action is what an
+ * unfinished at-bat is saved as. An out uses `betweenEventType`. It names
+ * what the play came to, so it differs from `actionType` in `document.ts`,
+ * which names each runner's and each event's action: a pickoff throw the
+ * runner beat is `pickoff_<n>b` there, as MLB names the attempt, but a play
+ * whose result is `pickoff_<n>b` is a runner picked off.
+ */
+function safeActionEventType(reason: string, to: number): string {
+  if (reason === 'Steal') return `stolen_base_${stealTarget(to)}`
+  if (reason === 'Wild Pitch') return 'wild_pitch'
+  if (reason === 'Passed Ball') return 'passed_ball'
+  if (reason === 'Balk') return 'balk'
+  if (reason === 'Defensive Indifference') return 'defensive_indiff'
+  if (reason === 'Throwing Error' || reason === 'Fielding Error') return 'error'
+  return 'other_advance'
+}
+
+/**
+ * Events a play holds that change only who is on the field or where: the
+ * extra-innings runner placed, a pinch runner who leaves the order as it is,
+ * a change of the batting order. None puts an at-bat under way.
+ */
+const LINEUP_EVENT_CODES = new Set([
+  'placed_runner',
+  'ts_courtesy_runner',
+  'ts_batting_order'
+])
+
+/**
+ * A pitch or a runner's play has happened, so the at-bat is no longer only a
+ * lineup. Placing the extra-innings runner, a courtesy runner or a change of
+ * the order starts nothing: a half ended before the first pitch after one
+ * saves no play.
+ */
+export function atBatUnderWay(play: GamePlay): boolean {
+  return (
+    play.runners.some(
+      runner => runner.details.movementReason !== 'Place a Runner (Tiebreaker)'
+    ) ||
+    play.playEvents.some(
+      event =>
+        event.isSubstitution !== true &&
+        !LINEUP_EVENT_CODES.has(event.details.code ?? '')
+    )
+  )
+}
+
+/**
+ * What an at-bat ended by hand is stored as: the out, if a runner was put
+ * out, otherwise the steal or other running play, otherwise
+ * `ts_at_bat_ended`, which keeps the pitches without charging the batter a
+ * plate appearance.
+ */
+function interruptedEvent(play: GamePlay): {
+  event: string
+  eventType: string
+} {
+  const out = [...play.runners].reverse().find(runner => runner.movement.isOut)
+  if (out != null)
+    return {
+      event: 'Runner out',
+      eventType: betweenEventType(
+        out.details.movementReason,
+        out.movement.start,
+        out.movement.end
+      )
+    }
+  // The batter never finished, so every runner moved between pitches: a balk
+  // is the one award that keeps the same plate appearance. A row that moved
+  // nobody (a runner back safe on a pickoff throw, a correction sending one
+  // back) or placed one names no running play.
+  const moves = play.runners.filter(
+    runner =>
+      runner.movement.start !== runner.movement.end &&
+      runner.details.movementReason !== 'Back' &&
+      runner.details.movementReason !== 'Place a Runner (Tiebreaker)'
+  )
+  const named =
+    [...moves].reverse().find(runner => runner.movement.runScored === true) ??
+    moves.at(-1)
+  if (named == null)
+    return { event: 'At Bat Ended', eventType: 'ts_at_bat_ended' }
+  return {
+    event: named.details.movementReason,
+    eventType: safeActionEventType(
+      named.details.movementReason,
+      named.movement.end
+    )
+  }
+}
+
+/**
+ * Saves the at-bat in progress without sending the batter to the dugout.
+ * The pitches, the steals and the putouts stay on the play. The batting
+ * order is left where it is, so he is up again next inning.
+ */
+function closeInterruptedAtBat(ctx: Ctx): void {
+  const play = current(ctx)
+  const named = interruptedEvent(play)
+  play.about.isComplete = true
+  play.result.event = named.event
+  play.result.eventType = named.eventType
+  play.result.description = named.event
+  play.result.awayScore = line(ctx).teams.away.runs
+  play.result.homeScore = line(ctx).teams.home.runs
+  countRbi(play)
+  ctx.state.liveData.plays.allPlays.push(copyState(play))
+  ctx.out.push({
+    type: 'playClosed',
+    atBatIndex: play.about.atBatIndex,
+    eventType: play.result.eventType
+  })
 }
 
 /** Three outs between pitches: the play ends as the runner's out, and so does the half. */
@@ -2056,6 +2198,22 @@ function courtesyRunner(ctx: Ctx, action: LineupAction): void {
 
 function lineup(ctx: Ctx, action: LineupAction): void {
   const state = ctx.state
+  const index =
+    state.liveData.plays.currentPlay?.about.atBatIndex ??
+    state.liveData.plays.allPlays.length
+  if (
+    action.effectiveAtBat != null &&
+    (action.effectiveAtBat > index || state.pending != null)
+  ) {
+    ;(state.deferredLineups ??= []).push({
+      ...action,
+      effectiveAtBat: Math.max(
+        action.effectiveAtBat,
+        index + (state.pending == null ? 0 : 1)
+      )
+    })
+    return
+  }
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
   if (action.kind === 'runner') {
     courtesyRunner(ctx, action)
@@ -2073,9 +2231,43 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     play.source.teamstation.lineupChanged = true
     return
   }
-  const setup = action.setup ?? setupOf(state)
+  let setup = action.setup ?? setupOf(state)
+  if (action.setup != null && action.effectiveSides != null) {
+    setup = setupOf(state)
+    for (const side of action.effectiveSides) {
+      setup.sides[side] = copyState(action.setup.sides[side])
+      for (const id of setup.sides[side].players) {
+        setup.players[id] = copyState(action.setup.players[id])
+        if (!setup.tagOrder.includes(id)) setup.tagOrder.push(id)
+      }
+    }
+  }
   // Who took whose place in the order: a substitute bats when his man was due.
   const replaced: Record<number, number> = {}
+  if (
+    action.setup != null &&
+    action.kind === 'roster' &&
+    action.replaces != null
+  ) {
+    const side = battingSide(state)
+    const before = state.liveData.boxscore.teams[side]
+    const after = setup.sides[side].battingOrder
+    const slot = before.battingIndex
+    if (
+      action.player == null ||
+      before.battingOrder[slot] !== action.replaces ||
+      after[slot] !== action.player ||
+      before.battingOrder.length !== after.length ||
+      !after.every(
+        (id, index) => index === slot || id === before.battingOrder[index]
+      )
+    )
+      refuse(
+        'illegal',
+        'The pinch hitter must replace the selected batting slot'
+      )
+    replaced[action.replaces] = action.player
+  }
   if (action.setup == null) {
     const sideName = action.side
     if (sideName == null) refuse('malformed', 'Say which team')
@@ -2130,17 +2322,30 @@ function lineup(ctx: Ctx, action: LineupAction): void {
       replaced[leaving] = incoming
     } else refuse('malformed', 'A roster change carries its setup')
   }
+  const recordReplacement =
+    recordsOverrideReplacement(state) ||
+    (action.setup != null &&
+      action.kind === 'roster' &&
+      action.replaces != null)
   const applied = applyRoster(
     state,
     setup,
     action.nextBatter,
     replaced,
     ctx.replay,
-    action.keepSlot === true
+    action.keepSlot === true,
+    recordReplacement,
+    action.effectiveAtBat != null
   )
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid lineup')
   ctx.state = applied.state
+  if (
+    action.setup != null &&
+    action.kind === 'roster' &&
+    action.replaces != null
+  )
+    ctx.state.overrideLineupSetup = true
   // A pinch runner takes the charges of the man he runs for (9.16).
   const was = baseIds(state)
   baseIds(ctx.state).forEach((id, index) => {
@@ -2150,12 +2355,30 @@ function lineup(ctx: Ctx, action: LineupAction): void {
     ctx.charges.delete(runner)
   })
   const play = ctx.state.liveData.plays.currentPlay
-  if (play != null) {
-    play.source.teamstation.lineupChanged = true
-    for (const change of lineupChanges(state, ctx.state, applied.takers))
-      play.playEvents.push(
+  if (play != null || recordReplacement) {
+    if (play != null) play.source.teamstation.lineupChanged = true
+    for (const change of lineupChanges(
+      state,
+      ctx.state,
+      applied.takers,
+      recordReplacement
+    )) {
+      // Later changes for a waiting team/role must not overtake its queue.
+      const waiting =
+        ctx.state.pendingLineupEvents?.some(
+          event =>
+            ctx.state.gameData.players[event.player.id]?.teamId ===
+              ctx.state.gameData.players[change.player.id].teamId &&
+            isDefensiveLineupEvent(event.details.code) ===
+              isDefensiveLineupEvent(change.eventType)
+        ) === true
+      const events =
+        play != null && !waiting
+          ? play.playEvents
+          : (ctx.state.pendingLineupEvents ??= [])
+      events.push(
         withoutUndefined({
-          index: play.playEvents.length,
+          index: events.length,
           isPitch: false,
           type: 'action',
           details: {
@@ -2172,7 +2395,11 @@ function lineup(ctx: Ctx, action: LineupAction): void {
           player: change.player
         })
       )
+    }
   }
+  for (const side of ['away', 'home'] as const)
+    if (ctx.state.liveData.boxscore.teams[side].defense.P != null)
+      delete ctx.state.overridePitchers?.[side]
   ctx.out.push({
     type: 'batterChanged',
     batter: ctx.state.liveData.linescore.offense.batter?.id ?? null
@@ -2189,6 +2416,15 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
   }
   if (state.pending != null) refuse('notNow', 'Finish the current play first')
   if (action.kind === 'endHalf') {
+    const play = state.liveData.plays.currentPlay
+    // A strikeout or a walk would still be pending, and is refused above, so
+    // the at-bat in progress never finished the batter's turn: it is saved —
+    // the steal, the pickoff, the pitches — and the same batter is due next
+    // inning. An older endHalf dropped it, and replays as it was scored.
+    if (keepsAtBat(action) && play != null) {
+      if (inPlay(play)) refuse('notNow', 'A ball in play needs its result')
+      if (atBatUnderWay(play)) closeInterruptedAtBat(ctx)
+    }
     nextHalf(ctx)
     return
   }
@@ -2265,13 +2501,31 @@ function gameFlow(ctx: Ctx, action: GameFlowAction): void {
     strikes: action.strikes ?? line(ctx).strikes,
     outs: action.outs ?? line(ctx).outs,
     batter: action.batter ?? line(ctx).offense.batter?.id ?? null,
-    pitcher: action.pitcher ?? line(ctx).defense.P?.id ?? null,
+    batterIndex: action.batterIndex,
+    pitcher:
+      action.clearPitcher === true
+        ? null
+        : (action.pitcher ?? line(ctx).defense.P?.id ?? null),
     bases: [bases[0] ?? null, bases[1] ?? null, bases[2] ?? null]
   })
   if (applied.state == null)
     refuse('illegal', applied.error ?? 'Invalid game state')
   ctx.state = applied.state
   const before = state.liveData.linescore
+  const side = battingSide(ctx.state)
+  const changedHalf = before.isTopInning !== line(ctx).isTopInning
+  const selectedTurn =
+    action.batterIndex != null &&
+    action.batterIndex !== state.liveData.boxscore.teams[side].battingIndex
+  if ((changedHalf && action.clearPitcher === true) || selectedTurn) {
+    ctx.state.overrideLineupSetup = true
+    if (begun(state)) ctx.state.overridePlayStarted = true
+  }
+  if (changedHalf && action.clearPitcher === true) {
+    const defense = fieldingSide(ctx.state)
+    const pitcher = state.liveData.boxscore.teams[defense].defense.P
+    if (pitcher != null) (ctx.state.overridePitchers ??= {})[defense] = pitcher
+  }
   outsCorrected(ctx.state, {
     inning: before.currentInning,
     top: before.isTopInning,
@@ -2348,7 +2602,9 @@ export function applyAction(
   }
   const played = state.liveData.plays.allPlays.length
   const copy = inPlace ? state : copyState(state)
+  delete copy.lineupWarning
   const ctx: Ctx = { state: copy, out: [], charges: chargeBook(copy), replay }
+  const lineupBefore = action.type === 'lineup' ? setupOf(copy) : undefined
   const mound = copy.liveData.linescore.defense.P
   errorlessOuts(copy)
   try {
@@ -2376,6 +2632,29 @@ export function applyAction(
       ctx,
       action
     )
+    if (
+      action.type === 'lineup' &&
+      action.effectiveAtBat == null &&
+      ctx.state.deferredLineups != null
+    ) {
+      const before = lineupBefore!
+      const after = setupOf(ctx.state)
+      const sides: Side[] =
+        action.side != null
+          ? [action.side]
+          : (['away', 'home'] as const).filter(
+              side => lineupSideKey(before, side) !== lineupSideKey(after, side)
+            )
+      ctx.state.deferredLineups = ctx.state.deferredLineups.flatMap(queued => {
+        const keep = (
+          queued.effectiveSides ??
+          (queued.side == null ? (['away', 'home'] as const) : [queued.side])
+        ).filter(side => !sides.includes(side))
+        return keep.length === 0 ? [] : [{ ...queued, effectiveSides: keep }]
+      })
+      if (ctx.state.deferredLineups.length === 0)
+        delete ctx.state.deferredLineups
+    }
     settle(ctx)
     keepCharges(ctx.state, ctx.charges, mound)
     const open = ctx.state.liveData.plays.currentPlay
@@ -2399,6 +2678,17 @@ export function applyAction(
       code: 'illegal',
       message: error instanceof Error ? error.message : String(error)
     })
+  }
+  // Only successful scoring leaves correction setup; refusals preserve it.
+  if (
+    action.type !== 'lineup' &&
+    !(
+      action.type === 'gameFlow' &&
+      ['override', 'placeRunner'].includes(action.kind)
+    )
+  ) {
+    delete ctx.state.overrideLineupSetup
+    delete ctx.state.overridePlayStarted
   }
   ctx.state.meta.sequence++
   const plays = ctx.state.liveData.plays.allPlays

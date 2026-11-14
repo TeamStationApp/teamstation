@@ -3,9 +3,9 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { LiveStream } from '../../common/api'
 import { Button } from '../components/Button'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { Emblem } from '../components/Emblem'
-import { Icon } from '../components/Icon'
-import { initialsOf } from '../components/initials'
+import { PersonEmblem } from '../components/PersonEmblem'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -67,10 +67,10 @@ export function CameraRow(props: CameraRowProps): React.ReactElement {
         {mine ? (
           <Emblem fallback="" icon="videocam" />
         ) : (
-          <Emblem
+          <PersonEmblem
+            userId={stream.userId}
+            name={stream.ownerName}
             uri={stream.ownerPicture}
-            fallback={initialsOf(stream.ownerName)}
-            shape="circle"
           />
         )}
         <View style={styles.words}>
@@ -103,7 +103,9 @@ export function CameraRow(props: CameraRowProps): React.ReactElement {
           testID={`angle-more-${stream.id}`}
           onPress={onMore}
         >
-          <Text style={styles.moreText}>…</Text>
+          <ButtonIcon name="more">
+            <Text style={styles.moreText}>…</Text>
+          </ButtonIcon>
         </Pressable>
       )}
       {onDelete != null && (
@@ -123,7 +125,7 @@ export function CameraRow(props: CameraRowProps): React.ReactElement {
       {opens ? (
         // The row's own target carries the words; this only reaches further.
         <Pressable accessible={false} style={styles.tail} onPress={press}>
-          <Icon name="chevron_right" color={theme.secondaryTextColor} />
+          <ButtonIcon name="chevron_right" color={theme.secondaryTextColor} />
           {foot}
         </Pressable>
       ) : (

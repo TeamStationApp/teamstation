@@ -118,19 +118,20 @@ async function main(): Promise<void> {
       required_count: 0,
       optional_count: 2
     })
+    // Uma reads her own assignment, so it names her in full.
     await login(103)
     await open(`/umpires/${f.leagueA}`)
     await page.waitForSelector('[aria-label^="Sign Up, Field"]')
     await m.tapOn({ css: '[aria-label^="Sign Up, Field"]' })
     await contains(page, 'Field 1 (optional)')
     await tap(m, 'Confirm')
-    await page.waitForSelector('[aria-label="Uma L, uty_field:1"]')
+    await page.waitForSelector('[aria-label="Uma Lee, uty_field:1"]')
     await open(`/umpires/${f.leagueA}?levels=ulv_browser_majors`)
     await contains(page, 'No games match this schedule.')
     await open('/games/gam_umpire_g1')
     await page.waitForSelector('[data-testid="game-umpires"]')
     expect(await page.$eval('[data-testid="game-umpires"]', n => n.textContent))
-      .contains('Uma L')
+      .contains('Uma Lee')
       .and.contains('Field')
     await page.evaluate(() => {
       document
@@ -140,9 +141,12 @@ async function main(): Promise<void> {
     await capture(m, artifacts, 'support/optional-game-info.png')
     await page.setViewport({ width: 1440, height: 900 })
     await open(`/umpires/${f.leagueA}`)
-    await page.waitForSelector('[aria-label="Uma L, uty_field:1"]')
+    await page.waitForSelector('[aria-label="Uma Lee, uty_field:1"]')
     expect(
-      await page.$eval('[aria-label="Uma L, uty_field:1"]', n => n.textContent)
+      await page.$eval(
+        '[aria-label="Uma Lee, uty_field:1"]',
+        n => n.textContent
+      )
     ).contains('Demo Hawks')
     for (const [name, id] of [
       ['Demo Hawks', f.teamA],
@@ -156,7 +160,7 @@ async function main(): Promise<void> {
       )
       await contains(page, name)
       await m.command('back')
-      await page.waitForSelector('[aria-label="Uma L, uty_field:1"]')
+      await page.waitForSelector('[aria-label="Uma Lee, uty_field:1"]')
     }
     await page.evaluate(() => {
       window.open = url => {
@@ -177,10 +181,10 @@ async function main(): Promise<void> {
     )
     await page.waitForSelector('[data-testid="game-umpires"]')
     expect(await page.$eval('[data-testid="game-umpires"]', n => n.textContent))
-      .contains('Uma L')
+      .contains('Uma Lee')
       .and.contains('Field')
     await m.command('back')
-    await page.waitForSelector('[aria-label="Uma L, uty_field:1"]')
+    await page.waitForSelector('[aria-label="Uma Lee, uty_field:1"]')
     await tap(m, 'Leaderboard', 'tab')
     await page.waitForSelector('[aria-label="Gold trophy"]')
     const ranks = await page.$$eval('[aria-label="Gold trophy"]', nodes =>
@@ -258,7 +262,8 @@ async function main(): Promise<void> {
     }
     await page.setViewport(null)
     await page.setViewport({ width: 1440, height: 900 })
-    const control = '[aria-label="Uma L, majors, Plate"]'
+    // The league's administrator reads its umpire in full.
+    const control = '[aria-label="Uma Lee, majors, Plate"]'
     const before = await page.$eval(control, n =>
       n.getAttribute('aria-pressed')
     )

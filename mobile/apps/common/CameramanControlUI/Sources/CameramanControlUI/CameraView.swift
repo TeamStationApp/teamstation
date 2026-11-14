@@ -10,10 +10,14 @@ import SwiftUI
 /// already knows the remote one.
 public struct CameraView<Model: CameraControlling, Picture: View>: View {
   private let model: Model
+  @State private var focusFeedback: FocusFeedback?
   /// Present only when this screen was pushed over something else. Cameraman's own screen is the
   /// app's root and has nothing to close to, so it passes nil and no button is drawn.
   private let onClose: (() -> Void)?
   private let picture: () -> Picture
+  /// Local camera previews convert normalized layer coordinates with their native preview API.
+  /// Remote pictures keep using the encoded-image contract on the model.
+  private let focusPreview: ((FocusPoint) -> Void)?
   /// The zoom the pinch started from. Pinch is multiplicative against this rather than against the
   /// live value, which is what makes it track the fingers instead of drifting.
   @State private var zoomAtGestureStart: Double?
@@ -41,12 +45,14 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
     model: Model,
     onClose: (() -> Void)? = nil,
     isShowingSettings: Binding<Bool>? = nil,
+    focusPreview: ((FocusPoint) -> Void)? = nil,
     @ViewBuilder picture: @escaping () -> Picture
   ) {
     self.model = model
     self.onClose = onClose
     self.settingsShown = isShowingSettings
     self.picture = picture
+    self.focusPreview = focusPreview
   }
 
   public var body: some View {
@@ -55,6 +61,41 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
         .ignoresSafeArea()
         .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { pictureFrame = $0 }
         .gesture(pinch)
+        .simultaneousGesture(SpatialTapGesture().onEnded { value in
+          guard model.isResponding, !isShowingSettings.wrappedValue,
+                let point = FocusGeometry.imagePoint(
+                  x: value.location.x, y: value.location.y,
+                  width: pictureFrame.width, height: pictureFrame.height,
+                  imageWidth: Double(model.settings.width), imageHeight: Double(model.settings.height)
+                ) else { return }
+          focusFeedback = FocusFeedback(x: value.location.x, y: value.location.y)
+          if let focusPreview,
+             let local = FocusPoint(x: value.location.x / pictureFrame.width,
+                                    y: value.location.y / pictureFrame.height) {
+            focusPreview(local)
+          } else {
+            model.focus(at: point)
+          }
+        })
+        .overlay(alignment: .topLeading) {
+          if let feedback = focusFeedback {
+            TimelineView(.animation) { context in
+              FocusCorners()
+                .stroke(.yellow, lineWidth: 2)
+                .frame(width: 30, height: 30)
+                .opacity(feedback.opacity(at: context.date))
+                .position(x: feedback.x, y: feedback.y)
+                .accessibilityIdentifier("focus-marker")
+            }
+            .allowsHitTesting(false)
+          }
+        }
+        .task(id: focusFeedback?.token) {
+          guard focusFeedback != nil else { return }
+          do { try await Task.sleep(for: .seconds(FocusFeedback.duration)) }
+          catch { return }
+          focusFeedback = nil
+        }
         // On the picture rather than on the enclosing ZStack: an accessibility identifier on a
         // container makes SwiftUI publish it as one element and hides the controls inside it, so a
         // flow can then see the screen but none of its values.
@@ -72,6 +113,20 @@ public struct CameraView<Model: CameraControlling, Picture: View>: View {
         Spacer()
         HStack {
           flipButton
+          VStack(alignment: .leading, spacing: 6) {
+            Text(model.focusStatusLabel)
+              .font(.subheadline.weight(.semibold))
+              .accessibilityIdentifier("focus-state:\(model.focus.generation):\(model.focus.request.isEmpty ? "none" : model.focus.request)")
+            if model.focus.supported {
+              Button("Auto Focus") { model.autoFocus() }
+                .font(.subheadline.weight(.semibold))
+                .accessibilityIdentifier("focus-auto")
+                .disabled(!model.isResponding)
+            }
+          }
+          .foregroundStyle(.white)
+          .padding(10)
+          .background(.black.opacity(0.55), in: .rect(cornerRadius: 10))
           Spacer()
         }
       }
@@ -296,4 +351,20 @@ private enum Metrics {
   /// About half an inch: an iPhone screen runs roughly 150 to 165 points to the inch. Matches the
   /// 80dp band on Android.
   static let systemEdgeBand: CGFloat = 80
+}
+
+private struct FocusCorners: Shape {
+  func path(in rect: CGRect) -> Path {
+    let rect = rect.insetBy(dx: 1, dy: 1)
+    var path = Path()
+    for (x, y, dx, dy) in [(rect.minX, rect.minY, 1.0, 1.0),
+                           (rect.maxX, rect.minY, -1.0, 1.0),
+                           (rect.minX, rect.maxY, 1.0, -1.0),
+                           (rect.maxX, rect.maxY, -1.0, -1.0)] {
+      path.move(to: CGPoint(x: x + dx * 8, y: y))
+      path.addLine(to: CGPoint(x: x, y: y))
+      path.addLine(to: CGPoint(x: x, y: y + dy * 8))
+    }
+    return path
+  }
 }

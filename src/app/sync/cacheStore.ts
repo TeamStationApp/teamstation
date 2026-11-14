@@ -72,12 +72,29 @@ export interface OutboxRow {
    * row writes read named (`appliedEvents`). Null for a row with none.
    */
   names: string | null
+  /** Device-only lineup replay baseline and context, persisted across restart. */
+  lineupRecovery?: string | null
+  /** Rejected scoring identity to deliver after later events writers drain. */
+  rejectedScoring?: string | null
   /**
    * Queued by a screen that does not wait for the server
    * (`Outbox.submitBackground`): the kinds only such a screen queues
    * (`unroster`, `guestPlayer`, `existingPlayer`) are read back from it.
    */
   background: boolean
+  /**
+   * The `FOLD_VERSION` of the build that queued the row, or null for a build
+   * from before rows kept it. A game's plays an older fold made are played
+   * again or judged before they are sent (`Outbox`, `rebuildEvents`).
+   */
+  foldVersion: number | null
+  /**
+   * A queued save of plays' session log (`SaveChange.log`), as JSON: kept on
+   * the phone beside the body and never sent, so a newer build can play it
+   * again on its own engine. Null for any other row, and for one queued by a
+   * build from before rows kept it.
+   */
+  log: string | null
 }
 
 export type NewOutboxRow = Omit<
@@ -89,9 +106,13 @@ export type NewOutboxRow = Omit<
   | 'message'
   | 'names'
   | 'background'
+  | 'foldVersion'
+  | 'log'
 > & {
   names?: string | null
   background?: boolean
+  foldVersion?: number | null
+  log?: string | null
   /**
    * Its place in the queue, when it takes the place a row it replaces held
    * (a direct send that could not be answered); else after every row.
@@ -127,7 +148,20 @@ export interface CacheTransaction {
   update: (
     id: string,
     fields: Partial<
-      Pick<OutboxRow, 'body' | 'state' | 'attempts' | 'leaseUntil' | 'message'>
+      Pick<
+        OutboxRow,
+        | 'body'
+        | 'state'
+        | 'attempts'
+        | 'leaseUntil'
+        | 'message'
+        | 'names'
+        | 'foldVersion'
+        | 'log'
+        | 'lineupRecovery'
+        | 'rejectedScoring'
+        | 'idempotencyKey'
+      >
     >
   ) => Promise<void>
   remove: (id: string) => Promise<void>
@@ -196,7 +230,11 @@ const SCHEMA = [
 const ADDED_COLUMNS: Array<[table: string, column: string, type: string]> = [
   ['outbox', 'message', 'text'],
   ['outbox', 'names', 'text'],
-  ['outbox', 'background', 'integer NOT NULL DEFAULT 0']
+  ['outbox', 'background', 'integer NOT NULL DEFAULT 0'],
+  ['outbox', 'fold_version', 'integer'],
+  ['outbox', 'log', 'text'],
+  ['outbox', 'lineup_recovery', 'text'],
+  ['outbox', 'rejected_scoring', 'text']
 ]
 
 function outboxRowOf(row: SqlRow): OutboxRow {
@@ -216,16 +254,28 @@ function outboxRowOf(row: SqlRow): OutboxRow {
     gameId: typeof row.game_id === 'string' ? row.game_id : null,
     message: typeof row.message === 'string' ? row.message : null,
     names: typeof row.names === 'string' ? row.names : null,
-    background: Number(row.background ?? 0) === 1
+    background: Number(row.background ?? 0) === 1,
+    foldVersion: row.fold_version == null ? null : Number(row.fold_version),
+    log: typeof row.log === 'string' ? row.log : null,
+    lineupRecovery:
+      typeof row.lineup_recovery === 'string' ? row.lineup_recovery : null,
+    rejectedScoring:
+      typeof row.rejected_scoring === 'string' ? row.rejected_scoring : null
   }
 }
 
 const OUTBOX_COLUMNS: Record<string, string> = {
   body: 'body',
+  lineupRecovery: 'lineup_recovery',
+  rejectedScoring: 'rejected_scoring',
+  idempotencyKey: 'idempotency_key',
   state: 'state',
   attempts: 'attempts',
   leaseUntil: 'lease_until',
-  message: 'message'
+  message: 'message',
+  names: 'names',
+  foldVersion: 'fold_version',
+  log: 'log'
 }
 
 function transactionOf(tx: SqlTransaction): CacheTransaction {
@@ -268,13 +318,15 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
         leaseUntil: null,
         message: null,
         names: row.names ?? null,
-        background: row.background === true
+        background: row.background === true,
+        foldVersion: row.foldVersion ?? null,
+        log: row.log ?? null
       }
       await tx.execute(
         `INSERT INTO outbox (id, idempotency_key, seq, chain, method, path,
            body, depends_on, state, attempts, lease_until, game_id, message,
-           names, background)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           names, background, fold_version, log, lineup_recovery, rejected_scoring)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
           queued.id,
           queued.idempotencyKey,
@@ -290,7 +342,11 @@ function transactionOf(tx: SqlTransaction): CacheTransaction {
           queued.gameId,
           queued.message,
           queued.names,
-          queued.background ? 1 : 0
+          queued.background ? 1 : 0,
+          queued.foldVersion,
+          queued.log,
+          queued.lineupRecovery ?? null,
+          queued.rejectedScoring ?? null
         ]
       )
       return queued

@@ -110,7 +110,8 @@ async function main(): Promise<void> {
       waitUntil: 'networkidle0'
     })
     await text(recipient, 'ADMINS')
-    await text(recipient, 'Tim R')
+    // By their own name, in full.
+    await text(recipient, 'Tim Raines')
     await recipient.screenshot({
       path: join(artifacts!, 'roster-admin-after.png')
     })
@@ -252,7 +253,7 @@ async function main(): Promise<void> {
     await newcomer.goto(f.h.origin + `/teams/${f.teamA}?tab=team`, {
       waitUntil: 'networkidle0'
     })
-    await text(newcomer, 'Hank A')
+    await text(newcomer, 'Hank Aaron')
     await newcomer.screenshot({
       path: join(artifacts!, 'person-invitation-onboarding.png')
     })

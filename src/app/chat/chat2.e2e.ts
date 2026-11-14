@@ -515,6 +515,30 @@ export function innermostLabelled(
 /** The shared shell's floating tab bar, by its tabs' own labels. */
 export const SHELL_TABS = ['Home', 'Videos', 'Schedule', 'Search', 'Chat']
 
+/** E9's shared-shell return journey, also runnable in the navigation fixture. */
+export async function sharedChromeReturnsToChat(
+  ui: Pick<Chat2UI, 'nodes' | 'native' | 'tapObserved' | 'present'>
+): Promise<void> {
+  const tab = async (label: string): Promise<PublicNode> => {
+    const nodes = await ui.nodes()
+    const tabs = ui.native ? nodes : nodes.filter(n => n.type === 'tab')
+    if (label === 'Chat' && tabs.some(n => n.text === 'Messages'))
+      label = 'Messages'
+    // A native tab list carries the selected tab's label too.
+    if (ui.native)
+      return { text: label, bounds: innermostLabelled(nodes, label) }
+    return need(
+      tabs.find(n => n.text === label && n.bounds != null),
+      'Public shared-shell tab fixture missing: ' + label
+    )
+  }
+  for (const label of ['Home', 'Videos', 'Schedule']) {
+    await ui.tapObserved(await tab(label))
+    await ui.tapObserved(await tab('Chat'))
+    await ui.present('chat-message-history')
+  }
+}
+
 /**
  * Where a labelled control lies against the floating tab bar: the driver taps
  * a control's centre, and over the bar that tap lands on a tab.
@@ -8143,21 +8167,7 @@ export class Scenarios {
     await this.check(
       'E9 ordinary shared chrome routes return to selected chat',
       async () => {
-        // A native tab list carries the selected tab's label too.
-        const tab = async (label: string): Promise<PublicNode> => {
-          const nodes = await ui.nodes()
-          if (ui.native)
-            return { text: label, bounds: innermostLabelled(nodes, label) }
-          return need(
-            nodes.find(n => n.text === label && n.bounds != null),
-            'Public shared-shell tab fixture missing: ' + label
-          )
-        }
-        for (const label of ['Home', 'Videos', 'Schedule']) {
-          await ui.tapObserved(await tab(label))
-          await ui.tapObserved(await tab('Chat'))
-          await ui.present('chat-message-history')
-        }
+        await sharedChromeReturnsToChat(ui)
       }
     )
   }

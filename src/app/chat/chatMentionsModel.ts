@@ -170,11 +170,16 @@ export function mentionRequest(
   return { text: after, start: edit.start, end: edit.afterEnd }
 }
 
+/**
+ * Writes `@` and the member's public label into the draft. The body goes to
+ * every member, so it carries the label the public reads (`compactName`),
+ * never a full name only this reader may read.
+ */
 export function insertMention(
   request: MentionRequest,
   current: string,
   tokens: readonly MentionToken[] | undefined,
-  member: Pick<MemberView, 'userId' | 'shortName'>
+  member: Pick<MemberView, 'userId' | 'shortName' | 'compactName'>
 ):
   | { text: string; tokens: MentionToken[]; selection: ComposerSelection }
   | undefined {
@@ -183,7 +188,7 @@ export function insertMention(
     current.slice(request.start, request.end) !== '@'
   )
     return undefined
-  const label = '@' + member.shortName
+  const label = '@' + (member.compactName ?? member.shortName)
   const tail = current.slice(request.end)
   const space = tail === '' || !/^\s/u.test(tail) ? ' ' : ''
   const text = current.slice(0, request.start) + label + space + tail

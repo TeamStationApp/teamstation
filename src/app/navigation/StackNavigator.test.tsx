@@ -183,6 +183,30 @@ describe('stack navigator', function () {
   })
 
   describe('stack navigator push (U4)', function () {
+    it('keeps scenes mounted inside their clip when navigation changes beneath the shared header', async () => {
+      await start(scene('home'))
+      const before = wrapper('home')!
+      await show({
+        sidebar: <Text testID="test-sidebar">Navigation</Text>,
+        sidebarWidth: 256,
+        headerHeight: 64,
+        chrome: <Text>Header</Text>
+      })
+      const sidebar = host.querySelector('[data-testid="test-sidebar"]')!
+      expect(getComputedStyle(sidebar.parentElement!).paddingTop).equals('64px')
+      const clip = before.parentElement!
+      expect(getComputedStyle(clip).overflowX).equals('hidden')
+      expect(clip.contains(before)).equals(true)
+      expect(getComputedStyle(clip).left).equals('256px')
+      expect(clip.parentElement).equals(
+        host.querySelector('[data-chrome]')!.parentElement
+      )
+      await show({ sidebar: undefined, sidebarWidth: 0 })
+      expect(wrapper('home')).equals(before)
+      expect(mounts.get('home')).equals(1)
+      expect(unmounts.get('home') ?? 0).equals(0)
+    })
+
     it('slides the incoming scene in over the outgoing one, which shifts left', async function () {
       await start(scene('team'))
       await show(

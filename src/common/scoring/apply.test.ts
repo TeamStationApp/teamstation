@@ -29,6 +29,21 @@ const count = (state: ReturnType<typeof game>): string => {
 }
 
 describe('applying pitches', function () {
+  it('keeps override setup when an in-place pitch is refused, and clears it on success', () => {
+    const state = game()
+    state.overrideLineupSetup = true
+    state.overridePlayStarted = true
+    state.awaitingBatter = { teamId: 'team-away', dueIndex: 0, duePlayerId: 1 }
+    const refused = applyAction(state, ball, { inPlace: true })
+    expect(refused.problems[0].message).includes('batter due is on base')
+    expect(state.overrideLineupSetup).equals(true)
+    expect(state.overridePlayStarted).equals(true)
+    state.awaitingBatter = null
+    const accepted = applyAction(state, ball, { inPlace: true })
+    expect(accepted.problems).deep.equals([])
+    expect(accepted.state.overrideLineupSetup).equals(undefined)
+    expect(accepted.state.overridePlayStarted).equals(undefined)
+  })
   it('reuses an existing identity on its own side without changing its profile or order', () => {
     for (const active of [true, false]) {
       const state = game()
@@ -585,6 +600,20 @@ describe('a pinch runner who keeps the batting order (U3)', function () {
         replaces: F.P
       }
     )
+
+  it('saves no play when the half is ended by hand after only a courtesy runner', function () {
+    const state = walked()
+    const plays = state.liveData.plays.allPlays.length
+    const order = state.liveData.boxscore.teams.away.battingIndex
+    const ended = after(state, runner(19), {
+      type: 'gameFlow',
+      kind: 'endHalf',
+      keepAtBat: true
+    })
+    expect(ended.liveData.linescore.isTopInning).equals(false)
+    expect(ended.liveData.plays.allPlays).length(plays)
+    expect(ended.liveData.boxscore.teams.away.battingIndex).equals(order)
+  })
 
   it("puts him on the base and gives him the runner's charges, and nothing else changes", function () {
     const state = walked()

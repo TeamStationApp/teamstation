@@ -4,7 +4,8 @@ import type { GameRecording } from './gameRecording'
 /** Browser recording is not supported by the phone camera engine. */
 export function useGameRecording(
   _client: TeamStationClient,
-  _gameId: string
+  _gameId: string,
+  _signedIn: boolean | null
 ): GameRecording {
   return {}
 }

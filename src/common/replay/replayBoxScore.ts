@@ -1,6 +1,6 @@
 import { statLines } from '../scoring/credits'
 import type { GamePlay, GameState, Side } from '../scoring/state'
-import { inningsPitched } from '../statExtras'
+import { addStatCount, inningsPitched } from '../statExtras'
 import { namesOf } from './replayNames'
 
 /**
@@ -37,6 +37,8 @@ export interface ReplayPitchingLine {
   er: number
   bb: number
   k: number
+  hbp: number | null
+  strikes: number | null
   pc: number | null
   /** On the mound now. */
   current: boolean
@@ -220,6 +222,7 @@ export function replayBoxScore(
       const line = lines.pitching[id]
       const charged = runs.get(id)
       const outs = line?.outs ?? 0
+      const pc = team.pitchCounts[id] ?? 0
       return {
         id,
         name: names.get(id) ?? '',
@@ -230,7 +233,12 @@ export function replayBoxScore(
         er: charged?.er ?? 0,
         bb: line?.bb ?? 0,
         k: line?.k ?? 0,
-        pc: team.pitchCounts[id] ?? 0,
+        hbp: line?.hbp ?? 0,
+        // Seeded pitch totals have no strike history. A partial count must not
+        // appear beside the complete pitch total as though it were complete.
+        strikes:
+          pc > (line?.pitches ?? 0) ? null : line == null ? 0 : line.strikes,
+        pc,
         current: !atBat && !state.final && id === mound
       }
     })
@@ -267,6 +275,8 @@ export interface ReplayPitchingTotals {
   er: number
   bb: number
   k: number
+  hbp: number | null
+  strikes: number | null
   pc: number | null
 }
 
@@ -296,9 +306,13 @@ export function battingTotals(
 export function pitchingTotals(
   lines: readonly ReplayPitchingLine[]
 ): ReplayPitchingTotals {
-  const sum = (
-    field: Exclude<keyof ReplayPitchingTotals, 'ip' | 'pc'>
-  ): number => lines.reduce((total, line) => total + line[field], 0)
+  const sum = (field: 'outs' | 'h' | 'r' | 'er' | 'bb' | 'k'): number =>
+    lines.reduce((total, line) => total + line[field], 0)
+  const nullableSum = (field: 'hbp' | 'strikes' | 'pc'): number | null =>
+    lines.reduce<number | null>(
+      (total, line) => addStatCount(total, line[field]),
+      0
+    )
   const outs = sum('outs')
   return {
     outs,
@@ -308,9 +322,9 @@ export function pitchingTotals(
     er: sum('er'),
     bb: sum('bb'),
     k: sum('k'),
-    pc: lines.some(line => line.pc === null)
-      ? null
-      : lines.reduce((total, line) => total + (line.pc ?? 0), 0)
+    hbp: nullableSum('hbp'),
+    strikes: nullableSum('strikes'),
+    pc: nullableSum('pc')
   }
 }
 

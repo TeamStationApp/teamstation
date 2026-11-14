@@ -114,4 +114,18 @@ describe('box score totals arithmetic', function () {
     expect(pitchingTotals([pitcher(12, 7, '2.1')]).ip).equals('2.1')
     expect(pitchingTotals([]).ip).equals('0.0')
   })
+  it('sums pitches and strikes independently and preserves unknown counts', function () {
+    const one = { ...pitcher(10, 4, '1.1'), pitches: 23, strikes: 15 }
+    const two = { ...pitcher(11, 5, '1.2'), pitches: 31, strikes: 20 }
+    expect(pitchingTotals([one, two])).includes({ pitches: 54, strikes: 35 })
+    expect(pitchingTotals([one, { ...two, strikes: null }])).includes({
+      pitches: 54,
+      strikes: null
+    })
+    expect(pitchingTotals([one, { ...two, pitches: null }])).includes({
+      pitches: null,
+      strikes: 35
+    })
+    expect(pitchingTotals([])).includes({ pitches: 0, strikes: 0 })
+  })
 })

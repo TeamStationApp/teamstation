@@ -1,4 +1,16 @@
 import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
+import {
+  CATCHER_COUNTS_AS_CHOICES,
+  CATCHER_INNING_CHOICES,
+  DEFAULT_PLAYING_TIME_RULES,
+  DEFENSIVE_OUTS,
+  INNING_DEADLINES,
+  MEASURED_IN_CHOICES,
+  PARTIAL_INNING_CHOICES,
+  PLAYING_TIME_RANGES,
+  ROTATE_EVERY_CHOICES,
+  SITTING_ORDER_CHOICES
+} from '../../common/playingTimeRules'
 import { userIdSchema } from '../userIdSchema'
 const ref = {
   type: 'object',
@@ -29,6 +41,64 @@ const action = {
   }
 }
 const retryKey = { type: 'string', minLength: 8, maxLength: 120 }
+/** A season's or team's Playing Time Rules, each rule with its default. */
+export const playingTimeRulesSchema = (() => {
+  // By the rule's name, a large roster's block's the same as the main one's.
+  const choices: Record<string, readonly unknown[]> = {
+    measuredIn: MEASURED_IN_CHOICES,
+    required: DEFENSIVE_OUTS,
+    completeBy: INNING_DEADLINES,
+    countPartial: PARTIAL_INNING_CHOICES,
+    catcherCountsAs: CATCHER_COUNTS_AS_CHOICES,
+    infieldBy: INNING_DEADLINES,
+    outfieldBy: INNING_DEADLINES,
+    equalSittingOrder: SITTING_ORDER_CHOICES,
+    rotateEvery: ROTATE_EVERY_CHOICES,
+    catcherMaxInnings: CATCHER_INNING_CHOICES,
+    catcherBlocksPitching: CATCHER_INNING_CHOICES
+  }
+  const ranges: Record<string, { min: number; max: number }> = {
+    ...PLAYING_TIME_RANGES,
+    players: PLAYING_TIME_RANGES.largeRosterPlayers,
+    minimum: PLAYING_TIME_RANGES.minimumInnings
+  }
+  const integer = (key: string): Record<string, unknown> => ({
+    type: 'integer',
+    minimum: ranges[key].min,
+    maximum: ranges[key].max
+  })
+  /** Each key of `defaults`, a block as an object of its own. */
+  const properties = (defaults: object): Record<string, unknown> =>
+    Object.fromEntries(
+      Object.entries(defaults).map(([key, value]: [string, unknown]) => [
+        key,
+        typeof value === 'object' && value != null
+          ? { type: 'object', properties: properties(value), default: value }
+          : {
+              ...(key === 'maxInningsPerPosition'
+                ? {
+                    oneOf: [
+                      integer(key),
+                      { type: 'string', enum: ['unlimited'] }
+                    ]
+                  }
+                : choices[key] != null
+                  ? { enum: choices[key] }
+                  : ranges[key] != null
+                    ? integer(key)
+                    : { type: 'boolean' }),
+              default: value
+            }
+      ])
+    )
+  return {
+    type: 'object',
+    nullable: true,
+    description:
+      "The whole set. A missing rule takes its default, and a missing block its defaults; a value out of range or not one of its choices is a 400 naming the rule. Null is none on a season, and on a team follows its managing season again. A team stores a full copy, so a later change to the season never reaches it. A league answers 400. A set in the first version's shape (no `measuredIn`, and one of that version's keys such as `mandatoryPlay`) is read into this one. 'none' is no deadline, no catcher limit, or (`catcherBlocksPitching`) no block on pitching.",
+    properties: properties(DEFAULT_PLAYING_TIME_RULES)
+  }
+})()
 /** A parent, competition, personal-role or promotion invitation. */
 const relationship = {
   type: 'object',
@@ -372,7 +442,8 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
               enum: [...PLAYER_NAME_PRIVACY, null],
               description:
                 "How the public reads this level's player names. Null is Default, which inherits from the seasons and leagues that manage it. Group detail answers the stored value, the resolved format and the levels it was inherited from."
-            }
+            },
+            playingTimeRules: playingTimeRulesSchema
           }
         }),
         responses
@@ -500,7 +571,7 @@ export function creationPaths(errorResponse: unknown): Record<string, unknown> {
           'Public minimal group profile with optional current management capability',
         parameters: [parameter('id')],
         description:
-          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. No roster, statistics, private user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league. `canManagePeople` is true for its administrators, coaches and assistants, who open anybody on its people list and give or take away every role there but Admin; `canSeePeople` for its members and role holders, who read that list; `canManageRoster`, on a team only, for its administrators, coaches, assistants and scorekeepers, who add and create its players.',
+          'Only group identity, locality, true parents, competition membership, shortened staff names, published schedule and aggregate results. Each of a team\u2019s `staff` carries its account `userId`, which alone picks their tile\u2019s colour, and nothing else of theirs. No roster, statistics, other user IDs, contacts, full staff surname, events or media. `nonMemberView` is true on a team for anybody signed in who is not a member of it, following it or not, whose private team reads are the non-member view; false for members, for nobody signed in, and on every season and league. `canManagePeople` is true for its administrators, coaches and assistants, who open anybody on its people list and give or take away every role there but Admin; `canSeePeople` for its members and role holders, who read that list; `canManageRoster`, on a team only, for its administrators, coaches, assistants and scorekeepers, who add and create its players. For an administrator of a season or team, `playingTimeRules` is its own Playing Time Rules or null; a team\u2019s also has `seasonPlayingTimeRules`, `{ season: { id, name }, rules }` from the latest-starting managing season with rules, or null. Nobody else is sent either field. A season\u2019s `group` carries `leagueId` and `leaguePictureUrl`, its league\u2019s signed picture (null without one), which the season is drawn with when its own `imageUrl` is null; `leaguePictureUrl` is null on a team or a league.',
         responses
       }
     }

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { after, before, describe, it } from 'mocha'
 import pg from 'pg'
 
+import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import type { ScoringAction } from '../../common/scoring/actions'
 import type { LineupFixture } from '../../server/dev/lineupFixture'
 import { browserSession, maestro } from '../../test/refinementsMaestro.e2e'
@@ -377,7 +378,8 @@ describe('team-keyed lineups, and reset with swap', function () {
         method,
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
         },
         body: JSON.stringify(body)
       })
@@ -601,7 +603,8 @@ describe('team-keyed lineups, and reset with swap', function () {
         method: 'POST',
         headers: {
           authorization: `Bearer ${token}`,
-          'content-type': 'application/json'
+          'content-type': 'application/json',
+          [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL)
         },
         body: JSON.stringify(body)
       })

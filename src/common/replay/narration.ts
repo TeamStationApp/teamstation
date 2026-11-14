@@ -12,7 +12,7 @@ import {
   type Side
 } from '../scoring/state'
 import type { Transition } from '../scoring/transitions'
-import { namesOf } from './replayNames'
+import { publicNamesOf } from './replayNames'
 import { isClose, type ReplayStep, type ReplayTimeline } from './replayTimeline'
 
 /**
@@ -439,7 +439,7 @@ export function narrateStep(
   step: Pick<ReplayStep, 'actions'>,
   after: GameState,
   transitions: readonly Transition[],
-  names: Map<number, string> = namesOf(after)
+  names: Map<number, string> = publicNamesOf(after)
 ): Narration {
   const said: Said = { parts: [], excited: false }
   const pitched = transitions.findIndex(t => t.type === 'pitchThrown')
@@ -599,7 +599,7 @@ function resumeFrom(
     const now = timeline.steps[i]
     if (was.key !== now.key || was.actions.length !== now.actions.length) return
   }
-  const named = namesOf(previous.end)
+  const named = publicNamesOf(previous.end)
   if (named.size !== names.size) return
   for (const [id, name] of names) if (named.get(id) !== name) return
   return tail
@@ -633,7 +633,7 @@ export function narrateTimeline(
   timeline: ReplayTimeline,
   previous?: { timeline: ReplayTimeline; narrations: Map<string, Narration> }
 ): Map<string, Narration> {
-  const names = namesOf(timeline.end)
+  const names = publicNamesOf(timeline.end)
   const resume =
     previous == null
       ? undefined

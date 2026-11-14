@@ -40,6 +40,7 @@ import {
 } from './state'
 import {
   actionByTeam,
+  recordVersion,
   setupByTeam,
   type SideTeams,
   type TeamSetup
@@ -86,7 +87,7 @@ function teamStationOf(
     teamSetups.set(stamp.setupBefore, made)
   }
   return {
-    version: 3,
+    version: recordVersion(stamp.actions),
     setupBefore: made.setup,
     ...recordActions(stamp, teams),
     ...(detail === undefined ? {} : { detail })
@@ -1746,6 +1747,7 @@ export const HIGHLIGHT_CREDITED = {
     'defensive_switch',
     'ts_batting_order',
     'ts_courtesy_runner',
+    'ts_at_bat_ended',
     'final_score'
   ])
 } as const satisfies Record<string, ReadonlySet<string>>
@@ -2144,7 +2146,18 @@ export function finalDocumentOf(state: GameState, stamp: PlayStamp): GumboPlay {
       rbi: 0
     },
     pitchIndex: [],
-    actionIndex: [],
+    actionIndex: (state.pendingLineupEvents ?? []).map((_, index) => index),
+    ...((state.pendingLineupEvents?.length ?? 0) > 0
+      ? {
+          playEvents: state.pendingLineupEvents!.map((event, index) =>
+            substitutionDocument(
+              { ...event, index },
+              ref => person(state, stamp.setupBefore, ref),
+              { away: line.teams.away.runs, home: line.teams.home.runs }
+            )
+          )
+        }
+      : {}),
     runnerIndex: [],
     credits: [],
     teamStation: teamStationOf(state.gameData.teams, stamp)

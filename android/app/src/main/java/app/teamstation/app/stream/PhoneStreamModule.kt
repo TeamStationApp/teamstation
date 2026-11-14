@@ -204,6 +204,10 @@ class PhoneStreamModule(reactContext: ReactApplicationContext) : NativePhoneStre
         ordered.run { engine.setZoom(displayed) }
     }
 
+    override fun setFocus(command: String) {
+        ordered.run { engine.setFocus(command) }
+    }
+
     override fun pinch(scale: Double, ended: Boolean) {
         ordered.run { engine.pinch(scale, ended) }
     }

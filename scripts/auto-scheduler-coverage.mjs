@@ -40,6 +40,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { coverageSource } from './coverage-source.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
@@ -50,54 +51,54 @@ const minimum = unitOnly ? 90 : 95
 /** The `.test.ts` suites, run together under mocha. */
 const tsSuites = [
   // M1: the venue registry, availability and ownership.
-  'src/migrate/migrations/077venues.test.ts',
+  'src/migrate/migrations/077venues.integration.test.ts',
   'src/app/web/mapFrame.test.ts',
   'src/common/fieldAvailability.test.ts',
   'src/common/calendarDates.test.ts',
   'src/common/eventSchedule.test.ts',
   'src/common/venues.test.ts',
-  'src/server/venues/ownership.test.ts',
+  'src/server/venues/ownership.integration.test.ts',
   // M2: the venue API, photos and notifications.
-  'src/server/routes/venues.test.ts',
-  'src/server/notifications/venueNotifications.test.ts',
+  'src/server/routes/venues.integration.test.ts',
+  'src/server/notifications/venueNotifications.integration.test.ts',
   'src/server/location/googlePlaces.test.ts',
-  'src/server/media/images.test.ts',
+  'src/server/media/images.integration.test.ts',
   'src/server/openapi.test.ts',
-  'src/server/jsonBody.test.ts',
+  'src/server/jsonBody.integration.test.ts',
   'src/common/api.venues.test.ts',
   // M3: the Field Manager, venue and field screens.
   'src/app/platform/currentPosition.test.ts',
   // M4: games on fields, warnings and notifications.
-  'src/migrate/migrations/078gameFields.test.ts',
-  'src/server/venues/gameFields.test.ts',
-  'src/server/admin/mergeTeams.test.ts',
-  'src/server/schedule/gameApprovals.test.ts',
-  'src/server/events/eventInfo.test.ts',
-  'src/server/routes/schedule.test.ts',
+  'src/migrate/migrations/078gameFields.integration.test.ts',
+  'src/server/venues/gameFields.integration.test.ts',
+  'src/server/admin/mergeTeams.integration.test.ts',
+  'src/server/schedule/gameApprovals.integration.test.ts',
+  'src/server/events/eventInfo.integration.test.ts',
+  'src/server/routes/schedule.integration.test.ts',
   'src/app/screens/gameDraft.fields.test.ts',
   // M5: exhibition teams, season settings and the setup.
-  'src/migrate/migrations/079seasonScheduling.test.ts',
+  'src/migrate/migrations/079seasonScheduling.integration.test.ts',
   'src/common/schedulingChecks.test.ts',
-  'src/server/routes/schedulingSetup.test.ts',
-  'src/server/routes/seasonReaders.test.ts',
-  'src/server/admin/mergeTeamsSeasonFlags.test.ts',
+  'src/server/routes/schedulingSetup.integration.test.ts',
+  'src/server/routes/seasonReaders.integration.test.ts',
+  'src/server/admin/mergeTeamsSeasonFlags.integration.test.ts',
   'src/common/api.scheduling.test.ts',
   // M6: the scheduler.
-  'src/migrate/migrations/080schedulePreviews.test.ts',
+  'src/migrate/migrations/080schedulePreviews.integration.test.ts',
   'src/common/autoScheduler/*.test.ts',
-  'src/server/routes/schedulePreviews.test.ts',
-  'src/server/autoScheduler/publish.test.ts',
-  'src/server/autoScheduler/reschedule.test.ts',
+  'src/server/routes/schedulePreviews.integration.test.ts',
+  'src/server/autoScheduler/publish.integration.test.ts',
+  'src/server/autoScheduler/reschedule.integration.test.ts',
   'src/server/autoScheduler/rules.test.ts',
   'src/server/autoScheduler/managerPreview.unit.test.ts',
   'src/server/autoScheduler/buildOffThread.test.ts',
   // Fixes M2: a season is dates, scheduled in each field’s local time.
   'src/common/eventTime.test.ts',
   'src/common/seasonScheduling.test.ts',
-  'src/server/groups/authority.test.ts',
-  'src/server/groups/parentTerms.test.ts',
+  'src/server/groups/authority.integration.test.ts',
+  'src/server/groups/parentTerms.integration.test.ts',
   // Fixes M5: T-ball as a size of its own, and the add icon in the phone font.
-  'src/migrate/migrations/086fieldSizes.test.ts',
+  'src/migrate/migrations/086fieldSizes.integration.test.ts',
   'src/app/components/iconFont.test.ts',
   // Fixes M8: the pin map's Google-only document.
   'src/app/components/pinMapDocument.test.ts',
@@ -166,23 +167,23 @@ if (process.env.TS_MANAGER_COACH_COVERAGE === '1') {
     'src/common/api.test.ts'
   ]
   const integrationSuites = [
-    'src/migrate/runner.test.ts',
-    'src/server/routes/people.test.ts',
-    'src/server/routes/follows.test.ts',
-    'src/server/teams/teamHeadCoach.test.ts',
-    'src/server/admin/people.test.ts',
-    'src/server/graphql/graphql.test.ts',
-    'src/server/groups/publicSummary.test.ts',
-    'src/server/routes/manage.test.ts',
-    'src/server/groups/teamMerge.test.ts',
-    'src/server/teams/teamRoster.test.ts',
-    'src/server/events/eventInfo.test.ts',
-    'src/server/routes/schedulingSetup.test.ts',
-    'src/server/routes/schedulePreviews.test.ts',
+    'src/migrate/runner.integration.test.ts',
+    'src/server/routes/people.integration.test.ts',
+    'src/server/routes/follows.integration.test.ts',
+    'src/server/teams/teamHeadCoach.integration.test.ts',
+    'src/server/admin/people.integration.test.ts',
+    'src/server/graphql/graphql.integration.test.ts',
+    'src/server/groups/publicSummary.integration.test.ts',
+    'src/server/routes/manage.integration.test.ts',
+    'src/server/groups/teamMerge.integration.test.ts',
+    'src/server/teams/teamRoster.integration.test.ts',
+    'src/server/events/eventInfo.integration.test.ts',
+    'src/server/routes/schedulingSetup.integration.test.ts',
+    'src/server/routes/schedulePreviews.integration.test.ts',
     'src/server/autoScheduler/buildOffThread.test.ts',
-    'src/server/autoScheduler/publish.test.ts',
-    'src/server/autoScheduler/reschedule.test.ts',
-    'src/server/venues/gameFields.test.ts'
+    'src/server/autoScheduler/publish.integration.test.ts',
+    'src/server/autoScheduler/reschedule.integration.test.ts',
+    'src/server/venues/gameFields.integration.test.ts'
   ]
   const suites = unitOnly
     ? isolatedSuites
@@ -337,7 +338,7 @@ if (!reuseUnitRuns) {
         'process.env.TS_SENTRY_DSN': JSON.stringify(''),
         'process.env.NODE_ENV': JSON.stringify('test')
       },
-      loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+      loader: ASSET_LOADER
     })
   }
 }

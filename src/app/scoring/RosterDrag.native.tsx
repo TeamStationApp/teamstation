@@ -1,27 +1,41 @@
 import React, { useContext, useEffect, useId, useRef, useState } from 'react'
-import { type GestureResponderEvent, View, type ViewProps } from 'react-native'
+import {
+  type GestureResponderEvent,
+  Text,
+  View,
+  type ViewProps
+} from 'react-native'
 
 import { useTheme } from '../theme/ThemeContext'
 import { RosterCardSlot, useRosterLifted } from './RosterCardSlot'
 import {
   measureRosterView,
   RosterClipContext,
+  RosterGripContext,
   useRosterGesture
 } from './RosterDragContext'
-import type { RosterDragProps } from './rosterDragProps'
+import type { RosterDragProps, RosterGripProps } from './rosterDragProps'
 import type { RosterGesture } from './rosterGesture'
 import { RosterHold } from './rosterHold'
 import { ROSTER_CARD_GAP } from './rosterLayout'
 export { RosterDragGroup, RosterScrollArea } from './RosterDragContext'
-/** Extracted responder adapter also exercised with native page coordinates in unit tests. */
+/**
+ * Extracted responder adapter also exercised with native page coordinates in
+ * unit tests. `grip` marks the next touch start as one on the card's grip.
+ */
 export function rosterResponder(
   engine: RosterGesture,
   props: RosterDragProps,
   current = (): RosterDragProps => props,
   source?: string
-): ViewProps & { dispose: () => void } {
+): ViewProps & { dispose: () => void; grip: () => void } {
   let owned = false
   let contact = false
+  let gripped = false
+  // A touch that started on the grip stays the grip's: the card follows it
+  // by its touch events and never asks for it. React Native grants a view
+  // the touch before asking the holder to let go, and the grip refuses.
+  let onGrip = false
   const point = (e: GestureResponderEvent): { x: number; y: number } => ({
     x: e.nativeEvent.pageX,
     y: e.nativeEvent.pageY
@@ -53,20 +67,29 @@ export function rosterResponder(
     const tap = hold.finish()
     contact = false
     owned = false
-    if (active) engine.release(point(e)).catch(cancel)
-    else if (tap && current().disabled !== true) current().onTap?.()
+    // A tap on the grip lifted the card as it landed: put it back.
+    if (tap) {
+      if (active) engine.cancel()
+      if (current().disabled !== true) current().onTap?.()
+    } else if (active) engine.release(point(e)).catch(cancel)
   }
   return {
     dispose: cancel,
+    grip: () => {
+      gripped = true
+    },
     onStartShouldSetResponder: () => false,
     onTouchStart: e => {
+      const grip = gripped
+      gripped = false
+      onGrip = grip
       if (
         (current().playerId == null && current().onTap == null) ||
         current().disabled === true
       )
         return
       contact = true
-      hold.start(point(e))
+      hold.start(point(e), grip)
     },
     onTouchMove: e => {
       if (!owned) move(e)
@@ -79,7 +102,7 @@ export function rosterResponder(
     // it claims the touch on that same move, before a parent pan can.
     onMoveShouldSetResponder: e => {
       hold.move(point(e))
-      return hold.active
+      return hold.active && !onGrip
     },
     onResponderGrant: () => {
       owned = true
@@ -121,6 +144,43 @@ export function rosterItemLayout(
   }
 }
 
+/**
+ * The three bars at a roster card's left, over the card's whole height and
+ * its left padding (`scoringPlayerCardStyle`'s). A touch on them picks the
+ * card up as it lands; anywhere else on the card holds first. The grip is
+ * its own responder, and blocks the native one, so no list scrolls from it.
+ */
+export function RosterGrip({
+  label,
+  color
+}: RosterGripProps): React.ReactElement {
+  const grip = useContext(RosterGripContext)
+  return (
+    <View
+      onTouchStart={grip}
+      onStartShouldSetResponder={() => true}
+      onResponderGrant={() => true}
+      onResponderTerminationRequest={() => false}
+      style={{
+        alignSelf: 'stretch',
+        justifyContent: 'center',
+        marginVertical: -10,
+        marginLeft: -8,
+        paddingLeft: 8,
+        paddingRight: 2
+      }}
+    >
+      <Text
+        selectable={false}
+        accessibilityLabel={label}
+        style={{ color, fontSize: 24 }}
+      >
+        ≡
+      </Text>
+    </View>
+  )
+}
+
 export function RosterDrag(props: RosterDragProps): React.ReactElement {
   const engine = useRosterGesture()
   const source = useId()
@@ -134,7 +194,7 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
     rosterResponder(engine, props, () => latest.current, source)
   )
   useEffect(() => adapter.dispose, [adapter, props.disabled, props.playerId])
-  const { dispose, ...handlers } = adapter
+  const { dispose, grip, ...handlers } = adapter
   const [hover, setHover] = useState<false | 'before' | 'after' | 'row'>(false)
   useEffect(() => {
     if (props.playerId == null) return
@@ -206,17 +266,19 @@ export function RosterDrag(props: RosterDragProps): React.ReactElement {
       }}
       style={rosterItemLayout(lifted, props.disabled === true)}
     >
-      {props.targetId === 'roster' ? (
-        props.children
-      ) : (
-        <RosterCardSlot
-          source={source}
-          target={props.targetId}
-          player={props.playerId}
-        >
-          {props.children}
-        </RosterCardSlot>
-      )}
+      <RosterGripContext.Provider value={grip}>
+        {props.targetId === 'roster' ? (
+          props.children
+        ) : (
+          <RosterCardSlot
+            source={source}
+            target={props.targetId}
+            player={props.playerId}
+          >
+            {props.children}
+          </RosterCardSlot>
+        )}
+      </RosterGripContext.Provider>
       {hover === 'row' && (
         // Drawn over the card, so like the web outline it takes no layout
         // space and cards stay ROSTER_CARD_GAP apart.

@@ -3,17 +3,14 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { RosterCandidate } from '../../common/api'
 import { useTheme } from '../theme/ThemeContext'
-import { Emblem } from './Emblem'
-import { Icon } from './Icon'
-import { initialsOf } from './initials'
-
-/** A pill's height; its padding is at least half of it (`docs/ui-rules.md`). */
-const PILL_HEIGHT = 22
+import { ButtonIcon } from './ButtonIcon'
+import { PersonAffiliationLine } from './PersonAffiliationLine'
+import { PersonEmblem } from './PersonEmblem'
 
 /**
  * One search result in the app theme, a card of its own: the player's
- * picture or initials, their short name, a pill for each team they play for
- * in a current or future season, and a chevron.
+ * picture or initials, their name, the affiliation line under it
+ * (`PersonAffiliationLine`), and a chevron.
  */
 export function CandidateCard({
   candidate,
@@ -49,12 +46,12 @@ export function CandidateCard({
         elevation: 1
       })}
     >
-      <Emblem
-        shape="circle"
+      <PersonEmblem
+        userId={candidate.userId}
+        name={candidate.shortName}
         uri={candidate.avatarUrl}
-        fallback={initialsOf(candidate.shortName)}
       />
-      <View style={{ flex: 1, minWidth: 0, gap: 6 }}>
+      <View style={{ flex: 1, minWidth: 0, gap: 2 }}>
         <Text
           numberOfLines={1}
           style={{
@@ -65,39 +62,12 @@ export function CandidateCard({
         >
           {candidate.shortName}
         </Text>
-        {candidate.teams.length > 0 && (
-          <View
-            testID="Candidate teams"
-            style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 4 }}
-          >
-            {candidate.teams.map(team => (
-              <View
-                key={team.teamId}
-                style={{
-                  height: PILL_HEIGHT,
-                  paddingHorizontal: PILL_HEIGHT / 2,
-                  maxWidth: '100%',
-                  justifyContent: 'center',
-                  borderRadius: PILL_HEIGHT / 2,
-                  backgroundColor: theme.pillBackground
-                }}
-              >
-                <Text
-                  numberOfLines={1}
-                  style={{
-                    color: theme.pillTextColor,
-                    fontFamily: theme.regularTextFont,
-                    fontSize: theme.rem(0.75)
-                  }}
-                >
-                  {team.name}
-                </Text>
-              </View>
-            ))}
-          </View>
-        )}
+        <PersonAffiliationLine
+          affiliations={candidate.affiliations}
+          testID="Candidate affiliations"
+        />
       </View>
-      <Icon name="chevron_right" color={theme.secondaryTextColor} />
+      <ButtonIcon name="chevron_right" color={theme.secondaryTextColor} />
     </Pressable>
   )
 }

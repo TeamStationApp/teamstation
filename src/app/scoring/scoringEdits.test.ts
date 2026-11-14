@@ -2,7 +2,6 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import {
-  overrideError,
   overrideOf as overrideDraft,
   rosterError,
   validateRoster
@@ -11,6 +10,7 @@ import { setupOf } from '../../common/scoring/state'
 import { scoringSession } from '../../test/scoringSession'
 import { addDevelopmentPlayer } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
+import { overrideActions } from './overrideModel'
 import {
   copyState,
   initialScoringState,
@@ -166,19 +166,21 @@ describe('atomic scoring edits', function () {
       ['strikes', 3],
       ['outs', 3]
     ] as const)
-      expect(overrideError(state.session, { ...good, [key]: value })).is.a(
-        'string'
-      )
+      expect(
+        overrideActions(state.session, { ...good, [key]: value }).error
+      ).is.a('string')
     for (const batter of [null, 10, 999])
-      expect(overrideError(state.session, { ...good, batter })).includes(
-        'batter'
-      )
+      expect(
+        overrideActions(state.session, { ...good, batter }).error
+      ).includes('batter')
     for (const pitcher of [null, 1, 999])
-      expect(overrideError(state.session, { ...good, pitcher })).includes(
-        'pitcher'
-      )
+      expect(
+        overrideActions(state.session, { ...good, pitcher }).error
+      ).includes('pitcher')
     for (const bases of [[1, null, null], [2, 2, null], [10, null, null], []])
-      expect(overrideError(state.session, { ...good, bases })).includes('Bases')
+      expect(overrideActions(state.session, { ...good, bases }).error).includes(
+        'Bases'
+      )
     expect(
       scoringReducer(state, { type: 'OVERRIDE', draft: { ...good, balls: 4 } })
     ).equals(state)

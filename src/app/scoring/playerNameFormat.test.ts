@@ -2,6 +2,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { asRosterEntry, type RosterEntry } from '../../common/api'
+import type { CurrentPlay } from '../../common/gumboPlay'
 import { namesOf } from '../../common/replay/replayNames'
 import {
   drawnName,
@@ -11,6 +12,7 @@ import {
   shortName
 } from '../../common/scoring/actions'
 import { newSetup } from '../../common/scoring/lineup'
+import { withReaderNames } from '../../common/scoring/readerNames'
 import {
   resolveRosterCommands,
   rosterPrompt,
@@ -193,6 +195,35 @@ describe('a label on a client', function () {
     expect(board('A L')).deep.equals({ firstName: 'A', lastName: 'L' })
   })
 
+  it('prints the public label on the board strip for a name full only for this reader', function () {
+    const state = labelled('Alex Lee', { nameFormat: 'full' })
+    state.gameData.players[batterOf(state)].compactName = 'Alex L'
+    expect(scoreboardFor(state).batter).deep.equals({
+      firstName: 'Alex',
+      lastName: 'L'
+    })
+    // Everywhere else the full label is drawn whole.
+    expect(namesOf(state).get(batterOf(state))).equals('Alex Lee')
+  })
+
+  it('prints the public label whole on the board strip when its format shows a surname', function () {
+    const state = labelled('Alex Lee', { nameFormat: 'full' })
+    Object.assign(state.gameData.players[batterOf(state)], {
+      compactName: 'A Lee',
+      compactFormat: 'initialLast'
+    })
+    expect(scoreboardFor(state).batter).deep.equals({
+      firstName: 'A Lee',
+      lastName: ''
+    })
+    // The field draws the same public label, as it stands.
+    expect(
+      shortPlayerNames(Object.values(state.gameData.players)).get(
+        batterOf(state)
+      )
+    ).equals('A Lee')
+  })
+
   it('is drawn by a play description rather than the model name', function () {
     const state = withModelNames(
       labelled('A L', { nameFormat: 'initials', halves: true })
@@ -252,6 +283,168 @@ describe('a phone applying a post', function () {
     expect(
       applied.currentPlay.teamStation.setupBefore.players[7].nameFormat
     ).equals('full')
+  })
+})
+
+describe('a phone applying a post for a reader who reads a player in full', function () {
+  it('caches the public label, so the read puts the full name back beside it', function () {
+    const setup = (fullName: string, nameFormat?: string): object => ({
+      version: 2,
+      setupBefore: {
+        players: {
+          7: { id: 7, fullName, ...(nameFormat == null ? {} : { nameFormat }) }
+        }
+      },
+      actions: []
+    })
+    const applied = appliedEvents(
+      {
+        plays: [],
+        currentPlay: {
+          about: { atBatIndex: 0 },
+          teamStation: setup('C Lee', 'initialLast')
+        },
+        readerNames: { 7: 'Cliff Lee' }
+      },
+      {
+        currentPlay: {
+          about: { atBatIndex: 0 },
+          teamStation: setup('')
+        }
+      },
+      {
+        gameId: 'g1',
+        plays: 'local-p',
+        lineups: null,
+        newPlayId: () => 'local-row',
+        // The session names him as its reader reads him.
+        names: { 7: 'Cliff Lee' }
+      }
+    ) as { currentPlay: unknown; readerNames: Record<string, string> }
+    const players = (play: unknown): Record<string, object> =>
+      (play as { teamStation: { setupBefore: { players: any } } }).teamStation
+        .setupBefore.players
+    expect(players(applied.currentPlay)[7]).include({
+      fullName: 'C Lee',
+      nameFormat: 'initialLast'
+    })
+    const read = withReaderNames(
+      { plays: [], currentPlay: applied.currentPlay as CurrentPlay },
+      applied.readerNames
+    )
+    expect(players(read.currentPlay)[7]).include({
+      fullName: 'Cliff Lee',
+      nameFormat: 'full',
+      compactName: 'C Lee',
+      compactFormat: 'initialLast'
+    })
+  })
+
+  it('names him as the session does once renamed on the phone', function () {
+    const applied = appliedEvents(
+      {
+        plays: [],
+        currentPlay: {
+          about: { atBatIndex: 0 },
+          teamStation: {
+            setupBefore: { players: { 7: { id: 7, fullName: 'Cliff L' } } }
+          }
+        },
+        readerNames: { 7: 'Cliff Lee' }
+      },
+      {
+        currentPlay: {
+          about: { atBatIndex: 0 },
+          teamStation: {
+            setupBefore: { players: { 7: { id: 7, fullName: '' } } }
+          }
+        }
+      },
+      {
+        gameId: 'g1',
+        plays: 'local-p',
+        lineups: null,
+        newPlayId: () => 'local-row',
+        names: { 7: 'Clifton L' }
+      }
+    ) as {
+      currentPlay: {
+        teamStation: { setupBefore: { players: Record<string, object> } }
+      }
+    }
+    expect(applied.currentPlay.teamStation.setupBefore.players[7]).include({
+      fullName: 'Clifton L'
+    })
+  })
+
+  it('keeps a full-read player renamed on the phone public in the slot', function () {
+    const cached = (format?: string): unknown => ({
+      plays: [],
+      currentPlay: {
+        about: { atBatIndex: 0 },
+        teamStation: {
+          setupBefore: {
+            players: {
+              7: {
+                id: 7,
+                fullName: format == null ? 'Cliff L' : 'C Lee',
+                ...(format == null ? {} : { nameFormat: format })
+              }
+            }
+          }
+        }
+      },
+      readerNames: { 7: 'Cliff Lee' }
+    })
+    const post = {
+      currentPlay: {
+        about: { atBatIndex: 0 },
+        teamStation: {
+          setupBefore: { players: { 7: { id: 7, fullName: '' } } }
+        }
+      }
+    }
+    const game = {
+      gameId: 'g1',
+      plays: 'local-p',
+      lineups: null,
+      newPlayId: () => 'local-row',
+      names: { 7: 'Clifton Lee' }
+    }
+    interface Applied {
+      currentPlay: {
+        teamStation: { setupBefore: { players: Record<string, object> } }
+      }
+      readerNames: Record<string, string>
+    }
+    const applied = appliedEvents(cached(), post, game) as unknown as Applied
+    expect(applied.currentPlay.teamStation.setupBefore.players[7]).include({
+      fullName: 'Clifton L'
+    })
+    expect(applied.readerNames).deep.equals({ 7: 'Clifton Lee' })
+    // Read back, he is the new name in full with its public label beside it.
+    const read = withReaderNames(
+      {
+        plays: [],
+        currentPlay: applied.currentPlay as unknown as CurrentPlay
+      },
+      applied.readerNames
+    ).currentPlay as unknown as Applied['currentPlay']
+    expect(read.teamStation.setupBefore.players[7]).include({
+      fullName: 'Clifton Lee',
+      compactName: 'Clifton L'
+    })
+    // A public format the cached game writes him in is kept.
+    const formatted = appliedEvents(
+      cached('initialLast'),
+      post,
+      game
+    ) as unknown as Applied
+    expect(formatted.currentPlay.teamStation.setupBefore.players[7]).include({
+      fullName: 'C Lee',
+      nameFormat: 'initialLast'
+    })
+    expect(formatted.readerNames).deep.equals({ 7: 'Clifton Lee' })
   })
 })
 

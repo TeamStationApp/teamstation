@@ -1,13 +1,13 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { UndoTicker } from '../scoring/UndoTicker'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Emblem } from './Emblem'
-import { initialsOf } from './initials'
+import { PersonAffiliationLine } from './PersonAffiliationLine'
+import { PersonEmblem } from './PersonEmblem'
 
 /** A person identity shared by account and umpire candidate searches. */
 export function PersonSearchRow({
+  userId,
   name,
   avatarUrl,
   affiliations,
@@ -16,6 +16,7 @@ export function PersonSearchRow({
   accessibilityLabel = name,
   affiliationTestID
 }: {
+  userId: string
   name: string
   avatarUrl?: string | null
   affiliations?: string
@@ -25,14 +26,6 @@ export function PersonSearchRow({
   affiliationTestID?: string
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const initials = initialsOf(name)
-  const letters =
-    initials.length === 1
-      ? Array.from(name.trim().replace(/^[^\p{L}\p{N}]+/u, ''))
-          .slice(0, 2)
-          .join('')
-          .toUpperCase()
-      : initials
   return (
     <Pressable
       accessibilityRole="button"
@@ -41,24 +34,20 @@ export function PersonSearchRow({
       onPress={onPress}
       style={styles.row}
     >
-      <Emblem
+      <PersonEmblem
+        userId={userId}
+        name={name}
         uri={avatarUrl}
-        fallback={letters}
         initialsSize={0.875}
-        shape="circle"
       />
       <View style={styles.text}>
         <Text numberOfLines={1} style={styles.name}>
           {name}
         </Text>
-        {affiliations != null && affiliations !== '' && (
-          <UndoTicker
-            text={affiliations}
-            style={styles.affiliation}
-            enabled
-            testID={affiliationTestID}
-          />
-        )}
+        <PersonAffiliationLine
+          affiliations={affiliations}
+          testID={affiliationTestID}
+        />
       </View>
     </Pressable>
   )
@@ -78,10 +67,5 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600' as const,
     color: theme.primaryTextColor
-  },
-  affiliation: {
-    fontFamily: theme.regularTextFont,
-    fontSize: theme.rem(0.875),
-    color: theme.secondaryTextColor
   }
 }))

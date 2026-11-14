@@ -1,7 +1,8 @@
 import React from 'react'
 import { Pressable, Text, View } from 'react-native'
 
-import { Icon, type IconName } from '../../components/Icon'
+import { ButtonIcon } from '../../components/ButtonIcon'
+import type { IconName } from '../../components/Icon'
 import { lstrings } from '../../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../../theme/ThemeContext'
 import { type PlacedIcon, placeIcons } from '../pressGrid'
@@ -44,6 +45,8 @@ export interface BarFrame {
 }
 
 export interface MultiCamBarProps {
+  onJumpToPresent?: () => void
+  onPressStateChange?: (pressed: boolean) => void
   window: Window
   atMs: number
   angles: BarAngle[]
@@ -132,10 +135,42 @@ export function BarButton(props: {
       onPress={props.onPress}
     >
       {props.icon != null ? (
-        <Icon name={props.icon} size={1.25} color="#ffffff" />
+        <ButtonIcon name={props.icon} size={1.25} color="#ffffff" />
       ) : (
         <Text style={styles.buttonText}>{props.label}</Text>
       )}
+    </Pressable>
+  )
+}
+
+/** Live-only chapter-forward control; hidden input belongs to the reveal layer. */
+export function JumpToPresent(props: {
+  visible: boolean
+  onPress: () => void
+  onPressStateChange?: (pressed: boolean) => void
+}): React.ReactElement {
+  const styles = getBarStyles(useTheme())
+  return (
+    <Pressable
+      testID="jumpToPresent"
+      accessibilityRole="button"
+      accessibilityLabel={lstrings.angles_jump_present}
+      accessibilityElementsHidden={!props.visible}
+      importantForAccessibility={props.visible ? 'auto' : 'no-hide-descendants'}
+      pointerEvents={props.visible ? 'auto' : 'none'}
+      tabIndex={props.visible ? 0 : -1}
+      style={styles.button}
+      onPressIn={() => {
+        if (props.visible) props.onPressStateChange?.(true)
+      }}
+      onPressOut={() => props.onPressStateChange?.(false)}
+      onPress={() => {
+        if (props.visible) props.onPress()
+      }}
+    >
+      <View pointerEvents="none" style={{ transform: [{ rotate: '180deg' }] }}>
+        <ButtonIcon name="skip_previous" size={1.25} color="#ffffff" />
+      </View>
     </Pressable>
   )
 }
@@ -153,6 +188,7 @@ export function BarButton(props: {
 export function ExitButton(props: {
   visible: boolean
   onPress: () => void
+  onPressStateChange?: (pressed: boolean) => void
   /** How far down from the top, past a notch or a status bar. */
   top?: number
   right?: number
@@ -178,9 +214,18 @@ export function ExitButton(props: {
         accessibilityRole="button"
         accessibilityLabel={lstrings.angles_close}
         style={styles.exitButton}
-        onPress={onPress}
+        tabIndex={visible ? 0 : -1}
+        onPressIn={() => {
+          if (visible) props.onPressStateChange?.(true)
+        }}
+        onPressOut={() => props.onPressStateChange?.(false)}
+        onPress={() => {
+          if (visible) onPress()
+        }}
       >
-        <Text style={styles.buttonText}>✕</Text>
+        <ButtonIcon name="close">
+          <Text style={styles.buttonText}>✕</Text>
+        </ButtonIcon>
       </Pressable>
     </View>
   )

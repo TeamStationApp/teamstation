@@ -64,6 +64,9 @@ RCT_EXPORT_VIEW_PROPERTY(highlighted, BOOL)
 @property(nonatomic, strong) UIView *previewSurface;
 @property(nonatomic, strong) UIView *previewSheen;
 @property(nonatomic) BOOL previewFocused;
+@property(nonatomic, strong) UIImage *sourceImage;
+@property(nonatomic) CGSize renderedSize;
+- (void)renderArtwork;
 - (void)updatePreviewFocus;
 - (void)updateMotion;
 @end
@@ -73,6 +76,7 @@ RCT_EXPORT_VIEW_PROPERTY(highlighted, BOOL)
     self.contentMode = UIViewContentModeScaleAspectFill;
     self.clipsToBounds = NO;
     self.layer.cornerRadius = 12;
+    self.masksFocusEffectToContents = YES;
     self.previewSurface = [UIView new];
     self.previewSurface.userInteractionEnabled = NO;
     self.previewSurface.clipsToBounds = YES;
@@ -95,11 +99,49 @@ RCT_EXPORT_VIEW_PROPERTY(highlighted, BOOL)
 }
 - (void)layoutSubviews {
   [super layoutSubviews];
+  [self renderArtwork];
   [self bringSubviewToFront:self.previewSurface];
   self.previewSurface.bounds = self.bounds;
   self.previewSurface.center = CGPointMake(CGRectGetMidX(self.bounds), CGRectGetMidY(self.bounds));
   self.previewSheen.frame = self.previewSurface.bounds;
   self.previewSheen.layer.sublayers.firstObject.frame = self.previewSheen.bounds;
+}
+- (void)setImage:(UIImage *)image {
+  self.sourceImage = image;
+  self.renderedSize = CGSizeZero;
+  [self renderArtwork];
+}
+- (void)setContentMode:(UIViewContentMode)contentMode {
+  [super setContentMode:contentMode];
+  self.renderedSize = CGSizeZero;
+  [self renderArtwork];
+}
+- (void)renderArtwork {
+  CGSize size = self.bounds.size;
+  UIImage *source = self.sourceImage;
+  if (!source || source.size.width <= 0 || source.size.height <= 0 || size.width <= 0 || size.height <= 0) {
+    [super setImage:nil];
+    self.renderedSize = CGSizeZero;
+    return;
+  }
+  if (CGSizeEqualToSize(size, self.renderedSize)) return;
+  // Round the image's alpha, not the outer view: UIKit can still lift it
+  // beyond its resting bounds, with lighting and shadow following its shape.
+  CGFloat sx = size.width / source.size.width, sy = size.height / source.size.height;
+  CGFloat scale = self.contentMode == UIViewContentModeScaleAspectFit ? MIN(sx,sy) : MAX(sx,sy);
+  CGSize drawn = CGSizeMake(source.size.width * scale, source.size.height * scale);
+  CGRect rect = CGRectMake((size.width-drawn.width)/2, (size.height-drawn.height)/2, drawn.width, drawn.height);
+  UIGraphicsImageRendererFormat *format = [UIGraphicsImageRendererFormat preferredFormat];
+  format.opaque = NO;
+  UIGraphicsImageRenderer *renderer = [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
+  UIImage *rounded = [renderer imageWithActions:^(UIGraphicsImageRendererContext *context) {
+    [[UIBezierPath bezierPathWithRoundedRect:(CGRect){CGPointZero,size} cornerRadius:12] addClip];
+    [source drawInRect:rect];
+  }];
+  self.renderedSize = size;
+  UIImageRenderingMode mode = source.renderingMode;
+  if (source.isSymbolImage && mode == UIImageRenderingModeAutomatic) mode = UIImageRenderingModeAlwaysTemplate;
+  [super setImage:[rounded imageWithRenderingMode:mode]];
 }
 - (void)didUpdateReactSubviews {
   [self bringSubviewToFront:self.previewSurface];

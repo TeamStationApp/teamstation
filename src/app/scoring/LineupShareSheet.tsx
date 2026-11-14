@@ -5,6 +5,7 @@ import type { RosterEntry } from '../../common/api'
 import { rosterError as rulesRefusal } from '../../common/scoring/rules'
 import { setupOf } from '../../common/scoring/state'
 import { Button } from '../components/Button'
+import { ButtonIcon } from '../components/ButtonIcon'
 import { CancelAction } from '../components/CancelAction'
 import { WarningSheet } from '../components/WarningSheet'
 import { lstrings, sprintf } from '../locales/strings'
@@ -243,7 +244,9 @@ export function LineupShareSheet({
         opacity: disabled ? 0.5 : 1
       }}
     >
-      <LineupQrGlyph kind={kind} color={theme.primaryTextColor} />
+      <ButtonIcon>
+        <LineupQrGlyph kind={kind} color={theme.primaryTextColor} />
+      </ButtonIcon>
       <View style={{ flex: 1, minWidth: 0 }}>
         <Text style={text}>{label}</Text>
         {note != null && (
@@ -258,9 +261,11 @@ export function LineupShareSheet({
           </Text>
         )}
       </View>
-      <Text style={{ ...text, color: theme.scoringSurface.chevronActive }}>
-        ›
-      </Text>
+      <ButtonIcon name="chevron_right">
+        <Text style={{ ...text, color: theme.scoringSurface.chevronActive }}>
+          ›
+        </Text>
+      </ButtonIcon>
     </Pressable>
   )
   const showPayload = devBuild || status === 'unavailable'

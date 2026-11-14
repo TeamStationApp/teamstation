@@ -49,7 +49,11 @@ describe('the full-screen player in the shell (U12)', () => {
     originals = Object.getOwnPropertyDescriptors(api)
     globalThis.WebSocket = fakeSockets().Impl as unknown as typeof WebSocket
     api.whoAmI = async () =>
-      asSessionUser({ id: 101, displayName: 'Babe Ruth', isAdmin: false })
+      asSessionUser({
+        id: userIdOfGumbo(101),
+        displayName: 'Babe Ruth',
+        isAdmin: false
+      })
     api.myRoles = async () => ({ teams: {}, guardianOf: [] })
     api.hasNotifications = async () => false
     api.teams = async () => []
@@ -95,6 +99,10 @@ describe('the full-screen player in the shell (U12)', () => {
       '[data-testid="gameVideoOpen"]'
     )
     expect(open, 'the picture opens the player').not.equals(null)
+    await act(async () => {
+      open!.click()
+    })
+    expect(currentRoute()).not.has.property('angles')
     await act(async () => {
       open!.click()
     })

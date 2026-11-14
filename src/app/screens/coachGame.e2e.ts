@@ -609,7 +609,7 @@ describe('Coach Game', function () {
     expect(await coach.page.$('[aria-label="Coach"]')).equals(null)
   })
 
-  it('C2: opens full screen with its own chevron, the team on the right, four tabs and the roster bar', async function () {
+  it('C2: opens full screen with its own chevron, the team on the right, the Box Score pill over four tabs and the roster bar', async function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
@@ -636,12 +636,31 @@ describe('Coach Game', function () {
     expect(team.right).greaterThan(WIDTH - 40)
     expect(await coach.page.$('[aria-label="Away Team"]')).equals(null)
     expect(await coach.page.$('[aria-label="Home Team"]')).equals(null)
-    const tabs = await coach.page.$$eval('[role="tab"]', nodes =>
-      nodes.map(node => String(node.getAttribute('aria-label')))
-    )
-    expect(tabs).deep.equals(['Box', 'Roster', 'Lineup', 'Defense'])
-    // The bar, as the scorekeeper's: green Create Player text, the round mic
-    // in the middle and taller than Save, Cancel under them.
+    // The coaching screen's own tabs: the game's are still behind it.
+    const tabs = await coach.page.evaluate(() => {
+      const pill = document.querySelector('[data-testid="Box Score pill"]')!
+      const roster = document.querySelector(
+        '[aria-label="Roster"][role="tab"]'
+      )!
+      return [
+        pill,
+        ...roster.parentElement!.querySelectorAll('[role="tab"]')
+      ].map(node => String(node.getAttribute('aria-label')))
+    })
+    expect(tabs).deep.equals([
+      'Box Score',
+      'Roster',
+      'Lineup',
+      'Defense',
+      'Plan'
+    ])
+    // Box Score is a pill on its own row, above the other four.
+    const pill = await coach.box('[data-testid="Box Score pill"]')
+    const roster = await coach.box('[aria-label="Roster"][role="tab"]')
+    expect(pill.y + pill.height).lessThan(roster.y + 1)
+    // The bar, as the scorekeeper's: the round mic in the middle and taller
+    // than Save, and Cancel, a red button as large as Save, left of it on
+    // Save's row.
     const bar = await coach.box('[data-testid="Roster footer bar"]')
     const add = await coach.box('[aria-label="Create Player"]')
     const mic = await coach.box('[data-testid="Roster mic"]')
@@ -652,7 +671,10 @@ describe('Coach Game', function () {
     expect(mic.x + mic.width).lessThan(save.x + 1)
     expect(mic.x + mic.width / 2).closeTo(bar.x + bar.width / 2, 1)
     expect(mic.height).closeTo(save.height + 12, 0.5)
-    expect(cancel.y).greaterThan(save.y + save.height - 1)
+    expect(cancel.x + cancel.width).lessThan(mic.x + 1)
+    expect(cancel.y + cancel.height / 2).closeTo(save.y + save.height / 2, 4)
+    expect(cancel.width).closeTo(save.width, 1)
+    expect(cancel.height).closeTo(save.height, 1)
     expect(bar.y + bar.height).lessThan(HEIGHT + 1)
   })
 
@@ -668,7 +690,7 @@ describe('Coach Game', function () {
     ])
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box')
+    await coach.tabOn('Box Score')
     await coach.page.waitForFunction(
       () => String(document.body.textContent).includes('Pitching — Visitors'),
       { timeout: 30000 }
@@ -732,7 +754,7 @@ describe('Coach Game', function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box')
+    await coach.tabOn('Box Score')
     const boxText = async (has: string): Promise<string> => {
       await coach.page.waitForFunction(
         has =>
@@ -815,7 +837,7 @@ describe('Coach Game', function () {
     // The visitors' head coach: Judge bats first for them.
     await coach.as(fixture, 'awayCoach')
     await coach.coachGame(fixture.gameId)
-    await coach.tabOn('Box')
+    await coach.tabOn('Box Score')
     const mic = await coach.box(ROSTER_MIC)
     await coach.page.mouse.click(mic.x + mic.width / 2, mic.y + mic.height / 2)
     const status = async (text: string): Promise<void> => {

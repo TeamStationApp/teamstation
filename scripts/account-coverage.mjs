@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
@@ -77,7 +78,7 @@ await build({
     TS_API_BASE_URL: JSON.stringify('/api/v1'),
     'process.env.NODE_ENV': JSON.stringify('test')
   },
-  loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+  loader: ASSET_LOADER
 })
 const env = { ...process.env, NODE_V8_COVERAGE: temp }
 function run(command, args) {
@@ -89,9 +90,9 @@ run('node_modules/.bin/mocha', [
   'sucrase/register',
   '-r',
   './src/test/scoringDomSetup.cjs',
-  'src/server/routes/account.test.ts',
-  'src/server/routes/account.chatAge.test.ts',
-  'src/server/routes/password.test.ts',
+  'src/server/routes/account.integration.test.ts',
+  'src/server/routes/account.chatAge.integration.test.ts',
+  'src/server/routes/password.integration.test.ts',
   'src/server/auth/passwords.test.ts',
   'src/common/passwordProtocol.test.ts',
   'src/common/passwordCalibration.test.ts',
@@ -99,7 +100,7 @@ run('node_modules/.bin/mocha', [
   'src/app/platform/passwordKdf.test.ts',
   'src/app/platform/accountPhoto.test.ts',
   'src/server/openapi.test.ts',
-  'src/server/jsonBody.test.ts',
+  'src/server/jsonBody.integration.test.ts',
   'src/common/api.test.ts',
   'lib/account-tests.cjs'
 ])

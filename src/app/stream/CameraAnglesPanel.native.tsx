@@ -25,6 +25,7 @@ import {
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
+  cameraLimit,
   cameraRefusal,
   type CameraTap,
   isEnded,
@@ -66,6 +67,7 @@ export const ANGLES_POLL_MS = 5000
 export const LAUNCH_LIMIT_MS = 30_000
 
 export interface CameraAnglesPanelProps {
+  signedIn: boolean | null
   client: TeamStationClient
   gameId: string
   /** The engine; a test hands in one over a stand-in module. */
@@ -157,6 +159,21 @@ function isUploading(
  */
 export function CameraAnglesPanel(
   props: CameraAnglesPanelProps
+): React.ReactElement | null {
+  if (props.signedIn !== true)
+    return props.signedIn === null || props.hasVideo ? null : (
+      <StreamEmptyState
+        client={props.client}
+        access={null}
+        onRecord={() => {}}
+        onRequested={() => {}}
+      />
+    )
+  return <SignedInCameraAnglesPanel {...props} />
+}
+
+function SignedInCameraAnglesPanel(
+  props: Omit<CameraAnglesPanelProps, 'signedIn'>
 ): React.ReactElement | null {
   const {
     client,
@@ -603,12 +620,7 @@ export function CameraAnglesPanel(
     phone.cancelUpload(id).then(refresh, refresh)
   }
 
-  const limit =
-    streams?.gameCanAdd === 0
-      ? sprintf(lstrings.stream_limit_game, streams.maxGameCameras)
-      : streams?.canAdd === 0
-        ? sprintf(lstrings.stream_limit_person, streams.maxCameras)
-        : undefined
+  const limit = cameraLimit(streams)
   /** A camera as the list last gave it, or as it was when it was chosen. */
   const asListed = (stream: LiveStream | undefined): LiveStream | undefined =>
     angles.find(angle => angle.stream.id === stream?.id)?.stream ?? stream

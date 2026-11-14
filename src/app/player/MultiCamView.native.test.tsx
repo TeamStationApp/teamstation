@@ -400,6 +400,24 @@ describe('leaving either grid says where it had got to (U12)', function () {
         `[aria-label="${lstrings.angles_close}"]`
       )!
       await act(async () => {
+        exit.dispatchEvent(
+          new window.MouseEvent('mousedown', {
+            bubbles: true,
+            button: 0,
+            buttons: 1
+          })
+        )
+      })
+      await settle(2100)
+      expect(exit.parentElement?.style.opacity).equals('1')
+      await act(async () => {
+        exit.dispatchEvent(
+          new window.MouseEvent('mouseup', {
+            bubbles: true,
+            button: 0,
+            buttons: 0
+          })
+        )
         exit.click()
       })
       // The phone's sheet slides away first, then says.

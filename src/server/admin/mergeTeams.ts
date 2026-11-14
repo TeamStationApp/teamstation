@@ -324,7 +324,8 @@ export async function mergeTeams(
     ['schedule_preview_games', 'home_team_id'],
     ['schedule_preview_games', 'away_team_id'],
     ['events', 'battingTeamId'],
-    ['event_players', 'team_id']
+    ['event_players', 'team_id'],
+    ['game_plans', 'team_id']
   ]
 
   for (const [table, column] of references) {
@@ -384,6 +385,13 @@ export async function mergeTeams(
     const stricter = await stricterOfTeams(trx, fromTeamId, intoTeamId)
     await mergeParents(trx, fromTeamId, intoTeamId, true)
     await keepPrivacy(trx, intoTeamId, stricter)
+    // The survivor keeps its own Playing Time Rules. With none of its own it
+    // takes the other team's override, which the games moved to it were
+    // judged by, rather than falling back to a season's.
+    await sql`update teams target set playing_time_rules = source.playing_time_rules
+      from teams source
+      where target.id = ${intoTeamId} and source.id = ${fromTeamId}
+        and target.playing_time_rules is null`.execute(trx)
     // A player add is the team's: its rejection undoes it there, and the
     // team's next add reads what became of the last.
     // Unless the other team had the person anyway, on any row of theirs, in
@@ -477,6 +485,11 @@ export async function mergeTeams(
       )
       .execute()
 
+    // A game plan is one per team in a game: where the survivor already has
+    // one, it stays and the other team's goes, as a follow does.
+    await sql`delete from game_plans retired using game_plans kept
+      where retired.team_id = ${fromTeamId} and kept.team_id = ${intoTeamId}
+        and retired.game_id = kept.game_id`.execute(trx)
     // Games, plays and the plays' children each have their own turn below.
     for (const [table, column] of references) {
       if (table === 'games' || table === 'events' || table === 'event_players')
@@ -687,6 +700,12 @@ export async function mergeTeams(
         join games g on g.id=${fixture.keptGameId} join seasons s on s.id=g.season_id
         where n.game_id=${fixture.retiredGameId} and t.league_id=s.league_id
         on conflict do nothing`.execute(trx)
+      // A coach's plan goes to the kept game, unless his team has one there.
+      await sql`update game_plans retired set game_id = ${fixture.keptGameId}
+        where retired.game_id = ${fixture.retiredGameId}
+          and not exists (select 1 from game_plans kept
+            where kept.game_id = ${fixture.keptGameId}
+              and kept.team_id = retired.team_id)`.execute(trx)
       // A game the Auto-Scheduler published is the kept game now.
       await trx
         .updateTable('schedule_preview_games')

@@ -4,7 +4,6 @@ import {
   asNumber,
   asObject,
   asOptional,
-  asString,
   type Cleaner
 } from 'cleaners'
 
@@ -15,11 +14,12 @@ import { PITCH_DATA_CLEANERS, PITCH_DATA_TOOL_FIELDS } from './pitchLocation'
 import { idOfWrittenTag, positionSaid, tagOf, writtenTag } from './playerTags'
 import {
   asFielderRef,
-  asGameSetup,
+  asLineupAction,
   asSessionId,
   type FielderRef,
   type GameState,
   isPosition,
+  LINEUP_KINDS,
   type Optional,
   type PlayerRef,
   type Position,
@@ -179,17 +179,7 @@ export type BatteryKind = (typeof BATTERY_KINDS)[number]
 export const ERROR_KINDS = ['fielding', 'throwing'] as const
 export type ErrorKind = (typeof ERROR_KINDS)[number]
 
-export const LINEUP_KINDS = [
-  'roster',
-  'battingOrder',
-  'position',
-  'addPlayer',
-  'substitute',
-  'pinchRunner',
-  'batterSide',
-  'runner'
-] as const
-export type LineupKind = (typeof LINEUP_KINDS)[number]
+export { LINEUP_KINDS, type LineupKind } from './state'
 
 export const GAME_FLOW_KINDS = [
   'closePlay',
@@ -247,6 +237,7 @@ export const PRODUCED_EVENT_TYPES = [
   'defensive_switch',
   'ts_batting_order',
   'ts_courtesy_runner',
+  'ts_at_bat_ended',
   'final_score'
 ] as const
 
@@ -264,8 +255,6 @@ export const ACTION_TYPES = [
 export type ActionType = (typeof ACTION_TYPES)[number]
 
 const asPoint = asObject({ x: asNumber, z: asNumber })
-const asSideName = asLiteral('away', 'home')
-const asPosition = asLiteral(...POSITIONS)
 const asOneOf = <T extends string>(values: readonly T[]): Cleaner<T> =>
   asLiteral(...values)
 
@@ -346,45 +335,7 @@ const actionCleaners = {
       asArray(asObject({ runner: asSessionId, to: asOneOf(DESTINATIONS) }))
     )
   }),
-  lineup: asObject({
-    type: asLiteral('lineup'),
-    kind: asOneOf(LINEUP_KINDS),
-    side: asOptional(asSideName),
-    setup: asOptional(asGameSetup),
-    /**
-     * Sides of a roster setup left in roster order because the saver could
-     * not see that team's default. The game shows that order, and the first
-     * pitch leaves that team's default as it stands.
-     */
-    unseen: asOptional(asArray(asSideName)),
-    /**
-     * Sides of a roster setup the saver could see. The first pitch takes
-     * one as the lineup the game begins with, except a side an earlier save
-     * left unseen whose arrangement is still that roster order.
-     */
-    confirmed: asOptional(asArray(asSideName)),
-    /**
-     * The screen logged this roster because it was showing a default in
-     * place of an unseen order, ahead of a play. A rebase lets it replace
-     * only a side that is still that order. Every other side stays as the
-     * server holds it.
-     */
-    shown: asOptional(asLiteral(true)),
-    /**
-     * A roster saved after the first pitch: each side keeps its batting slot,
-     * and whoever now stands in it bats. Absent, the man due stays due.
-     */
-    keepSlot: asOptional(asLiteral(true)),
-    nextBatter: asOptional(asSessionId),
-    order: asOptional(asArray(asSessionId)),
-    position: asOptional(asPosition),
-    player: asOptional(asSessionId),
-    replaces: asOptional(asSessionId),
-    base: asOptional(asOneOf(BASES)),
-    name: asOptional(asString),
-    jersey: asOptional(asString),
-    batSide: asOptional(asLiteral('L', 'R'))
-  }),
+  lineup: asLineupAction,
   gameFlow: asObject({
     type: asLiteral('gameFlow'),
     kind: asOneOf(GAME_FLOW_KINDS),
@@ -397,7 +348,16 @@ const actionCleaners = {
     balls: asOptional(asNumber),
     strikes: asOptional(asNumber),
     outs: asOptional(asNumber),
+    /**
+     * An `endHalf` that saves the at-bat in progress. Only new actions carry
+     * it: an older one dropped that at-bat, and its record still holds the
+     * next at-bat's actions after it, so it replays as it was scored.
+     */
+    keepAtBat: asOptional(asBoolean),
+    /** An explicit half-change reset; absent on older saved overrides. */
+    clearPitcher: asOptional(asBoolean),
     batter: asOptional(asSessionId),
+    batterIndex: asOptional(asNumber),
     pitcher: asOptional(asSessionId),
     bases: asOptional(
       asArray((raw: unknown) => (raw == null ? null : asSessionId(raw)))
@@ -523,6 +483,8 @@ export function cleanAction(
  * input, as `toolSchema()` offers them. Only the scoring screen says the
  * scorer set a launch angle himself, so a dictated ball in play loses
  * `launchAngleDragged`, whatever the model sent: its angle stays an estimate.
+ * A dictated end of the half is a new one, so it keeps the at-bat in progress
+ * (`spokenAction`).
  */
 export function dictatedAction(
   name: string,
@@ -533,10 +495,73 @@ export function dictatedAction(
       ? { ...input, type: name }
       : { type: name }
   )
-  if ('problem' in cleaned || cleaned.action.type !== 'ballInPlay')
-    return cleaned
+  if ('problem' in cleaned) return cleaned
+  if (cleaned.action.type !== 'ballInPlay') return spokenAction(cleaned)
   const { launchAngleDragged, ...action } = cleaned.action
   return { action }
+}
+
+/**
+ * How this engine folds a game's log into plays, apart from the socket's wire
+ * version (`GAME_SOCKET_PROTOCOL`). A phone stamps each save it queues with
+ * it, and a save queued under an older one is played again or judged before
+ * it is sent (`Outbox`). Raise it only when an older engine would fold some
+ * log into plays at other indexes or with other results. 4: an end of the
+ * half can keep its at-bat (`keepAtBat`). 5 reads explicit pitcher resets,
+ * selected batting slots and their pinch-hit replacement relationship.
+ */
+export const FOLD_VERSION = 5
+
+/** The fold that first read an end of the half that keeps its at-bat. */
+export const KEEPS_AT_BAT_SINCE = 4
+/** Explicit pitcher resets and batting-slot overrides. */
+export const OVERRIDE_SLOTS_SINCE = 5
+
+/**
+ * Whether `action` is an end of the half that keeps the at-bat in progress:
+ * one the End half button, dictation and a repair of an older game mark
+ * (`keepAtBat`). It reads a stored action as well as a cleaned one.
+ */
+export function keepsAtBat(action: unknown): boolean {
+  if (action == null || typeof action !== 'object') return false
+  const { type, kind, keepAtBat } = action as Record<string, unknown>
+  return type === 'gameFlow' && kind === 'endHalf' && keepAtBat === true
+}
+
+/**
+ * Corrections requiring fold 5. A missing pitcher is ambiguous without folding
+ * prior plays: older folds refused it when the resolved mound was empty.
+ * Reads and queued writes conservatively use the same compatibility boundary.
+ */
+export function usesOverrideSlots(action: unknown): boolean {
+  if (action == null || typeof action !== 'object') return false
+  const value = action as Record<string, unknown>
+  return (
+    (value.type === 'gameFlow' &&
+      value.kind === 'override' &&
+      (value.clearPitcher === true ||
+        value.batterIndex != null ||
+        value.pitcher == null)) ||
+    (value.type === 'lineup' &&
+      value.kind === 'roster' &&
+      value.setup != null &&
+      value.replaces != null)
+  )
+}
+
+/**
+ * A cleaned action a scorer said, as the game takes it from the screen: an
+ * end of the half keeps the at-bat in progress (`keepAtBat`), as the End half
+ * button's does. Dictation's server interpreter and `dictatedAction` both
+ * read a model's calls through it.
+ */
+export function spokenAction<
+  T extends { action: ScoringAction } | { problem: Problem }
+>(cleaned: T): T {
+  if ('problem' in cleaned) return cleaned
+  const action = cleaned.action
+  if (action.type !== 'gameFlow' || action.kind !== 'endHalf') return cleaned
+  return { ...cleaned, action: { ...action, keepAtBat: true } }
 }
 
 /** The fields of an action that name one player, and those that name several. */
@@ -995,10 +1020,18 @@ export function shortName(player: {
   firstName?: string
   lastName?: string
   nameFormat?: PlayerNamePrivacy
+  compactName?: string
+  compactFormat?: PlayerNamePrivacy
 }): string {
   const first = player.firstName?.trim() ?? ''
   const last = player.lastName?.trim() ?? ''
   if (first !== '' && last !== '') return `${first} ${initial(last)}`
+  // A label full only for this reader is shortened from the public one.
+  if (player.compactName != null)
+    return shortName({
+      fullName: player.compactName,
+      nameFormat: player.compactFormat
+    })
   const words = player.fullName
     .trim()
     .split(/\s+/)

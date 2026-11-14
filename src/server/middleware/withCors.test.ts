@@ -4,6 +4,10 @@ import { expect } from 'chai'
 import express from 'express'
 import { after, before, describe, it } from 'mocha'
 
+import {
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 import { withCors } from './withCors'
 
 describe('withCors', function () {
@@ -62,7 +66,7 @@ describe('withCors', function () {
       headers: {
         origin: ORIGIN,
         'access-control-request-method': 'GET',
-        'access-control-request-headers': 'authorization,x-teamstation-app'
+        'access-control-request-headers': `authorization,x-teamstation-app,${SCORING_FEATURE_HEADER}`
       }
     })
     expect(response.status).equals(204)
@@ -71,8 +75,14 @@ describe('withCors', function () {
       ?.split(',')
     expect(allowed).includes('authorization')
     expect(allowed).includes('x-teamstation-app')
+    expect(allowed).includes('x-teamstation-protocol')
+    expect(allowed).includes(SCORING_FEATURE_HEADER)
     const result = await fetch(`${base}/teams`, {
-      headers: { origin: ORIGIN, 'x-teamstation-app': 'TS web' }
+      headers: {
+        origin: ORIGIN,
+        'x-teamstation-app': 'TS web',
+        [SCORING_FEATURE_HEADER]: SCORING_FEATURES
+      }
     })
     expect(result.status).equals(200)
     expect(result.headers.get('access-control-allow-origin')).equals(ORIGIN)
@@ -81,9 +91,14 @@ describe('withCors', function () {
   it('refuses a preflight from an origin it does not list', async function () {
     const response = await fetch(`${base}/teams`, {
       method: 'OPTIONS',
-      headers: { origin: 'http://elsewhere.example.test' }
+      headers: {
+        origin: 'http://elsewhere.example.test',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': SCORING_FEATURE_HEADER
+      }
     })
     expect(response.status).equals(403)
+    expect(response.headers.get('access-control-allow-headers')).equals(null)
     expect(response.headers.get('access-control-allow-origin')).equals(null)
     expect(response.headers.get('access-control-expose-headers')).equals(null)
   })

@@ -454,6 +454,7 @@ function MultiCamGrid(
             }
           />
           <ExitButton
+            onPressStateChange={mc.handleControlsPressed}
             visible={mc.controlsShown}
             onPress={() => {
               close()
@@ -482,6 +483,8 @@ function MultiCamGrid(
 
           {mc.take != null && mc.atWallMs != null ? (
             <MultiCamBar
+              onJumpToPresent={mc.anyLive ? mc.jumpToPresent : undefined}
+              onPressStateChange={mc.handleControlsPressed}
               window={mc.take}
               atMs={mc.atWallMs}
               angles={mc.barAngles(mc.take)}

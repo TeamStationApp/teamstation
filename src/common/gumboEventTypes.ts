@@ -9,8 +9,10 @@
  * posts, `ts_manual_placement`, a batter the scorer put on
  * base by hand, `ts_batter_out`, a batter out on a play MLB has no code
  * for ("Batter Out — Other"), `ts_batting_order`, the action a scorer's
- * change of batting order writes, and `ts_courtesy_runner`, a pinch runner
- * who takes a runner's base and leaves the batting order as it is.
+ * change of batting order writes, `ts_courtesy_runner`, a pinch runner
+ * who takes a runner's base and leaves the batting order as it is, and
+ * `ts_at_bat_ended`, an at-bat the half was ended in before the batter
+ * finished, with nothing but pitches in it: no plate appearance.
  */
 export const GUMBO_EVENT_TYPES = [
   'pickoff_1b',
@@ -93,7 +95,8 @@ export const GUMBO_EVENT_TYPES = [
   'ts_manual_placement',
   'ts_batter_out',
   'ts_batting_order',
-  'ts_courtesy_runner'
+  'ts_courtesy_runner',
+  'ts_at_bat_ended'
 ] as const
 
 export type GumboEventType = (typeof GUMBO_EVENT_TYPES)[number]
@@ -105,7 +108,8 @@ export const GUMBO_EXTENSION_EVENT_TYPES: readonly GumboEventType[] = [
   'ts_manual_placement',
   'ts_batter_out',
   'ts_batting_order',
-  'ts_courtesy_runner'
+  'ts_courtesy_runner',
+  'ts_at_bat_ended'
 ]
 
 /**
@@ -239,7 +243,8 @@ const EVENT_TYPE_NAMES: Record<GumboEventType, string> = {
   ts_manual_placement: 'Batter placed on base',
   ts_batter_out: 'Out',
   ts_batting_order: 'Batting order change',
-  ts_courtesy_runner: 'Pinch runner (order unchanged)'
+  ts_courtesy_runner: 'Pinch runner (order unchanged)',
+  ts_at_bat_ended: 'At-bat ended with the half'
 }
 
 export function eventTypeName(eventType: string | null): string {

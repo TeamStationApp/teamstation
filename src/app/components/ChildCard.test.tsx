@@ -26,6 +26,7 @@ async function menuRight(frame?: PaneFrame): Promise<number> {
   const card = (
     <ChildCard
       kind="team"
+      id="tem_demoHawks"
       title="Demo Hawks"
       imageUrl={null}
       onPress={() => undefined}

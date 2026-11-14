@@ -3,6 +3,7 @@ import path from 'node:path'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 const directory = process.env.TS_HERO_FIXTURE_DIR
@@ -23,7 +24,7 @@ await build({
     'process.env.NODE_ENV': JSON.stringify('development'),
     'process.env.TS_SENTRY_DSN': JSON.stringify('')
   },
-  loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+  loader: ASSET_LOADER
 })
 await cp('src/app/assets/fonts', path.join(directory, 'fonts'), {
   recursive: true

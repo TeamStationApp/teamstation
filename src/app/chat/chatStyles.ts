@@ -93,6 +93,7 @@ export const getChatStyles = cacheStyles((theme: Theme) => ({
   },
   rowText: {
     flex: 1,
+    minWidth: 0,
     gap: theme.rem(0.125)
   },
   name: {

@@ -106,7 +106,7 @@ function fixture(): { client: TeamStationClient; game: GameDetail } {
   return { client, game }
 }
 async function render(
-  props: React.ComponentProps<typeof GameScreen>
+  props: Omit<React.ComponentProps<typeof GameScreen>, 'signedIn'>
 ): Promise<void> {
   const host = document.createElement('div')
   document.body.append(host)
@@ -115,7 +115,7 @@ async function render(
     root!.render(
       <ThemeProvider>
         <GestureHandlerRootView>
-          <GameScreen {...props} />
+          <GameScreen signedIn {...props} />
         </GestureHandlerRootView>
       </ThemeProvider>
     )
@@ -178,7 +178,7 @@ describe('the event page’s automatic and explicit sections', () => {
       root!.render(
         <ThemeProvider>
           <GestureHandlerRootView>
-            <GameScreen key="all-actions" {...props} />
+            <GameScreen signedIn key="all-actions" {...props} />
           </GestureHandlerRootView>
         </ThemeProvider>
       )
@@ -304,7 +304,12 @@ describe('the event page’s automatic and explicit sections', () => {
         root!.render(
           <ThemeProvider>
             <GestureHandlerRootView>
-              <GameScreen client={client} gameId="g1" initialTab={initialTab} />
+              <GameScreen
+                signedIn
+                client={client}
+                gameId="g1"
+                initialTab={initialTab}
+              />
             </GestureHandlerRootView>
           </ThemeProvider>
         )
@@ -406,6 +411,7 @@ describe('the event page’s automatic and explicit sections', () => {
         <ThemeProvider>
           <GestureHandlerRootView>
             <GameScreen
+              signedIn
               client={client}
               gameId="g1"
               initialTab="boxScore"
@@ -521,7 +527,12 @@ describe('the event page’s automatic and explicit sections', () => {
       root!.render(
         <ThemeProvider>
           <GestureHandlerRootView>
-            <GameScreen client={client} gameId="g2" initialTab="boxScore" />
+            <GameScreen
+              signedIn
+              client={client}
+              gameId="g2"
+              initialTab="boxScore"
+            />
           </GestureHandlerRootView>
         </ThemeProvider>
       )
@@ -573,6 +584,119 @@ describe('the event page’s automatic and explicit sections', () => {
       document.querySelector('[aria-label="Event settings"][role="button"]')
     ).equals(null)
   })
+  it('keeps permissions fresh on focus and reconnect without asking on each play', async () => {
+    const { client, game } = fixture()
+    game.canScore = false
+    const scheduling = client.gameScheduling.bind(client)
+    let asks = 0
+    client.gameScheduling = async id => {
+      asks += 1
+      return await scheduling(id)
+    }
+    let listener: ((event: GameSocketEvent) => void) | undefined
+    await render({
+      client,
+      gameId: 'g1',
+      socket: {
+        subscribe: (_id, receive) => {
+          listener = receive
+          return () => {}
+        }
+      }
+    })
+    const initial = asks
+    expect(initial).greaterThan(0)
+    await act(async () => {
+      listener!({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'playEdits',
+        at: new Date().toISOString(),
+        data: {
+          generation: 0,
+          fromDigest: 'd0',
+          digest: 'd1',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
+      })
+    })
+    await act(async () => {
+      listener!({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'game',
+        at: new Date().toISOString(),
+        data: { status: 'scheduled', awayScore: null, homeScore: null }
+      })
+    })
+    expect(asks).equals(initial)
+    await act(async () => {
+      window.dispatchEvent(new window.Event('focus'))
+    })
+    expect(asks).equals(initial + 1)
+    await act(async () => {
+      listener!({ type: 'resync', gameId: 'g1' })
+    })
+    expect(asks).equals(initial + 2)
+    game.seasonId = 'season-new'
+    await act(async () => {
+      listener!({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'game',
+        at: new Date().toISOString(),
+        data: { status: 'scheduled', awayScore: null, homeScore: null }
+      })
+    })
+    expect(asks).equals(initial + 3)
+    await act(async () => {
+      listener!({
+        type: 'error',
+        gameId: 'g1',
+        code: 'internal',
+        message: 'internal'
+      })
+    })
+    await act(async () => {
+      listener!({ type: 'subscribed', gameId: 'g1' })
+    })
+    expect(asks).equals(initial + 4)
+    let finish: (value: typeof game) => void = () => undefined
+    const held = new Promise<typeof game>(resolve => {
+      finish = resolve
+    })
+    let reads = 0
+    client.game = async () => (++reads === 1 ? await held : { ...game })
+    await act(async () => {
+      window.dispatchEvent(new window.Event('focus'))
+    })
+    expect(reads).equals(1)
+    await act(async () => {
+      listener!({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'playEdits',
+        at: new Date().toISOString(),
+        data: {
+          generation: 0,
+          fromDigest: 'd1',
+          digest: 'd2',
+          namesDigest: 'n0',
+          edits: [],
+          currentPlay: null
+        }
+      })
+    })
+    expect(asks).equals(initial + 5)
+    await act(async () => {
+      finish({ ...game })
+      await held
+    })
+    expect(asks).equals(initial + 5)
+  })
+
   it('shows the Settings action to a scorekeeper with no scheduling rights (F9)', async () => {
     const { client, game } = fixture()
     expect(game.canScore).equals(true)
@@ -635,7 +759,12 @@ describe('the event page’s automatic and explicit sections', () => {
             }}
           >
             <GestureHandlerRootView>
-              <GameScreen client={client} gameId="g1" initialTab="info" />
+              <GameScreen
+                signedIn
+                client={client}
+                gameId="g1"
+                initialTab="info"
+              />
             </GestureHandlerRootView>
           </HeaderSlotProvider>
         </ThemeProvider>
@@ -708,7 +837,7 @@ describe('the event page’s screen scope', () => {
   }
 
   async function renderScoped(
-    props: React.ComponentProps<typeof GameScreen>,
+    props: Omit<React.ComponentProps<typeof GameScreen>, 'signedIn'>,
     socket: FakeScopeSocket,
     clock?: ReturnType<typeof testClock>
   ): Promise<void> {
@@ -724,7 +853,7 @@ describe('the event page’s screen scope', () => {
               scope={{ scope: 'event', gameId: props.gameId }}
               timers={clock}
             >
-              <GameScreen {...props} />
+              <GameScreen signedIn {...props} />
             </ScreenScopeProvider>
           </GestureHandlerRootView>
         </ThemeProvider>

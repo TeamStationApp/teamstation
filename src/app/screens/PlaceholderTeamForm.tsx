@@ -111,7 +111,8 @@ export function PlaceholderTeamForm({
         timezone: locality?.timezone ?? 'UTC',
         external: true,
         parentNames: [],
-        leagueId: null
+        leagueId: null,
+        leaguePictureUrl: null
       }
     })
   }
@@ -172,7 +173,7 @@ export function PlaceholderTeamForm({
       {step === 'logo' && (
         <GroupPictureChooser
           fitInitials
-          team
+          group={{ kind: 'team', id: null }}
           client={client}
           name={trimmed}
           value={picture}

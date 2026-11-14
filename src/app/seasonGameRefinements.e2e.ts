@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/prefer-optional-chain, @typescript-eslint/prefer-nullish-coalescing -- Serialized browser callbacks cannot capture Sucrase's generated helper functions. */
-import { cp, mkdir, readFile, writeFile } from 'node:fs/promises'
+import { cp, mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import { expect } from 'chai'
 import { sql } from 'kysely'
 
+import { userIdOfGumbo } from '../common/userId'
 import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
 import {
   absent,
@@ -23,21 +24,27 @@ import {
 import { refinementsFixture } from '../test/seasonGameRefinementsFixture'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 
+/**
+ * Setup: run npm run build.web, then set TS_REFINEMENTS_ARTIFACTS to a private
+ * output directory, TS_MAESTRO_D_CLIENT to the built Maestro D JS entry, and
+ * MAESTRO_D_BIN to its binary. This script starts and stops its own daemon.
+ * npm run test.e2e.seasonSchedule selects the schedule scenarios only.
+ */
 async function main(): Promise<void> {
   const artifacts = process.env.TS_REFINEMENTS_ARTIFACTS
   if (artifacts == null) throw new Error('Supply TS_REFINEMENTS_ARTIFACTS')
   const web = join(artifacts, 'support/refinements-web')
   await mkdir(web, { recursive: true })
   await cp(resolve('dist'), web, { recursive: true })
-  const clock = `<script>(()=>{const anchor=performance.now();window.Date=new Proxy(Date,{construct(t,a){return Reflect.construct(t,a.length?a:[1791313200000])},get(t,p){return p==='now'?()=>1791313200000+performance.now()-anchor:Reflect.get(t,p)}})})()</script>`
-  await writeFile(
-    join(web, 'index.html'),
-    (await readFile(join(web, 'index.html'), 'utf8')).replace(
-      '<head>',
-      '<head>' + clock
-    )
-  )
-  const seed = await refinementsFixture(web)
+  // Shift schedule dates by whole days while leaving server, browser, database,
+  // session expiry and timeout clocks running normally.
+  // These schedule checks use future game dates; this does not shift the
+  // shared fixture's season frame or claim coverage of season-boundary rules.
+  const dayMs = 24 * 60 * 60 * 1000
+  const offset =
+    Math.floor(Date.now() / dayMs) * dayMs - Date.parse('2026-10-06')
+  const dateOf = (iso: string): Date => new Date(Date.parse(iso) + offset)
+  const seed = await refinementsFixture(web, '127.0.0.1', dateOf)
   const { f } = seed
   await writeFile(
     join(artifacts, 'support/refinements-live-manifest.json'),
@@ -80,8 +87,17 @@ async function main(): Promise<void> {
     await tap(b.m, 'Send me a sign-in code')
     await show(b.m, '.*six-digit code is on its way.*')
     await fill(b.m, 'Sign-in code', f.h.mail.get(email)!)
+    const verified = b.page.waitForResponse(response =>
+      response.url().endsWith('/auth/email-code/verify')
+    )
     await tap(b.m, 'Sign in')
+    expect((await verified).status()).equals(200)
     await show(b.m, 'Search')
+    const identity = await b.page.evaluate(async () => {
+      const response = await fetch('/api/v1/auth/me')
+      return { status: response.status, id: (await response.json()).id }
+    })
+    expect(identity).deep.equals({ status: 200, id: userIdOfGumbo(user) })
   }
   const make = async (
     device: string,
@@ -118,7 +134,234 @@ async function main(): Promise<void> {
   const pass = async (id: string, description: string): Promise<void> => {
     await log(artifacts, 'browser-scenarios.log', `${id} PASS: ${description}`)
   }
+  const saveCoverage = async (): Promise<void> => {
+    await recordBrowserCoverage(
+      sessions.map(s => s.page),
+      f.h.origin,
+      process.env.TS_REFINEMENTS_BROWSER_COVERAGE ??
+        resolve('coverage/refinements/browser.json'),
+      web
+    )
+  }
+  const openPublicProposal = async (
+    visitor: BrowserSession,
+    proposalId: string
+  ): Promise<void> => {
+    await visit(
+      visitor,
+      `/groups/season/${f.seasonA}?tab=schedule&when=upcoming`
+    )
+    await contains(visitor.page, 'Pending approval')
+    const projection = await visitor.page.evaluate(async path => {
+      const response = await fetch(path)
+      return await response.json()
+    }, `/api/v1/seasons/${f.seasonA}`)
+    expect(
+      projection.games.some(
+        (row: { pendingRequestId?: string }) =>
+          row.pendingRequestId === proposalId
+      ),
+      'UI login session authorizes the proposal'
+    ).equals(true)
+    // A full navigation first renders the anonymous projection; wait for the
+    // UI login session to restore the authorized proposal action.
+    await visitor.page.waitForFunction(
+      () =>
+        [
+          ...document.querySelectorAll(
+            '[data-testid="schedule-display-row"][role="button"]'
+          )
+        ].some(row => {
+          const label = row.getAttribute('aria-label')
+          return (
+            label != null &&
+            label.includes('Demo Visitors @ Demo Eagles') &&
+            label.includes('Pending approval')
+          )
+        }),
+      { timeout: 15000 }
+    )
+    const label = await diagnostic(visitor.page, () =>
+      [
+        ...document.querySelectorAll(
+          '[data-testid="schedule-display-row"][role="button"]'
+        )
+      ]
+        .map(n => n.getAttribute('aria-label'))
+        .find(
+          name =>
+            name != null &&
+            name.includes('Demo Visitors @ Demo Eagles') &&
+            name.includes('Pending approval')
+        )
+    )
+    if (label == null) {
+      await capture(visitor.m, artifacts, 'public-proposal-missing.png')
+      throw new Error(
+        'Authorized public proposal row missing: ' +
+          (await diagnostic(visitor.page, () => document.body.innerText))
+      )
+    }
+    await visitor.m.scrollUntilVisible({
+      element: { text: label },
+      centerElement: true,
+      timeout: 15000
+    })
+    await capture(visitor.m, artifacts, 'public-season-authorized-proposal.png')
+    await tap(visitor.m, label)
+    await contains(visitor.page, 'Accept invitation')
+    expect(new URL(visitor.page.url()).pathname).equals(
+      `/notifications/${proposalId}`
+    )
+    await pass(
+      'public-season-proposal-open',
+      'Visiting team opens its authorized proposal from the shared public schedule row'
+    )
+  }
   try {
+    const guest = await make('web-public-season-open', 1000, 900)
+    const privateRequests: string[] = []
+    const failedGameReads: string[] = []
+    guest.page.on('request', request => {
+      const path = new URL(request.url()).pathname
+      if (
+        /\/api\/v1\/(videos\/[^/]+\/playback|games\/[^/]+\/(box-score|scheduling)|events\/[^/]+\/info|teams$|seasons\/[^/]+\/teams$)/.test(
+          path
+        )
+      )
+        privateRequests.push(path)
+    })
+    guest.page.on('response', response => {
+      const path = new URL(response.url()).pathname
+      if (/\/api\/v1\/(games|videos)\//.test(path) && response.status() >= 400)
+        failedGameReads.push(`${response.status()} ${path}`)
+    })
+    // Exercise the actual destination for each newly tappable public state.
+    // Reuse one game, then restore it before the existing member scenarios.
+    let restoreErrors: unknown[] = []
+    try {
+      for (const state of [
+        'scheduled',
+        'withdrawal',
+        'replacement',
+        'recorded'
+      ] as const) {
+        await f.h.db
+          .updateTable('games')
+          .set({
+            status:
+              state === 'recorded'
+                ? 'final'
+                : state === 'scheduled'
+                  ? 'scheduled'
+                  : 'cancelled',
+            cancellation_reason:
+              state === 'withdrawal' || state === 'replacement' ? state : null,
+            withdrawn_by_team_id: state === 'withdrawal' ? f.teamA : null,
+            withdrawn_at: state === 'withdrawal' ? new Date() : null
+          })
+          .where('id', '=', seed.gameId)
+          .execute()
+        if (state === 'recorded')
+          await f.h.db
+            .insertInto('videos')
+            .values({
+              id: 'public-schedule-recording',
+              game_id: seed.gameId,
+              title: 'Demo recording',
+              kind: 'program',
+              status: 'ready',
+              storage: 'local',
+              duration_sec: 30
+            })
+            .execute()
+        await visit(guest, `/groups/season/${f.seasonA}?tab=schedule&when=all`)
+        const selector = `[data-testid="public-game-${seed.gameId}"] [role="button"]`
+        await guest.page.waitForSelector(selector)
+        const label = await guest.page.$eval(selector, row =>
+          row.getAttribute('aria-label')
+        )
+        if (label == null) throw new Error('Public schedule row has no label')
+        await guest.m.scrollUntilVisible({
+          element: { text: label },
+          centerElement: true,
+          timeout: 15000
+        })
+        const read = guest.page.waitForResponse(
+          response =>
+            new URL(response.url()).pathname === `/api/v1/games/${seed.gameId}`
+        )
+        await tap(guest.m, label)
+        const response = await read
+        expect(response.status()).equals(200)
+        const detail = await response.json()
+        expect(detail.nonMemberView).equals(true)
+        await contains(guest.page, 'Demo Hawks')
+        expect(new URL(guest.page.url()).pathname).equals(
+          `/games/${seed.gameId}`
+        )
+        if (state !== 'recorded') {
+          await contains(guest.page, 'Demo Field')
+          await contains(guest.page, 'Sign in to view event information.')
+        }
+        if (state === 'withdrawal' || state === 'replacement')
+          await contains(guest.page, 'Canceled')
+        if (state === 'recorded') {
+          expect(
+            detail.videos.map((video: { id: string }) => video.id)
+          ).includes('public-schedule-recording')
+          expect(privateRequests).deep.equals([])
+          expect(await guest.page.$('video')).equals(null)
+          await tap(guest.m, 'Videos', 'tab')
+          await guest.page.waitForSelector('[data-testid="gameVideoPreview"]')
+          // A guest gets a real recording preview, never a playable media element.
+          expect(await guest.page.$('video')).equals(null)
+          expect(await guest.page.$('[data-testid="warningSheet"]')).equals(
+            null
+          )
+          await capture(guest.m, artifacts, 'public-recorded-game-preview.png')
+          await tap(guest.m, 'Play game video')
+          await contains(guest.page, 'Log in / Sign up')
+          expect(await guest.page.$('[data-testid="warningSheet"]')).not.equals(
+            null
+          )
+          expect(await guest.page.$('video')).equals(null)
+        }
+        expect(privateRequests).deep.equals([])
+        expect(failedGameReads).deep.equals([])
+        await pass(
+          `public-season-game-${state}`,
+          'Guest opens the restricted game page without member-only reads or playback'
+        )
+      }
+    } finally {
+      const restored = await Promise.allSettled([
+        f.h.db
+          .deleteFrom('videos')
+          .where('id', '=', 'public-schedule-recording')
+          .execute(),
+        f.h.db
+          .updateTable('games')
+          .set({
+            status: 'scheduled',
+            cancellation_reason: null,
+            withdrawn_by_team_id: null,
+            withdrawn_at: null
+          })
+          .where('id', '=', seed.gameId)
+          .execute()
+      ])
+      restoreErrors = restored
+        .filter(result => result.status === 'rejected')
+        .map(result => result.reason)
+    }
+    // A scenario error propagates past this point unchanged; cleanup errors
+    // are reported only when the scenario itself succeeded.
+    if (restoreErrors.length > 0)
+      throw new AggregateError(
+        restoreErrors,
+        'Could not restore schedule fixture'
+      )
     const admin = await make('web-refinements', 1440, 1000, 101)
     await contains(admin.page, 'YOUR LEAGUES')
     const home = await diagnostic(admin.page, () => {
@@ -200,6 +443,11 @@ async function main(): Promise<void> {
         )
     )
     if (pendingLabel == null) throw new Error('Season pending action missing')
+    await admin.m.scrollUntilVisible({
+      element: { text: pendingLabel },
+      centerElement: true,
+      timeout: 15000
+    })
     await tap(admin.m, pendingLabel)
     await contains(admin.page, 'Withdraw invitation')
     expect(new URL(admin.page.url()).pathname).equals(
@@ -328,10 +576,7 @@ async function main(): Promise<void> {
       "These teams are in the season but don't have scheduled games."
     )
     await capture(admin.m, artifacts, 'teams-after.png')
-    const teamPage = await diagnostic(admin.page, () => {
-      const value = document.body.textContent
-      return value === null ? '' : value
-    })
+    const teamPage = await diagnostic(admin.page, () => document.body.innerText)
     expect(teamPage.indexOf('EXHIBITION TEAMS')).greaterThan(
       teamPage.indexOf('Demo Hawks')
     )
@@ -371,6 +616,55 @@ async function main(): Promise<void> {
       'mixed teams appear once upper, exhibition-only and unscheduled are disjoint, placeholder badge and parent-only people verified; sticky tabs remain visible after scroll'
     )
 
+    // The schedule regression pass does not exercise unrelated game-edit forms.
+    if (process.env.TS_REFINEMENTS_SCHEDULE_ONLY === '1') {
+      const proposal = await f.h.request(
+        'POST',
+        '/game-requests',
+        {
+          sender: { kind: 'season', id: f.seasonA },
+          game: {
+            homeTeamId: f.teamB,
+            awayTeamId: f.standaloneTeam,
+            seasonId: f.seasonA,
+            startAt: dateOf('2026-10-29T19:00:00Z').toISOString(),
+            venue: 'Demo Host-only Field',
+            status: 'scheduled'
+          },
+          idempotencyKey: 'public-schedule-proposal'
+        },
+        101
+      )
+      expect(proposal.status).equals(201)
+      const proposalId = (await proposal.json()).id
+      expect(
+        (
+          await f.h.request(
+            'POST',
+            `/game-requests/${proposalId}/accept`,
+            {},
+            102
+          )
+        ).status
+      ).equals(200)
+      const visitor = await make('web-public-season-proposal', 1000, 900, 103)
+      await openPublicProposal(visitor, proposalId)
+      await saveCoverage()
+      await writeFile(
+        join(artifacts, 'support/refinements-finished-manifest.json'),
+        JSON.stringify(
+          { scope: 'schedule-only', game: seed.gameId, season: f.seasonA },
+          null,
+          2
+        )
+      )
+      await pass(
+        'schedule-only',
+        'Selected public schedule and B1–B4 scenarios complete; game-edit and native scenarios excluded'
+      )
+      return
+    }
+
     await visit(admin, `/games/${seed.gameId}`)
     await contains(admin.page, 'Event settings')
     await tap(admin.m, 'Event settings')
@@ -378,7 +672,7 @@ async function main(): Promise<void> {
     await capture(admin.m, artifacts, 'game-settings-after.png')
     const before = await game(seed.gameId)
     await tap(admin.m, 'Swap home and away')
-    await fill(admin.m, 'Date', '2026-10-24')
+    await fill(admin.m, 'Date', dateOf('2026-10-24').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '16:45')
     await fill(admin.m, 'Time zone', 'America/Los_Angeles')
     await fill(admin.m, 'Venue (optional)', 'Preview only field')
@@ -465,8 +759,8 @@ async function main(): Promise<void> {
     await f.h.db
       .updateTable('group_requests')
       .set({
-        sent_at: new Date('2026-09-01T19:00:00Z'),
-        expires_at: new Date('2026-09-08T19:00:00Z')
+        sent_at: dateOf('2026-09-01T19:00:00Z'),
+        expires_at: dateOf('2026-09-08T19:00:00Z')
       })
       .where('id', '=', expiring.id)
       .execute()
@@ -521,7 +815,7 @@ async function main(): Promise<void> {
         home_team_id: f.teamA,
         away_team_id: f.teamB,
         season_id: f.seasonA,
-        start_at: new Date('2026-10-21T18:00:00Z'),
+        start_at: dateOf('2026-10-21T18:00:00Z'),
         venue: 'Demo Decline Field',
         status: 'scheduled'
       })
@@ -617,7 +911,7 @@ async function main(): Promise<void> {
         home_team_id: f.teamA,
         away_team_id: seed.teams.Comets,
         season_id: f.seasonA,
-        start_at: new Date('2026-10-22T18:00:00Z'),
+        start_at: dateOf('2026-10-22T18:00:00Z'),
         venue: 'Demo Original',
         status: 'scheduled'
       })
@@ -631,7 +925,7 @@ async function main(): Promise<void> {
     await tap(admin.m, 'Skip')
     await admin.m.waitForAnimationToEnd()
     await tap(admin.m, 'Skip')
-    await fill(admin.m, 'Date', '2026-10-22')
+    await fill(admin.m, 'Date', dateOf('2026-10-22').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '20:15')
     await fill(admin.m, 'Time zone', 'America/Los_Angeles')
     await tap(admin.m, 'Exhibition', 'switch')
@@ -673,9 +967,11 @@ async function main(): Promise<void> {
       timezone: 'America/Los_Angeles',
       exhibition: true
     })
-    expect((await game(saveId)).start_at.toISOString()).equals(
-      '2026-10-23T03:15:00.000Z'
-    )
+    expect(
+      (await game(saveId)).start_at.toLocaleString('sv-SE', {
+        timeZone: 'America/Los_Angeles'
+      })
+    ).equals(dateOf('2026-10-22').toISOString().slice(0, 10) + ' 20:15:00')
     await admin.page.waitForFunction(
       () =>
         document.body.textContent == null ||
@@ -738,7 +1034,7 @@ async function main(): Promise<void> {
     if (opponentLabel == null)
       throw new Error('Administered-season opponent action missing')
     await tap(admin.m, opponentLabel)
-    await fill(admin.m, 'Date', '2026-10-28')
+    await fill(admin.m, 'Date', dateOf('2026-10-28').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '19:00')
     await fill(admin.m, 'Venue (optional)', 'Demo Administered Host Field')
     await tap(admin.m, 'Save')
@@ -808,7 +1104,7 @@ async function main(): Promise<void> {
     )
     if (awayGuest == null) throw new Error('Host-only away opponent missing')
     await tap(admin.m, awayGuest)
-    await fill(admin.m, 'Date', '2026-10-29')
+    await fill(admin.m, 'Date', dateOf('2026-10-29').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '19:00')
     await fill(admin.m, 'Venue (optional)', 'Demo Host-only Field')
     await tap(admin.m, 'Save')
@@ -853,46 +1149,7 @@ async function main(): Promise<void> {
         (row: any) => row.pendingRequestId === hostOnlyId
       )
     ).not.equals(undefined)
-    await visit(
-      visitors,
-      `/groups/season/${f.seasonA}?tab=schedule&when=upcoming`
-    )
-    await contains(visitors.page, 'Open game proposal')
-    await visitors.m.scrollUntilVisible({
-      element: { text: 'Open game proposal for Demo Visitors at Demo Eagles' },
-      centerElement: true,
-      timeout: 15000
-    })
-    const placement = await diagnostic(visitors.page, () => {
-      const marker = document.querySelector(
-        '[aria-label="Pending approval for Demo Visitors at Demo Eagles"]'
-      )
-      if (marker === null || marker.parentElement === null) return null
-      const header = marker.parentElement
-      const name = header.firstElementChild
-      if (name === null || name === marker) return null
-      const statusBox = marker.getBoundingClientRect()
-      const nameBox = name.getBoundingClientRect()
-      return {
-        statusLeft: statusBox.left,
-        statusTop: statusBox.top,
-        statusRight: statusBox.right,
-        nameRight: nameBox.right,
-        nameTop: nameBox.top,
-        headerRight: header.getBoundingClientRect().right
-      }
-    })
-    if (placement == null)
-      throw new Error('Public pending status header is missing')
-    expect(placement.statusLeft).greaterThan(placement.nameRight)
-    expect(placement.statusTop).closeTo(placement.nameTop, 1)
-    expect(placement.statusRight).closeTo(placement.headerRight, 1)
-    await capture(visitors.m, artifacts, 'public-season-proposal-scenario.png')
-    await tap(visitors.m, 'Open game proposal for Demo Visitors at Demo Eagles')
-    await contains(visitors.page, 'Accept invitation')
-    expect(new URL(visitors.page.url()).pathname).equals(
-      `/notifications/${hostOnlyId}`
-    )
+    await openPublicProposal(visitors, hostOnlyId)
     await tap(visitors.m, 'Accept invitation')
     await contains(visitors.page, 'Accepted')
     const hostPublished = await f.h.db
@@ -919,7 +1176,7 @@ async function main(): Promise<void> {
           homeTeamId: f.teamA,
           awayTeamId: seed.teams.Comets,
           seasonId: f.seasonB,
-          startAt: '2026-10-30T19:00:00Z',
+          startAt: dateOf('2026-10-30T19:00:00Z').toISOString(),
           venue: 'Demo Unauthorized Host',
           status: 'scheduled'
         },
@@ -962,13 +1219,7 @@ async function main(): Promise<void> {
       'Season administrator sends two unmanaged teams with zero team consent; both team administrators approve, host approval/edit controls remain unavailable'
     )
 
-    await recordBrowserCoverage(
-      sessions.map(s => s.page),
-      f.h.origin,
-      process.env.TS_REFINEMENTS_BROWSER_COVERAGE ??
-        resolve('coverage/refinements/browser.json'),
-      web
-    )
+    await saveCoverage()
     await writeFile(
       join(artifacts, 'support/refinements-finished-manifest.json'),
       JSON.stringify(
@@ -994,7 +1245,7 @@ async function main(): Promise<void> {
             home_team_id: f.teamA,
             away_team_id: f.teamB,
             season_id: f.seasonA,
-            start_at: new Date('2026-10-15T18:30:00Z'),
+            start_at: dateOf('2026-10-15T18:30:00Z'),
             venue: 'Demo Field',
             status: 'scheduled'
           },
@@ -1003,7 +1254,7 @@ async function main(): Promise<void> {
             home_team_id: f.teamA,
             away_team_id: seed.teams.Comets,
             season_id: f.seasonA,
-            start_at: new Date('2026-10-16T18:30:00Z'),
+            start_at: dateOf('2026-10-16T18:30:00Z'),
             venue: 'Demo Managed Field',
             status: 'scheduled'
           }

@@ -3,7 +3,7 @@ import type { Kysely } from 'kysely'
 import { conflict } from '../../common/errors'
 import { makeId } from '../../common/ids'
 import { type Role, type RoleFlag, ROLES } from '../../common/roles'
-import { mayEditName, openArrivalsOf } from '../access'
+import { mayViewFullNames, openArrivalsOf } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
@@ -451,22 +451,25 @@ export async function peopleInScope(
   if (!viewer.isAdmin) {
     const open = await openArrivalsOf(db, teamIds)
     const everyone = [...people.values()]
-    const held: Array<(typeof everyone)[number]> = []
-    for (const each of everyone)
-      if (
+    const arrivals = everyone.filter(
+      each =>
         each.teams.length > 0 &&
         each.seasons.length === 0 &&
         each.leagues.length === 0 &&
-        each.teams.every(
-          team => open.get(team.id)?.has(each.userId) === true
-        ) &&
-        // Not from a reader whose rights no add takes away.
-        !(
-          viewer.userId != null &&
-          (await mayEditName(db, viewer.userId, each.userId, viewer))
-        )
-      )
-        held.push(each)
+        each.teams.every(team => open.get(team.id)?.has(each.userId) === true)
+    )
+    // Not from a reader who may see their full name, whose rights no add
+    // takes away: one answer for the list.
+    const shown =
+      viewer.userId == null || arrivals.length === 0
+        ? new Set<string>()
+        : await mayViewFullNames(
+            db,
+            viewer.userId,
+            arrivals.map(each => each.userId),
+            viewer
+          )
+    const held = arrivals.filter(each => !shown.has(each.userId))
     const names = await shortNamesOf(
       db,
       held.map(each => each.userId)

@@ -19,7 +19,7 @@ import {
   SectionHeader,
   TextField
 } from '../components'
-import { ActionList, ActionRow } from '../components/ActionRow'
+import { ActionList, ActionRow, CardThemeScope } from '../components/ActionRow'
 import { BlackoutDatesEditor } from '../components/BlackoutDatesEditor'
 import { CancelAction } from '../components/CancelAction'
 import { CheckRow } from '../components/CheckRow'
@@ -54,6 +54,14 @@ export function approvalLabel(approvesAt: string): string {
 /** A field's sizes as a row's detail line. */
 export function sizesLabel(sizes: readonly FieldSize[]): string {
   return sizes.map(fieldSizeLabel).join(' · ')
+}
+
+/** Approve, in the success colour of the card it sits on. */
+function ApproveButton(
+  props: Omit<React.ComponentProps<typeof Button>, 'kind' | 'textColor'>
+): React.ReactElement {
+  const theme = useTheme()
+  return <Button {...props} kind="text" small textColor={theme.successColor} />
 }
 
 /**
@@ -295,11 +303,8 @@ export function VenueScreen({
                   detail={`${item.kind === 'claim' ? 'Claim' : 'Request to co-own'} · ${approvalLabel(item.approvesAt)}`}
                   end={
                     <View style={styles.decisions}>
-                      <Button
+                      <ApproveButton
                         label="Approve"
-                        kind="text"
-                        small
-                        textColor={theme.successColor}
                         accessibilityLabel={`Approve ${item.leagueName}`}
                         disabled={busy}
                         onPress={() => {
@@ -471,16 +476,18 @@ export function VenueScreen({
         {id != null && rights.canEdit && (
           <View style={styles.section}>
             <SectionHeader title="Venue settings" />
-            <ListCard>
-              <ActionRow
-                title="Size switch time"
-                detail={`${detail.sizeSwitchMinutes} minutes to change a field from one size to another`}
-                onOpen={() => {
-                  setSwitchTime(String(detail.sizeSwitchMinutes))
-                }}
-                openLabel="Change size switch time"
-              />
-            </ListCard>
+            <CardThemeScope>
+              <ListCard>
+                <ActionRow
+                  title="Size switch time"
+                  detail={`${detail.sizeSwitchMinutes} minutes to change a field from one size to another`}
+                  onOpen={() => {
+                    setSwitchTime(String(detail.sizeSwitchMinutes))
+                  }}
+                  openLabel="Change size switch time"
+                />
+              </ListCard>
+            </CardThemeScope>
             <Text style={styles.subhead}>Default hours</Text>
             <Text style={styles.sentence}>
               Fields use these hours unless they set their own.

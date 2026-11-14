@@ -72,7 +72,7 @@ export async function fill(label: string, value: string): Promise<void> {
     return
   }
   const input = document.querySelector<HTMLInputElement | HTMLTextAreaElement>(
-    `[aria-label="${label}"]`
+    `input[aria-label="${label}"], textarea[aria-label="${label}"]`
   )
   expect(input, label).not.equals(null)
   await act(async () => {
@@ -88,4 +88,20 @@ export async function fill(label: string, value: string): Promise<void> {
 
 export function text(): string {
   return document.body.textContent ?? ''
+}
+
+/** The row text reading exactly `label`. */
+export function rowLeaf(label: string): HTMLElement {
+  const leaf = [
+    ...document.querySelectorAll<HTMLElement>(
+      '[data-testid="relationship-action-row"] *'
+    )
+  ].find(node => node.children.length === 0 && node.textContent === label)
+  if (leaf == null) throw new Error(`No row text "${label}"`)
+  return leaf
+}
+
+/** The colour of the row text reading exactly `label`. */
+export function rowTextColor(label: string): string {
+  return getComputedStyle(rowLeaf(label)).color
 }

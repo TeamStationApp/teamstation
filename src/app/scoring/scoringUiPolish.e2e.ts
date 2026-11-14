@@ -29,7 +29,14 @@ async function main(): Promise<void> {
   const section = process.env.SCORING_UI_SECTION
   assert(
     section == null ||
-      ['roster', 'appearance', 'workflow', 'bases', 'tags'].includes(section),
+      [
+        'roster',
+        'appearance',
+        'appearance-overrides',
+        'workflow',
+        'bases',
+        'tags'
+      ].includes(section),
     'SCORING_UI_SECTION must name a supported scenario'
   )
   const phase = 'after'
@@ -69,6 +76,7 @@ async function main(): Promise<void> {
       throw error
     })
   interface Node {
+    id?: string
     text?: string
     type?: string
     enabled?: boolean
@@ -183,8 +191,12 @@ async function main(): Promise<void> {
     const web = !native
       ? flat(hierarchy).find(node => node.type === 'WebView')
       : undefined
+    // Safari's own toolbar also has a "More" button. Keep app targets
+    // separate when the driver flattens the WebView into the window tree.
+    const appNode = (node: Node): boolean => node.id !== 'MoreMenuButton'
     const nodes = flat(web ?? hierarchy).filter(
       node =>
+        appNode(node) &&
         (node.text === text ||
           (text.startsWith('Undo ') && node.text?.startsWith(text) === true)) &&
         node.bounds != null
@@ -192,7 +204,9 @@ async function main(): Promise<void> {
     const node =
       nodes.at(-1) ??
       flat(hierarchy)
-        .filter(node => node.text === text && node.bounds != null)
+        .filter(
+          node => appNode(node) && node.text === text && node.bounds != null
+        )
         .at(-1)
     if (node?.bounds == null)
       await m.tapOn({
@@ -473,6 +487,18 @@ async function main(): Promise<void> {
       'PASS actual roster hold/drag, remove, tap-to-add and draft cancellation'
     )
   }
+  const overrideAppearance = async (): Promise<void> => {
+    await menu('Overrides')
+    await reach('Batter')
+    await tap('Batter')
+    await capture('overrides-choice')
+    await tap('Cancel')
+    await open(true)
+    await tap('Assign P')
+    await shown('Assign pitcher')
+    await capture('defensive')
+    await tap('Cancel')
+  }
   const appearance = async (): Promise<void> => {
     await open()
     await menu('Set Team Rosters')
@@ -541,16 +567,7 @@ async function main(): Promise<void> {
     }
     await reach('Done')
     await tap('Done')
-    await menu('Overrides')
-    await reach('Batter')
-    await tap('Batter')
-    await capture('overrides-choice')
-    await tap('Cancel')
-    await open(true)
-    await tap('Assign P')
-    await shown('Assign pitcher')
-    await capture('defensive')
-    await tap('Cancel')
+    await overrideAppearance()
     console.log(
       'PASS portrait scoring appearance, all position toggles, settings toggles and modal cancellation'
     )
@@ -663,8 +680,8 @@ async function main(): Promise<void> {
     assert(second != null)
     const persisted = JSON.stringify(fixture.stored())
     await open(false, game)
-    await shown('Bobby Witt')
-    await shown('Juan Soto')
+    await shown('^Bobby W$')
+    await shown('^Juan S$')
     await dismissDevelopmentWarnings()
     if (native) await new Promise(resolve => setTimeout(resolve, 3000))
     await capture('history-reopened')
@@ -778,6 +795,10 @@ async function main(): Promise<void> {
     await m.stopApp()
     await m.launchApp({ stopApp: true })
     if (section == null || section === 'roster') await rosterInteractions()
+    if (section === 'appearance-overrides') {
+      await open()
+      await overrideAppearance()
+    }
     if (section == null || section === 'appearance') await appearance()
     if (section == null || ['workflow', 'bases'].includes(section))
       await workflow()

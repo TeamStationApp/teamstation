@@ -3,14 +3,26 @@ import { Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Badge, type BadgeTone } from './Badge'
+import { ButtonIcon } from './ButtonIcon'
 import { Emblem } from './Emblem'
-import { Icon, type IconName } from './Icon'
-import { TeamEmblem } from './TeamEmblem'
+import { GroupEmblem, type GroupEmblemProps } from './GroupEmblem'
+import type { IconName } from './Icon'
+import { PersonEmblem, type PersonEmblemProps } from './PersonEmblem'
 
 export interface ListRowProps {
   /** Custom leading identity mark, before the name. */
   leading?: React.ReactNode
-  teamName?: string
+  /**
+   * A team, league or season: its tile, on the colour its id gives it, with
+   * its picture inside. No row picks a group's colour of its own.
+   */
+  group?: GroupEmblemProps
+  /**
+   * A person: their photo, or the initials of the name the row shows (the
+   * title, unless `name` says otherwise) on the colour their account id gives
+   * them. No row picks a person's colour of its own.
+   */
+  person?: Omit<PersonEmblemProps, 'name'> & { name?: string }
   detailTestID?: string
   detail?: string
   /** Wrapping secondary content aligned beneath the title, beside the emblem. */
@@ -81,8 +93,10 @@ export function ListRow(props: ListRowProps): React.ReactElement {
   const content = (
     <>
       {props.leading ??
-        (props.teamName != null ? (
-          <TeamEmblem name={props.teamName} uri={emblemUri} />
+        (props.group != null ? (
+          <GroupEmblem {...props.group} />
+        ) : props.person != null ? (
+          <PersonEmblem name={props.title} {...props.person} />
         ) : (
           (emblem != null || emblemIcon != null) && (
             <Emblem
@@ -127,7 +141,7 @@ export function ListRow(props: ListRowProps): React.ReactElement {
       {badgeLabel != null && <Badge label={badgeLabel} tone={badgeTone} />}
       {end}
       {onPress != null && (
-        <Icon
+        <ButtonIcon
           name="chevron_right"
           color={
             props.muted === true
@@ -190,6 +204,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   },
   text: {
     flex: 1,
+    minWidth: 0,
     gap: theme.rem(0.125)
   },
   title: {

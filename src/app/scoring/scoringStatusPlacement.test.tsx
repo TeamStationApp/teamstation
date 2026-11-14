@@ -1,18 +1,19 @@
 import { expect } from 'chai'
-import { afterEach, describe, it } from 'mocha'
+import { afterEach, beforeEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
+import { stubFieldInsets } from '../../test/fieldInsetsStub'
 import {
   bandedBounds,
   bandedField,
-  bandedSafe,
   BaseballScreen,
   fieldHolderStyle,
   useBandedReports
 } from '../field/BaseballScreen'
-import { FIELD_EDGE_GAP } from '../field/fieldSafeArea'
+import { bandedSafe, FIELD_EDGE_GAP, topLift } from '../field/fieldSafeArea'
 import type { BaseProjection, FieldCanvasProps } from '../field/fieldTypes'
+import type { Insets } from '../platform/insets'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
   CONTROL_DECK_HEIGHT,
@@ -69,9 +70,13 @@ describe('the offline line’s band at the top', function () {
     })
     root = undefined
   })
-  const screen = (band?: number): React.ReactElement => (
+  const screen = (
+    band?: number,
+    extra: Partial<React.ComponentProps<typeof BaseballScreen>> = {}
+  ): React.ReactElement => (
     <ThemeProvider>
       <BaseballScreen
+        {...extra}
         field={{
           players: [],
           selected: '',
@@ -150,6 +155,19 @@ describe('the offline line’s band at the top', function () {
       flex: 1,
       transform: [{ translateY: 28 }]
     })
+    // Lifted: as much taller, so its bottom stays on the screen's.
+    expect(fieldHolderStyle(-24)).deep.equals({
+      flex: 1,
+      transform: [{ translateY: -24 }],
+      marginBottom: -24
+    })
+    // A lift held under a band: moved down, still the lift taller.
+    expect(fieldHolderStyle(28, 24)).deep.equals({
+      flex: 1,
+      transform: [{ translateY: 28 }],
+      marginBottom: -24
+    })
+    expect(fieldHolderStyle(0, 0)).deep.equals({ flex: 1 })
   })
 
   it('moves every screen point the canvas reports down by the band', function () {
@@ -287,6 +305,118 @@ describe('the offline line’s band at the top', function () {
     })
     expect(seen.map(p => p.bases[0].y)).deep.equals([400, 428, 400])
     expect(reports!.bounds?.y).equals(62)
+  })
+
+  it('lifts the header row half a button into the top inset, never above the edge gap', function () {
+    for (const inset of [0, 8, 20, 59])
+      expect(
+        bandedSafe(
+          { paddingTop: Math.max(FIELD_EDGE_GAP, inset) },
+          -topLift(inset, 'web')
+        ).paddingTop,
+        `inset ${inset}`
+      ).equals(Math.max(FIELD_EDGE_GAP, inset - topLift(inset, 'web')))
+    expect(
+      bandedSafe({ paddingTop: 'max(8px, env(safe-area-inset-top))' }, -24)
+        .paddingTop
+    ).equals('calc(max(8px, env(safe-area-inset-top)) - 24px)')
+    expect(bandedSafe({}, -24).paddingTop).equals('0px')
+  })
+
+  describe('under a phone browser’s top inset', function () {
+    let safeArea: Insets | null = null
+    let restore = (): void => undefined
+    beforeEach(function () {
+      safeArea = { top: 59, bottom: 34, left: 0, right: 0 }
+      restore = stubFieldInsets(() => safeArea)
+    })
+    afterEach(function () {
+      restore()
+    })
+    /** The header row's overlay, whose top padding places ☰ and the speaker. */
+    const overlayTop = (host: HTMLElement): string => {
+      const menu = host.querySelector('[aria-label="Open scoring menu"]')
+      const overlay = menu?.parentElement?.parentElement?.parentElement
+      const key = Object.keys(overlay ?? {}).find(name =>
+        name.startsWith('__reactProps$')
+      )
+      const props = (overlay as unknown as Record<string, { style?: unknown }>)[
+        key ?? ''
+      ]
+      const style = [props.style].flat(Infinity) as Array<
+        Record<string, unknown>
+      >
+      return String(Object.assign({}, ...style).paddingTop)
+    }
+    const holder = (): string[] =>
+      [...document.querySelectorAll<HTMLElement>('div')]
+        .map(node => node.style.transform)
+        .filter(moved => moved.startsWith('translateY('))
+
+    it('lifts ☰, the speaker and the field by topLift, and nothing under the offline band', async function () {
+      const host = document.createElement('div')
+      document.body.appendChild(host)
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(
+          screen(0, { sound: { on: true, onToggle: () => undefined } })
+        )
+      })
+      expect(topLift(59, 'web')).equals(24)
+      expect(holder()).deep.equals(['translateY(-24px)'])
+      expect(overlayTop(host)).equals(
+        'calc(max(8px, env(safe-area-inset-top)) - 24px)'
+      )
+      // The offline band drawn across the top: ☰ starts below it, unlifted.
+      await act(async () => {
+        root!.render(
+          screen(SCORING_OFFLINE_BAND, {
+            sound: { on: true, onToggle: () => undefined }
+          })
+        )
+      })
+      expect(holder()).deep.equals([`translateY(${SCORING_OFFLINE_BAND}px)`])
+      expect(overlayTop(host)).equals(
+        `calc(max(8px, env(safe-area-inset-top)) + ${SCORING_OFFLINE_BAND}px)`
+      )
+      // A browser with no inset: nothing to lift.
+      safeArea = null
+      await act(async () => {
+        root!.unmount()
+      })
+      root = createRoot(host)
+      await act(async () => {
+        root!.render(screen(0))
+      })
+      expect(holder()).deep.equals([])
+      expect(overlayTop(host)).equals('max(8px, env(safe-area-inset-top))')
+    })
+  })
+
+  it('starts the header row with the volume button and ends it with ☰', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        screen(0, {
+          sound: { on: false, onToggle: () => undefined },
+          dictationLog: <div data-testid="the-log" />
+        })
+      )
+    })
+    const menu = host.querySelector('[aria-label="Open scoring menu"]')
+    const row = menu?.parentElement?.parentElement
+    // The row's first child is the screen reader's summary, drawn nowhere.
+    const drawn = [...(row?.children ?? [])].slice(1)
+    expect(drawn).length(3)
+    const volume = drawn[0].querySelector<HTMLElement>(
+      '[aria-label="Unmute game sounds"]'
+    )
+    expect(volume?.style.backgroundColor).equals('rgb(255, 255, 255)')
+    expect(volume?.textContent).equals('volume_off')
+    expect(drawn[1].querySelector('[data-testid="the-log"]')).not.equals(null)
+    expect(drawn[2].contains(menu)).equals(true)
   })
 
   it('starts the field under the band only while there is one', async function () {

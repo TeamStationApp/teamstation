@@ -37,9 +37,53 @@ import type { WalkUpSong } from './walkUpSong'
  * game and screen scope subscribe. A server refuses a subscribe below its
  * minimum as `forbidden` with the reason `updateRequired`, so an app too old
  * to read what it would be sent stops following instead of misreading it. 3
- * is the first whose scope frames carry no revision.
+ * is the first whose scope frames carry no revision. 4 is the first that
+ * reads an end of the half that keeps the at-bat in progress (`keepAtBat`):
+ * an older app drops that at-bat on replay, and every later play moves down
+ * an index. 5 reads explicit pitcher resets and selected batting slots.
+ * It is the socket's and the API's version only: how the engine
+ * folds a log, which a phone's queued saves are judged by, is
+ * `FOLD_VERSION`, and moves only when that does.
  */
-export const GAME_SOCKET_PROTOCOL = 3
+export const GAME_SOCKET_PROTOCOL = 5
+
+/**
+ * The oldest protocol a game or scope subscribe may name on any server: an
+ * app below it misreads a scope's frames. Rendered score views need no more;
+ * replay source with newer actions is gated separately at its HTTP resource.
+ */
+export const MINIMUM_GAME_SOCKET_PROTOCOL = 3
+
+/**
+ * The oldest protocol a save of a game's plays may name on any server: an app
+ * below it cannot replay explicit pitcher resets or selected batting slots.
+ */
+export const MINIMUM_SAVE_PROTOCOL = 5
+
+/** Replay clients fold stored actions; rendered score-only views do not. */
+export const MINIMUM_OVERRIDE_REPLAY_PROTOCOL = 5
+
+/**
+ * The minimum a server holds subscribes to: its config's, never below
+ * `MINIMUM_GAME_SOCKET_PROTOCOL`. A config can raise it and never lower it,
+ * since every server writes the minimum it started with back into its config
+ * file, which pins it there.
+ */
+export function minimumProtocolOf(configured: number | undefined): number {
+  return Math.max(MINIMUM_GAME_SOCKET_PROTOCOL, configured ?? 0)
+}
+
+/** The minimum a save of plays is held to: the subscribes', and 5 at least. */
+export function saveProtocolOf(configured: number | undefined): number {
+  return Math.max(MINIMUM_SAVE_PROTOCOL, minimumProtocolOf(configured))
+}
+
+/**
+ * The header the app names `GAME_SOCKET_PROTOCOL` in on every API request.
+ * A save of a game's plays from an app older than the server's minimum is
+ * refused as the socket refuses its subscribe (`updateRequired`).
+ */
+export const PROTOCOL_HEADER = 'x-teamstation-protocol'
 
 /**
  * A stored play as `GET /games/:gameId/events` gives each row: its id, its
@@ -61,7 +105,8 @@ export type PlayEdit =
   { op: 'put'; play: WirePlayRow } | { op: 'remove'; atBatIndex: number }
 
 /** What a `change` is about. */
-export type GameChangeKind = 'playEdits' | 'lineups' | 'walkUpSong' | 'game'
+export type GameChangeKind =
+  'playEdits' | 'lineups' | 'walkUpSong' | 'game' | 'plans'
 
 /**
  * How a game's stored plays changed, as a `playEdits` change carries it: the
@@ -110,6 +155,12 @@ export interface GameChangeData {
   lineups: { home: TeamLineups; away: TeamLineups; digest: string }
   /** One player's song on one team, or null once it is removed. */
   walkUpSong: { teamId: string; userId: string; song: WalkUpSong | null }
+  /**
+   * A team's game plan was saved. Only the team is named, as every viewer of
+   * the game hears it: whoever may plan that side reads `GET
+   * /games/:gameId/plans` again.
+   */
+  plans: { teamId: string }
   game: {
     status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
     awayScore: number | null
@@ -443,7 +494,8 @@ const asChangeHead = asObject({
     'playEdits',
     'lineups',
     'walkUpSong',
-    'game'
+    'game',
+    'plans'
   ) as Cleaner<GameChangeKind>,
   at: asString
 })

@@ -11,7 +11,7 @@ import {
 import type { GroupRef } from '../../common/groupCreation'
 import { asRole, type Role, ROLE_FLAGS } from '../../common/roles'
 import { asUserId } from '../../common/userId'
-import { seesPeopleOf } from '../access'
+import { seesPeopleOf, visibleScopes } from '../access'
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
@@ -47,6 +47,7 @@ import { noteScopeChange } from '../socket/syncRevision'
 import { personProfile } from '../teams/personProfile'
 import { teamHeadCoach } from '../teams/teamHeadCoach'
 import { levelPeople, onPeopleList } from '../teams/teamRoster'
+import { readerOf } from '../users/readerNames'
 
 /**
  * People at a team, a season or a league, with nobody's acceptance needed.
@@ -89,7 +90,14 @@ export function peopleRoutes(
         const actor = await actorOf(req.actor)
         const ref = { kind, id: pathParam(req.params.id) }
         if (!(await seesPeopleOf(db, actor, ref))) throw notFound()
-        const people = await levelPeople(db, media.space, ref, actor)
+        const people = await levelPeople(
+          db,
+          media.space,
+          ref,
+          actor,
+          readerOf(req.actor),
+          await visibleScopes(db, actor.userId, actor.isAdmin)
+        )
         if (people == null) throw notFound()
         const manages = await canManagePeople(db, actor, ref)
         res.json({

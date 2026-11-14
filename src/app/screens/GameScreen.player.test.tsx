@@ -151,6 +151,7 @@ async function page(
                 frame={options.frame == null ? null : { ...options.frame }}
               >
                 <GameScreen
+                  signedIn
                   client={client}
                   gameId="g1"
                   initialTab="watch"
@@ -245,7 +246,7 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     platformWas = null
   })
 
-  it('has no controls, and a tap opens the player on it alone, at its moment', async function () {
+  it('has no browser controls, and revealing then opening keeps its moment', async function () {
     const view = await page([videoOf('v1', START, 2), videoOf('v2', START)])
     const video = inline()
     expect(video.controls).equals(false)
@@ -254,6 +255,10 @@ describe("the videos page's picture and the full-screen player (U12)", function 
       '[data-testid="gameVideoOpen"]'
     )!
     expect(open.getAttribute('aria-label')).equals(lstrings.game_video_open)
+    await act(async () => {
+      open.click()
+    })
+    expect(view.changes).has.length(0)
     await act(async () => {
       open.click()
     })
@@ -290,7 +295,9 @@ describe("the videos page's picture and the full-screen player (U12)", function 
           )
         })
     }
-    // The top-left square, near its corner.
+    // The first hidden press reveals; the next changes the sound.
+    await tap(3, 3)
+    expect(inline().muted).equals(true)
     await tap(3, 3)
     expect(inline().muted).equals(false)
     await tap(3, 3)
@@ -301,6 +308,11 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     const view = await page([videoOf('v1', START)])
     expect(inline().muted).equals(true)
     drive(inline(), 20)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
+        .click()
+    })
     await act(async () => {
       document
         .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
@@ -366,6 +378,11 @@ describe("the videos page's picture and the full-screen player (U12)", function 
       }
     )
     drive(inline(), 20)
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
+        .click()
+    })
     await act(async () => {
       document
         .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
@@ -801,6 +818,11 @@ describe("the videos page's picture and the full-screen player (U12)", function 
         .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
         .click()
     })
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[data-testid="gameVideoOpen"]')!
+        .click()
+    })
     const opened = view.changes.at(-1)!
     // On its own media time.
     expect(opened.from).deep.equals({ videoId: 'u1', sec: 25, wallMs: 25_000 })
@@ -831,6 +853,156 @@ describe("the videos page's picture and the full-screen player (U12)", function 
     await page([videoOf('v1', START)], {}, { nonMember: true })
     expect(document.querySelector('[data-testid="gameVideoOpen"]')).equals(null)
     expect(document.querySelector('video')).equals(null)
+  })
+})
+
+describe('Videos tab autoplay', function () {
+  const proto = window.HTMLMediaElement.prototype
+  const saved = new Map<string, PropertyDescriptor | undefined>()
+  let ready = 4
+  let plays: HTMLMediaElement[]
+  let playing: WeakSet<HTMLMediaElement>
+  beforeEach(function () {
+    plays = []
+    playing = new WeakSet()
+    ready = 4
+    for (const name of ['play', 'pause', 'paused', 'readyState'])
+      saved.set(name, Object.getOwnPropertyDescriptor(proto, name))
+    Object.defineProperties(proto, {
+      play: {
+        configurable: true,
+        value: async function (this: HTMLMediaElement) {
+          plays.push(this)
+          playing.add(this)
+        }
+      },
+      pause: {
+        configurable: true,
+        value: function (this: HTMLMediaElement) {
+          playing.delete(this)
+        }
+      },
+      paused: {
+        configurable: true,
+        get: function (this: HTMLMediaElement) {
+          return !playing.has(this)
+        }
+      },
+      readyState: { configurable: true, get: () => ready }
+    })
+  })
+  afterEach(function () {
+    for (const [name, descriptor] of saved) {
+      if (descriptor != null) Object.defineProperty(proto, name, descriptor)
+    }
+  })
+  const select = async (name: string): Promise<void> => {
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>(
+          `[aria-label="Game sections"] [aria-label="${name}"]`
+        )!
+        .click()
+    })
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 30))
+    })
+  }
+
+  for (const initialTab of ['boxScore', 'info'] as const)
+    for (const metadataReady of [true, false])
+      it(`starts silently from ${initialTab} with metadata ${metadataReady ? 'ready' : 'delayed'}`, async function () {
+        ready = metadataReady ? 4 : 0
+        await page([videoOf('v1', START)], {
+          initialTab,
+          autoPlay: metadataReady ? false : undefined
+        })
+        expect(plays).length(0)
+        await select('Videos')
+        const video = inline()
+        if (!metadataReady)
+          await act(async () => {
+            ready = 4
+            video.dispatchEvent(new window.Event('loadedmetadata'))
+          })
+        expect(plays).includes(video)
+        expect(video.paused).equals(false)
+        expect(video.muted).equals(true)
+      })
+
+  it('starts a paused recording at its saved position when Videos is selected again', async function () {
+    await page([videoOf('v1', START)], { initialTab: 'boxScore' })
+    await select('Videos')
+    const video = inline()
+    video.currentTime = 44
+    video.pause()
+    await select('Box score')
+    await select('Videos')
+    expect(inline().currentTime).equals(44)
+    expect(inline().paused).equals(false)
+  })
+
+  it('cancels delayed metadata playback on leaving and does not carry the request into another game', async function () {
+    ready = 0
+    const view = await page([videoOf('v1', START)], {
+      initialTab: 'boxScore',
+      autoPlay: false
+    })
+    await select('Videos')
+    const old = inline()
+    await select('Info')
+    const count = plays.length
+    await act(async () => {
+      old.dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    expect(plays).length(count)
+    await view.rerender({ gameId: 'g2', initialTab: 'watch' })
+    await act(async () => {
+      inline().dispatchEvent(new window.Event('loadedmetadata'))
+    })
+    expect(plays).length(count)
+  })
+
+  it('plays on a quick tab return that keeps the same player mounted', async function () {
+    await page([videoOf('v1', START)], { initialTab: 'watch' })
+    const video = inline()
+    video.currentTime = 44
+    video.pause()
+    await act(async () => {
+      for (const name of ['Info', 'Videos'])
+        document
+          .querySelector<HTMLElement>(
+            `[aria-label="Game sections"] [aria-label="${name}"]`
+          )!
+          .click()
+    })
+    expect(inline()).equals(video)
+    expect(video.currentTime).equals(44)
+    expect(video.paused).equals(false)
+  })
+
+  it('waits for a delayed playback address and cancels a request whose tab was left', async function () {
+    let deliver: (value: Playback) => void = () => undefined
+    await page(
+      [videoOf('v1', START)],
+      { initialTab: 'boxScore', autoPlay: false },
+      {
+        playback: async () =>
+          await new Promise<Playback>(resolve => {
+            deliver = resolve
+          })
+      }
+    )
+    await select('Videos')
+    expect(plays).length(0)
+    await select('Info')
+    await act(async () => {
+      deliver(playable('v1'))
+    })
+    expect(plays).length(0)
+    await select('Videos')
+    expect(inline().paused).equals(false)
+    expect(plays).includes(inline())
   })
 })
 
@@ -872,14 +1044,20 @@ describe('a game’s highlights (U26)', function () {
       await act(async () => {
         row('Second single').click()
       })
-      expect(listProps().extraData).equals('e2')
+      expect(listProps().extraData).deep.equals({
+        activeEventId: 'e2',
+        signedIn: true
+      })
       expect(row('Second single').className).not.equals(unmarked)
       expect(row('First single').className).equals(unmarked)
       expect(video.currentTime).equals(240)
       await act(async () => {
         row('Third single').click()
       })
-      expect(listProps().extraData).equals('e3')
+      expect(listProps().extraData).deep.equals({
+        activeEventId: 'e3',
+        signedIn: true
+      })
       expect(row('Second single').className).equals(unmarked)
       expect(row('Third single').className).not.equals(unmarked)
       expect(video.currentTime).equals(360)

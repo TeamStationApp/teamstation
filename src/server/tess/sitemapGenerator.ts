@@ -80,6 +80,7 @@ const SETTINGS_ROUTES = new Set([
   'groupSettings',
   'leagueUmpires',
   'nodeAdministration',
+  'playingTimeRules',
   'seasonTimeFrame',
   'teamAddPlayer',
   'teamCreatePlayer',

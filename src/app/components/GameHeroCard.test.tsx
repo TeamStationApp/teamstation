@@ -97,11 +97,11 @@ describe('GameHeroCard', function () {
     expect(container.textContent).not.includes('FINAL')
     expect(container.textContent).not.includes('Badgers (Ripken) 4')
   })
-  it('gives a side with no logo a tile of its initials in its team’s colour', async function () {
+  it('gives a side with no logo a tile of its initials in its team id’s colour', async function () {
     const container = await render(<GameHeroCard {...oct4} />)
     const tile = tileOf(container, 'AG')
     expect(hex(getComputedStyle(tile).backgroundColor)).equals(
-      teamTint('Amber Gardens')
+      teamTint(oct4.homeTeamId)
     )
   })
 
@@ -129,14 +129,23 @@ describe('GameHeroCard', function () {
     expect(container.innerHTML).includes('badgers.png')
   })
 
-  it('colours a tile by the name where there is no team id', async function () {
+  it('colours a tile by its team id', async function () {
     const container = await render(
       <GameHeroCard {...oct4} awayLogoUrl={null} />
     )
     const tile = tileOf(container, 'BR')
     expect(hex(getComputedStyle(tile).backgroundColor)).equals(
-      teamTint('Badgers (Ripken)')
+      teamTint(oct4.awayTeamId)
     )
+  })
+
+  it('draws a renamed team on the same colour', async function () {
+    const container = await render(
+      <GameHeroCard {...oct4} awayName="Demo Comets" awayLogoUrl={null} />
+    )
+    expect(
+      hex(getComputedStyle(tileOf(container, 'DC')).backgroundColor)
+    ).equals(teamTint(oct4.awayTeamId))
   })
 
   /** The rule above the summary: a top border on the card's last block. */

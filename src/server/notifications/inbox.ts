@@ -4,6 +4,7 @@ import { forbidden, notFound } from '../../common/errors'
 import type { GroupRef } from '../../common/groupCreation'
 import {
   CHAT_DEVICE_APPROVAL,
+  type GuardianTerms,
   isSchedulingNews,
   LOCAL_COPY_EXPIRING,
   type Notification,
@@ -31,6 +32,8 @@ import {
 import { canScheduleFor, currentActor } from '../groups/rights'
 import { heldAt } from '../invites/grants'
 import { shortNamesOf, userNames } from '../users/nameBook'
+import { fullNamesFor, type Reader, readerOf } from '../users/readerNames'
+import { survivorsOf } from '../users/survivors'
 import {
   grantInformation,
   type PlayerRemovedMetadata,
@@ -58,6 +61,11 @@ interface PageNames {
   groups: ReadonlyMap<string, string>
   /** The short name of each player a removal notice names, by user id. */
   players: ReadonlyMap<string, string>
+  /**
+   * Whom of the players the page's notices and requests name, and their
+   * survivors, the reader may read in full (`fullNamesFor`), found once.
+   */
+  readsFull: ReadonlySet<string>
 }
 
 /** A notice of information, worded for this person. */
@@ -204,12 +212,16 @@ async function informationFor(
  * What a page of notices names, in one read of `users` and one of each kind
  * of group: the actor of every grant and of every claim a person decided,
  * the sender of every request, and the group of every grant; and in one more
- * read of `users`, the player of every removal notice.
+ * read of `users`, the player of every removal notice, in full for a reader
+ * who may read them in full. Whom the reader reads in full is found once for
+ * every player the page names, requests' players among them, so no notice
+ * asks again.
  */
 async function pageNames(
   db: Kysely<Database>,
   events: ReadonlyArray<Selectable<NotificationEventsTable>>,
-  requests: readonly StoredRequest[] = []
+  requests: readonly StoredRequest[],
+  reader: Reader | undefined
 ): Promise<PageNames> {
   const people = await userNames(db, [
     ...events
@@ -225,15 +237,38 @@ async function pageNames(
     const scope = (event.metadata as { scope?: GroupRef } | null)?.scope
     return event.source_type === 'grant' && scope != null ? [scope] : []
   })
-  const players = await shortNamesOf(
-    db,
-    events.flatMap(event =>
-      event.source_type === PLAYER_ADD_REJECTED
-        ? [(event.metadata as PlayerRemovedMetadata).userId]
+  const removed = events.flatMap(event =>
+    event.source_type === PLAYER_ADD_REJECTED
+      ? [(event.metadata as PlayerRemovedMetadata).userId]
+      : []
+  )
+  // A notice and a player add name a merged player as his survivor (as
+  // `shortNamesOf` does): ask of both. A guardian request names him as he is.
+  const merged = [
+    ...removed,
+    ...requests.flatMap(request =>
+      (request.terms as { kind?: string }).kind === 'playerAdd'
+        ? [(request.terms as PlayerAddTerms).userId]
         : []
     )
+  ]
+  const guarded = requests.flatMap(request =>
+    (request.terms as { kind?: string }).kind === 'guardian'
+      ? [(request.terms as GuardianTerms).playerUserId]
+      : []
   )
-  return { people, groups: await groupNames(db, scopes), players }
+  const readsFull =
+    reader == null || merged.length + guarded.length === 0
+      ? new Set<string>()
+      : await fullNamesFor(db, reader, [
+          ...merged,
+          ...guarded,
+          ...(merged.length === 0
+            ? []
+            : (await survivorsOf(db, merged)).values())
+        ])
+  const players = await shortNamesOf(db, removed, { reader, readsFull })
+  return { people, groups: await groupNames(db, scopes), players, readsFull }
 }
 
 /**
@@ -308,14 +343,16 @@ export const PLAYER_ADD_REJECTED = 'playerAddRejected'
 
 /**
  * A request as this person's notification, or null when it is not theirs.
- * `senders` holds the senders' live names a page read at once.
+ * `senders` holds the senders' live names a page read at once, and
+ * `readsFull` whom of its players the reader may read in full (`pageNames`).
  */
 export async function notificationFor(
   db: Kysely<Database>,
   actor: Actor,
   request: StoredRequest,
   clock: Clock = realClock,
-  senders?: ReadonlyMap<string, string>
+  senders?: ReadonlyMap<string, string>,
+  readsFull?: ReadonlySet<string>
 ): Promise<Listed | null> {
   const fresh = await currentActor(db, actor)
   const sides = await db
@@ -403,7 +440,13 @@ export async function notificationFor(
       event?.recorded_recipients.includes(fresh.userId) === true ||
       receipt != null)
   if (!eligible && !senderAdmin && !historical) return null
-  const display = await titleAndDescription(db, request, senders)
+  const display = await titleAndDescription(
+    db,
+    request,
+    senders,
+    readerOf(fresh),
+    readsFull
+  )
   // A change already made, which its approver may reject for 90 days, until
   // a later add of the same person replaces it.
   const notice = request.kind === 'playerAdd' && status === 'applied'
@@ -750,10 +793,17 @@ export async function inbox(
       eb(eb.val(fresh.userId), '=', eb.fn.any('recorded_recipients'))
     )
     .execute()
-  const names = await pageNames(db, information, found)
+  const names = await pageNames(db, information, found, readerOf(fresh))
   const projected: Listed[] = []
   for (const request of found) {
-    const row = await notificationFor(db, fresh, request, clock, names.people)
+    const row = await notificationFor(
+      db,
+      fresh,
+      request,
+      clock,
+      names.people,
+      names.readsFull
+    )
     if (row != null) projected.push(row)
   }
   for (const event of information) {
@@ -833,7 +883,7 @@ export async function notificationDetail(
       db,
       fresh,
       event,
-      await pageNames(db, [event]),
+      await pageNames(db, [event], [], readerOf(fresh)),
       clock
     )
     if (information == null) throw notFound()

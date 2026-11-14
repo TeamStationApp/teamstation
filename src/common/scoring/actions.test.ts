@@ -20,6 +20,7 @@ import {
   keyterms,
   LINEUP_KINDS,
   mapPlayers,
+  modelNameOf,
   namesFieldersById,
   OUT_KINDS,
   PITCH_CALLS,
@@ -33,6 +34,7 @@ import {
   toolSchema,
   TRAJECTORIES,
   untaggedAction,
+  usesOverrideSlots,
   withoutBlankPlayers
 } from './actions'
 import { storedEventType } from './document'
@@ -203,6 +205,26 @@ const examples: ScoringAction[] = [
 ]
 
 describe('scoring actions', function () {
+  it('identifies stored override-slot semantics without assuming a cleaned action', () => {
+    for (const action of [
+      null,
+      undefined,
+      5,
+      'override',
+      {},
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'override', pitcher: 10 },
+      { type: 'lineup', kind: 'roster', setup: {} }
+    ])
+      expect(usesOverrideSlots(action)).equals(false)
+    for (const action of [
+      { type: 'gameFlow', kind: 'override' },
+      { type: 'gameFlow', kind: 'override', clearPitcher: true, pitcher: 10 },
+      { type: 'gameFlow', kind: 'override', batterIndex: 0, pitcher: 10 },
+      { type: 'lineup', kind: 'roster', setup: {}, replaces: 1 }
+    ])
+      expect(usesOverrideSlots(action)).equals(true)
+  })
   it('round-trips one example of every action through its cleaner', function () {
     expect(examples.map(action => action.type)).deep.equals([...ACTION_TYPES])
     for (const action of examples)
@@ -270,6 +292,9 @@ describe('scoring actions', function () {
     expect(
       dictatedAction('pitch', { type: 'ballInPlay', call: 'B' })
     ).deep.equals({ action: { type: 'pitch', call: 'B' } })
+    expect(dictatedAction('gameFlow', { kind: 'endHalf' })).deep.equals({
+      action: { type: 'gameFlow', kind: 'endHalf', keepAtBat: true }
+    })
     expect(dictatedAction('result', 'single')).to.have.nested.property(
       'problem.code',
       'malformed'
@@ -465,6 +490,16 @@ describe('scoring actions', function () {
     // A player with no number on the roster is named without one.
     bottom.gameData.players[14].jersey = '  '
     expect(promptContext(bottom)).includes(`SS Player 1. (tag ${tagOf(13)})`)
+    // One named in full for this reader is named to the model by the label
+    // everyone reads.
+    Object.assign(bottom.gameData.players[14], {
+      fullName: 'Francisco Lindor',
+      nameFormat: 'full',
+      compactName: 'Francisco L'
+    })
+    expect(promptContext(bottom))
+      .includes(`SS Francisco L. (tag ${tagOf(13)})`)
+      .and.not.include('Lindor')
   })
 
   it('reads a dictated action’s players back from their tags, and tags them again for the model', function () {
@@ -890,6 +925,15 @@ describe('scoring actions', function () {
     expect(shortName({ fullName: 'Unlisted' })).equals('Unlisted')
     expect(shortName({ fullName: '  ', firstName: 'Ana' })).equals('Ana')
     expect(shortName({ fullName: '' })).equals('')
+    // A label full only for this reader: the public one, shortened.
+    const mookie = {
+      id: 7,
+      fullName: 'Mookie Betts',
+      nameFormat: 'full' as const,
+      compactName: 'Mookie B'
+    }
+    expect(shortName(mookie)).equals('Mookie B.')
+    expect(modelNameOf({ meta: {} }, mookie)).equals('Mookie B.')
 
     const game = sampleGame()
     for (const player of Object.values(game.gameData.players)) {

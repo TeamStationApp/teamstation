@@ -3,6 +3,7 @@ import { after, describe, it } from 'mocha'
 
 import { type LineScoreStep, TeamStationClient } from '../../common/api'
 import type { BoardLine } from '../../common/scoring/boardLineTypes'
+import { mediaAt, wallAt } from '../../common/wallTimeline'
 import { lstrings } from '../locales/strings'
 import type { Rect } from './multiCam/layout'
 import { GAP, playerLayout } from './multiCam/playerLayout'
@@ -250,20 +251,19 @@ describe('player layouts in a browser', function () {
       const session = await webSession(`e3-${width}`, width, height)
       const size = landscape ? 'landscape' : 'portrait'
 
-      // Where the take's clock is: the board's wall time less the picture's.
-      await open(session, grid(S, 2, 30))
-      await gridReady(session, 2, { board: true, box: true })
-      const offsetOf = async (): Promise<number> => {
-        const state = await gridState(session)
-        return state.board!.at - (await master(session)).currentTime * 1000
-      }
-      const offset = await offsetOf()
-      const tFor = (wall: number): number => Math.max(0, (wall - offset) / 1000)
+      // Use the recording's media-to-wall anchors. The scoreboard's data-at
+      // is the last scoring change, not the current playhead's wall time.
+      const timeline = await client.wallTimeline(S.videos[0])
+      const tFor = (wall: number): number =>
+        Math.max(0, mediaAt(timeline.anchors, wall)! / 1000)
 
       /** The box against the step in effect at the playhead. */
       const check = async (what: string): Promise<BoardLine> => {
         const state = await gridState(session)
-        const playhead = (await master(session)).currentTime * 1000 + offset
+        const playhead = wallAt(
+          timeline.anchors,
+          (await master(session)).currentTime * 1000
+        )!
         const expected = stepAt(state.box!.at)!
         expect(state.box!.at, `${what} box at`).at.most(playhead + 1000)
         expect(
@@ -320,10 +320,18 @@ describe('player layouts in a browser', function () {
 
       await open(session, grid(S, 2, tFor(inning(11).at) + 2))
       await gridReady(session, 2, { board: true, box: true })
-      await check(`${size} into 11`)
+      const eleventh = await check(`${size} into 11`)
+      expect(currentInning(eleventh)).equals(11)
       const latest = (await gridState(session)).box!.innings
-      // Shaped for six, it shows the latest six, at either size.
-      expect(latest, 'the latest six innings').deep.equals([6, 7, 8, 9, 10, 11])
+      // Compact layouts fit more than six columns; every layout keeps the
+      // most recent innings in order and ends at the current inning.
+      expect(latest.length, 'at least six innings fit').at.least(6)
+      expect(latest, 'the latest consecutive innings').deep.equals(
+        Array.from(
+          { length: latest.length },
+          (_, index) => 12 - latest.length + index
+        )
+      )
       await shot(
         session,
         landscape
@@ -392,6 +400,11 @@ describe('player layouts in a browser', function () {
     }
     /** Taps the picture, and answers the one tile's first reading. */
     const openPlayer = async (): Promise<{ t: number }> => {
+      const hidden = await page.$eval(
+        '[data-testid="gameVideoOpen"]',
+        node => node.getAttribute('tabindex') === '-1'
+      )
+      if (hidden) await page.click('[data-testid="gameVideoOpen"]')
       await page.click('[data-testid="gameVideoOpen"]')
       await page.waitForFunction(
         `(() => { const v = ${GRID_VIDEOS}; return v.length === 1 && v[0].readyState >= 2 })()`,
@@ -401,9 +414,11 @@ describe('player layouts in a browser', function () {
     }
     const closePlayer = async (): Promise<number> => {
       const [tile] = await tiles()
-      await page.evaluate(
-        `(() => { [...document.querySelectorAll('[aria-label="${lstrings.angles_close}"]')].find(node => node.closest('#root') == null).click() })()`
+      await page.keyboard.press('Tab')
+      await page.waitForFunction(
+        `document.querySelector('[aria-label="${lstrings.angles_close}"][tabindex="0"]')`
       )
+      await page.click(`[aria-label="${lstrings.angles_close}"][tabindex="0"]`)
       await inlineReady()
       return tile.t
     }
@@ -593,7 +608,7 @@ describe('player layouts in a browser', function () {
         ).equals(null)
 
       // A drag along the bottom row of the block of videos: the playhead goes
-      // where the finger is on the drawn line, with nothing but the line up.
+      // where the finger is on the drawn line, with all controls visible.
       const span = Number(
         await page.evaluate(
           `document.querySelector('[aria-label="Position in the game"]').getAttribute('aria-valuemax')`
@@ -613,6 +628,9 @@ describe('player layouts in a browser', function () {
       const blockBottom = Math.max(...block.map(rect => rect.y + rect.h))
       const row = blockBottom - (blockBottom - blockTop) * 0.08
       const before = await settle()
+      // Reveal first so the following gesture is allowed to scrub.
+      await down(line.x + line.w * 0.5, row)
+      await up()
       await down(line.x + line.w * 0.5, row)
       await move(line.x + line.w * 0.75, row)
       // The bar fades in.
@@ -626,7 +644,7 @@ describe('player layouts in a browser', function () {
       await up()
       const after = await settle()
       expect(Number(barUp), `${what}: the bar shows`).greaterThan(0)
-      expect(Number(closeUp), `${what}: and nothing else`).equals(0)
+      expect(Number(closeUp), `${what}: controls show together`).greaterThan(0)
       const landed = Number(
         await page.evaluate(
           `document.querySelector('[aria-label="Position in the game"]').getAttribute('aria-valuenow')`

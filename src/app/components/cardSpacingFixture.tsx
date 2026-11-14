@@ -267,6 +267,7 @@ export function CardSpacingFixture(): React.ReactElement {
                   <Text style={textStyle}>Empty state</Text>
                 </Card>
                 <ChildCard
+                  id="sea_comets"
                   title="Comets"
                   subtitle="Example season"
                   footer="Example locality"
@@ -314,6 +315,8 @@ export function CardSpacingFixture(): React.ReactElement {
                   </CardContent>
                 </ListCard>
                 <GameHeroCard
+                  awayTeamId="tem_comets"
+                  homeTeamId="tem_copperFoxes"
                   awayName="Comets"
                   homeName="Copper Foxes"
                   awayScore={3}

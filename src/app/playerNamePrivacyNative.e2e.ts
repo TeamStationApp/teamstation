@@ -4,6 +4,12 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
+import {
+  DEFAULT_PRIVACY_LABEL,
+  PLAYER_NAME_PRIVACY_LABELS,
+  PLAYER_NAME_PRIVACY_STOPS
+} from '../common/playerNamePrivacy'
+import { turnWheel, wheelAt } from '../test/iosWheel.e2e'
 import type { PrivacyNativeManifest } from '../test/playerNamePrivacyNativeFixture.e2e'
 import { maestro } from '../test/refinementsMaestro.e2e'
 
@@ -79,9 +85,18 @@ async function main(): Promise<void> {
   const tap = async (text: string): Promise<void> => {
     await m.tapOn({ text, timeout: 20000 })
   }
-  /** One wheel row, by its test id: the same words also sit behind the dialog. */
+  const stops = PLAYER_NAME_PRIVACY_STOPS.map(value =>
+    value == null ? DEFAULT_PRIVACY_LABEL : PLAYER_NAME_PRIVACY_LABELS[value]
+  )
+  /**
+   * One wheel stop: on iOS the system's wheel, turned to the stop's label; on
+   * Android the row, by its test id, since the same words also sit behind the
+   * dialog.
+   */
   const spin = async (stop: number): Promise<void> => {
-    await m.tapOn({ id: `player-name-privacy-${stop}`, timeout: 20000 })
+    if (platform === 'ios')
+      await turnWheel(m, async () => await wheelAt(m), stops[stop], stops)
+    else await m.tapOn({ id: `player-name-privacy-${stop}`, timeout: 20000 })
   }
   const shot = async (name: string): Promise<void> => {
     await m.waitForAnimationToEnd()
@@ -113,9 +128,9 @@ async function main(): Promise<void> {
     await appendFile(join(out, log), `${line}\n`)
     console.log(line)
   }
-  const signIn = async (): Promise<void> => {
+  const signIn = async (email = manifest.email): Promise<void> => {
     await tap('E-mail address')
-    await m.inputText({ text: manifest.email })
+    await m.inputText({ text: email })
     await m.hideKeyboard()
     await m.tapOn({ text: 'Send me a sign-in code', optional: true })
     await show('Sign-in code', 30000)
@@ -123,7 +138,7 @@ async function main(): Promise<void> {
     for (let waited = 0; code == null && waited < 15; waited++) {
       code = (
         await control<{ code: string | null }>(
-          `/code?email=${encodeURIComponent(manifest.email)}`
+          `/code?email=${encodeURIComponent(email)}`
         )
       ).code
       if (code == null) await new Promise(resolve => setTimeout(resolve, 1000))
@@ -266,6 +281,28 @@ async function main(): Promise<void> {
     await tap('Use')
     await show('Full name')
     await note('$ N10 A flick snaps the wheel to Full name, and Use stores it')
+
+    // N11: a coach reads Alex Lee in full on the roster, while the diamond
+    // keeps the public label. Back to First name, last initial first, so the
+    // public label and the coach's differ.
+    await choose('Full name', [3, 2, 1], 'First name, last initial')
+    await m.command('stopApp', { appId })
+    await m.launchApp({ clearState: true })
+    await signIn(manifest.coachEmail)
+    await open(`teams/${manifest.teamId}?tab=team`, 'Alex Lee')
+    await shot('native-coach-roster-after.png')
+    await note("$ N11 The coach's roster reads Alex Lee")
+    // Alex bats: walked, he stands on first, where the field names him.
+    await open(`games/${manifest.gameId}/score`, 'BUNT')
+    for (let ball = 0; ball < 3; ball++) {
+      await tap('BALL')
+      await m.waitForAnimationToEnd()
+    }
+    await show('Alex L')
+    await m.assertNotVisible({ text: 'Alex Lee', timeout: 5000 })
+    expect(await texts()).not.includes('Alex Lee')
+    await shot('native-overlay-after.png')
+    await note('$ N11 The diamond reads Alex L, and nowhere Alex Lee')
   } finally {
     await m.detach().catch(() => undefined)
     await daemon.shutdown().catch(() => undefined)

@@ -123,6 +123,63 @@ describe('the roster chat', function () {
     })
     expect(chosen).equals(1)
   })
+
+  it('closes on its X or a tap on its turns, but not on the question’s buttons', async function () {
+    let closed = 0
+    let chosen = -1
+    let dismissed = 0
+    const draw = async (onClose?: () => void): Promise<void> => {
+      await render(
+        <RosterChat
+          turns={turns}
+          onClose={onClose}
+          ask={
+            <AskCard
+              question="Which Freeman?"
+              options={['Away', 'Home']}
+              onChoose={index => {
+                chosen = index
+              }}
+              onDismiss={() => {
+                dismissed++
+              }}
+            />
+          }
+        />
+      )
+    }
+    await draw(() => {
+      closed++
+    })
+    const press = async (target: HTMLElement): Promise<void> => {
+      await act(async () => {
+        target.click()
+      })
+    }
+    await press(node('Home')!)
+    await press(node('Dismiss question')!)
+    expect([chosen, dismissed, closed]).deep.equals([1, 1, 0])
+    const close = node('Close dictation')!
+    expect(close.getAttribute('role')).equals('button')
+    expect(close.style.position).equals('absolute')
+    await press(close)
+    expect(closed).equals(1)
+    await press(all('Roster chat said')[0])
+    await press(all('Roster chat problem')[0])
+    expect(closed).equals(3)
+    // A shadow, as it floats over the screen.
+    expect(node('Dictation chat')!.style.boxShadow).not.equals('')
+    // The box is no button and takes no focus, so a screen reader reaches
+    // the question's buttons and the X each on its own.
+    const box = node('Dictation chat')!
+    expect(box.getAttribute('role')).equals(null)
+    expect(box.getAttribute('tabindex')).not.equals('0')
+    for (const label of ['Home', 'Away', 'Dismiss question', 'Close dictation'])
+      expect(node(label)!.getAttribute('tabindex'), label).equals('0')
+    // Nothing to close it with, no X.
+    await draw()
+    expect(node('Close dictation')).equals(null)
+  })
 })
 
 describe('the roster chat on the roster screen', function () {
@@ -230,5 +287,108 @@ describe('the roster chat on the roster screen', function () {
     })
     expect(screen.reloads()).equals(1)
     expect(node('Dictation chat')).equals(null)
+  })
+
+  it('floats over the screen, and its X or a tap closes it with the change still staged; the next dictation opens it again', async function () {
+    const screen = await coachScreen()
+    const top = (): HTMLElement =>
+      host.querySelector<HTMLElement>('[data-testid="Roster editor top"]')!
+    const before = top().previousElementSibling
+    await screen.say()
+    const overlay = host.querySelector<HTMLElement>(
+      '[data-testid="Roster chat overlay"]'
+    )!
+    expect(overlay.style.position).equals('absolute')
+    expect(overlay.contains(node('Dictation chat'))).equals(true)
+    // The content keeps its place: nothing new is laid out above it.
+    expect(top().previousElementSibling).equals(before)
+    expect(overlay.contains(top())).equals(false)
+    const saved = (): string | null =>
+      node('Save Rosters')!.getAttribute('aria-disabled')
+    expect(saved()).equals(null)
+    await act(async () => {
+      node('Close dictation')!.click()
+    })
+    expect(node('Dictation chat')).equals(null)
+    expect(saved()).equals(null)
+    await screen.say()
+    expect(all('Roster chat said')).has.length(1)
+    await act(async () => {
+      all('Roster chat said')[0].click()
+    })
+    expect(node('Dictation chat')).equals(null)
+    // A note opens nothing while it is closed.
+    await act(async () => {
+      node('Cancel')!.click()
+    })
+    expect(node('Dictation chat')).equals(null)
+  })
+
+  it('answers the question it opens with, or dismisses it on closing', async function () {
+    const home = state.session.liveData.boxscore.teams.home
+    const third = home.battingOrder[2]
+    const open = async (): Promise<void> => {
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host?.remove()
+      const fake = fakeDictation()
+      await render(
+        <RosterEditor
+          state={state}
+          audience="coach"
+          fixedSide="home"
+          initialDraft={{
+            draft: state.session,
+            side: 'home',
+            mode: 'defense',
+            chat: [{ key: 0, said: 'Number 3 plays third', lines: [] }],
+            question: {
+              question: 'Which #3?',
+              options: [
+                {
+                  label: 'This #3',
+                  side: 'home',
+                  commands: [
+                    {
+                      type: 'setPositions',
+                      side: 'home',
+                      places: [{ player: third, position: '3B' }]
+                    }
+                  ]
+                }
+              ]
+            }
+          }}
+          dictate={{
+            health: dictatingHealth,
+            url: 'ws://host/api/v1/dictation',
+            gameId: 'g1',
+            log: [],
+            startEnabled: true,
+            tapMs: 0,
+            tailMs: 0,
+            openSocket: fake.openSocket,
+            openMicrophone: fake.openMicrophone
+          }}
+          onSave={() => undefined}
+        />
+      )
+    }
+    await open()
+    expect(node('Dictation question')).not.equals(null)
+    await act(async () => {
+      node('This #3')!.click()
+    })
+    expect(node('Dictation question')).equals(null)
+    expect(all('Roster chat line')[0].textContent).includes('to 3B')
+    expect(node('Dictation chat')).not.equals(null)
+    await open()
+    await act(async () => {
+      node('Close dictation')!.click()
+    })
+    expect(node('Dictation chat')).equals(null)
+    expect(node('Dictation question')).equals(null)
   })
 })

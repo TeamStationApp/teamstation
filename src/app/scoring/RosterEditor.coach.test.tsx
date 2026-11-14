@@ -4,10 +4,13 @@ import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { Text } from 'react-native'
 
+import { asRosterEntry } from '../../common/api'
 import { applyAction } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
+import { userIdOfGumbo } from '../../common/userId'
 import { scoringSession } from '../../test/scoringSession'
 import { ThemeProvider } from '../theme/ThemeContext'
+import { guestRenames } from './guestRenames'
 import { gameFixture } from './isUnscoredGame.test'
 import { RosterEditor, type RosterEditorDraft } from './RosterEditor'
 import { initialScoringState } from './scoringMachine'
@@ -48,6 +51,7 @@ describe('the roster screen for a coach', function () {
       onCancel?: () => void
       state?: ScoringState
       sheetHeight?: number
+      hiddenTeams?: readonly string[]
     } = {}
   ): Promise<void> => {
     host = document.createElement('div')
@@ -62,6 +66,7 @@ describe('the roster screen for a coach', function () {
               audience="coach"
               fixedSide="home"
               renderBoxScore={() => <Text>Line score here</Text>}
+              hiddenTeams={props.hiddenTeams}
               initialDraft={props.initialDraft}
               onReload={props.onReload}
               onCancel={props.onCancel}
@@ -83,7 +88,7 @@ describe('the roster screen for a coach', function () {
     })
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
-    expect(node('Box')!.getAttribute('aria-selected')).equals('true')
+    expect(node('Box Score')!.getAttribute('aria-selected')).equals('true')
     expect(host.textContent).includes('Line score here')
     expect(host.querySelector('[aria-label="Batting lineup"]')).not.equals(null)
     // The box score has no instruction and no lineup of its own on show.
@@ -94,6 +99,105 @@ describe('the roster screen for a coach', function () {
     expect(host.textContent).not.includes('Line score here')
     // His own side, though the draft he came back to named the other.
     expect(node(`Remove ${name(home.battingOrder[0])}`)).not.equals(null)
+  })
+
+  it('draws a long name as its first and last name, each a line of its own at full size', async function () {
+    const session = copyState(state.session)
+    // Every player of this game bats, so the second is taken out of the
+    // lineup to show a roster card.
+    const [batter, benched] = home.battingOrder
+    Object.assign(session.gameData.players[batter], {
+      fullName: 'Ke Bryan Hayes',
+      firstName: 'Ke Bryan',
+      lastName: 'Hayes',
+      jersey: '3'
+    })
+    Object.assign(session.gameData.players[benched], {
+      fullName: 'Christian Encarnacion-Strand',
+      firstName: 'Christian',
+      lastName: 'Encarnacion-Strand',
+      jersey: '4'
+    })
+    await mount({ state: initialScoringState(session) })
+    await click('Lineup')
+    await click('Remove Christian Encarnacion-Strand')
+    // A name's two lines: the slot, jersey and first name, then the last.
+    const linesOf = (card: Element): string[] =>
+      [
+        ...card.querySelectorAll<HTMLElement>(
+          '[data-testid="Roster name"] [dir="auto"]'
+        )
+      ].map(text => String(text.textContent))
+    const lineupCard = host.querySelector('[data-roster-target="lineup-0"]')!
+    expect(linesOf(lineupCard)).deep.equals(['1. #3 Ke Bryan ', 'Hayes'])
+    // Read whole, the card still says the name as it always did.
+    expect(lineupCard.textContent).includes('1. #3 Ke Bryan Hayes')
+    const rosterCard = host.querySelector(`[data-roster-player="${benched}"]`)!
+    expect(linesOf(rosterCard)).deep.equals([
+      '#4 Christian ',
+      'Encarnacion-Strand'
+    ])
+    for (const card of [lineupCard, rosterCard])
+      for (const text of card.querySelectorAll<HTMLElement>(
+        '[data-testid="Roster name"] [dir="auto"]'
+      )) {
+        const style = getComputedStyle(text)
+        // One line each, at the cards' own 14 points: nothing shrinks.
+        expect(style.whiteSpace).equals('nowrap')
+        expect(style.textOverflow).equals('ellipsis')
+        expect(style.fontSize).equals('14px')
+      }
+  })
+
+  it('runs the Roster cards from the left margin and the Lineup cards to the right, a rem apart', async function () {
+    await mount()
+    await click('Lineup')
+    const content = (name: string): HTMLElement =>
+      host.querySelector<HTMLElement>(`[aria-label="${name}"]`)!
+        .firstElementChild as HTMLElement
+    for (const name of ['Roster players', 'Batting lineup']) {
+      const style = getComputedStyle(content(name))
+      expect(style.paddingLeft, name).equals('0px')
+      expect(style.paddingRight, name).equals('0px')
+    }
+    // The row that holds the two columns.
+    let row: HTMLElement | null = host.querySelector<HTMLElement>(
+      '[aria-label="Batting lineup"]'
+    )
+    while (row != null && getComputedStyle(row).flexDirection !== 'row')
+      row = row.parentElement
+    expect(getComputedStyle(row!).gap).equals('16px')
+  })
+
+  it('names each fielder on the Defense field by the scoring field’s short name', async function () {
+    const session = copyState(state.session)
+    const pitcher = home.defense.P!
+    Object.assign(session.gameData.players[pitcher], {
+      fullName: 'Christian Encarnacion-Strand',
+      firstName: 'Christian',
+      lastName: 'Encarnacion-Strand',
+      jersey: '4'
+    })
+    await mount({ state: initialScoringState(session) })
+    await click('Defense')
+    // How much the card shows follows the field's measured height; the name
+    // is the same in its text or, on a card too short for it, its label.
+    const said = [
+      ...host
+        .querySelector('[data-testid="Defense P card"]')!
+        .querySelectorAll<HTMLElement>('[dir="auto"]')
+    ].flatMap(text => [
+      String(text.textContent),
+      text.getAttribute('aria-label') ?? ''
+    ])
+    expect(said.some(text => text.endsWith('Christian E'))).equals(true)
+    expect(said.join(' ')).not.includes('Encarnacion')
+    // A screen reader hears him in full.
+    expect(
+      host
+        .querySelector('[data-roster-target="defense-P"]')!
+        .getAttribute('aria-description')
+    ).equals('#4 Christian Encarnacion-Strand')
   })
 
   it('discards a tapped change on Cancel, reloads and is clean again', async function () {
@@ -114,6 +218,12 @@ describe('the roster screen for a coach', function () {
     await click(`Remove ${last}`)
     expect(node(`Remove ${last}`)).equals(null)
     expect(saveDisabled()).equals(null)
+    // Cancel is on Save Rosters' row, in the footer bar.
+    expect(
+      host
+        .querySelector('[data-testid="Roster footer bar"]')!
+        .contains(node('Cancel'))
+    ).equals(true)
     await click('Cancel')
     expect(reloads).equals(1)
     expect(cancels).equals(0)
@@ -238,14 +348,260 @@ describe('the roster screen for a coach', function () {
     expect(host.querySelectorAll('[data-testid="batIcon"]')).lengthOf(1)
     expect(host.textContent).not.includes('Drop here to remove')
   })
-  it('clears his whole defense, the pitcher too, from the red Clear level with Roster (U34)', async function () {
+  it('draws a hidden team’s player named in full by his public label, and only that team’s', async function () {
+    const named = copyState(state.session)
+    const id = named.liveData.boxscore.teams.home.battingOrder[0]
+    named.gameData.players[id] = {
+      ...named.gameData.players[id],
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const homeId = named.gameData.teams.home.id
+    const awayId = named.gameData.teams.away.id
+    for (const [hidden, shown, gone] of [
+      [[homeId], 'Shohei O', 'Ohtani'],
+      [[awayId], 'Shohei Ohtani', undefined],
+      [[], 'Shohei Ohtani', undefined]
+    ] as const) {
+      await mount({ state: initialScoringState(named), hiddenTeams: hidden })
+      expect(node(`Remove ${shown}`), shown).not.equals(null)
+      if (gone != null) expect(host.textContent).not.includes(gone)
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      host.remove()
+    }
+  })
+  it('opens a hidden team’s guest named in full on his public label, and keeps his name when only the jersey changes', async function () {
+    const named = copyState(state.session)
+    const guestId = named.liveData.boxscore.teams.home.players.find(
+      id => named.gameData.players[id].local
+    )!
+    expect(guestId, 'a game-only player').not.equals(undefined)
+    named.gameData.players[guestId] = {
+      ...named.gameData.players[guestId],
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const drafts: RosterEditorDraft[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterEditor
+            state={initialScoringState(named)}
+            audience="coach"
+            fixedSide="home"
+            hiddenTeams={[named.gameData.teams.home.id]}
+            renderBoxScore={() => <Text>Line score here</Text>}
+            onDraftChange={draft => drafts.push(draft)}
+            onSave={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('Roster')
+    const card = host.querySelector<HTMLElement>(
+      '[aria-label^="Shohei O,"][aria-label*="game-only player"]'
+    )
+    expect(card, 'the guest by his public label').not.equals(null)
+    await act(async () => {
+      card!.click()
+    })
+    const input = (label: string): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+    expect(input('First Name').value).equals('Shohei')
+    expect(input('Last Name').value).equals('O')
+    expect(document.body.innerHTML).not.includes('Ohtani')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input('Jersey Number'), '17')
+      input('Jersey Number').dispatchEvent(
+        new window.Event('input', { bubbles: true })
+      )
+    })
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Save Player"]')!.click()
+    })
+    expect(drafts.at(-1)!.draft.gameData.players[guestId]).include({
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      jersey: '17'
+    })
+    expect(document.body.innerHTML).not.includes('Ohtani')
+  })
+  it('keeps a guest’s name when his sheet opened on his public label and his name is read in full by the save', async function () {
+    const named = copyState(state.session)
+    const guestId = named.liveData.boxscore.teams.home.players.find(
+      id => named.gameData.players[id].local
+    )!
+    named.gameData.players[guestId] = {
+      ...named.gameData.players[guestId],
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const opened = initialScoringState(named)
+    const drafts: RosterEditorDraft[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const render = async (hiddenTeams: readonly string[]): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <RosterEditor
+              state={opened}
+              audience="coach"
+              fixedSide="home"
+              hiddenTeams={hiddenTeams}
+              renderBoxScore={() => <Text>Line score here</Text>}
+              onDraftChange={draft => drafts.push(draft)}
+              onSave={() => undefined}
+            />
+          </ThemeProvider>
+        )
+      })
+    }
+    // Every team is hidden while the reader's rights are read again.
+    await render([named.gameData.teams.home.id])
+    await click('Roster')
+    const card = host.querySelector<HTMLElement>(
+      '[aria-label^="Shohei O,"][aria-label*="game-only player"]'
+    )
+    expect(card, 'the guest by his public label').not.equals(null)
+    await act(async () => {
+      card!.click()
+    })
+    const input = (label: string): HTMLInputElement =>
+      document.querySelector<HTMLInputElement>(`[aria-label="${label}"]`)!
+    expect(input('Last Name').value).equals('O')
+    // The rights land: his name may be read in full, the sheet still open.
+    await render([])
+    expect(input('Last Name').value).equals('O')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(input('Jersey Number'), '17')
+      input('Jersey Number').dispatchEvent(
+        new window.Event('input', { bubbles: true })
+      )
+    })
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Save Player"]')!.click()
+    })
+    const saved = drafts.at(-1)!.draft
+    expect(saved.gameData.players[guestId]).include({
+      firstName: 'Shohei',
+      lastName: 'Ohtani',
+      fullName: 'Shohei Ohtani',
+      jersey: '17'
+    })
+    expect(guestRenames(named, saved)).deep.equals([])
+  })
+  it('keeps a guest named in full by his public label when a player is left out', async function () {
+    const named = copyState(state.session)
+    const guestId = named.liveData.boxscore.teams.home.players.find(
+      id => named.gameData.players[id].local
+    )!
+    expect(guestId, 'a game-only player').not.equals(undefined)
+    named.gameData.players[guestId] = {
+      ...named.gameData.players[guestId],
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    }
+    const teamId = named.gameData.teams.home.id
+    // The rest of the side are his team's roster players.
+    const rostered = named.liveData.boxscore.teams.home.players.filter(
+      id => id !== guestId
+    )
+    for (const id of rostered) named.gameData.players[id].local = false
+    const rosters = {
+      [teamId]: rostered.map(id =>
+        asRosterEntry({
+          userId: userIdOfGumbo(id),
+          gumboId: id,
+          shortName: named.gameData.players[id].fullName,
+          jersey: named.gameData.players[id].jersey,
+          positions: [],
+          isPlayer: true,
+          role: 'member',
+          section: 'player',
+          staffRoles: [],
+          inheritedFrom: null
+        })
+      )
+    }
+    const drafts: RosterEditorDraft[] = []
+    host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <RosterEditor
+            state={initialScoringState(named)}
+            audience="coach"
+            fixedSide="home"
+            renderBoxScore={() => <Text>Line score here</Text>}
+            rosters={rosters}
+            unrostered={{ away: [], home: [] }}
+            onRosteredChange={async (side, userId, on) => ({
+              away: [],
+              home: on ? [] : [rostered[0]]
+            })}
+            onDraftChange={draft => drafts.push(draft)}
+            onSave={() => undefined}
+          />
+        </ThemeProvider>
+      )
+    })
+    await click('Roster')
+    const left = host.querySelector<HTMLInputElement>(
+      'input[type="checkbox"][aria-label="Rostered for this game"]'
+    )!
+    await act(async () => {
+      left.click()
+    })
+    const last = drafts.at(-1)!.draft
+    expect(last.liveData.boxscore.teams.home.players).not.include(rostered[0])
+    expect(last.gameData.players[guestId]).include({
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    })
+  })
+
+  it('clears his whole defense, the pitcher too, from the red Clear at the field’s top right (U34)', async function () {
     await mount()
     await click('Defense')
-    const header = host.querySelector<HTMLElement>(
-      '[data-testid="Defense roster header"]'
-    )!
-    expect(header.textContent).equals('RosterClear')
-    expect(header.style.justifyContent).equals('space-between')
+    // No title over the roster cards, and no instruction line: the tab pill
+    // still reads Roster, so the old row is looked for by its testID.
+    expect(host.querySelector('[data-testid="Defense roster header"]')).equals(
+      null
+    )
+    expect(host.textContent).not.includes('Drag a player into position')
+    const field = host.querySelector('[data-testid="Defensive field"]')!
+    const clear = node('Clear Defense')!
+    expect(field.contains(clear)).equals(true)
+    expect(clear.style.position).equals('absolute')
+    expect(clear.style.top).equals('4px')
+    expect(clear.style.right).equals('4px')
+    expect(clear.textContent).equals('Clear')
     expect(
       host
         .querySelector('[data-roster-target="defense-P"]')!
@@ -261,5 +617,63 @@ describe('the roster screen for a coach', function () {
       )
     ).lengthOf(0)
     expect(saveDisabled()).equals(null)
+  })
+
+  it('opens the Defense help from the blue Help at the field’s top left, and a tap outside closes it', async function () {
+    await mount()
+    await click('Defense')
+    const help = node('Defense help')!
+    expect(
+      host.querySelector('[data-testid="Defensive field"]')!.contains(help)
+    ).equals(true)
+    expect(help.style.position).equals('absolute')
+    expect(help.style.top).equals('4px')
+    expect(help.style.left).equals('4px')
+    expect(help.textContent).equals('Help')
+    const sheetText = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="Help sheet text"]')
+    expect(sheetText()).equals(null)
+    await click('Defense help')
+    expect(sheetText()!.textContent).equals(
+      'Tap and drag players into positions.'
+    )
+    await act(async () => {
+      document
+        .querySelector<HTMLElement>('[aria-label="Dismiss sheet"]')!
+        .click()
+    })
+    expect(sheetText()).equals(null)
+    // Done closes it too.
+    await click('Defense help')
+    await act(async () => {
+      document.querySelector<HTMLElement>('[aria-label="Done"]')!.click()
+    })
+    expect(sheetText()).equals(null)
+  })
+
+  it('runs the Defense roster cards from margin to margin, in two columns', async function () {
+    await mount()
+    await click('Defense')
+    await click('Clear Defense')
+    const grid = host.querySelector<HTMLElement>(
+      '[data-testid="Defense roster grid"]'
+    )!
+    // No inset either side of the cards.
+    const content = grid.closest(
+      '[data-roster-target="roster"]'
+    )!.parentElement!
+    expect(content.style.paddingLeft).equals('0px')
+    expect(content.style.paddingRight).equals('0px')
+    await act(async () => {
+      ;(
+        grid as unknown as { __reactLayoutHandler: (event: object) => void }
+      ).__reactLayoutHandler({
+        nativeEvent: { layout: { x: 0, y: 0, width: 370, height: 200 } }
+      })
+    })
+    const cards = [...grid.children] as HTMLElement[]
+    expect(cards.length).greaterThan(1)
+    for (const card of cards) expect(card.style.width).equals('177px')
+    expect(grid.style.columnGap).equals('16px')
   })
 })

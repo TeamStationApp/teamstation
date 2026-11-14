@@ -1,5 +1,5 @@
 import { asNumber, asObject, asOptional, asString } from 'cleaners'
-import { Router } from 'express'
+import { type Request, Router } from 'express'
 import type { Kysely } from 'kysely'
 
 import {
@@ -7,19 +7,37 @@ import {
   conflict,
   forbidden,
   notFound,
-  unauthorized
+  unauthorized,
+  updateRequired
 } from '../../common/errors'
+import {
+  MINIMUM_OVERRIDE_REPLAY_PROTOCOL,
+  PROTOCOL_HEADER,
+  saveProtocolOf
+} from '../../common/gameSocket'
 import {
   asPostEventsBody,
   type CurrentPlay,
   type GumboPlay
 } from '../../common/gumboPlay'
+import { usesOverrideSlots } from '../../common/scoring/actions'
+import type { ScoringAuthorship } from '../../common/scoring/authorship'
 import { halfOutcomes } from '../../common/scoring/linescore'
 import type { SwapEffect } from '../../common/scoring/playsLost'
+import {
+  asScoringMutation,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
+import {
+  requiresDeferredLineups,
+  SCORING_FEATURE_HEADER,
+  SCORING_FEATURES
+} from '../../common/scoring/teamRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import { canScore, lineupTeams, roleScopes } from '../access'
 import { requireNodeAdmin } from '../admin/nodeAdministration'
 import { lockPlayerEdits } from '../admin/people'
+import { type Actor, isMachine } from '../auth/sessions'
 import type { ValkeyCache } from '../cache/valkeyCache'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -43,23 +61,63 @@ import {
   type StoredPlay
 } from '../events/postPlays'
 import { requireVisibleGame } from '../events/requireVisibleGame'
+import { namedScoringAuthorship } from '../events/scoringAuthorship'
 import { storedLineupsDigest } from '../events/teamLineups'
 import { playForWire } from '../events/wireRecords'
 import { swapOrReset } from '../games/resetSwap'
 import { gameSwapEffect } from '../games/swapEffect'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
-import { namedScoringGame } from '../scoring/openRow'
+import { namedScoringGame, type ReaderNames } from '../scoring/openRow'
 import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { modelNames } from '../users/nameBook'
-import { isSpoken } from '../users/readerNames'
+import { isSpoken, type Reader, readerOf } from '../users/readerNames'
 import { tellGameWritten } from './gameWritten'
 
 export interface EventRouteOptions {
   onGameWritten?: (gameId: string) => void
+  /**
+   * The oldest `GAME_SOCKET_PROTOCOL` an app's save of plays may name, as
+   * the game socket's subscribe. Never below `MINIMUM_SAVE_PROTOCOL`.
+   */
+  minimumProtocol?: number
   /** Where a live post leaves the game socket's frame of its edits. */
   cache?: ValkeyCache
+}
+
+/**
+ * Refuses a save from a TeamStation app older than the protocol, or naming
+ * none: it replays a game short of a play an end of the half kept, and writes
+ * its plays at the wrong indexes. An app is a request that names itself in
+ * `x-teamstation-app`, or one signed in as a person that carries TeamStation's
+ * own scoring records or is a live post, an undo's removal among them, which
+ * builds before that header still send. An API key, a machine token or Tess
+ * posts as before.
+ */
+function requireCurrentApp(
+  req: Request,
+  actor: Actor,
+  body: {
+    mode?: string
+    plays: readonly GumboPlay[]
+    currentPlay?: CurrentPlay | null
+  },
+  minimum: number
+): void {
+  if (actor.apiKey != null || isMachine(actor)) return
+  const scored =
+    body.plays.some(play => play.teamStation != null) ||
+    body.currentPlay?.teamStation != null
+  if (
+    req.header('x-teamstation-app') == null &&
+    !scored &&
+    body.mode !== 'live'
+  )
+    return
+  const protocol = Number(req.header(PROTOCOL_HEADER))
+  if (Number.isFinite(protocol) && protocol >= minimum) return
+  throw updateRequired('Update TeamStation to keep scoring games.')
 }
 
 /**
@@ -112,9 +170,13 @@ export interface EventRouteOptions {
  * answers `namesDigest`, the digest of the book its plays are named from: a
  * player's public name can change with nothing written, when a hold lapses,
  * so a `playEdits` change naming another digest does not apply to this read.
+ * The plays are named as the public reads them, for every reader; `GET` adds
+ * `readerNames`, each of the game's players its reader reads in full, by
+ * gumbo id.
  *
- * A post answers every stored play as `GET` does, as builds before the
- * edits answer read it and a phone's queue writes it over the game it holds.
+ * A post answers every stored play as `GET` does, `readerNames` included, as
+ * builds before the edits answer read it and a phone's queue writes it over
+ * the game it holds.
  * A live post with `?answer=edits` answers only what it wrote: `edits`, a
  * put of each play it wrote or its tag repair rewrote and a remove of each
  * index it took away, and the at-bat in progress, with those digests and the
@@ -232,6 +294,12 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asPostEventsBody, req.body)
+      requireCurrentApp(
+        req,
+        actor,
+        body,
+        saveProtocolOf(options.minimumProtocol)
+      )
       // A live post asked for its edits answers only what it wrote. Every
       // other answers every play, as builds before the edits answer read it
       // and a phone's queue writes it over the game it holds.
@@ -251,6 +319,27 @@ export function eventRoutes(
             gameId,
             body,
             async (trx, game) => {
+              if (req.get(SCORING_FEATURE_HEADER) !== SCORING_FEATURES) {
+                // This callback runs with the game row locked, before writes.
+                const held = await trx
+                  .selectFrom('games')
+                  .select(['currentPlay', 'pregame'])
+                  .where('id', '=', gameId)
+                  .executeTakeFirstOrThrow()
+                const plays = await readPlays(trx, gameId)
+                if (
+                  [
+                    held.currentPlay,
+                    held.pregame,
+                    ...plays.map(play => play.gumbo),
+                    body.currentPlay,
+                    ...body.plays
+                  ].some(requiresDeferredLineups)
+                )
+                  throw conflict(
+                    'Update TeamStation to score this game; its lineup changes require a newer app.'
+                  )
+              }
               // A scorekeeper of either team, which an administrator of it is.
               const scorers = await roleScopes(trx, actor.userId, actor.isAdmin)
               if (
@@ -268,6 +357,7 @@ export function eventRoutes(
               ? undefined
               : async (trx, posted) => {
                   const kept: LivePostDigests = {
+                    superseded: posted.superseded,
                     priorPlaysDigest: posted.priorPlaysDigest,
                     lineupsDigest: posted.lineupsDigest
                   }
@@ -277,6 +367,8 @@ export function eventRoutes(
                   })
                 },
             {
+              scoringAuthor: true,
+              scoringUserId: actor.userId,
               expectedGeneration: body.generation,
               halves: async (trx, game) =>
                 lineupTeams(
@@ -284,10 +376,11 @@ export function eventRoutes(
                   game
                 ),
               answer: edits ? 'edits' : 'all',
+              listFullNamesFor: readerOf(actor),
               cache: options.cache
             }
           )
-          wrote = true
+          wrote = response.superseded !== true
           return { status: 200, body: response }
         },
         keepsAnswer: false,
@@ -310,16 +403,38 @@ export function eventRoutes(
               .setIsolationLevel('repeatable read')
               .execute(
                 async trx =>
-                  await storedGameRead(trx, gameId, async game =>
-                    lineupTeams(
-                      await roleScopes(trx, actor.userId, actor.isAdmin),
-                      game
-                    )
+                  await storedGameRead(
+                    trx,
+                    gameId,
+                    async game =>
+                      lineupTeams(
+                        await roleScopes(trx, actor.userId, actor.isAdmin),
+                        game
+                      ),
+                    // Edits are the shared record: nobody is named apart.
+                    edits ? undefined : readerOf(actor)
                   )
               )
           )
+          // Acceptance belongs to the original transaction. A peer may
+          // have advanced its accepted result before this reply is retried.
+          const superseded = kept.superseded === true
+          if (superseded)
+            return {
+              status: 200,
+              body: {
+                ...current,
+                priorPlaysDigest: current.playsDigest,
+                superseded: true
+              }
+            }
           if (!edits) return { status: 200, body: { ...current, ...kept } }
-          const { plays, currentPlay, ...digests } = current
+          const {
+            plays,
+            currentPlay,
+            readerNames: _readerNames,
+            ...digests
+          } = current
           return {
             status: 200,
             body: {
@@ -360,15 +475,47 @@ export function eventRoutes(
               )
               return teams
             },
+            readerOf(actor),
             plays
           )
       )
+      if (
+        req.get(SCORING_FEATURE_HEADER) !== SCORING_FEATURES &&
+        [
+          result.answer.currentPlay,
+          ...result.answer.plays.map(play => (play as { gumbo: unknown }).gumbo)
+        ].some(requiresDeferredLineups)
+      )
+        throw conflict(
+          'Update TeamStation to open scoring for this game; its lineup changes require a newer app.'
+        )
       // A game with nothing stored has no setup to hold anyone's halves, and
       // whoever may dictate still needs their first names.
       // Dictation's, so nothing Tess, who does not dictate, is told.
       const spoken = isSpoken() ? {} : await modelNames(db, teams)
+      const answer = await folded(result)
+      if (
+        actor.apiKey == null &&
+        !isMachine(actor) &&
+        !(
+          Number(req.header(PROTOCOL_HEADER)) >=
+          MINIMUM_OVERRIDE_REPLAY_PROTOCOL
+        ) &&
+        [
+          ...answer.plays.map(
+            row => (row as { gumbo?: unknown } | null)?.gumbo
+          ),
+          answer.currentPlay
+        ].some(play => {
+          const actions = (
+            play as { teamStation?: { actions?: unknown } } | null
+          )?.teamStation?.actions
+          return Array.isArray(actions) && actions.some(usesOverrideSlots)
+        })
+      )
+        throw updateRequired('Update TeamStation to replay this game.')
       res.json({
-        ...(await folded(result)),
+        ...answer,
         ...(Object.keys(spoken).length === 0 ? {} : { modelNames: spoken }),
         // Named with these teams' halves, unlike the game socket's edits.
         ...(teams.length === 0 ? {} : { halves: teams })
@@ -501,12 +648,15 @@ function postAnswerOf(raw: unknown): 'edits' | undefined {
 
 /** What a live post's key keeps of its answer: the rest is read again. */
 interface LivePostDigests {
+  superseded?: boolean
   priorPlaysDigest: string | null
   lineupsDigest: string | null
 }
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */
 interface StoredGameAnswer {
+  scoringAuthorship?: ScoringAuthorship
+  scoringMutation?: ScoringMutation
   plays: unknown[]
   currentPlay: unknown
   playsDigest: string
@@ -519,13 +669,19 @@ interface StoredGameAnswer {
   lineupsDigest: string | null
   generation: number
   swap: SwapEffect
+  /**
+   * Gumbo id → full name, for each of the game's players its reader reads in
+   * full and the plays, named as the public reads them, do not. Absent when
+   * there are none, or the read goes to a model.
+   */
+  readerNames?: ReaderNames
 }
 
 /**
  * The answer read through `db`: each stored play, the at-bat in progress,
- * both digests, and what a swap does. Before the first pitch its at-bat is
- * the pregame shell, and `fold` replays it (`pregameFold`), reading nothing,
- * once the caller has let the game row go.
+ * both digests, what a swap does, and whom `reader` reads in full. Before the
+ * first pitch its at-bat is the pregame shell, and `fold` replays it
+ * (`pregameFold`), reading nothing, once the caller has let the game row go.
  */
 async function storedGameRead(
   db: Kysely<Database>,
@@ -534,6 +690,7 @@ async function storedGameRead(
     home_team_id: string
     away_team_id: string
   }) => Promise<readonly string[]>,
+  reader: Reader | undefined,
   held?: StoredPlay[]
 ): Promise<{
   answer: StoredGameAnswer
@@ -550,6 +707,8 @@ async function storedGameRead(
       'pregame',
       'lineups_digest',
       'play_generation',
+      'scoring_mutation',
+      'scoring_authorship',
       'status',
       'cancellation_reason'
     ])
@@ -557,16 +716,26 @@ async function storedGameRead(
     .executeTakeFirstOrThrow()
   const current = atBatOf(game, stored.length > 0)
   const lineups = await halves(game)
-  const { game: resolved, names } = await namedScoringGame(
+  const {
+    game: resolved,
+    names,
+    readerNames
+  } = await namedScoringGame(
     db,
     {
       plays: stored.map(row => row.gumbo as GumboPlay),
       currentPlay: current as CurrentPlay | null
     },
-    { halves: lineups, gameId }
+    { halves: lineups, gameId, listFullNamesFor: reader }
   )
   const teams = teamsOfRow(game)
+  const scoringAuthorship = await namedScoringAuthorship(
+    db,
+    game.scoring_authorship,
+    reader
+  )
   const answer: StoredGameAnswer = {
+    ...(scoringAuthorship == null ? {} : { scoringAuthorship }),
     plays: stored.map((row, index) => ({
       ...playJson(row),
       gumbo: playForWire(resolved.plays[index], teams)
@@ -578,12 +747,18 @@ async function storedGameRead(
       id: gameId,
       ...game
     }),
+    ...(game.scoring_mutation == null
+      ? {}
+      : {
+          scoringMutation: asScoringMutation(game.scoring_mutation)
+        }),
     generation: game.play_generation,
     // What swapping home and away would do, as the swap route decides it.
     swap: gameSwapEffect(
       game,
       stored.map(row => row.gumbo)
-    )
+    ),
+    ...(readerNames == null ? {} : { readerNames })
   }
   return {
     answer,

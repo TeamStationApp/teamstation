@@ -32,6 +32,10 @@ import type {
   VideoSummary
 } from '../../common/api'
 import type { ScoreboardOverlay } from '../../common/nodeSettings'
+import {
+  battingTotals,
+  pitchingTotals
+} from '../../common/replay/replayBoxScore'
 import { SCOREBOARD_BOARD_SIZE } from '../../common/scoreboard'
 import { wallAt, type WallTimeline } from '../../common/wallTimeline'
 import { useMotionPreference } from '../components/useMotionPreference'
@@ -40,6 +44,12 @@ import { angleLabels } from '../player/multiCam/takes'
 import { boardAt } from '../player/scoreboardOverlay/boardAt'
 import { LineScoreBox } from '../player/scoreboardOverlay/LineScoreBox'
 import { ScoreboardOverlay as PlacedScoreboard } from '../player/scoreboardOverlay/ScoreboardOverlay'
+import {
+  replayBattingLabels,
+  replayBoxLabels,
+  replayPitchingLabels
+} from '../screens/boxScoreLabels'
+import { StatsKey } from '../screens/StatsKey'
 import {
   focusMagnification,
   NativeGradient,
@@ -1457,7 +1467,7 @@ export function TvPlayer({
                       </Text>
                       <StatRow
                         name="Batting"
-                        values={['AB', 'R', 'H', 'RBI', 'BB', 'K']}
+                        values={replayBattingLabels}
                         heading
                       />
                       {box[side].batting.map(player => (
@@ -1474,9 +1484,17 @@ export function TvPlayer({
                           ]}
                         />
                       ))}
+                      {box[side].batting.length > 0 && (
+                        <TvBattingTotal rows={box[side].batting} />
+                      )}
+                      <View
+                        testID="tv-batting-pitching-spacer"
+                        style={styles.statsSpacer}
+                        accessible={false}
+                      />
                       <StatRow
                         name="Pitching"
-                        values={['IP', 'H', 'R', 'ER', 'BB', 'K', 'PC']}
+                        values={replayPitchingLabels}
                         heading
                       />
                       {box[side].pitching.map(player => (
@@ -1490,13 +1508,24 @@ export function TvPlayer({
                             player.er,
                             player.bb,
                             player.k,
-                            player.pc ?? '—'
+                            player.hbp ?? '—',
+                            player.pc ?? '—',
+                            player.strikes ?? '—'
                           ]}
                         />
                       ))}
+                      {box[side].pitching.length > 0 && (
+                        <TvPitchingTotal rows={box[side].pitching} />
+                      )}
                     </View>
                   ))}
                 </View>
+                <StatsKey
+                  kind="box"
+                  columns={replayBoxLabels}
+                  color="#fff"
+                  fontSize={28}
+                />
               </>
             )}
           </ScrollView>
@@ -1515,6 +1544,44 @@ export function TvPlayer({
         </View>
       )}
     </PlaybackBoundary>
+  )
+}
+
+function TvBattingTotal({
+  rows
+}: {
+  rows: Parameters<typeof battingTotals>[0]
+}): React.ReactElement {
+  const total = battingTotals(rows)
+  return (
+    <StatRow
+      name="Totals"
+      values={[total.ab, total.r, total.h, total.rbi, total.bb, total.k]}
+    />
+  )
+}
+
+function TvPitchingTotal({
+  rows
+}: {
+  rows: Parameters<typeof pitchingTotals>[0]
+}): React.ReactElement {
+  const total = pitchingTotals(rows)
+  return (
+    <StatRow
+      name="Totals"
+      values={[
+        total.ip,
+        total.h,
+        total.r,
+        total.er,
+        total.bb,
+        total.k,
+        total.hbp ?? '—',
+        total.pc ?? '—',
+        total.strikes ?? '—'
+      ]}
+    />
   )
 }
 
@@ -1745,6 +1812,7 @@ const Scrubber = React.forwardRef<
 
 const styles = StyleSheet.create({
   statRow: { flexDirection: 'row', paddingVertical: 2, alignItems: 'center' },
+  statsSpacer: { height: 44 },
   statName: { width: 300, paddingRight: 20 },
   statCell: { flex: 1, minWidth: 48, textAlign: 'center' },
   statText: {

@@ -48,7 +48,7 @@ const paths = [
   if (
     !existsSync(path) ||
     !/^src\/.+\.tsx?$/.test(path) ||
-    /\.(test|e2e|integration|smoke)\./.test(path) ||
+    /\.(test|spec|e2e|integration|smoke)\./.test(path) ||
     path.startsWith('src/test/') ||
     // Vendored comparison vocabulary is static data, not executable logic.
     path === 'src/common/chatCrypto/safetyWordList.ts' ||
@@ -84,7 +84,9 @@ if (!serverOnly) {
       process.env.TS_UI_TWEAKS_GREP ??
         'roster|Roster|scoring sheet|player entry|placeholder|the coach|coach game|the Coach Game pill|automatic and explicit sections|title event creation and event detail editing|game page|game screen|game hero|game sections|game tabs|game watch|game card|relationship list|shared relationship Leave row|confirmed season participation departure|group settings identity|the league page|the season screen|settings people flows|creation and organization interface behavior|settings cleanup shared presentation|calendar, five-minute|timezone city selection|ScheduleRow|team presentation|minimal public team|team schedule|schedule event creation entry|season time|season page|group link|discovery|membership|Membership|warning|Warning|poster|Poster|sign.in|login|Login|event Info|event RSVP|schedule RSVP|recording|streaming screen|actual app|actual App|the app at launch|team route frames|Search tab|non-member|member’s game Videos|team card’s right|expanded statistics|the games feed|direct action app completion|applyCoverCrop|Coach Game|Score Game|the game Record button|Home Add and Create|the home screen|GameHeroCard|game actions|actual game scoring entry|the box score|player’s settings form' +
           '|entity chat|the person profile|Team roles on Settings|umpire|Umpire|TickerText|native season layout|TextWidthButton|text-width|card content spacing|pill label clearance' +
-          '|stack navigator|scene slot|stack transitions|history motion|predictive back|tab pages|pinned content in pill pages|a player’s|a league’s People tab|native event section and picture pinning|browser event pane in pill pages|native pinned schedule anchoring|chat overlays and Back|reading animated values now|the chat gate|Tess in the app|team settings browser history|chat UI follow-up covered|web camera management|the pinned head in a browser|management.test.tsx|the Walk-up tab|the Field Manager|the person profile|the Score Game screen|an opened chat video|the Auto-Scheduler setup'
+          '|stack navigator|scene slot|stack transitions|history motion|predictive back|tab pages|pinned content in pill pages|a player’s|a league’s People tab|native event section and picture pinning|browser event pane in pill pages|native pinned schedule anchoring|chat overlays and Back|reading animated values now|the chat gate|Tess in the app|team settings browser history|chat UI follow-up covered|web camera management|the pinned head in a browser|management.test.tsx|the Walk-up tab|the Field Manager|the person profile|the Score Game screen|an opened chat video|the Auto-Scheduler setup' +
+          '|defensive field|Box Score pill|Playing Time Rules|game plan|plan shift|the scoring screen on the game socket' +
+          '|one sliding standings capsule|roster chat'
     ],
     { NODE_V8_COVERAGE: temp },
     true
@@ -112,21 +114,21 @@ run(
       'src/app/navigation/stackScene.test.ts',
       'src/app/navigation/historyMotion.test.ts',
       'src/app/navigation/history.test.ts',
-      'src/server/tess/sitemap.test.ts',
+      'src/server/tess/sitemap.integration.test.ts',
       'src/app/scoring/createDictatedPlayers.test.ts',
       'src/app/scoring/dictatedRoster.test.ts',
-      'src/server/events/eventInfo.test.ts',
+      'src/server/events/eventInfo.integration.test.ts',
       'src/server/games/gameLive.test.ts',
-      'src/server/games/scoringActivity.test.ts',
+      'src/server/games/scoringActivity.integration.test.ts',
       'src/server/dictation/interpreter.test.ts',
-      'src/server/routes/membershipRequests.test.ts',
-      'src/server/routes/appSignIn.test.ts',
-      'src/server/routes/events.test.ts',
-      'src/server/routes/games.test.ts',
-      'src/server/routes/people.test.ts',
-      'src/server/routes/seasons.test.ts',
-      'src/server/routes/seasonReaders.test.ts',
-      'src/server/notifications/requestInformation.test.ts',
+      'src/server/routes/membershipRequests.integration.test.ts',
+      'src/server/routes/appSignIn.integration.test.ts',
+      'src/server/routes/events.integration.test.ts',
+      'src/server/routes/games.integration.test.ts',
+      'src/server/routes/people.integration.test.ts',
+      'src/server/routes/seasons.integration.test.ts',
+      'src/server/routes/seasonReaders.integration.test.ts',
+      'src/server/notifications/requestInformation.integration.test.ts',
       'src/app/scoring/playerDraft.test.ts',
       'src/app/scoring/currentSetup.test.ts',
       'src/app/screens/gameTabs.test.ts',
@@ -135,14 +137,14 @@ run(
       'src/app/layout/watch.test.ts',
       'src/server/live/receiving.test.ts',
       'src/server/openapi.test.ts',
-      'src/server/routes/players.test.ts',
-      'src/server/routes/lineups.test.ts',
-      'src/server/routes/rosterCreation.test.ts',
-      'src/server/routes/teamMembers.test.ts',
-      'src/server/routes/teams.test.ts',
-      'src/server/groups/publicSummary.test.ts',
+      'src/server/routes/players.integration.test.ts',
+      'src/server/routes/lineups.integration.test.ts',
+      'src/server/routes/rosterCreation.integration.test.ts',
+      'src/server/routes/teamMembers.integration.test.ts',
+      'src/server/routes/teams.integration.test.ts',
+      'src/server/groups/publicSummary.integration.test.ts',
       ...readdirSync('src/server/routes')
-        .filter(name => name === 'publicGameAccess.test.ts')
+        .filter(name => name === 'publicGameAccess.integration.test.ts')
         .map(name => 'src/server/routes/' + name)
     ]),
     ...(process.env.TS_UI_TWEAKS_NODE_TESTS_EXTRA?.split(',') ?? [])
@@ -173,6 +175,8 @@ run('node_modules/.bin/c8', [
   ...paths.flatMap(path => ['--include', path]),
   '--exclude',
   '**/*.test.*',
+  '--exclude',
+  '**/*.spec.*',
   '--exclude',
   '**/*.e2e.*',
   '--exclude',

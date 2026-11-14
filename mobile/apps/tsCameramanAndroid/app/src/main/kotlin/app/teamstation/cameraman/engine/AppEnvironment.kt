@@ -898,7 +898,8 @@ class AppEnvironment(
                 clientCount = serverStatusState.value.clientCount,
                 currentBitrate = adaptiveBitrate?.status?.controller?.bitrate,
                 frameDelivery = frameThrottle.delivery,
-                deliveredFrameRate = frameThrottle.deliveredFrameRate
+                deliveredFrameRate = frameThrottle.deliveredFrameRate,
+                focus = cameraState.focus
             )
         }
 
@@ -937,6 +938,7 @@ class AppEnvironment(
                 when (val outcome = CameraParameters.parseSet(request.body, current)) {
                     is ParameterOutcome.Success -> {
                         val write = outcome.value
+                        write.focus?.let { camera.setFocus(it) }
                         write.name?.let { rename(it) }
                         write.position?.let { if (it != current.position) camera.flip() }
                         write.displayedZoom?.let { camera.setDisplayedZoom(it) }
@@ -1110,6 +1112,7 @@ class AppEnvironment(
             noteSettingsApplied(next)
             configureVideoEncoder(next)
             camera.configure(CameraPosition.BACK, next)
+            camera.resetControls()
             applyAudio(next)
             ok()
         }

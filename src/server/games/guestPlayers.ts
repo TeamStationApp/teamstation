@@ -139,7 +139,8 @@ export async function createGuestPlayer(
       staffRoles: [],
       inheritedFrom: null,
       avatarUrl: null,
-      walkUpSong: null
+      walkUpSong: null,
+      affiliations: ''
     }
   })
 }
@@ -275,7 +276,8 @@ export async function renameGuestPlayer(
         staffRoles: [],
         inheritedFrom: null,
         avatarUrl: null,
-        walkUpSong: null
+        walkUpSong: null,
+        affiliations: ''
       }
     }
   })
@@ -380,7 +382,8 @@ export async function addExistingGuest(
         staffRoles: [],
         inheritedFrom: null,
         avatarUrl: null,
-        walkUpSong: null
+        walkUpSong: null,
+        affiliations: ''
       }
     }
   })

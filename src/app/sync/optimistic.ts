@@ -1,5 +1,11 @@
-import { shortName, shortNames } from '../../common/names'
+import { formatName, shortName } from '../../common/names'
+import { PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { NewRosterPlayer } from '../../common/playerSettings'
+import { FINAL_INDEX, storedRecordOf } from '../../common/scoring/gumbo'
+import {
+  sameScoringMutation,
+  type ScoringMutation
+} from '../../common/scoring/scoringMutation'
 import { POSITIONS } from '../../common/scoring/state'
 import { namesIn, withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
@@ -197,6 +203,20 @@ function withHalves(
   }
 }
 
+/** Whether a known scoring winner prevents this optimistic write. */
+export function skipsScoringOverlay(document: unknown, post: unknown): boolean {
+  const stored = objectOf(document)
+  const body = objectOf(post)
+  const mutation = body.scoringMutation as ScoringMutation | undefined
+  const prior = stored.scoringMutation as ScoringMutation | undefined
+  const base = body.scoringBase as ScoringMutation | null | undefined
+  return (
+    (mutation == null || !sameScoringMutation(mutation, prior)) &&
+    base !== undefined &&
+    !sameScoringMutation(base, prior)
+  )
+}
+
 /**
  * `GET /games/:gameId/events` once a live post is written: its plays in
  * place by `atBatIndex`, the indexes in `remove` gone, and the at-bat in
@@ -206,7 +226,10 @@ function withHalves(
  * names kept beside it on the phone (`game.names`), then from those the
  * cached answer already shows, and each setup player keeps the first and
  * last names the cached answer gave him, so a game reopened from it offline
- * still offers them to correct (`draftOfLocalPlayer`).
+ * still offers them to correct (`draftOfLocalPlayer`). A player the cached
+ * answer does not hold yet is named by the label his roster entry on the
+ * phone keeps for the public (`game.compact`), as the server names him,
+ * and listed in `readerNames` when the entry names him in full.
  */
 export function appliedEvents(
   document: unknown,
@@ -217,16 +240,58 @@ export function appliedEvents(
     lineups: string | null
     newPlayId: () => string
     names?: Readonly<Record<string, string>> | null
+    /**
+     * By gumbo id, the public label (`compactName`) of the players the
+     * rosters on the phone name otherwise for this reader, and whether
+     * they name him in full.
+     */
+    compact?: Readonly<Record<string, { name: string; full: boolean }>>
   }
 ): Json {
   const stored = objectOf(document)
   const body = objectOf(post)
+  const mutation = body.scoringMutation as ScoringMutation | undefined
+  // A queued request still needs delivery, but an already observed winner
+  // must not be replaced by a conflicting optimistic picture during drain.
+  if (skipsScoringOverlay(document, post)) {
+    const snapshot = { ...stored }
+    delete snapshot.superseded
+    return snapshot
+  }
   const held = eventsNames(stored)
   const halves = eventsHalves(stored)
   const formats = eventsFormats(stored)
   const sent = game.names ?? {}
-  const nameOf = (id: number): string | undefined =>
-    Object.hasOwn(sent, String(id)) ? sent[String(id)] : held.get(id)
+  // The cached documents name everyone as the public reads them, and the
+  // answer's `readerNames` names in full whom this reader reads so. A
+  // session name that is only that full name leaves the public one cached:
+  // read again, it is put back in full with the public label beside it.
+  const reader = objectOf(stored.readerNames)
+  const compact = game.compact ?? {}
+  const listed: Record<string, string> = {}
+  const nameOf = (id: number): string | undefined => {
+    const key = String(id)
+    if (!Object.hasOwn(sent, key)) return held.get(id)
+    if (held.has(id)) {
+      if (!Object.hasOwn(reader, key)) return sent[key]
+      if (reader[key] === sent[key]) return held.get(id)
+      // Renamed, and read in full: the public slot takes the new name as the
+      // public reads it, in the format the cached game writes him in, and
+      // the full one goes to `readerNames`.
+      listed[key] = sent[key]
+      const person = { id, displayName: sent[key] }
+      const format = PLAYER_NAME_PRIVACY.find(
+        value => value === formats.get(id)
+      )
+      return format == null ? shortName(person) : formatName(person, format)
+    }
+    // Not yet in the cached answer: named as the public reads him, as the
+    // server will, with his full name apart when the roster gives it.
+    if (!Object.hasOwn(compact, key)) return sent[key]
+    const { name, full } = compact[key]
+    if (full && sent[key] !== name) listed[key] = sent[key]
+    return name
+  }
   const named = (play: unknown): unknown =>
     play == null ? play : withHalves(withNames(play, nameOf), halves, formats)
   const rows = new Map<number, Json>()
@@ -237,6 +302,18 @@ export function appliedEvents(
   }
   for (const index of arrayOf(body.remove))
     if (typeof index === 'number') rows.delete(index)
+  if (mutation != null)
+    for (const index of rows.keys())
+      if (
+        index !== FINAL_INDEX &&
+        (index > mutation.frontier ||
+          (index === mutation.frontier &&
+            !(storedRecordOf(body.currentPlay)?.actions ?? []).some(
+              action =>
+                !(action.type === 'gameFlow' && action.kind === 'closePlay')
+            )))
+      )
+        rows.delete(index)
   for (const play of arrayOf(body.plays)) {
     const index = indexOf(play)
     if (index == null) continue
@@ -248,13 +325,21 @@ export function appliedEvents(
       gumbo: named(play)
     })
   }
+  const snapshot = { ...stored }
+  delete snapshot.superseded
   return {
-    ...stored,
+    ...snapshot,
     plays: [...rows.entries()].sort(([a], [b]) => a - b).map(([, row]) => row),
     currentPlay:
       body.currentPlay === undefined
         ? (stored.currentPlay ?? null)
         : named(body.currentPlay),
+    ...(Object.keys(listed).length === 0
+      ? {}
+      : { readerNames: { ...reader, ...listed } }),
+    ...(body.scoringMutation == null
+      ? {}
+      : { scoringMutation: body.scoringMutation }),
     priorPlaysDigest: stored.playsDigest ?? null,
     playsDigest: game.plays,
     lineupsDigest: game.lineups
@@ -289,23 +374,14 @@ function renamedIn(
 
 /**
  * The game's short name for a guest called `name`, as the server will name
- * him: short names over everyone the cached answer names, him by his new
- * halves, the others by the halves its setups hold or else by the names it
- * shows.
+ * him: his new halves written alone (`shortName`), whoever else the game
+ * names.
  */
-function guestShortName(stored: Json, gumboId: number, name: Halves): string {
-  const halves = eventsHalves(stored)
-  const people = [...eventsNames(stored)]
-    .filter(([id]) => id !== gumboId)
-    .map(([id, shown]) => ({ id, displayName: shown, ...halves.get(id) }))
+function guestShortName(id: number | string, name: Halves): string {
   const whole = [name.firstName, name.lastName]
     .filter(part => part !== '')
     .join(' ')
-  return (
-    shortNames([...people, { id: gumboId, displayName: whole, ...name }]).get(
-      gumboId
-    ) ?? whole
-  )
+  return shortName({ id, displayName: whole, ...name })
 }
 
 /**
@@ -320,7 +396,7 @@ export function renamedEvents(
   name: { firstName: string; lastName: string }
 ): Json {
   const stored = objectOf(document)
-  const short = guestShortName(stored, gumboId, name)
+  const short = guestShortName(gumboId, name)
   const his = new Map([[gumboId, name]])
   const renamed = (play: unknown): unknown => {
     if (play == null) return play
@@ -400,6 +476,12 @@ export function localRosterEntry(
     .filter(part => part !== '')
     .join(' ')
   const displayName = named === '' ? 'Player' : named
+  const short = shortName({
+    id: localId,
+    firstName: player.firstName,
+    lastName: player.lastName,
+    displayName
+  })
   return {
     userId: userIdOfGumbo(localId),
     gumboId: localId,
@@ -414,12 +496,7 @@ export function localRosterEntry(
       : {}),
     bats: player.bats,
     throws: player.throws,
-    shortName: shortName({
-      id: localId,
-      firstName: player.firstName,
-      lastName: player.lastName,
-      displayName
-    }),
+    shortName: short,
     avatarUrl: null,
     jersey: player.jersey,
     positions: [...player.positions],

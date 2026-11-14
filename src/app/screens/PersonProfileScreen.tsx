@@ -12,10 +12,9 @@ import { PersonMessageButton } from '../chat/PersonMessageButton'
 import {
   Button,
   Card,
-  Emblem,
-  initialsOf,
   ListCard,
   ListRow,
+  PersonEmblem,
   Screen,
   SectionHeader
 } from '../components'
@@ -248,10 +247,10 @@ export function PersonProfileScreen(
       <View style={styles.page}>
         <Card>
           <View style={styles.hero}>
-            <Emblem
+            <PersonEmblem
+              userId={person.userId}
+              name={name}
               uri={person.avatarUrl}
-              fallback={initialsOf(person.shortName)}
-              shape="circle"
               size={4.5}
             />
             <View style={styles.heroText}>
@@ -284,9 +283,10 @@ export function PersonProfileScreen(
                 <ListRow
                   key={child.userId}
                   title={child.shortName}
-                  emblem={initialsOf(child.shortName)}
-                  emblemUri={child.avatarUrl}
-                  emblemShape="circle"
+                  person={{
+                    userId: child.userId,
+                    uri: child.avatarUrl
+                  }}
                   onPress={
                     onOpenPlayer == null
                       ? undefined

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import { build } from 'esbuild'
 
+import { userIdOfGumbo } from '../common/userId'
 import { verifyMediaPath } from '../server/media/mediaTokens'
 import { mediaRoutes } from '../server/routes/media'
 import { groupFixture } from '../test/groupFixtures'
@@ -357,6 +358,20 @@ async function main(): Promise<void> {
       })
       await contains(s.page, 'America/Chicago')
       // Reopen scoring so the hero transition can be tested against real media.
+      // Administrative access alone does not expose assigned-role actions.
+      for (const role of ['scorekeeper', 'coach'] as const)
+        await f.h.db
+          .insertInto('scope_roles')
+          .values({
+            id: `sro_ui_tweaks_${role}`,
+            user_id: userIdOfGumbo(101),
+            scope_type: 'team',
+            scope_id: f.teamA,
+            role,
+            granted_by: userIdOfGumbo(101),
+            granted_at: new Date()
+          })
+          .execute()
       await f.h.db
         .updateTable('games')
         .set({
@@ -394,7 +409,7 @@ async function main(): Promise<void> {
       })
       try {
         if (await s.page.$eval('video', video => video.paused))
-          await s.m.pressKey({ key: 'SPACE' })
+          await s.m.tapOn({ css: '[data-testid="gameVideoZones"]' })
         await s.page.waitForFunction(
           () => {
             const v = document.querySelector('video')
@@ -410,7 +425,7 @@ async function main(): Promise<void> {
           { paused: true, browserBack: true }
         ]) {
           if ((await s.page.$eval('video', video => video.paused)) !== paused)
-            await s.m.pressKey({ key: 'SPACE' })
+            await s.m.tapOn({ css: '[data-testid="gameVideoZones"]' })
           await s.page.waitForFunction(
             expected => {
               const video = document.querySelector('video')
@@ -423,7 +438,11 @@ async function main(): Promise<void> {
           const time = await s.page.$eval('video', video => video.currentTime)
           await s.m.tapOn({ text: 'Score', role: 'button' })
           await contains(s.page, 'Full game scoring')
-          expect(await s.page.$('[aria-label="Game sections"]')).equals(null)
+          await s.page.waitForFunction(() => {
+            const tabs = document.querySelector('[aria-label="Game sections"]')
+            if (tabs === null) return true
+            return tabs.closest('[aria-hidden="true"]') !== null
+          })
           await shot('scoring-choices')
           if (browserBack) await s.page.goBack()
           else await s.m.tapOn({ text: 'Back', role: 'button' })
@@ -523,6 +542,11 @@ async function main(): Promise<void> {
           )
         ).status
       ).equals(200)
+    }
+    if (!before && process.env.TS_UI_SCOPE === 'playback') {
+      await writeFile(join(out, 'public-access.log'), logs.join('\n') + '\n')
+      console.log('UI tweaks playback browser assertions passed')
+      return
     }
     if (!before) {
       console.log('Create roster player through coach screen')

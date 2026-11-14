@@ -9,19 +9,25 @@ import {
   asRosterEntry,
   type GameDetail,
   type GameLineupsResponse,
+  type GamePlansResponse,
   type Health,
   type Lineup,
   type RosterEntry,
   type SaveLineupsBody,
+  type SidePlan,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { GamePlan, PlanCell } from '../../common/gamePlan'
 import type { GameSocketEvent } from '../../common/gameSocket'
+import { EMPTY_PLAN_SAME_DAY } from '../../common/planWarnings'
+import { DEFAULT_PLAYING_TIME_RULES } from '../../common/playingTimeRules'
 import {} from '../../common/scoring/gumbo'
 import { ScoringSession } from '../../common/scoring/session'
 import {
   copyState,
   type GameState,
+  isPosition,
   POSITIONS,
   setupOf
 } from '../../common/scoring/state'
@@ -157,10 +163,22 @@ const NO_DICTATION: Health = {
   dictationModels: []
 }
 
+/** His side's plan as `GET /games/:gameId/plans` answers it, none saved. */
+const HOME_PLAN: SidePlan = {
+  teamId: 'home',
+  plan: null,
+  rules: null,
+  sameDay: EMPTY_PLAN_SAME_DAY
+}
+
 /** The server, as the screen asks it things: what it was asked, and sent. */
 interface Server {
   client: TeamStationClient
   saved: SaveLineupsBody[]
+  /** Each game plan saved, and every save of either kind in order. */
+  savedPlans: GamePlan[]
+  writes: string[]
+  plans: GamePlansResponse
   reads: { events: number; boxScore: number; lineups: number }
   game: GameDetail
   answer: (body: SaveLineupsBody) => Promise<GameLineupsResponse>
@@ -170,6 +188,9 @@ function server(game: Partial<GameDetail> = {}): Server {
   const held: Server = {
     client,
     saved: [],
+    savedPlans: [],
+    writes: [],
+    plans: { away: null, home: HOME_PLAN },
     reads: { events: 0, boxScore: 0, lineups: 0 },
     game: {
       ...gameFixture,
@@ -202,7 +223,16 @@ function server(game: Partial<GameDetail> = {}): Server {
   client.health = async () => NO_DICTATION
   client.saveLineups = async (_gameId, body) => {
     held.saved.push(body)
+    held.writes.push('lineups')
     return await held.answer(body)
+  }
+  client.gamePlans = async () => held.plans
+  client.saveGamePlan = async (_gameId, teamId, plan) => {
+    held.savedPlans.push(plan)
+    held.writes.push('plan')
+    const side = { ...HOME_PLAN, ...held.plans.home, teamId, plan }
+    held.plans = { ...held.plans, home: side }
+    return side
   }
   return held
 }
@@ -236,6 +266,17 @@ class FakeChanges implements GameChanges {
       data: { digest }
     }
     await this.emit(event as unknown as GameSocketEvent)
+  }
+
+  /** A save of a team's game plan, announced. */
+  async plans(teamId: string): Promise<void> {
+    await this.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'plans',
+      at: '2026-10-12T12:00:00Z',
+      data: { teamId }
+    } as unknown as GameSocketEvent)
   }
 }
 
@@ -648,7 +689,7 @@ describe('Coach Game (U25)', function () {
 
   this.timeout(20000)
 
-  it('draws its own chevron and his team’s name on the right, over Box Score, Roster, Lineup and Defense', async function () {
+  it('draws its own chevron and his team’s name on the right, over a Box Score pill on its own row above Roster, Lineup, Defense and Plan', async function () {
     const held = server()
     await coach(held)
     expect(node('Back', 'button')).not.equals(null)
@@ -657,15 +698,51 @@ describe('Coach Game (U25)', function () {
     )!
     expect(header.textContent).equals('Hawks')
     expect(getComputedStyle(header).textAlign).equals('right')
-    for (const tab of ['Box', 'Roster', 'Lineup', 'Defense'])
+    for (const tab of ['Box Score', 'Roster', 'Lineup', 'Defense', 'Plan'])
       expect(node(tab, 'tab'), tab).not.equals(null)
-    expect(node('Box', 'tab')!.getAttribute('aria-selected')).equals('true')
+    // Box Score is a pill of its own, on the row above the other three, and
+    // he opens on it with none of them chosen.
+    const pill = document.querySelector<HTMLElement>(
+      '[data-testid="Box Score pill"]'
+    )!
+    expect(pill).equals(node('Box Score', 'tab'))
+    const tabs = node('Roster', 'tab')!.parentElement!
+    expect(tabs.contains(pill)).equals(false)
+    expect(
+      [...tabs.querySelectorAll('[role="tab"]')].map(tab =>
+        tab.getAttribute('aria-label')
+      )
+    ).deep.equals(['Roster', 'Lineup', 'Defense', 'Plan'])
+    expect(
+      pill.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(pill.getAttribute('aria-selected')).equals('true')
+    for (const tab of ['Roster', 'Lineup', 'Defense', 'Plan'])
+      expect(node(tab, 'tab')!.getAttribute('aria-selected'), tab).equals(
+        'false'
+      )
+    expect(tabs.querySelector('[data-testid="Roster selector thumb"]')).equals(
+      null
+    )
+    expect(
+      document.querySelector('[data-testid="Roster box score"]')
+    ).not.equals(null)
     // His own team alone.
     expect(node('Away Team')).equals(null)
     expect(node('Home Team')).equals(null)
     expect(held.reads.boxScore).equals(1)
     // The game holds no lineup for his side yet: Save is lit as it stands.
     expect(saveDisabled()).equals(false)
+    // Lineup takes the choice from the pill.
+    await click('Lineup', 'tab')
+    expect(node('Lineup', 'tab')!.getAttribute('aria-selected')).equals('true')
+    expect(pill.getAttribute('aria-selected')).equals('false')
+    expect(
+      tabs.querySelector('[data-testid="Roster selector thumb"]')
+    ).not.equals(null)
+    await click('Box Score', 'tab')
+    expect(pill.getAttribute('aria-selected')).equals('true')
+    expect(node('Lineup', 'tab')!.getAttribute('aria-selected')).equals('false')
   })
 
   it('offers Save on his default when a blind save left his side unseen', async function () {
@@ -1284,6 +1361,162 @@ describe('Coach Game (U25)', function () {
     expect(node('First Name')).equals(null)
   })
 
+  it('refreshes coach lineup validation when a peer finishes the pending hit', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    const store = memoryStore()
+    const context = {
+      gamePk: 'g1',
+      teams: teamsOf(held.game),
+      setup: startingSetup(held.game, roster('away'), roster('home'))
+    }
+    const writer = await ScoringSession.open(store, 'g1', context)
+    for (const action of [
+      { type: 'lineup', kind: 'roster', setup: context.setup },
+      { type: 'ballInPlay', contact: 'swing', fielder: 209 },
+      { type: 'result', eventType: 'single' }
+    ] as const)
+      expect(writer.apply(action).problems).deep.equals([])
+    await writer.flush()
+    let observer: ScoringSession | undefined
+    await coach(held, {
+      socket: changes,
+      source: {
+        open: async () => {
+          observer = await ScoringSession.open(store, 'g1', context)
+          return observer
+        }
+      }
+    })
+    await click('Lineup', 'tab')
+    expect(
+      writer.apply({ type: 'gameFlow', kind: 'closePlay' }).problems
+    ).deep.equals([])
+    await writer.flush()
+    await changes.change('playEdits')
+    await waitFor(
+      () =>
+        observer!.state.liveData.plays.currentPlay?.matchup.batter.id === 102,
+      'the coach to adopt the next batter after the remote hit'
+    )
+    expect(document.body.textContent).not.includes(
+      'Choose a next batter in the lineup who is not already on base.'
+    )
+    writer.close()
+  })
+
+  it('defers play refresh while the coach has a staged edit', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const removed = await stageChange()
+    const reads = held.reads.events
+    await changes.change('playEdits')
+    expect(held.reads.events).equals(reads)
+    expect(node(removed)).equals(null)
+    expect(saveDisabled()).equals(false)
+    await click('Cancel')
+    await waitFor(() => held.reads.events > reads, 'pending plays after Cancel')
+    expect(node(removed)).not.equals(null)
+  })
+
+  it('does not adopt a play read that races a coach edit', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const original = held.client.gameEvents.bind(held.client)
+    let release: (() => void) | undefined
+    held.client.gameEvents = async gameId => {
+      await new Promise<void>(resolve => {
+        release = resolve
+      })
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => release != null, 'the delayed play read')
+    const removed = await stageChange()
+    held.client.gameEvents = original
+    await act(async () => {
+      release!()
+    })
+    await settle()
+    expect(node(removed)).equals(null)
+    expect(saveDisabled()).equals(false)
+    await click('Cancel')
+    expect(node(removed)).not.equals(null)
+  })
+
+  it('retains a play refresh when a coach edit is reversed before its read returns', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    await click('Lineup', 'tab')
+    const original = held.client.gameEvents.bind(held.client)
+    let release: (() => void) | undefined
+    let reads = 0
+    held.client.gameEvents = async gameId => {
+      if (++reads === 1)
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => release != null, 'the held play read')
+    const removals = document.querySelectorAll<HTMLElement>(
+      '[aria-label^="Remove "]'
+    )
+    const label = removals[removals.length - 1].getAttribute('aria-label')!
+    await click(label)
+    expect(node(label)).equals(null)
+    await click(`Add ${label.slice('Remove '.length)} to Lineup`)
+    expect(node(label)).not.equals(null)
+    await act(async () => {
+      release!()
+    })
+    await waitFor(() => reads >= 2, 'the clean editor to recover its play read')
+    expect(held.saved).has.length(0)
+  })
+
+  it('retries a failed coach play refresh without another notice', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const original = held.client.gameEvents.bind(held.client)
+    let attempts = 0
+    held.client.gameEvents = async gameId => {
+      if (++attempts === 1) throw new Error('Temporary read failure')
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => attempts === 2, 'the failed play read to retry')
+    expect(node('Save Rosters')).not.equals(null)
+  })
+
+  it('reads again for play notices received during a coach refresh', async function () {
+    const held = server()
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    const original = held.client.gameEvents.bind(held.client)
+    let release: (() => void) | undefined
+    let reads = 0
+    held.client.gameEvents = async gameId => {
+      if (++reads === 1)
+        await new Promise<void>(resolve => {
+          release = resolve
+        })
+      return await original(gameId)
+    }
+    await changes.change('playEdits')
+    await waitFor(() => release != null, 'the first read to start')
+    await changes.change('playEdits')
+    expect(reads).equals(1)
+    await act(async () => {
+      release!()
+    })
+    await waitFor(() => reads === 2, 'the later notice to be read')
+  })
+
   it('follows another device’s lineups under a clean draft, and warns over a staged one', async function () {
     const held = server()
     const socket = new FakeChanges()
@@ -1399,6 +1632,991 @@ describe('Coach Game (U25)', function () {
       () => document.body.textContent!.includes('Unable to load the game'),
       'the failure'
     )
+  })
+})
+
+describe('the coach’s game plan', function () {
+  const cell = (row: number, inning: number): HTMLElement =>
+    document.querySelector<HTMLElement>(
+      `[data-testid="Plan cell ${row}-${inning}"]`
+    )!
+  /**
+   * A value typed into a plan cell: a click that highlights it, its keys on
+   * the grid that holds the focus, then the focus taken away.
+   */
+  async function type(
+    row: number,
+    inning: number,
+    keys: string[]
+  ): Promise<void> {
+    await act(async () => {
+      cell(row, inning).click()
+    })
+    await settle()
+    const grid = document.querySelector<HTMLElement>(
+      '[data-testid="Plan grid"]'
+    )!
+    for (const key of keys)
+      await act(async () => {
+        grid.dispatchEvent(
+          new window.KeyboardEvent('keydown', {
+            key,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+    await act(async () => {
+      grid.blur()
+    })
+    await settle()
+  }
+  /** A server whose game already holds his lineup: Save waits for a change. */
+  function accepted(): Server {
+    const held = server()
+    held.client.gameLineups = async () => {
+      held.reads.lineups++
+      return lineups('first', true)
+    }
+    held.answer = async () => lineups('mine', true)
+    return held
+  }
+  async function plan(held: Server): Promise<void> {
+    await coach(held)
+    await click('Plan', 'tab')
+    await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+  }
+
+  for (const finish of ['Save Rosters', 'Cancel'])
+    it(`reads deferred peer scoring after a plan-only ${finish}`, async () => {
+      const held = accepted()
+      const changes = new FakeChanges()
+      await coach(held, { socket: changes })
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      await type(1, 1, ['c', 'f'])
+      const before = held.reads.events
+      await changes.change('playEdits')
+      expect(held.reads.events).equals(before)
+      expect(cell(1, 1).textContent).equals('CF')
+      await click(finish)
+      await waitFor(() => saveDisabled(), 'the clean plan')
+      await waitFor(
+        () => held.reads.events > before,
+        'deferred scoring refresh'
+      )
+      expect(held.writes).deep.equals(finish === 'Save Rosters' ? ['plan'] : [])
+    })
+
+  it('puts Plan in the pill after Defense, with its Help and no instruction or Choose Next Batter list', async function () {
+    const held = server({ coachSides: ['away'] })
+    held.plans = { away: { ...HOME_PLAN, teamId: 'away' }, home: null }
+    await coach(held, {
+      teamId: 'away',
+      source: {
+        open: async () => {
+          // A batter is awaited: the Lineup tab lists who may be next.
+          const game = copyState(gameUnderWay())
+          const order = game.liveData.boxscore.teams.away.battingOrder
+          game.awaitingBatter = {
+            teamId: game.gameData.teams.away.id,
+            dueIndex: 1,
+            duePlayerId: order[1]
+          }
+          return ScoringSession.start(memoryStore(), 'g1', game)
+        }
+      }
+    })
+    const tabs = node('Roster', 'tab')!.parentElement!
+    expect(
+      [...tabs.querySelectorAll('[role="tab"]')].map(tab =>
+        tab.getAttribute('aria-label')
+      )
+    ).deep.equals(['Roster', 'Lineup', 'Defense', 'Plan'])
+    await click('Lineup', 'tab')
+    expect(document.body.textContent).includes('Choose Next Batter')
+    await click('Plan', 'tab')
+    expect(node('Plan', 'tab')!.getAttribute('aria-selected')).equals('true')
+    expect(document.body.textContent)
+      .not.includes('Drag a player to change the batting order')
+      .and.not.includes('Choose Next Batter')
+      .and.not.includes('Tap to add to lineup.')
+    expect(document.querySelector('[data-testid="Plan help"]')).not.equals(null)
+    expect(document.querySelector('[data-testid="Plan sheet"]')).not.equals(
+      null
+    )
+    // The away side's batting order, name then jersey.
+    expect(
+      document.querySelector('[data-testid="Plan player 1"]')!.textContent
+    ).equals('Owl 1 #1')
+  })
+
+  it('closes a phone’s picker, and only that, on a tap on the tabs or the bar around the sheet', async function () {
+    const originalOS = Platform.OS
+    Object.defineProperty(Platform, 'OS', { value: 'ios', configurable: true })
+    const backdrop = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>(
+        '[data-testid="Plan picker screen backdrop"]'
+      )
+    const picker = (): HTMLElement | null =>
+      document.querySelector<HTMLElement>('[data-testid="Plan field picker"]')
+    try {
+      await plan(accepted())
+      expect(backdrop()).equals(null)
+      await act(async () => {
+        cell(2, 3).click()
+      })
+      await settle()
+      expect(picker()).not.equals(null)
+      // Over the tabs and the footer, as the sheet's own backdrop is over
+      // the sheet: a tap there closes the picker and stays on Plan.
+      expect(backdrop()!.getAttribute('aria-label')).equals('Close the field')
+      await act(async () => {
+        backdrop()!.click()
+      })
+      await settle()
+      expect(picker()).equals(null)
+      expect(backdrop()).equals(null)
+      expect(node('Plan', 'tab')!.getAttribute('aria-selected')).equals('true')
+      // Gone with the sheet when the tab changes under an open picker.
+      await act(async () => {
+        cell(2, 3).click()
+      })
+      await settle()
+      expect(backdrop()).not.equals(null)
+      await click('Lineup', 'tab')
+      expect(backdrop()).equals(null)
+    } finally {
+      Object.defineProperty(Platform, 'OS', {
+        value: originalOS,
+        configurable: true
+      })
+    }
+  })
+
+  it('lights Save for an edited plan and saves the plan alone, and the lineup first when both changed', async function () {
+    const held = accepted()
+    await plan(held)
+    expect(saveDisabled()).equals(true)
+    await type(1, 1, ['p'])
+    expect(cell(1, 1).textContent).equals('P')
+    expect(saveDisabled()).equals(false)
+    // A cell put back is no change.
+    await type(1, 1, ['Delete'])
+    expect(saveDisabled()).equals(true)
+    await type(1, 1, ['c', 'f'])
+    await click('Save Rosters')
+    await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+    expect(held.writes).deep.equals(['plan'])
+    const sent = held.savedPlans[0]
+    // A side with no plan opens with five innings.
+    expect(sent.innings).equals(5)
+    // A plan holding a position is on.
+    expect(sent.enabled).equals(true)
+    expect(sent.rows.map(row => row.player.gumboId)).deep.equals([
+      201, 202, 203, 204, 205, 206, 207, 208, 209
+    ])
+    expect(sent.rows[0].cells).deep.equals(['CF', '', '', '', ''])
+    await waitFor(() => saveDisabled(), 'a clean plan')
+    // Both changed: the lineup is saved, then the plan.
+    await type(2, 2, ['p'])
+    await stageChange()
+    await click('Save Rosters')
+    await waitFor(() => held.savedPlans.length === 2, 'the plan saved again')
+    expect(held.writes).deep.equals(['plan', 'lineups', 'plan'])
+    // The lineup alone: no plan is sent.
+    await stageChange()
+    await click('Save Rosters')
+    await waitFor(() => held.writes.length === 4, 'the lineup saved')
+    await settle()
+    expect(held.writes).deep.equals(['plan', 'lineups', 'plan', 'lineups'])
+  })
+
+  it('saves a stored plan again after a reorder alone, its rows in the new order', async function () {
+    const held = accepted()
+    const hawk = (n: number): GamePlan['rows'][number]['player'] => ({
+      gumboId: 200 + n,
+      fullName: `Hawk ${n}`,
+      jersey: String(n)
+    })
+    held.plans = {
+      away: null,
+      home: {
+        ...HOME_PLAN,
+        plan: {
+          enabled: false,
+          innings: 6,
+          rows: [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ({
+            player: hawk(n),
+            cells:
+              n === 3 ? ['1B', '', '', '', '', ''] : ['', '', '', '', '', '']
+          }))
+        }
+      }
+    }
+    await plan(held)
+    expect(saveDisabled()).equals(true)
+    // Grab Hawk 3, up two, drop: he leads off.
+    const third = document.querySelector<HTMLElement>(
+      '[aria-label="Reorder Hawk 3"]'
+    )!
+    for (const key of ['Enter', 'ArrowUp', 'ArrowUp', 'Enter'])
+      await act(async () => {
+        third.dispatchEvent(
+          new window.KeyboardEvent('keydown', { key, bubbles: true })
+        )
+      })
+    await settle()
+    expect(cell(1, 1).textContent).equals('1B')
+    expect(saveDisabled()).equals(false)
+    await click('Save Rosters')
+    await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+    expect(held.writes).deep.equals(['lineups', 'plan'])
+    const sent = held.savedPlans[0]
+    expect(sent.rows.map(row => row.player.gumboId)).deep.equals([
+      203, 201, 202, 204, 205, 206, 207, 208, 209
+    ])
+    expect(sent.rows[0].cells).deep.equals(['1B', '', '', '', '', ''])
+  })
+
+  /** His plan stored with Hawk 1 to 9 in `order`, a 1B in Hawk 3's row. */
+  function storedPlan(held: Server, order: number[]): void {
+    held.plans = {
+      away: null,
+      home: {
+        ...HOME_PLAN,
+        plan: {
+          enabled: false,
+          innings: 6,
+          rows: order.map(n => ({
+            player: { gumboId: 200 + n, fullName: `Hawk ${n}`, jersey: `${n}` },
+            cells:
+              n === 3 ? ['1B', '', '', '', '', ''] : ['', '', '', '', '', '']
+          }))
+        }
+      }
+    }
+  }
+
+  it('opens clean over a plan stored before somebody else reordered the lineup, and saves it in order with his next lineup', async function () {
+    const held = accepted()
+    // Stored with Hawk 3 leading off; the game now bats Hawk 1 first.
+    storedPlan(held, [3, 1, 2, 4, 5, 6, 7, 8, 9])
+    const screen = await coach(held)
+    await click('Plan', 'tab')
+    await waitFor(() => cell(3, 1) != null, 'the plan sheet')
+    // His plan's rows follow the game's order, Hawk 3's cells with him.
+    expect(cell(3, 1).textContent).equals('1B')
+    expect(saveDisabled()).equals(true)
+    await click('Back')
+    expect(document.body.textContent).not.includes(
+      'Discard unsaved roster changes?'
+    )
+    expect(screen.exits()).equals(1)
+    expect(held.writes).deep.equals([])
+    // A lineup he does save takes the plan with it, in the order saved.
+    await stageChange()
+    await click('Save Rosters')
+    await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+    expect(held.writes).deep.equals(['lineups', 'plan'])
+    expect(held.savedPlans[0].rows[1].player.gumboId).equals(203)
+    expect(held.savedPlans[0].rows[1].cells[0]).equals('1B')
+  })
+
+  it('swaps a player dropped on a row after the first pitch, his plan row with him, and shows no insertion edge', async function () {
+    const held = accepted()
+    storedPlan(held, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    await coach(held, {
+      source: {
+        open: async () =>
+          ScoringSession.start(memoryStore(), 'g1', gameUnderWay())
+      }
+    })
+    await click('Plan', 'tab')
+    await waitFor(() => cell(3, 1) != null, 'the plan sheet')
+    // jsdom lays nothing out: each row and the sheet are told where they
+    // are drawn.
+    const box = (y: number, height: number): DOMRect =>
+      // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+      ({
+        x: 0,
+        y,
+        left: 0,
+        top: y,
+        width: 400,
+        height,
+        right: 400,
+        bottom: y + height
+      }) as DOMRect
+    const rows = [
+      ...document.querySelectorAll<HTMLElement>('[data-roster-target^="plan-"]')
+    ]
+    rows.forEach((row, at) => {
+      row.getBoundingClientRect = () => box(100 + at * 44, 43)
+    })
+    document.querySelector<HTMLElement>(
+      '[data-testid="Plan sheet area"]'
+    )!.getBoundingClientRect = () => box(0, 600)
+    rows[0].setPointerCapture = () => undefined
+    rows[0].hasPointerCapture = () => false
+    const pointer = async (type: string, y: number): Promise<void> => {
+      const event = new window.MouseEvent(type, {
+        bubbles: true,
+        clientX: 60,
+        clientY: y,
+        button: 0
+      })
+      Object.defineProperties(event, {
+        pointerType: { value: 'mouse' },
+        pointerId: { value: 1 }
+      })
+      await act(async () => {
+        rows[0].dispatchEvent(event)
+        await new Promise(resolve => setTimeout(resolve, 0))
+      })
+    }
+    // Hawk 1, held over the lower half of Hawk 3's row.
+    await pointer('pointerdown', 120)
+    await pointer('pointermove', 160)
+    await pointer('pointermove', 225)
+    // Long enough for the row to show where a drop would go.
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 120))
+    })
+    expect(
+      document.querySelector('[aria-label="Lineup insertion point"]')
+    ).equals(null)
+    await pointer('pointerup', 225)
+    await settle()
+    expect(
+      [1, 2, 3].map(
+        n =>
+          document.querySelector(`[data-testid="Plan player ${n}"]`)!
+            .textContent
+      )
+    ).deep.equals(['Hawk 3 #3', 'Hawk 2 #2', 'Hawk 1 #1'])
+    expect([cell(1, 1).textContent, cell(3, 1).textContent]).deep.equals([
+      '1B',
+      ''
+    ])
+    await click('Save Rosters')
+    await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+    expect(held.writes).deep.equals(['lineups', 'plan'])
+    const lineup = held.saved[0]
+    expect(
+      lineup.battingOrder
+        .slice(0, 3)
+        .map(index => lineup.players[index].gumboId)
+    ).deep.equals([203, 202, 201])
+    expect(
+      held.savedPlans[0].rows.slice(0, 3).map(row => row.player.gumboId)
+    ).deep.equals([203, 202, 201])
+    expect(held.savedPlans[0].rows[0].cells[0]).equals('1B')
+  })
+
+  it('stays clean when somebody else’s reorder arrives while the plan is open', async function () {
+    const held = accepted()
+    storedPlan(held, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    const changes = new FakeChanges()
+    const store = memoryStore()
+    const context = (
+      game: GameDetail,
+      away: RosterEntry[],
+      home: RosterEntry[]
+    ): Parameters<typeof ScoringSession.open>[2] => ({
+      gamePk: 'g1',
+      teams: teamsOf(game),
+      setup: startingSetup(game, away, home)
+    })
+    const screen = await coach(held, {
+      socket: changes,
+      source: {
+        open: async (game, away, home) =>
+          await ScoringSession.open(store, 'g1', context(game, away, home))
+      }
+    })
+    await click('Plan', 'tab')
+    await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+    expect(cell(3, 1).textContent).equals('1B')
+    expect(saveDisabled()).equals(true)
+    await waitFor(() => held.reads.lineups >= 2, 'the digest read')
+    // The scorekeeper moves Hawk 3 to lead off, and says so.
+    const scorekeeper = await ScoringSession.open(
+      store,
+      'g1',
+      context(held.game, roster('away'), roster('home'))
+    )
+    const setup = setupOf(scorekeeper.state)
+    const order = setup.sides.home.battingOrder
+    setup.sides.home.battingOrder = [
+      order[2],
+      order[0],
+      order[1],
+      ...order.slice(3)
+    ]
+    scorekeeper.apply({
+      type: 'lineup',
+      kind: 'roster',
+      setup,
+      confirmed: ['away', 'home']
+    })
+    await scorekeeper.flush()
+    await changes.change('lineups', 'theirs')
+    await waitFor(() => cell(1, 1)?.textContent === '1B', 'his reorder')
+    expect(
+      document.querySelector('[data-testid="Plan player 1"]')!.textContent
+    ).equals('Hawk 3 #3')
+    expect(saveDisabled()).equals(true)
+    await click('Back')
+    expect(document.body.textContent).not.includes(
+      'Discard unsaved roster changes?'
+    )
+    expect(screen.exits()).equals(1)
+    expect(held.writes).deep.equals([])
+  })
+
+  it('says how many playing-time warnings a saved plan has', async function () {
+    const held = accepted()
+    held.plans = {
+      away: null,
+      home: {
+        ...HOME_PLAN,
+        rules: {
+          ...DEFAULT_PLAYING_TIME_RULES,
+          defensivePlayingTime: true,
+          measuredIn: 'outs'
+        }
+      }
+    }
+    await plan(held)
+    expect(document.body.textContent).includes('Not yet 6 defensive outs')
+    await type(1, 1, ['p'])
+    await type(2, 1, ['p'])
+    expect(
+      document.querySelector(
+        '[data-testid="Plan warning red duplicatePosition"]'
+      )
+    ).not.equals(null)
+    await click('Save Rosters')
+    // Its inning 1, two pitchers and the rest blank, benches the Defense
+    // tab's other fielders before the first pitch: the notice says so too.
+    await waitFor(
+      () =>
+        document.body.textContent!.includes(
+          'Saved. Defense set from the plan’s inning 1. Plan has 1 red and 1 yellow playing-time warnings.'
+        ),
+      'the warning notice'
+    )
+    expect(held.savedPlans).has.length(1)
+  })
+
+  it('restores the saved plan on Cancel, and asks before leaving an edited one', async function () {
+    const held = accepted()
+    held.plans = {
+      away: null,
+      home: {
+        ...HOME_PLAN,
+        plan: {
+          enabled: true,
+          innings: 7,
+          rows: [
+            {
+              player: { gumboId: 201, fullName: 'Hawk 1', jersey: '1' },
+              cells: ['P', 'P', '', '', '', '', '']
+            }
+          ]
+        }
+      }
+    }
+    await plan(held)
+    expect(cell(1, 1).textContent).equals('P')
+    expect(cell(1, 7)).not.equals(null)
+    await type(1, 1, ['Delete'])
+    expect(saveDisabled()).equals(false)
+    await click('Back')
+    expect(document.body.textContent).includes(
+      'Discard unsaved roster changes?'
+    )
+    await click('Keep editing')
+    await click('Cancel')
+    await waitFor(() => cell(1, 1)?.textContent === 'P', 'the saved plan')
+    expect(saveDisabled()).equals(true)
+  })
+
+  describe('a plan saved elsewhere while his is open', function () {
+    /** Hawk 1's plan, opening at the cell given. */
+    const hawkPlan = (first: PlanCell): GamePlansResponse => ({
+      away: null,
+      home: {
+        ...HOME_PLAN,
+        plan: {
+          enabled: true,
+          innings: 6,
+          rows: [
+            {
+              player: { gumboId: 201, fullName: 'Hawk 1', jersey: '1' },
+              cells: [first, '', '', '', '', '']
+            }
+          ]
+        }
+      }
+    })
+    async function opened(
+      held: Server
+    ): Promise<{ changes: FakeChanges; reads: () => number }> {
+      let reads = 0
+      held.client.gamePlans = async () => {
+        reads++
+        return held.plans
+      }
+      const changes = new FakeChanges()
+      await coach(held, { socket: changes })
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      return { changes, reads: () => reads }
+    }
+
+    it('reads it in under a clean plan, for his team and on a resync only', async function () {
+      const held = accepted()
+      held.plans = hawkPlan('P')
+      const { changes, reads } = await opened(held)
+      expect(cell(1, 1).textContent).equals('P')
+      const before = reads()
+      // The other team's save is not his.
+      held.plans = hawkPlan('C')
+      await changes.plans('away')
+      expect(reads()).equals(before)
+      expect(cell(1, 1).textContent).equals('P')
+      await changes.plans('home')
+      await waitFor(() => cell(1, 1)?.textContent === 'C', 'the newer plan')
+      expect(saveDisabled()).equals(true)
+      held.plans = hawkPlan('SS')
+      await changes.emit({ type: 'resync', gameId: 'g1' })
+      await waitFor(
+        () => cell(1, 1)?.textContent === 'SS',
+        'the plan on resync'
+      )
+      expect(saveDisabled()).equals(true)
+      expect(held.writes).deep.equals([])
+    })
+
+    it('keeps his edits over it, saves them over it, and Cancel goes back to it', async function () {
+      const held = accepted()
+      held.plans = hawkPlan('P')
+      const { changes } = await opened(held)
+      await type(1, 2, ['s'])
+      expect(saveDisabled()).equals(false)
+      held.plans = hawkPlan('C')
+      await changes.plans('home')
+      // His draft stands: the first inning as he opened it, his edit kept.
+      expect(cell(1, 1).textContent).equals('P')
+      expect(cell(1, 2).textContent).equals('SS')
+      expect(saveDisabled()).equals(false)
+      await click('Cancel')
+      await waitFor(
+        () => cell(1, 1)?.textContent === 'C',
+        'the newer saved plan'
+      )
+      expect(cell(1, 2).textContent).equals('')
+      expect(saveDisabled()).equals(true)
+      // Edited again over the newer plan and the plan saved elsewhere once
+      // more, his Save is the one stored.
+      await type(1, 2, ['l'])
+      held.plans = hawkPlan('1B')
+      await changes.plans('home')
+      expect(cell(1, 1).textContent).equals('C')
+      await click('Save Rosters')
+      await waitFor(() => held.savedPlans.length === 1, 'the plan save')
+      expect(held.savedPlans[0].rows[0].cells.slice(0, 2)).deep.equals([
+        'C',
+        'LF'
+      ])
+      expect(held.writes).deep.equals(['plan'])
+    })
+  })
+
+  describe('his plan’s first inning, before the first pitch', function () {
+    /**
+     * His plan with Hawk 1 to 9 in batting order, `first` their inning 1
+     * column, the rest blank: on when it holds a position, as the server
+     * stores it.
+     */
+    function firstInning(held: Server, first: PlanCell[]): void {
+      held.plans = {
+        away: null,
+        home: {
+          ...HOME_PLAN,
+          plan: {
+            enabled: first.some(isPosition),
+            innings: 6,
+            rows: [1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => ({
+              player: {
+                gumboId: 200 + n,
+                fullName: `Hawk ${n}`,
+                jersey: `${n}`
+              },
+              cells: [first[n - 1] ?? '', '', '', '', '', '']
+            }))
+          }
+        }
+      }
+    }
+    /**
+     * An inning 1 column that keeps Hawk 1 to 9 at P to RF, but for the
+     * cells given, by Hawk.
+     */
+    const column = (changes: Record<number, PlanCell> = {}): PlanCell[] =>
+      POSITIONS.map((position, at) => changes[at + 1] ?? position)
+    /** Hawk 1 and 2 swapped, P and C: the rest keep their positions. */
+    const SWAPPED = column({ 1: 'C', 2: 'P' })
+    /**
+     * Opens his screen over a game that takes each lineup save, as the
+     * server's roster action does, so the game read back holds it.
+     */
+    async function opened(held: Server): Promise<void> {
+      const games = new DevelopmentScoringSource()
+      let session: ScoringSession | undefined
+      const saveLineups = held.client.saveLineups.bind(held.client)
+      held.client.saveLineups = async (gameId, body) => {
+        const answer = await saveLineups(gameId, body)
+        const game = copyState(session!.resumable().state)
+        const team = game.liveData.boxscore.teams[body.side]
+        for (const position of POSITIONS) {
+          const index = body.defense[position]
+          team.defense[position] =
+            index == null ? null : (team.players[index] ?? null)
+        }
+        session!.apply({ type: 'lineup', kind: 'roster', setup: setupOf(game) })
+        await session!.flush()
+        return answer
+      }
+      await coach(held, {
+        source: {
+          open: async (game, away, home) => {
+            session = await games.open(game, away, home)
+            return session
+          }
+        }
+      })
+    }
+    /** Who the Defense tab shows at each position, by gumbo id. */
+    async function shownDefense(): Promise<Record<string, string | null>> {
+      await click('Defense', 'tab')
+      return Object.fromEntries(
+        POSITIONS.map(position => [
+          position,
+          document
+            .querySelector(`[data-roster-target="defense-${position}"]`)!
+            .getAttribute('data-roster-player')
+        ])
+      )
+    }
+    /** Hawk 1 to 9 at P to RF, but for the positions given. */
+    const fielding = (
+      changes: Record<string, number> = {}
+    ): Record<string, number> => ({
+      ...Object.fromEntries(POSITIONS.map((position, i) => [position, i])),
+      ...changes
+    })
+
+    it('starts the lineup he saves in it, and Defense shows it', async function () {
+      const held = accepted()
+      firstInning(held, SWAPPED)
+      await opened(held)
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      // An edit to a later inning, so there is something to save.
+      await type(1, 2, ['p'])
+      await click('Save Rosters')
+      await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+      expect(held.writes).deep.equals(['lineups', 'plan'])
+      expect(held.saved[0].defense).deep.equals(fielding({ P: 1, C: 0 }))
+      expect(held.savedPlans[0].enabled).equals(true)
+      await waitFor(() => saveDisabled(), 'a clean screen')
+      const shown = await shownDefense()
+      expect([shown.P, shown.C, shown.RF]).deep.equals(['202', '201', '209'])
+      expect(document.body.textContent).not.includes('not applied')
+      expect(document.body.textContent).includes(
+        'Saved. Defense set from the plan’s inning 1.'
+      )
+    })
+
+    /**
+     * Drags the fielder at `from` on the Defense tab onto `to`. jsdom lays
+     * nothing out, so only `to` is drawn under the pointer.
+     */
+    async function moveFielder(from: string, to: string): Promise<void> {
+      await click('Defense', 'tab')
+      const source = document.querySelector(
+        `[data-roster-target="defense-${from}"]`
+      )!
+      // eslint-disable-next-line @typescript-eslint/unbound-method
+      const original = HTMLElement.prototype.getBoundingClientRect
+      HTMLElement.prototype.getBoundingClientRect = function () {
+        const target = this.getAttribute('data-roster-target')
+        const x = target == null ? 0 : target === `defense-${to}` ? 200 : -1000
+        // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+        return {
+          x,
+          y: 0,
+          left: x,
+          top: 0,
+          right: x + 400,
+          bottom: 800,
+          width: 400,
+          height: 800
+        } as DOMRect
+      }
+      try {
+        for (const [type, x] of [
+          ['pointerdown', 0],
+          ['pointermove', 250],
+          ['pointerup', 250]
+        ] as const)
+          await act(async () => {
+            const event = new window.MouseEvent(type, {
+              bubbles: true,
+              button: 0,
+              clientX: x,
+              clientY: 10
+            })
+            Object.defineProperty(event, 'pointerId', { value: 1 })
+            source.dispatchEvent(event)
+            await new Promise(resolve =>
+              setTimeout(resolve, type === 'pointerdown' ? 520 : 20)
+            )
+          })
+      } finally {
+        HTMLElement.prototype.getBoundingClientRect = original
+      }
+    }
+
+    it('says when his inning 1 puts someone else where he moved a fielder on Defense', async function () {
+      const held = server()
+      // Hawk 5 plays shortstop in inning 1; Hawk 4 sits.
+      firstInning(held, column({ 4: '', 5: 'SS' }))
+      await opened(held)
+      // He moves Hawk 4 from second to short, Hawk 5 to second.
+      await moveFielder('2B', 'SS')
+      const moved = await shownDefense()
+      expect([moved['2B'], moved.SS]).deep.equals(['205', '204'])
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the lineup saved')
+      // Hawk 5 is saved at short, as the plan has him; Hawk 4 leaves it.
+      const { '2B': second, ...rest } = fielding()
+      expect(second).equals(3)
+      expect(held.saved[0].defense).deep.equals(rest)
+      await waitFor(
+        () =>
+          document.body.textContent!.includes(
+            'Saved. Defense set from the plan’s inning 1.'
+          ),
+        'the notice'
+      )
+    })
+
+    it('says when his inning 1 benches a fielder the Defense tab has, leaving his position empty', async function () {
+      const held = server()
+      // Hawk 4, at second on Defense, sits inning 1, and nobody takes second.
+      firstInning(held, column({ 4: '' }))
+      await opened(held)
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the lineup saved')
+      const { '2B': second, ...rest } = fielding()
+      expect(second).equals(3)
+      expect(held.saved[0].defense).deep.equals(rest)
+      await waitFor(
+        () =>
+          document.body.textContent!.includes(
+            'Saved. Defense set from the plan’s inning 1.'
+          ),
+        'the notice'
+      )
+    })
+
+    it('says his inning 1 set the defence beside the plan’s warnings', async function () {
+      const held = accepted()
+      firstInning(held, column({ 4: '', 5: 'SS' }))
+      held.plans.home = {
+        ...held.plans.home!,
+        rules: {
+          ...DEFAULT_PLAYING_TIME_RULES,
+          defensivePlayingTime: true,
+          measuredIn: 'outs'
+        }
+      }
+      await opened(held)
+      await moveFielder('2B', 'SS')
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      await type(9, 2, ['l'])
+      await click('Save Rosters')
+      await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+      await waitFor(
+        () =>
+          /Saved\. Defense set from the plan’s inning 1\. Plan has .+ playing-time warnings?\./.test(
+            document.body.textContent!
+          ),
+        'the notice'
+      )
+    })
+
+    it('says nothing of his inning 1 when it agrees with his Defense edit', async function () {
+      const held = server()
+      firstInning(held, column({ 4: 'SS', 5: '2B' }))
+      await opened(held)
+      await moveFielder('2B', 'SS')
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the lineup saved')
+      expect(held.saved[0].defense).deep.equals(fielding({ '2B': 4, SS: 3 }))
+      await settle()
+      expect(document.body.textContent).not.includes('Defense set from')
+    })
+
+    it('keeps the Defense tab’s defence for a plan with no position in it', async function () {
+      const held = server()
+      firstInning(
+        held,
+        column().map((): PlanCell => '')
+      )
+      await opened(held)
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the lineup saved')
+      expect(held.saved[0].defense).deep.equals(fielding())
+      await settle()
+      expect(held.writes).deep.equals(['lineups'])
+    })
+
+    it('leaves the defence alone once the game is under way', async function () {
+      const held = accepted()
+      firstInning(held, SWAPPED)
+      await coach(held, {
+        source: {
+          open: async () =>
+            ScoringSession.start(memoryStore(), 'g1', gameUnderWay())
+        }
+      })
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      await type(1, 2, ['s'])
+      await click('Save Rosters')
+      await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+      await settle()
+      // The plan alone: no lineup with its first inning is saved.
+      expect(held.writes).deep.equals(['plan'])
+      const shown = await shownDefense()
+      expect([shown.P, shown.C]).deep.equals(['201', '202'])
+    })
+
+    it('does not start a column that leaves nobody pitching, and says so', async function () {
+      const held = server()
+      // Hawk 1 leaves the mound to catch, and nobody takes it.
+      firstInning(held, column({ 1: 'C', 2: '1B', 3: '' }))
+      await opened(held)
+      await click('Save Rosters')
+      await waitFor(() => held.saved.length === 1, 'the lineup saved')
+      expect(held.saved[0].defense).deep.equals(fielding())
+      await waitFor(
+        () =>
+          document.body.textContent!.includes(
+            'Saved. Inning 1 plan not applied: needs a pitcher.'
+          ),
+        'the notice'
+      )
+      const shown = await shownDefense()
+      expect([shown.P, shown.C]).deep.equals(['201', '202'])
+    })
+
+    it('says so beside the plan’s warnings', async function () {
+      const held = accepted()
+      firstInning(held, column({ 1: 'C', 2: '1B', 3: '' }))
+      held.plans.home = {
+        ...held.plans.home!,
+        rules: {
+          ...DEFAULT_PLAYING_TIME_RULES,
+          defensivePlayingTime: true,
+          measuredIn: 'outs'
+        }
+      }
+      await opened(held)
+      await click('Plan', 'tab')
+      await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+      await type(2, 2, ['c'])
+      await click('Save Rosters')
+      await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+      expect(held.writes).deep.equals(['plan'])
+      await waitFor(
+        () =>
+          /Saved\. Inning 1 plan not applied: needs a pitcher\. Plan has .+ playing-time warnings?\./.test(
+            document.body.textContent!
+          ),
+        'the notice'
+      )
+    })
+  })
+
+  it('drops a reread of his plan sent before his save and answered after it', async function () {
+    const held = accepted()
+    const older = held.plans
+    // The reread is read before his save commits, and answers after it.
+    let answer: (() => void) | undefined
+    let reads = 0
+    held.client.gamePlans = async () => {
+      reads++
+      if (reads === 1) return held.plans
+      return await new Promise(resolve => {
+        answer = () => {
+          resolve(older)
+        }
+      })
+    }
+    const changes = new FakeChanges()
+    await coach(held, { socket: changes })
+    await click('Plan', 'tab')
+    await waitFor(() => cell(1, 1) != null, 'the plan sheet')
+    await changes.plans('home')
+    expect(answer).not.equals(undefined)
+    await type(1, 2, ['s'])
+    await click('Save Rosters')
+    await waitFor(() => held.savedPlans.length === 1, 'the plan saved')
+    await waitFor(() => saveDisabled(), 'a clean plan')
+    await act(async () => {
+      answer!()
+    })
+    await settle()
+    // The plan he saved stands, clean: the older answer is not his base.
+    expect(cell(1, 2).textContent).equals('SS')
+    expect(saveDisabled()).equals(true)
+  })
+
+  it('keeps the edited plan when its save fails, and says so', async function () {
+    const held = accepted()
+    held.client.saveGamePlan = async () => {
+      throw new Error('offline')
+    }
+    await plan(held)
+    await type(3, 2, ['s'])
+    await click('Save Rosters')
+    await waitFor(
+      () => document.body.textContent!.includes('Unable to save the lineup'),
+      'the failure'
+    )
+    expect(cell(3, 2).textContent).equals('SS')
+    expect(saveDisabled()).equals(false)
+  })
+
+  it('says the plan could not be read, and saves none', async function () {
+    const held = accepted()
+    held.client.gamePlans = async () => {
+      throw new Error('offline')
+    }
+    await coach(held)
+    await click('Plan', 'tab')
+    expect(document.body.textContent).includes(
+      'Unable to load the game plan. Please try again.'
+    )
+    expect(cell(1, 1)).equals(null)
+    expect(saveDisabled()).equals(true)
   })
 })
 
@@ -1820,6 +3038,7 @@ describe('the Coach Game pill', function () {
     const opened: string[] = []
     await render(
       <GameScreen
+        signedIn
         client={client}
         gameId="g1"
         initialTab="boxScore"

@@ -36,6 +36,18 @@ object PhoneStreamMaps {
             "thermal" to status.thermal,
             "recordingSeconds" to status.recordingSeconds,
             "isRecording" to status.isRecording,
+            "videoWidth" to status.videoWidth.toDouble(),
+            "videoHeight" to status.videoHeight.toDouble(),
+            "focus" to present(
+                "supported" to status.focus.supported,
+                "phase" to status.focus.phase.wire,
+                "generation" to status.focus.generation,
+                "request" to status.focus.request,
+                "rotation" to status.focus.rotation.toDouble(),
+                "mirrored" to status.focus.mirrored,
+                "x" to status.focus.point?.x,
+                "y" to status.focus.point?.y
+            ),
             "error" to status.error?.rawValue
         )
 

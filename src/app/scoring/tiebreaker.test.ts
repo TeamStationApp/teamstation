@@ -1,11 +1,16 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { baseIds, tiebreakerSetupError } from '../../common/scoring/rules'
+import {
+  baseIds,
+  overrideOf,
+  tiebreakerSetupError
+} from '../../common/scoring/rules'
 import { applyAction } from '../../common/scoring/session'
 import { copyState } from '../../common/scoring/state'
 import { scoringSession } from '../../test/scoringSession'
 import { gameFixture } from './isUnscoredGame.test'
+import { overrideHalf } from './overrideModel'
 import { initialScoringState, scoringReducer } from './scoringMachine'
 import { recentRunnerIds } from './tiebreaker'
 
@@ -84,6 +89,7 @@ describe('top-inning tiebreaker setup', () => {
     expect(tiebreakerSetupError(first.session)).equals(undefined)
     const changed = scoringReducer(first, { type: 'TIEBREAKER_OUTS', outs: 2 })
     expect(changed.past.at(-1)?.label).equals('Set Outs')
+    expect(changed.log.at(-1)).not.property('batterIndex')
     expect(changed.session.liveData.linescore.outs).equals(2)
     expect(baseIds(changed.session)).deep.equals([null, 2, null])
     expect(changed.session.liveData.boxscore).deep.equals(
@@ -111,6 +117,56 @@ describe('top-inning tiebreaker setup', () => {
       start.session
     )
   })
+
+  for (const top of [true, false])
+    it(`keeps the selected merged batting slot when setting outs: top=${top}`, () => {
+      const start = initial()
+      const side = top ? 'away' : 'home'
+      const batter = top ? 1 : 10
+      const order = start.session.liveData.boxscore.teams[side].battingOrder
+      order[4] = batter
+      let selected = scoringReducer(start, {
+        type: 'OVERRIDE',
+        draft: {
+          ...overrideHalf(start.session, overrideOf(start.session), top),
+          batter,
+          batterIndex: 4
+        }
+      })
+      if (!top) {
+        const draft = copyState(selected.session)
+        draft.liveData.boxscore.teams.away.defense.P = 1
+        selected = scoringReducer(selected, { type: 'ROSTER', draft })
+        expect(tiebreakerSetupError(selected.session)).includes('top inning')
+        expect(
+          scoringReducer(selected, { type: 'TIEBREAKER_OUTS', outs: 2 })
+        ).equals(selected)
+        expect(place(selected, 11, 2)).equals(selected)
+        return
+      }
+      expect(tiebreakerSetupError(selected.session)).equals(undefined)
+      const changed = scoringReducer(selected, {
+        type: 'TIEBREAKER_OUTS',
+        outs: 2
+      })
+      expect(changed.session.liveData.linescore.outs).equals(2)
+      expect(changed.session.liveData.boxscore.teams[side].battingIndex).equals(
+        4
+      )
+      expect(
+        JSON.parse(
+          JSON.stringify(scoringReducer(changed, { type: 'UNDO' }).session)
+        )
+      ).deep.equals(JSON.parse(JSON.stringify(selected.session)))
+      let replay = start.session
+      for (const action of JSON.parse(JSON.stringify(changed.log))) {
+        const result = applyAction(replay, action)
+        expect(result.problems).deep.equals([])
+        replay = result.state
+      }
+      expect(replay.liveData.boxscore.teams[side].battingIndex).equals(4)
+      expect(replay.liveData.linescore.outs).equals(2)
+    })
 
   it('outs accepts only changed integers 0–2 at a clean top and protects read-only scoring', () => {
     const start = initial()
@@ -191,5 +247,16 @@ describe('top-inning tiebreaker setup', () => {
     expect(recentRunnerIds(state)).deep.equals([99, 2, 1, 9, 8, 7, 6, 5])
     delete finished.lineups
     expect(recentRunnerIds(state)).deep.equals([99, 2, 1, 9, 8, 7, 6, 5])
+  })
+})
+
+describe('tiebreaker outs after a stale batting index', function () {
+  it('uses the current batter identity when its index no longer matches', function () {
+    const state = initial()
+    state.session.liveData.boxscore.teams.away.battingIndex = 3
+    const next = scoringReducer(state, { type: 'TIEBREAKER_OUTS', outs: 1 })
+    expect(next.session.liveData.linescore.outs).equals(1)
+    expect(next.session.liveData.boxscore.teams.away.battingIndex).equals(0)
+    expect(next.log.at(-1)).not.property('batterIndex')
   })
 })

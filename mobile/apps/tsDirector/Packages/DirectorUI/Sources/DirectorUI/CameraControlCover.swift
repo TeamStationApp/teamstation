@@ -16,7 +16,7 @@ struct CameraControlCover: View {
       if let model = environment.activeCameraControl, let pipeline = environment.router.pipeline(at: sourceIndex) {
         CameraView(model: model, onClose: { environment.closeCameraControl() }) {
           CameraPreviewView(renderer: pipeline.renderer)
-            .aspectRatio(16 / 9, contentMode: .fit)
+            .aspectRatio(CGFloat(model.settings.width) / CGFloat(max(model.settings.height, 1)), contentMode: .fit)
         }
       } else {
         Button("Close") { environment.closeCameraControl() }

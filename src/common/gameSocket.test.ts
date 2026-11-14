@@ -331,6 +331,23 @@ describe('GameSocket (U16)', function () {
       socket.close()
     })
 
+    it('keeps a game plan’s change, which names only the team', function () {
+      const { socket } = makeSocket()
+      const heard: GameSocketEvent[] = []
+      socket.subscribe('g1', event => heard.push(event))
+      last().open()
+      const change = {
+        type: 'change',
+        gameId: 'g1',
+        kind: 'plans',
+        at: '2027-04-10T17:00:00.000Z',
+        data: { teamId: 'tem_hawks' }
+      }
+      last().receive(change)
+      expect(heard).deep.equals([change])
+      socket.close()
+    })
+
     it('passes on an older worker’s whole list of plays as the re-read form, with its digest', function () {
       const { socket } = makeSocket()
       const heard: GameSocketEvent[] = []

@@ -39,7 +39,7 @@ export const enUs = {
   error_fallback_reload: 'Reload',
   update_required_title: 'Update required',
   update_required_body:
-    'This version of TeamStation can no longer follow games live. Update the app to continue.',
+    'This version of TeamStation can no longer follow or score games live. Update the app to continue.',
   update_required_reload: 'Reload',
   oauth_title: 'Authorize access',
   oauth_request: '%s wants to use your TeamStation identity.',
@@ -93,10 +93,11 @@ export const enUs = {
   roster_admins: 'Admins',
   roster_staff: 'Staff',
   roster_players: 'Players',
+  /** Under a roster search's list when it answered as many as it answers. */
+  candidates_capped: 'Showing the first %s \u2014 type more to narrow.',
   roster_family: 'Family members',
   roster_spectators: 'Spectators',
   roster_followers: 'Followers',
-  roster_guardian_of: 'Parent/guardian of %s',
   // The pill on somebody given their place from above: `Season coach`, and
   // for a member of the season or league, `Season spectator`.
   roster_inherited_pill: '%1$s %2$s',
@@ -148,11 +149,77 @@ export const enUs = {
   coach_not_coach: 'Only a head coach of this team can coach it here.',
   coach_load_failed: 'Unable to load the game. Please try again.',
   coach_save_failed: 'Unable to save the lineup. Please try again.',
+  /** The coaching screen's Box Score pill, on its own row above the tabs. */
+  coach_box_score: 'Box Score',
+  /** The coaching screen's tab for the per-inning game plan. */
+  coach_plan_tab: 'Plan',
+  /** Shown for five seconds after a save whose plan has warnings. */
+  coach_plan_saved_warnings: 'Saved. Plan has %s.',
+  /**
+   * After a save before the first pitch whose followed plan's inning 1
+   * leaves nobody pitching, so the lineup keeps the Defense tab's defence.
+   */
+  coach_plan_saved_no_pitcher:
+    'Saved. Inning 1 plan not applied: needs a pitcher.',
+  coach_plan_saved_no_pitcher_warnings:
+    'Saved. Inning 1 plan not applied: needs a pitcher. Plan has %s.',
+  /**
+   * After a save before the first pitch whose followed plan's inning 1
+   * changed who plays a position from what the Defense tab had, by putting
+   * someone else there or benching its fielder.
+   */
+  coach_plan_saved_defense: 'Saved. Defense set from the plan\u2019s inning 1.',
+  coach_plan_saved_defense_warnings:
+    'Saved. Defense set from the plan\u2019s inning 1. Plan has %s.',
+  coach_plan_load_failed: 'Unable to load the game plan. Please try again.',
+  /**
+   * The roster screen's Help and Clear, at the Defense field's top corners,
+   * and the sheet Help slides up.
+   */
+  roster_help: 'Help',
+  roster_clear: 'Clear',
+  roster_defense_help_label: 'Defense help',
+  roster_clear_defense: 'Clear Defense',
+  roster_defense_help: 'Tap and drag players into positions.',
+  /** The roster screen's Cancel, a red button left of the microphone. */
+  roster_cancel: 'Cancel',
+  /** The Plan tab's Help, left of its Clear, and the sheet it opens. */
+  plan_help_label: 'Plan help',
+  plan_help:
+    'Tap and hold a player to drag them to a new batting order. Tap or hold an inning slot to set a player\u2019s position.',
+  plan_player_header: 'Player',
+  plan_add_inning: 'Add inning',
+  /** A cell's accessible name: the player, and the inning. */
+  plan_cell_label: '%1$s, inning %2$s',
+  /** The web's grid of cells, which takes the keys for the highlighted one. */
+  plan_grid_label:
+    'Innings. Arrow keys move between cells; a position\u2019s first letter sets one, and Delete benches.',
+  plan_refused:
+    '%s is not a position. Use P, C, 1B, 2B, 3B, SS, LF, CF, RF, DH or EH, or leave it blank to bench.',
+  /** The field picker's title: who and which inning it assigns. */
+  plan_assign_title: 'Assign: %1$s (Inn %2$s)',
+  plan_bench: 'Bench',
+  plan_close_picker: 'Close the field',
+  plan_no_warnings: 'No playing-time warnings.',
+  plan_warning_red: 'Red warning: %s',
+  plan_warning_yellow: 'Yellow warning: %s',
+  plan_clear: 'Clear',
+  plan_clear_label: 'Clear the plan',
+  plan_clear_title: 'Clear the whole plan?',
+  plan_clear_detail:
+    'Every inning is emptied for every player. Nothing is saved until Save Rosters.',
+  /** An added inning's red number, and the confirmation it opens. */
+  plan_delete_inning_label: 'Delete inning %s',
+  plan_delete_inning_title: 'Delete inning %s?',
+  plan_delete_inning_detail:
+    'Its cells are removed for every player, and the innings after it move up. Nothing is saved until Save Rosters.',
+  plan_delete: 'Delete',
   game_replay: 'Replay',
   game_live: 'Live',
-  replay_exit: 'Exit',
-  replay_announcer_on: 'Turn announcer on',
-  replay_announcer_off: 'Turn announcer off',
+  /** The volume button's label, on the scoring screen and the replay. */
+  sound_mute: 'Mute game sounds',
+  sound_unmute: 'Unmute game sounds',
+  replay_close: 'Close replay',
   replay_pause: 'Pause replay',
   replay_play: 'Play replay',
   replay_paused: 'Paused',
@@ -224,6 +291,7 @@ export const enUs = {
   angles_pause: 'Pause',
   angles_back_ten: 'Back ten seconds',
   angles_forward_ten: 'Forward ten seconds',
+  angles_jump_present: 'Jump to present',
   player_slow_mo: 'Slow Mo 25%',
   game_batting: 'Batting',
   game_box_score_empty: 'No batting to show for this game yet.',
@@ -337,6 +405,101 @@ export const enUs = {
   month_10: 'October',
   month_11: 'November',
   month_12: 'December',
+  // A stepper in a settings row: − and + either side of the value
+  setting_stepper_decrease: 'Decrease %s',
+  setting_stepper_increase: 'Increase %s',
+  setting_stepper_value: '%s: %s',
+  // Playing Time Rules: a season's or a team's, from a row on its settings
+  playing_time_title: 'Playing Time Rules',
+  playing_time_subtitle_season:
+    'Configures the playing time rules for this season.',
+  playing_time_subtitle_team:
+    'Configures the playing time rules for this team.',
+  playing_time_future_games: 'Changes apply to future games.',
+  playing_time_row_season: 'Season rules',
+  playing_time_row_overridden: 'Overridden for this team',
+  playing_time_row_team: 'Team rules',
+  playing_time_row_off: 'Off',
+  playing_time_override: 'Override season rules',
+  playing_time_following: 'Following %s',
+  playing_time_save: 'Save',
+  playing_time_turn_off: 'Turn Off Playing Time Rules',
+  playing_time_turn_off_title: 'Turn off playing time rules for %s?',
+  playing_time_turn_off_detail:
+    'Its saved rules are removed, and its future games are no longer checked against them.',
+  playing_time_turn_off_confirm: 'Turn Off',
+  playing_time_loading: 'Loading\u2026',
+  playing_time_cannot_load: 'The playing time rules did not load.',
+  playing_time_cannot_save: 'The playing time rules were not saved.',
+  playing_time_group_defensive: 'Defensive Playing Time',
+  playing_time_group_fields: 'Infield and Outfield',
+  playing_time_group_sitting: 'Sitting and Bench Equity',
+  playing_time_group_positions: 'Position Limits and Rotation',
+  playing_time_group_battery: 'Pitcher and Catcher',
+  playing_time_group_batting: 'Batting Order',
+  playing_time_require: 'Require Defensive Playing Time',
+  // Under it: what it requires, in the unit it is measured in
+  playing_time_require_outs: 'Require %s defensive outs',
+  playing_time_require_inning: 'Require 1 full inning',
+  playing_time_require_innings: 'Require %s full innings',
+  playing_time_require_inning_by: 'Require 1 full inning by the %s',
+  playing_time_require_innings_by: 'Require %s full innings by the %s',
+  playing_time_measured_in: 'Playing time measured in',
+  playing_time_innings: 'Innings',
+  playing_time_outs: 'Defensive Outs',
+  playing_time_outs_required: 'Defensive Outs Required',
+  playing_time_consecutive: 'Must Be Consecutive',
+  playing_time_large_rosters: 'Reduced Requirement for Large Rosters',
+  playing_time_large_roster_players:
+    'Following requirements when ≥ %s players present',
+  // A large roster's row, named for a screen reader apart from the same row above
+  playing_time_large_roster_row: '%s (large rosters)',
+  playing_time_minimum_innings: 'Minimum Full Innings',
+  playing_time_minimum_by: 'Must Complete by Inning',
+  playing_time_partial: 'Count Partial Innings',
+  playing_time_full_only: 'Full only',
+  playing_time_any_appearance: 'Any appearance',
+  playing_time_inning_3: '3rd',
+  playing_time_inning_4: '4th',
+  playing_time_inning_5: '5th',
+  playing_time_no_deadline: 'n/a',
+  playing_time_infield: 'Require Minimum Infield',
+  playing_time_infield_innings: 'Infield Innings Required',
+  playing_time_pitcher_infield: 'Pitcher counts as infield',
+  playing_time_catcher_counts_as: 'Catcher counts as',
+  playing_time_infield_choice: 'Infield',
+  playing_time_outfield_choice: 'Outfield',
+  playing_time_off: 'Off',
+  playing_time_infield_by: 'Complete infield by inning',
+  playing_time_outfield: 'Require Minimum Outfield',
+  playing_time_outfield_innings: 'Outfield Innings Required',
+  playing_time_outfield_by: 'Complete outfield by inning',
+  playing_time_battery_minimums:
+    'Starting pitcher and catcher exempt from minimums',
+  playing_time_sitting: 'Enforce Sitting Limits',
+  playing_time_no_consecutive_sits: 'No Consecutive Sits',
+  playing_time_sitting_order: 'Equal Sitting Order',
+  playing_time_second_after_all: 'No 2nd sit until all have sat once',
+  playing_time_third_after_all: 'No 3rd until all have sat twice',
+  playing_time_max_sits: 'Max Sits Per Game',
+  playing_time_battery_sitting: 'Starting Pitcher / Catcher Exempt',
+  playing_time_battery_sitting_detail:
+    'Starting pitcher and catcher may sit with none of the above restrictions.',
+  playing_time_limit_position: 'Limit Innings at One Position',
+  playing_time_max_position: 'Max Innings per Position',
+  playing_time_unlimited: 'Unlimited',
+  playing_time_rotate_every: 'Rotate Every N Innings',
+  playing_time_catcher_limit: 'Catcher Inning Limit',
+  playing_time_none: 'None',
+  playing_time_catcher_pitching: 'Catching Blocks Pitching',
+  // %s is the innings chosen, or the placeholder below while it is off
+  playing_time_catcher_pitching_detail:
+    'After %s innings catching, no pitching that calendar day',
+  playing_time_catcher_pitching_n: 'N',
+  playing_time_disable: 'Disable',
+  playing_time_continuous: 'Continuous Batting Order',
+  playing_time_late_arrivals: 'Late Arrivals Added to End',
+  playing_time_departures: 'Departures Skip Without Out',
 
   // A player's guardians and adult family members
   guardians_title: 'Guardians and family',
@@ -804,7 +967,7 @@ export const enUs = {
   stats_at_bats: 'AB',
   stats_hits: 'H',
   stats_walks: 'BB',
-  stats_strikeouts: 'K',
+  stats_strikeouts: 'SO',
   stats_runs_batted_in: 'RBI',
   stats_average: 'AVG',
   stats_on_base: 'OBP',
@@ -980,6 +1143,37 @@ export const enUs = {
   scoring_no_plays: 'No plays yet',
   scoring_history_hint: 'Your last action appears here',
   scoring_undo_hint: 'Undo last action',
+  remote_log_another_scorer: 'Another scorer',
+  remote_log_undo: 'Undo — %s',
+  remote_log_pitch_ball: 'Ball',
+  remote_log_pitch_called: 'Called strike',
+  remote_log_pitch_swinging: 'Swinging strike',
+  remote_log_pitch_foul: 'Foul',
+  remote_log_pitch_foul_tip: 'Foul tip',
+  remote_log_pitch_foul_bunt: 'Foul bunt',
+  remote_log_ball_in_play_to: '%1$s to %2$s',
+  remote_log_runner_to: 'Runner to %s',
+  remote_log_runner_out_at: 'Runner out at %s',
+  remote_log_with_reason: '%1$s (%2$s)',
+  remote_log_at_base: '%1$s at %2$s',
+  remote_log_fielding_play: 'Fielding play',
+  remote_log_fielding_error: 'Fielding error',
+  remote_log_lineup: 'Lineup change',
+  remote_log_end_half: 'End of the half',
+  remote_log_end_game: 'Game over',
+  remote_log_place_runner: 'Runner placed',
+  remote_log_override: 'Game corrected',
+  remote_log_close_play: 'Play closed',
+  /**
+   * Shown when an inning's end moves the defence to the game plan's next
+   * column, until the next play: with the plan's playing-time warnings, or
+   * why the game refused the column.
+   */
+  scoring_plan_applied: 'Inning %s plan applied',
+  scoring_plan_applied_warnings: 'Inning %1$s plan applied — %2$s',
+  scoring_plan_team_applied: '%1$s inning %2$s plan applied',
+  scoring_plan_team_applied_warnings: '%1$s inning %2$s plan applied — %3$s',
+  scoring_plan_refused: '%1$s inning %2$s plan not applied: %3$s',
   scoring_place_runner: 'Place a Runner',
   scoring_roster_tab: 'Roster',
   scoring_edit_roster_instruction: 'Tap player to edit.',
@@ -1074,6 +1268,7 @@ export const enUs = {
   dictation_left_out: 'Left out: %s',
   dictation_mic_unavailable: 'The microphone is not available: %s',
   dictation_chat: 'Dictation chat',
+  dictation_chat_close: 'Close dictation',
   dictation_changes_discarded: 'Changes discarded',
   dictation_roster_play: 'That is a play — score it on the scoring screen',
   dictation_roster_other_team: 'Only the %s roster changes here',

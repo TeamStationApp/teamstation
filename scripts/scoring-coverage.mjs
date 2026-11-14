@@ -23,9 +23,20 @@ const base =
 const { coverageSources } = createRequire(import.meta.url)(
   './coverage-source-paths.cjs'
 )
+const { coverageSource, verifyCoverageSource } = createRequire(import.meta.url)(
+  './coverage-provenance.cjs'
+)
+const source = currentSetupScope ? coverageSource(process.cwd(), base) : null
+if (currentSetupScope) {
+  const { verifyScoringBundle } = createRequire(import.meta.url)(
+    './scoring-combined-coverage.cjs'
+  )
+  verifyScoringBundle(resolve('lib/current-setup-tests.cjs.map'), process.cwd())
+}
 const includes = currentSetupScope
   ? [
-      ...coverageSources(base, process.cwd(), rosterEdit).paths,
+      ...coverageSources(base, process.cwd(), rosterEdit, currentSetupScope)
+        .paths,
       // Collect the source-map sentinel even when only a child form changed.
       'src/app/scoring/ScoringScreen.tsx',
       ...(rosterEdit
@@ -58,9 +69,19 @@ const test = spawnSync(
           'src/app/scoring/*.test.ts',
           'src/app/field/*.test.ts',
           'src/server/scoring/*.test.ts',
+          'src/server/statsBuilder/*.test.ts',
+          'src/server/events/*.test.ts',
+          'src/server/dev/livePitch.integration.test.ts',
+          'src/server/routes/events.integration.test.ts',
+          'src/server/middleware/withCors.test.ts',
+          'src/server/openapi.test.ts',
+          'src/server/games/*.test.ts',
+          'src/common/api.test.ts',
+          'src/common/gumboPlay.test.ts',
+          'src/migrate/migrations/115scoringMutation.integration.test.ts',
           'src/common/replay/*.test.ts',
           'src/app/replay/*.test.ts',
-          'src/server/routes/lineups.test.ts',
+          'src/server/routes/lineups.integration.test.ts',
           'src/app/sync/*.test.ts',
           ...(rosterEdit
             ? [
@@ -70,11 +91,11 @@ const test = spawnSync(
                 'src/common/playerSettings.test.ts',
                 'src/common/names.test.ts',
                 'src/common/rosterFullName.test.ts',
-                'src/server/access.test.ts',
-                'src/server/routes/players.test.ts',
-                'src/server/routes/rosterManagement.test.ts',
-                'src/server/routes/teams.test.ts',
-                'src/server/teams/teamRoster.test.ts',
+                'src/server/access.integration.test.ts',
+                'src/server/routes/players.integration.test.ts',
+                'src/server/routes/rosterManagement.integration.test.ts',
+                'src/server/routes/teams.integration.test.ts',
+                'src/server/teams/teamRoster.integration.test.ts',
                 'src/server/openapi.test.ts'
               ]
             : [])
@@ -170,7 +191,12 @@ if (
 }
 
 // Validate the same base used to collect the changed-source coverage above.
-const { paths, untracked } = coverageSources(base, process.cwd(), rosterEdit)
+const { paths, untracked } = coverageSources(
+  base,
+  process.cwd(),
+  rosterEdit,
+  currentSetupScope
+)
 
 let covered = 0
 let total = 0
@@ -228,7 +254,7 @@ if (changedBase != null) {
   // roots, git cannot pair a moved file with its old path and would count
   // every line of it as changed.
   const roots = [
-    ...(rosterEdit ? ['src/server/'] : []),
+    ...(rosterEdit || currentSetupScope ? ['src/server/', 'src/migrate/'] : []),
     'src/app/',
     'src/common/',
     'src/server/stats/',
@@ -250,7 +276,20 @@ if (changedBase != null) {
   for (const path of Object.keys(changes))
     if (!/\.tsx?$/.test(path) || /\.(test|integration|e2e)\./.test(path))
       delete changes[path]
-  const raw = JSON.parse(readFileSync('coverage/coverage-final.json', 'utf8'))
+  let raw = JSON.parse(readFileSync('coverage/coverage-final.json', 'utf8'))
+  if (currentSetupScope) {
+    verifyCoverageSource(source, process.cwd(), base)
+    const { scoringCombinedCoverage } = createRequire(import.meta.url)(
+      './scoring-combined-coverage.cjs'
+    )
+    raw = scoringCombinedCoverage(
+      raw,
+      process.env.TS_SCORING_BROWSER_COVERAGE,
+      process.cwd(),
+      base
+    )
+    writeFileSync('coverage/combined-final.json', JSON.stringify(raw))
+  }
   const coverage = Object.fromEntries(
     Object.keys(changes).map(path => [path, raw[resolve(path)]])
   )
@@ -261,8 +300,20 @@ if (changedBase != null) {
   )
   writeFileSync('coverage/changed-lines.json', JSON.stringify(report, null, 2))
   console.log(
-    `Changed executable line coverage: ${report.covered}/${report.total} (${report.percent.toFixed(2)}%)`
+    `Combined changed executable line coverage: ${report.covered}/${report.total} (${report.percent.toFixed(2)}%)`
   )
+  for (const [path, lines] of Object.entries(report.files)) {
+    const count = lines.covered.length + lines.uncovered.length
+    if (count === 0) continue
+    const percent = (100 * lines.covered.length) / count
+    console.log(`Changed executable ${path}: ${percent.toFixed(2)}%`)
+    if (percent < 95) {
+      console.error(
+        `Changed executable coverage below 95%: ${path}: ${lines.uncovered.join(',')}`
+      )
+      process.exitCode = 1
+    }
+  }
   if (!report.pass) {
     console.error('Missing source maps:', report.missing)
     for (const [path, rows] of Object.entries(report.files))

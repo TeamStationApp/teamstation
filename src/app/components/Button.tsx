@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Pressable,
   type StyleProp,
+  StyleSheet,
   Text,
   type TextStyle,
   type ViewStyle
@@ -10,7 +11,9 @@ import {
 
 import { pillPadding } from '../theme/pill'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { Icon, type IconName } from './Icon'
+import { ButtonIcon } from './ButtonIcon'
+import { useFittedText } from './fittedText'
+import type { IconName } from './Icon'
 
 export type ButtonKind = 'primary' | 'secondary' | 'text'
 
@@ -39,6 +42,12 @@ export interface ButtonProps {
   style?: StyleProp<ViewStyle>
   /** Allows a bounded label to shrink without changing other buttons. */
   labelStyle?: StyleProp<TextStyle>
+  /**
+   * The smallest share of its size a label-only button's label may shrink
+   * to, so it fits a narrow button whole rather than ellipsized: the phone
+   * fits it itself, and the web picks the size from the measured widths.
+   */
+  fit?: number
   /** For a device test that must tell this button from text that reads the same. */
   testID?: string
   /** Points the target reaches past a shell drawn shorter than 48. */
@@ -78,11 +87,22 @@ export function Button(props: ButtonProps): React.ReactElement {
     style,
     labelStyle,
     testID,
-    hitSlop
+    hitSlop,
+    fit
   } = props
   const theme = useTheme()
   const styles = getStyles(theme)
   const inert = disabled || busy
+  const fitted = useFittedText(fit, (busy ? busyLabel : label) ?? '')
+  const labelStyles: StyleProp<TextStyle> = [
+    styles.label,
+    styles[`${kind}Label`],
+    compact && { fontSize: 14 },
+    small && styles.smallLabel,
+    textColor != null && { color: textColor },
+    labelStyle
+  ]
+  const size = StyleSheet.flatten(labelStyles)?.fontSize
 
   return (
     <Pressable
@@ -94,6 +114,8 @@ export function Button(props: ButtonProps): React.ReactElement {
       disabled={inert}
       hitSlop={hitSlop}
       onPress={onPress}
+      ref={fitted.box}
+      onLayout={fitted.handleLayout}
       style={({ pressed }) => [
         styles.base,
         styles[kind],
@@ -116,7 +138,7 @@ export function Button(props: ButtonProps): React.ReactElement {
       {(!busy || busyLabel != null) && (
         <>
           {icon != null && (
-            <Icon
+            <ButtonIcon
               name={icon}
               size={1.125}
               color={
@@ -127,14 +149,13 @@ export function Button(props: ButtonProps): React.ReactElement {
             />
           )}
           <Text
+            ref={fitted.text}
             numberOfLines={1}
+            {...fitted.textProps}
             style={[
-              styles.label,
-              styles[`${kind}Label`],
-              compact && { fontSize: 14 },
-              small && styles.smallLabel,
-              textColor != null && { color: textColor },
-              labelStyle
+              labelStyles,
+              fitted.scale < 1 &&
+                size != null && { fontSize: size * fitted.scale }
             ]}
           >
             {busy ? busyLabel : label}
@@ -206,6 +227,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
   secondaryLabel: { color: theme.secondaryButtonTextColor },
 
   text: { backgroundColor: 'transparent' },
-  textPressed: { backgroundColor: theme.containerBackgroundColor },
+  textPressed: { backgroundColor: theme.textButtonPressedColor },
   textLabel: { color: theme.activeColor }
 }))

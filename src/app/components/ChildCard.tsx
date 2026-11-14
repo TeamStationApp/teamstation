@@ -3,9 +3,7 @@ import { Modal, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Card } from './Card'
-import { Emblem } from './Emblem'
-import { initialsOf } from './initials'
-import { TeamEmblem } from './TeamEmblem'
+import { GroupEmblem } from './GroupEmblem'
 import { usePaneFrame } from './useBreakpoint'
 
 export interface ChildCardPill {
@@ -18,6 +16,11 @@ export interface ChildCardAction {
 }
 export interface ChildCardProps {
   kind?: 'team' | 'season'
+  /** The child's id, which picks its tile's colour. */
+  id: string
+  /** A season's league, whose colour and picture its tile falls back on. */
+  leagueId?: string | null
+  leagueImageUrl?: string | null
   title: string
   imageUrl: string | null
   /** The line under the name: a season's time frame, a team's record. */
@@ -77,11 +80,15 @@ export function ChildCard(props: ChildCardProps): React.ReactElement {
       />
       <View style={styles.body}>
         <View style={styles.through}>
-          {props.kind === 'team' ? (
-            <TeamEmblem name={title} uri={imageUrl} size={3} />
-          ) : (
-            <Emblem uri={imageUrl} fallback={initialsOf(title)} size={3} />
-          )}
+          <GroupEmblem
+            kind={props.kind ?? 'season'}
+            id={props.id}
+            leagueId={props.leagueId}
+            name={title}
+            uri={imageUrl}
+            leagueUri={props.leagueImageUrl}
+            size={3}
+          />
         </View>
         <View style={styles.text}>
           <View style={styles.through}>

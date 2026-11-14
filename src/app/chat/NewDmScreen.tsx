@@ -13,15 +13,10 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import { asUserId } from '../../common/userId'
-import {
-  Button,
-  Card,
-  Icon,
-  initialsOf,
-  Screen,
-  TextField
-} from '../components'
-import { Emblem } from '../components/Emblem'
+import { Button, Card, Screen, TextField } from '../components'
+import { Icon } from '../components/Icon'
+import { PersonAffiliationLine } from '../components/PersonAffiliationLine'
+import { PersonEmblem } from '../components/PersonEmblem'
 import { lstrings, sprintf } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { DM_MAX_MEMBERS } from './chatModel'
@@ -224,14 +219,15 @@ export function NewDmScreen(props: NewDmScreenProps): React.ReactElement {
                   }
                 ]}
               >
-                <Emblem
+                <PersonEmblem
+                  userId={person.userId}
+                  name={person.shortName}
                   uri={person.avatarUrl}
-                  fallback={initialsOf(person.shortName)}
-                  shape="circle"
                 />
-                <Text style={[shared.name, { flex: 1 }]}>
-                  {person.shortName}
-                </Text>
+                <View style={shared.rowText}>
+                  <Text style={shared.name}>{person.shortName}</Text>
+                  <PersonAffiliationLine affiliations={person.affiliations} />
+                </View>
                 {isPicked(person) && (
                   <Icon name="star" color={theme.activeColor} />
                 )}

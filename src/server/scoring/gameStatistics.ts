@@ -7,6 +7,7 @@ import {
   statisticsWindow
 } from '../../common/gameStatistics'
 import type { CurrentPlay, GumboPlay } from '../../common/gumboPlay'
+import { withReaderNames } from '../../common/scoring/readerNames'
 import { teamsOfRow } from '../../common/teamLists'
 import type { Database } from '../db/database'
 import { readSnapshot } from '../db/readSnapshot'
@@ -17,15 +18,24 @@ import {
   boardTimeline,
   computeBoardTimeline
 } from '../scoreboard/boardTimeline'
+import type { Reader } from '../users/readerNames'
 import { historicalStatistics } from './historicalStatistics'
 import { computeLineTimeline, lineTimeline } from './lineTimeline'
-import { resolveScoringGame } from './openRow'
+import { namedScoringGame } from './openRow'
 
-/** Playback readers share one resource, snapshot, naming policy and timeline. */
+/**
+ * Playback readers share one resource, snapshot, naming policy and timeline.
+ * `source` is named as the public reads it, as the events read is, and
+ * `readerNames` lists apart whom `options.reader` may read in full: the
+ * client names them so (`withReaderNames`), keeping the public label for the
+ * replay diamond. The boxes are made from the source so named. `board` and
+ * `line` are the public timelines.
+ */
 export async function gameStatistics(
   db: Kysely<Database>,
   gameId: string,
-  query: StatisticsQuery = {}
+  query: StatisticsQuery = {},
+  options: { reader?: Reader } = {}
 ): Promise<GameStatistics> {
   return await readSnapshot(db, async trx => {
     const game = await trx
@@ -52,13 +62,13 @@ export async function gameStatistics(
       .where('gameId', '=', gameId)
       .orderBy('atBatIndex')
       .execute()
-    const resolved = await resolveScoringGame(
+    const { game: resolved, readerNames } = await namedScoringGame(
       trx,
       {
         plays: rows.map(row => row.gumbo as GumboPlay),
         currentPlay: atBatOf(game, rows.length > 0) as CurrentPlay | null
       },
-      { gameId }
+      { gameId, listFullNamesFor: options.reader }
     )
     const fold = await pregameFold(trx, gameId, game, resolved)
     const teams = teamsOfRow(game)
@@ -82,7 +92,7 @@ export async function gameStatistics(
             ? game.start_at.toISOString()
             : game.start_at
       },
-      source
+      withReaderNames(source, readerNames)
     )
     return {
       version: `${board.version}:${line.version}:${game.play_generation}`,
@@ -90,7 +100,8 @@ export async function gameStatistics(
       line: { ...line, steps: statisticsWindow(line.steps, query) },
       initial: stats.initial,
       boxes: statisticsWindow(stats.boxes, query),
-      source
+      source,
+      ...(readerNames == null ? {} : { readerNames })
     }
   })
 }

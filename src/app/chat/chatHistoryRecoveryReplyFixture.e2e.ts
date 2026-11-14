@@ -46,6 +46,25 @@ interface Setup {
 }
 let privateErrorFile: string | undefined
 
+/** The enrollment fixture's navigation entry, shared with the sidebar regression. */
+export async function openRecoveryChat(
+  m: Pick<Device, 'tapOn' | 'assertVisible'> & {
+    evalBrowserScript: (options: { script: string }) => Promise<unknown>
+  }
+): Promise<void> {
+  await m.tapOn({
+    css: '[role="tab"][aria-label="Chat"], [role="tab"][aria-label="Messages"]'
+  })
+  // Allow a rendering interval for cold crypto before accessibility polling.
+  await m.evalBrowserScript({
+    script: 'await new Promise(r=>setTimeout(r,8000));return true'
+  })
+  await m.assertVisible({
+    css: '[data-testid="chat-conversation-list"]',
+    timeout: 60000
+  })
+}
+
 /**
  * Waits until the browser has written the session cookie into the profile
  * on disk: a later run reuses the profile, and the browser writes its
@@ -164,16 +183,7 @@ async function main(): Promise<void> {
     } else
       assert.equal(auth, person.userId, 'The profile belongs to another actor')
     await m.assertVisible({ text: 'Account,', timeout: 30000 })
-    await m.tapOn({ css: '[aria-label="Chat"]' })
-    // Give the cold crypto module a rendering interval before the driver's
-    // accessibility polling. The readiness assertion remains authoritative.
-    await m.evalBrowserScript({
-      script: 'await new Promise(r=>setTimeout(r,8000));return true'
-    })
-    await m.assertVisible({
-      css: '[data-testid="chat-conversation-list"]',
-      timeout: 60000
-    })
+    await openRecoveryChat(m)
     assert.equal(
       await read(
         m,
@@ -482,16 +492,17 @@ async function main(): Promise<void> {
     await daemon.shutdown({ wait: 15000 })
   }
 }
-main().catch((error: unknown) => {
-  // A driver error can echo the last input, including a synthetic password.
-  if (privateErrorFile != null)
-    writeFileSync(
-      privateErrorFile,
-      error instanceof Error ? (error.stack ?? error.message) : String(error),
-      { mode: 0o600 }
+if (require.main === module)
+  main().catch((error: unknown) => {
+    // A driver error can echo the last input, including a synthetic password.
+    if (privateErrorFile != null)
+      writeFileSync(
+        privateErrorFile,
+        error instanceof Error ? (error.stack ?? error.message) : String(error),
+        { mode: 0o600 }
+      )
+    console.error(
+      'Reply fixture setup failed; inspect the private runner artifacts.'
     )
-  console.error(
-    'Reply fixture setup failed; inspect the private runner artifacts.'
-  )
-  process.exitCode = 1
-})
+    process.exitCode = 1
+  })

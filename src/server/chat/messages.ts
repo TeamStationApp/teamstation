@@ -11,6 +11,7 @@ import { makeId } from '../../common/ids'
 import { asUserId, userIdOfGumbo } from '../../common/userId'
 import type { ChatKind, ChatMessagesTable, Database } from '../db/database'
 import type { MediaContext } from '../media/mediaContext'
+import type { Reader } from '../users/readerNames'
 import {
   assertDmSendAllowed,
   blockedSenderIds,
@@ -748,7 +749,7 @@ export async function reportMessage(
 export async function reportsFor(
   db: Kysely<Database>,
   space: MediaContext['space'],
-  options: { open: boolean; id?: string }
+  options: { open: boolean; id?: string; reader?: Reader }
 ): Promise<ChatReportView[]> {
   let query = db
     .selectFrom('chat_reports')
@@ -798,10 +799,15 @@ export async function reportsFor(
     scopeId: row.scope_id
   }))
   const titles = titlesOf(titled, await scopeIdentities(db, scopesOf(titled)))
-  const people = await chatPeople(db, space, [
-    ...rows.map(row => row.reporter_user_id),
-    ...envelopes.map(envelope => envelope.senderUserId)
-  ])
+  const people = await chatPeople(
+    db,
+    space,
+    [
+      ...rows.map(row => row.reporter_user_id),
+      ...envelopes.map(envelope => envelope.senderUserId)
+    ],
+    { reader: options.reader }
+  )
   const person = (userId: string): { userId: string; shortName: string } => ({
     userId,
     shortName: people.get(userId)?.shortName ?? ''

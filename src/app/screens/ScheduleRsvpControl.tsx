@@ -7,7 +7,7 @@ import {
   type PlayerRsvpCounts as Counts,
   playerRsvpCounts
 } from '../../common/eventInfo'
-import { Emblem, initialsOf } from '../components'
+import { PersonEmblem } from '../components'
 import { RSVP_COLORS } from '../components/eventRsvpPosition'
 import { PlayerRsvpCounts } from '../components/PlayerRsvpCounts'
 import { useForegroundRefresh } from '../hooks/useForegroundRefresh'
@@ -157,10 +157,10 @@ export function ScheduleRsvpControl({
                     }
                   ]}
                 >
-                  <Emblem
+                  <PersonEmblem
+                    userId={row.userId}
+                    name={row.name}
                     uri={row.avatarUrl}
-                    fallback={initialsOf(row.name)}
-                    shape="circle"
                     size={1.5}
                   />
                 </View>

@@ -10,8 +10,10 @@ import { resolve } from 'node:path'
 
 import { build } from 'esbuild'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import { chatCoreResolvePlugin } from './chatCoreResolvePlugin.mjs'
 import { pagedListStandInPlugin } from './pagedListStandInPlugin.mjs'
+import { appFiles, tierOf } from './testTiers.mjs'
 import { webSettings } from './web-build-settings.mjs'
 
 mkdirSync('lib', { recursive: true })
@@ -36,7 +38,9 @@ const files = currentSetup
       'src/app/hooks/*.test.tsx',
       'src/app/screens/CoachGameScreen.test.tsx'
     ])
-  : globSync('src/**/*.test.tsx')
+  : // `--tier=integration` bundles the app files that need a server; the default
+    // is the unit tier's.
+    appFiles(tierOf(process.argv.slice(2)))
 const extraFiles = rosterEdit
   ? globSync([
       'src/app/App*.test.tsx',
@@ -167,7 +171,8 @@ const bundle = async entry =>
       'process.env.TS_SENTRY_DSN': JSON.stringify(''),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+    // The crowd's sounds as files beside the bundle, as the web build has them.
+    loader: ASSET_LOADER
   })
 
 await Promise.all(entries.map(bundle))

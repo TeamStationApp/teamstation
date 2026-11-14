@@ -1,5 +1,11 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { ActivityIndicator, Text, TextInput, View } from 'react-native'
+import {
+  ActivityIndicator,
+  Text,
+  TextInput,
+  type TextInputProps,
+  View
+} from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { monthDay } from '../../common/calendarDates'
@@ -42,6 +48,17 @@ function plural(count: number, one: string): string {
 
 /** Which date of a period the calendar is choosing. */
 type Choosing = { index: number; end: 'from' | 'until' } | 'add' | null
+
+/** A value typed on a shared card, in the card's own text colour. */
+function CardTextInput({
+  style,
+  ...props
+}: TextInputProps): React.ReactElement {
+  const theme = useTheme()
+  return (
+    <TextInput {...props} style={[style, { color: theme.primaryTextColor }]} />
+  )
+}
 
 /**
  * One season of a league's next schedule: its game windows, which can
@@ -208,7 +225,7 @@ export function ScheduleSeasonScreen({
               key={key}
               title={label}
               end={
-                <TextInput
+                <CardTextInput
                   key={`${season.id}:${settings[key] ?? 1}`}
                   accessibilityLabel={label}
                   value={
@@ -553,7 +570,6 @@ const getStyles = cacheStyles((theme: Theme) => ({
     width: 56,
     minHeight: 48,
     textAlign: 'right',
-    color: theme.primaryTextColor,
     fontSize: 16
   },
   preference: { width: 212 },

@@ -21,6 +21,7 @@ import { canFilm, canSeeGame, roleScopes, visibleScopes } from '../access'
 import { lockKeys } from '../db/advisoryLocks'
 import type { Database } from '../db/database'
 import { discardStream } from '../director/discard'
+import { publicNames, readerNaming } from '../groups/playerNamePrivacy'
 import { isFullTeam, waitingOwnRequest } from '../groups/requests'
 import {
   cameraLabelOf,
@@ -56,6 +57,7 @@ import {
   settleRecordingReminder
 } from '../notifications/recordingReminders'
 import type { LiveSettings } from '../serverConfig'
+import { type Reader, readerOf } from '../users/readerNames'
 
 /**
  * The cameras pointed at a game: the URLs they publish to, and what each one
@@ -300,7 +302,7 @@ export function liveRoutes(
         actor.isAdmin,
         pathParam(req.params.gameId)
       )
-      res.json(await listFor(db, space, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId, readerOf(actor)))
     })
   )
 
@@ -365,7 +367,13 @@ export function liveRoutes(
           entityId: answer.row.id
         })
         res.status(answer.created ? 201 : 200).json({
-          ...(await summaryOf(db, space, answer.row, actor.userId)),
+          ...(await summaryOf(
+            db,
+            space,
+            answer.row,
+            actor.userId,
+            readerOf(actor)
+          )),
           url: streamUrlFor(live, host, answer.key)
         })
         return
@@ -392,7 +400,7 @@ export function liveRoutes(
 
       setAudit(res.locals, { entityType: 'liveStream', entityId: created.id })
       res.status(201).json({
-        ...(await summaryOf(db, space, created, actor.userId)),
+        ...(await summaryOf(db, space, created, actor.userId, readerOf(actor))),
         url: streamUrlFor(live, host, created.key)
       })
     })
@@ -428,7 +436,7 @@ export function liveRoutes(
         )
       }
       res.json({
-        ...(await summaryOf(db, space, row, actor.userId)),
+        ...(await summaryOf(db, space, row, actor.userId, readerOf(actor))),
         url: streamUrlFor(live, host, key)
       })
     })
@@ -455,7 +463,7 @@ export function liveRoutes(
       setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       const fresh = (await liveStreamById(db, row.id)) ?? row
       res.json({
-        ...(await summaryOf(db, space, fresh, actor.userId)),
+        ...(await summaryOf(db, space, fresh, actor.userId, readerOf(actor))),
         url: streamUrlFor(live, host, key)
       })
     })
@@ -599,7 +607,7 @@ export function liveRoutes(
       })
       const fresh =
         (await liveStreamById(db, row.id, { removed: 'allow' })) ?? row
-      res.json(await summaryOf(db, space, fresh, actor.userId))
+      res.json(await summaryOf(db, space, fresh, actor.userId, readerOf(actor)))
     })
   )
 
@@ -638,7 +646,7 @@ export function liveRoutes(
         .execute()
       setAudit(res.locals, { entityType: 'liveStream', entityId: row.id })
       const fresh = (await liveStreamById(db, row.id)) ?? row
-      res.json(await summaryOf(db, space, fresh, actor.userId))
+      res.json(await summaryOf(db, space, fresh, actor.userId, readerOf(actor)))
     })
   )
 
@@ -706,7 +714,7 @@ export function liveRoutes(
         before: { state: row.state, slot: row.slot },
         after: { state: 'revoked', removedVideo }
       })
-      res.json(await listFor(db, space, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId, readerOf(actor)))
     })
   )
 
@@ -771,7 +779,13 @@ export function liveRoutes(
       })
       res.json({
         removed,
-        streams: await listFor(db, space, game.id, actor.userId)
+        streams: await listFor(
+          db,
+          space,
+          game.id,
+          actor.userId,
+          readerOf(actor)
+        )
       })
     })
   )
@@ -818,7 +832,7 @@ export function liveRoutes(
         before: { state: row.state, slot: row.slot },
         after: { discarded: true, deletedVideos: videoIds }
       })
-      res.json(await listFor(db, space, game.id, actor.userId))
+      res.json(await listFor(db, space, game.id, actor.userId, readerOf(actor)))
     })
   )
 
@@ -883,6 +897,8 @@ export function liveRoutes(
             videoId: row.videoId,
             gameId: row.gameId,
             title: row.title,
+            homeTeamId: row.homeTeamId,
+            awayTeamId: row.awayTeamId,
             homeTeamName: row.homeTeamName,
             awayTeamName: row.awayTeamName,
             startedAt:
@@ -912,13 +928,14 @@ async function summaryOf(
   db: Kysely<Database>,
   space: SpaceSettings,
   row: LiveStreamRow,
-  askedBy: string
+  askedBy: string,
+  reader: Reader | undefined
 ): Promise<LiveStream> {
   const [status, owners] = await Promise.all([
     statusOf(db, row.id),
-    ownersOf(db, space, [row.userId])
+    ownersOf(db, space, [row.userId], reader)
   ])
-  return oneStream(row, status, owners.get(row.userId)?.name ?? '', askedBy)
+  return oneStream(row, status, ownerOf(owners, row.userId), askedBy)
 }
 
 /** What a game's list says of a camera beyond what a single answer does. */
@@ -989,14 +1006,16 @@ async function listFor(
   db: Kysely<Database>,
   space: SpaceSettings,
   gameId: string,
-  askedBy: string
+  askedBy: string,
+  reader: Reader | undefined
 ): Promise<unknown> {
   const rows = await liveStreamsFor(db, gameId)
   const [owners, videos, discarded] = await Promise.all([
     ownersOf(
       db,
       space,
-      rows.map(row => row.userId)
+      rows.map(row => row.userId),
+      reader
     ),
     playableVideos(db, rows),
     db
@@ -1019,7 +1038,7 @@ async function listFor(
     oneStream(
       row,
       statuses.get(row.id) ?? null,
-      owners.get(row.userId)?.name ?? '',
+      ownerOf(owners, row.userId),
       askedBy,
       {
         ownerPicture: owners.get(row.userId)?.picture ?? null,
@@ -1043,27 +1062,52 @@ async function listFor(
 }
 
 interface Owner {
+  /** As the reader reads them: whole only if they may read it (`readerNaming`). */
   name: string
   picture: string | null
 }
 
-/** Who these people are, in the words a screen would use, and their picture. */
+/** A camera's owner as its answer names them; nobody found names nobody. */
+const ownerOf = (owners: ReadonlyMap<string, Owner>, userId: string): string =>
+  owners.get(userId)?.name ?? ''
+
+/**
+ * Who these people are, in the words a screen would use for this reader, and
+ * their picture: the whole name for those the reader may read in full
+ * (`fullNamesFor`), the public short name otherwise. No reader (a machine,
+ * `readerOf`) reads everyone's public short name (`publicNames`).
+ */
 async function ownersOf(
   db: Kysely<Database>,
   space: SpaceSettings,
-  userIds: string[]
+  userIds: string[],
+  reader: Reader | undefined
 ): Promise<Map<string, Owner>> {
   const wanted = [...new Set(userIds)]
   if (wanted.length === 0) return new Map()
   const rows = await db
     .selectFrom('users')
-    .select(['id', 'display_name as displayName', 'avatar_path as avatarPath'])
+    .select([
+      'id',
+      'display_name as displayName',
+      'first_name as firstName',
+      'last_name as lastName',
+      'avatar_path as avatarPath'
+    ])
     .where('id', 'in', wanted)
     .execute()
+  const people = rows.map(person => ({ person }))
+  const names =
+    reader == null
+      ? await publicNames(db, people)
+      : (await readerNaming(db, people, reader)).names
   return new Map(
     rows.map(row => [
       row.id,
-      { name: row.displayName, picture: imageUrl(space, row.avatarPath) }
+      {
+        name: names.get(row.id)!,
+        picture: imageUrl(space, row.avatarPath)
+      }
     ])
   )
 }

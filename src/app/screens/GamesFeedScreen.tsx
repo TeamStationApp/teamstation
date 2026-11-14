@@ -50,6 +50,7 @@ import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   clock,
   matchupLines,
+  matchupTitle,
   shortDate,
   shortDateNoWeekday,
   shortTime
@@ -420,13 +421,7 @@ const GameCardRow = memo(function GameCardRow(props: {
               options == null
                 ? undefined
                 : () => {
-                    onOpenGame(
-                      game.id,
-                      [lines.first, lines.second]
-                        .filter(line => line !== '')
-                        .join(' '),
-                      options
-                    )
+                    onOpenGame(game.id, matchupTitle(lines), options)
                   }
             }
           />
@@ -470,13 +465,7 @@ const GameCardRow = memo(function GameCardRow(props: {
               options == null
                 ? undefined
                 : () => {
-                    onOpenGame(
-                      game.id,
-                      [lines.first, lines.second]
-                        .filter(line => line !== '')
-                        .join(' '),
-                      options
-                    )
+                    onOpenGame(game.id, matchupTitle(lines), options)
                   }
             }
           />

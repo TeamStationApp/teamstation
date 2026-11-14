@@ -499,7 +499,7 @@ describe('plate appearances and the state each began in', function () {
     ).deep.equals([])
     // Codes MLB lists but the engine never writes: a ball in the dirt, a
     // pitchout hit into play, a blocked swinging strike, a pickoff throw (no
-    // pitch: other). A call with no code of its own is read by the plain
+    // pitch: omitted). A call with no code of its own is read by the plain
     // code.
     const [first] = scored(...hit('single'), close)
     const coded = (code: string): GumboPlay => ({
@@ -510,7 +510,36 @@ describe('plate appearances and the state each began in', function () {
       ['*B', 'Y', 'W', '1'].map(
         code => plateAppearances([coded(code)], teams, known)[0].firstPitch
       )
-    ).deep.equals(['ball', 'inPlay', 'strike', 'other'])
+    ).deep.equals(['ball', 'inPlay', 'strike', null])
+    const automaticThenDelivery = coded('VP')
+    automaticThenDelivery.playEvents = [
+      ...(automaticThenDelivery.playEvents as unknown[]),
+      { isPitch: true, details: { call: { code: 'C' } } }
+    ]
+    const [afterPenalty] = plateAppearances(
+      [automaticThenDelivery],
+      teams,
+      known
+    )
+    expect(afterPenalty.pitches).equals(1)
+    expect(afterPenalty.firstPitch).equals('strike')
+    expect(afterPenalty.firstPitchThrown).equals('strike')
+    for (const code of [
+      '1',
+      'N',
+      'PSO',
+      'A',
+      'AC',
+      'AB',
+      'VB',
+      'VC',
+      'VP',
+      'VS'
+    ]) {
+      const [appearance] = plateAppearances([coded(code)], teams, known)
+      expect(appearance.pitches, code).equals(0)
+      expect(appearance.firstPitch, code).equals(null)
+    }
     expect(
       plateAppearances(
         [

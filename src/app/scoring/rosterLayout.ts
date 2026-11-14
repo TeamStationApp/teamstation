@@ -6,3 +6,22 @@
  * where a drop lands agree.
  */
 export const ROSTER_CARD_GAP = 16
+/** The space between the Roster and Lineup columns side by side: a rem. */
+export const ROSTER_COLUMN_GAP = 16
+
+/**
+ * Defense's two roster columns in a grid `width` wide: the left card's left
+ * edge `margin` in from one side, the right card's right edge `margin` in
+ * from the other, and `gap` between them.
+ */
+export function rosterGridColumns(
+  width: number,
+  margin: number,
+  gap: number
+): [{ left: number; width: number }, { left: number; width: number }] {
+  const column = Math.max(0, (width - 2 * margin - gap) / 2)
+  return [
+    { left: margin, width: column },
+    { left: margin + column + gap, width: column }
+  ]
+}

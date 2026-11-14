@@ -1,6 +1,7 @@
 import type { Kysely } from 'kysely'
 
 import { conflict } from '../../common/errors'
+import { formatName } from '../../common/names'
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
 import type { StoredGame } from '../../common/scoring/session'
 import { withNames } from '../../common/scoring/storedNames'
@@ -18,6 +19,7 @@ import {
   scopeOf,
   withWithdrawn
 } from '../users/nameBook'
+import { fullNamesFor, type Reader } from '../users/readerNames'
 import { survivorsOf } from '../users/survivors'
 import { resolveGumboIds } from './gumboIds'
 import { projectScoringGame, scoringIdsIn } from './projection'
@@ -49,7 +51,22 @@ export interface ScoringReadOptions {
    * format is taken down to its spoken form (`spokenFormat`).
    */
   spoken?: boolean
+  /**
+   * Whom the documents are named for: everyone this reader may read in full
+   * is (`booksOver`). None for the game record every viewer holds.
+   */
+  reader?: Reader
+  /**
+   * Whom the answer's `readerNames` map is for: the documents stay named as
+   * `reader` says, and it lists apart the players this reader reads in full.
+   * Never the same thing as `reader`, which writes full names into the
+   * documents themselves.
+   */
+  listFullNamesFor?: Reader
 }
+
+/** Gumbo id → full name, for the players a reader reads in full. */
+export type ReaderNames = Record<number, string>
 
 type GumboDocument = StoredGame['plays'][number] | StoredGame['currentPlay']
 
@@ -225,6 +242,8 @@ interface GameNamer<T extends StoredGame> {
   projected: T
   names: NameBook
   scope: GameScope
+  /** For `options.listFullNamesFor`, whom it reads in full; absent for nobody. */
+  readerNames?: ReaderNames
   /**
    * A document as the reader is answered it, and the way to name it as the
    * public is, worked out only when asked for.
@@ -260,9 +279,11 @@ async function gameNamer<T extends StoredGame>(
   // General scoring reads also feed public scoreboards. Disambiguate against
   // everyone in the game without adding private name parts to the projection.
   // Ids as stored and their survivors' read as the same accounts.
+  const scope = scopeOf(projected, players)
   const book = (
-    await booksOver(db, new Map([[0, scopeOf(projected, players)]]), {
-      spoken: options.spoken
+    await booksOver(db, new Map([[0, scope]]), {
+      spoken: options.spoken,
+      reader: options.reader
     })
   ).get(0)!
   // A rejected add's plays stay; every surface reads them as the placeholder.
@@ -304,7 +325,55 @@ async function gameNamer<T extends StoredGame>(
           : { ...named, teamStation: withHalves(record, nobody, none, names) }
     }
   }
-  return { projected, names, scope: scopeOf(stored, players), name }
+  return {
+    projected,
+    names,
+    scope: scopeOf(stored, players),
+    readerNames: await readerNamesOf(db, scope, names, options),
+    name
+  }
+}
+
+/**
+ * The players of `scope` that `options.listFullNamesFor` reads in full and `book`
+ * does not, by their full names, read from the accounts `book` already
+ * loaded (one `fullNamesFor` call); nothing for no such reader, a spoken
+ * read, or a withdrawn player, whom `book` names by the placeholder.
+ */
+async function readerNamesOf(
+  db: Kysely<Database>,
+  scope: GameScope,
+  book: NameBook,
+  options: ScoringReadOptions
+): Promise<ReaderNames | undefined> {
+  // `fullNamesFor` answers nobody for a read that goes to a model.
+  if (options.listFullNamesFor == null || options.spoken === true)
+    return undefined
+  const shortened = [...new Set(scope.ids)].flatMap(id => {
+    const shown = book.formatOf(id)
+    const person = book.personOf(id)
+    return shown == null || shown === 'full' || person == null
+      ? []
+      : [{ id, person }]
+  })
+  const full = await fullNamesFor(
+    db,
+    options.listFullNamesFor,
+    shortened.map(({ person }) => person.userId)
+  )
+  const names: ReaderNames = {}
+  for (const { id, person } of shortened)
+    if (full.has(person.userId))
+      names[id] = formatName(
+        {
+          id: person.userId,
+          displayName: person.displayName,
+          firstName: person.firstName,
+          lastName: person.lastName
+        },
+        'full'
+      )
+  return Object.keys(names).length === 0 ? undefined : names
 }
 
 /**
@@ -313,14 +382,24 @@ async function gameNamer<T extends StoredGame>(
  * accounts read as their survivors (as `resolveScoringGame`), every play
  * and the at-bat in progress named from `users` (`withNames`) by short
  * names over the game's players, and first and last names only for the
- * players of `options.halves`. The documents given are left as they are.
+ * players of `options.halves`, and the players `options.listFullNamesFor` reads
+ * in full besides (`readerNames`). The documents given are left as they are.
  */
 export async function namedScoringGame<T extends StoredGame>(
   db: Kysely<Database>,
   stored: T,
   options: ScoringReadOptions = {}
-): Promise<{ game: T; names: NameBook; scope: GameScope }> {
-  const { projected, names, scope, name } = await gameNamer(db, stored, options)
+): Promise<{
+  game: T
+  names: NameBook
+  scope: GameScope
+  readerNames?: ReaderNames
+}> {
+  const { projected, names, scope, readerNames, name } = await gameNamer(
+    db,
+    stored,
+    options
+  )
   return {
     game: {
       ...projected,
@@ -328,7 +407,8 @@ export async function namedScoringGame<T extends StoredGame>(
       currentPlay: name(projected.currentPlay).reader
     },
     names,
-    scope
+    scope,
+    ...(readerNames == null ? {} : { readerNames })
   }
 }
 
@@ -347,6 +427,8 @@ export interface ResolvedPlays extends NamedPlays {
    * names every play: it moves whenever any play's public name would.
    */
   namesDigest: string
+  /** For `options.listFullNamesFor`, whom it reads in full (`namedScoringGame`). */
+  readerNames?: ReaderNames
 }
 
 /**
@@ -378,7 +460,12 @@ export async function resolveScoringPlays(
           ...game,
           plays: game.plays.filter(play => only.has(play.about.atBatIndex))
         }
-  const { projected, names, name } = await gameNamer(db, stored, options, kept)
+  const { projected, names, readerNames, name } = await gameNamer(
+    db,
+    stored,
+    options,
+    kept
+  )
   const plays = kept(projected).plays.map(play => ({ play, ...name(play) }))
   const current = name(projected.currentPlay)
   return {
@@ -390,7 +477,8 @@ export async function resolveScoringPlays(
         .map(play => play.public()),
       currentPlay: current.public()
     },
-    namesDigest: names.digest
+    namesDigest: names.digest,
+    ...(readerNames == null ? {} : { readerNames })
   }
 }
 

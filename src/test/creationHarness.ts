@@ -10,6 +10,7 @@ import { eventInfoRoutes } from '../server/routes/eventInfo'
 import { eventListRoutes } from '../server/routes/eventList'
 import { eventRoutes } from '../server/routes/events'
 import { gameApprovalRoutes } from '../server/routes/gameApprovals'
+import { gamePlanRoutes } from '../server/routes/gamePlans'
 import { groupRoutes } from '../server/routes/groups'
 import { inviteRoutes } from '../server/routes/invites'
 import { lineupRoutes } from '../server/routes/lineups'
@@ -110,6 +111,7 @@ export async function creationHarness(
       app.use('/api/v1', statsRoutes(db, media))
       app.use('/api/v1', walkUpSongRoutes(db))
       app.use('/api/v1', lineupRoutes(db))
+      app.use('/api/v1', gamePlanRoutes(db))
       app.use('/api/v1', teamMemberRoutes(db, media))
       app.use(
         '/api/v1',

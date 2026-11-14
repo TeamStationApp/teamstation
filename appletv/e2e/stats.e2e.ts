@@ -84,6 +84,8 @@ async function main(): Promise<void> {
     await tv.assertVisible({ id: 'tv-scoreboard', timeout: 30000 })
     await tv.assertNotVisible({ id: 'tv-cameras-panel', timeout: 15000 })
     await tv.assertNotVisible({ id: 'tv-box-panel', timeout: 15000 })
+    // Keep the short fixture from ending and opening Highlights mid-check.
+    await tv.pressKey({ key: 'playPause' })
     // Seek beyond the fixture's scored actions, then open the bottom panel.
     for (let i = 0; i < 5; i++) await tv.pressKey({ key: 'DPAD_RIGHT' })
     await openStatsPanel(tv)
@@ -99,9 +101,12 @@ async function main(): Promise<void> {
         before.x + before.width > 1880,
         'last inning starts clipped by viewport'
       )
-      await tv.pressKey({ key: 'DPAD_RIGHT' })
-      await tv.pressKey({ key: 'DPAD_RIGHT' })
-      await tv.pressKey({ key: 'DPAD_RIGHT' })
+      for (let i = 0; i < 3; i++) {
+        await tv.pressKey({ key: 'DPAD_RIGHT' })
+        // Native scrolling updates the next press's starting offset as it
+        // animates. Let each movement finish before requesting another.
+        await new Promise(resolve => setTimeout(resolve, 700))
+      }
       await tv.waitForAnimationToEnd({ timeout: 3000 })
       const after = column(await tv.hierarchy()).bounds
       assert(
@@ -126,6 +131,72 @@ async function main(): Promise<void> {
         tv,
         path.join(artifacts, 'compact-long-names.png')
       )
+      await tv.pressKey({ key: 'DPAD_DOWN' })
+      await tv.assertVisible({ id: 'tv-stats-home', timeout: 5000 })
+      const find = (node: any, id: string): any =>
+        node.id === id
+          ? node
+          : node.children?.map((child: any) => find(child, id)).find(Boolean)
+      const definitions = [
+        'At bats',
+        'Runs scored',
+        'Hits',
+        'Runs batted in',
+        'Base on balls (walks)',
+        'Strikeouts',
+        'Home runs',
+        'Hit by pitch',
+        'Batting average',
+        'Innings pitched',
+        'Batters faced',
+        'Earned runs',
+        'Number of pitches',
+        'Strikes',
+        'Errors'
+      ]
+      const seen = new Set<string>()
+      const nodes = (node: any): any[] => [
+        node,
+        ...(node.children ?? []).flatMap(nodes)
+      ]
+      for (let i = 0; i < 35; i++) {
+        const tree = await tv.hierarchy()
+        const key = find(tree, 'box-stats-key')
+        const panelBounds = find(tree, 'tv-box-panel').bounds
+        assert.equal(
+          nodes(tree).filter(node => node.id === 'box-stats-key').length,
+          1
+        )
+        if (key !== undefined) {
+          // WDA can flatten text into siblings of the test-ID container.
+          // Its bounds still identify which text belongs to this legend.
+          for (const node of nodes(tree)) {
+            const bounds = node.bounds
+            if (
+              definitions.includes(node.text) &&
+              bounds !== undefined &&
+              bounds.x >= key.bounds.x &&
+              bounds.x + bounds.width <= key.bounds.x + key.bounds.width &&
+              bounds.y >= key.bounds.y &&
+              bounds.y + bounds.height <= key.bounds.y + key.bounds.height &&
+              bounds.y >= panelBounds.y &&
+              bounds.y + bounds.height <=
+                Math.min(1080, panelBounds.y + panelBounds.height)
+            )
+              seen.add(node.text)
+          }
+        }
+        if (seen.size === definitions.length) break
+        await tv.pressKey({ key: 'DPAD_DOWN' })
+        await new Promise(resolve => setTimeout(resolve, 200))
+      }
+      assert(
+        seen.size === definitions.length,
+        `every bottom-key definition is reachable: missing ${definitions.filter(text => !seen.has(text)).join(', ')}`
+      )
+      await tv.assertVisible({ text: 'Number of pitches' })
+      await tv.assertVisible({ text: 'Strikes' })
+      await captureScreenshot(tv, path.join(artifacts, 'pitch-strike-key.png'))
     }
     await tv.pressKey({ key: 'BACK' })
     await tv.assertNotVisible({ id: 'tv-box-panel' })

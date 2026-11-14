@@ -3,7 +3,11 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import type { ExistingPlayerAnswer, RosterEntry } from '../../common/api'
+import {
+  type ExistingPlayerAnswer,
+  ROSTER_CANDIDATE_MAX,
+  type RosterEntry
+} from '../../common/api'
 import { HttpError } from '../../common/errors'
 import type { ExistingRosterPlayer } from '../../common/playerSettings'
 import {
@@ -44,7 +48,8 @@ const burnes = candidate('Corbin Burnes', {
   bats: 'right',
   throws: 'right',
   tier: 'season',
-  teams: [{ teamId: 'tem_bears', name: 'Valley Bears' }]
+  teams: [{ teamId: 'tem_bears', name: 'Valley Bears' }],
+  affiliations: 'Valley Bears'
 })
 const entry = { userId: 'usr_burnes' } as unknown as RosterEntry
 
@@ -131,7 +136,13 @@ describe('team settings Add Player', function () {
       fake.last().resolve([burnes, candidate('Max Fried')])
     })
     expect(node('Choose Corbin B')).not.equals(null)
-    expect(text()).includes('Valley Bears')
+    // The card draws the server's affiliation line in place of team pills,
+    // and none for a candidate whose line is empty.
+    const lines = [
+      ...document.querySelectorAll('[data-testid="Candidate affiliations"]')
+    ]
+    expect(lines.map(line => line.textContent)).deep.equals(['Valley Bears'])
+    expect(node('Choose Corbin B')!.contains(lines[0])).equals(true)
     await click('Cancel')
     expect(cancelled).has.length(1)
     expect(sent).has.length(0)
@@ -354,7 +365,7 @@ describe('team settings Add Player', function () {
     expect(text()).includes('Searching needs a connection.')
   })
 
-  it('shows a spinner under the rows while a page loads, and Retry when it fails', async () => {
+  it('draws one answer with no paging, and says when it holds the first hundred', async () => {
     const { fake } = await open()
     await act(async () => {
       fake.last().resolve(page(30))
@@ -380,23 +391,17 @@ describe('team settings Add Player', function () {
       return found[0].memoizedProps!
     }
     expect(list().keyExtractor(burnes)).equals('usr_burnes')
+    expect(list().onEndReached).equals(undefined)
+    expect(text()).not.includes('Showing the first')
+    await input('Search players', 'Player')
     await act(async () => {
-      list().onEndReached()
+      timers!.fire()
     })
-    expect(
-      document.querySelector('[data-testid="Candidates loading more"]')
-    ).not.equals(null)
     await act(async () => {
-      fake.last().reject(new Error('socket hang up'))
+      fake.last().resolve(page(ROSTER_CANDIDATE_MAX))
     })
-    expect(text()).includes('Unable to load players. Please try again.')
-    // Reaching the end again over the error asks nothing.
-    const asked = fake.asks.length
-    await act(async () => {
-      list().onEndReached()
-    })
-    expect(fake.asks.length).equals(asked)
-    await click('Retry')
-    expect(fake.asks.length).equals(asked + 1)
+    expect(text()).includes(
+      `Showing the first ${ROSTER_CANDIDATE_MAX} \u2014 type more to narrow.`
+    )
   })
 })

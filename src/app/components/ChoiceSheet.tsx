@@ -3,6 +3,7 @@ import { Modal, Pressable, Text, View } from 'react-native'
 
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { CancelAction } from './CancelAction'
+import { RadioMark } from './RadioMark'
 
 export interface ChoiceSheetProps {
   title: string
@@ -13,6 +14,8 @@ export interface ChoiceSheetProps {
     destructive?: boolean
     /** Label in the link colour, in the same outline as the other choices. */
     link?: boolean
+    /** The one a setting holds now: a mark at its right. */
+    selected?: boolean
     onPress: () => void
   }>
   /** Cancel stays in the link colour, as it does under a destructive choice. */
@@ -40,27 +43,37 @@ export function ChoiceSheet(props: ChoiceSheetProps): React.ReactElement {
               key={choice.label}
               accessibilityRole="button"
               accessibilityLabel={choice.label}
+              accessibilityState={
+                choice.selected == null
+                  ? undefined
+                  : { selected: choice.selected }
+              }
+              aria-selected={choice.selected}
               onPress={() => {
                 onClose()
                 choice.onPress()
               }}
               style={({ pressed }) => [
                 styles.choice,
+                choice.selected != null && styles.marked,
                 pressed && styles.pressed
               ]}
             >
-              <Text
-                style={[
-                  styles.label,
-                  choice.link === true && styles.link,
-                  choice.destructive === true && styles.destructive
-                ]}
-              >
-                {choice.label}
-              </Text>
-              {choice.detail != null && (
-                <Text style={styles.detail}>{choice.detail}</Text>
-              )}
+              <View style={styles.words}>
+                <Text
+                  style={[
+                    styles.label,
+                    choice.link === true && styles.link,
+                    choice.destructive === true && styles.destructive
+                  ]}
+                >
+                  {choice.label}
+                </Text>
+                {choice.detail != null && (
+                  <Text style={styles.detail}>{choice.detail}</Text>
+                )}
+              </View>
+              {choice.selected != null && <RadioMark on={choice.selected} />}
             </Pressable>
           ))}
           <CancelAction
@@ -113,6 +126,12 @@ const getStyles = cacheStyles((theme: Theme) => ({
     borderColor: theme.defaultBorderColor,
     gap: theme.rem(theme.spaceXsRem)
   },
+  marked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: theme.rem(theme.spaceMdRem)
+  },
+  words: { flexShrink: 1, flexGrow: 1, gap: theme.rem(theme.spaceXsRem) },
   label: {
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(1),

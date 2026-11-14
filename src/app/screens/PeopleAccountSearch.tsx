@@ -245,6 +245,7 @@ export function PeopleAccountSearch({
                   rows.map(row => (
                     <PersonSearchRow
                       key={row.userId}
+                      userId={row.userId}
                       name={row.displayName}
                       avatarUrl={row.avatarUrl}
                       affiliations={row.affiliations}

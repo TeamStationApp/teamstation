@@ -4,6 +4,7 @@ import type { Kysely } from 'kysely'
 
 import { notFound, unauthorized } from '../../common/errors'
 import { asUserId } from '../../common/userId'
+import { visibleScopes } from '../access'
 import { blocksFor, setBlock } from '../chat/blocks'
 import {
   addDmMembers,
@@ -14,7 +15,9 @@ import {
 } from '../chat/dms'
 import { chatCaller } from '../chat/keys'
 import {
+  chatNames,
   chatPeople,
+  chatPeopleOf,
   conversationFor,
   conversationsFor,
   logOf,
@@ -31,6 +34,7 @@ import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
 import { survivors } from '../teams/teamStaff'
+import { readerOf } from '../users/readerNames'
 
 /** At most this many people come back from a candidate search. */
 export const MAX_CANDIDATES = 50
@@ -64,7 +68,7 @@ export function chatRoutes(
     requireActor,
     withAsync(async (req, res) => {
       const caller = chatCaller(req.actor)
-      res.json(await blocksFor(db, media, caller.userId))
+      res.json(await blocksFor(db, media, caller.userId, readerOf(req.actor)))
     })
   )
   for (const method of ['put', 'delete'] as const) {
@@ -75,7 +79,7 @@ export function chatRoutes(
         const caller = chatCaller(req.actor)
         const target = cleanBody(asUserId, pathParam(req.params.userId))
         await setBlock(db, caller.userId, target, method === 'put', clock())
-        res.json(await blocksFor(db, media, caller.userId))
+        res.json(await blocksFor(db, media, caller.userId, readerOf(req.actor)))
       })
     )
   }
@@ -97,7 +101,14 @@ export function chatRoutes(
       const actor = req.actor
       if (actor == null) throw unauthorized()
       res.json(
-        await conversationsFor(db, media, actor.userId, actor.isAdmin, clock())
+        await conversationsFor(
+          db,
+          media,
+          actor.userId,
+          actor.isAdmin,
+          clock(),
+          readerOf(actor)
+        )
       )
     })
   )
@@ -162,7 +173,16 @@ export function chatRoutes(
       if (actor == null) throw unauthorized()
       const id = pathParam(req.params.conversationId)
       await mustBeMember(id, actor.userId)
-      res.json(await membersOf(db, media.space, id, clock()))
+      res.json(
+        await membersOf(
+          db,
+          media.space,
+          id,
+          clock(),
+          readerOf(actor),
+          await visibleScopes(db, actor.userId, actor.isAdmin)
+        )
+      )
     })
   )
 
@@ -204,20 +224,32 @@ export function chatRoutes(
         typeof req.query.userId === 'string' ? req.query.userId : undefined
       const canonical =
         target == null ? undefined : (await survivors(db, [target])).get(target)
-      const people = await chatPeople(
+      // Searched and cut down by name first: lines and labels are read for
+      // the people sent alone.
+      const named = await chatNames(
         db,
-        media.space,
-        target == null ? ids : ids.filter(id => id === canonical)
+        target == null ? ids : ids.filter(id => id === canonical),
+        readerOf(actor)
       )
+      const kept = [...named.values()]
+        .filter(person => nameMatches(person.names, query))
+        .sort((a, b) => a.shortName.localeCompare(b.shortName))
+        .slice(0, MAX_CANDIDATES)
+      const people = await chatPeopleOf(db, media.space, kept, {
+        reader: readerOf(actor),
+        scopes: await visibleScopes(db, actor.userId, actor.isAdmin)
+      })
       res.json(
-        [...people.values()]
-          .filter(person => nameMatches(person.names, query))
-          .sort((a, b) => a.shortName.localeCompare(b.shortName))
-          .slice(0, MAX_CANDIDATES)
+        kept
+          .map(person => people.get(person.userId)!)
           .map(person => ({
             userId: person.userId,
             shortName: person.shortName,
-            avatarUrl: person.avatarUrl
+            ...(person.compactName == null
+              ? {}
+              : { compactName: person.compactName }),
+            avatarUrl: person.avatarUrl,
+            affiliations: person.affiliations
           }))
       )
     })
@@ -257,7 +289,8 @@ export function chatRoutes(
       const people = await chatPeople(
         db,
         media.space,
-        adults.map(adult => adult.userId)
+        adults.map(adult => adult.userId),
+        { reader: readerOf(actor) }
       )
       res.json(
         adults.flatMap(adult => {
@@ -267,6 +300,9 @@ export function chatRoutes(
             {
               userId: adult.userId,
               shortName: person.shortName,
+              ...(person.compactName == null
+                ? {}
+                : { compactName: person.compactName }),
               label: adult.label ?? ''
             }
           ]
@@ -296,7 +332,8 @@ export function chatRoutes(
             media,
             made.conversationId,
             actor.userId,
-            actor.isAdmin
+            actor.isAdmin,
+            readerOf(actor)
           )
         )
     })

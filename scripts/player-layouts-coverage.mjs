@@ -39,6 +39,7 @@ import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
 import ts from 'typescript'
 
+import { ASSET_LOADER } from '../src/esbuildLoaders.mjs'
 import {
   buildNativeSpecs,
   runNativeSpecs
@@ -57,16 +58,16 @@ const tsSuites = [
   'src/server/openapi.test.ts',
   // The line score from game events (M1).
   'src/common/scoring/boardLine.test.ts',
-  'src/server/scoring/lineTimeline.test.ts',
-  'src/server/routes/lineScore.test.ts',
+  'src/server/scoring/lineTimeline.integration.test.ts',
+  'src/server/routes/lineScore.integration.test.ts',
   'src/app/navigation/gameAngles.test.ts',
   'src/server/live/timestampJump.test.ts',
-  'src/server/live/splitter.test.ts',
+  'src/server/live/splitter.integration.test.ts',
   // Where a highlight stops (mobile video sheet, M1).
   'src/common/nodeSettings.test.ts',
   'src/server/highlights.test.ts',
-  'src/server/nodeSettings.test.ts',
-  'src/server/routes/highlightRoutes.test.ts',
+  'src/server/nodeSettings.integration.test.ts',
+  'src/server/routes/highlightRoutes.integration.test.ts',
   // The phone's icon font, with the event card's full-screen icon (M5).
   'src/app/components/iconFont.test.ts'
 ]
@@ -190,7 +191,7 @@ for (const [index, suite] of appSuites.entries()) {
       'process.env.TS_SENTRY_DSN': JSON.stringify(''),
       'process.env.NODE_ENV': JSON.stringify('test')
     },
-    loader: { '.png': 'dataurl', '.jpg': 'dataurl', '.svg': 'dataurl' }
+    loader: ASSET_LOADER
   })
 }
 

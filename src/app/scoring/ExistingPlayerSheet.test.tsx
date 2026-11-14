@@ -3,7 +3,7 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import type { RosterCandidate } from '../../common/api'
+import { ROSTER_CANDIDATE_MAX, type RosterCandidate } from '../../common/api'
 import { HttpError } from '../../common/errors'
 import {
   candidate,
@@ -131,7 +131,8 @@ describe('ExistingPlayerSheet', function () {
       document.querySelector('[data-testid="Candidates loading"]')
     ).not.equals(null)
     const betts = candidate('Mookie Betts', {
-      teams: [{ teamId: 'tem_dodgers', name: 'Ridgeview Dodgers' }]
+      teams: [{ teamId: 'tem_dodgers', name: 'Ridgeview Dodgers' }],
+      affiliations: 'Ridgeview Dodgers'
     })
     await answer(fake, [betts, candidate('Mike Trout')])
     expect(node('Choose Mookie B')).not.equals(null)
@@ -223,47 +224,30 @@ describe('ExistingPlayerSheet', function () {
     expect(fake.asks).has.length(2)
   })
 
-  it('shows a spinner under the rows while a page loads, and Retry under them when it fails', async () => {
+  it('draws one answer with no paging, and says when it holds the first hundred', async () => {
     const fake = await mount()
     await answer(fake, page(30))
     const props = listProps()
-    expect(props).to.include({
-      recycleItems: true,
-      estimatedItemSize: 72,
-      onEndReachedThreshold: 0.5
-    })
+    expect(props).to.include({ recycleItems: true, estimatedItemSize: 72 })
+    expect(props.onEndReached).equals(undefined)
     expect(props.keyExtractor(page(1)[0])).equals(page(1)[0].userId)
-    const reachEnd = async (): Promise<void> => {
-      await act(async () => {
-        listProps().onEndReached()
-      })
-    }
-    await reachEnd()
-    expect(fake.asks).has.length(2)
-    expect(fake.last().after).equals(page(30)[29].cursor)
-    expect(
-      document.querySelector('[data-testid="Candidates loading more"]')
-    ).not.equals(null)
+    expect(text()).not.includes('Showing the first')
+    await type('Player')
     await act(async () => {
-      fake.last().reject(new Error('socket hang up'))
+      timers!.fire()
     })
-    expect(text()).includes('Unable to load players. Please try again.')
-    expect(node('Retry')).not.equals(null)
-    // The rows stay, and reaching the end again does not ask over the error.
-    expect(node('Choose Player0 O')).not.equals(null)
-    await reachEnd()
+    await answer(fake, page(ROSTER_CANDIDATE_MAX))
+    expect(text()).includes(
+      `Showing the first ${ROSTER_CANDIDATE_MAX} \u2014 type more to narrow.`
+    )
     expect(fake.asks).has.length(2)
-    await act(async () => {
-      node('Retry')!.click()
-    })
-    expect(fake.asks).has.length(3)
   })
 
   it('lists the people the phone keeps at once, and the server’s join them (U43)', async () => {
     const fake = new FakeCandidateClient()
     fake.kept.tem_falcons = [
-      candidate('Mookie Betts', { cursor: 'kept-1' }),
-      candidate('Shohei Ohtani', { cursor: 'kept-2' })
+      candidate('Mookie Betts'),
+      candidate('Shohei Ohtani')
     ]
     await mount(fake)
     await act(async () => {
@@ -323,7 +307,7 @@ describe('ScoringCandidateCard', function () {
     document.body.innerHTML = ''
   })
 
-  it('draws the picture when there is one, a pill per team, and none without teams', async () => {
+  it('draws the picture when there is one, the affiliation line in place of team pills, and no line when it is empty', async () => {
     await render(
       <>
         <ScoringCandidateCard
@@ -332,7 +316,9 @@ describe('ScoringCandidateCard', function () {
             teams: [
               { teamId: 'tem_a', name: 'Ridgeview Dodgers' },
               { teamId: 'tem_b', name: 'Lakeside Herons' }
-            ]
+            ],
+            affiliations:
+              'Guardians: Ken G · Ridgeview Dodgers · Lakeside Herons'
           })}
           onPress={() => undefined}
         />
@@ -345,10 +331,18 @@ describe('ScoringCandidateCard', function () {
     )
     const [betts, trout] = [node('Choose Mookie B')!, node('Choose Mike T')!]
     expect(betts.querySelector('img')).not.equals(null)
-    expect(betts.textContent).includes('Ridgeview Dodgers')
-    expect(betts.textContent).includes('Lakeside Herons')
+    // One line, the server's, in the sheet's secondary colour: no pills.
+    const line = betts.querySelector<HTMLElement>(
+      '[data-testid="Candidate affiliations"]'
+    )!
+    expect(line.textContent).equals(
+      'Guardians: Ken G · Ridgeview Dodgers · Lakeside Herons'
+    )
+    expect(getComputedStyle(line).color).not.equals('')
     expect(betts.textContent).includes('›')
-    expect(trout.querySelector('[data-testid="Candidate teams"]')).equals(null)
+    expect(
+      trout.querySelector('[data-testid="Candidate affiliations"]')
+    ).equals(null)
     expect(trout.textContent).includes('MT')
     expect(trout.getAttribute('aria-disabled')).equals('true')
   })

@@ -126,7 +126,7 @@ private final class RecordingLinker: GameLinker {
   }
 }
 
-private let gameFull = "This game already has 6 cameras. End one to add another."
+private let gameFull = "This game already has 4 cameras. End one to add another."
 private let personFull = "You already have 4 cameras on this game. End one to add another."
 
 private func event(_ gameId: String) -> TeamStationEvent {

@@ -23,6 +23,8 @@ import {
 } from '../../test/scoringGames'
 import type { ScoringAction } from '../scoring/actions'
 import { applyAction } from '../scoring/apply'
+import { withReaderNames } from '../scoring/readerNames'
+import type { StoredGame } from '../scoring/session'
 import { type GameState, setupOf } from '../scoring/state'
 import type { Transition } from '../scoring/transitions'
 import {
@@ -36,6 +38,7 @@ import {
   spoken,
   stepsWithStates
 } from './narration'
+import { namesOf } from './replayNames'
 import { type ReplayStep, replayTimelineOf } from './replayTimeline'
 
 /** What the announcer says for `actions` taken on `state`, as one step. */
@@ -142,13 +145,13 @@ describe('replay narration of a whole game', function () {
     })
     expect(said.get('6-1')?.text).equals('Shohei O flies out to center.')
     expect(said.get('7-1')?.text).equals(
-      'Now pitching for the Harbor Hawks, Luis Gi.'
+      'Now pitching for the Harbor Hawks, Luis G.'
     )
     expect(said.get('8-1')?.text).equals(
       'Anthony V reaches on an error by the shortstop.'
     )
     expect(said.get('9-1')?.text).equals(
-      'Luis Ga steps in. Ball one, one and oh. Wild pitch, Anthony V moves up to second.'
+      'Luis G steps in. Ball one, one and oh. Wild pitch, Anthony V moves up to second.'
     )
     expect(said.get('10-1')?.text).equals(
       'Jose T lifts a sacrifice fly to center. Anthony V scores! Harbor Hawks lead two to one.'
@@ -227,13 +230,33 @@ describe('replay narration of a whole game', function () {
     )
   })
 
-  it('names players only by first name and last initial, telling two alike apart', async function () {
+  it('names players only by first name and last initial, two alike the same', async function () {
     const texts = [...(await narrations()).values()].map(said => said.text)
     for (const player of [...AWAY_PLAYERS, ...HOME_PLAYERS])
       for (const text of texts)
         expect(text, player.last).not.match(new RegExp(`\\b${player.last}\\b`))
-    expect(texts.join(' ')).includes('Luis Ga').and.includes('Luis Gi')
+    expect(texts.join(' '))
+      .includes('Luis G')
+      .and.not.match(/\bLuis G[a-z]/)
     for (const text of texts) expect(text.length).lessThanOrEqual(MAX_NARRATION)
+  })
+
+  it('narrates the card from the public labels for a reader who reads a player in full, as the announcer does', async function () {
+    // The game as the public reads it, and as a reader who may read Mookie
+    // Betts in full reads it: the announcer's audio is the public one.
+    const shared = JSON.parse(
+      JSON.stringify(await finalGame()).replaceAll('Mookie Betts', 'Mookie B')
+    ) as StoredGame
+    const read = withReaderNames(shared, { 9201: 'Mookie Betts' })
+    const readTimeline = replayTimelineOf(read, replayContext())
+    expect(namesOf(readTimeline.end).get(9201)).equals('Mookie Betts')
+    const card = narrateTimeline(readTimeline)
+    const audio = narrateTimeline(replayTimelineOf(shared, replayContext()))
+    expect([...card.keys()]).deep.equals([...audio.keys()])
+    for (const [key, said] of audio)
+      expect(card.get(key)?.text, key).equals(said.text)
+    const texts = [...card.values()].map(said => said.text).join(' ')
+    expect(texts).includes('Mookie B').and.not.includes('Betts')
   })
 
   it('narrates a grown step whole, and a ball in play saved before its result as in play', async function () {

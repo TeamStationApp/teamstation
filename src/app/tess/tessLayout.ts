@@ -76,7 +76,7 @@ export function useTessWide(): boolean {
   return wide
 }
 
-/** What the divider on the column's right edge is given. */
+/** What the divider on the column's left edge is given. */
 export interface TessDividerProps {
   /** The column's width now. */
   width: number
@@ -134,13 +134,13 @@ function setTessWidth(width: number, done: boolean): void {
  * The column's width on this window, within its limits, and how to change
  * it: `done` is the end of a drag or a key press, which is saved.
  */
-export function useTessWidth(): {
+export function useTessWidth(reservedWidth = 0): {
   width: number
   max: number
   setWidth: (width: number, done: boolean) => void
 } {
   const width = useSyncExternalStore(subscribe, () => dragged)
-  const max = tessMaxWidth(useWindowDimensions().width)
+  const max = tessMaxWidth(useWindowDimensions().width - reservedWidth)
   return { width: clampTessWidth(width, max), max, setWidth: setTessWidth }
 }
 
@@ -150,7 +150,11 @@ export function useTessWidth(): {
  * answered again only when that changes, so a window being resized or the
  * divider dragged redraws nothing that asks unless it crosses `atLeast`.
  */
-export function usePaneAtLeast(atLeast: number, column: boolean): boolean {
+export function usePaneAtLeast(
+  atLeast: number,
+  column: boolean,
+  reservedWidth = 0
+): boolean {
   const watch = useCallback((reader: () => void): (() => void) => {
     const window = Dimensions.addEventListener('change', reader)
     const width = subscribe(reader)
@@ -160,7 +164,7 @@ export function usePaneAtLeast(atLeast: number, column: boolean): boolean {
     }
   }, [])
   return useSyncExternalStore(watch, () => {
-    const window = Dimensions.get('window').width
+    const window = Dimensions.get('window').width - reservedWidth
     const beside = column ? clampTessWidth(dragged, tessMaxWidth(window)) : 0
     return window - beside >= atLeast
   })

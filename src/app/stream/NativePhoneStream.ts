@@ -29,6 +29,17 @@ export interface NativePhoneStreamRequest {
 }
 
 /** Four times a second while the engine is open. */
+export interface NativeCameraFocus {
+  supported: boolean
+  phase: string
+  generation: string
+  request: string
+  rotation: CodegenTypes.Double
+  mirrored: boolean
+  x?: CodegenTypes.Double
+  y?: CodegenTypes.Double
+}
+
 export interface NativePhoneStreamStatus {
   /** `idle`, `connecting`, `live` or `retrying`. */
   phase: string
@@ -48,6 +59,10 @@ export interface NativePhoneStreamStatus {
    * lost (Android sends it; iOS may not).
    */
   error?: string
+  focus?: NativeCameraFocus
+  /** Encoded frame dimensions used by Android's fitted preview. */
+  videoWidth?: CodegenTypes.Double
+  videoHeight?: CodegenTypes.Double
 }
 
 export interface NativePhoneZoomScale {
@@ -170,6 +185,7 @@ export interface Spec extends TurboModule {
   resumeInterrupted: (request: NativePhoneStreamRequest) => Promise<boolean>
 
   setZoom: (displayed: CodegenTypes.Double) => void
+  setFocus: (command: string) => void
   pinch: (scale: CodegenTypes.Double, ended: boolean) => void
   zoomScale: () => Promise<NativePhoneZoomScale>
   lenses: () => Promise<NativePhoneLens[]>

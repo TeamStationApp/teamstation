@@ -109,20 +109,21 @@ export const STALE_MS = 1000
  */
 export function judgeReadout(
   window: Readout[],
-  rules: ReadoutRules = READOUT_RULES
+  rules: ReadoutRules = READOUT_RULES,
+  afterSeek = false
 ): ReadoutVerdict {
   // The readout is up to a second old when read: reads in the window's first
   // second that still find the grid held are the landing it had not caught up
   // with yet — a scrub's old place, which would read as playing backwards —
-  // and not playback. A hold that lasts past that second is still judged.
+  // and not playback. A fast seek may never redraw while held, so after a
+  // known seek the playing readout has the same freshness delay. A hold or
+  // backwards movement past that first second is still judged.
   const staleUntil = (window[0]?.atMs ?? 0) + STALE_MS
   let lead = 0
-  while (
-    lead < window.length - 2 &&
-    window[lead].clock?.held === true &&
-    window[lead].atMs < staleUntil
-  )
+  while (lead < window.length - 2 && window[lead].atMs < staleUntil) {
+    if (!afterSeek && window[lead].clock?.held !== true) break
     lead += 1
+  }
   const snapshots = window.slice(lead)
   const reasons: string[] = []
   const names = [...new Set(snapshots.flatMap(s => s.tiles.map(t => t.name)))]

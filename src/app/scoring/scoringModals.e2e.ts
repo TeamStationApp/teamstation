@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import { turnWheel, wheelAt, wheelValue } from '../../test/iosWheel.e2e'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { runnerTargets } from './runnerDrag'
@@ -585,6 +586,67 @@ async function main(): Promise<void> {
       !['advanced', 'error'].includes(process.env.SCORING_MODAL_SECTION ?? '')
     )
       await open()
+    if (process.env.SCORING_MODAL_SECTION === 'overrideNumbers') {
+      assert(native, 'This regression requires native layout, not a browser')
+      await menu('Overrides')
+      for (const [row, label, initial] of [
+        ['Owls score', 'Owls', 0],
+        ['Hawks score', 'Hawks', 0],
+        ['Inning', 'Inning', 1]
+      ] as const) {
+        // The system's wheel: its row reads the value.
+        const options = Array.from({ length: 51 }, (_, i) => String(i))
+        const reads = async (value: number): Promise<void> => {
+          for (let tries = 0; tries < 20; tries++) {
+            if (wheelValue(await wheelAt(m), options) === String(value)) return
+            await m.waitForAnimationToEnd({ timeout: 1000 })
+          }
+          assert.fail(`${label} wheel does not read ${value}`)
+        }
+        await tap(row)
+        await reads(initial)
+        await m.waitForAnimationToEnd({ timeout: 3000 })
+        const nodes = flat(await m.hierarchy())
+        const title = nodes.find(node => node.text === label)?.bounds
+        // The picker's frame: its wheel's bounds overhang it, for the rows
+        // it curves away above and below.
+        const wheel = nodes.find(node => node.type === 'Picker')?.bounds
+        const done = nodes.find(node => node.text === 'Done')?.bounds
+        const cancel = nodes
+          .filter(node => node.text === 'Cancel')
+          .at(-1)?.bounds
+        assert(title != null && wheel != null && done != null && cancel != null)
+        assert(title.y + title.height <= wheel.y, 'Title overlaps wheel')
+        assert(wheel.height >= 132, 'Wheel must retain its three-row height')
+        assert(wheel.y + wheel.height < done.y, 'Done overlaps wheel')
+        assert(done.y + done.height < cancel.y, 'Cancel overlaps Done')
+        await capture(`override-${label.toLowerCase()}`)
+        const turn = async (): Promise<void> => {
+          await turnWheel(
+            m,
+            async () => await wheelAt(m),
+            String(initial + 1),
+            options
+          )
+        }
+        await turn()
+        await tap('Cancel')
+        await tap(row)
+        await reads(initial)
+        await turn()
+        await tap('Done')
+        await tap(row)
+        await reads(initial + 1)
+        await tap('Done')
+      }
+      await tap('Apply Override')
+      await shown('Undo Override game state')
+      console.log(
+        'PASS native score/inning layout, wheel taps, Cancel, Done and Apply'
+      )
+      assert.deepEqual(fixture.unexpected, [])
+      return
+    }
     if (process.env.SCORING_MODAL_SECTION === 'settings') {
       await menu('Settings')
       await shown('Scoring sound')
@@ -645,17 +707,13 @@ async function main(): Promise<void> {
           baseline ? 'Undo Place a Runner' : 'Undo Place Mike Trout on 1B'
         )
         await menu('Overrides')
-        await input('inning', '0')
-        await finishKeyboard()
-        await reach(
-          'Use whole numbers: inning 1 or higher, scores 0 or higher, balls 0–3, strikes 0–2, outs 0–2.'
-        )
-        await shown('Use whole numbers')
+        await tap('Owls score')
+        await shown('Owls: 0')
+        await shown('Done')
+        await tap('Cancel')
         await tap('Cancel')
         await menu('Overrides')
-        await input('inning', '2')
-        await finishKeyboard()
-        await reach('Apply Override')
+        await tap('Balls 2')
         await tap('Apply Override')
         await shown('Undo Override')
         await tap('Undo Override')

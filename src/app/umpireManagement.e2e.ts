@@ -262,13 +262,15 @@ async function main(): Promise<void> {
             await open(settings)
             await tap(m, 'Manage Umpires')
             await fill(m, 'Search affiliated people', 'Uma')
-            await contains(page, 'Uma L')
+            // The league's administrator manages its people, Uma among
+            // them as a guardian of a player of its team: she reads in full.
+            await contains(page, 'Uma Lee')
             await shot('candidate-row.png')
-            await tap(m, 'Uma L')
-            await m.tapOn({ text: 'Uma L, minors, Field', role: 'button' })
+            await tap(m, 'Uma Lee')
+            await m.tapOn({ text: 'Uma Lee, minors, Field', role: 'button' })
             await page.waitForFunction(() => {
               const cell = document.querySelector(
-                '[aria-label="Uma L, minors, Field"]'
+                '[aria-label="Uma Lee, minors, Field"]'
               )
               return (
                 cell !== null && cell.getAttribute('aria-pressed') === 'true'
@@ -306,7 +308,7 @@ async function main(): Promise<void> {
           await shot('signup-modal-after.png')
           await tap(m, 'Confirm')
           await page.waitForSelector(
-            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma L, uty_plate:1"]'
+            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma Lee, uty_plate:1"]'
           )
           expect(
             (
@@ -317,9 +319,11 @@ async function main(): Promise<void> {
             ).length
           ).equals(1)
           await open('/games/gam_umpire_g1')
-          await contains(page, 'Plate: Uma L')
+          // Uma reads her own slot, so the game's umpires name her in full:
+          // her row's title, then its position.
+          await contains(page, 'Uma LeePlate')
           await m.scrollUntilVisible({
-            element: { text: 'Plate: Uma L' },
+            element: { text: 'Plate' },
             direction: 'down'
           })
           await shot('game-screen-after.png')
@@ -356,18 +360,18 @@ async function main(): Promise<void> {
           await m.tapOn({
             css: '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Conflict"]'
           })
-          await contains(page, 'Billy L')
+          await contains(page, 'Billy Lee')
           await shot('conflict-modal-after.png')
           await tap(m, 'Cancel')
           await m.tapOn({
             css: '[data-testid="umpire-game-gam_umpire_g1"] [aria-label^="Sign Up, Field"]'
           })
-          await contains(page, 'Bobby L')
+          await contains(page, 'Bobby Lee')
           await contains(page, 'not certified for Field')
           await tap(m, 'Demo Hawks')
           await tap(m, 'Confirm')
           await page.waitForSelector(
-            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Bobby L, uty_field:1"]'
+            '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Bobby Lee, uty_field:1"]'
           )
           const row = await f.h.db
             .selectFrom('umpire_assignments')
@@ -378,9 +382,9 @@ async function main(): Promise<void> {
           expect(row.credit_team_id).equals(f.teamA)
         } else if (scenario === 5) {
           await signIn(103, `/umpires/${f.leagueA}`)
-          await contains(page, 'Uma L')
+          await contains(page, 'Uma Lee')
           await m.tapOn({
-            css: '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma L, uty_plate:1"]'
+            css: '[data-testid="umpire-game-gam_umpire_g1"] [aria-label="Uma Lee, uty_plate:1"]'
           })
           await contains(page, 'Uma Lee')
           await contains(page, 'Go to profile page')
@@ -390,15 +394,16 @@ async function main(): Promise<void> {
             '[data-testid="umpire-game-gam_umpire_g1"] [aria-label^="Sign Up, Plate"]'
           )
           await m.tapOn({
-            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
+            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma Lee, uty_plate:1"]'
           })
           await contains(page, 'Go to profile page')
           expect(await page.$('[aria-label="Remove assignment"]')).equals(null)
           await tap(m, 'Cancel')
+          // The league's administrator reads its umpire in full.
           await signIn(101, `/umpires/${f.leagueA}?view=league`)
-          await contains(page, 'Uma L')
+          await contains(page, 'Uma Lee')
           await m.tapOn({
-            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma L, uty_plate:1"]'
+            css: '[data-testid="umpire-game-gam_umpire_g4"] [aria-label="Uma Lee, uty_plate:1"]'
           })
           await contains(page, 'Uma Lee')
           await contains(page, 'Remove assignment')

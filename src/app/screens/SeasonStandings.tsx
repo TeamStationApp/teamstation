@@ -88,7 +88,12 @@ export function SeasonStandings({
               >
                 {index + 1}
               </Text>
-              <TeamEmblem uri={row.logoUrl} name={row.teamName} size={1.5} />
+              <TeamEmblem
+                teamId={row.teamId}
+                uri={row.logoUrl}
+                name={row.teamName}
+                size={1.5}
+              />
               <View style={{ flex: 1, gap: 2 }}>
                 <Text
                   numberOfLines={1}

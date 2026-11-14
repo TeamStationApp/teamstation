@@ -3,10 +3,11 @@ import { Pressable, Text, View } from 'react-native'
 
 import type { WeekdayHours } from '../../common/venues'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { CardThemeScope } from './ActionRow'
 import { Button } from './Button'
+import { ButtonIcon } from './ButtonIcon'
 import { CancelAction } from './CancelAction'
 import { TimePicker } from './EventScheduleFields'
-import { Icon } from './Icon'
 import { ListCard } from './ListCard'
 import { PickerDialog } from './PickerDialog'
 import { SegmentedPill } from './SegmentedPill'
@@ -68,33 +69,17 @@ export function WeeklyHoursEditor({
   label?: string
   openDefault?: OpenDefault
 }): React.ReactElement {
-  const styles = getStyles(useTheme())
   const [day, setDay] = useState<number>()
   return (
     <View>
-      <ListCard>
-        {WEEKDAYS.map((name, weekday) => {
-          const entry = value.find(item => item.weekday === weekday)
-          return (
-            <Pressable
-              key={name}
-              accessibilityRole="button"
-              accessibilityLabel={`${label}: ${name}, ${hoursLabel(entry)}`}
-              disabled={disabled}
-              onPress={() => {
-                setDay(weekday)
-              }}
-              style={styles.row}
-            >
-              <Text style={styles.day}>{name}</Text>
-              <Text style={entry == null ? styles.closed : styles.hours}>
-                {hoursLabel(entry)}
-              </Text>
-              {!disabled && <Icon name="chevron_right" size={1.25} />}
-            </Pressable>
-          )
-        })}
-      </ListCard>
+      <CardThemeScope>
+        <WeekRows
+          value={value}
+          label={label}
+          disabled={disabled}
+          onOpen={setDay}
+        />
+      </CardThemeScope>
       {day != null && (
         <DayHoursSheet
           weekday={day}
@@ -115,6 +100,46 @@ export function WeeklyHoursEditor({
         />
       )}
     </View>
+  )
+}
+
+/** The week's rows, in colours that read on the card they sit on. */
+function WeekRows({
+  value,
+  label,
+  disabled,
+  onOpen
+}: {
+  value: WeekdayHours[]
+  label: string
+  disabled: boolean
+  onOpen: (weekday: number) => void
+}): React.ReactElement {
+  const styles = getStyles(useTheme())
+  return (
+    <ListCard>
+      {WEEKDAYS.map((name, weekday) => {
+        const entry = value.find(item => item.weekday === weekday)
+        return (
+          <Pressable
+            key={name}
+            accessibilityRole="button"
+            accessibilityLabel={`${label}: ${name}, ${hoursLabel(entry)}`}
+            disabled={disabled}
+            onPress={() => {
+              onOpen(weekday)
+            }}
+            style={styles.row}
+          >
+            <Text style={styles.day}>{name}</Text>
+            <Text style={entry == null ? styles.closed : styles.hours}>
+              {hoursLabel(entry)}
+            </Text>
+            {!disabled && <ButtonIcon name="chevron_right" size={1.25} />}
+          </Pressable>
+        )
+      })}
+    </ListCard>
   )
 }
 
@@ -188,7 +213,7 @@ function DayHoursSheet({
                 <Text style={styles.hours}>
                   {clockLabel(which === 'start' ? start : end)}
                 </Text>
-                <Icon name="chevron_right" size={1.25} />
+                <ButtonIcon name="chevron_right" size={1.25} />
               </Pressable>
             ))}
           </ListCard>

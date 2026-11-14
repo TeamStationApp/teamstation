@@ -326,7 +326,7 @@ describe('current scoring setup', function () {
     session.liveData.linescore.isTopInning = false
     expect(battingWarningKey(session)).not.equals(key)
   })
-  it('preserves hydrated collision labels even when name parts remain', () => {
+  it('preserves hydrated roster labels even when name parts remain', () => {
     const original = game()
     const ids = original.liveData.boxscore.teams.home.players.slice(0, 2)
     const rows = ids.map((id, index) => {
@@ -344,7 +344,8 @@ describe('current scoring setup', function () {
       return asRosterEntry({
         userId: userIdOfGumbo(200 + index),
         gumboId: id,
-        shortName: index === 0 ? 'Luis Ga' : 'Luis Go',
+        shortName: index === 0 ? 'Luis G' : 'L Gonzalez',
+        ...(index === 0 ? {} : { nameFormat: 'initialLast' }),
         jersey: null,
         positions: [],
         isPlayer: true,
@@ -359,8 +360,57 @@ describe('current scoring setup', function () {
     })
     expect(
       ids.map(id => defensiveRosterLabel(shown.gameData.players[id]))
-    ).deep.equals(['Luis Ga', 'Luis Go'])
+    ).deep.equals(['Luis G', 'L Gonzalez'])
     expect(shown.gameData.players[ids[0]].lastName).equals('Garcia')
+    expect(shown.gameData.players[ids[1]].lastName).equals('Gonzalez')
+  })
+  it('keeps the public label beside a roster name full only for its reader, and drops it when the roster does', function () {
+    const original = game()
+    const player = original.gameData.players[1]
+    player.local = false
+    player.fullName = 'Mookie B'
+    const entry = asRosterEntry({
+      userId: userIdOfGumbo(101),
+      gumboId: 1,
+      shortName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'Mookie B',
+      jersey: '50',
+      positions: [],
+      isPlayer: true,
+      role: 'member',
+      section: 'player',
+      staffRoles: [],
+      inheritedFrom: null
+    })
+    const shown = withRosterDetails(original, { [player.teamId]: [entry] })
+    expect(shown.gameData.players[1]).include({
+      fullName: 'Mookie Betts',
+      nameFormat: 'full',
+      compactName: 'Mookie B'
+    })
+    // The field draws the public label; the lineup the full one.
+    expect(
+      shortPlayerNames(Object.values(shown.gameData.players)).get(1)
+    ).equals('Mookie B')
+    expect(defensiveRosterLabel(shown.gameData.players[1])).equals(
+      '#50 Mookie Betts'
+    )
+    expect(withRosterDetails(shown, { [player.teamId]: [entry] })).equals(shown)
+    const { nameFormat: _f, compactName: _c, ...plain } = entry
+    const public_ = withRosterDetails(shown, {
+      [player.teamId]: [{ ...plain, shortName: 'Mookie B' }]
+    })
+    expect(public_.gameData.players[1].fullName).equals('Mookie B')
+    expect(public_.gameData.players[1]).not.have.property('compactName')
+    // A roster with no label keeps the game's, and the public one beside it.
+    const unnamed = withRosterDetails(shown, {
+      [player.teamId]: [{ ...plain, shortName: ' ', jersey: '5' }]
+    })
+    expect(unnamed.gameData.players[1]).include({
+      fullName: 'Mookie Betts',
+      compactName: 'Mookie B'
+    })
   })
   it('displays current team jerseys without changing saved setup or placeholders', function () {
     const original = game()
@@ -625,19 +675,45 @@ describe('names drawn on the field', function () {
     expect(names.get(2)).equals('Daniel M')
   })
 
+  it('draws the public label of a player named in full only for this reader', function () {
+    const names = shortPlayerNames([
+      {
+        ...player(1, 'Mookie Betts'),
+        nameFormat: 'full',
+        compactName: ' Mookie B '
+      },
+      player(2, 'Daniel M')
+    ])
+    expect(names.get(1)).equals('Mookie B')
+    expect(names.get(2)).equals('Daniel M')
+  })
+
+  it('draws a typed player who shares a public label by that same label (Q7)', function () {
+    const names = shortPlayerNames([
+      {
+        ...player(1, 'Mookie Betts'),
+        nameFormat: 'full',
+        compactName: 'Mookie B'
+      },
+      player(2, 'Mookie Bell', { firstName: 'Mookie', lastName: 'Bell' })
+    ])
+    expect(names.get(1)).equals('Mookie B')
+    expect(names.get(2)).equals('Mookie B')
+  })
+
   it('keeps an initial that already has its period', function () {
     expect(shortPlayerNames([player(1, 'Jordan K.')]).get(1)).equals(
       'Jordan K.'
     )
   })
 
-  it('takes another letter when two players would read the same', function () {
+  it('draws two players whose names share a short form the same', function () {
     const names = shortPlayerNames([
-      player(1, 'Luis Garcia', { firstName: 'Luis', lastName: 'Garcia' }),
-      player(2, 'Luis Gibson', { firstName: 'Luis', lastName: 'Gibson' })
+      player(1, 'Josh Smith', { firstName: 'Josh', lastName: 'Smith' }),
+      player(2, 'Josh Staumont', { firstName: 'Josh', lastName: 'Staumont' })
     ])
-    expect(names.get(1)).equals('Luis Ga')
-    expect(names.get(2)).equals('Luis Gi')
+    expect(names.get(1)).equals('Josh S')
+    expect(names.get(2)).equals('Josh S')
   })
   it('waits only for a pitcher, and still draws every empty position to fill (U11)', function () {
     const session = game()

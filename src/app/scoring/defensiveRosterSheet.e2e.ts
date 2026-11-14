@@ -135,8 +135,8 @@ async function main(): Promise<void> {
       if(cells[0].y!==cells[1].y||cells[0].x>=cells[1].x)throw Error('Two columns');
       const footer=document.querySelector('[aria-label="Create Player"]').getBoundingClientRect();
       if(footer.bottom>innerHeight||footer.y<r.y)throw Error('Footer outside sheet');
-      if(!fielders.textContent.includes('Mike T #27'))throw Error('Name jersey order');
-      if(!bench.textContent.includes('Nolan A')||bench.textContent.includes('Nolan A #'))throw Error('Missing jersey');
+      if(!/Mike T\\w* #27/.test(fielders.textContent))throw Error('Name jersey order');
+      if(!/Nolan A/.test(bench.textContent)||/Nolan A\\w* #/.test(bench.textContent))throw Error('Missing jersey');
       return 'layout passed';`
       })
     await capture(
@@ -216,17 +216,19 @@ async function main(): Promise<void> {
     if (native) await tap('Open pitcher')
     else await fieldTap('Clayton K')
     await m.assertVisible({ text: '^Assign pitcher$' })
+    // A roster player is named in full when the signed-in scorer may read
+    // him in full and short otherwise; Clayton, made here, is always short.
     await m.scrollUntilVisible({
-      element: { text: 'Assign P #27 Mike T' },
+      element: { text: 'Assign P #27 Mike T\\w*' },
       direction: 'DOWN',
       timeout: 15000
     })
-    await tap('Assign P #27 Mike T')
+    await tap('Assign P #27 Mike T\\w*')
     await m.waitForAnimationToEnd({ timeout: 3000 })
     if (native) await tap('Open catcher')
     else await fieldTap('Assign C')
     await m.assertVisible({ text: '^Assign catcher$' })
-    await m.assertVisible({ text: 'Assign C #27 Mike T' })
+    await m.assertVisible({ text: 'Assign C #27 Mike T\\w*' })
     await capture(mode + '-substitution')
     console.log(
       `PASS ${mode}: cancel, named creation, placeholders, bench assignment, substitution and vacated catcher`

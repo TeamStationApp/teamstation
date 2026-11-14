@@ -432,56 +432,61 @@ async function roster(run: Run): Promise<void> {
     return match!
   }
   const row = (name: string): string => found(name).text
-  expect(row('Mike T')).includes('Season coach')
-  expect(row('Babe R')).includes('League admin')
-  expect(row('Owen M')).includes('Assistant')
-  expect(row('Nick P')).includes('Scorekeeper')
+  // The admin manages the team's people, so reads everybody on its list in
+  // full: the players, and the adults the list names beside them.
+  expect(row('Mike Trout')).includes('Season coach')
+  expect(row('Babe Ruth')).includes('League admin')
+  expect(row('Owen Miller')).includes('Assistant')
+  expect(row('Nick Punto')).includes('Scorekeeper')
   expect(row('Ichiro')).includes('Coach')
   expect(row('Ichiro')).not.includes('Season')
-  expect(row('Alfonso S')).includes('SS · 2B')
-  expect(row('Alfonso S')).includes('#7')
-  expect(row('Tim R')).not.includes('#')
-  expect(row('Hank M')).not.includes('#')
-  expect(row('Sandy L')).includes('Season spectator')
-  expect(row('Leo G')).includes('League spectator')
+  expect(row('Alfonso Soriano')).includes('SS · 2B')
+  expect(row('Alfonso Soriano')).includes('#7')
+  expect(row('Tim Raines')).not.includes('#')
+  expect(row('Hank Majeski')).not.includes('#')
+  expect(row('Sandy Leon')).includes('Season spectator')
+  expect(row('Leo Gomez')).includes('League spectator')
   // The team's own spectator and the followers carry no pill.
-  for (const name of ['Hank M', 'Grant H', 'Felipe A'])
+  for (const name of ['Hank Majeski', 'Grant Hartwig', 'Felipe Alou'])
     expect(row(name), name).not.match(/Season|League/)
   // For the team's admin every row opens, with a chevron: a player's page,
   // and staff, family, spectators and followers their profile.
   for (const name of [
-    'Babe R',
-    'Mike T',
-    'Owen M',
-    'Nick P',
+    'Babe Ruth',
+    'Mike Trout',
+    'Owen Miller',
+    'Nick Punto',
     'Ichiro',
-    'Tim R',
-    'Hank M',
-    'Leo G',
-    'Sandy L',
-    'Felipe A',
-    'Grant H',
-    'Alfonso S',
-    'Ben C',
-    'Cody D',
-    'Drew E',
-    'Elijah D'
+    'Tim Raines',
+    'Hank Majeski',
+    'Leo Gomez',
+    'Sandy Leon',
+    'Felipe Alou',
+    'Grant Hartwig',
+    'Alfonso Soriano',
+    'Ben Chapman',
+    'Cody Decker',
+    'Drew Ellis',
+    'Elijah Dukes'
   ]) {
     expect(found(name).button, name).equals(true)
     expect(row(name), name).includes('chevron_right')
   }
   // In its section's order: the team's own staff, then the season's coach.
-  expect(page.indexOf('Owen M')).lessThan(page.indexOf('Mike T'))
-  expect(page.indexOf('Mike T')).lessThan(page.indexOf('PLAYERS'))
-  expect(page.indexOf('Tim R')).greaterThan(page.indexOf('FAMILY MEMBERS'))
+  expect(page.indexOf('Owen Miller')).lessThan(page.indexOf('Mike Trout'))
+  expect(page.indexOf('Mike Trout')).lessThan(page.indexOf('PLAYERS'))
+  // His own row, after the line under the player he guards names him.
+  expect(page.lastIndexOf('Tim Raines')).greaterThan(
+    page.indexOf('FAMILY MEMBERS')
+  )
   // The team's own spectator, then the league's and the season's by name,
   // then the followers by name.
-  expect(page.indexOf('Hank M')).greaterThan(page.indexOf('SPECTATORS'))
-  expect(page.indexOf('Hank M')).lessThan(page.indexOf('Leo G'))
-  expect(page.indexOf('Leo G')).lessThan(page.indexOf('Sandy L'))
-  expect(page.indexOf('Sandy L')).lessThan(page.indexOf('FOLLOWERS'))
-  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Felipe A'))
-  expect(page.indexOf('Felipe A')).lessThan(page.indexOf('Grant H'))
+  expect(page.indexOf('Hank Majeski')).greaterThan(page.indexOf('SPECTATORS'))
+  expect(page.indexOf('Hank Majeski')).lessThan(page.indexOf('Leo Gomez'))
+  expect(page.indexOf('Leo Gomez')).lessThan(page.indexOf('Sandy Leon'))
+  expect(page.indexOf('Sandy Leon')).lessThan(page.indexOf('FOLLOWERS'))
+  expect(page.indexOf('FOLLOWERS')).lessThan(page.indexOf('Felipe Alou'))
+  expect(page.indexOf('Felipe Alou')).lessThan(page.indexOf('Grant Hartwig'))
   await run.shot(admin, 'roster-after.png', { fit: true })
   // The place and the gear share the card's right-hand column without
   // touching, and "Demo Hawks" keeps its words whole, on this phone and on a
@@ -664,7 +669,8 @@ async function people(run: Run): Promise<void> {
   })
   await contains(coach.page, 'Tim Raines')
   await contains(coach.page, 'PARENT/GUARDIAN OF')
-  await contains(coach.page, 'Alfonso S')
+  // The coach reads their player in full.
+  await contains(coach.page, 'Alfonso Soriano')
   const coachView = await heldRows(coach, 'team')
   expect(coachView.admin).equals('—')
   expect(coachView.coach).equals('Off')
@@ -677,7 +683,7 @@ async function people(run: Run): Promise<void> {
     ).equals(false)
   await run.shot(coach, 'person-profile-team.png', { fit: true })
   // Alfonso's row opens Alfonso, on the Hawks.
-  await coach.m.tapOn({ text: 'Alfonso S', timeout: 15000 })
+  await coach.m.tapOn({ text: 'Alfonso Soriano', timeout: 15000 })
   await coach.page.waitForFunction(
     () => location.pathname.startsWith('/players/'),
     { timeout: 15000 }
@@ -689,7 +695,7 @@ async function people(run: Run): Promise<void> {
     url: `${f.h.origin}/seasons/${f.seasonA}/people/${people.guardian}`
   })
   await contains(admin.page, 'Season · Demo Regular')
-  await contains(admin.page, 'Alfonso S')
+  await contains(admin.page, 'Alfonso Soriano')
   const page =
     (await admin.page.evaluate(() => document.body.textContent)) ?? ''
   expect(page).includes('SEASON ROLES')
@@ -757,7 +763,7 @@ async function people(run: Run): Promise<void> {
   await until(async () => !(await onHawks(ben.id)))
   expect(await roleRows(ben.id)).deep.equals([])
   await contains(admin.page, 'Removed Ben C from Demo Hawks')
-  await contains(admin.page, 'Alfonso S')
+  await contains(admin.page, 'Alfonso Soriano')
   const rosterNames = await admin.page.evaluate(() => {
     const roster = document.querySelector('[data-testid="teamTabContent"]')
     if (roster === null) throw new Error('No roster')
@@ -765,9 +771,11 @@ async function people(run: Run): Promise<void> {
       .filter(node => node.children.length === 0)
       .map(node => String(node.textContent))
   })
-  expect(rosterNames).includes('Alfonso S')
-  expect(rosterNames).includes('Cody D')
+  // The admin reads the players left in full.
+  expect(rosterNames).includes('Alfonso Soriano')
+  expect(rosterNames).includes('Cody Decker')
   expect(rosterNames).not.includes('Ben C')
+  expect(rosterNames).not.includes('Ben Chapman')
   await run.shot(admin, 'player-remove-from-team.png', { fit: true })
 
   // By the API: adding an account by address applies at once, tells them,
@@ -1371,9 +1379,11 @@ async function guardian(run: Run): Promise<void> {
     playerName: 'Cody D',
     teamName: 'Demo Hawks'
   })
+  // The mail names Cody short; the coach, who may read him in full, reads
+  // his own sent request so.
   const sent = await api('GET', '/me/notifications?sent=1', people.teamCoach)
   expect(sent.body.items.map((item: any) => item.title)).deep.equals([
-    'Be a guardian of Cody D'
+    'Be a guardian of Cody Decker'
   ])
   const jade = await api(
     'POST',
@@ -1428,7 +1438,7 @@ async function guardian(run: Run): Promise<void> {
   expect(mailed).not.has.property('teamName')
   const timSent = await api('GET', '/me/notifications?sent=1', people.guardian)
   expect(timSent.body.items.map((item: any) => item.title)).deep.equals([
-    'Be a guardian of Alfonso S'
+    'Be a guardian of Alfonso Soriano'
   ])
   const beforeTeams = await api('GET', '/teams', invitee)
   expect(beforeTeams.body).deep.equals([])
@@ -1450,9 +1460,10 @@ async function guardian(run: Run): Promise<void> {
   await tap(faye.m, 'History')
   await contains(faye.page, 'Accepted')
   expect(await guardiansOf(avery.id)).deep.equals([people.guardian, invitee])
+  // A guardian now, she reads Alfonso in full.
   const inbox = await api('GET', '/me/notifications?history=1', invitee)
   expect(inbox.body.items[0]).deep.include({
-    title: 'Be a guardian of Alfonso S',
+    title: 'Be a guardian of Alfonso Soriano',
     status: 'accepted'
   })
   const roles = await api('GET', '/me/roles', invitee)
@@ -2213,7 +2224,7 @@ async function home(run: Run): Promise<void> {
   }
   const guardianOrder = inOrder(guardianHome, [
     'YOUR PLAYERS',
-    'Alfonso S',
+    'Alfonso Soriano',
     'YOUR TEAMS',
     'Demo Hawks',
     'Create League',
@@ -2233,8 +2244,12 @@ async function home(run: Run): Promise<void> {
   )
   await run.shot(guardian, 'home-after.png', { fit: true })
 
-  // Opened from Home, Alfonso's page has no team: his whole career.
-  await guardian.m.tapOn({ css: '[aria-label="Alfonso S"]', timeout: 15000 })
+  // Opened from Home, Alfonso's page has no team: his whole career. His
+  // guardian reads his name in full.
+  await guardian.m.tapOn({
+    css: '[aria-label="Alfonso Soriano"]',
+    timeout: 15000
+  })
   await guardian.page.waitForSelector('[aria-label="Filter videos"]', {
     timeout: 20000
   })

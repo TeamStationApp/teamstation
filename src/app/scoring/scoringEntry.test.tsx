@@ -43,6 +43,7 @@ describe('actual game scoring entry', function () {
     let opened = 0
     await render(
       <GameScreen
+        signedIn
         client={client}
         gameId="g1"
         onScoreGame={() => {
@@ -101,7 +102,7 @@ describe('actual game scoring entry', function () {
       homeScore: 0
     })
     client.teams = async () => []
-    await render(<GameScreen client={client} gameId="g1" />)
+    await render(<GameScreen signedIn client={client} gameId="g1" />)
     expect(button('Score')).equals(null)
     expect(button('Videos')).not.equals(null)
     expect(button('Box score')).not.equals(null)
@@ -123,7 +124,7 @@ describe('actual game scoring entry', function () {
       const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => game
       client.teams = async () => []
-      await render(<GameScreen client={client} gameId="g1" />)
+      await render(<GameScreen signedIn client={client} gameId="g1" />)
       expect(button('Score')).equals(null)
       expect(button('Continue Scoring')).equals(null)
       expect(button('Box score')).not.equals(null)
@@ -141,7 +142,7 @@ describe('actual game scoring entry', function () {
       awayScore: 1
     })
     client.teams = async () => []
-    await render(<GameScreen client={client} gameId="g1" />)
+    await render(<GameScreen signedIn client={client} gameId="g1" />)
     expect(button('Score')).not.equals(null)
   })
 })
@@ -180,6 +181,7 @@ describe('scoring entry on the phones', function () {
       await renderOn(
         os,
         <GameScreen
+          signedIn
           client={client}
           gameId="g1"
           recording={{ open: () => undefined }}
@@ -193,7 +195,7 @@ describe('scoring entry on the phones', function () {
       const client = new TeamStationClient({ baseUrl: '/api/v1' })
       client.game = async () => ({ ...gameFixture, canScore: false })
       client.teams = async () => []
-      await renderOn(os, <GameScreen client={client} gameId="g1" />)
+      await renderOn(os, <GameScreen signedIn client={client} gameId="g1" />)
       expect(button('Score')).equals(null)
       expect(button('Box score')).not.equals(null)
     })
@@ -265,6 +267,7 @@ describe('game actions preserve box score and videos', function () {
     const from: unknown[] = []
     await render(
       <GameScreen
+        signedIn
         client={client}
         gameId="g1"
         onOpenPlayer={(id, _name, side) => {
@@ -363,6 +366,7 @@ describe('game actions preserve box score and videos', function () {
     try {
       await render(
         <GameScreen
+          signedIn
           client={client}
           gameId="g1"
           autoPlay

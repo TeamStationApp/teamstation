@@ -26,9 +26,11 @@ import {
 } from '../common/walkUpSong'
 import { schedulePreviewPaths } from './autoScheduler/schedulePreviewsOpenApi'
 import { createEventOperation, eventInfoPaths } from './events/eventInfoOpenApi'
+import { gamePlanPaths } from './games/gamePlansOpenApi'
 import { MAX_READS } from './graphql/restReader'
 import { MAX_DEPTH } from './graphql/schema'
 import { creationPaths } from './groups/openApi'
+import { MAX_CAMERAS, MAX_GAME_CAMERAS } from './live/streamKeys'
 import { MAX_QUERY_LENGTH } from './routes/graphql'
 import { gameApprovalPaths } from './schedule/gameApprovalOpenApi'
 import { schedulingSetupPaths } from './scheduler/schedulingSetupOpenApi'
@@ -38,7 +40,7 @@ import { nullableGumboIdSchema, userIdSchema } from './userIdSchema'
 import { venuePaths } from './venues/venuesOpenApi'
 
 const PUBLIC_NAME =
-  "The public name: first name and last initial, unless the player's league, season or team chose another format."
+  "The name as the caller may read it: the full name for a caller who may read it (a guardian, the player, staff of a team they play on), and otherwise the public name, first name and last initial unless the player's league, season or team chose another format."
 
 const videoCollectionParameters = [
   {
@@ -128,7 +130,7 @@ const statIdentity = {
     description:
       'Whether the line opens its player\u2019s page for this viewer. Absent from team tables, which is true.'
   },
-  shortName: { type: 'string' },
+  shortName: { type: 'string', description: PUBLIC_NAME },
   teamId: { type: ['string', 'null'] }
 }
 const battingSchema = {
@@ -864,8 +866,83 @@ const idempotencyKeyParam = {
   schema: { type: 'string', minLength: 1, maxLength: 200 }
 }
 
+const scoringMutationSchema = {
+  type: 'object',
+  required: ['at', 'id', 'revision', 'frontier'],
+  properties: {
+    at: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Original user action time, Unix milliseconds, at most 8640000000000000 (the supported date range), retained as retry identity even when the offline device clock is ahead. Acceptance depends on the observed scoring base, not this timestamp.'
+    },
+    id: { type: 'string', pattern: '^[a-zA-Z0-9_-]{1,128}$' },
+    revision: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Automatic completion and rebase revisions retain the original at and id.'
+    },
+    frontier: {
+      type: 'integer',
+      minimum: 0,
+      description:
+        'Current at-bat index, or the index following the last completed at-bat. A winning mutation removes the superseded tail from this index.'
+    }
+  }
+}
+
+/** Who authored each stored action and who removed which; no text. */
+const scoringAuthorshipSchema = {
+  type: 'object',
+  description:
+    'Server-stamped authorship of the stored scoring actions. Clients word the scoring log themselves from the plays; this carries only who did what.',
+  required: ['plays', 'removals', 'names'],
+  properties: {
+    plays: {
+      type: 'object',
+      description:
+        "At-bat index to one author user id per action of that play's record, null where no scorer is credited.",
+      additionalProperties: {
+        type: 'array',
+        items: { type: ['string', 'null'] }
+      }
+    },
+    removals: {
+      type: 'array',
+      maxItems: 100,
+      description:
+        'The most recent removals of stored actions by a scorer, oldest first.',
+      items: {
+        type: 'object',
+        required: ['id', 'sequence', 'userId', 'atBatIndex', 'actions'],
+        properties: {
+          id: { type: 'string' },
+          sequence: { type: 'integer' },
+          userId: { type: 'string' },
+          atBatIndex: { type: 'integer' },
+          actions: { type: 'array', items: { type: 'object' } }
+        }
+      }
+    },
+    names: {
+      type: 'object',
+      description:
+        'Author user id to short display name; empty when the reader may not read it.',
+      additionalProperties: { type: 'string' }
+    }
+  }
+}
+
 /** What every answer of a post says of the game it leaves. */
 const postedDigests = {
+  scoringMutation: scoringMutationSchema,
+  scoringAuthorship: scoringAuthorshipSchema,
+  superseded: {
+    type: 'boolean',
+    description:
+      'True when a scoring mutation based on a displaced version was ignored. The response contains the canonical game; the client must adopt it instead of replaying the rejected scoring.'
+  },
   currentPlay: {
     oneOf: [{ $ref: '#/components/schemas/GumboCurrentPlay' }, { type: 'null' }]
   },
@@ -1190,9 +1267,11 @@ const gumboEventType = {
     "TeamStation's extensions: `final_score` and `score_correction` (an " +
     'import), `ts_manual_placement` (a batter the scorer put ' +
     'on base by hand), `ts_batter_out` (a batter out on a play MLB has no ' +
-    'code for), `ts_batting_order` (a change of batting order) and ' +
+    'code for), `ts_batting_order` (a change of batting order), ' +
     '`ts_courtesy_runner` (a pinch runner who takes a runner’s base and ' +
-    'leaves the batting order as it is). A post ' +
+    'leaves the batting order as it is) and `ts_at_bat_ended` (an at-bat ' +
+    'the half was ended in with only pitches in it, no plate appearance). ' +
+    'A post ' +
     'may still send `catcher_interference`, `placed_runner` or ' +
     '`manual_placement`; they are stored as `catcher_interf`, ' +
     '`runner_placed` and `ts_manual_placement`. It may also send the ' +
@@ -1975,6 +2054,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                           'bb',
                           'k',
                           'pc',
+                          'hbp',
+                          'strikes',
                           'current'
                         ],
                         properties: {
@@ -1983,6 +2064,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                           ip: { type: 'string' },
                           current: { type: 'boolean' },
                           pc: { type: ['integer', 'null'] },
+                          hbp: { type: ['integer', 'null'] },
+                          strikes: { type: ['integer', 'null'] },
                           ...Object.fromEntries(
                             ['outs', 'h', 'r', 'er', 'bb', 'k'].map(key => [
                               key,
@@ -2767,7 +2850,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'section',
             'staffRoles',
             'inheritedFrom',
-            'walkUpSong'
+            'walkUpSong',
+            'affiliations'
           ],
           description:
             'One person on a team\u2019s roster. Somebody listed without a ' +
@@ -2785,6 +2869,19 @@ export function openApiDocument(version: string): OpenApiDocument {
             shortName: {
               type: 'string',
               description: PUBLIC_NAME
+            },
+            compactName: {
+              type: 'string',
+              description:
+                'The public name, present only when `shortName` is full ' +
+                'because of the caller: what a compact surface draws.'
+            },
+            compactFormat: {
+              type: 'string',
+              enum: ['initialLast', 'initials', 'full'],
+              description:
+                'The format of `compactName`, when it is not the built-in ' +
+                'first name and last initial.'
             },
             pool: {
               type: 'boolean',
@@ -2901,9 +2998,20 @@ export function openApiDocument(version: string): OpenApiDocument {
               type: 'array',
               items: { type: 'string' },
               description:
-                'For a family member, the short names of the players on this ' +
-                'list they are a parent or guardian of. Absent for everybody ' +
+                'For a family member, the names this list gives the players on ' +
+                'it they are a parent or guardian of. Absent for everybody ' +
                 'else.'
+            },
+            affiliations: {
+              type: 'string',
+              description:
+                'The line under the name: `Guardian of <players>`, ' +
+                '`Guardians: <names>` and their teams, joined by ` \u00b7 `, ' +
+                'naming only the teams and people the caller may see, in full ' +
+                'for whoever the caller may read in full (`mayViewFullNames`). ' +
+                'On a team\u2019s roster it names no team, and only guardians ' +
+                'of, or guarded players on, that team. Empty when nothing is ' +
+                'visible.'
             }
           }
         },
@@ -2934,7 +3042,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               ],
               properties: {
                 userId: userIdSchema,
-                shortName: { type: 'string' },
+                shortName: { type: 'string', description: PUBLIC_NAME },
                 fullName: {
                   type: ['string', 'null'],
                   description:
@@ -2961,7 +3069,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 required: ['userId', 'shortName', 'avatarUrl', 'teamId'],
                 properties: {
                   userId: userIdSchema,
-                  shortName: { type: 'string' },
+                  shortName: { type: 'string', description: PUBLIC_NAME },
                   avatarUrl: { type: ['string', 'null'] },
                   teamId: { type: 'string' }
                 }
@@ -3190,6 +3298,7 @@ export function openApiDocument(version: string): OpenApiDocument {
       ...schedulingSetupPaths(errorResponse),
       ...schedulePreviewPaths(errorResponse),
       ...eventInfoPaths(errorResponse),
+      ...gamePlanPaths(errorResponse),
       ...accountPaths,
       ...apiKeyPaths,
       ...graphqlPaths,
@@ -3801,7 +3910,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             'the latest game start comes first, a row with no game last, ' +
             'then name, then id. Each entry has `direct` and `source` ' +
             '(`member` or `follow`). A follow whose group is gone is left ' +
-            'out. The five-row window is the client\u2019s.',
+            'out. The five-row window is the client\u2019s. A member ' +
+            'season carries `leagueId` and `leaguePictureUrl`, its ' +
+            'league\u2019s signed picture (null without one), as a followed ' +
+            'season\u2019s public group does.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -4838,7 +4950,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`replayable` is whether anything TeamStation scored is stored ' +
             'for the game — a play carrying its `teamStation` record, or a ' +
             'recorded at-bat in progress — so it can be replayed. ' +
-            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null). Names are abbreviated.',
+            '`umpires` is null when league umpire management is off or no positions are required; otherwise it contains positions with stable slot, typeId, typeName, ordinal, required and person (a { userId, name, avatarUrl } or null; a tile\u2019s colour is a hash of `userId` alone). Names are abbreviated.',
           security: [{}, { bearer: [] }],
           parameters: [gameIdParam],
           responses: {
@@ -5177,6 +5289,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: "Replace a game's plays",
           description:
+            'Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. ' +
             'One body is the whole set. A play is replaced when its ' +
             '`about.atBatIndex` is already stored, and a stored index that is ' +
             'not in the body is deleted, including a legacy line-score-only ' +
@@ -5228,7 +5341,15 @@ export function openApiDocument(version: string): OpenApiDocument {
             'is refused the same way with `details: { stale: true, ' +
             'generation }`: the sender opens the game again. A post answers ' +
             'every stored play, unless it is a live post and `answer=edits` ' +
-            'asks for only what it wrote (`edits`).',
+            'asks for only what it wrote (`edits`). With `scoringMutation`, ' +
+            'the request must include currentPlay (null when none). Live ' +
+            'TeamStation scoring requires scoringBase, the observed scoring version. ' +
+            'The first accepted write advances that version. Conflicting writes ' +
+            'based on a displaced version return the canonical game with ' +
+            '`superseded: true`, without changing it, even with `answer=edits`. ' +
+            'Retries retain the original identity; reuse with different content ' +
+            'is 409. Missing scoringBase is 400. Generation and team checks ' +
+            'still precede acceptance. A current-version deliberate Undo remains valid.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
@@ -5301,6 +5422,18 @@ export function openApiDocument(version: string): OpenApiDocument {
                         "a game's first plays fixes its fence at this one. " +
                         'Anything but whole feet from 1 to 600 is ignored, ' +
                         "and the game's resolved fence is fixed instead."
+                    },
+                    scoringMutation: scoringMutationSchema,
+                    scoringHistory: {
+                      type: 'array',
+                      items: { $ref: '#/components/schemas/GumboPlay' },
+                      description:
+                        'Completed editable scoring ancestry for a stamped delta. Requires scoringBase. History never authorizes replacement of a displaced base. Imported read-only plays are excluded.'
+                    },
+                    scoringBase: {
+                      anyOf: [scoringMutationSchema, { type: 'null' }],
+                      description:
+                        'Required for live TeamStation scoring. The last observed scoring mutation, or null before any scoring. A changed version returns the canonical game with superseded:true for stamped scoring, or stale 409 for lineup-only reconciliation. Device timestamps do not choose a conflicting winner.'
                     },
                     lineupsBase: {
                       type: 'string',
@@ -5408,9 +5541,20 @@ export function openApiDocument(version: string): OpenApiDocument {
         },
         get: {
           summary: "A game's plays",
-          description: 'The stored plays in `atBatIndex` order.',
+          description:
+            'The stored plays in `atBatIndex` order. Games with deferred lineup records require the header `x-teamstation-scoring: deferred-lineups-v1` for reads and writes; unsupported clients receive 409 and an update message. These records retain version 4 by-team envelopes on the wire instead of being downgraded to version 2. Override-slot or pitcher-less override actions require x-teamstation-protocol 5 or newer; older or missing app versions receive 503 with reason updateRequired. API keys and machine actors are exempt from that protocol-version check.',
           security: [{ bearer: [] }],
-          parameters: [gameIdParam],
+          parameters: [
+            gameIdParam,
+            {
+              name: 'x-teamstation-protocol',
+              in: 'header',
+              required: false,
+              schema: { type: 'integer' },
+              description:
+                'Version 5 or newer for games with override-slot or pitcher-less override actions.'
+            }
+          ],
           responses: {
             200: {
               description:
@@ -5437,7 +5581,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                 'again and names none): a player can be named otherwise with ' +
                 'nothing written, as when an add holding them on another team ' +
                 'lapses, so a change naming another digest is not applied to ' +
-                'this read, and the game is read again',
+                'this read, and the game is read again. The plays name every ' +
+                'player as the public reads them; `readerNames`, present only ' +
+                'when not empty, gives by gumbo id the full name of each of ' +
+                "the game's players the reader may read in full, and a post's " +
+                'answer of every play carries it too',
               content: {
                 'application/json': {
                   schema: {
@@ -5469,20 +5617,27 @@ export function openApiDocument(version: string): OpenApiDocument {
                       },
                       playsDigest: { type: 'string' },
                       namesDigest: { type: 'string' },
+                      scoringMutation: scoringMutationSchema,
+                      scoringAuthorship: scoringAuthorshipSchema,
                       lineupsDigest: { type: 'string' },
                       generation: { type: 'integer' },
                       swap: {
                         type: 'string',
                         enum: ['swap', 'reset', 'scoredElsewhere', 'withdrawn']
                       },
-                      halves: { type: 'array', items: { type: 'string' } }
+                      halves: { type: 'array', items: { type: 'string' } },
+                      readerNames: {
+                        type: 'object',
+                        additionalProperties: { type: 'string' }
+                      }
                     }
                   }
                 }
               }
             },
             401: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            503: errorResponse
           }
         }
       },
@@ -6327,16 +6482,30 @@ export function openApiDocument(version: string): OpenApiDocument {
             '(version, team names and timestamped inning lines), `initial` ' +
             '(the native pregame box or null), `boxes` (timestamped player ' +
             'statistics or an availability message), and `source` (authorized ' +
-            'plays, currentPlay and generation for replay). Imported plays ' +
+            'plays, currentPlay and generation for replay, named as the public ' +
+            'reads them), with `readerNames` (gumbo id to full name) for the ' +
+            'players the caller may read in full, as the events read answers ' +
+            'it. Imported plays ' +
             'are supported. Missing detail does not hide available inning ' +
             'scores. Native box steps also identify their atBatIndex and ' +
             'actionIndex so replay can distinguish actions at the same time. ' +
             'Historical bounds select only steps already in effect; a window ' +
             'includes its predecessor. Source documents remain whole for replay. ' +
+            'Replay source with override-slot or pitcher-less corrections requires ' +
+            'x-teamstation-protocol 5 or newer; older or missing versions receive ' +
+            '503 with reason updateRequired. API keys and machine actors are exempt. Rendered board and line views remain compatible. ' +
             'No query preserves the totals response used by installed clients.',
           security: [{ bearer: [] }],
           parameters: [
             gameIdParam,
+            {
+              name: 'x-teamstation-protocol',
+              in: 'header',
+              required: false,
+              description:
+                'Replay source containing override-slot actions requires version 5 or newer.',
+              schema: { type: 'integer' }
+            },
             {
               name: 'view',
               in: 'query',
@@ -6392,7 +6561,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             },
             400: errorResponse,
             403: errorResponse,
-            404: errorResponse
+            404: errorResponse,
+            503: errorResponse
           }
         }
       },
@@ -6442,7 +6612,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'One person, for their own page',
           description:
-            'Their public name, avatar, bats and throws, whether the caller ' +
+            'Their name as the caller may read it, avatar, bats and throws, whether the caller ' +
             'may change their name (`canEditName`), how the caller may ' +
             'invite a guardian of them (`guardianInviteAs`), and the teams ' +
             'they have played for that the caller may see: every one to the ' +
@@ -6675,7 +6845,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`team` may be repeated, and narrows the list to the seasons ' +
             'those teams play in. Asked that way, a season the caller may ' +
             'schedule games in counts as one they may see. Leaving it out ' +
-            'lists every season the caller may watch.',
+            'lists every season the caller may watch. `leagueId` is the ' +
+            'season\u2019s league or null, and `leaguePictureUrl` that ' +
+            'league\u2019s signed picture (null without one), which a season ' +
+            'with no `logoUrl` of its own is drawn with.',
           security: [{}, { bearer: [] }],
           parameters: [
             {
@@ -6915,7 +7088,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary:
             'Who people are here, by the ids another service has, or the players you guard',
           description:
-            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayEditName permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and team/guardian affiliations using privacy-formatted related names, prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
+            'With forGroupKind and forGroupId, only administrators of that group may search sign-in accounts. q matches only the name mayViewFullNames permits: full name or first name and last initial. Returns at most five {userId, displayName, avatarUrl, affiliations} rows with a signed photo URL (or null) and the affiliation line: the guarded players, guardians and teams the caller may see, named as the caller may read them, empty when none is visible; prefix matches first and stable name/id ties. Empty q returns []. Repeated exclude removes selected account IDs before the limit. This mode cannot be combined with other filters. ' +
             'A play names people by their numeric gumboId, so a sender ' +
             'asks this with the ids it holds first. Each answer is ' +
             '`{ userId, gumboId, externalIds, shortName, avatarUrl }`: a person, ' +
@@ -6947,8 +7120,14 @@ export function openApiDocument(version: string): OpenApiDocument {
             'Players already on the team, and with `forGame` ' +
             'anybody already in that game, are left out. Each row adds ' +
             '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
-            'in a season ending today or later), `tier` and `cursor`, and ' +
-            'nothing else about the person. `forTeam` beside `externalId` or ' +
+            'in a season ending today or later), `affiliations` (the line ' +
+            'under the name, as on the account search), `tier` and `cursor` ' +
+            '(always empty: the search answers once, at most 100 rows, with ' +
+            'no further pages, and a request with `after` answers `[]`), and ' +
+            'nothing else about the person; `nameFormat` when `shortName` is ' +
+            'not in the built-in format, and beside a name full only for the ' +
+            'asker, the public name in `compactName` (its format in ' +
+            '`compactFormat` unless built in). `forTeam` beside `externalId` or ' +
             '`guardedBy` is 400. A team or game you cannot see is 404; one you ' +
             'see but may not add to is 403.',
           security: [{ bearer: [] }],
@@ -7035,16 +7214,28 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'limit',
               in: 'query',
-              schema: { type: 'integer', minimum: 1, maximum: 50, default: 30 },
+              schema: {
+                type: 'integer',
+                minimum: 1,
+                maximum: 100,
+                default: 100
+              },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default 30, maximum 50.'
+                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100.'
+            },
+            {
+              name: 'capped',
+              in: 'query',
+              schema: { type: 'string', enum: ['1'] },
+              description:
+                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is up to 100 whatever limit says, for installed builds that send limit=30 and page on with after.'
             },
             {
               name: 'after',
               in: 'query',
               schema: { type: 'string' },
               description:
-                'With forTeam: the cursor of the last row of the previous page.'
+                'With forTeam: the search has no further pages, so a request with after answers []. Installed builds send it to scroll on.'
             },
             {
               name: 'guardedBy',
@@ -7058,7 +7249,7 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'By externalId, in user id order; by guardedBy, by short name. Empty when nobody matches'
+                'By externalId, in user id order; by guardedBy, by short name; by forTeam, a bare array of at most 100, nearest first. Empty when nobody matches'
             },
             400: errorResponse,
             401: errorResponse
@@ -7182,7 +7373,8 @@ export function openApiDocument(version: string): OpenApiDocument {
             'name. Anybody signed in who is not a member of the team (the ' +
             'non-member view) reads the same roster, followers included, ' +
             'with `avatarUrl` null on every entry. ' +
-            "Names follow the team's player name privacy, a first name and last " +
+            'Somebody the caller may read in full (`mayViewFullNames`) is named in ' +
+            "full, with the public name in `compactName` (its format in `compactFormat`); everybody else follows the team's player name privacy, a first name and last " +
             'initial by default, and a row in another format says so in ' +
             '`nameFormat`. includeFullNames=true ' +
             'adds nameDetails (displayName, firstName, lastName) for roster managers: ' +
@@ -7233,7 +7425,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'hand, so a roster import does not overwrite them. The person ' +
             'can be merged later because they are a real user. Audited. ' +
             'With `{ userId, jersey?, positions? }` instead, an existing player joins the ' +
-            'team: 201 with their entry (short name only) and `notice` (`requestId`, and `told`: ' +
+            'team: 201 with their entry (named as the caller may read them) and `notice` (`requestId`, and `told`: ' +
             'guardians, player or coaches) when their side was told, 200 with `unchanged` when ' +
             'they already play for it, or 202 `{ pending: { requestId } }` ' +
             'when their side must accept first. Any other key beside `userId` is 400. ' +
@@ -7448,7 +7640,10 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`lastPostId`, `lastPostSeq`, `lastPostAt` describe the latest post, ' +
             'including a deleted post; edits, reactions and preferences do not change post recency. ' +
             'Additive `avatarName` and `avatarUrl` describe the scope’s own identity ' +
-            'and signed image URL, or null for a DM. DM people have an optional ' +
+            'and signed image URL, or null for a DM. Additive `leagueId` and ' +
+            '`leaguePictureUrl` are a season chat\u2019s league and its signed ' +
+            'picture, which its tile falls back on; null for every other chat. ' +
+            'DM people have an optional ' +
             '`avatarUrl`, null for former members. Older responses may omit these fields.',
           security: [{ bearer: [] }],
           responses: {
@@ -7549,8 +7744,13 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: "A chat's members",
           description:
             'For members only; anybody else gets 404. Each is `{userId, ' +
-            'shortName, avatarUrl, label, isModerator, isApprover, eligible, ' +
-            'hasIdentity, identityKey, generation}`.',
+            'shortName, compactName?, avatarUrl, label, affiliations, ' +
+            'isModerator, isApprover, eligible, hasIdentity, identityKey, ' +
+            'generation}`. ' +
+            '`shortName` is full for somebody the caller may read in full; ' +
+            '`compactName` is then the public label, what a mention writes. ' +
+            '`affiliations` is the line under the name: the guarded players, ' +
+            'guardians and teams the caller may see, empty when none is.',
           security: [{ bearer: [] }],
           parameters: [conversationIdParam],
           responses: {
@@ -7605,7 +7805,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           summary: 'The people the caller may start a DM with',
           description:
             'Exactly those the DM rules let the caller name, whose name holds ' +
-            '`q`, at most 50: `{userId, shortName, avatarUrl}`. Empty for ' +
+            '`q`, at most 50: `{userId, shortName, compactName?, ' +
+            'avatarUrl, affiliations}`, `compactName` the public label beside a full ' +
+            '`shortName`, `affiliations` the line under the name (guarded ' +
+            'players, guardians and teams the caller may see, empty when none ' +
+            'is). Empty for ' +
             'somebody whose only tie is following a team.',
           security: [{ bearer: [] }],
           parameters: [
@@ -7639,7 +7843,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'adult family members and immediate coaches; with `q`: every ' +
             'included adult (guardians, family, adult team, season and ' +
             'league staff) whose name holds it. Never the caller. Each is ' +
-            '`{userId, shortName, label}`.',
+            '`{userId, shortName, compactName?, label}`.',
           security: [{ bearer: [] }],
           parameters: [
             {
@@ -9660,6 +9864,10 @@ export function openApiDocument(version: string): OpenApiDocument {
       '/live': {
         get: {
           summary: 'The games being played right now that you may watch',
+          description:
+            'Each is `{videoId, gameId, title, homeTeamId, awayTeamId, ' +
+            'homeTeamName, awayTeamName, startedAt, gameStartAt, angles}`; ' +
+            'the team ids pick each team\u2019s tile colour.',
           security: [{ bearer: [] }],
           responses: {
             200: {
@@ -9733,7 +9941,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         post: {
           summary: 'Another camera of my own on this game',
           description:
-            'Up to four active per person and six active per game; an ended ' +
+            `Up to ${MAX_CAMERAS} active per person and ${MAX_GAME_CAMERAS} active per game; an ended ` +
             'camera counts against neither, and a Director\u2019s counts. The ' +
             'slot is the lowest I do not already hold, so ending one and ' +
             'asking again gives that number back rather than counting ' +
@@ -10874,7 +11082,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         get: {
           summary: 'Authorized season batting and pitching aggregates',
           description:
-            'Requires private season access. Adds only stored stat rows from visible games assigned to this season. Names are shortened. Public discovery never receives this resource.',
+            'Requires private season access. Adds only stored stat rows from visible games assigned to this season. Each name is full where the caller may read it and shortened otherwise. Public discovery never receives this resource.',
           security: [{ bearer: [] }],
           parameters: [
             {

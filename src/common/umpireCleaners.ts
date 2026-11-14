@@ -40,6 +40,8 @@ export const asUmpireSeasons = asObject({
       id: asString,
       name: asString,
       logoUrl: asEither(asString, asLiteral(null)),
+      leagueId: asOptional(asString, ''),
+      leaguePictureUrl: asOptional(asEither(asString, asLiteral(null)), null),
       requirement: asEither(
         asObject({
           levelId: asString,
@@ -51,18 +53,17 @@ export const asUmpireSeasons = asObject({
     })
   )
 })
-export const asUmpirePeople = asObject({
-  people: asArray(
-    asObject({
-      id: asString,
-      name: asString,
-      avatarUrl: asEither(asString, asLiteral(null)),
-      affiliations: asString,
-      certifications: asArray(
-        asObject({ levelId: asString, typeId: asString, enabled: asBoolean })
-      )
-    })
+const asUmpirePerson = asObject({
+  id: asString,
+  name: asString,
+  avatarUrl: asEither(asString, asLiteral(null)),
+  affiliations: asOptional(asString, ''),
+  certifications: asArray(
+    asObject({ levelId: asString, typeId: asString, enabled: asBoolean })
   )
+})
+export const asUmpirePeople = asObject({
+  people: asArray(asUmpirePerson)
 })
 export const asUmpireLeagues = asObject({
   leagues: asArray(

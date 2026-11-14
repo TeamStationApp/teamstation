@@ -9,6 +9,7 @@ import {
 
 import type { TeamStationClient, VideoSummary } from '../../../common/api'
 import { lstrings } from '../../locales/strings'
+import { CARD_HIDE_MS } from '../cardScrub'
 import { type SeekFlash, useFlash } from '../GestureFeedback'
 import { livePlaybackRetryDelay } from '../liveRejoin'
 import type { PlayIntent } from '../playIntent'
@@ -16,6 +17,7 @@ import {
   type GridZone,
   type PlacedIcon,
   scrubFraction,
+  worksWhileHidden,
   zoneAt
 } from '../pressGrid'
 import { SLOW_RATE } from '../slowMotion'
@@ -203,7 +205,7 @@ const JOIN_POLL_MS = 30
 const SEEKABLE_SLACK_SEC = 0.25
 
 /** How long the bar stays up after the last touch of it. */
-const BAR_HIDE_MS = 3000
+const BAR_HIDE_MS = CARD_HIDE_MS
 
 export interface TileState {
   parked: ParkReason | null
@@ -308,8 +310,10 @@ export interface MultiCam {
   /** The crawl's rate, or 0. */
   slow: number
   flash: SeekFlash | null
-  /** The scrub line, the bottom row's group, shown on its own. */
+  /** The scrub line, shown together with every control. */
   scrubShown: boolean
+  anyLive: boolean
+  jumpToPresent: () => void
   /**
    * The controls above the scrub line, which show together: the sound, the
    * way out, ten seconds back, play or pause, ten seconds on.
@@ -335,13 +339,13 @@ export interface MultiCam {
    * a tap — is always sought (`scrubSeeks`).
    */
   scrub: (wallMs: number, final?: boolean) => void
-  /** Shows the scrub line for three seconds. */
+  /** Shows the scrub line for two seconds. */
   showBar: () => void
-  /** Shows the controls above it for three seconds. */
+  /** Shows the controls above it for two seconds. */
   showControls: () => void
+  handleControlsPressed: (pressed: boolean) => void
   /**
-   * Puts one group away at once, for a mouse that has moved onto the other:
-   * the two never show together from a hover.
+   * Puts the shared controls and scrub line away at once.
    */
   hideBar: () => void
   hideControls: () => void
@@ -2056,22 +2060,14 @@ export function useMultiCam(
     [goTo]
   )
 
-  /**
-   * The two groups of controls, which get out of the way: the scrub line, and
-   * everything above it. Each is up for three seconds after whatever called
-   * it — a press in its squares, a hover, the bar being touched — and gone
-   * otherwise, so the pictures have the whole screen. Both are up when the
-   * take first has a clock to show.
-   */
-  const bar = useAutoHide(BAR_HIDE_MS)
+  // Icons and scrub line share one deadline and synchronous visibility ref.
   const controls = useAutoHide(BAR_HIDE_MS)
-  const barShown = bar.shown
+  const barShown = controls.shown
   const controlsShown = controls.shown
   const controlsShownRef = controls.shownRef
-  const showBar = bar.show
-  const hideBar = bar.hide
+  const showBar = controls.show
   const showControls = controls.show
-  /** While the scrub line is in use nothing else shows. */
+  const hideBar = controls.hide
   const hideControls = controls.hide
 
   const [flash, flashFor] = useFlash()
@@ -2082,19 +2078,16 @@ export function useMultiCam(
   soundOffRef.current = soundOff
 
   /** What a tap in one of the squares above the scrub line does. */
-  const runZone = (zone: GridZone): void => {
-    if (zone === 'scrub') {
-      showBar()
-      hideControls()
-      return
-    }
-    // The way out only once it can be seen: hidden, the tap shows it.
-    if (zone === 'corner') {
-      if (controlsShownRef.current) onCornerRef.current?.()
-      else showControls()
-      return
-    }
+  const runZone = (zone: GridZone, allowedAtStart = false): void => {
+    const allowed =
+      allowedAtStart || controlsShownRef.current || worksWhileHidden(zone)
     showControls()
+    if (!allowed) return
+    if (zone === 'scrub') return
+    if (zone === 'corner') {
+      onCornerRef.current?.()
+      return
+    }
     if (zone === 'audio') {
       const off = !soundOffRef.current
       // Inside the touch, the one moment iOS lets the sound back on:
@@ -2152,12 +2145,13 @@ export function useMultiCam(
 
   /**
    * A finger has come down. False when it is to be ignored, because another
-   * finger is holding a crawl.
+   * finger is holding a crawl or finishing a consumed gesture.
    *
    * Every finger reaches this one press, so it is kept by pointer. A second
    * finger used to replace the first outright: the crawl the first was holding
    * then never saw its finger lift and ran on for good, and the second
-   * finger's lift was taken for a tap. Any other press is given up to the
+   * finger's lift was taken for a tap. A consumed gesture also keeps its
+   * pointer until it ends. Any other press is given up to the
    * newer finger, which is the one the viewer is thinking about.
    */
   const pressStart = (
@@ -2167,7 +2161,12 @@ export function useMultiCam(
     tile: number | null
   ): boolean => {
     const current = press.current
-    if (current?.mode === 'held' && current.pointerId !== pointerId) {
+    if (
+      (current?.mode === 'held' || current?.mode === 'dead') &&
+      current.pointerId !== pointerId
+    ) {
+      // A consumed reveal keeps ownership until its pointer ends. Showing
+      // controls must not let a second finger turn that reveal into an action.
       return false
     }
     if (current != null) {
@@ -2196,6 +2195,11 @@ export function useMultiCam(
       scrubTo: null,
       frame: 0
     }
+    // A revealing touch owns no action, including a later drag or hold.
+    if (!controlsShownRef.current && !worksWhileHidden(state.zone)) {
+      state.mode = 'dead'
+      showControls()
+    }
     // Still for `HOLD_MS`: a crawl on the +10 s squares (`gestureAction`),
     // a tile picked up anywhere above the scrub line when there are others to
     // swap it with. Otherwise it stays a press whose lift, still under the
@@ -2212,6 +2216,7 @@ export function useMultiCam(
         // an arrow key held down — belongs to its key, and lifting this
         // finger must not end it.
         state.mode = beginSlow() ? 'held' : 'dead'
+        showControls()
         return
       }
       if (state.tile != null && chosen.length > 1) {
@@ -2255,7 +2260,6 @@ export function useMultiCam(
     if (to == null) return
     state.scrubTo = to
     showBar()
-    hideControls()
     if (state.frame !== 0) return
     state.frame = requestAnimationFrame(() => {
       state.frame = 0
@@ -2277,7 +2281,7 @@ export function useMultiCam(
     // Inside the touch, which is the one moment iOS lets the sound back on:
     // unmuted any other time, a playing video is paused instead.
     const unblocked = soundBlockedRef.current
-    if (unblocked) {
+    if (unblocked && state.mode !== 'dead') {
       const heard = heardId == null ? null : elements.current.get(heardId)
       if (heard != null && !soundOffRef.current) heard.muted = false
       soundBlockedRef.current = false
@@ -2298,7 +2302,7 @@ export function useMultiCam(
       // has done what it was for: it does not turn it straight off again.
       if (state.zone === 'audio' && unblocked && !soundOffRef.current)
         showControls()
-      else runZoneRef.current(state.zone)
+      else runZoneRef.current(state.zone, true)
     }
     return state.mode
   }
@@ -2346,6 +2350,16 @@ export function useMultiCam(
   // has none: letting the clock extend the window made the total in the
   // corner of the bar grow by a second every time it was watched to the end.
   const anyLive = chosen.some(video => video.status === 'live')
+  const jumpToPresent = (): void => {
+    const allowed = controlsShownRef.current
+    showControls()
+    if (!allowed || !anyLive) return
+    const target = livePointRef.current()
+    if (target == null || !Number.isFinite(target)) return
+    const here = gameNowRef.current('') ?? atWallRef.current
+    scrub(Math.max(target, here ?? target))
+  }
+
   // Each angle read as the live point reads it (`newestWallOf`): by its
   // mapping, or its player's seekable end where it has none, as a phone's
   // tile before the server's timeline arrives.
@@ -2395,7 +2409,7 @@ export function useMultiCam(
     }
   }, [endAtMs, ended])
 
-  // The three seconds start when there is a bar to see, not when the view
+  // The two seconds start when there is a bar to see, not when the view
   // mounts: four sources take longer than that to open, and a bar that hid
   // before it was ever drawn left the view with no sign it had one.
   const barReady = take != null && atWallMs != null
@@ -2482,7 +2496,10 @@ export function useMultiCam(
     slow,
     flash,
     scrubShown: barShown,
+    anyLive,
+    jumpToPresent,
     controlsShown,
+    handleControlsPressed: controls.setPressed,
     soundOff,
     drag,
     intents,
@@ -2634,7 +2651,7 @@ export function startOf(video: VideoSummary, takeFromMs: number): number {
 
 /**
  * Something that shows for `ms` after whatever last called it, then hides:
- * one of the grid's two groups of controls. Up to begin with.
+ * the grid's shared controls. A held button stays visible until release.
  */
 export function useAutoHide(ms: number): {
   shown: boolean
@@ -2642,25 +2659,21 @@ export function useAutoHide(ms: number): {
   shownRef: { current: boolean }
   show: () => void
   hide: () => void
+  setPressed: (pressed: boolean) => void
 } {
   const [shown, setShown] = useState(true)
   const shownRef = useRef(true)
+  const pressed = useRef(false)
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  /** When the timer was last started again. */
-  const shownAt = useRef(0)
   const set = (next: boolean): void => {
     shownRef.current = next
     setShown(next)
   }
   const show = useCallback((): void => {
-    // A mouse over the grid lands here on every move, many times a second,
-    // and a quarter of a second makes no difference to a timer of seconds
-    // that is already running.
-    const now = Date.now()
-    if (timer.current != null && now - shownAt.current < 250) return
-    shownAt.current = now
     set(true)
     if (timer.current != null) clearTimeout(timer.current)
+    timer.current = null
+    if (pressed.current) return
     timer.current = setTimeout(() => {
       timer.current = null
       set(false)
@@ -2677,5 +2690,12 @@ export function useAutoHide(ms: number): {
     },
     []
   )
-  return { shown, shownRef, show, hide }
+  const setPressed = useCallback(
+    (next: boolean): void => {
+      pressed.current = next
+      show()
+    },
+    [show]
+  )
+  return { shown, shownRef, show, hide, setPressed }
 }

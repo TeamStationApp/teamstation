@@ -130,6 +130,28 @@ describe('scoring renderer identities', function () {
 })
 
 describe('a player on the field', function () {
+  it('is labelled by his public name when named in full only for this reader', function () {
+    const session = createDevelopmentSession(
+      gameFixture,
+      roster,
+      scoringRoster(10)
+    )
+    const fielder = fieldPlayersFor(session).find(
+      item => item.team === 'defense'
+    )!
+    Object.assign(session.gameData.players[fielder.playerId!], {
+      fullName: 'Shohei Ohtani',
+      nameFormat: 'full',
+      compactName: 'Shohei O'
+    })
+    const named = fieldPlayersFor(session).find(
+      item => item.playerId === fielder.playerId
+    )!
+    expect([named.name, named.displayName]).deep.equals([
+      'Shohei O',
+      'Shohei O'
+    ])
+  })
   it('moves without drawing his body again, and draws it again when it changes', async function () {
     const player = fieldPlayersFor(
       createDevelopmentSession(gameFixture, roster, scoringRoster(10))

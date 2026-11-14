@@ -11,6 +11,7 @@ import {
 import { userIdOfGumbo } from '../../common/userId'
 import {
   angleState,
+  cameraLimit,
   cameraRefusal,
   cameraSubtitle,
   cameraTap,
@@ -121,7 +122,11 @@ describe('a camera row’s words', function () {
   })
 
   it('names the owner on somebody else’s row, whatever filmed it', function () {
-    const theirs = stream({ deviceModel: 'Pixel 10', source: 'gopro' })
+    const theirs = stream({
+      deviceModel: 'Pixel 10',
+      source: 'gopro',
+      ownerName: 'Mookie B'
+    })
     expect(cameraSubtitle(theirs, false)).equals(
       'Waiting for stream from Mookie B'
     )
@@ -130,6 +135,18 @@ describe('a camera row’s words', function () {
     )
     expect(cameraSubtitle({ ...theirs, ...ended }, false)).equals(
       'Mookie B streaming'
+    )
+  })
+
+  it('names the owner as the server wrote them for this reader', function () {
+    // A public label in another format is drawn as it came, not shortened
+    // again.
+    expect(
+      cameraSubtitle(stream({ ownerName: 'A Lee', ...live }), false)
+    ).equals('A Lee streaming')
+    // A reader who may read the whole name sees it whole.
+    expect(cameraSubtitle(stream({ ownerName: 'Robin Yount' }), false)).equals(
+      'Waiting for stream from Robin Yount'
     )
   })
 
@@ -208,8 +225,8 @@ describe('the order of a game’s camera rows', function () {
     others,
     canAdd: 4,
     maxCameras: 4,
-    gameCanAdd: 6,
-    maxGameCameras: 6,
+    gameCanAdd: 4,
+    maxGameCameras: 4,
     discarded: []
   })
   const row = (
@@ -254,6 +271,53 @@ describe('the order of a game’s camera rows', function () {
       list([row('b', undefined), row('a', undefined)])
     )
     expect(ids(active)).deep.equals(['b', 'a'])
+  })
+})
+
+describe('why Record Video is off', function () {
+  const listed = (
+    patch: Partial<GameLiveStreams>,
+    count = 0
+  ): GameLiveStreams => ({
+    gameId: 'gam_1',
+    mine: [],
+    others: Array.from({ length: count }, (_, n) =>
+      stream({ id: `liv_${n}`, slot: n + 1 })
+    ),
+    canAdd: 4,
+    maxCameras: 4,
+    gameCanAdd: 4,
+    maxGameCameras: 4,
+    discarded: [],
+    ...patch
+  })
+
+  it('says nothing before the list is read, or while there is room', function () {
+    expect(cameraLimit(undefined)).equals(undefined)
+    expect(cameraLimit(listed({}, 2))).equals(undefined)
+  })
+
+  it('gives the game’s limit once the game is full', function () {
+    expect(cameraLimit(listed({ canAdd: 0, gameCanAdd: 0 }, 4))).equals(
+      'This game already has 4 cameras. End one to add another.'
+    )
+  })
+
+  it('counts the active cameras of a game left above its limit, not the ended ones', function () {
+    const full = listed({ canAdd: 0, gameCanAdd: 0 }, 6)
+    full.others.push(
+      stream({ id: 'liv_ended', state: 'ended' }),
+      stream({ id: 'liv_closing', closesAt: '2026-05-20T17:00:00.000Z' })
+    )
+    expect(cameraLimit(full)).equals(
+      'This game already has 6 cameras. End one to add another.'
+    )
+  })
+
+  it('gives the person’s limit while the game still has room', function () {
+    expect(cameraLimit(listed({ canAdd: 0, gameCanAdd: 2 }, 4))).equals(
+      'You already have 4 cameras on this game. End one to add another.'
+    )
   })
 })
 

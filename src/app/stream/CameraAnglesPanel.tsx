@@ -21,6 +21,7 @@ import { launchWebCamera } from './cameraDeepLinks'
 import { CameraRow } from './CameraRow'
 import {
   type Angle,
+  cameraLimit,
   cameraRefusal,
   isEnded,
   orderAngles
@@ -98,7 +99,7 @@ export function CameraAnglesPanel({
     }
   }, [client, gameId])
   useEffect(() => {
-    if (!shown || signedIn === false) return
+    if (!shown || signedIn !== true) return
     mounted.current = true
     let polling = false
     const poll = (): void => {
@@ -208,12 +209,7 @@ export function CameraAnglesPanel({
       ? [...active, ...ended].find(angle => angle.stream.id === sheet.id)
       : undefined
   const stream = chosen?.stream
-  const limit =
-    streams?.gameCanAdd === 0
-      ? sprintf(lstrings.stream_limit_game, streams.maxGameCameras)
-      : streams?.canAdd === 0
-        ? sprintf(lstrings.stream_limit_person, streams.maxCameras)
-        : undefined
+  const limit = cameraLimit(streams)
   const record = (): void => {
     setError(undefined)
     setSheet({ kind: 'name' })
@@ -317,8 +313,9 @@ export function CameraAnglesPanel({
     )
   }
 
+  if (signedIn === null) return null
   if (
-    signedIn !== false &&
+    signedIn &&
     (access === undefined || (access?.canFilm === true && streams == null))
   )
     return null

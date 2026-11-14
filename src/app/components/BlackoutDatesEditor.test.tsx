@@ -3,8 +3,17 @@ import { afterEach, describe, it } from 'mocha'
 import React, { useState } from 'react'
 
 import { rangeDates } from '../../common/venues'
-import { mount, press, settle, text, unmount } from '../../test/gameFormDom'
+import {
+  mount,
+  press,
+  rowTextColor,
+  settle,
+  text,
+  unmount
+} from '../../test/gameFormDom'
 import { chooseDateRange, hasLabel, tapText } from '../../test/venueDom'
+import { ScopedThemeProvider } from '../theme/ThemeContext'
+import { tsDark } from '../theme/tsDark'
 import {
   BlackoutDatesEditor,
   blackoutRangeLabel,
@@ -42,6 +51,15 @@ function rows(): string[] {
 }
 
 describe('the blackout dates editor', () => {
+  it('keeps its ranges readable on a dark shared card', async () => {
+    await mount(
+      <ScopedThemeProvider theme={tsDark}>
+        <BlackoutRangeList dates={['2027-07-04']} onRemove={() => undefined} />
+      </ScopedThemeProvider>
+    )
+    expect(rowTextColor('Jul 4')).equals('rgb(31, 36, 24)')
+    expect(rowTextColor('Remove')).equals('rgb(186, 26, 26)')
+  })
   afterEach(unmount)
 
   it('reads a range with its day count, and one day alone', () => {

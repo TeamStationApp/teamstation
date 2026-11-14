@@ -31,6 +31,7 @@ import { fenceDistanceFor } from '../games/fenceDistance'
 import { resolveGumboIds } from '../scoring/gumboIds'
 import { namesMergedAccounts, resolveScoringGame } from '../scoring/openRow'
 import { teamNames } from '../users/nameBook'
+import type { Reader } from '../users/readerNames'
 import { atBatOf } from './atBatInProgress'
 import { readPlays } from './postPlays'
 
@@ -63,7 +64,8 @@ export type TeamSideLineups = SideLineups & { teamId: string; teamName: string }
 
 /**
  * Both sides' lineups in a game as they stand now, as
- * `GET /games/:gameId/lineups` answers and the game socket sends them.
+ * `GET /games/:gameId/lineups` answers and the game socket sends them; for
+ * `options.reader`, everyone that reader may read in full is named in full.
  */
 export async function gameLineups(
   db: Trx,
@@ -73,12 +75,14 @@ export async function gameLineups(
     away_team_id: string
     currentPlay: unknown
     pregame?: unknown
-  }
+  },
+  options: { reader?: Reader } = {}
 ): Promise<Record<Side, TeamSideLineups>> {
   const context = await lineupContext(db, game)
   const sides = lineupHistory(
     await resolveScoringGame(db, await storedOrPregame(db, game), {
-      gameId: game.id
+      gameId: game.id,
+      reader: options.reader
     }),
     context
   )
@@ -220,7 +224,13 @@ export async function storedFormDigest(
 
 /** `lineupsDigest` of everything a read of the lineups counts. */
 function digestOf(read: GameLineups): string {
-  return lineupsDigest(read.sides, read.bench, read.courtesy, read.due)
+  return lineupsDigest(
+    read.sides,
+    read.bench,
+    read.courtesy,
+    read.due,
+    read.deferred
+  )
 }
 
 /**
@@ -282,7 +292,8 @@ export function lineupsDigest(
   sides: Record<Side, SideLineups>,
   bench: Record<Side, LineupPerson[]> = { away: [], home: [] },
   courtesy: CourtesyRunner[] = [],
-  due: DueBatter | null = null
+  due: DueBatter | null = null,
+  deferred: GameLineups['deferred'] = []
 ): string {
   const seen = (
     side: Side
@@ -302,9 +313,11 @@ export function lineupsDigest(
     home: ReturnType<typeof seen>
     courtesy?: CourtesyRunner[]
     due?: DueBatter
+    deferred?: GameLineups['deferred']
   } = { away: seen('away'), home: seen('home') }
   if (courtesy.length > 0) body.courtesy = courtesy
   if (due != null) body.due = due
+  if (deferred.length > 0) body.deferred = deferred
   return createHash('sha256').update(JSON.stringify(body)).digest('hex')
 }
 
@@ -344,13 +357,15 @@ function mapLineup<From, To>(
 /**
  * A team's stored default, read: merged ids resolved to their survivors
  * (the stored row is left as it is), and each player with an id named from
- * `users`, by the short names of the team's roster (`teamNames`). A
+ * `users`, by the short names of the team's roster (`teamNames`), and in full
+ * for whoever `options.reader` may read in full; a write passes no reader. A
  * placeholder keeps the name the team typed.
  */
 export async function resolvedDefaultOf(
   db: Trx,
   teamId: string,
-  raw: unknown
+  raw: unknown,
+  options: { reader?: Reader } = {}
 ): Promise<DefaultLineup | null> {
   const kept = defaultOf(raw)
   if (kept?.lineup == null) return null
@@ -359,7 +374,7 @@ export async function resolvedDefaultOf(
     db,
     people.flatMap(person => (person?.gumboId == null ? [] : [person.gumboId]))
   )
-  const nameOf = await teamNames(db, teamId, mapping.values())
+  const nameOf = await teamNames(db, teamId, mapping.values(), options)
   const resolve = (person: StoredLineupPerson): LineupPerson => {
     if (person.gumboId == null)
       return { gumboId: null, name: person.name ?? '', jersey: person.jersey }

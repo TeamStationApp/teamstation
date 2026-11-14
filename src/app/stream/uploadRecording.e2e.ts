@@ -217,7 +217,9 @@ async function main(): Promise<void> {
       `the upload was caught part way (last seen ${seen}%)`
     )
     say(`$ stopApp (at “Uploading ${seen}%”)`)
-    await phone.m.stopApp({ appId: 'app.teamstation.app' })
+    await phone.m.stopApp({
+      appId: process.env.TS_STREAM_APP_ID ?? 'app.teamstation.app'
+    })
     await sleep(3000)
     await phone.launch()
     await phone.signInIfAsked(email)

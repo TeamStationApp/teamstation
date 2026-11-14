@@ -6,6 +6,7 @@ import {
   UMPIRE_LEADERBOARD_MAX_PAGE,
   type UmpireLeaderboardQuery
 } from '../../common/umpireSchedule'
+import { visibleScopes } from '../access'
 import { now } from '../clock'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
@@ -32,6 +33,7 @@ import {
   umpireSchedulePage
 } from '../umpires/schedule'
 import { addType, removeType, types } from '../umpires/types'
+import { readerOf } from '../users/readerNames'
 
 /** League configuration can change every game's displayed slots or occupants. */
 async function noteLeagueGames(
@@ -270,17 +272,35 @@ export function umpireRoutes(
           trx,
           league,
           String(req.query.q ?? ''),
-          media
+          media,
+          readerOf(req.actor),
+          await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
         )
       }
     }
   )
-  manage('get', '/leagues/:leagueId/umpires', async (trx, league) => ({
-    people: await admin.people(trx, league, undefined, media)
+  manage('get', '/leagues/:leagueId/umpires', async (trx, league, req) => ({
+    people: await admin.people(
+      trx,
+      league,
+      undefined,
+      media,
+      readerOf(req.actor),
+      await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
+    )
   }))
   manage('put', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     await savePeople(trx, league, req.actor!.userId, req.body)
-    return { people: await admin.people(trx, league, undefined, media) }
+    return {
+      people: await admin.people(
+        trx,
+        league,
+        undefined,
+        media,
+        readerOf(req.actor),
+        await visibleScopes(trx, req.actor!.userId, req.actor!.isAdmin)
+      )
+    }
   })
   manage('post', '/leagues/:leagueId/umpires', async (trx, league, req) => {
     if (typeof req.body?.userId !== 'string')
@@ -325,11 +345,28 @@ export function umpireRoutes(
         if (view === 'league')
           throw badRequest('paged does not apply with view=league')
         res.json(
-          await umpireSchedulePage(db, req.actor, leagueId, view, filters, page)
+          await umpireSchedulePage(
+            db,
+            req.actor,
+            leagueId,
+            view,
+            filters,
+            page,
+            readerOf(req.actor)
+          )
         )
         return
       }
-      res.json(await schedule(db, req.actor, leagueId, view, filters))
+      res.json(
+        await schedule(
+          db,
+          req.actor,
+          leagueId,
+          view,
+          filters,
+          readerOf(req.actor)
+        )
+      )
     })
   )
 

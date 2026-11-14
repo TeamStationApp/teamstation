@@ -32,6 +32,7 @@ typedef void (^TSPhoneStreamReply)(id _Nullable value, NSString *_Nullable code,
 - (void)interruptedSession:(TSPhoneStreamReply)reply;
 - (void)resumeInterrupted:(NSDictionary<NSString *, id> *)request reply:(TSPhoneStreamReply)reply;
 - (void)setZoom:(double)displayed;
+- (void)setFocus:(NSString *)command;
 - (void)pinch:(double)scale ended:(BOOL)ended;
 - (void)zoomScale:(TSPhoneStreamReply)reply;
 - (void)lenses:(TSPhoneStreamReply)reply;
@@ -193,6 +194,11 @@ static NSDictionary *requestDictionary(JS::NativePhoneStream::NativePhoneStreamR
 - (void)setZoom:(double)displayed
 {
   [_bridge setZoom:displayed];
+}
+
+- (void)setFocus:(NSString *)command
+{
+  [_bridge setFocus:command];
 }
 
 - (void)pinch:(double)scale ended:(BOOL)ended

@@ -34,6 +34,7 @@ import { eventListRoutes } from './routes/eventList'
 import { eventRoutes } from './routes/events'
 import { followRoutes } from './routes/follows'
 import { gameApprovalRoutes } from './routes/gameApprovals'
+import { gamePlanRoutes } from './routes/gamePlans'
 import { graphqlRoutes } from './routes/graphql'
 import { groupRoutes } from './routes/groups'
 import { guardianRoutes } from './routes/guardians'
@@ -146,6 +147,22 @@ const UPGRADE_ONLY = new Set([
 ])
 
 describe('the API document', function () {
+  it('declares nullable replay pitcher hit batters and strikes', function () {
+    const schemas = openApiDocument('0.0.0').components.schemas as Record<
+      string,
+      any
+    >
+    for (const side of ['away', 'home']) {
+      const pitching =
+        schemas.HistoricalBox.properties[side].properties.pitching.items
+      for (const field of ['hbp', 'strikes', 'pc']) {
+        expect(pitching.required).includes(field)
+        expect(pitching.properties[field]).deep.equals({
+          type: ['integer', 'null']
+        })
+      }
+    }
+  })
   it('describes every route the server answers', function () {
     const mounted = [
       ...oauthRoutes(),
@@ -173,6 +190,7 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
+      ...routesOf(gamePlanRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
       ...routesOf(analyticsRoutes(db)),
@@ -245,6 +263,7 @@ describe('the API document', function () {
       ...routesOf(teamMemberRoutes(db, media)),
       ...routesOf(eventRoutes(db)),
       ...routesOf(lineupRoutes(db)),
+      ...routesOf(gamePlanRoutes(db)),
       ...routesOf(narrationRoutes(db, null)),
       ...routesOf(adminRoutes()),
       ...routesOf(analyticsRoutes(db)),

@@ -93,16 +93,16 @@ describe("Tess's divider", () => {
   it('drags once a frame, ends where the pointer is let go, and clamps to 320 and the window’s limit', async () => {
     const resized = await show(400, 720)
     await pointer('pointerdown', 400)
-    await pointer('pointermove', 450)
-    await pointer('pointermove', 520)
+    await pointer('pointermove', 350)
+    await pointer('pointermove', 280)
     await settle()
     await settle()
     await new Promise(resolve => setTimeout(resolve, 30))
     await settle()
     // Two moves in one frame: only the last is drawn.
     expect(resized).deep.equals([[520, false]])
-    await pointer('pointermove', 2000)
-    await pointer('pointerup', 2000)
+    await pointer('pointermove', -2000)
+    await pointer('pointerup', -2000)
     expect(
       resized.slice(1),
       'the last move dropped; the end clamped'
@@ -112,7 +112,7 @@ describe("Tess's divider", () => {
     await new Promise(resolve => setTimeout(resolve, 30))
     expect(resized).length(2)
     await pointer('pointerdown', 400)
-    await pointer('pointercancel', -500)
+    await pointer('pointercancel', 1000)
     expect(resized.at(-1)).deep.equals([320, true])
   })
 
@@ -131,7 +131,7 @@ describe("Tess's divider", () => {
     const touch = await pointer('pointerdown', 400, { isPrimary: true })
     expect(touch.defaultPrevented).equals(true)
     await pointer('pointerup', 480)
-    expect(resized).deep.equals([[480, true]])
+    expect(resized).deep.equals([[320, true]])
   })
 
   it('moves 16 points a press of ← or →, within its limits, and leaves other keys alone', async () => {
@@ -140,16 +140,16 @@ describe("Tess's divider", () => {
     expect((await press('ArrowLeft')).defaultPrevented).equals(true)
     expect((await press('Tab')).defaultPrevented).equals(false)
     expect(resized).deep.equals([
-      [416, true],
-      [384, true]
+      [384, true],
+      [416, true]
     ])
     await unmount()
     resized = await show(320, 330)
     await press('ArrowLeft')
     await press('ArrowRight')
     expect(resized).deep.equals([
-      [320, true],
-      [330, true]
+      [330, true],
+      [320, true]
     ])
   })
 

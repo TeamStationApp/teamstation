@@ -80,9 +80,11 @@ import {
   useHandoffSlot
 } from './components'
 import { FLOATING_HEIGHT_REM } from './components/AppNav'
+import { AppSidebar } from './components/AppSidebar'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
+import { useSidebarWidth } from './components/sidebarLayout'
 import { type SuccessNotice, SuccessToast } from './components/SuccessToast'
 import { UpdateRequiredNotice } from './components/UpdateRequiredNotice'
 import { ChatBench } from './dev/chatBench'
@@ -201,6 +203,7 @@ import { OAuthScreen } from './screens/OAuthScreen'
 import { OnboardingScreen } from './screens/OnboardingScreen'
 import { PersonProfileScreen } from './screens/PersonProfileScreen'
 import { PlayerScreen } from './screens/PlayerScreen'
+import { PlayingTimeRulesScreen } from './screens/PlayingTimeRulesScreen'
 import { PromoteExternalScreen } from './screens/PromoteExternalScreen'
 import { SchedulePreviewScreen } from './screens/SchedulePreviewScreen'
 import { ScheduleSeasonScreen } from './screens/ScheduleSeasonScreen'
@@ -469,10 +472,9 @@ function Shell(props: AppProps): React.ReactElement {
   const apiBaseUrl = props.apiBaseUrl ?? '/api/v1'
   const theme = useTheme()
   const styles = getStyles(theme)
-  // One boundary, the one that already existed: below it the three
-  // destinations float over the content, above it they sit in the header and
-  // there is no sidebar at all.
+  // The existing bar layout remains below the sidebar's window threshold.
   const isWide = useBreakpoint() !== 'phone'
+  const windowSidebarWidth = useSidebarWidth()
   // Measured rather than repeated. The content's top padding and the pegged
   // player both have to clear the header, and a second copy of its height is a
   // second thing to forget.
@@ -794,6 +796,10 @@ function Shell(props: AppProps): React.ReactElement {
    * can do is hide a tab.
    */
   const signedInAs = session?.user.id
+  // A refused save keeps its plays on the device for the person signed in.
+  useEffect(() => {
+    scoringSource.account = signedInAs
+  }, [scoringSource, signedInAs])
   /**
    * Whether this account may see chat: confirmed for its age, or this
    * device's Apple answer is 13 or more. Every chat surface stands behind it.
@@ -892,9 +898,9 @@ function Shell(props: AppProps): React.ReactElement {
     [gameSocket]
   )
   /**
-   * The server refused a game screen's subscribe because this build is older
-   * than the socket's protocol. It stays set: no later socket of this build
-   * would be told otherwise.
+   * The server refused a game screen's subscribe, or a save of a game's plays,
+   * because this build is older than the socket's protocol. It stays set: no
+   * later socket or call of this build would be told otherwise.
    */
   const [updateRequired, setUpdateRequired] = useState(false)
   useEffect(
@@ -904,6 +910,17 @@ function Shell(props: AppProps): React.ReactElement {
       }),
     [gameSocket]
   )
+  // A call the server refused for the same reason: a save of a game's plays.
+  useEffect(() => {
+    const required = (): void => {
+      setUpdateRequired(true)
+    }
+    client.onUpdateRequired = required
+    return () => {
+      if (client.onUpdateRequired === required)
+        client.onUpdateRequired = undefined
+    }
+  }, [client])
   /**
    * The session, refused by the server (a REST 401, the scoreboard socket's
    * 4401, `whoAmI` saying nobody): no token and nobody signed in, keeping
@@ -1342,6 +1359,8 @@ function Shell(props: AppProps): React.ReactElement {
   }, [signedInAs])
   const tessSuppressed =
     immersiveField || djScreen || top?.name === 'scoreboardOverride'
+  const sidebarWidth =
+    signedInAs == null || tessSuppressed ? 0 : windowSidebarWidth
   const tessWide = useTessWide()
   const onboarded =
     session?.user.onboarding == null ||
@@ -1389,7 +1408,7 @@ function Shell(props: AppProps): React.ReactElement {
   const tessColumn = tessShown && tessWide
   // Room for the chat list and a chat side by side, as `ChatWorkspace` lays
   // itself out: the pane, less Tess's column when it is open beside it.
-  const chatWide = usePaneAtLeast(CHAT_WIDE_WIDTH, tessColumn)
+  const chatWide = usePaneAtLeast(CHAT_WIDE_WIDTH, tessColumn, sidebarWidth)
 
   // The scene a frame is drawn as: the same while that screen writes its own
   // frame (a pill, a filter), another for any other screen.
@@ -2161,7 +2180,11 @@ function Shell(props: AppProps): React.ReactElement {
     (
       userId: string,
       title: string,
-      from: { seasonId?: string; teamId?: string; onTeam?: string } = {}
+      from: {
+        seasonId?: string
+        teamId?: string
+        onTeam?: string
+      } = {}
     ): void => {
       const narrowed = from.seasonId != null || from.teamId != null
       const next: Pushed = {
@@ -2408,8 +2431,9 @@ function Shell(props: AppProps): React.ReactElement {
           isAdmin={isAdmin}
           title={route.name === 'join' ? lstrings.join_header : 'Sign in'}
           showMark
+          sidebar={sidebarWidth > 0}
           nav={
-            isWide ? (
+            isWide && sidebarWidth === 0 ? (
               <AppNav
                 mode="header"
                 selected={tab}
@@ -2419,53 +2443,62 @@ function Shell(props: AppProps): React.ReactElement {
             ) : undefined
           }
         />
-        {route.name === 'join' ? (
-          <JoinScreen
-            client={client}
-            code={route.code}
-            signedIn={false}
-            onSignedIn={rememberSession}
-            onOpen={openFromInvite}
-          />
-        ) : route.name === 'signInLink' ? (
-          <SignInLinkScreen
-            key={route.token}
-            client={client}
-            token={route.token}
-            server={route.server}
-            onSignedIn={signedIn}
-            onSignInAgain={linkSpent => {
-              const destination: Route = { name: 'signIn' }
-              goToRoute(destination)
-              showRoute(destination, linkSpent)
-            }}
-          />
-        ) : (
-          <>
-            {route.name === 'teamStationTv' &&
-              signInRequest.appOrigin != null && (
-                <TvBrowserHandoff server={route.server} token={route.token} />
+        <View style={[styles.pane, styles.split]}>
+          <View style={styles.pane}>
+            <PaneBesideTess open={false} sidebarWidth={sidebarWidth}>
+              {route.name === 'join' ? (
+                <JoinScreen
+                  client={client}
+                  code={route.code}
+                  signedIn={false}
+                  onSignedIn={rememberSession}
+                  onOpen={openFromInvite}
+                />
+              ) : route.name === 'signInLink' ? (
+                <SignInLinkScreen
+                  key={route.token}
+                  client={client}
+                  token={route.token}
+                  server={route.server}
+                  onSignedIn={signedIn}
+                  onSignInAgain={linkSpent => {
+                    const destination: Route = { name: 'signIn' }
+                    goToRoute(destination)
+                    showRoute(destination, linkSpent)
+                  }}
+                />
+              ) : (
+                <>
+                  {route.name === 'teamStationTv' &&
+                    signInRequest.appOrigin != null && (
+                      <TvBrowserHandoff
+                        server={route.server}
+                        token={route.token}
+                      />
+                    )}
+                  <LoginScreen
+                    next={
+                      route.name === 'teamStationTv'
+                        ? routePath(route)
+                        : route.name === 'signIn'
+                          ? route.next
+                          : undefined
+                    }
+                    client={client}
+                    onSignedIn={signedIn}
+                    onDiscover={() => {
+                      goToRoute({ name: 'discover' })
+                      showRoute({ name: 'discover' })
+                    }}
+                  />
+                </>
               )}
-            <LoginScreen
-              next={
-                route.name === 'teamStationTv'
-                  ? routePath(route)
-                  : route.name === 'signIn'
-                    ? route.next
-                    : undefined
-              }
-              client={client}
-              onSignedIn={signedIn}
-              onDiscover={() => {
-                goToRoute({ name: 'discover' })
-                showRoute({ name: 'discover' })
-              }}
-            />
-          </>
-        )}
-        {!isWide && (
-          <AppNav mode="floating" selected={tab} onSelect={selectTab} />
-        )}
+              {!isWide && sidebarWidth === 0 && (
+                <AppNav mode="floating" selected={tab} onSelect={selectTab} />
+              )}
+            </PaneBesideTess>
+          </View>
+        </View>
       </View>
     )
   }
@@ -2844,6 +2877,18 @@ function Shell(props: AppProps): React.ReactElement {
           pop()
         }}
       />
+    ) : top.name === 'playingTimeRules' ? (
+      <PlayingTimeRulesScreen
+        key={`${top.kind}:${top.id}`}
+        client={client}
+        kind={top.kind}
+        id={top.id}
+        onSaved={() => {
+          freshSettings(sceneKeyOf(stack.length - 2))
+          pop()
+        }}
+        onCancel={pop}
+      />
     ) : top.name === 'groupLocation' ? (
       <GroupLocationPage
         key={`${top.kind}:${top.id}`}
@@ -3045,6 +3090,9 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onOpenTimeFrame={group => {
           push({ name: 'seasonTimeFrame', kind: 'season', id: group.id })
+        }}
+        onOpenPlayingTime={group => {
+          push({ name: 'playingTimeRules', kind: group.kind, id: group.id })
         }}
         onLocation={group => {
           if (group.kind !== 'season')
@@ -3633,7 +3681,7 @@ function Shell(props: AppProps): React.ReactElement {
       // DJ Game is an iPhone's: on the web and Android its address shows
       // the game.
       <GameScreen
-        signedIn={session != null}
+        signedIn={askedAboutSession ? session != null : null}
         onSignIn={signInHere}
         socket={gameSocket}
         client={client}
@@ -3725,7 +3773,7 @@ function Shell(props: AppProps): React.ReactElement {
       scoringBody
     ) : top.name === 'game' ? (
       <GameScreen
-        signedIn={session != null}
+        signedIn={askedAboutSession ? session != null : null}
         onSignIn={signInHere}
         socket={gameSocket}
         client={client}
@@ -3842,6 +3890,27 @@ function Shell(props: AppProps): React.ReactElement {
   const chromeFrame = immersiveTop
     ? (chromeTop.current?.frame ?? stack[chromeDepth - 1])
     : stack[chromeDepth - 1]
+  const notifications =
+    session == null
+      ? undefined
+      : {
+          pending: hasPending,
+          onPress: () => {
+            if (top?.name !== 'notifications') push({ name: 'notifications' })
+          }
+        }
+  const account =
+    session == null
+      ? undefined
+      : {
+          userId: session.user.id,
+          name: session.user.displayName,
+          avatarUrl: session.user.avatarUrl,
+          onPress: () => {
+            if (top?.name !== 'account') push({ name: 'account' })
+          }
+        }
+
   const header = (
     <AppHeader
       apiBaseUrl={apiBaseUrl}
@@ -3858,6 +3927,7 @@ function Shell(props: AppProps): React.ReactElement {
       // where the chevron and what scrolled up into the header say where you
       // are.
       showMark={chromeFrame == null}
+      sidebar={sidebarWidth > 0}
       handoff={
         visit != null &&
         top?.name === 'player' &&
@@ -3868,7 +3938,7 @@ function Shell(props: AppProps): React.ReactElement {
       }
       onHeight={setHeaderHeight}
       nav={
-        isWide ? (
+        isWide && sidebarWidth === 0 ? (
           <AppNav
             mode="header"
             selected={tab}
@@ -3900,28 +3970,8 @@ function Shell(props: AppProps): React.ReactElement {
             }
           : undefined
       }
-      notifications={
-        session == null
-          ? undefined
-          : {
-              pending: hasPending,
-              onPress: () => {
-                if (top?.name !== 'notifications')
-                  push({ name: 'notifications' })
-              }
-            }
-      }
-      account={
-        session == null
-          ? undefined
-          : {
-              name: session.user.displayName,
-              avatarUrl: session.user.avatarUrl,
-              onPress: () => {
-                if (top?.name !== 'account') push({ name: 'account' })
-              }
-            }
-      }
+      notifications={notifications}
+      account={account}
     />
   )
 
@@ -3943,7 +3993,7 @@ function Shell(props: AppProps): React.ReactElement {
   // nothing below them notices either — the `<video>` element least of all.
   //
   // Tess's chat is keyed for the same reason: opening it on a wide window
-  // turns the root into a row, the column first, and the pane — the video
+  // turns the root into a row, the column last, and the pane — the video
   // playing in it — carries on. On a narrow one the same element is a layer
   // over the whole app, drawn above it by its z-index, and the pane stays
   // mounted underneath. Only its style changes across the boundary, so the
@@ -3954,7 +4004,7 @@ function Shell(props: AppProps): React.ReactElement {
   // hidden from VoiceOver and TalkBack, its floating destinations are not
   // drawn, and on the web nothing under it takes focus or a click.
   const tessPanel = tessShown && (
-    <TessFrame key="tess" wide={tessWide}>
+    <TessFrame key="tess" wide={tessWide} sidebarWidth={sidebarWidth}>
       <TessPanel
         client={client}
         onClose={closeTess}
@@ -3978,7 +4028,7 @@ function Shell(props: AppProps): React.ReactElement {
           onLayout={setBannerHeight}
         />
       </View>
-      {!isWide && !tessLayer && (
+      {!isWide && sidebarWidth === 0 && !tessLayer && (
         <AppNav
           key="nav"
           onHeight={setNavigationHeight}
@@ -4044,11 +4094,25 @@ function Shell(props: AppProps): React.ReactElement {
         <ChatOverlayHost>
           <TessOverlayProvider active={tessColumn}>
             <View style={[styles.app, tessColumn && styles.split]}>
-              {tessPanel}
               <View key="pane" style={styles.pane} {...coveredBy(tessLayer)}>
-                <PaneBesideTess open={tessColumn}>
+                <PaneBesideTess open={tessColumn} sidebarWidth={sidebarWidth}>
                   <ScreenScopeProvider socket={gameSocket} scope={visibleScope}>
                     <StackNavigator
+                      sidebarWidth={sidebarWidth}
+                      sidebar={
+                        sidebarWidth > 0 ? (
+                          <AppSidebar
+                            account={account}
+                            notifications={notifications}
+                            selected={tab}
+                            onSelect={selectTab}
+                            unread={chatOn && hasUnread(chatList)}
+                            apiBaseUrl={apiBaseUrl}
+                            buildsClient={session == null ? undefined : client}
+                            isAdmin={isAdmin}
+                          />
+                        ) : undefined
+                      }
                       top={topScene}
                       retained={retainedScene}
                       // The field preview is one scene, with nothing beneath.
@@ -4072,15 +4136,23 @@ function Shell(props: AppProps): React.ReactElement {
                       headerHeight={
                         headerHeight + (bannerShown ? bannerHeight : 0)
                       }
-                      navigationHeight={isWide ? 0 : navigationHeight}
+                      navigationHeight={
+                        isWide || sidebarWidth > 0 ? 0 : navigationHeight
+                      }
                       onHandoff={setHandoff}
                       onHandoffHeight={setHandoffHeight}
                       onBackOverride={setBack}
                     />
                   </ScreenScopeProvider>
-                  <TessOverlayHost />
+                  <View
+                    pointerEvents="box-none"
+                    style={[styles.paneOverlay, { left: sidebarWidth }]}
+                  >
+                    <TessOverlayHost />
+                  </View>
                 </PaneBesideTess>
               </View>
+              {tessPanel}
               <SuccessToast notice={successNotice} />
               {chatOn && <DeviceApprovalPrompt />}
               <ChatAgeHost
@@ -4286,6 +4358,15 @@ function stackFor(route: Route): Partial<Record<NavTabId, Pushed[]>> {
     const settings = {
       name: 'groupSettings' as const,
       kind: 'season' as const,
+      id: route.id
+    }
+    return { [tab]: [...stackFor(settings)[tab]!, route] }
+  }
+  if (route.name === 'playingTimeRules') {
+    // As the date range is: the settings it was opened from are underneath.
+    const settings = {
+      name: 'groupSettings' as const,
+      kind: route.kind,
       id: route.id
     }
     return { [tab]: [...stackFor(settings)[tab]!, route] }
@@ -4573,21 +4654,23 @@ function coveredBy(covered: boolean): ViewProps {
 }
 
 /**
- * Tess's chat: a column on the left of a wide window, as wide as it was
- * dragged, with the divider on its right edge; on a narrow one, a layer over
+ * Tess's chat: a column on the right of a wide window, as wide as it was
+ * dragged, with the divider on its left edge; on a narrow one, a layer over
  * the whole app. The same element either way, so a resize across the two
  * never remounts the chat. Only this and the pane's frame read the column's
  * width, so a drag redraws them and what reads the frame, and not the Shell.
  */
 function TessFrame({
   wide,
+  sidebarWidth,
   children
 }: {
   wide: boolean
+  sidebarWidth: number
   children: React.ReactNode
 }): React.ReactElement {
   const styles = getStyles(useTheme())
-  const { width, max, setWidth } = useTessWidth()
+  const { width, max, setWidth } = useTessWidth(sidebarWidth)
   return (
     <View
       testID={wide ? 'Tess column' : 'Tess layer'}
@@ -4603,32 +4686,35 @@ function TessFrame({
 
 /**
  * The pane's place beside Tess's open column, for the screens that size
- * themselves to it: the column's width in from the left, the window's
- * height; none while the column is closed, and the pane is the window again.
+ * themselves to it: navigation sets the left edge, Tess reserves space on
+ * the right, and the height stays the window's height.
  * Only this reads the window's exact size, so a window being resized or the
  * divider dragged redraws it and what reads the frame, and not the Shell:
  * its children are the Shell's, unchanged by its own redraws.
  */
 function PaneBesideTess({
   open,
+  sidebarWidth,
   children
 }: {
   open: boolean
+  sidebarWidth: number
   children: React.ReactNode
 }): React.ReactElement {
   const { width, height } = useWindowDimensions()
-  const column = useTessWidth().width
+  const tessWidth = useTessWidth(sidebarWidth).width
+  const column = sidebarWidth + (open ? tessWidth : 0)
   const frame = useMemo<PaneFrame | null>(
     () =>
-      open
+      column > 0
         ? {
-            x: column,
+            x: sidebarWidth,
             y: 0,
             width: Math.max(0, width - column),
             height
           }
         : null,
-    [open, column, width, height]
+    [column, sidebarWidth, width, height]
   )
   return <PaneFrameProvider frame={frame}>{children}</PaneFrameProvider>
 }
@@ -4739,7 +4825,7 @@ const getStyles = cacheStyles((theme: Theme) => ({
   root: {
     flex: 1
   },
-  // Tess's column on the left of a wide window, and the pane beside it.
+  // Tess's column on the right of a wide window, and the pane beside it.
   split: {
     flexDirection: 'row'
   },
@@ -4758,8 +4844,10 @@ const getStyles = cacheStyles((theme: Theme) => ({
     zIndex: 50,
     elevation: 50
   },
+  paneOverlay: { position: 'absolute', top: 0, right: 0, bottom: 0 },
   pane: {
-    flex: 1
+    flex: 1,
+    zIndex: 0
   },
   // Over the content rather than above it, which is the whole point of glass:
   // there has to be something behind it to blur.

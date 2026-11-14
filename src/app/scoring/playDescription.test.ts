@@ -620,6 +620,132 @@ describe('the last play, however it was tapped', function () {
       describeCompletedPlays([close], new Set([0]), () => states[4]).size
     ).equals(0)
   })
+  it('describes an at-bat the half was ended in by the steal it holds', () => {
+    const opening = game().session
+    const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const walked: ScoringAction[] = [
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      close
+    ]
+    const runner = opening.liveData.plays.currentPlay!.matchup.batter.id
+    const log: ScoringAction[] = [
+      ...walked,
+      { type: 'pitch', call: 'B' },
+      { type: 'baseRunning', kind: 'steal', runner, to: '2B' },
+      { type: 'gameFlow', kind: 'endHalf', keepAtBat: true },
+      { type: 'pitch', call: 'B' }
+    ]
+    const states = [opening]
+    for (const action of log)
+      states.push(applyAction(states.at(-1)!, action).state)
+    const at = (length: number): typeof opening => states[length]
+    const description = describeCompletedPlays(log, new Set([1]), at).get(1)
+    expect(description?.primary).matches(/steals second/i)
+    expect(description?.primary).not.matches(/End of the half/)
+    // A pitch after the steal: the play is still the steal.
+    const later: ScoringAction[] = [
+      ...log.slice(0, 7),
+      { type: 'pitch', call: 'B' },
+      ...log.slice(7)
+    ]
+    const laterStates = [opening]
+    for (const action of later)
+      laterStates.push(applyAction(laterStates.at(-1)!, action).state)
+    const pitched = describeCompletedPlays(
+      later,
+      new Set([1]),
+      length => laterStates[length]
+    ).get(1)
+    expect(pitched?.primary).matches(/steals second/i)
+    const empty: ScoringAction[] = [
+      ...walked,
+      { type: 'gameFlow', kind: 'endHalf', keepAtBat: true }
+    ]
+    const emptyStates = [opening]
+    for (const action of empty)
+      emptyStates.push(applyAction(emptyStates.at(-1)!, action).state)
+    expect(
+      describeCompletedPlays(
+        empty,
+        new Set([0]),
+        length => emptyStates[length]
+      ).get(0)?.primary
+    ).matches(/walk/i)
+  })
+
+  it('leaves a runner the half stranded on base in a kept at-bat', () => {
+    const opening = game().session
+    const close: ScoringAction = { type: 'gameFlow', kind: 'closePlay' }
+    const walked: ScoringAction[] = [
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      close
+    ]
+    const first = opening.liveData.plays.currentPlay!.matchup.batter.id
+    const log: ScoringAction[] = [
+      ...walked,
+      { type: 'baseRunning', kind: 'steal', runner: first, to: '2B' },
+      { type: 'baseRunning', kind: 'steal', runner: first, to: '3B' },
+      ...walked,
+      { type: 'baseRunning', kind: 'steal', runner: first, to: 'home' },
+      { type: 'gameFlow', kind: 'endHalf', keepAtBat: true }
+    ]
+    const states = [opening]
+    for (const action of log) {
+      const applied = applyAction(states.at(-1)!, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      states.push(applied.state)
+    }
+    const kept = states.at(-1)!.liveData.plays.allPlays.at(-1)!
+    const description = describeCompletedPlays(
+      log,
+      new Set([kept.about.atBatIndex]),
+      length => states[length]
+    ).get(kept.about.atBatIndex)
+    const words = `${description?.primary ?? ''}; ${description?.secondary ?? ''}`
+    expect(description?.primary).matches(/steals home/i)
+    expect(words).not.matches(/scores/i)
+  })
+
+  it('starts a kept at-bat in its own half, after a third out between pitches', () => {
+    const opening = game({ first: 2 }).session
+    opening.liveData.linescore.outs = 2
+    const log: ScoringAction[] = [
+      {
+        type: 'baseRunning',
+        kind: 'caught_stealing',
+        runner: 2,
+        to: '2B',
+        fielders: [11, 13]
+      },
+      { type: 'pitch', call: 'B' },
+      { type: 'pitch', call: 'B' },
+      { type: 'gameFlow', kind: 'endHalf', keepAtBat: true }
+    ]
+    const states = [opening]
+    for (const action of log) {
+      const applied = applyAction(states.at(-1)!, action)
+      expect(applied.problems, JSON.stringify(action)).deep.equals([])
+      states.push(applied.state)
+    }
+    expect(states[1].liveData.linescore.isTopInning).equals(false)
+    const kept = states.at(-1)!.liveData.plays.allPlays.at(-1)!
+    expect(kept.result.eventType).equals('ts_at_bat_ended')
+    const description = describeCompletedPlays(
+      log,
+      new Set([kept.about.atBatIndex]),
+      length => states[length]
+    ).get(kept.about.atBatIndex)
+    const words = `${description?.primary ?? ''}; ${description?.secondary ?? ''}`
+    expect(words).not.matches(/caught stealing/i)
+    expect(words).matches(/ball/i)
+  })
+
   it('reads a tapped ground out, over its entries, as a ground out', function () {
     const opening = game({}, undefined, true)
     let state = tapHit(opening, 'Ground Out', 14, -8)

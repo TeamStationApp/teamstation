@@ -65,6 +65,20 @@ describe('local mention ranges', function () {
     ).equals(undefined)
   })
 
+  it('writes the public label into the body for a member this reader reads in full', function () {
+    const person = {
+      ...member(userIdOfGumbo(2), 'Aaron Judge'),
+      compactName: 'Aaron J'
+    }
+    const request = mentionRequest('Hi  ready', 'Hi @ ready')!
+    const next = insertMention(request, request.text, undefined, person)!
+    expect(next.text).equals('Hi @Aaron J ready')
+    expect(next.text).not.includes('Judge')
+    expect(next.tokens).deep.equals([
+      { userId: userIdOfGumbo(2), start: 3, end: 11, label: '@Aaron J' }
+    ])
+  })
+
   it('moves ranges across caret edits, emoji and paste without linking arbitrary matching text', function () {
     expect(reconcileMentions(text, '🙂 ' + text, [token])[0]).includes({
       start: 6,

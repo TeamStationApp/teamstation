@@ -33,6 +33,7 @@ import {
 } from './dictatedCompletion'
 import { advanceReel, beginReel, ReelBuilder } from './dictatedReel'
 import { moreEligibility, moreReducer } from './moreActions'
+import { overrideActions } from './overrideModel'
 import {
   accepted,
   act,
@@ -56,6 +57,7 @@ import {
   CORRECTION_WINDOW_MS,
   type GameCheckpoint,
   type HistoryEntry,
+  type OverrideDraft,
   type ScoringDraft,
   type ScoringEvent,
   type ScoringScreenState,
@@ -89,7 +91,7 @@ export function copyState<T>(value: T): T {
 export function initialScoringState(
   session: ScoringSessionState,
   presentationEnabled = false,
-  options: { watching?: boolean } = {}
+  options: { watching?: boolean; following?: boolean } = {}
 ): ScoringState {
   const owned = copyGame(session)
   const state: ScoringState = {
@@ -109,12 +111,22 @@ export function initialScoringState(
   }
   // A game picked up in the middle of a play resumes at that play's step.
   if (owned.pending != null) {
+    const hit = owned.liveData.plays.currentPlay?.hitData
     state.pendingPlay = {
       outcome: owned.pending.outcome,
+      ...(options.following === true
+        ? {
+            fielder: owned.pending.fielder ?? hit?.fielder?.id,
+            location: hit?.coordinates,
+            angle: hit?.launchAngle,
+            contactKind: owned.pending.contactKind,
+            homeRunKind: owned.pending.homeRunKind
+          }
+        : {}),
       trajectoryAccepted: true
     }
     state.phase = 'runnerMovement'
-    settleRunners(state)
+    settleRunners(state, { advanceAutomatically: options.following !== true })
     // A decided play picked up here waits for the scorer: no countdown
     // closes it, and so nothing is saved until they finish it or pitch.
     state.correctionWindow = null
@@ -129,9 +141,10 @@ export function initialScoringState(
 export function resumedScoringState(
   session: ScoringSessionState,
   log: ScoringState['log'],
-  presentationEnabled = false
+  presentationEnabled = false,
+  options: { following?: boolean } = {}
 ): ScoringState {
-  const state = initialScoringState(session, presentationEnabled)
+  const state = initialScoringState(session, presentationEnabled, options)
   return { ...state, log: [...log, ...state.log] }
 }
 
@@ -145,27 +158,61 @@ export function actsOnOpening(session: ScoringSessionState): boolean {
 
 export function snapshotOf(state: ScoringState): ScoringSnapshot {
   // The log is shared: nothing changes an action once it is logged, and a
-  // step that logs one makes a new log (`act`).
+  // step that logs one makes a new log (`act`). So are the game plans, which
+  // only a `PLANS` event replaces, whole.
   const {
     past: _past,
     checkpoints: _checkpoints,
     session,
     log,
+    plans,
     ...rest
   } = state
-  return { ...copyState(rest), log, session: copyGame(session) }
+  return {
+    ...copyState(rest),
+    log,
+    session: copyGame(session),
+    ...(plans == null ? {} : { plans })
+  }
 }
 
-/** A copy of the screen without the game or its history. */
+/** Runs the same lineup confirmation and readiness checks as committing the draft. */
+export function overrideProblem(
+  state: ScoringState,
+  draft: OverrideDraft
+): string | undefined {
+  if (
+    state.moreDraft != null ||
+    (state.phase !== 'ready' && state.phase !== 'awaitingBatter')
+  )
+    return 'Finish the current play before applying an override.'
+  const next = snapshotOf(state)
+  try {
+    return overrideActions(next.session, draft, (_state, action) =>
+      act(next, action)
+    ).error
+  } catch (error) {
+    if (error instanceof Refused) return error.message
+    throw error
+  }
+}
+
+/** A copy of the screen without the game, its history or the game plans. */
 export function screenOf(state: ScoringState): ScoringScreenState {
   const {
     past: _past,
     checkpoints: _checkpoints,
     session: _session,
     log: _log,
+    plans: _plans,
     ...screen
   } = state
   return copyState(screen)
+}
+
+/** `state`'s game plans, for a state rebuilt without them. */
+function plansOf(state: ScoringState): Pick<ScoringState, 'plans'> {
+  return state.plans == null ? {} : { plans: state.plans }
 }
 
 /**
@@ -379,6 +426,7 @@ function restoreTo(
   const { session, checkpoints } = gameAt(state, where.logLength)
   return {
     ...copyState(where.screen),
+    ...plansOf(state),
     session,
     log: state.log.slice(0, where.logLength),
     past: state.past.slice(0, historyLength),
@@ -499,7 +547,9 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
-  let next = reduce(state, event)
+  return drainDictation(reduce(state, event))
+}
+function drainDictation(next: ScoringState): ScoringState {
   // A sentence that came back while the last one was shown applies once the
   // screen is at rest again.
   while (
@@ -521,13 +571,17 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     return state.presentationEnabled === event.enabled
       ? state
       : { ...state, presentationEnabled: event.enabled }
+  if (event.type === 'PLANS') return { ...state, plans: event.plans }
   if (event.type === 'RESET')
     return {
       ...resumedScoringState(
         event.session,
         event.log,
-        state.presentationEnabled
+        state.presentationEnabled,
+        { following: event.following }
       ),
+      ...plansOf(state),
+      generation: state.generation + 1,
       ...(event.readOnly === true ? { readOnly: true } : {})
     }
   if (event.type === 'CELEBRATION_DONE')
@@ -813,11 +867,19 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       return state
     return accepted(state, 'Set Outs', next => {
       const draft = overrideOf(next.session)
+      const team =
+        next.session.liveData.boxscore.teams[battingSide(next.session)]
       act(next, {
         type: 'gameFlow',
         kind: 'override',
         ...draft,
         outs: event.outs,
+        // A repeated identity needs its occurrence; ordinary tiebreakers
+        // keep the legacy action shape and do not enter correction setup.
+        ...(team.battingOrder[team.battingIndex] === draft.batter &&
+        team.battingOrder.indexOf(draft.batter) !== team.battingIndex
+          ? { batterIndex: team.battingIndex }
+          : {}),
         batter: draft.batter ?? undefined,
         pitcher: draft.pitcher ?? undefined
       })
@@ -836,14 +898,15 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
       next => {
         if (event.type === 'ROSTER')
           applyRosterSave(next, event.draft, event.nextBatter, event.runners)
-        else
-          act(next, {
-            type: 'gameFlow',
-            kind: 'override',
-            ...event.draft,
-            batter: event.draft.batter ?? undefined,
-            pitcher: event.draft.pitcher ?? undefined
-          })
+        else {
+          const prepared = overrideActions(
+            next.session,
+            event.draft,
+            (_state, action) => act(next, action)
+          )
+          if (prepared.error != null)
+            throw new Refused([{ code: 'illegal', message: prepared.error }])
+        }
         next.phase =
           next.session.awaitingBatter == null ? 'ready' : 'awaitingBatter'
         next.generation++
@@ -869,7 +932,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     return state.phase !== 'ready' || state.moreDraft != null
       ? state
       : accepted(state, 'End half inning', next => {
-          act(next, { type: 'gameFlow', kind: 'endHalf' })
+          act(next, { type: 'gameFlow', kind: 'endHalf', keepAtBat: true })
           next.motions = []
           next.pendingPlay = null
           next.generation++
@@ -930,6 +993,10 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
  */
 export interface ScoringScreenModel {
   scoring: ScoringState
+  /** Successful overrides only: a refused attempt must leave its sheet open. */
+  appliedOverrides?: number
+  /** Settled attempts release the editor lock even when the draft was refused. */
+  attemptedOverrides?: number
   /** Undo taps waiting to take back play saved before the screen opened. */
   savedUndos: number
   /** How many such taps have been taken back so far. */
@@ -962,13 +1029,28 @@ export function scoringScreenReducer(
     }
   if (
     event.type === 'UNDO' &&
+    scoring.runnerDraft == null &&
+    scoring.moreDraft == null &&
     scoring.past.length === 0 &&
     scoring.log.length > 0 &&
     scoring.readOnly !== true
   )
     return { ...model, savedUndos: model.savedUndos + 1 }
-  const next = scoringReducer(scoring, event)
-  return next === scoring ? model : { ...model, scoring: next }
+  const reduced = reduce(scoring, event)
+  const next = drainDictation(reduced)
+  return next === scoring && event.type !== 'OVERRIDE'
+    ? model
+    : {
+        ...model,
+        scoring: next,
+        ...(event.type === 'OVERRIDE'
+          ? {
+              attemptedOverrides: (model.attemptedOverrides ?? 0) + 1,
+              appliedOverrides:
+                (model.appliedOverrides ?? 0) + (reduced !== scoring ? 1 : 0)
+            }
+          : {})
+      }
 }
 
 /**

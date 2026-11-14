@@ -1,6 +1,7 @@
 import React, { type ReactNode, useRef } from 'react'
-import { ScrollView, Text, View } from 'react-native'
+import { Pressable, ScrollView, Text, View } from 'react-native'
 
+import { ButtonIcon } from '../components/ButtonIcon'
 import { lstrings } from '../locales/strings'
 import { useTheme } from '../theme/ThemeContext'
 import { MESSAGE_COLOR, SAID_COLOR } from './dictationControls'
@@ -25,28 +26,46 @@ const CHAT_HEIGHT = 66
  * A question, the model's or the screen's own about which player was meant,
  * is drawn under the turns, below the one it is about, whatever their
  * scroll. Nothing is drawn before the first dictation.
+ *
+ * It floats over the screen, with a shadow. Its X, or a tap anywhere in it
+ * but on the question's buttons, closes it; a drag scrolls its turns. The
+ * tap surface is no accessibility element, so a screen reader reaches the
+ * turns, the question's buttons and the X each on its own, and closes with
+ * the X.
  */
 export function RosterChat({
   turns,
-  ask
+  ask,
+  onClose
 }: {
   turns: readonly ChatTurn[]
   ask?: ReactNode
+  onClose?: () => void
 }): React.ReactElement | null {
   const theme = useTheme()
   const scroll = useRef<React.ComponentRef<typeof ScrollView>>(null)
   if (turns.length === 0 && ask == null) return null
   return (
-    <View
+    <Pressable
       testID="Roster chat"
+      accessible={false}
+      tabIndex={-1}
       accessibilityLabel={lstrings.dictation_chat}
       accessibilityLiveRegion="polite"
+      onPress={onClose}
       style={{
+        flexShrink: 1,
+        minHeight: 0,
         borderRadius: theme.rem(theme.radiusRem),
         borderWidth: 2,
         borderColor: theme.scoringInstructionBorder,
         backgroundColor: theme.scoringInstructionBackground,
-        overflow: 'hidden'
+        overflow: 'hidden',
+        shadowColor: '#000000',
+        shadowOpacity: 0.5,
+        shadowRadius: 10,
+        shadowOffset: { width: 0, height: 4 },
+        elevation: 6
       }}
     >
       <ScrollView
@@ -54,6 +73,8 @@ export function RosterChat({
         style={{ flexGrow: 0, maxHeight: CHAT_HEIGHT }}
         contentContainerStyle={{
           paddingHorizontal: 8,
+          // Clear of the X.
+          paddingRight: onClose == null ? 8 : 32,
           paddingVertical: 4,
           gap: 2
         }}
@@ -107,6 +128,25 @@ export function RosterChat({
       {ask != null && (
         <View style={{ alignItems: 'flex-end', padding: 6 }}>{ask}</View>
       )}
-    </View>
+      {onClose != null && (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={lstrings.dictation_chat_close}
+          hitSlop={8}
+          onPress={onClose}
+          style={{
+            position: 'absolute',
+            top: 2,
+            right: 4,
+            width: 24,
+            height: 24,
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}
+        >
+          <ButtonIcon name="close" size={1.125} color={SAID_COLOR} />
+        </Pressable>
+      )}
+    </Pressable>
   )
 }
