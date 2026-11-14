@@ -1585,6 +1585,13 @@ describe('Coach Game (U25)', function () {
 
   it('reads the box score again as plays arrive, at most once a period', async function () {
     const held = server()
+    // Only the read as the screen opens may answer the phone's copy.
+    const asked: string[] = []
+    held.client.boxScore = async (_gameId, options) => {
+      held.reads.boxScore++
+      asked.push(options?.offlineFirst === true ? 'offlineFirst' : 'server')
+      return { batting: [], pitching: [], stats: undefined }
+    }
     const socket = new FakeChanges()
     await coach(held, { socket, boxScoreEveryMs: 400 })
     expect(held.reads.boxScore).equals(1)
@@ -1596,6 +1603,7 @@ describe('Coach Game (U25)', function () {
     expect(held.reads.boxScore).equals(2)
     await socket.emit({ type: 'resync', gameId: 'g1' })
     await waitFor(() => held.reads.boxScore === 3, 'a third read')
+    expect(asked).deep.equals(['offlineFirst', 'server', 'server'])
   })
 
   it('opens on the server’s plays and defaults, never the phone’s stored copy', async function () {

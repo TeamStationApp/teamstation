@@ -47,6 +47,17 @@ export const candidatesKey = (teamId: string): string => `candidates.${teamId}`
 /** How many found people a team's candidates document keeps. */
 export const CANDIDATES_KEPT = 500
 
+/**
+ * The teams the schedule has listed as placeholder opponents (not on
+ * TeamStation), newest first: their rosters and default lineups answer no
+ * one, so the phone never has them, and with no signal a read of one is
+ * answered at once. Every read-ahead adds the ones its games list.
+ */
+export const PLACEHOLDER_TEAMS = 'placeholder.teams'
+
+/** How many placeholder teams that document keeps. */
+export const PLACEHOLDERS_KEPT = 500
+
 /** The team a search of `GET /users?forTeam=` is for, or none. */
 export function candidatesTeamOf(path: string): string | undefined {
   if (!path.startsWith('/users?')) return undefined

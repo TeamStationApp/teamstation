@@ -61,8 +61,9 @@ export function ScoreGameScreen(
     let live = true
     if (reveals === 0) setGame(undefined)
     setMissing(false)
+    // With no signal known, the phone's copy answers at once.
     client
-      .game(gameId)
+      .game(gameId, { offlineFirst: true })
       .then(found => {
         if (live) setGame(found)
       })

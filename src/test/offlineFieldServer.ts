@@ -1,8 +1,11 @@
 import { gameFixture } from '../app/scoring/isUnscoredGame.test'
 import type { PreferenceStorage } from '../app/scoring/scoringPreferenceStore'
+import { PREFETCH_NEAR_PATH } from '../app/sync/cachingClient'
 import type { GumboPlay } from '../common/gumboPlay'
+import { EMPTY_PLAN_SAME_DAY } from '../common/planWarnings'
 import { playForWire, playFromWire } from '../common/scoring/wireRecord'
 import { userIdOfGumbo } from '../common/userId'
+import { pageOf } from './pageOf'
 import { scoringRoster } from './scoringSession'
 
 /** The id the server gives the player the phone made offline. */
@@ -40,6 +43,10 @@ export function fieldServer(stored: {
   posts: Post[]
   /** Each write as it reached the server: method and path. */
   writes: string[]
+  /** Each read's path as it set out, before any hold or drop. */
+  requested: string[]
+  /** Reads refused with their status while listed: 503 as a deploy would. */
+  refused: Map<string, number>
   /** While set, a tag is refused: its event is not the server's. */
   refuseTags: boolean
   /** While set, a post of plays is refused for good, once `holdPlays` lets it go. */
@@ -50,6 +57,16 @@ export function fieldServer(stored: {
    * stale, as the server's lineups and generation checks refuse it.
    */
   staleOnSwap: boolean
+  /**
+   * While set, g1 is under way: the schedule lists it as begun an hour ago,
+   * not upcoming. Otherwise it starts tomorrow and has not begun.
+   */
+  underWay: boolean
+  /**
+   * While set, the Owls are a placeholder opponent: listed as external, with
+   * no roster or default lineup this person may read.
+   */
+  external: boolean
 } {
   const plays = new Map(stored.plays.map(play => [play.about.atBatIndex, play]))
   let currentPlay = stored.currentPlay
@@ -92,6 +109,32 @@ export function fieldServer(stored: {
     lineupsDigest: swapped ? 'lineups-swapped' : 'lineups-1',
     generation
   })
+  // g1 as the schedule lists it.
+  const listed = {
+    id: 'g1',
+    seasonId: null,
+    homeTeamId: 'home',
+    awayTeamId: 'away',
+    homeTeamName: 'Hawks',
+    awayTeamName: 'Owls',
+    homeTeamExternal: false,
+    awayTeamExternal: false,
+    startAt: '2026-10-22T18:00:00Z',
+    venue: null,
+    status: 'scheduled',
+    homeScore: null,
+    awayScore: null,
+    ingestStatus: 'none',
+    videoCount: 0
+  }
+  // g1 as the near games list it: begun an hour ago, or due tomorrow.
+  const nearListed = (): unknown => ({
+    ...listed,
+    awayTeamExternal: state.external,
+    startAt: new Date(
+      Date.now() + (state.underWay ? -1 : 24) * 3_600_000
+    ).toISOString()
+  })
   const routes: Record<string, () => unknown> = {
     // The scorekeeper also coaches the Hawks, for Coach Game.
     '/games/g1': () => ({
@@ -119,25 +162,39 @@ export function fieldServer(stored: {
       teams: { away: ['scorekeeper'], home: ['scorekeeper'] },
       guardianOf: []
     }),
-    '/events?when=upcoming': () => [
-      {
-        id: 'g1',
-        seasonId: null,
-        homeTeamId: 'home',
-        awayTeamId: 'away',
-        homeTeamName: 'Hawks',
-        awayTeamName: 'Owls',
-        homeTeamExternal: false,
-        awayTeamExternal: false,
-        startAt: '2026-10-22T18:00:00Z',
-        venue: null,
-        status: 'scheduled',
-        homeScore: null,
-        awayScore: null,
-        ingestStatus: 'none',
-        videoCount: 0
+    // Past's first page: g1 once it has begun.
+    '/events?paged=1&when=past': () =>
+      pageOf(state.underWay ? [nearListed()] : [], {}, { counts: null }),
+    // Every game from the look-back on: g1, begun an hour ago or due tomorrow.
+    [PREFETCH_NEAR_PATH]: () => [nearListed()],
+    '/events/g1/info': () => ({
+      id: 'g1',
+      eventKind: 'game',
+      title: null,
+      teamId: 'home',
+      teamName: 'Hawks',
+      startAt: '2026-10-22T18:00:00Z',
+      endAt: null,
+      timezone: 'UTC',
+      venue: null,
+      address: null,
+      latitude: null,
+      longitude: null,
+      status: 'scheduled',
+      canManage: false,
+      replyUserIds: [],
+      attendees: []
+    }),
+    '/games/g1/box-score': () => ({ batting: [], pitching: [] }),
+    '/games/g1/plans': () => ({
+      away: null,
+      home: {
+        teamId: 'home',
+        plan: null,
+        rules: null,
+        sameDay: EMPTY_PLAN_SAME_DAY
       }
-    ],
+    }),
     '/teams': () => [],
     '/teams/away/roster': () => roster('away'),
     '/teams/away/roster?includeFullNames=true': () => roster('away'),
@@ -165,10 +222,16 @@ export function fieldServer(stored: {
     dropHeld: false,
     posts: [] as Post[],
     writes: [] as string[],
+    requested: [] as string[],
+    refused: new Map<string, number>(),
     refuseTags: false,
     refusePlays: false,
     staleOnSwap: false,
+    underWay: false,
+    external: false,
     fetch: (async (url: unknown, init?: RequestInit) => {
+      if (init?.method == null || init.method === 'GET')
+        state.requested.push(String(url).replace('http://x/api/v1', ''))
       if (state.hold != null) {
         await state.hold
         // A stalled link the phone gave up on never delivered it.
@@ -320,6 +383,16 @@ export function fieldServer(stored: {
         }
         return json(404, { code: 'notFound', message: 'Not found' })
       }
+      const refusal = state.refused.get(path)
+      if (refusal != null)
+        return json(
+          refusal,
+          refusal === 403
+            ? { code: 'forbidden', message: 'Not yours' }
+            : { code: 'unavailable', message: 'Restarting' }
+        )
+      if (state.external && path.startsWith('/teams/away/'))
+        return json(404, { code: 'notFound', message: 'Not found' })
       const route = routes[path]
       return route == null
         ? json(404, { code: 'notFound', message: 'Not found' })

@@ -8,11 +8,14 @@ import { asPage, asSeasonGame, TeamStationClient } from '../../common/api'
 import { userIdOfGumbo } from '../../common/userId'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { pageOf } from '../../test/pageOf'
+import { gameFixture } from '../scoring/isUnscoredGame.test'
 import { cacheFileName, type DocumentStore, openCacheStore } from './cacheStore'
 import {
   CachingClient,
   expiredSignature,
   PREFETCH_CONCURRENCY,
+  PREFETCH_NEAR_PATH,
+  PREFETCH_STARTED_HOURS,
   unsignedBody,
   untilAborted
 } from './cachingClient'
@@ -747,7 +750,7 @@ describe('CachingClient', function () {
         }
       },
       '/me/roles': { body: roles },
-      '/events?when=upcoming': {
+      [PREFETCH_NEAR_PATH]: {
         body: [
           upcomingGame('g1', 'tem_hawks', 'tem_owls'),
           upcomingGame('g2', 'tem_hawks', 'tem_external')
@@ -794,7 +797,23 @@ describe('CachingClient', function () {
     expect(stored).not.includes(fullRosterKey('tem_owls'))
     expect(stored, 'a failed read is skipped').not.includes('game.g1')
     expect(stored).includes('me.roles').and.not.includes('games.upcoming')
-    expect(fetched, 'the scoring read stays').includes('/events?when=upcoming')
+    expect(fetched, 'the scoring read stays').includes(PREFETCH_NEAR_PATH)
+
+    // No signal known part-way through: the read-ahead's reads still ask
+    // the server, four at a time.
+    net.most = 0
+    let release = (): void => undefined
+    net.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const again = client.prefetch()
+    await new Promise(resolve => setTimeout(resolve, 10))
+    client.offline = true
+    release()
+    await again
+    net.gate = undefined
+    client.offline = false
+    expect(net.most).within(1, PREFETCH_CONCURRENCY)
 
     net.offline = true
     expect(await client.myRoles()).deep.include({ teams: roles.teams })
@@ -807,6 +826,188 @@ describe('CachingClient', function () {
     const before = net.calls.length
     await client.prefetch()
     expect(net.calls.length).equals(before)
+  })
+
+  it('answers an offlineFirst read from the phone at once once no signal is known, asks the server behind it, and leaves every other read network-first (Offline answers at once)', async function () {
+    const net = server({
+      '/games/g1': { body: { ...gameFixture, id: 'g1' } },
+      '/teams/tem_hawks/roster': { body: [rosterEntry(101)] },
+      '/teams/tem_jays/roster': { body: [rosterEntry(303)] },
+      '/teams/tem_eagles/roster': { body: [rosterEntry(404)] },
+      // The games stored: the Owls are a placeholder opponent.
+      [PREFETCH_NEAR_PATH]: {
+        body: [
+          upcomingGame('g1', 'tem_hawks', 'tem_owls'),
+          upcomingGame('g2', 'tem_hawks', 'tem_jays')
+        ].map(game => ({
+          ...(game as object),
+          awayTeamExternal: (game as { id: string }).id === 'g1'
+        }))
+      }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.game('g1')
+    await client.roster('tem_hawks')
+    // The read-ahead keeps the placeholder sides it lists, under a key of
+    // their own: gone the list, they are still known.
+    await client.prefetch()
+    stores
+      .get('usr_1')!
+      .db.prepare('DELETE FROM documents WHERE key = ?')
+      .run(PREFETCH_NEAR_PATH)
+    // With signal, the option changes nothing: the server answers first.
+    net.calls.length = 0
+    await client.game('g1', { offlineFirst: true })
+    expect(net.calls).deep.equals(['/games/g1'])
+    // A request that cannot leave: the phone knows it has no signal.
+    net.offline = true
+    await client.myRoles().catch(() => undefined)
+    expect(client.offline).equals(true)
+    // The link answers nothing at all, as a dropped one does.
+    net.offline = false
+    let release = (): void => undefined
+    net.gate = new Promise<void>(resolve => {
+      release = resolve
+    })
+    const soon = async <T>(read: Promise<T>): Promise<T | 'waited'> =>
+      await Promise.race([
+        read,
+        new Promise<'waited'>(resolve =>
+          setTimeout(() => {
+            resolve('waited')
+          }, 100)
+        )
+      ])
+    net.calls.length = 0
+    const game = await soon(client.game('g1', { offlineFirst: true }))
+    expect(game === 'waited' ? game : game.id).equals('g1')
+    // A whole-name roster never stored answers with the plain one.
+    const full = await soon(
+      client.roster('tem_hawks', { includeFullNames: true, offlineFirst: true })
+    )
+    expect(full === 'waited' ? full : full.map(row => row.userId)).deep.equals([
+      userIdOfGumbo(101)
+    ])
+    expect(net.calls, 'the server is still asked').includes('/games/g1')
+    // A placeholder opponent's roster, which the phone never has: no
+    // signal is the answer at once, and the server is still asked.
+    const never = await soon(
+      client.roster('tem_owls', { offlineFirst: true }).then(
+        () => 'answered',
+        (error: unknown) => (error as { code?: string }).code
+      )
+    )
+    expect(never).equals('offline')
+    expect(net.calls).includes('/teams/tem_owls/roster')
+    // Any other read never stored asks the server, as any read: on a link
+    // that works, a stale "no signal" never stands in for its answer.
+    const eagles = client.roster('tem_eagles', { offlineFirst: true })
+    expect(await soon(eagles.catch(() => 'failed'))).equals('waited')
+    expect(
+      await soon(
+        client.game('g8', { offlineFirst: true }).catch(() => 'failed')
+      )
+    ).equals('waited')
+    // Without the option, a stored read still waits for the network.
+    expect(await soon(client.game('g1').catch(() => 'failed'))).equals('waited')
+    release()
+    // A real opponent's roster comes back with its players.
+    expect((await eagles).map(row => row.userId)).deep.equals([
+      userIdOfGumbo(404)
+    ])
+    for (let tries = 0; client.offline && tries < 100; tries++)
+      await new Promise(resolve => setTimeout(resolve, 5))
+    expect(client.offline, 'the answer behind it brings the phone back').equals(
+      false
+    )
+  })
+
+  it('reads ahead the games from the look-back on and what their page, scoring and Coach Game read, so each opens offline (Started games)', async function () {
+    const at = (hours: number): string =>
+      new Date(Date.now() + hours * 3_600_000).toISOString()
+    const timed = (
+      id: string,
+      hours: number,
+      more: Record<string, unknown> = {}
+    ): unknown => ({
+      ...(upcomingGame(id, 'tem_hawks', 'tem_owls') as object),
+      startAt: at(hours),
+      ...more
+    })
+    const routes: Record<string, Answer | undefined> = {
+      '/me/roles': { body: { teams: {} } },
+      [PREFETCH_NEAR_PATH]: {
+        body: [
+          // Under way, scored before its start, called off, a practice,
+          // next week's game, and one the look-back has since passed.
+          timed('under', -1),
+          timed('early', 0.5, { homeScore: 1, awayScore: 0 }),
+          timed('off', -2, { status: 'cancelled' }),
+          timed('practice', -1, { eventKind: 'event' }),
+          timed('later', 5 * 24),
+          timed('aged', -(PREFETCH_STARTED_HOURS + 1))
+        ]
+      },
+      '/events/under/info': { body: { info: 'under' } },
+      '/games/under/box-score': { body: { box: 'under' } },
+      '/games/under/plans': { body: { plans: 'under' } }
+    }
+    const net = server(routes)
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.prefetch()
+    for (const id of ['under', 'early'])
+      for (const path of [
+        `/games/${id}`,
+        `/games/${id}/lineups`,
+        `/games/${id}/events`,
+        `/events/${id}/info`,
+        `/games/${id}/plans`,
+        `/games/${id}/box-score`
+      ])
+        expect(net.calls).includes(path)
+    expect(net.calls).includes('/games/later/events')
+    for (const path of [
+      '/events/later/info',
+      '/games/later/plans',
+      '/games/later/box-score'
+    ])
+      expect(net.calls, 'nothing past the horizon').not.includes(path)
+    expect(
+      net.calls.filter(path => path.includes('/off')),
+      'a game called off: its page and its information only'
+    ).deep.equals(['/games/off', '/events/off/info'])
+    expect(net.calls).includes('/events/practice/info')
+    expect(
+      net.calls.filter(path =>
+        /^\/games\/practice\/(plans|box-score)$/.test(path)
+      ),
+      'an event that is not a game has no plans or box score'
+    ).deep.equals([])
+    expect(new Set(net.calls).size, 'each read once').equals(net.calls.length)
+
+    // The list will not load: the games it last answered are read ahead,
+    // those the look-back has passed since left out.
+    routes[PREFETCH_NEAR_PATH] = {
+      status: 503,
+      body: { code: 'unavailable', message: 'Restarting' }
+    }
+    net.calls.length = 0
+    await client.prefetch()
+    expect(net.calls).includes('/games/under/box-score')
+    expect(net.calls).not.includes('/games/aged')
+
+    net.offline = true
+    expect(await rawRead(client, '/events/under/info')).deep.equals({
+      info: 'under'
+    })
+    expect(await rawRead(client, '/games/under/box-score')).deep.equals({
+      box: 'under'
+    })
+    expect(await rawRead(client, '/games/under/plans')).deep.equals({
+      plans: 'under'
+    })
   })
 
   it('paints Schedule from a first page only the prefetch stored (Paged prefetch)', async function () {
@@ -1121,12 +1322,16 @@ describe('CachingClient', function () {
       expect(groupScope('x')).equals('group:x')
     })
 
-    it('writes only the prefetch’s two upcoming pages, reads them when the list will not load, and paints Upcoming from the first page', async function () {
+    it('writes only the prefetch’s first Upcoming and Past pages, reads Upcoming’s when the list will not load, and paints Upcoming from it', async function () {
       const games = [game('g1', '2026-10-22T18:00:00Z')]
       const routes: Record<string, Answer | undefined> = {
-        '/events?when=upcoming': { body: games },
+        [PREFETCH_NEAR_PATH]: { body: games },
         '/events?paged=1&when=upcoming': {
           body: pageOf([...games, game('g2', '2026-10-23T18:00:00Z')])
+        },
+        // A game once it has started: listed in Past, to tap offline.
+        '/events?paged=1&when=past': {
+          body: pageOf([game('p1', '2026-10-21T18:00:00Z')])
         }
       }
       const net = server(routes)
@@ -1134,22 +1339,35 @@ describe('CachingClient', function () {
       client.openFor('usr_1')
       await client.prefetch()
       expect(pages()).deep.equals([
-        { scope: 'me', window: 'upcoming', cursor: 'first' },
-        { scope: 'me', window: 'upcoming', cursor: 'list' }
+        { scope: 'me', window: 'past', cursor: 'first' },
+        { scope: 'me', window: 'upcoming', cursor: 'first' }
       ])
       expect(
-        net.calls.filter(path => /^\/(events|teams\/[^/]+\/games)/.test(path))
-      ).deep.equals(['/events?when=upcoming', '/events?paged=1&when=upcoming'])
+        net.calls.filter(path =>
+          /^\/(events|teams\/[^/]+\/games)(\?|$)/.test(path)
+        ),
+        'the near games are a document, not a schedule page'
+      ).deep.equals([
+        PREFETCH_NEAR_PATH,
+        '/events?paged=1&when=upcoming',
+        '/events?paged=1&when=past'
+      ])
       expect(
         ids(await client.scheduleGames(ME_SCOPE, 'upcoming', asSeasonGame))
       ).deep.equals(['g1', 'g2'])
-      // The list will not load: the stored games choose what is read ahead.
-      routes['/events?when=upcoming'] = {
+      expect(
+        ids(await client.scheduleGames(ME_SCOPE, 'past', asSeasonGame))
+      ).deep.equals(['p1'])
+      expect(net.calls).not.includes('/games/g2/lineups')
+      // A phone that never stored the near games, whose read will not
+      // load: Upcoming's stored games choose what is read ahead.
+      routes[PREFETCH_NEAR_PATH] = {
         status: 503,
         body: { code: 'unavailable', message: 'Restarting' }
       }
-      net.calls.length = 0
-      await client.prefetch()
+      const other = clientOf(net.fetch)
+      other.openFor('usr_2')
+      await other.prefetch()
       expect(net.calls).includes('/games/g2/lineups')
     })
 

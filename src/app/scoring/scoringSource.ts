@@ -61,13 +61,15 @@ export interface ScoringSource {
    * read, and its saves sent once the swap is. `storedFirst`, for the
    * scoring screen alone: the defaults and the first read of the plays are
    * the phone's stored ones; every other caller reads the server.
+   * `offlineFirst`, for Coach Game: those two reads are the phone's stored
+   * ones only while no signal is known.
    */
   open: (
     game: GameDetail,
     away: RosterEntry[],
     home: RosterEntry[],
     held?: HeldOpening,
-    options?: { storedFirst?: boolean }
+    options?: { storedFirst?: boolean; offlineFirst?: boolean }
   ) => Promise<ScoringSession>
 }
 
@@ -119,11 +121,13 @@ function context(
 export async function defaultsOf(
   client: TeamStationClient,
   game: GameDetail,
-  storedFirst = false
+  storedFirst = false,
+  offlineFirst = false
 ): Promise<DefaultLineups> {
   const load = async (teamId: string): Promise<Lineup | null> => {
     try {
-      return (await client.defaultLineup(teamId, { storedFirst })).lineup
+      return (await client.defaultLineup(teamId, { storedFirst, offlineFirst }))
+        .lineup
     } catch {
       return null
     }
@@ -310,10 +314,11 @@ export class ServerScoringSource implements ScoringSource {
     away: RosterEntry[],
     home: RosterEntry[],
     opening?: HeldOpening,
-    options?: { storedFirst?: boolean }
+    options?: { storedFirst?: boolean; offlineFirst?: boolean }
   ): Promise<ScoringSession> {
     const client = this.client
     const storedFirst = options?.storedFirst === true
+    const offlineFirst = options?.offlineFirst === true
     let currentGame = game
     let rosters = { away, home }
     let first = true
@@ -321,7 +326,8 @@ export class ServerScoringSource implements ScoringSource {
     // them, whatever the defaults say now. As the scoring screen opens,
     // every read it waits on is the phone's stored one, when it has one.
     const defaults =
-      opening?.defaults ?? (await defaultsOf(client, game, storedFirst))
+      opening?.defaults ??
+      (await defaultsOf(client, game, storedFirst, offlineFirst))
     // The context for the game's teams as last read, rebuilt only when they
     // change: every read gives the one its teams call for, whether or not
     // the session keeps that read.
@@ -350,7 +356,8 @@ export class ServerScoringSource implements ScoringSource {
           opening != null && !later
             ? opening.events
             : await client.gameEvents(gameId, {
-                storedFirst: storedFirst && !later
+                storedFirst: storedFirst && !later,
+                offlineFirst: offlineFirst && !later
               })
         // On a reload or a rebase, the game read again after its plays: a
         // swap between the two reads would pair the swapped record with the

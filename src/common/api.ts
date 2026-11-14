@@ -3502,6 +3502,17 @@ export interface RequestOptions {
    */
   storedFirst?: boolean
   /**
+   * While the phone already knows it has no signal, it answers what it
+   * stored for the read at once, when it stored anything, and asks the
+   * server behind it; with signal, the server answers first, as for any
+   * read. For the screens that open on a game with no signal, which would
+   * otherwise wait out a deadline for each read. With nothing stored it
+   * asks the server, except for a placeholder opponent's roster or default
+   * lineup, which the phone never has: that fails as offline at once. The
+   * web keeps nothing.
+   */
+  offlineFirst?: boolean
+  /**
    * `swap`: the phone queues a swap of home and away and answers it from
    * its own copy of the game (`CachingClient.queueSwap`). Without it the
    * swap goes to the server.
@@ -3594,13 +3605,17 @@ export const UPLOAD_BODY_CHARS = 64 * 1024
  */
 export type StoredChange = 'game' | 'details'
 
-/** How a read takes `storedFirst`, for the screens that ask for it. */
+/** How a read takes `storedFirst` or `offlineFirst`, for the screens that ask for one. */
 export interface ReadOptions {
   storedFirst?: boolean
+  offlineFirst?: boolean
 }
 
 function readOptions(options: ReadOptions | undefined): RequestOptions {
-  return options?.storedFirst === true ? { storedFirst: true } : {}
+  return {
+    ...(options?.storedFirst === true ? { storedFirst: true } : {}),
+    ...(options?.offlineFirst === true ? { offlineFirst: true } : {})
+  }
 }
 
 /**
@@ -6282,11 +6297,13 @@ export class TeamStationClient {
     )
   }
 
-  async boxScore(gameId: string): Promise<BoxScore> {
+  async boxScore(gameId: string, options?: ReadOptions): Promise<BoxScore> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/box-score`,
-      asBoxScore
+      asBoxScore,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6309,11 +6326,16 @@ export class TeamStationClient {
   }
 
   /** Each side's lineups in a game: start, changes and current. */
-  async gameLineups(gameId: string): Promise<GameLineupsResponse> {
+  async gameLineups(
+    gameId: string,
+    options?: ReadOptions
+  ): Promise<GameLineupsResponse> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/lineups`,
-      asGameLineupsResponse
+      asGameLineupsResponse,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6340,11 +6362,16 @@ export class TeamStationClient {
    * same-day load its warnings are judged by; a side the caller may not save
    * the lineup of is null.
    */
-  async gamePlans(gameId: string): Promise<GamePlansResponse> {
+  async gamePlans(
+    gameId: string,
+    options?: ReadOptions
+  ): Promise<GamePlansResponse> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/plans`,
-      asGamePlansResponse
+      asGamePlansResponse,
+      undefined,
+      readOptions(options)
     )
   }
 
