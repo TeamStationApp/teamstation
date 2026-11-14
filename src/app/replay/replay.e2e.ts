@@ -1843,9 +1843,11 @@ const CENTRING = `
   const minLeft = Math.min(...cells.map(r => r.left)), maxRight = Math.max(...cells.map(r => r.right));
   const note = [...scroll.querySelectorAll('[dir="auto"]')].find(n => (n.textContent ?? '').startsWith('Stats from'));
   const noteRect = note?.getBoundingClientRect();
+  const sideways = [...scroll.querySelectorAll('*')].find(n => n.scrollWidth > n.clientWidth + 1 && ['auto', 'scroll'].includes(getComputedStyle(n).overflowX));
   return {
     left: Math.round((minLeft - left) * 10) / 10,
     right: Math.round((right - maxRight) * 10) / 10,
+    overflow: sideways ? sideways.scrollWidth - sideways.clientWidth : 0,
     note: noteRect ? { inColumn: column.contains(note), align: getComputedStyle(note).textAlign } : null
   };
 `
@@ -1853,16 +1855,29 @@ const CENTRING = `
 interface Centring {
   left: number
   right: number
+  /** How far the stats scroll sideways, when they are wider than the box. */
+  overflow: number
   note: { inColumn: boolean; align: string } | null
 }
 
 async function centred(m: Device, what: string): Promise<Centring> {
   const measured = await evalJson<Centring>(m, CENTRING)
-  console.log(`${what}: gaps ${measured.left} / ${measured.right}`)
-  assert.ok(
-    Math.abs(measured.left - measured.right) <= 1,
-    `${what}: the box score is off centre, ${measured.left} against ${measured.right}`
+  console.log(
+    `${what}: gaps ${measured.left} / ${measured.right}, sideways ${measured.overflow}`
   )
+  // Centred when it fits. Wider than the window (develop 3e0e1d4a7 added
+  // its pitch and strike columns, and a droplet's fonts set wider), it
+  // scrolls sideways from the left edge instead (7447e7314).
+  if (measured.overflow > 0)
+    assert.ok(
+      measured.left >= 0,
+      `${what}: the box score scrolls sideways but starts off the left, ${measured.left}`
+    )
+  else
+    assert.ok(
+      Math.abs(measured.left - measured.right) <= 1,
+      `${what}: the box score is off centre, ${measured.left} against ${measured.right}`
+    )
   return measured
 }
 

@@ -22,10 +22,10 @@ async function main(): Promise<void> {
     resolve(MAESTRO_D_CLIENT_ROOT, 'dist/cjs/index.js')
   )
   const daemon = await MaestroD.connect({ name: MAESTRO_D, spawn: false })
+  const devices = (await daemon.status()).devices as Array<{ id: string }>
   assert(
-    (await daemon.status()).devices.some(
-      (device: { id: string }) => device.id === MAESTRO_DEVICE
-    ) === true
+    devices.some(device => device.id === MAESTRO_DEVICE),
+    `daemon ${MAESTRO_D} has no ${MAESTRO_DEVICE}: ${JSON.stringify(devices.map(device => device.id))}`
   )
   const m = await daemon.attach({ device: MAESTRO_DEVICE })
   const read = async (expression: string): Promise<any> =>

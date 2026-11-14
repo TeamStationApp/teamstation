@@ -82,7 +82,7 @@ async function main(): Promise<void> {
             if(!key || !key.textContent.includes('#P - Number of pitches') || !key.textContent.includes('S - Strikes'))throw Error('Missing bottom key');
             if(scope.querySelectorAll('[data-testid="box-stats-key"]').length!==1)throw Error('Repeated box key');
             for(const definition of ['AB - At bats','R - Runs scored','H - Hits','RBI - Runs batted in','BB - Base on balls (walks)','SO - Strikeouts','HR - Home runs','HBP - Hit by pitch','AVG - Batting average','IP - Innings pitched','BF - Batters faced','ER - Earned runs','E - Errors']) {
-              if(!key.textContent.includes(definition))throw Error('Missing box definition '+definition);
+              if(!key.textContent.includes(definition))throw Error(${JSON.stringify(name)}+': missing box definition '+definition);
             }
             const text=scope.textContent;
             if(!text.includes('HBP') || !text.includes('#P') || !text.includes('SO'))throw Error('Missing box labels');
