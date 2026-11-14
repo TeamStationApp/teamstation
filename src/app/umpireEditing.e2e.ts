@@ -156,6 +156,14 @@ async function main(): Promise<void> {
       const r = n.getBoundingClientRect()
       return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
     })
+    // The drags are in rows, as the list draws them: one row is the step
+    // from Ada's checkbox to Billy's (80 points when they were written).
+    const row =
+      (await page.$eval('[aria-label="Select Billy Lee"]', n => {
+        const r = n.getBoundingClientRect()
+        return r.y + r.height / 2
+      })) - point.y
+    const rows = (count: number): number => Math.round(row * count)
     const drag = async (offsets: number[], start = point): Promise<void> => {
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
@@ -171,20 +179,20 @@ async function main(): Promise<void> {
         touchPoints: []
       })
     }
-    await drag([160])
+    await drag([rows(2)])
     expect(await checked()).length(3)
     await click('Billy Lee')
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma Lee'])
     await click('Ada Lee')
     await click('Uma Lee')
-    await drag([160, 80])
+    await drag([rows(2), rows(1)])
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Billy Lee'])
     await click('Ada Lee')
     await click('Billy Lee')
-    await drag([113], { ...point, y: point.y + 23 })
+    await drag([rows(113 / 80)], { ...point, y: point.y + rows(23 / 80) })
     expect(await checked()).length(3)
     for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
-    await drag([-113], { ...point, y: point.y + 136 })
+    await drag([-rows(113 / 80)], { ...point, y: point.y + rows(136 / 80) })
     expect(await checked()).length(3)
     for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     await drag([])

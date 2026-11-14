@@ -366,7 +366,9 @@ async function main(): Promise<void> {
                   env: stack.env
                 }
               )
-              // The producer reset the database under the running API.
+              // The producer reset the database under the running API, and
+              // with it the scoring accounts later scripts sign in as.
+              stack.reseed()
               await stack.restartApi({ speech: stack.speech })
             } catch (error) {
               return {
