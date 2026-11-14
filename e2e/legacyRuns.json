@@ -3352,5 +3352,35 @@
       "args": ["--grep", "scenario 6:"],
       "needs": "gpu"
     }
+  ],
+  "src/app/nativeWheel.e2e.ts": [
+    {
+      "label": "ios-app",
+      "env": {
+        "TS_WHEEL_SURFACE": "ios-app"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "ios-safari",
+      "env": {
+        "TS_WHEEL_SURFACE": "ios-safari"
+      },
+      "needs": "ios-sim"
+    },
+    {
+      "label": "android-app",
+      "env": {
+        "TS_WHEEL_SURFACE": "android-app"
+      },
+      "needs": "android-phone"
+    },
+    {
+      "label": "chromium",
+      "env": {
+        "TS_WHEEL_SURFACE": "chromium"
+      },
+      "needs": "web"
+    }
   ]
 }

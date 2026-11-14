@@ -10,7 +10,7 @@ import {
   wheelAt,
   type WheelNode,
   wheelValue
-} from '../../test/iosWheel.e2e'
+} from '../../../e2e/rigs/iosWheel'
 import {
   androidSmokeRecording,
   watchSmokeRecorder

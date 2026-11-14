@@ -5,10 +5,15 @@ import { createInterface } from 'node:readline'
 
 import express from 'express'
 
-import type { GroupFixture } from './groupFixtures'
-import { groupFixture } from './groupFixtures'
-import { seedPrivacyGame } from './playerNamePrivacyFixture'
-import { quiet, requireRedis, testPrefix, testStore } from './scoreboardKit'
+import type { GroupFixture } from '../../src/test/groupFixtures'
+import { groupFixture } from '../../src/test/groupFixtures'
+import { seedPrivacyGame } from '../../src/test/playerNamePrivacyFixture'
+import {
+  quiet,
+  requireRedis,
+  testPrefix,
+  testStore
+} from '../../src/test/scoreboardKit'
 
 /**
  * The pop-up wheel fixture for `src/app/nativeWheel.e2e.ts`: the privacy
@@ -18,7 +23,7 @@ import { quiet, requireRedis, testPrefix, testStore } from './scoreboardKit'
  *
  *   TS_WHEEL_HOST=<this Mac> TS_WHEEL_PORT=19480 \
  *     TS_WHEEL_MANIFEST=<private file> \
- *     node -r sucrase/register src/test/nativeWheelFixture.e2e.ts
+ *     node -r sucrase/register e2e/fixtures/nativeWheelFixture.ts
  *
  * Postgres and Redis must be running. Sign-in codes come from the control
  * endpoint, which listens on this Mac only, and are never printed. Interrupt

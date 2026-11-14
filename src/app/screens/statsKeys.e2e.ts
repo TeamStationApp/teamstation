@@ -14,7 +14,7 @@ import {
   required,
   shot,
   signInWeb
-} from '../replay/kit.e2e'
+} from '../../../e2e/rigs/replayKit'
 
 async function main(): Promise<void> {
   const seed = JSON.parse(readFileSync(required('TEST_SEED'), 'utf8')) as {

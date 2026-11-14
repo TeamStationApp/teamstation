@@ -4,24 +4,24 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
-import {
-  DEFAULT_PRIVACY_LABEL,
-  PLAYER_NAME_PRIVACY_LABELS,
-  PLAYER_NAME_PRIVACY_STOPS
-} from '../common/playerNamePrivacy'
+import type { NativeWheelManifest } from '../../e2e/fixtures/nativeWheelFixture'
 import {
   pickerWheels,
   turnWheel,
   wheelAt,
   type WheelNode,
   wheelValue
-} from '../test/iosWheel.e2e'
-import type { NativeWheelManifest } from '../test/nativeWheelFixture.e2e'
+} from '../../e2e/rigs/iosWheel'
 import {
   browserSession,
   maestro,
   type MaestroHandle
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import {
+  DEFAULT_PRIVACY_LABEL,
+  PLAYER_NAME_PRIVACY_LABELS,
+  PLAYER_NAME_PRIVACY_STOPS
+} from '../common/playerNamePrivacy'
 
 /**
  * The pop-up wheel on every surface, driven by maestro-d against

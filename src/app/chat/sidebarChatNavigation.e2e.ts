@@ -4,12 +4,12 @@ import { mkdir } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { promisify } from 'node:util'
 
-import { publicWebNodes } from '../../test/chat2Maestro.e2e'
+import { publicWebNodes } from '../../../e2e/rigs/chat2Maestro'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
 import { tessFixture } from '../../test/tessFixture'
 import { sharedChromeReturnsToChat } from './chat2.e2e'
 import { openRecoveryChat } from './chatHistoryRecoveryReplyFixture.e2e'

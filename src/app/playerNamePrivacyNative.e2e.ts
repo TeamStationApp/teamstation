@@ -4,14 +4,14 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
+import type { PrivacyNativeManifest } from '../../e2e/fixtures/playerNamePrivacyNativeFixture'
+import { turnWheel, wheelAt } from '../../e2e/rigs/iosWheel'
+import { maestro } from '../../e2e/rigs/refinementsMaestro'
 import {
   DEFAULT_PRIVACY_LABEL,
   PLAYER_NAME_PRIVACY_LABELS,
   PLAYER_NAME_PRIVACY_STOPS
 } from '../common/playerNamePrivacy'
-import type { PrivacyNativeManifest } from '../../e2e/fixtures/playerNamePrivacyNativeFixture'
-import { maestro } from '../../e2e/rigs/refinementsMaestro'
-import { turnWheel, wheelAt } from '../test/iosWheel.e2e'
 
 /**
  * Player name privacy in the phone app, driven by maestro-d against

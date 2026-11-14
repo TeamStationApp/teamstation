@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path'
 import { PerspectiveCamera, Vector3 } from 'three'
 
 import { modalFixture } from '../../../e2e/fixtures/scoringModalsFixture'
-import { turnWheel, wheelAt, wheelValue } from '../../test/iosWheel.e2e'
+import { turnWheel, wheelAt, wheelValue } from '../../../e2e/rigs/iosWheel'
 import { applyFieldCamera } from '../field/cameraModel'
 import { BASES, createPlayers } from '../field/fieldModel'
 import { runnerTargets } from './runnerDrag'
