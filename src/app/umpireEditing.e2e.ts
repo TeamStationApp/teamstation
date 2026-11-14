@@ -164,6 +164,22 @@ async function main(): Promise<void> {
         return r.y + r.height / 2
       })) - point.y
     const rows = (count: number): number => Math.round(row * count)
+    // What a failed drag is told: the app counts rows by each selector's
+    // own top and height, the drags by the step between checkboxes.
+    const layout = async (): Promise<string> =>
+      JSON.stringify({
+        row,
+        point,
+        scrollY: await page.evaluate(() => window.scrollY),
+        selectors: await page.$$eval(
+          '[data-testid^="umpire-select-drag-"]',
+          nodes =>
+            nodes.map(n => {
+              const r = n.getBoundingClientRect()
+              return [Math.round(r.top), Math.round(r.height)]
+            })
+        )
+      })
     const drag = async (offsets: number[], start = point): Promise<void> => {
       await cdp.send('Input.dispatchTouchEvent', {
         type: 'touchStart',
@@ -180,7 +196,7 @@ async function main(): Promise<void> {
       })
     }
     await drag([rows(2)])
-    expect(await checked()).length(3)
+    expect(await checked(), await layout()).length(3)
     await click('Billy Lee')
     expect(await checked()).deep.equals(['Select Ada Lee', 'Select Uma Lee'])
     await click('Ada Lee')
@@ -190,10 +206,10 @@ async function main(): Promise<void> {
     await click('Ada Lee')
     await click('Billy Lee')
     await drag([rows(113 / 80)], { ...point, y: point.y + rows(23 / 80) })
-    expect(await checked()).length(3)
+    expect(await checked(), await layout()).length(3)
     for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     await drag([-rows(113 / 80)], { ...point, y: point.y + rows(136 / 80) })
-    expect(await checked()).length(3)
+    expect(await checked(), await layout()).length(3)
     for (const name of ['Ada Lee', 'Billy Lee', 'Uma Lee']) await click(name)
     await drag([])
     expect(await checked()).deep.equals(['Select Ada Lee'])

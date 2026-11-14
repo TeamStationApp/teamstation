@@ -37,19 +37,20 @@ function paneTab(name: string): string {
 }
 
 /**
- * The pane's tallest scroller with room to scroll: the navigation's scenes,
- * between the sidebar and her column on the right (fb5ef504a), what is in
- * them, or what holds them short of the sidebar. On a wide window the
- * scenes scroll as one, header and all.
+ * The pane's tallest scroller with room to scroll: the navigation's scenes
+ * (fb5ef504a), what is in them, or what holds them. On a wide window the
+ * page scrolls as one beside her column, header and sidebar with it.
  */
-const findScroller = `(() => {
+const scrollerCandidates = `(() => {
   const scenes = document.querySelector('[data-testid="navigation-scenes"]')
-  if (scenes == null) return undefined
+  if (scenes == null) return []
   const around = []
-  for (let node = scenes.parentElement; node != null && node.querySelector('[data-testid="navigation-sidebar"]') == null; node = node.parentElement) around.push(node)
+  for (let node = scenes.parentElement; node != null; node = node.parentElement) around.push(node)
   return [scenes, ...around, ...Array.from(scenes.querySelectorAll('*'))]
-})()
-  ?.filter(candidate => {
+})()`
+
+const findScroller = `${scrollerCandidates}
+  .filter(candidate => {
     const style = getComputedStyle(candidate)
     return (
       ['auto', 'scroll'].includes(style.overflowY) &&
@@ -66,11 +67,24 @@ async function scrollPaneToTop(web: TessWeb): Promise<void> {
         const node = ${findScroller}
         if (node != null) { node.setAttribute('data-space-scroller', ''); node.scrollTop = 0 }`
     })
-    expect(await paneScrollTop(web), 'the pane can scroll').equals(0)
+    expect(
+      await paneScrollTop(web),
+      `the pane can scroll: ${await scrollers(web)}`
+    ).equals(0)
     // The list scrolls itself to its next game once it has settled.
     await pause(1500)
     expect(await paneScrollTop(web), 'the pane stayed put').equals(0)
   }, 20000)
+}
+
+/** What could scroll, for a failure: each candidate that is taller inside. */
+async function scrollers(web: TessWeb): Promise<string> {
+  const { data } = (await web.m.evalBrowserScript({
+    script: `return JSON.stringify(${scrollerCandidates}
+      .filter(n => n.scrollHeight > n.clientHeight)
+      .map(n => [n.tagName, n.getAttribute('data-testid'), getComputedStyle(n).overflowY, n.clientHeight, n.scrollHeight]))`
+  })) as { data?: unknown }
+  return String(data)
 }
 
 async function paneScrollTop(web: TessWeb): Promise<number> {

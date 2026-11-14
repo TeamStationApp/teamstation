@@ -81,7 +81,7 @@ async function main(): Promise<void> {
           ...process.env,
           MAESTRO_D_CLIENT_ROOT: clientRoot,
           MAESTRO_D: name,
-          MAESTRO_DEVICE: device,
+          MAESTRO_DEVICE: session.device,
           TS_CHAT_WEB: origin,
           TS_CHAT_ORIGIN: source,
           TS_CHAT_ARTIFACTS: out

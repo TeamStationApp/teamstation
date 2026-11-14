@@ -81,7 +81,10 @@ async function main(): Promise<void> {
             const key=scope.querySelector('[data-testid="box-stats-key"]');
             if(!key || !key.textContent.includes('#P - Number of pitches') || !key.textContent.includes('S - Strikes'))throw Error('Missing bottom key');
             if(scope.querySelectorAll('[data-testid="box-stats-key"]').length!==1)throw Error('Repeated box key');
-            for(const definition of ['AB - At bats','R - Runs scored','H - Hits','RBI - Runs batted in','BB - Base on balls (walks)','SO - Strikeouts','HR - Home runs','HBP - Hit by pitch','AVG - Batting average','IP - Innings pitched','BF - Batters faced','ER - Earned runs','E - Errors']) {
+            // The replay draws its compact columns (replayBoxLabels, 3e0e1d4a7),
+            // without HR, AVG or BF, and its key defines what it draws.
+            const compact=${JSON.stringify(name)}==='replay-box';
+            for(const definition of ['AB - At bats','R - Runs scored','H - Hits','RBI - Runs batted in','BB - Base on balls (walks)','SO - Strikeouts','HR - Home runs','HBP - Hit by pitch','AVG - Batting average','IP - Innings pitched','BF - Batters faced','ER - Earned runs','E - Errors'].filter(definition=>!compact||!/^(HR|AVG|BF) /.test(definition))) {
               if(!key.textContent.includes(definition))throw Error(${JSON.stringify(name)}+': missing box definition '+definition);
             }
             const text=scope.textContent;

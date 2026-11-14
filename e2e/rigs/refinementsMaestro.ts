@@ -48,6 +48,8 @@ export interface BrowserSession {
   m: MaestroHandle
   browser: Browser
   page: Page
+  /** The device's name on the daemon, for a child script to attach to. */
+  device: string
 }
 const browserPages = new WeakMap<MaestroHandle, Page>()
 export async function browserSession(
@@ -65,10 +67,11 @@ export async function browserSession(
     device
   )
   await mkdir(profile, { recursive: true })
+  // A device name is the machine's, across daemons: another run of the same
+  // script elsewhere on it holds the bare name.
+  const attached = `${device}-${process.pid}`
   const m = await daemon.attach({
-    // A device name is the machine's, across daemons: another run of the same
-    // script elsewhere on it holds the bare name.
-    device: `${device}-${process.pid}`,
+    device: attached,
     platform: 'web',
     url: `about:blank#${device}`,
     appId: `about:blank#${device}`,
@@ -108,7 +111,7 @@ export async function browserSession(
     resetOnNavigation: false,
     includeRawScriptCoverage: true
   })
-  return { m, browser, page }
+  return { m, browser, page, device: attached }
 }
 export async function fill(
   m: MaestroHandle,
