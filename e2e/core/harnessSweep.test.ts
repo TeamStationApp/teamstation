@@ -47,6 +47,17 @@ describe('the sweep of harness scenarios', function () {
     )
   })
 
+  it("lists a scenario that plays the app's HEVC video as waiting for a machine that decodes it", function () {
+    const [run] = harnessRuns('e2e/tests/assistant/chat/split-view.e2e.ts', [
+      scenario('assistant/chat/split-view#video-keeps-playing', [
+        'web-chromium'
+      ])
+    ])
+    expect(run.skip).equals(
+      "plays the app's HEVC video, which this sweep's Chrome cannot decode"
+    )
+  })
+
   it('counts a run as passed only when it passed', function () {
     expect(sweepStatus('passed')).equals('passed')
     expect(sweepStatus('passed-degraded')).equals('passed')

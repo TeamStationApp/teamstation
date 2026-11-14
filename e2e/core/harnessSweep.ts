@@ -23,6 +23,17 @@ export interface HarnessRun {
 const SWEEP_SURFACES = new Set(['web-chromium'])
 
 /**
+ * Scenarios that play the app's own video, which is HEVC (`playable.ts`):
+ * Chrome on a droplet decodes no HEVC, as the legacy scripts' `hevc` need
+ * says, so they wait for a machine that does.
+ */
+const PLAYS_HEVC = new Set([
+  'assistant/chat/links-in-pane#angle-link-fills-only-the-pane',
+  'assistant/chat/links-in-pane#chart-opens-over-the-angle-view',
+  'assistant/chat/split-view#video-keeps-playing'
+])
+
+/**
  * The runs the sweep makes of a harness file (`e2e/tests/…`): each of its
  * scenarios on each surface it names. A phone's, a simulator's or iOS
  * Safari's surface waits for the device pass, and a scenario that runs
@@ -47,7 +58,11 @@ export function harnessRuns(
             ? {
                 skip: 'runs against a deployed seat, which this sweep has none of'
               }
-            : {})
+            : PLAYS_HEVC.has(scenario.id)
+              ? {
+                  skip: "plays the app's HEVC video, which this sweep's Chrome cannot decode"
+                }
+              : {})
       }))
     )
 }

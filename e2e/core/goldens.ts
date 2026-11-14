@@ -185,7 +185,12 @@ export function acceptGolden(options: AcceptOptions): {
   const result = JSON.parse(
     readFileSync(join(options.runDir, 'result.json'), 'utf8')
   ) as RunResult
-  if (result.ref !== options.headRef) {
+  // Both are short ids, which a shallow clone abbreviates less than a full
+  // one does: the same commit when either begins the other.
+  if (
+    !result.ref.startsWith(options.headRef) &&
+    !options.headRef.startsWith(result.ref)
+  ) {
     throw new Error(
       `The run is from ${result.ref} and this checkout is at ${options.headRef}`
     )

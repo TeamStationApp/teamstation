@@ -31,19 +31,21 @@ async function space(web: TessWeb, type: 'keydown' | 'keyup'): Promise<void> {
   })
 }
 
-/** The pane's Team or Schedule tab. */
+/** The pane's Team or Schedule tab, never the navigation sidebar's. */
 function paneTab(name: string): string {
-  return `[role="tab"][aria-label="${name}"]`
+  return `[role="tab"][aria-label="${name}"]:not([data-testid="navigation-sidebar"] *)`
 }
 
-/** The tallest scroller right of her column with room to scroll. */
-const findScroller = `Array.from(document.querySelectorAll('*'))
+/**
+ * The pane's tallest scroller with room to scroll: in the navigation's
+ * scenes, between the sidebar and her column on the right (fb5ef504a).
+ */
+const findScroller = `Array.from(document.querySelectorAll('[data-testid="navigation-scenes"] *'))
   .filter(candidate => {
     const style = getComputedStyle(candidate)
     return (
       ['auto', 'scroll'].includes(style.overflowY) &&
-      candidate.scrollHeight > candidate.clientHeight + 200 &&
-      candidate.getBoundingClientRect().x >= 400
+      candidate.scrollHeight > candidate.clientHeight + 200
     )
   })
   .sort((a, b) => b.clientHeight - a.clientHeight)[0]`
@@ -296,7 +298,7 @@ export default defineE2e({
               active != null &&
               active.getAttribute('role') === 'tab' &&
               active.getAttribute('aria-label') === 'Team' &&
-              active.getBoundingClientRect().x >= 400
+              active.closest('[data-testid="navigation-scenes"]') != null
             )
           })
         }

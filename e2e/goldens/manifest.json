@@ -1,33 +1,33 @@
 {
   "goldens": {
     "app-shell/lists/list-screens#location-row-desktop/videos-list/web-chromium@chromium-1440x900-128": {
-      "sha256": "2ffa469c340756d3658d6ef3a113b4ceb6fbdc84777ce4ba42bb306b345f87e3",
-      "size": 26857,
+      "sha256": "ec2db10e99efdea31d0fe8b8d538f964a9754ccd2a9c152cb7d80e910898c278",
+      "size": 42659,
       "masks": []
     },
     "app-shell/lists/list-screens#location-row-phone/videos-list/web-chromium@chromium-393x852-128": {
-      "sha256": "921c79b78b33409b515822f80a16968d0def86248631b5414e406997bbfdf72e",
-      "size": 31599,
+      "sha256": "790b81152f5c59863bfc4b9c4f4467ee35fd883aecdc49dd78dea5a0d57de943",
+      "size": 38990,
       "masks": []
     },
     "app-shell/lists/list-screens#result-pill-desktop/videos-list/web-chromium@chromium-1440x900-128": {
-      "sha256": "098a87fe37efa4a2e6231c77e8bac7a9bc0e036bf8a93723e1ea9d3fbedd8726",
-      "size": 23423,
+      "sha256": "69a45d7341a1207e6a081033da4edd488f3bc31b7ddaf9420b411e69b8da187b",
+      "size": 39270,
       "masks": []
     },
     "app-shell/lists/list-screens#result-pill-phone/videos-list/web-chromium@chromium-393x852-128": {
-      "sha256": "15a0bb2ebbb28f980028994d1490874a569e9d2128537143a13927f8860114b6",
-      "size": 22107,
+      "sha256": "50b83622e4af6c6d97e02fd5030277a025fe4206886a4ea4919c4a6f2139959d",
+      "size": 29371,
       "masks": []
     },
     "app-shell/lists/list-screens#thumbnails-desktop/videos-list/web-chromium@chromium-1440x900-128": {
-      "sha256": "098a87fe37efa4a2e6231c77e8bac7a9bc0e036bf8a93723e1ea9d3fbedd8726",
-      "size": 23423,
+      "sha256": "69a45d7341a1207e6a081033da4edd488f3bc31b7ddaf9420b411e69b8da187b",
+      "size": 39270,
       "masks": []
     },
     "app-shell/lists/list-screens#thumbnails-phone/videos-list/web-chromium@chromium-393x852-128": {
-      "sha256": "15a0bb2ebbb28f980028994d1490874a569e9d2128537143a13927f8860114b6",
-      "size": 22107,
+      "sha256": "50b83622e4af6c6d97e02fd5030277a025fe4206886a4ea4919c4a6f2139959d",
+      "size": 29371,
       "masks": []
     },
     "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/attach-panel/web-chromium@chromium-1280x900-128": {
@@ -35,35 +35,105 @@
       "size": 78353,
       "masks": []
     },
+    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/attach-panel/web-chromium@chromium-1536x900-128": {
+      "sha256": "e371c460294b9de6df143599ed7a58ac86b4b40f37fb8b9caa36b28facce73a3",
+      "size": 93097,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/files-sent/web-chromium@chromium-1280x900-128": {
       "sha256": "09f4fbbb37e324f48f941fdf8663aab191340eb2e34286a0a63024e76744f263",
       "size": 76908,
       "masks": []
+    },
+    "assistant/chat/attachments#dropped-and-chosen-files-reach-the-model/files-sent/web-chromium@chromium-1536x900-128": {
+      "sha256": "072b7480026d4225dd3e76ab115e24e96f57ffaef6eabb8d4ecc3fa5db5924db",
+      "size": 90141,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/column-divider#drag-resizes-and-reload-keeps/column-wider/web-chromium@chromium-1280x900-128": {
       "sha256": "299bcdb016bd88be9fa79d3613488ea23e1a40b2740a56f54a47c6900f93dc2b",
       "size": 51336,
       "masks": []
     },
+    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/column-wider/web-chromium@chromium-1536x900-128": {
+      "sha256": "645af593a1248b294cfd3577912b6244f001b817e49c98c42dfa25b6759d37e6",
+      "size": 66640,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/column-divider#drag-resizes-and-reload-keeps/width-after-reload/web-chromium@chromium-1280x900-128": {
       "sha256": "299bcdb016bd88be9fa79d3613488ea23e1a40b2740a56f54a47c6900f93dc2b",
       "size": 51336,
       "masks": []
+    },
+    "assistant/chat/column-divider#drag-resizes-and-reload-keeps/width-after-reload/web-chromium@chromium-1536x900-128": {
+      "sha256": "645af593a1248b294cfd3577912b6244f001b817e49c98c42dfa25b6759d37e6",
+      "size": 66640,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/column-divider#keyboard-moves-it-16-points-a-press/column-moved-by-keys/web-chromium@chromium-1280x900-128": {
       "sha256": "babbb39ec0bbd05a23df9761a11a2b029229bc1a7d7f909b417557e51df77e8c",
       "size": 52145,
       "masks": []
     },
+    "assistant/chat/column-divider#keyboard-moves-it-16-points-a-press/column-moved-by-keys/web-chromium@chromium-1536x900-128": {
+      "sha256": "101d72cad287c196b17d0a9513c648d3e78d5a6f7bb2b1c5cf33db5321e68e0d",
+      "size": 67188,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/composer#shift-enter-is-a-new-line/two-lines/web-chromium@chromium-1280x900-128": {
       "sha256": "c9aef214b9e23b34f97defd41ef16465ce1d8206ca7b7c9e26f3032e3fa244aa",
       "size": 70157,
       "masks": []
     },
+    "assistant/chat/composer#shift-enter-is-a-new-line/two-lines/web-chromium@chromium-1536x900-128": {
+      "sha256": "7b29e4dd22f4251b712912c7d4ef8834e0b74c6cfc812503efd9bdb67bd9f3af",
+      "size": 84412,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/composer#title-and-plain-plus/header-and-composer/web-chromium@chromium-1280x900-128": {
       "sha256": "1767d827ab05e1da06bbd9dd5fe52684b66efa37e28baf0c4b9c484e852279f6",
       "size": 70869,
       "masks": []
+    },
+    "assistant/chat/composer#title-and-plain-plus/header-and-composer/web-chromium@chromium-1536x900-128": {
+      "sha256": "8f695664dd6048a8c03a5a931d984aec20b8872fe8e7bc1815cde623c88829be",
+      "size": 84975,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/confirm-hold#card-shows-the-change/change-card/web-chromium@chromium-1280x900-128": {
       "sha256": "551b5164a4fbe793b06943c64faef460cc182270b62d3c1200d4e716cbe0467f",
@@ -79,6 +149,24 @@
         }
       ]
     },
+    "assistant/chat/confirm-hold#card-shows-the-change/change-card/web-chromium@chromium-1536x900-128": {
+      "sha256": "581d5c686783355a47ea38ff41910e8ca43c937a588beacf1543f7c400f10107",
+      "size": 125223,
+      "masks": [
+        {
+          "enabled": true,
+          "id": "Tess change request"
+        },
+        {
+          "enabled": true,
+          "id": "Tess change body"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/confirm-hold#full-hold-makes-the-change/change-done/web-chromium@chromium-1280x900-128": {
       "sha256": "31d6a05b63f9fb7b7ccae11d3063945a3da93ef14fd2085a49dd9b539252d993",
       "size": 103124,
@@ -89,15 +177,59 @@
         }
       ]
     },
+    "assistant/chat/confirm-hold#full-hold-makes-the-change/change-done/web-chromium@chromium-1536x900-128": {
+      "sha256": "88c04ee7f955adf2efd9c245f84ab9e25a1aff7e1797836b08c469021e49e34b",
+      "size": 113365,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"Tess thought\"]"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
+    "assistant/chat/header-button#absent-without-tess/header-without-tess/web-chromium@chromium-1200x900-128": {
+      "sha256": "72d99da1f69f680975d163688491266f8d4e1a538bc98b79e6eaca7a2f30ae7d",
+      "size": 73779,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/header-button#absent-without-tess/header-without-tess/web-chromium@chromium-1280x900-128": {
       "sha256": "d6f70faf832001308f9180936730eb2bb30f6e1b056e19fa68de2397c9a1ca4b",
       "size": 65810,
       "masks": []
     },
+    "assistant/chat/header-button#before-notifications/header-member/web-chromium@chromium-1200x900-128": {
+      "sha256": "117dbfdb0b46e7ee60aca88bb808bc9d4b099044d557490d8a8ba0a09bbebf45",
+      "size": 60260,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/header-button#before-notifications/header-member/web-chromium@chromium-1280x900-128": {
       "sha256": "0d3d2f84976a1ff2d97082abc8a576fad2ab999ec6cbe9c369c0592d70be3154",
       "size": 51439,
       "masks": []
+    },
+    "assistant/chat/header-button#before-notifications/header-umpire/web-chromium@chromium-1200x900-128": {
+      "sha256": "5e08f4d06bae51eff4def95f39ae509143e730989fd92073d99674203b913da0",
+      "size": 73865,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/header-button#before-notifications/header-umpire/web-chromium@chromium-1280x900-128": {
       "sha256": "d6f70faf832001308f9180936730eb2bb30f6e1b056e19fa68de2397c9a1ca4b",
@@ -109,6 +241,16 @@
       "size": 88825,
       "masks": []
     },
+    "assistant/chat/links-in-pane#bubble-closes-an-open-chart/settings-after-chart/web-chromium@chromium-1536x900-128": {
+      "sha256": "d4b60018f1dcd4aa4affe673169f2f20bd587d85f16e073527c55256e75d05e4",
+      "size": 100416,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/links-in-pane#chart-opens-over-the-angle-view/chart-over-angle/web-chromium@chromium-1280x900-153": {
       "sha256": "2167fdd13ea33742ba15b8eadfae9aaa01636270ff19cd14584b84b168fb784a",
       "size": 45063,
@@ -119,55 +261,165 @@
       "size": 71124,
       "masks": []
     },
+    "assistant/chat/links-in-pane#hidden-player-is-not-shown/back-at-home/web-chromium@chromium-1536x900-128": {
+      "sha256": "c24ee5bb0c4f425bf11ab1adbda6f0d9c21343e6f26f846aa5b2e4dab7d29520",
+      "size": 84929,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/links-in-pane#hidden-player-is-not-shown/player-denied/web-chromium@chromium-1280x900-128": {
       "sha256": "473720a7c628e0afdc680a039c409bdadd9fc3436f52d16fffe395512e948853",
       "size": 40016,
       "masks": []
+    },
+    "assistant/chat/links-in-pane#hidden-player-is-not-shown/player-denied/web-chromium@chromium-1536x900-128": {
+      "sha256": "8cbaaa4d4f56c8043c13a16ae0195606a2315fc604e188cdb14ff3c744a883d3",
+      "size": 54607,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-link/web-chromium@chromium-1280x900-128": {
       "sha256": "e6841652252b3f59b3b190a6ff61a60afd3693ae8646494ed0558378e60c7d9c",
       "size": 77327,
       "masks": []
     },
+    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-link/web-chromium@chromium-1536x900-128": {
+      "sha256": "aca416b9fe30f17457d73d65ce9f89e74f41b1255b630f175bd9bd8fee8fb6d3",
+      "size": 90410,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-profile/web-chromium@chromium-1280x900-128": {
       "sha256": "b923a862073912c6976ce4ea12151b6bee8defd1b555396e8824ad9e63fa83e0",
       "size": 50717,
       "masks": []
+    },
+    "assistant/chat/links-in-pane#player-name-links-to-the-profile/player-profile/web-chromium@chromium-1536x900-128": {
+      "sha256": "8cc9a75c1126953f0a9b6f7bb8805773f6483a71e133f5f962bd4fef56bd6ee7",
+      "size": 67190,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/links-in-pane#way-bubble-opens-team-settings/settings-beside-chat/web-chromium@chromium-1280x900-128": {
       "sha256": "4543b7efb2404b7f18cda47950b57cec4975293f313e4753eba35b7ff901f63e",
       "size": 77672,
       "masks": []
     },
+    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/settings-beside-chat/web-chromium@chromium-1536x900-128": {
+      "sha256": "66eb18e3db964e27211ca61d91907e160dd0e03a16fc81f1fb5b29ac3079f58a",
+      "size": 90675,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/links-in-pane#way-bubble-opens-team-settings/way-bubble/web-chromium@chromium-1280x900-128": {
       "sha256": "ef1c9828ba67754f4fa5d6108b15c6b61f7f3a951bd5b6a9c1a4ea4175bf37ef",
       "size": 77643,
       "masks": []
+    },
+    "assistant/chat/links-in-pane#way-bubble-opens-team-settings/way-bubble/web-chromium@chromium-1536x900-128": {
+      "sha256": "8eb6977a540ddb4dc32d83923d1112514f975e2d15fb9d1c926d7fdf335029c4",
+      "size": 91006,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/push-to-talk#each-hold-becomes-a-message/two-messages-heard/web-chromium@chromium-1280x900-128": {
       "sha256": "ed0c93be3a1740e0f8046d7f492af5a4ee5684eb0c609cf7602504a13cce35bc",
       "size": 92131,
       "masks": []
     },
+    "assistant/chat/push-to-talk#each-hold-becomes-a-message/two-messages-heard/web-chromium@chromium-1536x900-128": {
+      "sha256": "e8be6c75e797196fcd691605bb71c88a24653022d76c75c12c3ca5147501914d",
+      "size": 104103,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/refusals#off-topic-declined-with-no-tool/declined/web-chromium@chromium-1280x900-128": {
       "sha256": "1225dd8c30a2d55d133aeffe67316b43a74385884e2c0705be4aaf6fcbb314c2",
       "size": 74757,
       "masks": []
+    },
+    "assistant/chat/refusals#off-topic-declined-with-no-tool/declined/web-chromium@chromium-1536x900-128": {
+      "sha256": "e15857ccf726f9cf8bcd2bac37413e13c4e422d9a6cceb8b5bf44d6bf1e9a4cb",
+      "size": 87871,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/refusals#scoring-write-refused-before-any-card/refused/web-chromium@chromium-1280x900-128": {
       "sha256": "b8a5d71e480ae997e5cb7d18c14f0590128b768e19ce24b83e70effd2153c6d0",
       "size": 78014,
       "masks": []
     },
+    "assistant/chat/refusals#scoring-write-refused-before-any-card/refused/web-chromium@chromium-1536x900-128": {
+      "sha256": "e37227aa553006e1f754a15a6a1cbf98370fc31b234dc62729c91da0dc3cac70",
+      "size": 90920,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-card/web-chromium@chromium-1280x900-128": {
       "sha256": "11324edd1eb433f5347c95a078963c75f35d0b478b4168b42f4726f1d214cfa2",
       "size": 74911,
       "masks": []
     },
+    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-card/web-chromium@chromium-1536x900-128": {
+      "sha256": "13c1f718919da095d2b9a9213eef9a831275f879cfcf3cb3042784def5af78b2",
+      "size": 88064,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-over-pane/web-chromium@chromium-1280x900-128": {
       "sha256": "73216300b0c1021156445058b98c84cb442bc95cecb131f64865e05def4e8917",
       "size": 31054,
       "masks": []
+    },
+    "assistant/chat/rich-content#chart-over-the-pane-loads-nothing-remote/chart-over-pane/web-chromium@chromium-1536x900-128": {
+      "sha256": "cea76303845615358e7c03802ef7fe0a703d871d5e745cd9f9fa9dfffc5e2efb",
+      "size": 51632,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/space-hold#a-tap-records-until-the-next-tap/tap-heard/web-chromium@chromium-1280x900-128": {
       "sha256": "68f23347d8e04a8e5730b833a4c119cd980bd5060fe032a4507b438fb9d8e733",
@@ -209,30 +461,80 @@
       "size": 36052,
       "masks": []
     },
+    "assistant/chat/split-view#back-closes-her-and-keeps-the-address/team-after-back/web-chromium@chromium-1536x900-128": {
+      "sha256": "2f1f598f178b6cef771468eea8e0800cb3d298651284ed11f10b075b45f13bc5",
+      "size": 52758,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/split-view#column-beside-pane/split/web-chromium@chromium-1280x900-128": {
       "sha256": "1767d827ab05e1da06bbd9dd5fe52684b66efa37e28baf0c4b9c484e852279f6",
       "size": 70869,
       "masks": []
+    },
+    "assistant/chat/split-view#column-beside-pane/split/web-chromium@chromium-1536x900-128": {
+      "sha256": "1f65f2675ea1cb20766f3982028c6400d786c281b5f3d53a4138dfee9df50bf4",
+      "size": 84923,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/split-view#dj-screen-keeps-her/dj-beside-tess/web-chromium@chromium-1280x900-128": {
       "sha256": "5c6c037412dda729ee0bafde6fd104109d8c2c1b5defff04b5e3d1e4699ea12f",
       "size": 66970,
       "masks": []
     },
+    "assistant/chat/split-view#dj-screen-keeps-her/dj-beside-tess/web-chromium@chromium-1536x900-128": {
+      "sha256": "45defc613aa8d2be6d970e442897e6fd0da864cf1b700d7ac5a6b9ef00c4c880",
+      "size": 81624,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/split-view#fills-window-when-narrow/closed-at-narrow-width/web-chromium@chromium-1024x900-128": {
-      "sha256": "0167137f85fd65b5b8082bb0042081cd8a3c637e883ae644fa7659958813f936",
-      "size": 54105,
-      "masks": []
+      "sha256": "815bb621410472658e8f48ce0baeb0e6d3fd6368e80b8bf40eb19e34bdd4b600",
+      "size": 56187,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/split-view#fills-window-when-narrow/full-window/web-chromium@chromium-1024x900-128": {
-      "sha256": "7dc4d7223f73eade5b6d0f0e63b2c58bb978b7379d52e8aa75deaea3d21e532f",
-      "size": 27217,
-      "masks": []
+      "sha256": "ba8f98c2372bdbd9332978dc01a52daa72630eaa5a4bf19bf1a524fa9d8912bc",
+      "size": 26432,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/split-view#team-screen-narrows-beside-her/team-beside-tess/web-chromium@chromium-1280x900-128": {
       "sha256": "ba2cf3a214f7187748df4512b499303465ba7c8be06493f80ae7d7e4575251e5",
       "size": 51568,
       "masks": []
+    },
+    "assistant/chat/split-view#team-screen-narrows-beside-her/team-beside-tess/web-chromium@chromium-1536x900-128": {
+      "sha256": "6c606454f91115ef9fcebd3c8d207db406ea1219b04c0724861800b3a2b6ae32",
+      "size": 66898,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
     },
     "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-collapsed/web-chromium@chromium-1280x900-128": {
       "sha256": "7525f8f7fc1e57ffb6be707f0b88cc55285e09715b94b39f982dc415fa8db646",
@@ -244,6 +546,20 @@
         }
       ]
     },
+    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-collapsed/web-chromium@chromium-1536x900-128": {
+      "sha256": "eec56a0db9292e48274c0ef90f30faa8dfc522c527a0fe5ced1a34adba48bd2e",
+      "size": 98925,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
+        }
+      ]
+    },
     "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-expanded/web-chromium@chromium-1280x900-128": {
       "sha256": "2d7a49de1f562e323d900858d2e4fe70f9b0f79d3e25b8c8d2fecf07ed88c6bf",
       "size": 124768,
@@ -251,6 +567,20 @@
         {
           "enabled": true,
           "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        }
+      ]
+    },
+    "assistant/chat/streaming-reply#thinking-steps-and-text-arrive-in-order/thought-expanded/web-chromium@chromium-1536x900-128": {
+      "sha256": "1427b3d71a9f65d3493464853ed0b7963bd6b476e90bd869a9294387ad2175cc",
+      "size": 135270,
+      "masks": [
+        {
+          "enabled": true,
+          "css": "[data-testid=\"Tess thought\"] [role=\"button\"]"
+        },
+        {
+          "enabled": true,
+          "css": "[data-testid=\"emblem\"]"
         }
       ]
     },
