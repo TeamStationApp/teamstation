@@ -186,3 +186,99 @@ describe('where a dictated ball or pitch went, through the real interpreter', fu
         expect(thrown?.pitchData?.location).deep.include(example.location)
     })
 })
+
+/**
+ * Issue #223: a ball the words give a fielder and no part of the field comes
+ * down where that fielder plays, and a place the words say still wins. The
+ * fixture's game fields 10 P, 11 C and 17 CF.
+ */
+describe('a named fielder places the ball, through the real interpreter', function () {
+  this.timeout(180000)
+  for (const example of [
+    { said: 'Fly out to the pitcher', fielder: 10, near: { x: 0, z: -18.44 } },
+    {
+      said: 'Pop fly caught by the catcher',
+      fielder: 11,
+      near: { x: 0, z: -4 }
+    },
+    { said: 'Fly out to left center', fielder: 17, bearing: -15 }
+  ])
+    it(`#223 ${example.said}`, async function () {
+      const config = JSON.parse(
+        readFileSync(
+          process.env.TS_DICTATION_CONFIG ?? 'serverConfig.json',
+          'utf8'
+        )
+      ).dictation?.anthropic
+      if (typeof config?.apiKey !== 'string' || config.apiKey === '')
+        throw new Error(
+          'Configure dictation.anthropic before running interpreter integration tests'
+        )
+      const before = initialScoringState(scoringSession(gameFixture), false)
+      before.session.gameData.venue = { fieldInfo: fieldInfoOf(200) }
+      const ask = async (): Promise<Turn> =>
+        await new Interpretation(
+          {
+            apiKey: config.apiKey,
+            baseUrl: config.baseUrl ?? 'https://api.anthropic.com/v1',
+            model: 'claude-haiku-5-5',
+            api: 'messages',
+            tools: toolSchema().filter(tool => tool.name !== 'lineup'),
+            rosterTools: rosterToolSchema()
+          },
+          `${promptContext(before.session)}\nROSTERS\n${rosterPrompt(before.session, ['away', 'home'])}`,
+          example.said
+        ).start()
+      const first = await ask()
+      const turn = scoreable(first) ? first : await ask()
+      expect(turn.kind, JSON.stringify(turn)).equals('actions')
+      if (turn.kind !== 'actions') return
+      const actions = turn.actions.map(action =>
+        actionFromTagSlots(action, before.session.meta.tagOrder)
+      )
+      const state = scoringReducer(before, {
+        type: 'DICTATED',
+        transcript: example.said,
+        actions
+      })
+      const ball = state.log.find(
+        (action): action is BallInPlayAction => action.type === 'ballInPlay'
+      )
+      const dumped = JSON.stringify({ actions, ball })
+      console.log(dumped)
+      // The out may still be on the play the screen has open.
+      const plays = [
+        ...state.session.liveData.plays.allPlays,
+        ...(state.session.liveData.plays.currentPlay == null
+          ? []
+          : [state.session.liveData.plays.currentPlay])
+      ]
+      expect(
+        plays.some(play =>
+          play.runners.some(runner =>
+            (runner.credits ?? []).some(
+              credit =>
+                credit.credit === 'f_putout' &&
+                credit.player?.id === example.fielder
+            )
+          )
+        ),
+        dumped
+      ).equals(true)
+      const location = ball?.location
+      expect(location, dumped).not.equals(undefined)
+      if (example.near != null)
+        expect(
+          Math.hypot(
+            location!.x - example.near.x,
+            location!.z - example.near.z
+          ),
+          dumped
+        ).lessThan(1)
+      if (example.bearing != null)
+        expect(
+          (Math.atan2(location!.x, -location!.z) * 180) / Math.PI,
+          dumped
+        ).closeTo(example.bearing, 1)
+    })
+})

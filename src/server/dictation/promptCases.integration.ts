@@ -1574,6 +1574,41 @@ const BLAKE = 2
       ).equals(true)
     })
 
+    for (const [said, fielder, trajectories] of [
+      ['Flies out to the pitcher', RIO_ID, ['fly_ball']],
+      ['Pop fly caught by the catcher', CAM, ['popup', 'fly_ball']]
+    ] as const)
+      it(`#223 sends no direction for a fielder said with no place: ${said}`, async function () {
+        const { actions } = decided(
+          await say(
+            'scoring',
+            hawksBatting({ batter: indigo, next: alex }),
+            said
+          )
+        )
+        const dumped = JSON.stringify(actions)
+        const inPlay = ball(actions)
+        expect(inPlay.direction, dumped).equals(undefined)
+        expect(inPlay.fielder, dumped).equals(fielder)
+        expect(trajectories, dumped).includes(inPlay.trajectory)
+        const result = resultOf(actions)
+        expect(result.eventType, dumped).equals('field_out')
+        expect(result.outBy, dumped).equals('catch')
+      })
+
+    it('#223 keeps the place said with a fly out to left center', async function () {
+      const { actions } = decided(
+        await say(
+          'scoring',
+          hawksBatting({ batter: indigo, next: alex }),
+          'Fly out to left center'
+        )
+      )
+      expect(ball(actions).direction, JSON.stringify(actions)).equals(
+        'left_center'
+      )
+    })
+
     it('#223 keeps a runner who holds at third on a double there', async function () {
       const { actions } = decided(
         await say(

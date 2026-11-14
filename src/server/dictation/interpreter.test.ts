@@ -109,13 +109,20 @@ describe('rules given only to the sentences that call for them', function () {
     expect(
       given("Wild pitch, he steals third, but the batter's swinging")
     ).deep.equals(['A SWING ON A WILD PITCH'])
+    expect(given('Flies out to the pitcher')).deep.equals([
+      'A FIELDER AND NO PLACE'
+    ])
+    expect(given('Pop fly caught by the catcher')).deep.equals([
+      'A FIELDER AND NO PLACE'
+    ])
     for (const plain of [
       'Ball one.',
       'Wild pitch, he steals third',
       'Fly out to left center',
       'Single to deep right center',
       "Ground ball to the third baseman for a fielder's choice. The batter is safe at first.",
-      'Sky high pop fly, center field, but the center fielder drops it, and it is an error.'
+      'Sky high pop fly, center field, but the center fielder drops it, and it is an error.',
+      'Routine fly ball, caught by the center fielder.'
     ])
       expect(given(plain), plain).deep.equals([])
   })
@@ -126,6 +133,9 @@ describe('rules given only to the sentences that call for them', function () {
     )
     expect(sentenceRules("wild pitch, the batter's swinging")).match(
       /"Wild pitch, he\s+steals third, but the batter's swinging", runner on second, is pitch S,\s+then batteryEvent wild_pitch of the "On second" runner to 3B/
+    )
+    expect(sentenceRules('pop fly caught by the pitcher')).match(
+      /"Flies out to the pitcher" is trajectory fly_ball, the pitcher,\s+and result field_out with outBy catch, with no direction/
     )
   })
 })

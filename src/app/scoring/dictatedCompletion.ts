@@ -51,6 +51,7 @@ import {
   depthPoint,
   depthUnits,
   directionPoint,
+  fielderSpot,
   FOUL_ANGLE,
   foulPoint,
   foulSide,
@@ -466,6 +467,28 @@ function fairBearing(
 }
 
 /**
+ * Words that name a part of the field a ball went to: a side, a gap, the
+ * hole, a corner, up the middle, over second, a foul line. "Left fielder"
+ * names a fielder and "line drive" how the ball travelled; "left" and
+ * "right" are a side only where they name one — "to right", "shallow
+ * left", "right field", "left center" — never "right back to the pitcher",
+ * "right in front of the plate" or "the runner left early".
+ */
+const PLACE_SAID =
+  /\b(?:center|centre)\b(?![\s-]+field(?:er|ers)\b)|\b(?:to|into|down|toward|towards|through|short|shallow|deep|the|in|at|over|past)\s+(?:left|right)\b(?![\s-]+field(?:er|ers)\b)(?!\s+(?:back|in\s+front|behind|over|on\s+top|to|through|at|there|early|on\s+base)\b)|\b(?:left|right)[\s-]+(?:field|center|centre|side|line)\b(?!er)|\bcorners?\b|\bfoul\s+territory\b|\b(?:toward|towards|near)\s+the\s+(?:(?:left|right|first|third)[\s-](?:field|base)\s+)?line\b|\bmiddle\b|\bgaps?\b|\balley\b|\bhole\b|\bside\b|\bover\s+second\b|\b(?:down|along|on|up|hugging)\s+the\s+(?:(?:left|right|first|third)[\s-](?:field|base)\s+)?line\b|\bfoul\s+line\b/i
+/**
+ * Words with a place word in them that say nothing of where the ball went:
+ * where the pitch crossed the plate, runners left on, the side retired.
+ */
+const NOT_A_PLACE =
+  /\bdown\s+the\s+middle\b|\bmiddle\s+of\s+the\s+plate\b|\b(?:inside|outside)\s+corner\b|\b(?:on|paints?|painted|nicks?|nicked)\s+the\s+(?:\w+\s+)?corner\b|\b(?:left|stranded)\s+on(?:\s+(?:base|first|second|third))\b|\bleft\s+(?:stranded|aboard)\b|\b(?:retire[sd]?|retiring|sits?|sat)\s+the\s+side\b|\bside\s+(?:is\s+)?retired\b|\bmiddle\s+of\s+the\s+(?:order|lineup|count|inning)\b/gi
+
+/** Whether the words name a part of the field the ball went to. */
+function placeSaid(transcript: string): boolean {
+  return PLACE_SAID.test(transcript.replace(NOT_A_PLACE, ' '))
+}
+
+/**
  * Each fielder as the words name him, and the base an infielder is named by
  * when a ball is hit to him ("pops out to second").
  */
@@ -835,6 +858,46 @@ export function sentenceDefaults(
         Math.hypot(next.location.x, next.location.z) < 1
       )
         delete next.location
+      // An out a fielder made, and words that name no part of the field:
+      // the model's direction is its own invention, and so is a depth the
+      // words do not say for an infielder, which would carry his catch into
+      // the outfield; an outfielder keeps the model's depth, as every ball
+      // does (`depthOf`). The ball comes down where he plays — the
+      // catcher's in front of the plate, not in his crouch behind it. A hit
+      // went past the fielder the model named, and keeps its direction.
+      const spotOf =
+        oneBall &&
+        !ownFoul &&
+        (own == null || !HITS.has(own.eventType)) &&
+        // His own, not one filled in from the direction above.
+        action.fielder != null &&
+        next.fielder === action.fielder &&
+        next.location == null &&
+        !placeSaid(transcript)
+          ? positionOf(game, next.fielder)
+          : undefined
+      let invented = false
+      if (spotOf != null) {
+        if (next.direction != null) {
+          delete next.direction
+          invented = true
+        }
+        if (
+          INFIELD.has(spotOf) &&
+          next.depth != null &&
+          depthSaid(transcript) == null
+        ) {
+          delete next.depth
+          invented = true
+        }
+      }
+      // A ground ball with nothing invented is left, as before, to the
+      // rules; any other comes down at his spot.
+      const atSpot =
+        spotOf != null &&
+        next.depth == null &&
+        next.distanceFeet == null &&
+        (invented || !grounder)
       if (next.location == null) {
         const fence = fenceOf(game)
         const units =
@@ -863,6 +926,7 @@ export function sentenceDefaults(
             fairBearing(game, next, base),
             homer ? units : Math.min(units, OUTFIELD_RADIUS)
           )
+        else if (atSpot) next.location = fielderSpot(spotOf)
         else if (next.direction != null)
           next.location = directionPoint(
             next.direction,

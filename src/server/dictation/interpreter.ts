@@ -28,7 +28,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
-import { placeSections, placeTools } from './placeInstructions'
+import { placesCalled, placeSections, placeTools } from './placeInstructions'
 
 /**
  * Turns what the scorer said into scoring actions, through an LLM.
@@ -402,6 +402,34 @@ export const SENTENCE_RULES: ReadonlyArray<{
   is its advance, not baseRunning, and never a question. "Wild pitch, he
   steals third, but the batter's swinging", runner on second, is pitch S,
   then batteryEvent wild_pitch of the "On second" runner to 3B.`
+  },
+  {
+    name: 'A FIELDER AND NO PLACE',
+    // A ball in the air a named fielder took, with no part of the field said.
+    said: transcript => {
+      const named =
+        /\b(?:pitcher|catcher|(?:first|second|third) baseman|shortstop|(?:left|center|right) fielder)\b/i
+      const inTheAir =
+        /\b(?:fly|flies|flied|pop|pops|popped|popup|liner|lines|lined|caught|catch)\b/i
+      const place =
+        /\b(?:left|right|center|centre|middle|gap|alley|line|corner|hole|side)\b/i
+      const withoutFielders = transcript.replace(
+        /\b(?:left|center|right) fielder\b/gi,
+        'fielder'
+      )
+      // A sentence that says how deep is taught its depth instead.
+      return (
+        named.test(transcript) &&
+        inTheAir.test(transcript) &&
+        !placesCalled(transcript).ball &&
+        !place.test(withoutFielders.replace(/\bline drive\b/gi, 'liner'))
+      )
+    },
+    rule: `- A fielder the scorer names with no part of the field: leave direction
+  and depth off; the game puts the ball where he plays. Never invent a
+  direction. "Flies out to the pitcher" is trajectory fly_ball, the pitcher,
+  and result field_out with outBy catch, with no direction. A place he does
+  say still wins.`
   }
 ]
 
