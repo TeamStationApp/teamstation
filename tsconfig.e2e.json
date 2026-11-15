@@ -1,0 +1,12 @@
+{
+  // The end-to-end suite, typechecked whole by the commit gate. It emits nothing,
+  // and reaches into `src` for what its fixtures share with the server.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom", "dom.iterable"]
+  },
+  "include": ["e2e/**/*.ts", "e2e/**/*.tsx"]
+}
