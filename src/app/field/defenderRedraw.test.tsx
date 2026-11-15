@@ -62,12 +62,41 @@ describe('a defender drag while the screen redraws', () => {
       const surface = renderer.scene.findByProps({
         name: 'interaction-surface'
       })
-      // A save answered mid-drag: the same nine players, drawn again.
+      // A save answered mid-drag: the same nine players, drawn again, the
+      // grabbed one where the finger has it rather than back on its spot.
       await renderer.fireEvent(surface, 'pointerDown', world(x, 1, z))
-      await renderer.update(scene(first.map(player => ({ ...player }))))
+      await renderer.fireEvent(surface, 'pointerMove', world(x, 1, z - 2))
+      const held = { ...first.find(player => player.id === 'SS')!.position }
+      const redrawn = first.map(player => ({
+        ...player,
+        position: { x: 0, z: 0 }
+      }))
+      await renderer.update(scene(redrawn))
+      const shortRedrawn = redrawn.find(player => player.id === 'SS')!
+      expect(shortRedrawn.dragging).equals(true)
+      expect(shortRedrawn.position).deep.equals(held)
       await renderer.fireEvent(surface, 'pointerMove', world(x, 1, z - 4))
       await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
       expect(placed.map(placement => placement.entityId)).deep.equals(['SS'])
+
+      // The grabbed player sent somewhere else mid-drag ends the grab.
+      const sent = first.map(player => ({ ...player }))
+      await renderer.update(scene(sent))
+      await renderer.fireEvent(surface, 'pointerDown', world(x, 1, z))
+      await renderer.update(
+        scene(
+          sent.map(player =>
+            player.id === 'SS'
+              ? {
+                  ...player,
+                  target: { x: player.target.x + 5, z: player.target.z }
+                }
+              : { ...player }
+          )
+        )
+      )
+      await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
+      expect(placed).has.length(1)
 
       // A player leaving mid-drag ends it.
       const now = first.map(player => ({ ...player }))

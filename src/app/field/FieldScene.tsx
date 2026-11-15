@@ -239,10 +239,24 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
     .join()
   // The same players drawn again keep a grab: a screen redrawn mid-drag (a
   // save answered, a roster read) hands over new objects for the same ids.
-  const playersKey = players.map(player => player.id).join()
+  // A player who has been sent somewhere else, as another device's play
+  // moves a runner, is not the same: the grab's origin is gone, so it ends.
+  const playersKey = players
+    .map(
+      player =>
+        `${player.id}@${player.target.x.toFixed(2)},${player.target.z.toFixed(2)}`
+    )
+    .join()
+  const drawnPlayers = useRef(players)
   useEffect(() => {
     const grabbed = players.find(item => item.id === drag.current?.id)
-    if (grabbed != null) grabbed.dragging = true
+    const before = drawnPlayers.current.find(item => item.id === grabbed?.id)
+    drawnPlayers.current = players
+    if (grabbed == null) return
+    grabbed.dragging = true
+    // Where the finger has it, not back on its base until the next move.
+    if (before != null && before !== grabbed)
+      grabbed.position = { ...before.position }
   }, [players])
   useEffect(() => {
     setPreview(null)
