@@ -229,8 +229,9 @@ describe('NativeVideoHandle', function () {
     expect(handle.readyState).equals(0)
   })
 
-  it('is ready once its loaded player says it holds enough, picture reported or not', function () {
+  it('on Android, is ready once its loaded player says it holds enough, picture reported or not', function () {
     const handle = new NativeVideoHandle(() => undefined)
+    handle.readyOnBuffer = true
     let canPlay = 0
     handle.addEventListener('canplay', () => {
       canPlay += 1
@@ -244,6 +245,31 @@ describe('NativeVideoHandle', function () {
     handle.handleBuffer({ isBuffering: false })
     expect(handle.readyState).equals(4)
     expect(canPlay).equals(1)
+  })
+
+  it('on iOS, waits for a picture however ready the player says it is', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(1)
+    handle.handleReadyForDisplay()
+    expect(handle.readyState).equals(4)
+  })
+
+  it('starts from nothing loaded when the view hands it a source with other settings', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const first = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = first
+    handle.handleReadyForDisplay()
+    // The same source again on the next render changes nothing.
+    handle.sourceConfig = first
+    expect(handle.readyState).equals(4)
+    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
+    expect(handle.readyState).equals(0)
   })
 
   it('has ended once it plays to the end, until it is moved back', function () {

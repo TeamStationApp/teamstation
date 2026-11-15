@@ -137,8 +137,22 @@ export class NativeVideoHandle implements VideoHandle {
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
 
-  /** The source as the view built it, buffer and live settings included. */
-  sourceConfig: ReactVideoSource | null = null
+  /**
+   * The source as the view built it, buffer and live settings included. A
+   * different one, the same address with other settings among them, is a
+   * new item the player opens from nothing, so what was loaded no longer
+   * counts.
+   */
+  get sourceConfig(): ReactVideoSource | null {
+    return this.config
+  }
+
+  set sourceConfig(config: ReactVideoSource | null) {
+    if (this.config != null && config !== this.config) this.state = 0
+    this.config = config
+  }
+
+  private config: ReactVideoSource | null = null
 
   /**
    * Whether `reload` has to clear the player's source before handing it the
@@ -151,6 +165,15 @@ export class NativeVideoHandle implements VideoHandle {
    * source a new one. iOS loads whatever it is handed.
    */
   clearBeforeReload = false
+
+  /**
+   * Whether a loaded player's buffer-ready report is enough to play, picture
+   * reported or not. Set by the view on Android, whose player can report its
+   * first picture before its load and so leave a tile looking short for
+   * good. AVPlayer says it is ready before it has a picture, so on iOS the
+   * picture is still what is waited for.
+   */
+  readyOnBuffer = false
 
   /**
    * The player has run out of picture and is waiting for more, from the
@@ -481,9 +504,8 @@ export class NativeVideoHandle implements VideoHandle {
    *
    * Android's player says ready only once it holds what it was told to start
    * with (`bufferForPlaybackMs`); AVPlayer says it when it judges playback
-   * likely to keep up. Either is enough to play once the source has loaded,
-   * picture reported or not: Android does not always report one, and a tile
-   * left short there is one the grid never starts.
+   * likely to keep up. On Android it is enough to play once the source has
+   * loaded, picture reported or not (`readyOnBuffer`).
    */
   handleBuffer = (data: OnBufferData): void => {
     this.rebase()
@@ -509,7 +531,8 @@ export class NativeVideoHandle implements VideoHandle {
       }
       return
     }
-    if (this.state < HAVE_METADATA || this.state === HAVE_ENOUGH_DATA) {
+    const floor = this.readyOnBuffer ? HAVE_METADATA : HAVE_CURRENT_DATA
+    if (this.state < floor || this.state === HAVE_ENOUGH_DATA) {
       return
     }
     this.state = HAVE_ENOUGH_DATA
