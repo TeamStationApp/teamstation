@@ -177,7 +177,7 @@ export async function stopProcess(
     })
   )
   const waited = async (ms: number): Promise<boolean> => {
-    let timer: NodeJS.Timeout | undefined
+    let timer: ReturnType<typeof setTimeout> | undefined
     const late = new Promise<boolean>(resolve => {
       timer = setTimeout(() => {
         resolve(false)
