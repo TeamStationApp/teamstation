@@ -15,6 +15,7 @@ import { PNG } from 'pngjs'
 
 import {
   attachStack,
+  checkStackId,
   listStacks,
   readStack,
   refuseAttachedForFaults,
@@ -245,7 +246,9 @@ export async function main(argv: string[]): Promise<number> {
     case 'stack': {
       if (subcommand === 'up') {
         mkdirSync(STACKS, { recursive: true, mode: 0o700 })
-        const id = values.id ?? Math.random().toString(36).slice(2, 10)
+        const id = checkStackId(
+          values.id ?? Math.random().toString(36).slice(2, 10)
+        )
         const args = [
           '-r',
           require.resolve('sucrase/register'),
@@ -291,7 +294,9 @@ export async function main(argv: string[]): Promise<number> {
         return 0
       }
       if (subcommand === 'serve') {
-        const id = values.id ?? Math.random().toString(36).slice(2, 10)
+        const id = checkStackId(
+          values.id ?? Math.random().toString(36).slice(2, 10)
+        )
         const errorLog = join(STACKS, `${id}.errors.jsonl`)
         const stack = await startStack({
           id,

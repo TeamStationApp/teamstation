@@ -6,6 +6,7 @@ import { expect } from 'chai'
 
 import {
   attachStack,
+  checkStackId,
   listStacks,
   parseHandle,
   readStack,
@@ -124,6 +125,15 @@ describe('attached stacks', function () {
         errorLog: join(dir, 'none')
       }).serverErrors(0)
     ).deep.equals([])
+  })
+
+  it('refuses a stack id that could leave the registry or change case in Postgres', function () {
+    const { dir } = scratch()
+    expect(checkStackId('stream-1a')).equals('stream-1a')
+    for (const id of ['MyStack', '../etc', 'a/b', '-lead', '']) {
+      expect(thrown(() => checkStackId(id))).instanceOf(HarnessError)
+    }
+    expect(thrown(() => readStack(dir, '../escape'))).instanceOf(HarnessError)
   })
 
   it('refuses fault runs on an attached stack as blocked, not on one it started', function () {

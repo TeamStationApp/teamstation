@@ -114,8 +114,16 @@ export function writeStackEntry(dir: string, file: string, text: string): void {
   chmodSync(file, 0o600)
 }
 
+/** Refuses a stack id other than a-z, 0-9 and -: the id names files and a database. */
+export function checkStackId(id: string): string {
+  if (!ID.test(id)) {
+    throw new HarnessError(`Stack id "${id}" is not a-z, 0-9 and -`)
+  }
+  return id
+}
+
 export function readStack(dir: string, id: string): StackEntry {
-  const file = join(dir, `${id}.json`)
+  const file = join(dir, `${checkStackId(id)}.json`)
   if (!existsSync(file)) throw new Error(`No stack "${id}"`)
   return JSON.parse(readFileSync(file, 'utf8'))
 }

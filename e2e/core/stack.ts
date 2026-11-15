@@ -14,6 +14,7 @@ import { join } from 'node:path'
 import { Pool } from 'pg'
 
 import { type FaultProxy, startFaultProxy } from '../faults/proxy'
+import { checkStackId } from './attach'
 import {
   baselineManifestPath,
   runLocalFixture,
@@ -248,7 +249,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
   const { publishPictureCatalog } =
     await import('../../src/server/media/pictureCatalog')
   const root = options.root ?? ROOT
-  const id = options.id ?? randomUUID().slice(0, 8)
+  const id = checkStackId(options.id ?? randomUUID().slice(0, 8))
   const dir = join(tmpdir(), 'teamstation-e2e-stacks', id)
   mkdirSync(dir, { recursive: true })
   const host = options.lan === true ? lanAddress() : '127.0.0.1'
@@ -335,7 +336,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         places.server.close()
         places.server.closeAllConnections()
       })
-      const databaseName = `e2e_${id.replace(/\W/g, '')}`
+      const databaseName = `e2e_${id.replace(/-/g, '_')}`
       const admin = new Pool({ connectionString: testDatabaseUrl })
       try {
         await admin.query(`create database ${databaseName}`)
