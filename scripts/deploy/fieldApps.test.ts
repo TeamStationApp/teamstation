@@ -31,7 +31,10 @@ import {
   fieldAppId,
   fieldLinkSettings,
   fieldOrigin,
+  RELEASE_KEYSTORE_SECRET,
+  RELEASE_PASSWORD_SECRET,
   setup,
+  signApkScript,
   signCameraman,
   writeFieldClientConfig
 } from '../../Masonfile'
@@ -146,7 +149,12 @@ describe('field app builds', function () {
             }>,
             parallel: false,
             android: undefined as
-              | Array<{ name: string; type?: string; publishes?: string[] }>
+              | Array<{
+                  name: string
+                  type?: string
+                  publishes?: string[]
+                  secrets?: string[]
+                }>
               | undefined,
             ios: undefined as
               | {
@@ -171,7 +179,8 @@ describe('field app builds', function () {
               recorded.android = (members.android ?? []).map(member => ({
                 name: member.name,
                 type: member.on?.type,
-                publishes: member.publishes
+                publishes: member.publishes,
+                secrets: member.secrets
               }))
             }
           })
@@ -193,10 +202,20 @@ describe('field app builds', function () {
       assert.equal(workflows.cameraman?.ios?.apple?.app, cameraApp)
       assert.equal(workflows.cameraman?.ios?.on?.type, 'macos-arm64')
       assert.equal(workflows.cameraman?.ios?.tools?.xcode, '26.6')
-      // Only the android-signing node's release key publishes the APK.
+      // Only the sign stage gets the release key, and only it publishes.
       assert.deepEqual(workflows.cameraman?.android, [
-        { name: 'compile', type: 'do-linux', publishes: undefined },
-        { name: 'sign', type: 'macos-arm64', publishes: [cameraApp] }
+        {
+          name: 'compile',
+          type: 'do-linux',
+          publishes: undefined,
+          secrets: undefined
+        },
+        {
+          name: 'sign',
+          type: 'macos-arm64',
+          publishes: [cameraApp],
+          secrets: [RELEASE_KEYSTORE_SECRET, RELEASE_PASSWORD_SECRET]
+        }
       ])
       assert.equal(workflows.distributor?.stages[0]?.on?.type, 'macos-arm64')
       assert.equal(workflows.distributor?.stages[0]?.xcode, '26.6')
@@ -224,6 +243,7 @@ describe('field app builds', function () {
       xcargs?: string[]
       stashed?: string
       unstashed?: string
+      signingEnv?: Record<string, string>
     }
     saved: string[]
   } {
@@ -283,6 +303,7 @@ describe('field app builds', function () {
       xcargs?: string[]
       stashed?: string
       unstashed?: string
+      signingEnv?: Record<string, string>
     } = {}
     const ctx = {
       workspace: dir,
@@ -291,7 +312,16 @@ describe('field app builds', function () {
         commands.push(command)
         if (options?.env?.MASON_BUILD_NUMBER != null)
           box.gradleEnv = options.env
+        if (options?.env?.TS_KEYSTORE != null) box.signingEnv = options.env
         return { code: 0, stdout: '', stderr: '' }
+      },
+      secret(name: string) {
+        assert.equal(name, RELEASE_PASSWORD_SECRET)
+        return 'store-password'
+      },
+      secretFile(name: string) {
+        assert.equal(name, RELEASE_KEYSTORE_SECRET)
+        return '/private/secret-1'
       },
       getBuildNumber(app: string) {
         assert.ok(
@@ -535,9 +565,15 @@ describe('field app builds', function () {
     assert.equal(android.box.unstashed, 'cameraman-release')
     assert.ok(
       android.commands.includes(
-        '"$HOME/.local/bin/teamstation-sign-release-apk" mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
+        signApkScript(
+          'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
+        )
       )
     )
+    assert.deepEqual(android.box.signingEnv, {
+      TS_KEYSTORE: '/private/secret-1',
+      TS_STORE_PASSWORD: 'store-password'
+    })
     assert.deepEqual(android.box.published, {
       app: CAMERAMAN_DEVELOP_APP,
       platform: 'android',

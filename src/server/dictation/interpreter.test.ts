@@ -24,6 +24,7 @@ import {
   MAX_FOLLOW_UPS,
   RESULT_MISSING,
   ROSTER_NOT_ASKED,
+  sentenceRules,
   systemPrompt,
   UNDO,
   UNDO_NOT_ASKED,
@@ -95,6 +96,55 @@ function config(
 ): InterpreterConfig {
   return { apiKey: 'key', model: 'grok-4.7', fetch: fetchImpl, ...more }
 }
+
+describe('rules given only to the sentences that call for them', function () {
+  const given = (transcript: string): string[] =>
+    [...sentenceRules(transcript).matchAll(/\n\n([A-Z' ]+)\n/g)].map(
+      match => match[1]
+    )
+  it('gives each rule to its own sentences and to no other', function () {
+    expect(
+      given('Double to left center, and the runner on second holds at third')
+    ).deep.equals(['A RUNNER WHO HOLDS'])
+    expect(
+      given("Wild pitch, he steals third, but the batter's swinging")
+    ).deep.equals(['A SWING ON A WILD PITCH'])
+    expect(given('Flies out to the pitcher')).deep.equals([
+      'A FIELDER AND NO PLACE'
+    ])
+    expect(given('Pop fly caught by the catcher')).deep.equals([
+      'A FIELDER AND NO PLACE'
+    ])
+    expect(given("Fielder's choice, runner out at second")).deep.equals([
+      "A FIELDER'S CHOICE AND NO KIND OF BALL"
+    ])
+    for (const plain of [
+      'Ball one.',
+      'Wild pitch, he steals third',
+      'Fly out to left center',
+      'Single to deep right center',
+      "Ground ball to the third baseman for a fielder's choice. The batter is safe at first.",
+      'Sky high pop fly, center field, but the center fielder drops it, and it is an error.',
+      'Routine fly ball, caught by the center fielder.'
+    ])
+      expect(given(plain), plain).deep.equals([])
+  })
+
+  it('works each rule as the issue reads it', function () {
+    expect(sentenceRules('the runner holds at third')).match(
+      /"Double to left center, and the runner on second holds at third" is\s+the double and runnerMovement of the "On second" runner to 3B, not out/
+    )
+    expect(sentenceRules("wild pitch, the batter's swinging")).match(
+      /"Wild pitch, he\s+steals third, but the batter's swinging", runner on second, is pitch S,\s+then batteryEvent wild_pitch of the "On second" runner to 3B/
+    )
+    expect(sentenceRules('pop fly caught by the pitcher')).match(
+      /"Flies out to the pitcher" is trajectory fly_ball, the pitcher,\s+and result field_out with outBy catch, with no direction/
+    )
+    expect(sentenceRules("fielder's choice")).match(
+      /ballInPlay with contact swing and no trajectory, result fielders_choice/
+    )
+  })
+})
 
 describe('dictation interpreter', function () {
   for (const reason of [
@@ -509,6 +559,10 @@ describe('dictation interpreter', function () {
       '"pop up to the shortstop", "pops out to the second baseman"'
     )
     expect(system).includes('goes\n  alone, with no result')
+    // The #223 rules are each given only to the sentences that call for them.
+    expect(system).not.includes('A RUNNER WHO HOLDS')
+    expect(system).not.match(/but the batter's\s+swinging/)
+    expect(system).not.match(/Never invent a\s+direction/)
     // Only what was said, every call a tool call, undo only when asked.
     expect(system).includes('it is not a list of events')
     expect(system).includes('never call pitch once for each of its codes')
@@ -2926,6 +2980,20 @@ describe('where the ball went and the pitch, in the prompt', function () {
       'Taken down the line, double.'
     ])
       expect(placeSections(plain), plain).not.includes(PITCH_INSTRUCTIONS)
+    // A loop is a bloop, whole words only; every other word a prefix.
+    for (const ball of [
+      'Loop single to center.',
+      'A looper to right, it falls in.',
+      'Looping fly to left, it drops.',
+      'He loops one into center for a single.',
+      'Looped into right, it drops.',
+      'He fouls it off down the left side.',
+      'Fouled off down the right field line.'
+    ])
+      expect(placeSections(ball), ball).includes(BALL_PLACE_INSTRUCTIONS)
+    expect(placeSections('He loops the lineup.')).not.includes(
+      BALL_PLACE_INSTRUCTIONS
+    )
   })
 
   it('offers where a ball and a pitch went only beside their sections', async function () {

@@ -10,6 +10,7 @@ import type {
 import {
   baseDestination,
   destinationBase,
+  DESTINATIONS,
   RUNNER_REASONS
 } from '../../common/scoring/actions'
 import {
@@ -50,6 +51,7 @@ import {
   depthPoint,
   depthUnits,
   directionPoint,
+  fielderSpot,
   FOUL_ANGLE,
   foulPoint,
   foulSide,
@@ -465,6 +467,36 @@ function fairBearing(
 }
 
 /**
+ * Words that say a ball was hit on a line: a liner, a drive, a rope — not
+ * the run a hit "drives in" or "drives home", or "drives two in", though "a
+ * drive in the gap" is the ball's.
+ */
+const LINER_SAID =
+  /\b(?:line[\s-]?drives?|liners?|lines|lined|drilled|ropes?|roped)\b|\bdrives?\b(?!\s+(?:home\b|in\b(?!\s+the\s+(?:gap|alley|corner|hole)\b)|[\w']+\s+(?:in|home)\b|[\w']+\s+[\w']+\s+(?:in|home)\b))/i
+
+/**
+ * Words that name a part of the field a ball went to: a side, a gap, the
+ * hole, a corner, up the middle, over second, a foul line. "Left fielder"
+ * names a fielder and "line drive" how the ball travelled; "left" and
+ * "right" are a side only where they name one — "to right", "shallow
+ * left", "right field", "left center" — never "right back to the pitcher",
+ * "right in front of the plate" or "the runner left early".
+ */
+const PLACE_SAID =
+  /\b(?:center|centre)\b(?![\s-]+field(?:er|ers)\b)|\b(?:to|into|down|toward|towards|through|short|shallow|deep|the|in|at|over|past)\s+(?:left|right)\b(?![\s-]+field(?:er|ers)\b)(?!\s+(?:back|in\s+front|behind|over|on\s+top|to|through|at|there|early|on\s+base)\b)|\b(?:left|right)[\s-]+(?:field|center|centre|side|line)\b(?!er)|\bcorners?\b|\bfoul\s+territory\b|\b(?:toward|towards|near)\s+the\s+(?:(?:left|right|first|third)[\s-](?:field|base)\s+)?line\b|\bmiddle\b|\bgaps?\b|\balley\b|\bhole\b|\bside\b|\bover\s+second\b|\b(?:down|along|on|up|hugging)\s+the\s+(?:(?:left|right|first|third)[\s-](?:field|base)\s+)?line\b|\bfoul\s+line\b/i
+/**
+ * Words with a place word in them that say nothing of where the ball went:
+ * where the pitch crossed the plate, runners left on, the side retired.
+ */
+const NOT_A_PLACE =
+  /\bdown\s+the\s+middle\b|\bmiddle\s+of\s+the\s+plate\b|\b(?:inside|outside)\s+corner\b|\b(?:on|paints?|painted|nicks?|nicked)\s+the\s+(?:\w+\s+)?corner\b|\b(?:left|stranded)\s+on(?:\s+(?:base|first|second|third))\b|\bleft\s+(?:stranded|aboard)\b|\b(?:retire[sd]?|retiring|sits?|sat)\s+the\s+side\b|\bside\s+(?:is\s+)?retired\b|\bmiddle\s+of\s+the\s+(?:order|lineup|count|inning)\b/gi
+
+/** Whether the words name a part of the field the ball went to. */
+function placeSaid(transcript: string): boolean {
+  return PLACE_SAID.test(transcript.replace(NOT_A_PLACE, ' '))
+}
+
+/**
  * Each fielder as the words name him, and the base an infielder is named by
  * when a ball is hit to him ("pops out to second").
  */
@@ -546,8 +578,9 @@ function saidSide(
 
 /**
  * What a sentence leaves to be assumed, filled in before it is tried:
- * - a hit with no trajectory is a line drive, and a caught foul a pop-up
- *   that was caught;
+ * - a hit with no trajectory is a line drive when the words say one, a
+ *   fly when it was a bloop, and otherwise has none; a caught foul is a
+ *   pop-up that was caught;
  * - a ball in play sent after its result, with only runners' moves
  *   between, goes before it;
  * - a caught ball no action names a fielder for, and whose words do not
@@ -775,10 +808,18 @@ export function sentenceDefaults(
       )
         next.homeRunKind = 'out-of-park'
       const base = oneBall ? baseSaid(transcript) : undefined
+      // A hit's trajectory is the words': a line drive only when they say
+      // one, and a bloop — a short fly — is in the air. A bloop the model
+      // called a line drive the words never said is a fly too.
+      const liner = LINER_SAID.test(transcript)
+      if (next.depth === 'bloop' && next.trajectory === 'line_drive' && !liner)
+        next.trajectory = 'fly_ball'
       if (next.trajectory == null && next.launchAngle == null) {
         if (ownFoul) next.trajectory = 'popup'
-        else if (own != null && HITS.has(own.eventType))
-          next.trajectory = 'line_drive'
+        else if (own != null && HITS.has(own.eventType)) {
+          if (liner) next.trajectory = 'line_drive'
+          else if (next.depth === 'bloop') next.trajectory = 'fly_ball'
+        }
       }
       if (ownCatch && next.fielder == null) {
         // A foul is caught on its side — by its direction, or the words
@@ -834,6 +875,46 @@ export function sentenceDefaults(
         Math.hypot(next.location.x, next.location.z) < 1
       )
         delete next.location
+      // An out a fielder made, and words that name no part of the field:
+      // the model's direction is its own invention, and so is a depth the
+      // words do not say for an infielder, which would carry his catch into
+      // the outfield; an outfielder keeps the model's depth, as every ball
+      // does (`depthOf`). The ball comes down where he plays — the
+      // catcher's in front of the plate, not in his crouch behind it. A hit
+      // went past the fielder the model named, and keeps its direction.
+      const spotOf =
+        oneBall &&
+        !ownFoul &&
+        (own == null || !HITS.has(own.eventType)) &&
+        // His own, not one filled in from the direction above.
+        action.fielder != null &&
+        next.fielder === action.fielder &&
+        next.location == null &&
+        !placeSaid(transcript)
+          ? positionOf(game, next.fielder)
+          : undefined
+      let invented = false
+      if (spotOf != null) {
+        if (next.direction != null) {
+          delete next.direction
+          invented = true
+        }
+        if (
+          INFIELD.has(spotOf) &&
+          next.depth != null &&
+          depthSaid(transcript) == null
+        ) {
+          delete next.depth
+          invented = true
+        }
+      }
+      // A ground ball with nothing invented is left, as before, to the
+      // rules; any other comes down at his spot.
+      const atSpot =
+        spotOf != null &&
+        next.depth == null &&
+        next.distanceFeet == null &&
+        (invented || !grounder)
       if (next.location == null) {
         const fence = fenceOf(game)
         const units =
@@ -862,6 +943,7 @@ export function sentenceDefaults(
             fairBearing(game, next, base),
             homer ? units : Math.min(units, OUTFIELD_RADIUS)
           )
+        else if (atSpot) next.location = fielderSpot(spotOf)
         else if (next.direction != null)
           next.location = directionPoint(
             next.direction,
@@ -886,27 +968,31 @@ export function sentenceDefaults(
   const baseOutWords = baseOutsSaid(transcript, game)
   const settled = holding(
     game,
-    choiceRelayLocations(
+    saidHolds(
       game,
-      doublePlay(
+      choiceRelayLocations(
         game,
-        creditThrowOuts(
+        doublePlay(
           game,
-          forceThenOverthrow(
+          creditThrowOuts(
             game,
-            baseOuts(
+            forceThenOverthrow(
               game,
-              errorAfterResult(explicitChoice(game, filled, transcript)),
+              baseOuts(
+                game,
+                errorAfterResult(explicitChoice(game, filled, transcript)),
+                transcript,
+                baseOutWords
+              ),
               transcript,
               baseOutWords
             ),
-            transcript,
-            baseOutWords
+            transcript
           ),
           transcript
-        ),
-        transcript
-      )
+        )
+      ),
+      transcript
     )
   )
   return thirdOut(game, settled, transcript, baseOutWords)
@@ -2369,18 +2455,62 @@ function holding(
   actions: readonly ScoringAction[]
 ): ScoringAction[] {
   const on = basesOf(game)
-  const stays = (action: ScoringAction, index: number): boolean =>
-    action.type === 'runnerMovement' &&
-    action.out !== true &&
-    on.get(action.runner) === action.to &&
-    !actions
-      .slice(0, index)
-      .some(
-        earlier =>
-          earlier.type === 'runnerMovement' && earlier.runner === action.runner
-      )
-  // A hold said before the play's result holds him against that result.
   const resultAt = actions.findIndex(action => action.type === 'result')
+  const result = actions[resultAt]
+  const hit = result?.type === 'result' && HITS.has(result.eventType)
+  // Moves said after the last pitch, battery event or steal before the
+  // result are this ball's; one said before them happened before it.
+  const since = actions
+    .slice(0, Math.max(0, resultAt))
+    .findLastIndex(
+      action =>
+        action.type === 'pitch' ||
+        action.type === 'batteryEvent' ||
+        action.type === 'baseRunning'
+    )
+  const stays = (action: ScoringAction, index: number): boolean => {
+    if (
+      action.type !== 'runnerMovement' ||
+      action.out === true ||
+      actions
+        .slice(0, index)
+        .some(
+          earlier =>
+            earlier.type === 'runnerMovement' &&
+            earlier.runner === action.runner
+        )
+    )
+      return false
+    // Where the sentence has him before this move: his base, or where his
+    // steal or a battery event earlier in it took him.
+    let base = on.get(action.runner)
+    if (base == null) return false
+    for (const earlier of actions.slice(0, index)) {
+      if (
+        earlier.type === 'baseRunning' &&
+        earlier.runner === action.runner &&
+        earlier.kind === 'steal' &&
+        earlier.to != null
+      )
+        base = earlier.to
+      if (earlier.type === 'batteryEvent')
+        for (const advance of earlier.advances ?? [])
+          if (advance.runner === action.runner) base = advance.to
+    }
+    // A runner held short of the hit — "holds at third" on a double — is
+    // held there against the hit, which would otherwise send him on. A move
+    // with a reason of its own (a steal, a throwing error) happened before
+    // the ball and stays there.
+    return (
+      base === action.to ||
+      (hit &&
+        index > since &&
+        action.fieldingRoute == null &&
+        (action.reason == null || action.reason === 'Advance') &&
+        DESTINATIONS.indexOf(action.to) > DESTINATIONS.indexOf(base))
+    )
+  }
+  // A hold said before the play's result holds him against that result.
   const ordered =
     resultAt < 0
       ? [...actions]
@@ -2406,11 +2536,115 @@ function holding(
       )
       if (stays && (sent == null || sent.to === destinationBase(action.to)))
         continue
+      // A hold short of where the play sent him that the bases cannot take
+      // — the runner behind already has the base he held — is left out, and
+      // the hit plays as it would without it, rather than losing the whole
+      // sentence.
+      if (
+        action.out !== true &&
+        on.has(action.runner) &&
+        sent != null &&
+        sent.to > destinationBase(action.to) &&
+        applyAction(state, action).problems.some(
+          problem => problem.code === 'illegal'
+        )
+      )
+        continue
     }
     kept.push(action)
     state = applyAction(state, action).state
   }
   return kept
+}
+
+/** A runner's full and last names, as patterns, longest first. */
+function namesOf(game: GameState, id: number): string[] {
+  const player = game.gameData.players[id]
+  const escape = (text: string): string =>
+    text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return [player?.fullName, player?.lastName]
+    .map(name => name?.trim())
+    .filter((name): name is string => name != null && name.length > 1)
+    .map(name => `\\b${escape(name)}\\b`)
+}
+
+/** The base a hit takes its batter to. */
+const BATTER_REACHES: Partial<Record<string, Destination>> = {
+  single: '1B',
+  double: '2B',
+  triple: '3B'
+}
+
+/** A base as the words say it. */
+const HELD_BASE: Record<string, Destination> = {
+  first: '1B',
+  '1st': '1B',
+  second: '2B',
+  '2nd': '2B',
+  third: '3B',
+  '3rd': '3B'
+}
+/** A runner's own words for stopping at a base: "holds at third". */
+const HOLDS =
+  '(?:holds|held|stays|stayed|stops|stopped|pulls\\s+up|pulled\\s+up|is\\s+held\\s+up|was\\s+held\\s+up|gets\\s+held\\s+up)(?:\\s+up)?\\s+at\\s+(first|second|third|1st|2nd|3rd)\\b'
+
+/**
+ * A runner the words say held at a base on a hit — "the runner on second
+ * holds at third", "Casey holds at third", or "the runner holds at third"
+ * with one runner on — sent there when the sentence moves him nowhere, just
+ * after the result, so the hit does not score him by rule.
+ */
+function saidHolds(
+  game: GameState,
+  actions: readonly ScoringAction[],
+  transcript: string
+): ScoringAction[] {
+  const resultAt = actions.findIndex(action => action.type === 'result')
+  const result = actions[resultAt]
+  if (result?.type !== 'result' || !HITS.has(result.eventType))
+    return [...actions]
+  const on = basesOf(game)
+  const held: ScoringAction[] = []
+  for (const [runner, base] of on) {
+    if (
+      actions.some(
+        action => action.type === 'runnerMovement' && action.runner === runner
+      )
+    )
+      continue
+    const from = Object.keys(HELD_BASE)
+      .filter(word => HELD_BASE[word] === base)
+      .join('|')
+    const named = [
+      `\\brunner\\s+(?:on|at|from)\\s+(?:${from})(?:\\s+base)?`,
+      ...playerPatterns(game, runner),
+      // A runner said by his whole name, or his last: "Casey Jones holds".
+      ...namesOf(game, runner)
+    ]
+    // "He" or "the runner", with one runner on, is that runner — unless the
+    // base he held is the batter's own on the hit, or the words say the
+    // batter-runner.
+    const vague =
+      on.size === 1 ? ['(?<![\\w-])(?:the\\s+)?runner\\b', '\\bhe\\b'] : []
+    for (const name of [...named, ...vague]) {
+      const match = new RegExp(`${name}[,]?\\s+${HOLDS}`, 'i').exec(transcript)
+      if (match == null) continue
+      const to = HELD_BASE[match[match.length - 1].toLowerCase()]
+      if (vague.includes(name) && to === BATTER_REACHES[result.eventType]) break
+      // A hold at his own base keeps him there against the hit, as one
+      // past it stops him short of where the hit sends him.
+      if (DESTINATIONS.indexOf(to) >= DESTINATIONS.indexOf(base))
+        held.push({ type: 'runnerMovement', runner, to })
+      break
+    }
+  }
+  return held.length === 0
+    ? [...actions]
+    : [
+        ...actions.slice(0, resultAt + 1),
+        ...held,
+        ...actions.slice(resultAt + 1)
+      ]
 }
 
 const DOUBLE_PLAY =

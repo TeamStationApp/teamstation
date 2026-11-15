@@ -53,6 +53,13 @@ declare module '@mason/types' {
       params?: Readonly<Record<string, string | number | boolean>>
     }
     sh: (command: string, options?: CommandOptions) => Promise<CommandResult>
+    /** A value secret the stage declared in `secrets`; anything else throws. */
+    secret: (name: string) => string
+    /**
+     * The path of a file secret the stage declared in `secrets`, written
+     * owner-only into the stage's private directory and deleted afterwards.
+     */
+    secretFile: (name: string) => string
     getBuildNumber: (key: string) => string
     stash: (name: string, paths: string | string[]) => Promise<void>
     unstash: (name: string) => Promise<void>
@@ -71,6 +78,12 @@ declare module '@mason/types' {
     fs: {
       glob: (patterns: string | string[]) => Promise<string[]>
     }
+    log: {
+      info: (message: string) => void
+      warn: (message: string) => void
+    }
+    /** Sets the run's one-line description. */
+    describe: (text: string) => void
     publish: (options: {
       app: string
       platform: string
