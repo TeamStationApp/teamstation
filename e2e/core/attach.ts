@@ -9,6 +9,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
+import { runLocalFixture } from './fixtures'
+import type { ServerError } from './invariants'
 import { BlockedError, HarnessError } from './result'
 import type { StackHandle } from './spec'
 
@@ -34,6 +36,14 @@ export interface StackEntry {
   webDir?: string
   /** The process serving a `stack up` stack; an attached stack has none. */
   pid?: number
+  /** A `stack up` stack's directory, whose server config its fixtures seed through. */
+  dir?: string
+  /** The checkout a `stack up` stack runs, whose fixture scripts seed it. */
+  root?: string
+  /** Where a `stack up` stack's `baseline` manifest is. */
+  baselineManifest?: string
+  /** The JSON lines file a `stack up` stack appends each API 5xx to. */
+  errorLog?: string
   /** The handle an attached stack was registered from. */
   handle?: AttachedHandle
   handleFile?: string
@@ -118,15 +128,47 @@ export function removeStack(
   return { id, stopped: entry.handle == null }
 }
 
-/** The handle a scenario gets for a registered stack. */
-export function stackHandleFor(entry: StackEntry): StackHandle {
+/** The 5xx a `stack up` stack has logged since `since`. */
+export function loggedServerErrors(file: string, since: number): ServerError[] {
+  if (!existsSync(file)) return []
+  return readFileSync(file, 'utf8')
+    .split('\n')
+    .filter(Boolean)
+    .map(line => JSON.parse(line) as ServerError)
+    .filter(row => row.at >= since)
+}
+
+/**
+ * The handle a scenario gets for a registered stack. A `stack up` stack has its
+ * own database and front, so it seeds worlds (on `mailbox`) and reports its 5xx;
+ * an attached one can do neither from here.
+ */
+export function stackHandleFor(
+  entry: StackEntry,
+  mailbox?: string
+): StackHandle {
+  const { dir, root, errorLog } = entry
   return {
     kind: 'isolated',
     origin: entry.origin,
     webDir: entry.webDir,
     attached: entry.handle,
     adopt: async origin => origin,
-    serverErrors: async () => undefined
+    baselineManifest: entry.baselineManifest,
+    ...(dir == null || root == null
+      ? {}
+      : {
+          seedWorld: async (name: string) => {
+            if (mailbox == null) {
+              throw new BlockedError(
+                'no test mailbox: set mailbox in the local settings'
+              )
+            }
+            return runLocalFixture(root, dir, name, mailbox)
+          }
+        }),
+    serverErrors: async since =>
+      errorLog == null ? undefined : loggedServerErrors(errorLog, since)
   }
 }
 

@@ -83,6 +83,46 @@ describe('attached stacks', function () {
     expect(await stack.serverErrors(0)).equals(undefined)
   })
 
+  it('gives a stack up stack its baseline, fixtures and logged 5xx', async function () {
+    const { dir } = scratch()
+    const errorLog = join(dir, '..', 'up.errors.jsonl')
+    writeFileSync(
+      errorLog,
+      [
+        { at: 1, method: 'GET', path: '/api/v1/old', status: 500 },
+        { at: 5, method: 'POST', path: '/api/v1/new', status: 503 }
+      ]
+        .map(row => JSON.stringify(row))
+        .join('\n') + '\n'
+    )
+    const entry = {
+      id: 'up',
+      origin: 'http://127.0.0.1:1',
+      pid: 1,
+      dir: join(dir, 'up'),
+      root: '/checkout',
+      baselineManifest: join(dir, 'up', 'baseline.json'),
+      errorLog
+    }
+    const stack = stackHandleFor(entry)
+    expect(stack.baselineManifest).equals(entry.baselineManifest)
+    expect((await stack.serverErrors(2))?.map(row => row.path)).deep.equals([
+      '/api/v1/new'
+    ])
+    let failure: unknown
+    await stack.seedWorld?.('team-with-roster').catch((error: unknown) => {
+      failure = error
+    })
+    expect(failure).instanceOf(BlockedError)
+    expect(String(failure)).includes('no test mailbox')
+    expect(
+      await stackHandleFor({
+        ...entry,
+        errorLog: join(dir, 'none')
+      }).serverErrors(0)
+    ).deep.equals([])
+  })
+
   it('refuses fault runs on an attached stack as blocked, not on one it started', function () {
     const { dir, handle } = scratch()
     const entry = attachStack(dir, handle(HANDLE))

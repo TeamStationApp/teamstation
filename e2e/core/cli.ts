@@ -1,5 +1,13 @@
 import { execFileSync, spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -249,43 +257,67 @@ export async function main(argv: string[]): Promise<number> {
           ...(values.native === true ? ['--native'] : []),
           ...(values.services ?? ['web', 'api']).flatMap(s => ['--services', s])
         ]
+        // The server's stderr, so a stack that did not start says why.
+        const log = join(STACKS, `${id}.log`)
+        const err = openSync(log, 'w')
         const child = spawn(process.execPath, args, {
           cwd: ROOT,
           detached: true,
-          stdio: 'ignore'
+          stdio: ['ignore', 'ignore', err]
+        })
+        closeSync(err)
+        let exited: string | undefined
+        child.once('exit', (code, signal) => {
+          exited = signal ?? String(code)
+        })
+        child.once('error', error => {
+          exited = error.message
         })
         child.unref()
         const end = Date.now() + 300000
         const file = join(STACKS, `${id}.json`)
+        const why = (): string => readFileSync(log, 'utf8').trim().slice(-2000)
         while (!existsSync(file)) {
-          if (Date.now() > end) throw new Error('The stack did not start')
+          if (exited != null) {
+            throw new Error(`The stack exited (${exited}): ${why()}`)
+          }
+          if (Date.now() > end) {
+            throw new Error(`The stack did not start in 5 minutes: ${why()}`)
+          }
           await new Promise(resolve => setTimeout(resolve, 250))
         }
         print(stackState(id))
         return 0
       }
       if (subcommand === 'serve') {
+        const id = values.id ?? Math.random().toString(36).slice(2, 10)
+        const errorLog = join(STACKS, `${id}.errors.jsonl`)
         const stack = await startStack({
-          id: values.id,
+          id,
           lan: values.lan,
           native: values.native,
-          services: values.services ?? ['web', 'api']
+          services: values.services ?? ['web', 'api'],
+          mailbox: settings.mailbox,
+          errorLog
         })
-        writeFileSync(
-          join(STACKS, `${stack.id}.json`),
-          JSON.stringify({
-            id: stack.id,
-            origin: stack.origin,
-            webDir: stack.webDir,
-            pid: process.pid
-          })
-        )
+        const entry: StackEntry = {
+          id: stack.id,
+          origin: stack.origin,
+          webDir: stack.webDir,
+          pid: process.pid,
+          dir: stack.dir,
+          root: ROOT,
+          baselineManifest: stack.baselineManifest,
+          errorLog
+        }
+        writeFileSync(join(STACKS, `${stack.id}.json`), JSON.stringify(entry))
         await new Promise<void>(resolve => {
           process.once('SIGTERM', () => {
             resolve()
           })
         })
         await stack.stop()
+        rmSync(errorLog, { force: true })
         return 0
       }
       if (subcommand === 'down') {
@@ -335,7 +367,7 @@ export async function main(argv: string[]): Promise<number> {
       const stack: StackHandle | undefined =
         values.stack == null
           ? undefined
-          : stackHandleFor(stackState(values.stack))
+          : stackHandleFor(stackState(values.stack), settings.mailbox)
       const outcome = await runScenario({
         id,
         surface: values.surface,
