@@ -123,7 +123,7 @@ function fixture(
   client: TeamStationClient
   session: { token: string; expiresAt: string; user: AccountSettings['user'] }
   calls: string[]
-  controls: { fail: string; loadFailures: number }
+  controls: { fail: string; loadFailures: number; affiliations: unknown }
   fetcher: typeof fetch
 } {
   let state: AccountSettings = {
@@ -145,7 +145,11 @@ function fixture(
     ]
   }
   const calls: string[] = []
-  const controls = { fail: '', loadFailures: 0 }
+  const controls: {
+    fail: string
+    loadFailures: number
+    affiliations: unknown
+  } = { fail: '', loadFailures: 0, affiliations: { groups: [], players: [] } }
   const apiKeys: unknown[] = []
   let requested = { email: '', replaceEmailId: undefined as string | undefined }
   const fetcher: typeof fetch = async (input, init) => {
@@ -271,6 +275,8 @@ function fixture(
           email: state.emails.find(e => e.id === body.emailId)!.email
         }
       }
+    if (route === '/me/affiliations')
+      return new Response(JSON.stringify(controls.affiliations))
     return new Response(
       JSON.stringify(route.startsWith('/me/account') ? state : [])
     )
@@ -300,6 +306,43 @@ describe('Account settings screen', () => {
     f.session.user = { ...f.session.user, isAdmin: true }
     await render(<AccountScreen {...f} onSignOut={() => {}} />)
     expect(button('Node administration')).equals(undefined)
+  })
+  it('lists the account’s affiliations below Add email address, and opens each', async () => {
+    const f = fixture()
+    f.controls.affiliations = {
+      groups: [
+        {
+          kind: 'season',
+          id: 'sea_regular',
+          group: {
+            id: 'sea_regular',
+            kind: 'season',
+            name: 'Demo Regular',
+            imageUrl: null,
+            locality: null
+          },
+          roles: ['coach', 'scorekeeper']
+        }
+      ],
+      players: []
+    }
+    const opened: unknown[] = []
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => {}}
+        onOpenGroup={group => {
+          opened.push(group)
+        }}
+      />
+    )
+    const page = text()
+    expect(page.indexOf('AFFILIATIONS1')).greaterThan(
+      page.indexOf('Add email address')
+    )
+    expect(page).includes('Demo RegularCoachScorekeeper')
+    await press('Open Demo Regular')
+    expect(opened).deep.equals([{ kind: 'season', id: 'sea_regular' }])
   })
   it('opens and closes blocked people without opening chat devices', async () => {
     const f = fixture()

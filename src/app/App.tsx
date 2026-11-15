@@ -3519,6 +3519,10 @@ function Shell(props: AppProps): React.ReactElement {
       <AccountScreen
         client={client}
         socket={gameSocket}
+        onOpenGroup={openGroup}
+        onOpenPlayer={(userId, name) => {
+          openPlayer(userId, name)
+        }}
         onTeamStationTv={() => {
           push({ name: 'teamStationTv' })
         }}

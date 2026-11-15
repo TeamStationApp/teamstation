@@ -120,7 +120,9 @@ describe('another person’s account, for a node administrator', function () {
       'Node administration',
       'Make primary',
       'Add email address',
-      'Chat devices'
+      'Chat devices',
+      // The Affiliations section is the signed-in person's own.
+      'AFFILIATIONS'
     ])
       expect(text(), hidden).not.includes(hidden)
     await fill('Name', 'Timothy Raines')

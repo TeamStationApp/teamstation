@@ -9,6 +9,7 @@ import type {
   TeamStationClient
 } from '../../common/api'
 import type { GameSocket } from '../../common/gameSocket'
+import type { GroupRef } from '../../common/groupCreation'
 import {
   type ClientPasswordCosts,
   newPasswordRequirements
@@ -31,6 +32,7 @@ import {
   SectionHeader,
   TextField
 } from '../components'
+import { AffiliationList } from '../components/AffiliationList'
 import { NewPasswordFields } from '../components/NewPasswordFields'
 import { useSceneReveals } from '../components/sceneShown'
 import { sportsPicturesEnabled } from '../components/sportsPictures'
@@ -79,6 +81,10 @@ export interface AccountScreenProps {
    * their addresses to read. Nothing of the signed-in person's own is shown.
    */
   target?: { userId: string; api: AccountApi }
+  /** An Affiliations row: a league, season or team, on its page. */
+  onOpenGroup?: (group: GroupRef) => void
+  /** An Affiliations row: a player the person guards, on their page. */
+  onOpenPlayer?: (userId: string, name: string) => void
 }
 
 /** A person's identity and verified sign-in methods, all on their own account. */
@@ -728,6 +734,11 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                   </CardContent>
                 </ListCard>
               </View>
+              <AffiliationList
+                client={client}
+                onOpenGroup={props.onOpenGroup}
+                onOpenPlayer={props.onOpenPlayer}
+              />
             </>
           )}
         </>
