@@ -132,7 +132,10 @@ const NETWORK_ONLY: RegExp[] = [
   /^\/join\/[^/]+(\/|$)/,
   // A place search carries its billing session, and a place's details end
   // it: neither means anything later.
-  /^\/locations(\/|$)/
+  /^\/locations(\/|$)/,
+  // A coaching plan's column for the inning in play is the coach's, read
+  // only while that inning lasts: never kept on a scorer's phone.
+  /^\/games\/[^/]+\/plans\/[^/]+\/innings\/[^/]+$/
 ]
 
 /**

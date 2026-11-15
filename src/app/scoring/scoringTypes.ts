@@ -1,4 +1,4 @@
-import type { GamePlansResponse } from '../../common/api'
+import type { PlanColumnCell } from '../../common/gamePlan'
 import type { Problem, ScoringAction } from '../../common/scoring/actions'
 import type { StagedRunner } from '../../common/scoring/rosterCommands'
 import type { HomeRunKind, Override } from '../../common/scoring/rules'
@@ -203,25 +203,19 @@ export interface ScoringSnapshot {
    */
   dictationQuestion?: DictationQuestion
   /**
-   * Both sides' game plans as `GET /games/:gameId/plans` last answered,
-   * absent until they load. They are the coaches', not the game's: an Undo
-   * or a reset keeps them, and only a `PLANS` event replaces them.
+   * The inning the game last entered on this screen, and a count that only
+   * goes up: each time an event scored here leaves the game in another
+   * inning (an inning's end, an Undo back across one, the Override editor),
+   * the screen downloads that inning's plan column (`usePlanInnings`). It is
+   * not the screen's to restore: an Undo or a reset keeps it, so the count
+   * never repeats.
    */
-  plans?: GamePlansResponse
-  /** What the last inning shift did, until the next action is applied. */
-  planNotice?: PlanNotice
+  inningStart?: InningStart
 }
-/**
- * An inning shift: the inning whose plan columns were applied, the sides
- * that moved, the playing-time warnings of the plans applied
- * (`warningSummary`'s text, empty for none), and each side whose column was
- * not applied, with why.
- */
-export interface PlanNotice {
+/** One inning entered on this screen, numbered by `id`. */
+export interface InningStart {
   inning: number
-  sides: GameSideName[]
-  summary: string
-  refused: Array<{ side: GameSideName; reason: string }>
+  id: number
 }
 /**
  * A question the screen asks about a dictated sentence: one answer among
@@ -265,11 +259,11 @@ export interface Beat {
 /**
  * The screen without the game: the step, what is drawn, the drafts. It is
  * what an Undo restores beside the game, which is rebuilt from the log. The
- * game plans are not the screen's, and stay as they are.
+ * inning last entered is not the screen's, and stays as it is.
  */
 export type ScoringScreenState = Omit<
   ScoringSnapshot,
-  'session' | 'log' | 'plans'
+  'session' | 'log' | 'inningStart'
 >
 
 /**
@@ -423,8 +417,16 @@ export type ScoringEvent =
       readOnly?: boolean
     }
   | { type: 'SWITCH_SIDE'; side: BatSide }
-  /** Both sides' game plans, read again: they replace the ones held. */
-  | { type: 'PLANS'; plans: GamePlansResponse }
+  /**
+   * One side's plan column for `inning`, as downloaded: applied as a roster
+   * save only while the game is still in that inning.
+   */
+  | {
+      type: 'PLAN_INNING'
+      side: GameSideName
+      inning: number
+      column: readonly PlanColumnCell[]
+    }
   /** The scorer's answer to `dictationQuestion`: an option, or the runners picked. */
   | {
       type: 'DICTATION_ANSWER'

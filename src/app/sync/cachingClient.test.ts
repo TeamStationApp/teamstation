@@ -2091,7 +2091,9 @@ describe('document keys', function () {
       '/join/CODE1',
       '/join/CODE1/email-code',
       '/locations?query=fen&session=s1',
-      '/locations/p1?session=s1'
+      '/locations/p1?session=s1',
+      // A coaching plan's column, read only while its inning lasts.
+      '/games/g/plans/t/innings/3'
     ]) {
       expect(networkOnly(path), path).equals(true)
       expect(documentKeyOf(path), path).equals(undefined)
@@ -2100,6 +2102,8 @@ describe('document keys', function () {
     expect(documentKeyOf('/chat/conversations/c1/messages?after=3')).equals(
       '/chat/conversations/c1/messages?after=3'
     )
+    // The whole plan is answered only to a team's coaches, and kept.
+    expect(networkOnly('/games/g/plans')).equals(false)
     expect(fallbackKeyOf('roster.full.t')).equals('roster.t')
     expect(fallbackKeyOf('roster.t')).equals(undefined)
   })

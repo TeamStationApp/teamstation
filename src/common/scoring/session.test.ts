@@ -1102,9 +1102,15 @@ describe('a scoring session', function () {
     session.apply(ball)
     await session.flush()
     expect(session.problem).equals('Something broke')
+    expect(session.saveFailure).equals('Something broke')
+    expect(session.offline).equals(false)
     expect(clock.waiting.map(entry => entry.ms)).deep.equals([1000])
     await clock.tick()
     expect(clock.waiting.map(entry => entry.ms)).deep.equals([2000])
+    // Saved at last, it no longer says the save failed.
+    store.fail = null
+    await session.flush()
+    expect(session.saveFailure).equals(null)
   })
 
   for (const peerAdvances of [false, true])

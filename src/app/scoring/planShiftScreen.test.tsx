@@ -7,22 +7,13 @@ import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 
-import {
-  type GameLineupsResponse,
-  type GamePlansResponse,
-  TeamStationClient
-} from '../../common/api'
+import { type GameLineupsResponse, TeamStationClient } from '../../common/api'
 import type { PlanCell } from '../../common/gamePlan'
 import type { GameSocketEvent } from '../../common/gameSocket'
-import { DEFAULT_PLAYING_TIME_RULES } from '../../common/playingTimeRules'
 import { ScoringSession as GameSession } from '../../common/scoring/session'
 import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { fieldServer, memoryStorage } from '../../test/offlineFieldServer'
-import {
-  PLAN_SWAPPED,
-  scoringPlans,
-  scoringSidePlan
-} from '../../test/scoringPlans'
+import { PLAN_START, PLAN_SWAPPED } from '../../test/scoringPlans'
 import { scoringRoster, scoringSession } from '../../test/scoringSession'
 import { cacheFileName, openCacheStore } from '../sync/cacheStore'
 import { CachingClient } from '../sync/cachingClient'
@@ -52,19 +43,22 @@ class FakeChanges implements GameChanges {
     }
   }
 
-  /** A coach saved a plan. */
-  async plans(): Promise<void> {
+  /** A coach saved a change to `inning` of `teamId`'s plan, or a resync. */
+  async emit(event: GameSocketEvent): Promise<void> {
     await act(async () => {
-      for (const listener of [...this.listeners])
-        listener({
-          type: 'change',
-          gameId: 'g1',
-          kind: 'plans',
-          at: '2026-10-12T12:00:00Z',
-          data: { teamId: 'home', inning: 1 }
-        })
+      for (const listener of [...this.listeners]) listener(event)
     })
     await settle()
+  }
+
+  async plans(teamId: string, inning: number): Promise<void> {
+    await this.emit({
+      type: 'change',
+      gameId: 'g1',
+      kind: 'plans',
+      at: '2026-10-12T12:00:00Z',
+      data: { teamId, inning }
+    })
   }
 }
 
@@ -108,8 +102,10 @@ async function endHalf(): Promise<void> {
   await click('Confirm End Half Inning')
 }
 
-const notice = (): string | null | undefined =>
-  document.querySelector('[data-testid="scoringPlanNotice"]')?.textContent
+const planNotice = (): Element | null =>
+  document.querySelector('[data-testid="scoringPlanNotice"]')
+const syncNotice = (): string | null | undefined =>
+  document.querySelector('[data-testid="planSyncNotice"]')?.textContent
 
 async function render(
   client: TeamStationClient,
@@ -137,13 +133,45 @@ async function render(
   await settle()
 }
 
+/** The column of a side whose first player is `first`, as the route answers. */
+const column = (first: number, cells: readonly PlanCell[]): unknown[] =>
+  cells.map((cell, at) => ({
+    player: {
+      gumboId: first + at,
+      fullName: `Player ${at + 1}`,
+      jersey: String(at + 1)
+    },
+    cell
+  }))
+
+const json = (status: number, body: unknown): Response =>
+  new Response(JSON.stringify(body), { status })
+
+/** An inning column, as the route answers a scorer. */
+const inningAnswer = (
+  teamId: string,
+  inning: number,
+  cells: readonly PlanCell[] | null
+): Response =>
+  json(200, {
+    teamId,
+    inning,
+    column: cells == null ? [] : column(teamId === 'away' ? 1 : 10, cells)
+  })
+
+type Answer = (teamId: string, inning: number) => Promise<Response> | Response
+
 /**
- * A scoring screen on a saved game whose plans read answers what `plans`
- * does: a fetch of its own, so a failed read is the client's as it is live.
+ * A scoring screen on a saved game whose inning route answers what
+ * `innings` does: a fetch of its own, so a failure is the client's as it is
+ * live. Every path it asks for is kept.
  */
-async function scoring(
-  plans: () => Promise<Response> | Response
-): Promise<{ changes: FakeChanges; roster: () => Promise<number> }> {
+async function scoring(innings: Answer): Promise<{
+  changes: FakeChanges
+  asked: string[]
+  roster: () => Promise<number>
+  home: () => Promise<Record<string, number | null>>
+}> {
   const store = memoryStore()
   const open = async (): Promise<GameSession> =>
     await GameSession.open(store, 'g1', {
@@ -151,15 +179,17 @@ async function scoring(
       teams: teamsOf(gameFixture),
       setup: startingSetup(gameFixture, scoringRoster(1), scoringRoster(10))
     })
+  const asked: string[] = []
   const client = new TeamStationClient({
     baseUrl: 'http://x/api/v1',
-    fetch: async (url: unknown) =>
-      String(url) === 'http://x/api/v1/games/g1/plans'
-        ? await plans()
-        : new Response(
-            JSON.stringify({ code: 'notFound', message: 'Not found' }),
-            { status: 404 }
-          )
+    fetch: async (url: unknown) => {
+      const path = String(url).replace('http://x/api/v1', '')
+      asked.push(path)
+      const inning = /^\/games\/g1\/plans\/([^/]+)\/innings\/(\d+)$/.exec(path)
+      return inning == null
+        ? json(404, { code: 'notFound', message: 'Not found' })
+        : await innings(inning[1], Number(inning[2]))
+    }
   })
   client.game = async () => gameFixture
   client.roster = async teamId =>
@@ -170,18 +200,54 @@ async function scoring(
   await render(client, { persistent: true, open }, changes)
   return {
     changes,
+    asked,
     // Roster saves in the game as stored.
     roster: async () =>
       (await open()).actions.filter(
         action => action.type === 'lineup' && action.kind === 'roster'
-      ).length
+      ).length,
+    home: async () => {
+      const game = await open()
+      return { ...game.state.liveData.boxscore.teams.home.defense }
+    }
   }
 }
 
-const answer = (body: GamePlansResponse): Response =>
-  new Response(JSON.stringify(body), { status: 200 })
+const inningsAsked = (asked: readonly string[]): string[] =>
+  asked.filter(path => path.includes('/innings/'))
 
-describe('plan shift on the scoring screen', function () {
+/** The home side fielding `cells` as players 10 to 18 in batting order. */
+const fielded = (cells: readonly PlanCell[]): Record<string, number | null> => {
+  const defense: Record<string, number | null> = Object.fromEntries(
+    PLAN_START.map(position => [position, null])
+  )
+  cells.forEach((cell, at) => {
+    if (cell in defense) defense[cell] = 10 + at
+  })
+  return defense
+}
+
+describe('plan innings on the scoring screen', function () {
+  it('downloads both sides’ column for the inning an inning’s end starts, applies it, and never reads the whole plan', async function () {
+    const { asked, roster, home } = await scoring((teamId, inning) =>
+      inningAnswer(teamId, inning, teamId === 'home' ? PLAN_SWAPPED : null)
+    )
+    await click('Ball')
+    await endHalf()
+    expect(inningsAsked(asked)).deep.equals([])
+    await endHalf()
+    expect(document.body.textContent).includes('Top 2nd')
+    expect(inningsAsked(asked)).deep.equals([
+      '/games/g1/plans/away/innings/2',
+      '/games/g1/plans/home/innings/2'
+    ])
+    expect(asked).not.includes('/games/g1/plans')
+    expect(await roster()).equals(1)
+    expect(await home()).deep.equals(fielded(PLAN_SWAPPED))
+    expect(planNotice()).equals(null)
+    expect(syncNotice()).equals(undefined)
+  })
+
   const failures: Array<[string, () => Response]> = [
     [
       'a network error',
@@ -189,36 +255,100 @@ describe('plan shift on the scoring screen', function () {
         throw new TypeError('Load failed')
       }
     ],
+    ['a 500', () => json(500, { code: 'internal', message: 'Down' })],
     [
-      'a 500',
+      'an inning not in play',
       () =>
-        new Response(JSON.stringify({ code: 'internal', message: 'Down' }), {
-          status: 500
+        json(409, {
+          code: 'conflict',
+          message: 'Not in play',
+          details: { reason: 'planInningNotCurrent', inning: 1 }
         })
     ],
     ['a body the cleaner refuses', () => new Response('[]', { status: 200 })]
   ]
   for (const [failure, fails] of failures)
-    it(`scores on after ${failure} reading the plans, and reads them on the next plans change`, async function () {
-      let read: () => Response = fails
-      const { changes, roster } = await scoring(() => read())
-      await click('Ball')
-      expect(document.body.textContent).includes('1 balls 0 strikes')
+    it(`drops the sync card after ${failure}, keeps the lineup on Accept, and applies the column on Try again`, async function () {
+      let answer: Answer = (teamId, inning) =>
+        teamId === 'home' ? fails() : inningAnswer(teamId, inning, null)
+      const { asked, roster, home } = await scoring(
+        async (teamId, inning) => await answer(teamId, inning)
+      )
       await endHalf()
       await endHalf()
-      expect(document.body.textContent).includes('Top 2nd')
-      expect(notice()).equals(undefined)
+      expect(syncNotice()).equals(
+        'Unable to sync new inning defensive lineup for HawksAcceptTry again'
+      )
       expect(await roster()).equals(0)
-      read = () =>
-        answer(scoringPlans({ home: scoringSidePlan(10, { 3: PLAN_SWAPPED }) }))
-      await changes.plans()
+      // Scoring goes on under the card.
+      await click('Ball')
+      expect(document.body.textContent).includes('1 balls')
+      await click('Accept')
+      expect(syncNotice()).equals(undefined)
+      expect(await roster()).equals(0)
+      // The next inning fails again; Try again asks once more and applies.
       await endHalf()
       await endHalf()
-      expect(notice()).equals('Inning 3 plan applied')
-      expect(await roster()).equals(1)
+      expect(syncNotice()).includes('Hawks')
+      answer = (teamId, inning) =>
+        inningAnswer(teamId, inning, teamId === 'home' ? PLAN_SWAPPED : null)
+      const before = inningsAsked(asked).length
+      await click('Try again')
+      expect(inningsAsked(asked).slice(before)).deep.equals([
+        '/games/g1/plans/home/innings/3'
+      ])
+      expect(syncNotice()).equals(undefined)
+      expect(await home()).deep.equals(fielded(PLAN_SWAPPED))
     })
 
-  it('scores offline, where the plans cannot be read, queuing plays and shifting nothing', async function () {
+  it('shows nothing before the game’s start time or once it is over', async function () {
+    for (const reason of ['planNotStarted', 'planGameOver']) {
+      const { asked, roster } = await scoring(() =>
+        json(403, { code: 'forbidden', message: 'No', details: { reason } })
+      )
+      await endHalf()
+      await endHalf()
+      expect(inningsAsked(asked), reason).has.length(2)
+      expect(syncNotice(), reason).equals(undefined)
+      expect(await roster()).equals(0)
+      await act(async () => {
+        root?.unmount()
+      })
+      root = undefined
+      document.body.replaceChildren()
+    }
+  })
+
+  it('downloads the inning in play again when a coach saves a change to it, replacing the defence, and nothing for another inning or a resync', async function () {
+    let cells: readonly PlanCell[] = PLAN_SWAPPED
+    const { changes, asked, home } = await scoring((teamId, inning) =>
+      inningAnswer(teamId, inning, teamId === 'home' ? cells : null)
+    )
+    await endHalf()
+    await endHalf()
+    expect(await home()).deep.equals(fielded(PLAN_SWAPPED))
+    const before = inningsAsked(asked).length
+    await changes.plans('home', 3)
+    await changes.emit({ type: 'resync', gameId: 'g1' })
+    expect(inningsAsked(asked)).has.length(before)
+    cells = PLAN_START
+    await changes.plans('home', 2)
+    expect(inningsAsked(asked).slice(before)).deep.equals([
+      '/games/g1/plans/home/innings/2'
+    ])
+    expect(await home()).deep.equals(fielded(PLAN_START))
+  })
+
+  it('takes a coach’s change on a screen just opened, before the scorer has scored anything', async function () {
+    const { changes, asked, home } = await scoring((teamId, inning) =>
+      inningAnswer(teamId, inning, teamId === 'home' ? PLAN_SWAPPED : null)
+    )
+    await changes.plans('home', 1)
+    expect(inningsAsked(asked)).deep.equals(['/games/g1/plans/home/innings/1'])
+    expect(await home()).deep.equals(fielded(PLAN_SWAPPED))
+  })
+
+  it('scores offline, where nothing can be saved, asking for no inning and showing no card', async function () {
     const dir = mkdtempSync(join(tmpdir(), 'teamstation-plan-'))
     const executors: Array<ReturnType<typeof nodeSqliteExecutor>> = []
     cleanup.push(async () => {
@@ -247,6 +377,8 @@ describe('plan shift on the scoring screen', function () {
     })
     client.openFor('usr_scorer')
     await client.prefetch()
+    // What the phone reads ahead is not the scoring screen's.
+    const ahead = asked.length
     net.offline = true
     const posts = net.posts.length
     await render(
@@ -256,111 +388,16 @@ describe('plan shift on the scoring screen', function () {
         new ServerClock(async () => await client.serverTime(), memoryStorage())
       )
     )
-    expect(asked).includes('/games/g1/plans')
     expect(document.body.textContent).includes('1 balls')
     await endHalf()
     await endHalf()
     await click('Ball')
     expect(document.body.textContent).includes('Top 2nd')
     expect(document.body.textContent).includes('1 balls')
-    expect(notice()).equals(undefined)
+    expect(inningsAsked(asked)).deep.equals([])
+    expect(asked.slice(ahead)).not.includes('/games/g1/plans')
+    expect(syncNotice()).equals(undefined)
     expect(net.posts.length, 'nothing left the phone').equals(posts)
     expect((await client.outboxSummary()).chains['game:g1']).greaterThan(0)
-  })
-
-  it('tells the scorer what the shift did, until the next play', async function () {
-    // Max Sits is one; Player 9 sits innings 1, 2 and 3.
-    const sitting: PlanCell[] = [
-      'P',
-      'C',
-      '1B',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      ''
-    ]
-    const plans = scoringPlans({
-      home: scoringSidePlan(
-        10,
-        { 1: sitting, 2: sitting, 3: sitting },
-        {
-          rules: {
-            ...DEFAULT_PLAYING_TIME_RULES,
-            enforceSittingLimits: true,
-            noConsecutiveSits: false,
-            equalSittingOrder: 'off'
-          }
-        }
-      )
-    })
-    await scoring(() => answer(plans))
-    await endHalf()
-    expect(notice()).equals(undefined)
-    await endHalf()
-    expect(notice()).equals('Inning 2 plan applied — 1 playing-time warning')
-    await click('Ball')
-    expect(notice()).equals(undefined)
-  })
-
-  it('tells the scorer a column it could not apply, and why', async function () {
-    const benched: PlanCell[] = [
-      '',
-      'C',
-      '1B',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      'RF'
-    ]
-    const { roster } = await scoring(() =>
-      answer(scoringPlans({ home: scoringSidePlan(10, { 2: benched }) }))
-    )
-    await endHalf()
-    await endHalf()
-    expect(document.body.textContent).includes('Top 2nd')
-    expect(notice()).equals('Hawks inning 2 plan not applied: needs a pitcher')
-    expect(await roster()).equals(0)
-  })
-
-  it('names each team when one side applies and the other is refused', async function () {
-    // Max Sits is one; the Owls' Player 9 sits innings 1, 2 and 3.
-    const sitting: PlanCell[] = [
-      'P',
-      'C',
-      '1B',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      ''
-    ]
-    const benched: PlanCell[] = ['', ...sitting.slice(1, 8), 'RF']
-    const plans = scoringPlans({
-      away: scoringSidePlan(
-        1,
-        { 1: sitting, 2: sitting, 3: sitting },
-        {
-          rules: {
-            ...DEFAULT_PLAYING_TIME_RULES,
-            enforceSittingLimits: true,
-            noConsecutiveSits: false,
-            equalSittingOrder: 'off'
-          }
-        }
-      ),
-      home: scoringSidePlan(10, { 2: benched })
-    })
-    const { roster } = await scoring(() => answer(plans))
-    await endHalf()
-    await endHalf()
-    expect(notice()).equals(
-      'Owls inning 2 plan applied — 1 playing-time warning\nHawks inning 2 plan not applied: needs a pitcher'
-    )
-    expect(await roster()).equals(1)
   })
 })

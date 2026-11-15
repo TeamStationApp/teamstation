@@ -1,26 +1,26 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import type { GamePlansResponse } from '../../common/api'
-import type { PlanCell } from '../../common/gamePlan'
-import {
-  DEFAULT_PLAYING_TIME_RULES,
-  type PlayingTimeRules
-} from '../../common/playingTimeRules'
+import type { PlanCell, PlanColumnCell } from '../../common/gamePlan'
 import type { ScoringAction } from '../../common/scoring/actions'
-import type { Position, Side } from '../../common/scoring/state'
+import { copyGame, type Position, type Side } from '../../common/scoring/state'
 import { completeMotions } from '../../test/scoringHelpers'
 import {
   PLAN_BLANK as BLANK,
   PLAN_START as START,
-  PLAN_SWAPPED as SWAPPED,
-  scoringPlans,
-  scoringSidePlan as sidePlan
+  PLAN_SWAPPED as SWAPPED
 } from '../../test/scoringPlans'
 import { scoringRoster } from '../../test/scoringSession'
 import { createDevelopmentSession } from './developmentSession'
 import { gameFixture } from './isUnscoredGame.test'
-import { initialScoringState, scoringReducer } from './scoringMachine'
+import { overrideDraftOf } from './overrideModel'
+import {
+  initialScoringState,
+  planInningWaits,
+  scoringReducer,
+  scoringScreenModel,
+  scoringScreenReducer
+} from './scoringMachine'
 import type { ScoringEvent, ScoringState } from './scoringTypes'
 
 function initial(): ScoringState {
@@ -28,13 +28,6 @@ function initial(): ScoringState {
     createDevelopmentSession(gameFixture, scoringRoster(1), scoringRoster(10))
   )
 }
-
-const plans = (
-  given: Parameters<typeof scoringPlans>[0]
-): ScoringEvent & { type: 'PLANS' } => ({
-  type: 'PLANS',
-  plans: scoringPlans(given)
-})
 
 function run(
   state: ScoringState,
@@ -59,6 +52,34 @@ function strikeOutSide(state: ScoringState): ScoringState {
   return state
 }
 
+/** Into the top of the 2nd: both halves of the 1st struck out. */
+const intoSecond = (): ScoringState => strikeOutSide(strikeOutSide(initial()))
+
+/**
+ * The column of the side whose first player is `first` (1 away, 10 home),
+ * as the inning route answers it: a cell per batter, in batting order here.
+ */
+const column = (first: number, cells: readonly PlanCell[]): PlanColumnCell[] =>
+  cells.map((cell, at) => ({
+    player: {
+      gumboId: first + at,
+      fullName: `Player ${at + 1}`,
+      jersey: String(at + 1)
+    },
+    cell
+  }))
+
+const planInning = (
+  side: Side,
+  inning: number,
+  cells: readonly PlanCell[]
+): ScoringEvent => ({
+  type: 'PLAN_INNING',
+  side,
+  inning,
+  column: column(side === 'away' ? 1 : 10, cells)
+})
+
 const rosters = (log: readonly ScoringAction[]): ScoringAction[] =>
   log.filter(action => action.type === 'lineup' && action.kind === 'roster')
 
@@ -82,355 +103,197 @@ function fielded(
   return defense
 }
 
-describe('plan shift', function () {
-  it('logs the next inning’s defence as one roster save at the bottom’s third out', function () {
-    let state = run(initial(), [plans({ home: sidePlan(10, { 2: SWAPPED }) })])
-    state = strikeOutSide(state)
-    expect(rosters(state.log)).deep.equals([])
-    const before = state.log.length
-    state = strikeOutSide(state)
-    expect(state.session.liveData.linescore).includes({
-      currentInning: 2,
-      isTopInning: true
-    })
-    const shift = state.log
-      .slice(before)
-      .filter(action => action.type === 'lineup')
-    expect(shift).has.length(1)
-    expect(shift[0]).includes({ kind: 'roster', keepSlot: true })
-    expect(state.log.at(-1)).equals(shift[0])
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10, SWAPPED))
-    expect(defenseOf(state, 'away')).deep.equals(fielded(1))
-    expect(state.planNotice).deep.equals({
-      inning: 2,
-      sides: ['home'],
-      summary: '',
-      refused: []
-    })
-  })
-
-  it('does nothing at the top half’s end', function () {
-    let state = run(initial(), [
-      plans({ home: sidePlan(10, { 1: SWAPPED, 2: SWAPPED }) })
-    ])
-    state = strikeOutSide(state)
-    expect(state.session.liveData.linescore.isTopInning).equals(false)
-    expect(rosters(state.log)).deep.equals([])
-    expect(state.planNotice).equals(undefined)
-  })
-
-  it('does nothing with no positions in the plan, with no plan, or with no next column, or a blank one', function () {
-    const noPositions = Object.fromEntries(
-      [1, 2, 3, 4, 5, 6].map(inning => [inning, BLANK])
-    )
-    for (const given of [
-      { home: sidePlan(10, noPositions) },
-      { home: sidePlan(10, { 2: BLANK }) },
-      { home: { ...sidePlan(10, {}), plan: null } },
-      { home: sidePlan(10, { 2: SWAPPED }, { innings: 1 }) },
-      {}
-    ]) {
-      let state = run(initial(), [plans(given)])
-      state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
+describe('plan innings in the scoring reducer', function () {
+  describe('the inning entered', function () {
+    it('is set when the bottom’s third out starts the next inning, and not at the top’s', function () {
+      let state = strikeOutSide(initial())
+      expect(state.session.liveData.linescore.currentInning).equals(1)
+      expect(state.inningStart).equals(undefined)
+      state = strikeOutSide(state)
       expect(state.session.liveData.linescore.currentInning).equals(2)
+      expect(state.inningStart).deep.equals({ inning: 2, id: 1 })
+      // Nothing is logged for the plan until its column lands.
       expect(rosters(state.log)).deep.equals([])
-      expect(defenseOf(state, 'home')).deep.equals(fielded(10))
-      expect(state.planNotice).equals(undefined)
-    }
-    // Nor before the plans are read.
-    const unread = run(initial(), [{ type: 'END_HALF' }, { type: 'END_HALF' }])
-    expect(rosters(unread.log)).deep.equals([])
-  })
-
-  it('reads a plan as on by its positions, not the flag it came with', function () {
-    const swapped = sidePlan(10, { 2: SWAPPED })
-    const flagged = (
-      plan: typeof swapped,
-      enabled: boolean
-    ): typeof swapped => ({
-      ...plan,
-      plan: plan.plan == null ? null : { ...plan.plan, enabled }
     })
-    let state = run(initial(), [plans({ home: flagged(swapped, false) })])
-    state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10, SWAPPED))
-    const blank = sidePlan(
-      10,
-      Object.fromEntries([1, 2, 3, 4, 5, 6].map(inning => [inning, BLANK]))
-    )
-    state = run(initial(), [plans({ home: flagged(blank, true) })])
-    state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
-    expect(rosters(state.log)).deep.equals([])
-    expect(state.planNotice).equals(undefined)
-  })
 
-  it('does nothing once the game is over', function () {
-    let state = run(initial(), [
-      plans({ home: sidePlan(10, { 2: SWAPPED }) }),
-      { type: 'END_HALF' },
-      { type: 'END_GAME' }
-    ])
-    expect(state.session.final).equals(true)
-    const log = state.log
-    state = run(state, [{ type: 'END_HALF' }])
-    expect(state.log).equals(log)
-    expect(rosters(state.log)).deep.equals([])
-  })
-
-  it('does nothing in a replay, applied or watched', function () {
-    const ends: ScoringAction[] = [
-      { type: 'gameFlow', kind: 'endHalf' },
-      { type: 'gameFlow', kind: 'endHalf' }
-    ]
-    const planned = plans({ home: sidePlan(10, { 2: SWAPPED }) })
-    const replayed = run(initial(), [
-      planned,
-      { type: 'REPLAYED', actions: ends }
-    ])
-    expect(replayed.session.liveData.linescore.currentInning).equals(2)
-    expect(rosters(replayed.log)).deep.equals([])
-    const watching = run(
-      initialScoringState(initial().session, false, { watching: true }),
-      [planned, { type: 'REPLAYED', actions: ends }]
-    )
-    expect(watching.session.liveData.linescore.currentInning).equals(2)
-    expect(rosters(watching.log)).deep.equals([])
-  })
-
-  it('takes the shift back with the third out’s Undo', function () {
-    let state = run(initial(), [plans({ home: sidePlan(10, { 2: SWAPPED }) })])
-    state = strikeOutSide(state)
-    const top = state
-    state = strikeOutSide(state)
-    expect(rosters(state.log)).has.length(1)
-    state = run(state, [{ type: 'UNDO' }])
-    expect(state.session.liveData.linescore).includes({
-      currentInning: 1,
-      isTopInning: false,
-      outs: 2
+    it('is set by an Undo back across an inning’s end, and only grows when the same end comes again', function () {
+      let state = intoSecond()
+      // The third out's play, taken back, leaves the 1st again.
+      while (state.session.liveData.linescore.currentInning === 2)
+        state = run(state, [{ type: 'UNDO' }])
+      expect(state.inningStart).deep.equals({ inning: 1, id: 2 })
+      state = strikeOutSide(state)
+      expect(state.session.liveData.linescore.currentInning).equals(2)
+      expect(state.inningStart?.inning).equals(2)
+      expect(state.inningStart?.id).greaterThan(2)
     })
-    expect(rosters(state.log)).deep.equals([])
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10))
-    expect(state.planNotice).equals(undefined)
-    // The plans stay: they are the coach's, not the step's.
-    expect(state.plans).equals(top.plans)
-  })
 
-  it('shifts on a manual End Half Inning too, and each side by its own plan', function () {
-    const awayColumn: PlanCell[] = [
-      'P',
-      '1B',
-      'C',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      'RF'
-    ]
-    let state = run(initial(), [
-      plans({
-        away: sidePlan(1, { 2: awayColumn }),
-        home: sidePlan(10, { 2: SWAPPED })
-      }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(rosters(state.log)).has.length(2)
-    expect(defenseOf(state, 'away')).deep.equals(fielded(1, awayColumn))
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10, SWAPPED))
-    expect(state.planNotice).deep.equals({
-      inning: 2,
-      sides: ['away', 'home'],
-      summary: '',
-      refused: []
+    it('is set by the Override editor’s inning and by End Half Inning', function () {
+      let state = initial()
+      const draft = { ...overrideDraftOf(state.session), inning: 3 }
+      state = run(state, [{ type: 'OVERRIDE', draft }])
+      expect(state.session.liveData.linescore.currentInning).equals(3)
+      expect(state.inningStart).deep.equals({ inning: 3, id: 1 })
+      state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
+      expect(state.inningStart).deep.equals({ inning: 4, id: 2 })
     })
-    // One Undo takes back the half's end and both shifts.
-    state = run(state, [{ type: 'UNDO' }])
-    expect(rosters(state.log)).deep.equals([])
-    expect(defenseOf(state, 'away')).deep.equals(fielded(1))
-  })
 
-  it('skips a column that leaves nobody pitching and says why, leaving the out standing', function () {
-    // Inning 2 benches the pitcher and gives nobody P.
-    const benched: PlanCell[] = [
-      '',
-      'C',
-      '1B',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      'RF'
-    ]
-    let state = run(initial(), [
-      plans({
-        away: sidePlan(1, { 2: SWAPPED }),
-        home: sidePlan(10, { 2: benched })
+    it('is set when a saved Undo takes the game back across an inning', function () {
+      const first = strikeOutSide(initial())
+      const saved = { session: copyGame(first.session), log: first.log }
+      const model = scoringScreenModel(strikeOutSide(first))
+      expect(model.scoring.inningStart).deep.equals({ inning: 2, id: 1 })
+      const back = scoringScreenReducer(model, {
+        type: 'SAVED_UNDONE',
+        undone: saved
       })
-    ])
-    state = strikeOutSide(state)
-    state = strikeOutSide(state)
-    expect(state.session.liveData.linescore).includes({
-      currentInning: 2,
-      isTopInning: true
+      expect(back.scoring.session.liveData.linescore.currentInning).equals(1)
+      expect(back.scoring.inningStart).deep.equals({ inning: 1, id: 2 })
+      // One that could not be taken back changes nothing.
+      expect(
+        scoringScreenReducer(model, { type: 'SAVED_UNDONE' }).scoring
+          .inningStart
+      ).deep.equals({ inning: 2, id: 1 })
     })
-    expect(rosters(state.log)).has.length(1)
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10))
-    expect(defenseOf(state, 'away')).deep.equals(fielded(1, SWAPPED))
-    expect(state.planNotice).deep.equals({
-      inning: 2,
-      sides: ['away'],
-      summary: '',
-      refused: [{ side: 'home', reason: 'needs a pitcher' }]
-    })
-    // Refused on its own side, nothing is logged at all.
-    const alone = run(initial(), [
-      plans({ home: sidePlan(10, { 2: benched }) }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(rosters(alone.log)).deep.equals([])
-    expect(alone.planNotice).deep.equals({
-      inning: 2,
-      sides: [],
-      summary: '',
-      refused: [{ side: 'home', reason: 'needs a pitcher' }]
+
+    it('is not set by another device’s game, a replay, an applied column, a watching screen or a finished game', function () {
+      const later = intoSecond()
+      // Another device's game, read in.
+      const reset = run(initial(), [
+        { type: 'RESET', session: copyGame(later.session), log: later.log }
+      ])
+      expect(reset.session.liveData.linescore.currentInning).equals(2)
+      expect(reset.inningStart).equals(undefined)
+      // A replay's steps across the inning.
+      const replayed = run(initial(), [
+        { type: 'REPLAYED', actions: later.log }
+      ])
+      expect(replayed.session.liveData.linescore.currentInning).equals(2)
+      expect(replayed.inningStart).equals(undefined)
+      // A screen watching another's scoring.
+      const watching = strikeOutSide(
+        strikeOutSide({ ...initial(), watching: true })
+      )
+      expect(watching.inningStart).equals(undefined)
+      // The column itself never moves the inning.
+      const applied = run(later, [planInning('home', 2, SWAPPED)])
+      expect(applied.inningStart).deep.equals(later.inningStart)
+      // A game ended moves no inning on.
+      const ended = run(intoSecond(), [{ type: 'END_GAME' }])
+      expect(ended.session.final).equals(true)
+      expect(run(ended, [{ type: 'END_HALF' }]).inningStart).deep.equals(
+        ended.inningStart
+      )
     })
   })
 
-  it('applies one side beside the other’s refusal with its own warnings, and keeps both refusals', function () {
-    // Max Sits is one; the away Player 9 sits innings 1, 2 and 3.
-    const rules: PlayingTimeRules = {
-      ...DEFAULT_PLAYING_TIME_RULES,
-      enforceSittingLimits: true,
-      noConsecutiveSits: false,
-      equalSittingOrder: 'off'
-    }
-    const sitting: PlanCell[] = [
-      'P',
-      'C',
-      '1B',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      ''
-    ]
-    const benched: PlanCell[] = ['', ...sitting.slice(1, 8), 'RF']
-    const state = run(initial(), [
-      plans({
-        away: sidePlan(1, { 1: sitting, 2: sitting, 3: sitting }, { rules }),
-        home: sidePlan(10, { 2: benched })
-      }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(defenseOf(state, 'away')).deep.equals(fielded(1, sitting))
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10))
-    expect(state.planNotice).deep.equals({
-      inning: 2,
-      sides: ['away'],
-      summary: '1 playing-time warning',
-      refused: [{ side: 'home', reason: 'needs a pitcher' }]
-    })
-    // Both refused: each side's reason stays, the away side's first.
-    const both = run(initial(), [
-      plans({
-        away: sidePlan(1, { 2: benched }),
-        home: sidePlan(10, { 2: benched })
-      }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(rosters(both.log)).deep.equals([])
-    expect(both.planNotice).deep.equals({
-      inning: 2,
-      sides: [],
-      summary: '',
-      refused: [
-        { side: 'away', reason: 'needs a pitcher' },
-        { side: 'home', reason: 'needs a pitcher' }
+  describe('a column downloaded', function () {
+    it('puts its side in that inning’s defence as one roster save, keeping the batting slots, taken back by one Undo', function () {
+      const before = intoSecond()
+      const order = [
+        ...before.session.liveData.boxscore.teams.home.battingOrder
       ]
+      const state = run(before, [planInning('home', 2, SWAPPED)])
+      expect(defenseOf(state, 'home')).deep.equals(fielded(10, SWAPPED))
+      expect(defenseOf(state, 'away')).deep.equals(defenseOf(before, 'away'))
+      expect(
+        state.session.liveData.boxscore.teams.home.battingOrder
+      ).deep.equals(order)
+      const logged = rosters(state.log.slice(before.log.length))
+      expect(logged).has.length(1)
+      expect(logged[0]).includes({ kind: 'roster', keepSlot: true })
+      expect(state.past).has.length(before.past.length + 1)
+      expect(defenseOf(run(state, [{ type: 'UNDO' }]), 'home')).deep.equals(
+        defenseOf(before, 'home')
+      )
     })
-  })
 
-  it('skips a column the game itself refuses, without throwing', function () {
-    // A home batter the game no longer counts as the team's: every roster
-    // save of that side is refused, the shift's too.
-    const opened = initial()
-    opened.session.gameData.players[18].teamId = 'elsewhere'
-    const state = run(opened, [
-      plans({ home: sidePlan(10, { 2: SWAPPED }) }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(state.session.liveData.linescore.currentInning).equals(2)
-    expect(rosters(state.log)).deep.equals([])
-    expect(state.planNotice?.refused).deep.equals([
-      { side: 'home', reason: 'has an invalid or duplicate lineup player' }
-    ])
-  })
+    it('replaces a defence the scorer changed by hand: the coach takes priority', function () {
+      const before = run(intoSecond(), [planInning('home', 2, SWAPPED)])
+      const coach: PlanCell[] = [
+        'P',
+        'C',
+        '1B',
+        'SS',
+        '2B',
+        '3B',
+        'LF',
+        'CF',
+        'RF'
+      ]
+      const state = run(before, [planInning('home', 2, coach)])
+      expect(defenseOf(state, 'home')).deep.equals(fielded(10, coach))
+    })
 
-  it('shifts a column with a red warning, and counts it in the notice', function () {
-    // Max Sits is one; Player 9 sits innings 1, 2 and 3.
-    const rules: PlayingTimeRules = {
-      ...DEFAULT_PLAYING_TIME_RULES,
-      enforceSittingLimits: true,
-      noConsecutiveSits: false,
-      equalSittingOrder: 'off'
-    }
-    const sitting: PlanCell[] = [
-      'P',
-      'C',
-      '1B',
-      '2B',
-      'SS',
-      '3B',
-      'LF',
-      'CF',
-      ''
-    ]
-    const state = run(initial(), [
-      plans({
-        home: sidePlan(10, { 1: sitting, 2: sitting, 3: sitting }, { rules })
-      }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10, sitting))
-    expect(state.planNotice?.summary).equals('1 playing-time warning')
-  })
+    it('logs nothing for a column the side already fields, which inningDefense answers null, as when another screen’s save of it was read in first', function () {
+      const once = run(intoSecond(), [planInning('home', 2, SWAPPED)])
+      expect(scoringReducer(once, planInning('home', 2, SWAPPED))).equals(once)
+    })
 
-  it('keeps the notice until the next action, and through a plans read', function () {
-    let state = run(initial(), [
-      plans({ home: sidePlan(10, { 2: SWAPPED }) }),
-      { type: 'END_HALF' },
-      { type: 'END_HALF' }
-    ])
-    expect(state.planNotice?.inning).equals(2)
-    state = run(state, [
-      plans({ home: sidePlan(10, { 2: SWAPPED, 3: START }) })
-    ])
-    expect(state.planNotice?.inning).equals(2)
-    state = run(state, [{ type: 'PITCH', kind: 'ball' }])
-    expect(state.planNotice).equals(undefined)
-    // The pitch's Undo brings it back, as the screen was before the pitch.
-    state = run(state, [{ type: 'UNDO' }])
-    expect(state.planNotice?.inning).equals(2)
-  })
+    it('lets the scorer field a ball after the column applied', function () {
+      const state = run(intoSecond(), [planInning('home', 2, SWAPPED)])
+      const chosen = scoringReducer(state, {
+        type: 'OUTCOME',
+        outcome: 'Ball Caught'
+      })
+      const centre = defenseOf(chosen, 'home').CF!
+      const located = scoringReducer(chosen, {
+        type: 'FIELDER',
+        id: centre,
+        point: { x: 0, z: -200 },
+        generation: chosen.generation
+      })
+      expect(located.phase).equals('trajectory')
+    })
 
-  it('keeps the plans through a reset', function () {
-    const read: GamePlansResponse = {
-      away: null,
-      home: sidePlan(10, { 2: SWAPPED })
-    }
-    let state = run(initial(), [{ type: 'PLANS', plans: read }])
-    state = run(state, [{ type: 'RESET', session: initial().session, log: [] }])
-    expect(state.plans).equals(read)
-    state = run(state, [{ type: 'END_HALF' }, { type: 'END_HALF' }])
-    expect(defenseOf(state, 'home')).deep.equals(fielded(10, SWAPPED))
+    it('takes a benched player off the field', function () {
+      const benched: PlanCell[] = [...START.slice(0, 8), '']
+      const state = run(intoSecond(), [planInning('home', 2, benched)])
+      expect(defenseOf(state, 'home')).deep.equals({
+        ...fielded(10),
+        RF: null
+      })
+    })
+
+    it('changes nothing for another inning, an empty column, a column with nobody pitching, mid-play, on a watching screen or once the game is over', function () {
+      const state = intoSecond()
+      const noPitcher: PlanCell[] = ['', ...SWAPPED.slice(1)]
+      for (const [label, event] of [
+        ['inning 3', planInning('home', 3, SWAPPED)],
+        ['inning 1', planInning('home', 1, SWAPPED)],
+        ['empty', { type: 'PLAN_INNING', side: 'home', inning: 2, column: [] }],
+        ['all benched', planInning('home', 2, BLANK)],
+        ['no pitcher', planInning('home', 2, noPitcher)]
+      ] as const)
+        expect(scoringReducer(state, event), label).equals(state)
+      const draft: Partial<ScoringState> = { moreDraft: state.moreDraft }
+      draft.moreDraft ??= { action: 'pickoff' } as unknown as NonNullable<
+        ScoringState['moreDraft']
+      >
+      const busyStates: Array<Partial<ScoringState>> = [
+        { phase: 'locateFielder' },
+        draft,
+        { dictationQuestion: { transcript: 'two balls', question: 'Which?' } },
+        { reel: [] },
+        { queuedDictation: [{ transcript: 'ball', actions: [] }] },
+        { celebration: { id: 1 } as unknown as ScoringState['celebration'] }
+      ]
+      for (const busy of busyStates) {
+        const waiting: ScoringState = { ...state, ...busy }
+        const label = Object.keys(busy).join()
+        expect(planInningWaits(waiting), label).equals(true)
+        const after = scoringReducer(waiting, planInning('home', 2, SWAPPED))
+        expect(rosters(after.log), label).deep.equals(rosters(state.log))
+      }
+      expect(planInningWaits(state)).equals(false)
+      const watching: ScoringState = { ...state, watching: true }
+      expect(scoringReducer(watching, planInning('home', 2, SWAPPED))).equals(
+        watching
+      )
+      const ended = run(state, [{ type: 'END_GAME' }])
+      expect(scoringReducer(ended, planInning('home', 2, SWAPPED))).equals(
+        ended
+      )
+    })
   })
 })

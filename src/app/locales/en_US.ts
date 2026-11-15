@@ -1167,15 +1167,13 @@ export const enUs = {
   remote_log_override: 'Game corrected',
   remote_log_close_play: 'Play closed',
   /**
-   * Shown when an inning's end moves the defence to the game plan's next
-   * column, until the next play: with the plan's playing-time warnings, or
-   * why the game refused the column.
+   * Dropped from the top of the scoring screen when an inning's plan column
+   * could not be downloaded within its 10 seconds: Try again asks once more,
+   * Accept keeps the lineup the game has.
    */
-  scoring_plan_applied: 'Inning %s plan applied',
-  scoring_plan_applied_warnings: 'Inning %1$s plan applied — %2$s',
-  scoring_plan_team_applied: '%1$s inning %2$s plan applied',
-  scoring_plan_team_applied_warnings: '%1$s inning %2$s plan applied — %3$s',
-  scoring_plan_refused: '%1$s inning %2$s plan not applied: %3$s',
+  scoring_plan_sync_failed: 'Unable to sync new inning defensive lineup for %s',
+  scoring_plan_sync_retry: 'Try again',
+  scoring_plan_sync_accept: 'Accept',
   scoring_place_runner: 'Place a Runner',
   scoring_roster_tab: 'Roster',
   scoring_edit_roster_instruction: 'Tap player to edit.',
