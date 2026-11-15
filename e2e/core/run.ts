@@ -468,7 +468,13 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       }
     }
 
-    const attempts = 1 + (options.retries ?? 0)
+    const retries = options.retries ?? 0
+    if (!Number.isInteger(retries) || retries < 0) {
+      throw new HarnessError(
+        `retries must be a whole number, 0 or more: ${retries}`
+      )
+    }
+    const attempts = 1 + retries
     let failure: Error | undefined
     for (let attempt = 0; attempt < attempts; attempt++) {
       failure = undefined

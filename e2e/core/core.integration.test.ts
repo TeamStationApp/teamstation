@@ -530,6 +530,14 @@ describe('run', function () {
     expect(missing.status).equals('blocked')
   })
 
+  it('is a harness error, not a pass, when it may make no attempt', async function () {
+    for (const retries of [Number.NaN, -1, 0.5]) {
+      const none = await outcome('return', { retries })
+      expect(none.status).equals('harness-error')
+      expect(none.reason).includes('retries must be a whole number')
+    }
+  })
+
   const WATCH = `const device = {
     hierarchy: async () => ({ children: [{ text: 'Sox' }] }),
     screenshot: async () => Buffer.from('x'),
