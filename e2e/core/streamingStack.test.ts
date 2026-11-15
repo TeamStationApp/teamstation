@@ -10,7 +10,9 @@ import { expect } from 'chai'
 import { daemonNames } from './daemons'
 import {
   attachedBlocker,
+  DAEMON_IDLE_SEC,
   restartDaemon,
+  stopDaemonsOnSignal,
   stopStartedDaemons,
   sweepArgs,
   sweepLine
@@ -308,6 +310,10 @@ describe("a sweep's own daemons", function () {
     }) as unknown as typeof spawnSync
     restartDaemon('maestro-d', 'e2e-41-ios', run)
     restartDaemon('maestro-d', 'e2e-41-android', run)
+    // Each exits by itself after a finite idle, in case nothing stops it.
+    expect(calls).includes(
+      `start --daemon e2e-41-ios --idle-timeout ${DAEMON_IDLE_SEC}`
+    )
     calls.length = 0
     stopStartedDaemons('maestro-d', run)
     expect(calls).deep.equals([
@@ -318,5 +324,28 @@ describe("a sweep's own daemons", function () {
     calls.length = 0
     stopStartedDaemons('maestro-d', run)
     expect(calls).deep.equals([])
+  })
+
+  it('stops them when the run is told to stop, and lets go of the signals after', function () {
+    const listeners = new Map<string, () => void>()
+    const on = {
+      once: (signal: string, handler: () => void) => {
+        listeners.set(signal, handler)
+        return on
+      },
+      removeListener: (signal: string) => {
+        listeners.delete(signal)
+        return on
+      }
+    } as unknown as Pick<NodeJS.Process, 'once' | 'removeListener'>
+    const exits: number[] = []
+    const unhook = stopDaemonsOnSignal('maestro-d', on, code => {
+      exits.push(code)
+    })
+    expect([...listeners.keys()]).deep.equals(['SIGINT', 'SIGTERM'])
+    listeners.get('SIGTERM')!()
+    expect(exits).deep.equals([143])
+    unhook()
+    expect(listeners.size).equals(0)
   })
 })

@@ -260,15 +260,46 @@ export function restartDaemon(
       // `stop` ended it already.
     }
   }
-  const started = run(bin, ['start', '--daemon', name, '--idle-timeout', '0'], {
-    encoding: 'utf8',
-    timeout: 60_000,
-    env: daemonEnv()
-  })
+  // A start that timed out may still have started it: stopped at the end too.
+  startedDaemons.add(name)
+  const started = run(
+    bin,
+    ['start', '--daemon', name, '--idle-timeout', String(DAEMON_IDLE_SEC)],
+    { encoding: 'utf8', timeout: 60_000, env: daemonEnv() }
+  )
   if (started.status !== 0) {
     throw new Error(`maestro-d start ${name} failed: ${String(started.stderr)}`)
   }
-  startedDaemons.add(name)
+}
+
+/**
+ * How long a sweep's daemon may sit unused before it exits by itself: longer
+ * than any one script runs, so none goes from under a script, and finite, so
+ * a sweep killed outright leaves none running for good. One that does exit
+ * between scripts is started again before the next (`ensureDaemon`).
+ */
+export const DAEMON_IDLE_SEC = 2 * 60 * 60
+
+/**
+ * Stops this run's daemons when the run is told to stop (a timeout, Ctrl-C),
+ * which skips the `finally` that would, and says how to undo it.
+ */
+export function stopDaemonsOnSignal(
+  bin: string,
+  on: Pick<NodeJS.Process, 'once' | 'removeListener'> = process,
+  exit: (code: number) => void = code => process.exit(code)
+): () => void {
+  const handlers = (['SIGINT', 'SIGTERM'] as const).map(signal => {
+    const handler = (): void => {
+      stopStartedDaemons(bin)
+      exit(signal === 'SIGINT' ? 130 : 143)
+    }
+    on.once(signal, handler)
+    return [signal, handler] as const
+  })
+  return () => {
+    for (const [signal, handler] of handlers) on.removeListener(signal, handler)
+  }
 }
 
 /** Starts a daemon that is not running; leaves a running one alone. */
@@ -415,6 +446,7 @@ async function main(): Promise<void> {
     // A short clip for the scripts that upload a recording.
     uploadFile = join(artifacts, 'upload.mp4')
   }
+  const unhook = stopDaemonsOnSignal(bin)
   // Everything from here runs with the stack up, so it stops it on the way out.
   try {
     if (uploadFile != null) {
@@ -657,6 +689,7 @@ async function main(): Promise<void> {
   } finally {
     // This run's daemons go with it, and the devices they hold are free.
     stopStartedDaemons(bin)
+    unhook()
     // Every script has its line by now: a stop that waits on a connection
     // nobody closes (droplets' sweeps sat for hours) is given a minute.
     await Promise.race([
