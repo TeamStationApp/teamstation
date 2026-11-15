@@ -138,6 +138,10 @@ function serverEnv(): NodeJS.ProcessEnv {
   return { ...process.env, NODE_ENV: 'test' }
 }
 
+/**
+ * Waits for the API's own port to answer health. Not through the front server: a
+ * fault proxy there breaks `/api/v1/health` like every other API path.
+ */
 async function untilHealthy(url: string, proc: ChildProcess): Promise<void> {
   const end = Date.now() + 60000
   while (Date.now() < end) {
@@ -145,7 +149,9 @@ async function untilHealthy(url: string, proc: ChildProcess): Promise<void> {
       throw new HarnessError(`The API exited with ${proc.exitCode}`)
     }
     try {
-      const reply = await fetch(`${url}/api/v1/health`)
+      const reply = await fetch(`${url}/api/v1/health`, {
+        signal: AbortSignal.timeout(5000)
+      })
       if (reply.ok) return
     } catch {
       // Not listening yet.
@@ -309,7 +315,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         await new Promise(resolve => setTimeout(resolve, 200))
         api.kill('SIGKILL')
       })
-      await untilHealthy(front.url, api)
+      await untilHealthy(`http://127.0.0.1:${apiPort}`, api)
     }
 
     let metroPort: number | undefined
