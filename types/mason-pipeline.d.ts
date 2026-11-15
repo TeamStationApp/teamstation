@@ -71,6 +71,12 @@ declare module '@mason/types' {
     fs: {
       glob: (patterns: string | string[]) => Promise<string[]>
     }
+    log: {
+      info: (message: string) => void
+      warn: (message: string) => void
+    }
+    /** Sets the run's one-line description. */
+    describe: (text: string) => void
     publish: (options: {
       app: string
       platform: string
