@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
+import type { Browser } from 'puppeteer'
+
 import {
   applyEmulation,
   browserFor,
@@ -9,7 +11,7 @@ import {
   type Emulation
 } from './browserCdp'
 import { browserClassOf } from './goldens'
-import { attachDevice, connectDaemon } from './maestro'
+import { attachDevice, connectDaemon, type MaestroDevice } from './maestro'
 import type { LocalSettings } from './settings'
 import type { WebSession } from './spec'
 
@@ -25,34 +27,46 @@ export async function openWebSession(
 ): Promise<WebSession> {
   const device = `web-${randomUUID().slice(0, 8)}`
   const daemon = await connectDaemon(settings, `e2e-${device}`)
-  const profile = join(runDir, 'browser-profiles', device)
-  mkdirSync(profile, { recursive: true })
-  const blank = `about:blank#${device}`
-  const m = await attachDevice(daemon, runDir, {
-    device,
-    platform: 'web',
-    url: blank,
-    appId: blank,
-    extra: {
-      browser: await browserFor(emulation),
-      windowSize: `${size.width}x${size.height}`,
-      headed: false,
-      userDataDir: profile
+  let m: MaestroDevice | undefined
+  let browser: Browser | undefined
+  const close = async (): Promise<void> => {
+    await browser?.disconnect().catch(() => undefined)
+    await m?.detach().catch(() => undefined)
+    await daemon.shutdown()
+  }
+  // A session that fails to open closes what it had opened: a browser or
+  // daemon left behind holds the device the next run asks for.
+  try {
+    const profile = join(runDir, 'browser-profiles', device)
+    mkdirSync(profile, { recursive: true })
+    const blank = `about:blank#${device}`
+    m = await attachDevice(daemon, runDir, {
+      device,
+      platform: 'web',
+      url: blank,
+      appId: blank,
+      extra: {
+        browser: await browserFor(emulation),
+        windowSize: `${size.width}x${size.height}`,
+        headed: false,
+        userDataDir: profile
+      }
+    })
+    const connected = await connectToMaestroChromium(profile, blank)
+    browser = connected.browser
+    const { page } = connected
+    await applyEmulation(page, emulation)
+    return {
+      m,
+      page,
+      deviceClass: browserClassOf(await browser.version(), size),
+      resize: async next => {
+        await page.setViewport(next)
+      },
+      close
     }
-  })
-  const { browser, page } = await connectToMaestroChromium(profile, blank)
-  await applyEmulation(page, emulation)
-  return {
-    m,
-    page,
-    deviceClass: browserClassOf(await browser.version(), size),
-    resize: async next => {
-      await page.setViewport(next)
-    },
-    close: async () => {
-      await browser.disconnect()
-      await m.detach()
-      await daemon.shutdown()
-    }
+  } catch (error) {
+    await close().catch(() => undefined)
+    throw error
   }
 }

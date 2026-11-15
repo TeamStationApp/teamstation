@@ -24,7 +24,7 @@ import {
 import { deviceClassOf } from './goldens'
 import type { ServerError } from './invariants'
 import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
-import { attachDevice, connectDaemon } from './maestro'
+import { attachDevice, connectDaemon, type MaestroDevice } from './maestro'
 import { gogRunner, readMail, testAddressFor, waitForMail } from './mail'
 import { findScenario, ROOT } from './manifest'
 import { iosBuiltApp, iosIsSimulator, prepareApp } from './prepare'
@@ -198,6 +198,9 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     options.runDir ?? mkdtempSync(join(tmpdir(), 'teamstation-e2e-run-'))
   mkdirSync(runDir, { recursive: true })
   const started = Date.now()
+  // When the attempt now running began: its server errors and mail are its own.
+  let attemptStarted = started
+  let attempts = 0
   const degradations: string[] = []
   let checkpoints: Checkpoints | undefined
   let targetKind: RunResult['target']
@@ -222,12 +225,23 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       checkpoints: checkpoints?.records ?? [],
       ...(checkpoints == null || checkpoints.unattributed.length === 0
         ? {}
-        : { unattributedServerErrors: checkpoints.unattributed })
+        : { unattributedServerErrors: checkpoints.unattributed }),
+      ...(attempts > 1 ? { attempts } : {})
     }
     writeResult(runDir, result)
     return { result, exitCode: exitCodeFor(status), runDir }
   }
 
+  // Every browser and daemon an attempt opened, closed before the next one
+  // starts and whatever ends the run, so none holds a device afterwards.
+  const sessions: WebSession[] = []
+  const attached: Array<() => Promise<void>> = []
+  const release = async (): Promise<void> => {
+    for (const session of sessions.splice(0)) {
+      await session.close().catch(() => undefined)
+    }
+    for (const close of attached.splice(0)) await close().catch(() => undefined)
+  }
   let stack: RunningStack | undefined
   try {
     const { entry, spec } = findScenario(options.id, root)
@@ -331,7 +345,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       runDir,
       root,
       settings: options.settings,
-      serverErrors: async () => await handle.serverErrors(started),
+      serverErrors: async () => await handle.serverErrors(attemptStarted),
       alone: options.concurrent !== true,
       worldIds: () => worldIdsOf(worlds),
       judges: options.judges ?? configuredJudges(options, root)
@@ -339,8 +353,6 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     const running = checkpoints
 
     const worlds: FixtureManifest[] = []
-    const sessions: WebSession[] = []
-    const attached: Array<() => Promise<void>> = []
     const targets: CheckpointTarget[] = []
     const watch = (device: any, info: WatchedDevice): CheckpointTarget => {
       const target = { device, consoleSeen: 0, ...info }
@@ -371,8 +383,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           size,
           emulation
         )
-        if (options.browserCoverage != null) await startCoverage(session.page)
         sessions.push(session)
+        if (options.browserCoverage != null) await startCoverage(session.page)
         watch(session.m, { deviceClass: session.deviceClass })
         return session
       },
@@ -414,7 +426,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           mailbox,
           to: address,
           from,
-          since: started
+          since: attemptStarted
         })
         return {
           subject: message.subject,
@@ -427,6 +439,13 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           options.settings,
           `e2e-${role}-${process.pid}`
         )
+        // Registered the moment the daemon connects, so a failed attach
+        // still shuts it down.
+        const held: { device?: MaestroDevice } = {}
+        attached.push(async () => {
+          await held.device?.detach().catch(() => undefined)
+          await daemon.shutdown()
+        })
         const physicalIos =
           attachOptions.platform === 'ios' &&
           attachOptions.appFile == null &&
@@ -436,10 +455,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           ...attachOptions,
           ...(physicalIos ? { appFile: iosBuiltApp() } : {})
         })
-        attached.push(async () => {
-          await device.detach()
-          await daemon.shutdown()
-        })
+        held.device = device
         const info = await device.platformInfo()
         if (info.platform === 'ios' && info.isSimulator === true) {
           pinStatusBar(id)
@@ -474,9 +490,32 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         `retries must be a whole number, 0 or more: ${retries}`
       )
     }
-    const attempts = 1 + retries
+    let coverageIndex = 0
+    const recordCoverage = async (): Promise<void> => {
+      if (options.browserCoverage == null || handle.webDir == null) return
+      for (const session of sessions) {
+        await writeCoverage(
+          [session.page],
+          handle.webDir,
+          handle.origin,
+          coverageFile(options.browserCoverage, options.id, coverageIndex++)
+        )
+      }
+    }
     let failure: Error | undefined
-    for (let attempt = 0; attempt < attempts; attempt++) {
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      if (attempt > 0) {
+        // A retry starts as the first attempt did: its own browsers, daemons,
+        // worlds, devices and server-error cursor.
+        await recordCoverage()
+        await release()
+        worlds.length = 0
+        targets.length = 0
+        degradations.length = 0
+        deviceClass = undefined
+        attemptStarted = Date.now()
+      }
+      attempts = attempt + 1
       failure = undefined
       running.reset()
       try {
@@ -489,20 +528,9 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     if (failure != null) {
       await keepEvidence(targets, runDir)
       failureKind = isAssertion(failure) ? 'assertion' : 'crash'
-      serverErrors = (await handle.serverErrors(started)) ?? []
+      serverErrors = (await handle.serverErrors(attemptStarted)) ?? []
     }
-    if (options.browserCoverage != null && handle.webDir != null) {
-      for (const [index, session] of sessions.entries()) {
-        await writeCoverage(
-          [session.page],
-          handle.webDir,
-          handle.origin,
-          coverageFile(options.browserCoverage, options.id, index)
-        )
-      }
-    }
-    for (const session of sessions) await session.close().catch(() => undefined)
-    for (const close of attached) await close().catch(() => undefined)
+    await recordCoverage()
     if (failure != null) throw failure
     const verdict = statusFromCheckpoints(running.records)
     if (verdict.status === 'failed') {
@@ -528,6 +556,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     }
     return finish(quarantined ? 'quarantined' : 'failed', message)
   } finally {
+    await release()
     await stack?.stop()
   }
 }

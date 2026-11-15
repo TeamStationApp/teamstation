@@ -45,7 +45,13 @@ import { apiBaseFor, iosBuiltApp, iosIsSimulator, prepareApp } from './prepare'
 import { BlockedError, exitCodeFor, HarnessError, type Status } from './result'
 import { runScenario } from './run'
 import { selectScenarios } from './select'
-import { hasSecret, loadSettings, readSecret, settingsPath } from './settings'
+import {
+  hasSecret,
+  loadSettings,
+  type LocalSettings,
+  readSecret,
+  settingsPath
+} from './settings'
 import { defineE2e, type E2eSpec, specProblems } from './spec'
 import { freePort, lanAddress, startStack } from './stack'
 import { trackedFiles, validate } from './validate'
@@ -528,6 +534,132 @@ describe('run', function () {
     expect(passed.status).equals('passed')
     const missing = await outcome(`ctx.device('nobody')`)
     expect(missing.status).equals('blocked')
+  })
+
+  /** A maestro-d client that logs each connect, attach, detach and shutdown. */
+  function loggingClient(attach: string): {
+    settings: LocalSettings
+    log: () => string[]
+  } {
+    const root = tempRoot()
+    const log = join(root, 'daemon.log')
+    writeFileSync(log, '')
+    mkdirSync(join(root, 'dist', 'cjs'), { recursive: true })
+    writeFileSync(join(root, 'dist', 'cjs', 'index.js'), '')
+    writeFileSync(join(root, 'package.json'), '{}')
+    mkdirSync(join(root, 'node_modules', 'maestro-d'), { recursive: true })
+    writeFileSync(
+      join(root, 'node_modules', 'maestro-d', 'index.js'),
+      `const fs = require('fs')
+      const note = text => fs.appendFileSync(${JSON.stringify(log)}, text + '\\n')
+      exports.MaestroD = { connect: async o => {
+        note('connect ' + o.name)
+        return {
+          shutdown: async () => note('shutdown ' + o.name),
+          attach: async () => { ${attach} }
+        }
+      } }`
+    )
+    const bin = join(root, 'maestro-d')
+    writeFileSync(bin, '#!/bin/sh\n')
+    chmodSync(bin, 0o755)
+    return {
+      settings: { maestroClientRoot: root, maestroBin: bin },
+      log: () => readFileSync(log, 'utf8').trim().split('\n')
+    }
+  }
+
+  it('shuts down a daemon whose attach failed', async function () {
+    const client = loggingClient(`throw new Error('no such device')`)
+    const failed = await outcome(
+      `await ctx.attach('phone', { platform: 'android' })`,
+      { devices: { phone: 'emulator-1' }, settings: client.settings }
+    )
+    expect(failed.reason).equals('no such device')
+    expect(client.log()).deep.equals([
+      `connect e2e-phone-${process.pid}`,
+      `shutdown e2e-phone-${process.pid}`
+    ])
+  })
+
+  it('closes devices even when reading the server errors fails', async function () {
+    const client = loggingClient(
+      `return { detach: async () => note('detach'), platformInfo: async () => ({ platform: 'android' }) }`
+    )
+    const failed = await outcome(
+      `await ctx.attach('phone', { platform: 'android' }); throw new Error('broke')`,
+      {
+        devices: { phone: 'emulator-1' },
+        settings: client.settings,
+        stack: {
+          kind: 'none',
+          origin: '',
+          webDir: undefined,
+          adopt: async (origin: string) => origin,
+          serverErrors: async () => {
+            throw new Error('no seat log')
+          }
+        }
+      }
+    )
+    expect(failed.reason).equals('no seat log')
+    expect(client.log()).deep.equals([
+      `connect e2e-phone-${process.pid}`,
+      'detach',
+      `shutdown e2e-phone-${process.pid}`
+    ])
+  })
+
+  it('gives each retry its own daemons and server-error cursor, and says it retried', async function () {
+    const client = loggingClient(
+      `return { detach: async () => note('detach'), platformInfo: async () => ({ platform: 'android' }), hierarchy: async () => ({ children: [{ text: 'Sox' }] }), screenshot: async () => Buffer.from('x'), getConsoleLogs: async () => ({ data: '[]' }) }`
+    )
+    const since: number[] = []
+    const root = tempRoot()
+    writeSpec(
+      root,
+      `await ctx.attach('phone', { platform: 'android' })
+      ctx.degrade('first only')
+      await ctx.checkpoint('screen', {})
+      if (!fs.existsSync(ctx.artifact('tried'))) {
+        fs.writeFileSync(ctx.artifact('tried'), '')
+        await new Promise(resolve => setTimeout(resolve, 5))
+        throw new Error('first attempt')
+      }`
+    )
+    const { result } = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      devices: { phone: 'emulator-1' },
+      settings: client.settings,
+      root,
+      runDir: join(root, 'run'),
+      retries: 1,
+      stack: {
+        kind: 'none',
+        origin: '',
+        webDir: undefined,
+        adopt: async (origin: string) => origin,
+        serverErrors: async (at?: number) => {
+          since.push(at ?? 0)
+          return []
+        }
+      }
+    })
+    expect(result.status).equals('passed-degraded')
+    expect(result.attempts).equals(2)
+    expect(result.degradations).deep.equals(['first only'])
+    const name = `e2e-phone-${process.pid}`
+    expect(client.log()).deep.equals([
+      `connect ${name}`,
+      'detach',
+      `shutdown ${name}`,
+      `connect ${name}`,
+      'detach',
+      `shutdown ${name}`
+    ])
+    expect(since.length).equals(2)
+    expect(since[1]).greaterThan(since[0])
   })
 
   it('is a harness error, not a pass, when it may make no attempt', async function () {

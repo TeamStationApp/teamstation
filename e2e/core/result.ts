@@ -48,6 +48,8 @@ export interface RunResult {
   serverErrors?: unknown[]
   /** A seat's server errors no running scenario can claim, for the night's report. */
   unattributedServerErrors?: unknown[]
+  /** How many times the scenario ran, when a retry was needed: a flaky pass shows. */
+  attempts?: number
 }
 
 export function writeResult(runDir: string, result: RunResult): string {
