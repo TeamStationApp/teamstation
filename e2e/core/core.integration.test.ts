@@ -374,6 +374,8 @@ describe('select', function () {
     expect(ids(['src/server/deep/x.ts'])).deep.equals([])
     expect(ids(['README.md'])).deep.equals([])
     expect(ids(['src/app/deleted-from-disk.ts'])).deep.equals(['a#x'])
+    expect(ids(['b'])).deep.equals(['b#x'])
+    expect(ids(['README.md', 'e2e/core/run.ts'])).deep.equals(['a#x', 'b#x'])
     expect(globToRegExp('**/x.ts').test('x.ts')).equals(true)
     expect(matchesAny('a.b', ['a?b'])).equals(false)
   })
