@@ -35,6 +35,40 @@ const realRun: Run = (command, args, env) => {
   })
 }
 
+/** A tool this machine does not have: the run cannot go here. */
+function missingTool(error: unknown): boolean {
+  return (error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT'
+}
+
+/**
+ * Runs an install or device step. One that fails is this machine's or the
+ * device's problem, never the app's, so the run is blocked.
+ */
+function onDevice(step: () => void): void {
+  try {
+    step()
+  } catch (error) {
+    if (error instanceof HarnessError || error instanceof BlockedError)
+      throw error
+    throw new BlockedError(`Install failed: ${String(error)}`)
+  }
+}
+
+/**
+ * Runs the build of the app under test. A missing tool blocks the run; a build
+ * that fails is the branch's failure, so it is a plain error and the run fails.
+ */
+function building(step: () => void): void {
+  try {
+    step()
+  } catch (error) {
+    if (missingTool(error)) {
+      throw new BlockedError(`The build needs a tool: ${String(error)}`)
+    }
+    throw new Error(`The app did not build: ${String(error)}`)
+  }
+}
+
 /** An SDK whose platform-tools are missing cannot install or see a device. */
 function androidSdkEnv(): NodeJS.ProcessEnv {
   const home = process.env.ANDROID_HOME
@@ -87,9 +121,15 @@ function installPackage(options: PrepareOptions, run: Run): void {
 function iosSigningArgs(): string[] {
   const config = join(process.cwd(), 'clientConfig.json')
   if (!existsSync(config)) return []
-  execFileSync('node', ['scripts/clientConfig.mjs', '.'], {
-    stdio: 'ignore'
-  })
+  try {
+    execFileSync('node', ['scripts/clientConfig.mjs', '.'], {
+      stdio: 'ignore'
+    })
+  } catch (error) {
+    throw new HarnessError(
+      `clientConfig.json did not convert: ${String(error)}`
+    )
+  }
   // xcodebuild runs in ios/, so a relative path would miss the root file.
   return [
     '--xcconfig',
@@ -128,9 +168,14 @@ export function iosBuiltApp(
 
 /** Whether `device` is a simulator UDID. A phone's UDID is not in this list. */
 export function iosIsSimulator(device: string): boolean {
-  const listed = execFileSync('xcrun', ['simctl', 'list', 'devices', '-j'], {
-    encoding: 'utf8'
-  })
+  let listed: string
+  try {
+    listed = execFileSync('xcrun', ['simctl', 'list', 'devices', '-j'], {
+      encoding: 'utf8'
+    })
+  } catch (error) {
+    throw new BlockedError(`simctl cannot list devices: ${String(error)}`)
+  }
   return listed.includes(`"${device}"`)
 }
 
@@ -144,46 +189,54 @@ function buildLocally(options: PrepareOptions, run: Run): void {
     options.metroPort == null ? [] : ['--port', String(options.metroPort)]
   if (app.endsWith('-ios')) {
     const simulator = options.simulator ?? iosIsSimulator(device)
-    run(
-      'npx',
-      [
-        'react-native',
-        'run-ios',
-        simulator ? '--udid' : '--device',
-        device,
-        '--no-packager',
-        ...iosSigningArgs(),
-        ...port
-      ],
-      env
-    )
+    const signing = iosSigningArgs()
+    building(() => {
+      run(
+        'npx',
+        [
+          'react-native',
+          'run-ios',
+          simulator ? '--udid' : '--device',
+          device,
+          '--no-packager',
+          ...signing,
+          ...port
+        ],
+        env
+      )
+    })
   } else if (app.endsWith('-android')) {
     const androidEnv = { ...env, ...androidSdkEnv() }
-    run(
-      'npx',
-      [
-        'react-native',
-        'run-android',
-        '--deviceId',
-        device,
-        '--no-packager',
-        ...port
-      ],
-      androidEnv
-    )
-    forwardPackager(device, options.metroPort ?? 8081, run, androidEnv)
+    building(() => {
+      run(
+        'npx',
+        [
+          'react-native',
+          'run-android',
+          '--deviceId',
+          device,
+          '--no-packager',
+          ...port
+        ],
+        androidEnv
+      )
+    })
+    onDevice(() => {
+      forwardPackager(device, options.metroPort ?? 8081, run, androidEnv)
+    })
   } else {
     throw new HarnessError(`Unknown app "${app}"`)
   }
 }
 
-/** Installs a package already on disk, or builds an app for a stack or seat. */
+/**
+ * Installs a package already on disk, or builds an app for a stack or seat. A
+ * failed install blocks the run; a failed build of the app fails it.
+ */
 export function prepareApp(options: PrepareOptions, run: Run = realRun): void {
-  try {
-    if (options.packagePath != null) installPackage(options, run)
-    else buildLocally(options, run)
-  } catch (error) {
-    if (error instanceof HarnessError) throw error
-    throw new BlockedError(`Install failed: ${String(error)}`)
-  }
+  if (options.packagePath != null) {
+    onDevice(() => {
+      installPackage(options, run)
+    })
+  } else buildLocally(options, run)
 }

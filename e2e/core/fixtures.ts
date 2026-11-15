@@ -1,8 +1,9 @@
-import { execFileSync, spawnSync } from 'node:child_process'
+import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { BlockedError, HarnessError } from './result'
+import { runSeatCommand } from './seatLog'
 import type { LocalSettings } from './settings'
 import { typeInto } from './typeInto'
 
@@ -69,12 +70,17 @@ export function runSeatFixture(
       'no seat command: set seatCommand in the local settings'
     )
   }
-  const output = execFileSync(
-    settings.seatCommand,
-    ['seed', world, '--seat', seat],
-    { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
-  )
-  return JSON.parse(output) as FixtureManifest
+  const output = runSeatCommand(settings.seatCommand, [
+    'seed',
+    world,
+    '--seat',
+    seat
+  ])
+  try {
+    return JSON.parse(output) as FixtureManifest
+  } catch {
+    throw new HarnessError(`seat seed ${world} printed no manifest`)
+  }
 }
 
 export function writeManifestFile(

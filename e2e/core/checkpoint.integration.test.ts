@@ -911,6 +911,27 @@ echo '{"at":2,"method":"GET","path":"/bad","status":503}'
       'logs --since 1970-01-01T00:00:00.000Z'
     )
   })
+
+  it('blocks on a missing seat command, and calls a failing one a harness error', function () {
+    const dir = mkdtempSync(join(tmpdir(), 'seat-'))
+    expect(() =>
+      seatServerErrors({ seatCommand: join(dir, 'absent') }, 0)
+    ).to.throw(BlockedError)
+    const failing = join(dir, 'failing.sh')
+    writeFileSync(failing, '#!/bin/sh\necho "no route to seat" >&2\nexit 1\n', {
+      mode: 0o755
+    })
+    expect(() => seatServerErrors({ seatCommand: failing }, 0)).to.throw(
+      HarnessError,
+      'no route to seat'
+    )
+    const garbled = join(dir, 'garbled.sh')
+    writeFileSync(garbled, '#!/bin/sh\necho "Welcome"\n', { mode: 0o755 })
+    expect(() => seatServerErrors({ seatCommand: garbled }, 0)).to.throw(
+      HarnessError,
+      'not JSON'
+    )
+  })
 })
 
 describe('read-back', function () {

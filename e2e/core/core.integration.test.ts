@@ -990,6 +990,36 @@ describe('prepare', function () {
       )
     }).throws(BlockedError)
   })
+
+  it('fails a build of the app that breaks, and blocks one missing its tool', function () {
+    const build = {
+      app: 'teamstation-android',
+      device: 'd',
+      origin: 'http://192.0.2.1:9000'
+    }
+    let broken: unknown
+    try {
+      prepareApp(build, () => {
+        throw new Error('Command failed: npx react-native run-android')
+      })
+    } catch (error) {
+      broken = error
+    }
+    expect(broken).instanceOf(Error)
+    expect(broken).not.instanceOf(BlockedError)
+    expect(broken).not.instanceOf(HarnessError)
+    expect(String(broken)).includes('The app did not build')
+    expect(() => {
+      prepareApp(build, () => {
+        throw Object.assign(new Error('spawn npx ENOENT'), { code: 'ENOENT' })
+      })
+    }).throws(BlockedError)
+    expect(() => {
+      prepareApp(build, command => {
+        if (command !== 'npx') throw new Error('no device')
+      })
+    }).throws(BlockedError, 'Install failed')
+  })
 })
 
 describe('browser emulation', function () {
