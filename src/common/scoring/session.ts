@@ -296,7 +296,6 @@ function held(list: readonly string[], digest: string): string[] {
   return [...list.filter(each => each !== digest), digest].slice(-HELD_DIGESTS)
 }
 
-/** A save refused because the lineups it was built on have moved on. */
 /**
  * A side of a roster saved over the game as it is now, `setup` holding that
  * copy: a player on the side now whom the saved roster never knew (another
@@ -318,6 +317,7 @@ function keepPlayersAddedSince(
   }
 }
 
+/** A save refused because the lineups it was built on have moved on. */
 function stale(error: unknown): boolean {
   return (
     error instanceof HttpError &&
