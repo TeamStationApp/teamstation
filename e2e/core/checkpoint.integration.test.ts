@@ -880,11 +880,13 @@ describe('checkpoints', function () {
       runDir,
       root,
       settings: {},
-      serverErrors: async () => [ERROR_500],
+      // A seat log read afresh each time: equal rows, never the same object.
+      serverErrors: async () => [{ ...ERROR_500 }],
       alone: false,
       worldIds: () => ['gam_mine']
     })
     await run.check('screen', {}, target())
+    await run.check('again', {}, target())
     expect(run.unattributed).deep.equals([ERROR_500])
     run.reset()
     expect(run.unattributed).deep.equals([])

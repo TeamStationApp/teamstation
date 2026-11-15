@@ -145,8 +145,16 @@ export class Checkpoints {
     })
     target.consoleSeen = outcome.consoleSeen
     record.invariants = outcome.report
+    // Each check reads the log afresh, so the same request comes back as a new
+    // object: it is the same error when it names the same request.
+    const same = (a: ServerError, b: ServerError): boolean =>
+      a.at === b.at &&
+      a.method === b.method &&
+      a.path === b.path &&
+      a.status === b.status
     for (const error of outcome.unattributed) {
-      if (!this.unattributed.includes(error)) this.unattributed.push(error)
+      if (!this.unattributed.some(seen => same(seen, error)))
+        this.unattributed.push(error)
     }
     const broken = failedInvariants(outcome.report)
     if (broken.length > 0) throw fail(broken.join('; '))

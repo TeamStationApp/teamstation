@@ -65,7 +65,8 @@ export async function connectDaemon(
   if (settings.maestroHome != null) {
     process.env.MAESTRO_RUNNER_HOME = settings.maestroHome
   }
-  console.log(execFileSync(bin, ['ps'], { encoding: 'utf8' }).trim())
+  // To stderr: `run` and `detect` print their result as JSON on stdout.
+  console.error(execFileSync(bin, ['ps'], { encoding: 'utf8' }).trim())
   const { MaestroD } = maestroClient(settings)
   return await MaestroD.connect({ name, bin })
 }

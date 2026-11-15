@@ -1126,11 +1126,16 @@ describe('maestro connection', function () {
     return { maestroClientRoot: root, maestroBin: bin, maestroHome: root }
   }
 
-  it('lists daemons, sets its home, and connects by name', async function () {
-    const log = console.log
+  it('lists daemons on stderr, sets its home, and connects by name', async function () {
+    const log = console.error
+    const out = console.log
     let printed = ''
-    console.log = (text: string) => {
+    let stdout = ''
+    console.error = (text: string) => {
       printed += text
+    }
+    console.log = (text: string) => {
+      stdout += text
     }
     try {
       const settings = fakeClient()
@@ -1138,8 +1143,10 @@ describe('maestro connection', function () {
       expect(daemon).to.have.property('name', 'e2e-test')
       expect(process.env.MAESTRO_RUNNER_HOME).equals(settings.maestroHome)
       expect(printed).includes('NAME')
+      expect(stdout).equals('')
     } finally {
-      console.log = log
+      console.error = log
+      console.log = out
       delete process.env.MAESTRO_RUNNER_HOME
     }
   })
