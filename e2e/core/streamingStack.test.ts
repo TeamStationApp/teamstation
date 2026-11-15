@@ -13,7 +13,7 @@ import { PassThrough } from 'node:stream'
 import { expect } from 'chai'
 
 import { daemonNames } from './daemons'
-import { attachedBlocker, sweepArgs } from './legacySweep'
+import { attachedBlocker, sweepArgs, sweepLine } from './legacySweep'
 import { BlockedError, HarnessError } from './result'
 import {
   attachedLegacyStack,
@@ -296,6 +296,37 @@ describe('the legacy sweep against an attached stack', function () {
     expect(
       attachedBlocker('x.e2e.ts', "dev('seed', ADMIN.email, ADMIN.password)")
     ).includes("its seed, which reads the worktree's server config")
+  })
+
+  it('reads a file that ran nothing as blocked, never as passed', function () {
+    const only = process.env.E2E_ONLY_LABELS
+    try {
+      delete process.env.E2E_ONLY_LABELS
+      expect(sweepLine('a.e2e.ts', [], [])).equals(
+        'blocked\t2\ta.e2e.ts\tnothing ran: its recipe lists no runs'
+      )
+      process.env.E2E_ONLY_LABELS = 'other'
+      expect(sweepLine('a.e2e.ts', [], [])).equals(
+        'blocked\t2\ta.e2e.ts\tnothing ran: E2E_ONLY_LABELS=other kept none of its runs'
+      )
+    } finally {
+      if (only == null) delete process.env.E2E_ONLY_LABELS
+      else process.env.E2E_ONLY_LABELS = only
+    }
+    const passed = { file: 'a.e2e.ts', status: 'passed', exit: 0 } as const
+    expect(sweepLine('a.e2e.ts', [passed, passed], [{}, {}])).equals(
+      'passed\t0\ta.e2e.ts\t2 runs'
+    )
+    expect(
+      sweepLine(
+        'a.e2e.ts',
+        [
+          passed,
+          { ...passed, status: 'failed', exit: 1, reason: 'no\nscreen' }
+        ],
+        [{}, { label: 'tv' }]
+      )
+    ).equals('failed\t1\ta.e2e.ts\ttv: no screen')
   })
 
   it('names its daemons for the run, or keeps the suite names', function () {

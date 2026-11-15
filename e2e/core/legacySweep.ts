@@ -290,6 +290,45 @@ export function attachedBlocker(
     : `attached stack: ${local} needs the sweep's own stack; the droplet sweep runs it`
 }
 
+/**
+ * A file's results line, without its duration, from its runs in the order
+ * they ran. A file none of whose runs went (a recipe listed none, or
+ * `E2E_ONLY_LABELS` kept none) proved nothing, so it is blocked, not passed.
+ */
+export function sweepLine(
+  file: string,
+  runs: LegacyRun[],
+  invocations: Invocation[]
+): string {
+  if (runs.length === 0) {
+    const only = process.env.E2E_ONLY_LABELS
+    const why =
+      only == null || only === ''
+        ? 'its recipe lists no runs'
+        : `E2E_ONLY_LABELS=${only} kept none of its runs`
+    return `blocked\t2\t${file}\tnothing ran: ${why}`
+  }
+  const failed = runs.filter(r => r.status === 'failed')
+  const pending = runs.filter(r => r.status === 'pending')
+  const blocked = runs.filter(r => r.status === 'blocked')
+  const labels = (list: LegacyRun[]): string =>
+    list
+      .map(r => {
+        const at = runs.indexOf(r)
+        const label = invocations[at]?.label ?? ''
+        // One line each: a reason can carry a script's stderr.
+        const what = (r.reason ?? `exit ${r.exit}`).replace(/\s+/g, ' ')
+        return label === '' ? what : `${label}: ${what}`
+      })
+      .join('; ')
+  if (failed.length > 0) {
+    return `failed\t${failed[0].exit}\t${file}\t${labels(failed)}`
+  }
+  if (pending.length > 0) return `pending\t3\t${file}\t${labels(pending)}`
+  if (blocked.length > 0) return `blocked\t2\t${file}\t${labels(blocked)}`
+  return `passed\t0\t${file}\t${runs.length > 1 ? `${runs.length} runs` : ''}`
+}
+
 async function main(): Promise<void> {
   const { stackId, rest } = sweepArgs(process.argv.slice(2))
   const [results, ...given] = rest
@@ -570,28 +609,7 @@ async function main(): Promise<void> {
           runs.push(await run(file, invocation))
         }
         await stack.ensureApi()
-        const failed = runs.filter(r => r.status === 'failed')
-        const pending = runs.filter(r => r.status === 'pending')
-        const blocked = runs.filter(r => r.status === 'blocked')
-        const labels = (list: LegacyRun[], from: Invocation[]): string =>
-          list
-            .map(r => {
-              const at = runs.indexOf(r)
-              const label = from[at]?.label ?? ''
-              // One line each: a reason can carry a script's stderr.
-              const what = (r.reason ?? `exit ${r.exit}`).replace(/\s+/g, ' ')
-              return label === '' ? what : `${label}: ${what}`
-            })
-            .join('; ')
-        if (failed.length > 0) {
-          line = `failed\t${failed[0].exit}\t${file}\t${labels(failed, invocations)}`
-        } else if (pending.length > 0) {
-          line = `pending\t3\t${file}\t${labels(pending, invocations)}`
-        } else if (blocked.length > 0) {
-          line = `blocked\t2\t${file}\t${labels(blocked, invocations)}`
-        } else {
-          line = `passed\t0\t${file}\t${runs.length > 1 ? `${runs.length} runs` : ''}`
-        }
+        line = sweepLine(file, runs, invocations)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         const what = error instanceof BlockedError ? 'blocked\t2' : 'error\t-'
