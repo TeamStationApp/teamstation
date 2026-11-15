@@ -96,8 +96,15 @@ function costOf(
   )
 }
 
-function ceilingOf(terms: ModelTerms): number {
-  return costOf(terms, ESTIMATED_INPUT_TOKENS, MAX_TOKENS)
+/**
+ * The most a call can cost: the rules, question and image estimate, plus a
+ * log's own length at a conservative three characters a token, so a long log
+ * cannot pass the budget check and then cost more than it allowed.
+ */
+function ceilingOf(terms: ModelTerms, input?: JudgeInput): number {
+  const logTokens =
+    input?.kind === 'text' ? Math.ceil(input.text.length / 3) : 0
+  return costOf(terms, ESTIMATED_INPUT_TOKENS + logTokens, MAX_TOKENS)
 }
 
 /** The one call the judge makes, so a test can stand in for the service. */
@@ -261,7 +268,7 @@ export function haikuJudge(
   ): Promise<
     (ReturnType<typeof asAnswer> & { costUsd: number }) | undefined
   > => {
-    if (!budget.allows(ceilingOf(terms))) return undefined
+    if (!budget.allows(ceilingOf(terms, input))) return undefined
     const reply = await call(
       client,
       terms,

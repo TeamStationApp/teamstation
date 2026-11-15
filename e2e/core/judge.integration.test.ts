@@ -24,6 +24,7 @@ import {
   haikuJudge,
   type Judge,
   type JudgeAnswer,
+  type JudgeInput,
   judgeHasAuthority,
   type MessagesClient,
   readJudgeBar,
@@ -172,7 +173,19 @@ describe('the Haiku judge', function () {
     expect(await judge.ask('Q', IMAGE, new Budget())).equals(undefined)
     expect(await judge.ask('Q', IMAGE, new Budget(0))).equals(undefined)
     expect(await judge.annotate(png(), new Budget(0))).equals(undefined)
+    // A log is priced by its length: a short one fits where a long one does not.
+    const log = (chars: number): JudgeInput => ({
+      kind: 'text',
+      text: 'x'.repeat(chars)
+    })
+    expect(await judge.ask('Q', log(3_000_000), new Budget(0.1))).equals(
+      undefined
+    )
     expect(bodies.length).equals(0)
+    expect(await judge.ask('Q', log(100), new Budget(0.1))).not.equals(
+      undefined
+    )
+    expect(bodies.length).equals(1)
     // Enough for Haiku but not the escalation: the doubt stands, unescalated.
     const doubting = replying(DOUBT)
     const answer = await haikuJudge(doubting.client, shrink).ask(
