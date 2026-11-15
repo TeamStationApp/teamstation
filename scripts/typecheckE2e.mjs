@@ -26,8 +26,14 @@ export function e2eErrors(output) {
 
 function main() {
   const tsc = spawnSync('npx', ['tsc', '-p', 'tsconfig.e2e.json'], {
-    encoding: 'utf8'
+    encoding: 'utf8',
+    // All of tsc's report, however long: a cut-off one hides the e2e errors after the cut.
+    maxBuffer: 256 * 1024 * 1024
   })
+  if (tsc.error != null || tsc.status == null) {
+    console.error(`tsc did not finish: ${tsc.error?.message ?? tsc.signal}`)
+    process.exit(1)
+  }
   const errors = e2eErrors(tsc.stdout)
   for (const error of errors) console.error(error)
   // A failure that names no file, such as a bad configuration, is still a failure.
