@@ -37,6 +37,15 @@ export default [
       }
     }
   },
+  {
+    files: ['e2e/**/*.ts', 'e2e/**/*.tsx'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.e2e.json'
+      }
+    }
+  },
 
   // The browser tests' helpers, outside `src`: the marker reader runs in a
   // page as well as in Node.

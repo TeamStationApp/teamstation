@@ -288,6 +288,12 @@ export const asServerConfig = asObject({
   primaryUrlOverride: asOptional(asString, ''),
 
   /**
+   * True only on a seat or stack that holds invented data: the fixtures script
+   * (`npm run fixtures`) refuses to run anywhere else. Production never sets it.
+   */
+  testSettings: asOptional(asBoolean, false),
+
+  /**
    * Where this server reports crashes and unhandled errors: a Sentry DSN, and
    * the environment its events are filed under.
    *
