@@ -52,6 +52,8 @@ export interface MemorySample {
   atMs: number
   bytes: number
   pid?: number
+  /** The sampler that took it, as the run names it. */
+  sampler?: string
 }
 
 export function parseJsonl<T>(text: string): T[] {

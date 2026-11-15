@@ -14,6 +14,7 @@ import {
   memoryCsv,
   type MemoryWindows,
   type ProcessVerdict,
+  samplerGaps,
   windowsFromPhases
 } from './soakMemory'
 import {
@@ -198,6 +199,7 @@ export function renderMarkdown(input: {
 }
 
 const EXIT: Record<Verdict, number> = { passed: 0, failed: 1, blocked: 2 }
+const SAMPLER_ACTIONS = new Set(['samplerStart', 'sample', 'samplerStop'])
 
 export function reduceRun(input: {
   events: RecordedEvent[]
@@ -235,12 +237,31 @@ export function reduceRun(input: {
       : front.app
   }
   const gates = evaluateGates(events, probes)
-  const verdicts = judgeMemory(memory, {
-    runStartMs,
-    windows,
-    relaunches,
-    foreground
-  })
+  const configured =
+    (start?.args?.samplers as
+      Array<{ name: string; informational?: boolean }> | undefined) ?? []
+  const verdicts = [
+    ...judgeMemory(memory, {
+      runStartMs,
+      windows,
+      relaunches,
+      foreground
+    }),
+    ...samplerGaps(
+      configured.map(sampler => ({
+        ...sampler,
+        samples: memory.filter(row => row.sampler === sampler.name).length,
+        errors: events
+          .filter(
+            event =>
+              event.target === sampler.name &&
+              SAMPLER_ACTIONS.has(event.action) &&
+              event.error != null
+          )
+          .map(event => `${event.action}: ${event.error}`)
+      }))
+    )
+  ]
   const memoryVerdicts = verdicts
     .map(row => row.verdict)
     .filter((verdict): verdict is Verdict => verdict !== 'informational')

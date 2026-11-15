@@ -28,6 +28,8 @@ export interface SoakIphone {
 /** Reads one device's memory. `stop` returns what it gathered over the whole run, if anything. */
 export interface SoakSampler {
   name: string
+  /** Its memory is never gated: the stack's. */
+  informational?: boolean
   start?: () => Promise<void>
   sample?: (now: number) => Promise<MemorySample[]>
   stop?: () => Promise<MemorySample[] | undefined>
@@ -237,7 +239,15 @@ export async function runSoak(parts: SoakParts): Promise<SoakReport> {
     atMs: startMs,
     target: 'run',
     action: 'runStart',
-    args: { phases: parts.schedule.phases, provenance: parts.provenance }
+    args: {
+      phases: parts.schedule.phases,
+      provenance: parts.provenance,
+      // The report judges each of these, so one that gave nothing is not simply absent.
+      samplers: parts.samplers.map(sampler => ({
+        name: sampler.name,
+        ...(sampler.informational === true ? { informational: true } : {})
+      }))
+    }
   })
   for (const sampler of parts.samplers) {
     try {
@@ -261,7 +271,7 @@ export async function runSoak(parts: SoakParts): Promise<SoakReport> {
       const take = async (): Promise<void> => {
         try {
           for (const row of (await sampler.sample?.(now())) ?? [])
-            write('memory.jsonl', row)
+            write('memory.jsonl', { ...row, sampler: sampler.name })
         } catch (error) {
           event({
             atMs: now(),
@@ -322,7 +332,7 @@ export async function runSoak(parts: SoakParts): Promise<SoakReport> {
     for (const sampler of parts.samplers) {
       try {
         for (const row of (await sampler.stop?.()) ?? [])
-          write('memory.jsonl', row)
+          write('memory.jsonl', { ...row, sampler: sampler.name })
       } catch (error) {
         event({
           atMs: now(),

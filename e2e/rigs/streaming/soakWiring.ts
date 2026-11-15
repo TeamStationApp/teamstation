@@ -184,6 +184,7 @@ export function dropletSampler(handle: StreamingHandle): SoakSampler {
     await exec('ssh', [...SSH_OPTIONS, handle.ssh, command, ...args])
   return {
     name: 'stack',
+    informational: true,
     sample: async now =>
       (
         await sampleDroplet({

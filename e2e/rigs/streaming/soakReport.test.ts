@@ -117,6 +117,48 @@ describe('the soak report', function () {
     expect(report.csv.split('\n')[0]).equals('device,process,minute,bytes,pid')
   })
 
+  it('blocks a configured sampler that gave nothing or threw, and keeps the stack informational', function () {
+    const base = run()
+    base.events[0].args = {
+      ...base.events[0].args,
+      samplers: [
+        { name: 'android-meminfo' },
+        { name: 'ipad-xctrace' },
+        { name: 'chrome' },
+        { name: 'stack', informational: true }
+      ]
+    }
+    base.events.push(
+      {
+        atMs: T0 + 5 * MIN,
+        target: 'chrome',
+        action: 'sample',
+        error: 'no renderer'
+      },
+      {
+        atMs: T0 + 121 * MIN,
+        target: 'ipad-xctrace',
+        action: 'samplerStop',
+        error: 'the recording would not stop'
+      }
+    )
+    const memory = base.memory.map(row =>
+      row.device === 'android' ? { ...row, sampler: 'android-meminfo' } : row
+    )
+    const report = reduceRun({ ...base, memory })
+    const gaps = report.memory.filter(row => row.process === 'sampler')
+    expect(gaps.map(row => [row.device, row.verdict, row.reason])).deep.equals([
+      [
+        'ipad-xctrace',
+        'blocked',
+        'the sampler failed: samplerStop: the recording would not stop'
+      ],
+      ['chrome', 'blocked', 'the sampler failed: sample: no renderer'],
+      ['stack', 'informational', 'the sampler gave no samples']
+    ])
+    expect(report.markdown).contains('| ipad-xctrace | sampler | blocked |')
+  })
+
   it('judges the iPhone Safari process only while Safari was in front', function () {
     const report = reduceRun(run())
     const safari = report.memory.find(row => row.device === 'iphone')!

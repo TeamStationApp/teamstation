@@ -7,7 +7,12 @@ import {
   type PresentedFrame,
   SETTLE_MS
 } from './chromeFrames'
-import { judgeMemory, type ProcessVerdict } from './soakMemory'
+import {
+  judgeMemory,
+  type ProcessVerdict,
+  samplerGaps,
+  type SamplerOutcome
+} from './soakMemory'
 import type { MemorySample } from './soakRecords'
 import { TILE_NOTICE } from './surfaces/surface'
 import {
@@ -220,8 +225,38 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
       )
       const samples: MemorySample[] = []
       const samplers = session.memory ?? []
-      for (const sampler of samplers)
-        await sampler.start?.().catch(() => undefined)
+      // Each sampler's samples and errors, so one that gave nothing is judged blocked.
+      const outcomes = new Map<(typeof samplers)[number], SamplerOutcome>(
+        samplers.map(sampler => [
+          sampler,
+          {
+            name: sampler.name,
+            ...(sampler.informational === true ? { informational: true } : {}),
+            samples: 0,
+            errors: []
+          }
+        ])
+      )
+      const gather = async (
+        sampler: (typeof samplers)[number],
+        what: string,
+        take: () => Promise<MemorySample[] | undefined>
+      ): Promise<void> => {
+        const outcome = outcomes.get(sampler)!
+        try {
+          const rows = (await take()) ?? []
+          outcome.samples += rows.length
+          samples.push(...rows)
+        } catch (error) {
+          outcome.errors.push(`${what}: ${(error as Error).message}`)
+        }
+      }
+      for (const sampler of samplers) {
+        await gather(sampler, 'start', async () => {
+          await sampler.start?.()
+          return []
+        })
+      }
       // Chrome logs every frame it presents, with the clock each one shows.
       const chrome = session.watchers.find(w => w.evaluate != null)
       const frames: PresentedFrame[] = []
@@ -321,15 +356,17 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
         if (session.now() >= nextSample) {
           nextSample = session.now() + MIN
           for (const sampler of samplers) {
-            samples.push(
-              ...((await sampler.sample?.(session.now()).catch(() => [])) ?? [])
+            await gather(
+              sampler,
+              'sample',
+              async () => await sampler.sample?.(session.now())
             )
           }
         }
         await session.sleep(1000)
       }
       for (const sampler of samplers) {
-        samples.push(...((await sampler.stop?.().catch(() => [])) ?? []))
+        await gather(sampler, 'stop', async () => await sampler.stop?.())
       }
       await drain()
       const analysis = chrome == null ? null : analyseFrames(frames, quiet)
@@ -348,10 +385,13 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
           frames.map(frame => JSON.stringify(frame)).join('\n') + '\n'
         )
       }
-      const memory = judgeMemory(samples, {
-        runStartMs: startMs,
-        windows: basicWindows(options.minutes)
-      })
+      const memory = [
+        ...judgeMemory(samples, {
+          runStartMs: startMs,
+          windows: basicWindows(options.minutes)
+        }),
+        ...samplerGaps([...outcomes.values()])
+      ]
       for (const verdict of memory) {
         await session.record.step(
           { role: verdict.device },

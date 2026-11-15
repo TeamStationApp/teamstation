@@ -210,7 +210,7 @@ describe('the soak run', function () {
       fails: { tv: 'relaunch', chrome: 'probe' },
       samplerFails: true
     })
-    await runSoak(run)
+    const report = await runSoak(run)
     const events = readJsonl<RecordedEvent>(join(run.runDir, 'events.jsonl'))
     const probes = readJsonl<RecordedProbe>(join(run.runDir, 'probes.jsonl'))
     const relaunch = events.find(
@@ -227,6 +227,12 @@ describe('the soak run', function () {
     expect(events.find(event => event.action === 'samplerStart')?.error).equals(
       'no trace'
     )
+    // The sampler that threw is judged, not left out.
+    expect(
+      report.memory.find(
+        row => row.device === 'ipad' && row.process === 'sampler'
+      )?.verdict
+    ).equals('blocked')
     expect(stopped).includes('publisherC')
     expect(stopped).includes('sampler')
   })

@@ -327,6 +327,35 @@ export function judgeMemory(
   return out
 }
 
+/** What one sampler gave over a run: how many samples, and what it threw. */
+export interface SamplerOutcome {
+  name: string
+  /** The stack's, which is never gated. */
+  informational?: boolean
+  samples: number
+  errors: string[]
+}
+
+/**
+ * A row for each sampler that gave no sample or threw: the memory it reads
+ * went unjudged, so the row is blocked (informational for the stack's).
+ */
+export function samplerGaps(samplers: SamplerOutcome[]): ProcessVerdict[] {
+  return samplers
+    .filter(sampler => sampler.samples === 0 || sampler.errors.length > 0)
+    .map(sampler => ({
+      device: sampler.name,
+      process: 'sampler',
+      kind: sampler.informational === true ? 'server' : 'app',
+      verdict: sampler.informational === true ? 'informational' : 'blocked',
+      reason:
+        sampler.errors.length > 0
+          ? `the sampler failed: ${[...new Set(sampler.errors)].join('; ')}`
+          : 'the sampler gave no samples',
+      lifetimes: []
+    }))
+}
+
 /** Memory curves, one row per sample, minutes from the run's start. */
 export function memoryCsv(samples: MemorySample[], runStartMs: number): string {
   const rows = [...samples].sort((a, b) => {

@@ -233,6 +233,27 @@ describe('the basic streaming soak', function () {
     ).greaterThan(100)
   })
 
+  it('blocks the memory of a sampler that threw or gave nothing, rather than leaving it out', async function () {
+    const fake = fakeSession()
+    fake.session.memory!.push(
+      {
+        name: 'ipad-xctrace',
+        sample: async () => {
+          throw new Error('no trace')
+        }
+      },
+      { name: 'quiet', sample: async () => [] }
+    )
+    await basicScrub({ minutes: 6, random: () => 0.5 }).run(fake.session)
+    const memory = fake.steps.filter(s => s.step === 'memory-sampler')
+    expect(memory.map(s => [s.surface, s.verdict])).deep.equals([
+      ['ipad-xctrace', 'blocked'],
+      ['quiet', 'blocked']
+    ])
+    expect(memory[0].observed).contains('the sampler failed: sample: no trace')
+    expect(memory[1].observed).contains('the sampler gave no samples')
+  })
+
   it('fails a look with no player, a notice or a still angle, and blocks one whose motion is unknown', function () {
     const tile = (
       advancing: boolean | null,
