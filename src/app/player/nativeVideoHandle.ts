@@ -138,19 +138,26 @@ export class NativeVideoHandle implements VideoHandle {
   source: string | null = null
 
   /**
-   * The source as the view built it, buffer and live settings included. A
-   * different one, the same address with other settings among them, is a
-   * new item the player opens from nothing, so what was loaded no longer
-   * counts.
+   * The source as the view built it, buffer and live settings included. On
+   * Android a different one, the same address with other settings among
+   * them, is a new item ExoPlayer opens from nothing, so what was loaded no
+   * longer counts. AVPlayer reads none of those settings and need not reopen
+   * an address it holds, so on iOS only a new address starts again.
    */
   get sourceConfig(): ReactVideoSource | null {
     return this.config
   }
 
   set sourceConfig(config: ReactVideoSource | null) {
-    if (this.config != null && config !== this.config) this.state = 0
+    if (this.readyOnBuffer && this.config != null && config !== this.config) {
+      this.state = 0
+      this.loaded = false
+    }
     this.config = config
   }
+
+  /** The item has been reported loaded since it was last opened. */
+  private loaded = false
 
   private config: ReactVideoSource | null = null
 
@@ -364,12 +371,17 @@ export class NativeVideoHandle implements VideoHandle {
     this.length = length
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
-    // Never lower: ExoPlayer can draw its first frame, and say so, before it
-    // reports the load, and knocking that picture back to "metadata only"
-    // left every tile of a phone's grid short for good — the grid waits for
-    // `HAVE_ENOUGH_DATA` before it plays, so it held them frozen on their
-    // first frame until somebody scrubbed.
-    this.state = Math.max(this.state, HAVE_METADATA)
+    // The first load never lowers: ExoPlayer can draw its first frame, and
+    // say so, before it reports the load, and knocking that picture back to
+    // "metadata only" left every tile of a phone's grid short for good — the
+    // grid waits for `HAVE_ENOUGH_DATA` before it plays, so it held them
+    // frozen on their first frame until somebody scrubbed. A load reported
+    // again for the same item is the player opening it once more by itself,
+    // with nothing drawn yet.
+    this.state = this.loaded
+      ? HAVE_METADATA
+      : Math.max(this.state, HAVE_METADATA)
+    this.loaded = true
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -630,6 +642,7 @@ export class NativeVideoHandle implements VideoHandle {
     // A fresh attempt, paused until somebody plays it, with nothing loaded yet.
     this.failed = false
     this.state = 0
+    this.loaded = false
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
     // live offset travel with it, and a bare address put ExoPlayer back on
@@ -646,6 +659,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.timeAt = this.clock()
     this.length = Number.POSITIVE_INFINITY
     this.state = 0
+    this.loaded = false
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null

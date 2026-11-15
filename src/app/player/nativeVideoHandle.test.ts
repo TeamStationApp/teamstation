@@ -260,8 +260,9 @@ describe('NativeVideoHandle', function () {
     expect(handle.readyState).equals(4)
   })
 
-  it('starts from nothing loaded when the view hands it a source with other settings', function () {
+  it('on Android, starts from nothing loaded when the view hands it a source with other settings', function () {
     const handle = new NativeVideoHandle(() => undefined)
+    handle.readyOnBuffer = true
     const first = { uri: 'https://media.example.test/a/index.m3u8' }
     handle.sourceConfig = first
     handle.handleReadyForDisplay()
@@ -270,6 +271,35 @@ describe('NativeVideoHandle', function () {
     expect(handle.readyState).equals(4)
     handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
     expect(handle.readyState).equals(0)
+  })
+
+  it('on iOS, keeps what it has when only the settings around the same address change', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const first = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = first
+    handle.handleReadyForDisplay()
+    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
+    expect(handle.readyState).equals(4)
+  })
+
+  it('drops back to metadata when the same item is reported loaded again', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const load = {
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0]
+    handle.handleReadyForDisplay()
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(4)
+    // ExoPlayer preparing the item once more by itself: nothing drawn yet.
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(1)
+    // A new source's first load keeps a picture reported ahead of it again.
+    handle.reset()
+    handle.handleReadyForDisplay()
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(4)
   })
 
   it('has ended once it plays to the end, until it is moved back', function () {
