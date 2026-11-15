@@ -68,7 +68,7 @@ A basic or targeted run's directory holds `basic-report.md` (basic soak only), a
 - `recoveries.jsonl`: each time a device's driver was lost and attached again;
 - `mirror/`: the stack's API log over the run.
 
-The scenario passes when no watcher failed a step, and is blocked when every watcher was blocked. The tiles' moments come from the burned-in clocks (`e2e/rigs/streaming/clockReader.ts`), so a picture that is covered or frozen shows as a missing or stale moment, not as a guess.
+A watcher fails when it failed any step, and is blocked when some step was blocked every time it was taken (a pass of one check says nothing of another the harness could not tell); a step taken again and again, such as a look every 30 s, is judged on the times it could be told. A watcher whose player never opened is blocked on its join and left out of the scenario's steps, and a scrub the driver could not do blocks that scrub's recovery: a control it could not find may be missing or merely unfound. The scenario passes when no watcher failed, and is blocked when every watcher was blocked. The tiles' moments come from the burned-in clocks (`e2e/rigs/streaming/clockReader.ts`), so a picture that is covered or frozen shows as a missing or stale moment, not as a guess.
 
 ## Where the code is
 

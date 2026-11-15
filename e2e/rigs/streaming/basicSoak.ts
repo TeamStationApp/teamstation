@@ -18,10 +18,10 @@ import { TILE_NOTICE } from './surfaces/surface'
 import {
   type Look,
   medianMs,
+  overall,
   spreadMs,
   type StepRecord,
   type Verdict,
-  verdicts,
   waitFor,
   type Watcher,
   type WatcherRole
@@ -283,11 +283,15 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
           try {
             did = await act(watcher, due.action, random)
           } catch (error) {
+            // A control the driver could not find may be missing or merely
+            // unfound, so the scrub's recovery is blocked, not failed; under
+            // the recovery's own name, a watcher none of whose scrubs could be
+            // done is blocked rather than passed on its looks.
             await session.record.step(
               watcher,
-              due.action,
-              'the scrub is done',
-              (error as Error).message,
+              `recover-${due.action}`,
+              `after a ${due.action} every angle moves again within ${RECOVERY_MS / 1000} s`,
+              `the ${due.action} could not be done: ${(error as Error).message}`,
               'blocked'
             )
             continue
@@ -392,17 +396,15 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
         }),
         ...samplerGaps([...outcomes.values()])
       ]
+      // The stack's memory is informational: it is in the report, never a step.
       for (const verdict of memory) {
+        if (verdict.verdict === 'informational') continue
         await session.record.step(
           { role: verdict.device },
           `memory-${verdict.process}`,
           'memory grows no more than 15 % and under 30 MB/h (60 for a browser tab)',
           memoryLine(verdict),
-          verdict.verdict === 'failed'
-            ? 'failed'
-            : verdict.verdict === 'passed'
-              ? 'passed'
-              : 'blocked'
+          verdict.verdict
         )
       }
       session.writeArtifact(
@@ -453,7 +455,7 @@ export function basicReport(
   const lines = [
     `# Basic streaming soak (${minutes} minutes)`,
     '',
-    `Verdict: **${Object.values(verdicts(steps)).includes('failed') ? 'failed' : 'passed'}**`,
+    `Verdict: **${overall(steps)}**`,
     '',
     '| Watcher | Every angle moving | Aligned within 1 s | Recovered after a scrub | Median recovery |',
     '| --- | --- | --- | --- | --- |',

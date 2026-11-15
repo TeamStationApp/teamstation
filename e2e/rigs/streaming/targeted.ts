@@ -179,19 +179,40 @@ export async function waitFor<T>(
   }
 }
 
-/** Each surface's verdict from its steps: failed on any failure, blocked when every step was. */
+/**
+ * Each surface's verdict from its steps: failed on any failure; else blocked
+ * when some step was blocked every time it was taken, since a pass of one
+ * check says nothing of another the harness could not tell; else passed. A
+ * step taken again and again (a look every 30 s) is judged on the times it
+ * could be told.
+ */
 export function verdicts(steps: StepRecord[]): Record<string, Verdict> {
   const out: Record<string, Verdict> = {}
   const surfaces = [...new Set(steps.map(step => step.surface))]
   for (const surface of surfaces) {
     const mine = steps.filter(step => step.surface === surface)
+    const untold = [...new Set(mine.map(step => step.step))].some(name =>
+      mine
+        .filter(step => step.step === name)
+        .every(step => step.verdict === 'blocked')
+    )
     out[surface] = mine.some(step => step.verdict === 'failed')
       ? 'failed'
-      : mine.every(step => step.verdict === 'blocked')
+      : untold
         ? 'blocked'
         : 'passed'
   }
   return out
+}
+
+/** One verdict for a run: failed on any surface's failure, else blocked on any surface's block. */
+export function overall(steps: StepRecord[]): Verdict {
+  const states = Object.values(verdicts(steps))
+  return states.includes('failed')
+    ? 'failed'
+    : states.includes('blocked') || states.length === 0
+      ? 'blocked'
+      : 'passed'
 }
 
 /** Records steps to `targeted.jsonl`, with a screenshot named for the step. */
@@ -577,7 +598,9 @@ export async function runTargeted(
     const takeStartMs = deps.now()
     for (const publisher of publishers.values()) await publisher.start()
     await deps.sleep(setup.leadMs ?? 60_000)
-    for (const watcher of watchers) {
+    // A watcher whose player never opened is left out of the steps: its
+    // blocked join is its whole verdict.
+    for (const watcher of [...watchers]) {
       try {
         // TeamStation TV's home lists the games as they were when it opened, so it opens afresh with the cameras live.
         await watcher.tv?.coldLaunch()
@@ -590,6 +613,7 @@ export async function runTargeted(
           (error as Error).message,
           'blocked'
         )
+        watchers.splice(watchers.indexOf(watcher), 1)
       }
     }
 

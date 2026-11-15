@@ -16,6 +16,7 @@ import {
   lookFrom,
   medianMs,
   memorySamplers,
+  overall,
   Recorder,
   runTargeted,
   spreadMs,
@@ -39,10 +40,14 @@ function clock(angle: string, atMs: number, confidence = 1): TileClock {
   }
 }
 
-function step(surface: string, verdict: StepRecord['verdict']): StepRecord {
+function step(
+  surface: string,
+  verdict: StepRecord['verdict'],
+  name = 's'
+): StepRecord {
   return {
     atMs: 0,
-    step: 's',
+    step: name,
     surface,
     expected: '',
     observed: '',
@@ -111,7 +116,7 @@ describe('the targeted helpers', function () {
     expect(no).deep.equals({ ok: false, value: 'x' })
   })
 
-  it('fails a surface with any failed step and blocks it only when every step was', function () {
+  it('fails a surface with any failed step, and blocks one with a step blocked every time it was taken', function () {
     expect(
       verdicts([
         step('chrome', 'passed'),
@@ -119,10 +124,26 @@ describe('the targeted helpers', function () {
         step('tv', 'blocked'),
         step('tv', 'blocked'),
         step('ipad', 'blocked'),
-        step('ipad', 'passed')
+        step('ipad', 'passed'),
+        step('iphone', 'passed', 'playing'),
+        step('iphone', 'blocked', 'recover-scrubLeft'),
+        step('iphone', 'blocked', 'recover-scrubLeft')
       ])
-    ).deep.equals({ chrome: 'failed', tv: 'blocked', ipad: 'passed' })
+    ).deep.equals({
+      chrome: 'failed',
+      tv: 'blocked',
+      ipad: 'passed',
+      iphone: 'blocked'
+    })
     expect(verdicts([])).deep.equals({})
+    expect(overall([step('ipad', 'passed'), step('tv', 'blocked')])).equals(
+      'blocked'
+    )
+    expect(overall([step('ipad', 'failed'), step('tv', 'blocked')])).equals(
+      'failed'
+    )
+    expect(overall([step('ipad', 'passed')])).equals('passed')
+    expect(overall([])).equals('blocked')
   })
 
   it('records each step with its picture, and without one it could not take', async function () {
@@ -474,7 +495,10 @@ describe('running a targeted scenario', function () {
       ALL,
       async session => {
         seen = session
-        expect(session.watchers.map(w => w.role)).deep.equals(ALL.watchers)
+        // Android's join was blocked: it is out of the scenario's steps.
+        expect(session.watchers.map(w => w.role)).deep.equals(
+          ALL.watchers.filter(role => role !== 'android')
+        )
         expect(session.takeStartMs).equals(T0)
         expect(session.now()).equals(T0 + 60_000)
         expect(session.shaper).equals('https://shaper.example.test')

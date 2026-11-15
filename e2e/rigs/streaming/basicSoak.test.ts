@@ -25,6 +25,7 @@ import {
   Recorder,
   type TargetedDriver,
   type TargetedSession,
+  verdicts,
   type Watcher
 } from './targeted'
 
@@ -200,11 +201,17 @@ describe('the basic streaming soak', function () {
     expect(of('tv', 'playing').every(v => v === 'blocked')).equals(true)
     expect(of('tv', 'recover-').every(v => v === 'blocked')).equals(true)
     expect(of('chrome', 'aligned').every(v => v === 'passed')).equals(true)
-    // The iPhone's first scrub threw: blocked, not a failure of the app.
-    expect(
-      steps.find(s => s.surface === 'iphone' && s.verdict === 'blocked')
-        ?.observed
-    ).equals('no bar on screen')
+    // The iPhone's first scrub threw: its recovery is blocked, not a failure
+    // of the app, and with its only scrubLeft untold the iPhone is blocked,
+    // not passed on its looks.
+    const untold = steps.find(
+      s => s.surface === 'iphone' && s.verdict === 'blocked'
+    )
+    expect([untold?.step, untold?.observed]).deep.equals([
+      'recover-scrubLeft',
+      'the scrubLeft could not be done: no bar on screen'
+    ])
+    expect(verdicts(steps).iphone).equals('blocked')
     expect(of('android', 'recover-').every(v => v === 'failed')).equals(true)
     expect(of('chrome', 'recover-').length).greaterThan(0)
     expect(of('chrome', 'aligned-after-').every(v => v === 'passed')).equals(
