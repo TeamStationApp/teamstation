@@ -212,7 +212,11 @@ interface Fake {
 function session(
   world: World,
   watchers: Array<ReturnType<typeof watcher>>,
-  options: { shapedIps?: Record<string, string>; noClocksOnSeek?: boolean } = {}
+  options: {
+    shaper?: string
+    shapedIps?: Record<string, string>
+    noClocksOnSeek?: boolean
+  } = {}
 ): Fake {
   const dir = mkdtempSync(join(tmpdir(), 'targeted-scenarios-'))
   const now = (): number => world.clock.t
@@ -278,6 +282,7 @@ function session(
     },
     sleep,
     now,
+    ...(options.shaper == null ? {} : { shaper: options.shaper }),
     shapedIps: options.shapedIps ?? {}
   }
   return { session: fake, world, steps: record.steps }
@@ -288,6 +293,7 @@ function verdictsOf(steps: StepRecord[]): Array<[string, string, Verdict]> {
 }
 
 const THREE = ['SynthA', 'SynthB', 'SynthC']
+const SHAPER = 'https://shaper.example.test'
 
 describe('the gap-seek scenario', function () {
   it('pauses into the hole, plays on, and finds nothing before the take', async function () {
@@ -420,7 +426,7 @@ describe('the receiver-outage scenario', function () {
 
   it('plays on after the outage, and holds a paused moment through another', async function () {
     const world = makeWorld(THREE)
-    const { shaper, outages } = conditioner(world, ['10.0.0.1', '10.0.0.3'])
+    const { shaper, outages } = conditioner(world, ['192.0.2.1', '192.0.2.3'])
     const fake = session(
       world,
       [
@@ -430,10 +436,20 @@ describe('the receiver-outage scenario', function () {
         watcher(world, 'chrome')
       ],
       {
-        shapedIps: { iphone: '10.0.0.1', android: '10.0.0.2', ipad: '10.0.0.3' }
+        shaper: SHAPER,
+        shapedIps: {
+          iphone: '192.0.2.1',
+          android: '192.0.2.2',
+          ipad: '192.0.2.3'
+        }
       }
     )
-    await receiverOutage(() => shaper).run(fake.session)
+    const asked: string[] = []
+    await receiverOutage(base => {
+      asked.push(base)
+      return shaper
+    }).run(fake.session)
+    expect(asked).deep.equals([SHAPER])
     expect(verdictsOf(fake.steps)).deep.equals([
       ['iphone', 'receiver-outage-playing', 'passed'],
       ['iphone', 'receiver-outage-paused', 'passed'],
@@ -443,25 +459,28 @@ describe('the receiver-outage scenario', function () {
       ['chrome', 'receiver-outage', 'blocked']
     ])
     expect(fake.steps[3].observed).equals(
-      '10.0.0.2 is not on test-net-1 or test-net-2'
+      '192.0.2.2 is not on a test network the conditioner shapes'
     )
     expect(fake.steps[5].observed).equals(
       'no address for chrome in soak.shapedIps'
     )
     expect(outages).deep.equals([
-      '10.0.0.1 180000',
-      '10.0.0.1 180000',
-      '10.0.0.3 180000'
+      '192.0.2.1 180000',
+      '192.0.2.1 180000',
+      '192.0.2.3 180000'
     ])
   })
 
   it('fails a watcher that plays on when it should stay paused', async function () {
     const world = makeWorld(THREE)
-    const { shaper } = conditioner(world, ['10.0.0.1'])
+    const { shaper } = conditioner(world, ['192.0.2.1'])
     const broken = watcher(world, 'iphone')
     // Its pause toggles nothing: the picture keeps moving.
     broken.surface.togglePause = async () => {}
-    const fake = session(world, [broken], { shapedIps: { iphone: '10.0.0.1' } })
+    const fake = session(world, [broken], {
+      shaper: SHAPER,
+      shapedIps: { iphone: '192.0.2.1' }
+    })
     await receiverOutage(() => shaper).run(fake.session)
     expect(verdictsOf(fake.steps)).deep.equals([
       ['iphone', 'receiver-outage-playing', 'passed'],
@@ -469,17 +488,37 @@ describe('the receiver-outage scenario', function () {
       ['iphone', 'receiver-outage-resumed', 'passed']
     ])
     const unread = makeWorld(THREE)
-    const none = conditioner(unread, ['10.0.0.1'])
+    const none = conditioner(unread, ['192.0.2.1'])
     const noClocks = session(
       unread,
       [watcher(unread, 'iphone', ['noClocks'])],
       {
-        shapedIps: { iphone: '10.0.0.1' }
+        shaper: SHAPER,
+        shapedIps: { iphone: '192.0.2.1' }
       }
     )
     await receiverOutage(() => none.shaper).run(noClocks.session)
     expect(noClocks.steps[1].observed).match(/^held unread; /)
     expect(noClocks.steps[1].verdict).equals('failed')
+  })
+
+  it('blocks every watcher when the local settings name no conditioner', async function () {
+    const world = makeWorld(THREE)
+    const { shaper, outages } = conditioner(world, ['192.0.2.1'])
+    const fake = session(
+      world,
+      [watcher(world, 'iphone'), watcher(world, 'android')],
+      { shapedIps: { iphone: '192.0.2.1' } }
+    )
+    await receiverOutage(() => shaper).run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([
+      ['iphone', 'receiver-outage', 'blocked'],
+      ['android', 'receiver-outage', 'blocked']
+    ])
+    expect(fake.steps[0].observed).equals(
+      "the local settings' soak block names no shaper"
+    )
+    expect(outages).deep.equals([])
   })
 
   it('builds its own conditioner unless told otherwise', function () {

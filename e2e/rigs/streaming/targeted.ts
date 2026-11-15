@@ -294,6 +294,8 @@ export interface TargetedSession {
   seekTo: (watcher: Watcher, targetMs: number) => Promise<number | null>
   sleep: (ms: number) => Promise<void>
   now: () => number
+  /** The network conditioner's address, from the local settings, when they give one. */
+  shaper?: string
   /** Each watcher role's address on a test network, from the local settings. */
   shapedIps: Record<string, string>
   /** The memory samplers, when the scenario asked for them. */
@@ -618,6 +620,9 @@ export async function runTargeted(
       },
       look,
       now: deps.now,
+      ...(world.settings.shaper == null
+        ? {}
+        : { shaper: world.settings.shaper }),
       shapedIps: world.settings.shapedIps ?? {},
       ...(setup.memory === true
         ? {

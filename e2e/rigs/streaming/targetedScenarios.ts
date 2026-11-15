@@ -268,23 +268,29 @@ export const publisherOutage: TargetedScenario = {
 
 /** S07–S09: a watcher's own network out for three minutes. */
 export function receiverOutage(
-  newShaper: () => Shaper = () => makeShaper()
+  newShaper: (base: string) => Shaper = base => makeShaper({ base })
 ): TargetedScenario {
   return {
     setup: { synthetic: THREE, watchers: ['iphone', 'android', 'ipad'] },
     run: async session => {
-      const conditioner = newShaper()
+      const conditioner =
+        session.shaper == null ? null : newShaper(session.shaper)
       for (const watcher of session.watchers) {
         const ip = session.shapedIps[watcher.role]
-        const on = ip == null ? null : await conditioner.onTestNetwork(ip)
-        if (ip == null || on == null) {
+        const on =
+          conditioner == null || ip == null
+            ? null
+            : await conditioner.onTestNetwork(ip)
+        if (conditioner == null || ip == null || on == null) {
           await session.record.step(
             watcher,
             'receiver-outage',
             'a three-minute network outage on this watcher',
-            ip == null
-              ? `no address for ${watcher.role} in soak.shapedIps`
-              : `${ip} is not on test-net-1 or test-net-2`,
+            conditioner == null
+              ? "the local settings' soak block names no shaper"
+              : ip == null
+                ? `no address for ${watcher.role} in soak.shapedIps`
+                : `${ip} is not on a test network the conditioner shapes`,
             'blocked'
           )
           continue

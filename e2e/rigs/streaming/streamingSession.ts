@@ -104,6 +104,8 @@ export interface SoakSettings {
   offsetMinutes?: number
   /** The installed TeamStation Develop build, which iOS attaches name so no other is put in its place. */
   iosApp: string
+  /** The network conditioner's address, for a watcher's outage; receiver-outage is blocked without it. */
+  shaper?: string
   /** Each watcher role's address on a test network, for an outage through the conditioner. */
   shapedIps?: Record<string, string>
 }
@@ -144,6 +146,9 @@ export function soakSettings(raw: unknown): SoakSettings {
     iosApp: soak.iosApp as string,
     ...(typeof soak.offsetMinutes === 'number'
       ? { offsetMinutes: soak.offsetMinutes }
+      : {}),
+    ...(typeof soak.shaper === 'string' && soak.shaper !== ''
+      ? { shaper: soak.shaper }
       : {}),
     ...(soak.shapedIps != null && typeof soak.shapedIps === 'object'
       ? {

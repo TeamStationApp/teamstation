@@ -1,15 +1,12 @@
 import { Agent } from 'undici'
 
 /**
- * The bench's network conditioner on the bench network
- * (`https://shaper.example.test`): it drops, delays or
- * caps one address's traffic, but only for a device on the test networks
- * (test-net-1, test-net-2), which `GET /v1/devices` lists. A watcher's address
- * comes from the local settings (`soak.shapedIps`); its outage is a 100 % loss
- * shape on that address, always cleared.
+ * The bench's network conditioner, at the address the local settings give
+ * (`soak.shaper`): it drops, delays or caps one address's traffic, but only
+ * for a device on the test networks, which `GET /v1/devices` lists. A
+ * watcher's address comes from the local settings too (`soak.shapedIps`); its
+ * outage is a 100 % loss shape on that address, always cleared.
  */
-
-export const SHAPER = 'https://shaper.example.test'
 
 export interface ShaperDevice {
   ip: string
@@ -28,14 +25,13 @@ export interface Shaper {
   ) => Promise<T | undefined>
 }
 
-export function shaper(
-  options: {
-    base?: string
-    fetch?: typeof fetch
-    sleep?: (ms: number) => Promise<void>
-  } = {}
-): Shaper {
-  const base = (options.base ?? SHAPER).replace(/\/$/, '')
+export function shaper(options: {
+  /** The conditioner's address, from the local settings. */
+  base: string
+  fetch?: typeof fetch
+  sleep?: (ms: number) => Promise<void>
+}): Shaper {
+  const base = options.base.replace(/\/$/, '')
   // The gateway serves its own certificate; the conditioner is LAN-only.
   const dispatcher = new Agent({ connect: { rejectUnauthorized: false } })
   const call =

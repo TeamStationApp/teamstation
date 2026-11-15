@@ -44,7 +44,7 @@ Not tested here: TV01 (needs more than four cameras; runs use at most four), IOS
 - **Local settings** (`~/.config/teamstation-e2e/local.json`, untracked), block `soak`:
   - `tvRemote`, `ndiCapture`, `tvJoinSteps`, `ffmpeg`, `offsetMinutes`: the bench's TV remote helper, NDI capture, TV join steps, the pinned ffmpeg and the bench clock's offset from UTC;
   - `iosApp`: the unpacked `.app` of the installed iOS build (maestro-d attaches with it);
-  - `shaper` and `shapedIps`: the network conditioner's address and each watcher role's address on the shaped test network, for receiver-outage (a watcher without one is reported blocked).
+  - `shaper` and `shapedIps`: the network conditioner's address and each watcher role's address on the shaped test network, for receiver-outage. The code has no default address: without `shaper` every watcher is reported blocked, and so is a watcher without an address.
 - **Simulated video:** every targeted scenario publishes only synthetic cameras (`SyntheticPublisher`), each burning its label and the bench clock into its frames. No phone publishes, so the bench phones are free to be watchers.
 
 ## Running

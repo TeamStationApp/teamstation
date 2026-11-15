@@ -325,7 +325,8 @@ function rig(
     tvJoinSteps: [],
     ffmpeg: 'f',
     iosApp: 'a',
-    shapedIps: { iphone: '10.0.0.1' },
+    shaper: 'https://shaper.example.test',
+    shapedIps: { iphone: '192.0.2.1' },
     ...options.settings
   }
   const world = {
@@ -476,7 +477,8 @@ describe('running a targeted scenario', function () {
         expect(session.watchers.map(w => w.role)).deep.equals(ALL.watchers)
         expect(session.takeStartMs).equals(T0)
         expect(session.now()).equals(T0 + 60_000)
-        expect(session.shapedIps).deep.equals({ iphone: '10.0.0.1' })
+        expect(session.shaper).equals('https://shaper.example.test')
+        expect(session.shapedIps).deep.equals({ iphone: '192.0.2.1' })
         expect(session.offsetMinutes).equals(0)
         expect(session.streamId('SynthB')).equals('st-b')
         expect(() => session.streamId('SynthZ')).throws(

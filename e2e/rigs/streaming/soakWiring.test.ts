@@ -124,7 +124,7 @@ describe('the soak wiring', function () {
     )
   })
 
-  it('keeps the shaped addresses that are strings and drops the rest', function () {
+  it('keeps the conditioner and the shaped addresses that are strings, and drops the rest', function () {
     const base = {
       tvRemote: { command: ['r'] },
       ndiCapture: { command: ['n'] },
@@ -139,6 +139,10 @@ describe('the soak wiring', function () {
       }).shapedIps
     ).deep.equals({ iphone: '192.0.2.20' })
     expect(soakSettings(base)).not.have.property('shapedIps')
+    expect(soakSettings(base)).not.have.property('shaper')
+    expect(
+      soakSettings({ ...base, shaper: 'https://shaper.example.test' }).shaper
+    ).equals('https://shaper.example.test')
     expect(soakSettings({ ...base, shapedIps: 'x' })).not.have.property(
       'shapedIps'
     )

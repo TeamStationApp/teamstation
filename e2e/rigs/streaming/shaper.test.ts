@@ -4,7 +4,9 @@ import type { AddressInfo } from 'node:net'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { SHAPER, shaper } from './shaper'
+import { shaper } from './shaper'
+
+const SHAPER = 'https://shaper.example.test'
 
 interface Sent {
   url: string
@@ -78,7 +80,7 @@ describe('the network conditioner', function () {
   it('says when the conditioner will not list its devices', async function () {
     const fake = conditioner({ listStatus: 502 })
     const error = await rejection(
-      shaper({ fetch: fake.fetch }).onTestNetwork('192.0.2.20')
+      shaper({ base: SHAPER, fetch: fake.fetch }).onTestNetwork('192.0.2.20')
     )
     expect(error.message).equals('the conditioner would not list devices: 502')
     expect(fake.sent[0].url).equals(`${SHAPER}/v1/devices`)
@@ -88,6 +90,7 @@ describe('the network conditioner', function () {
     const fake = conditioner()
     const slept: number[] = []
     const shape = shaper({
+      base: SHAPER,
       fetch: fake.fetch,
       sleep: async ms => {
         slept.push(ms)
@@ -108,7 +111,11 @@ describe('the network conditioner', function () {
 
   it('clears the shape even when the work during the outage throws', async function () {
     const fake = conditioner()
-    const shape = shaper({ fetch: fake.fetch, sleep: async () => {} })
+    const shape = shaper({
+      base: SHAPER,
+      fetch: fake.fetch,
+      sleep: async () => {}
+    })
     const error = await rejection(
       shape.outage('192.0.2.20', 1000, async () => {
         throw new Error('probe failed')
@@ -121,7 +128,7 @@ describe('the network conditioner', function () {
   it('says when the conditioner refuses a shape', async function () {
     const fake = conditioner({ shapeStatus: 400 })
     const error = await rejection(
-      shaper({ fetch: fake.fetch, sleep: async () => {} }).outage(
+      shaper({ base: SHAPER, fetch: fake.fetch, sleep: async () => {} }).outage(
         '192.0.2.20',
         1000
       )
@@ -155,7 +162,7 @@ describe('the network conditioner', function () {
   it('waits with real time when no sleep is given', async function () {
     const fake = conditioner()
     const started = Date.now()
-    await shaper({ fetch: fake.fetch }).outage('192.0.2.20', 5)
+    await shaper({ base: SHAPER, fetch: fake.fetch }).outage('192.0.2.20', 5)
     expect(Date.now() - started).at.least(4)
   })
 })
