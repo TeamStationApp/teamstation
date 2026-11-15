@@ -721,13 +721,20 @@ function projection(play: Record<string, any>): unknown {
     atBatIndex: play.about?.atBatIndex,
     eventType: play.result?.eventType,
     description: play.result?.description,
-    runners: (play.runners ?? []).map((r: any) => ({
-      id: r.details?.runner?.id,
-      originBase: r.movement?.originBase ?? null,
-      end: r.movement?.end ?? null,
-      isOut: r.movement?.isOut ?? false,
-      credits: (r.credits ?? []).map((c: any) => [c.player?.id, c.credit])
-    })),
+    // In no order: a dictated play keeps its runners in the order they were
+    // said, and "thrown to first for the out, the runner on first went to
+    // second" is the same play as the runner listed first.
+    runners: (play.runners ?? [])
+      .map((r: any) => ({
+        id: r.details?.runner?.id,
+        originBase: r.movement?.originBase ?? null,
+        end: r.movement?.end ?? null,
+        isOut: r.movement?.isOut ?? false,
+        credits: (r.credits ?? []).map((c: any) => [c.player?.id, c.credit])
+      }))
+      .sort((a: { id?: number }, b: { id?: number }) =>
+        String(a.id).localeCompare(String(b.id))
+      ),
     score: [play.result?.awayScore, play.result?.homeScore]
   }
 }

@@ -731,6 +731,13 @@ export function sentenceDefaults(
         const depth = depthOf(transcript, next.depth)
         if (depth != null) next.depth = depth
       }
+      // A caught foul is never the center fielder's: one the model gave him
+      // is the first baseman's for a right-handed batter and the third
+      // baseman's for a left-handed one.
+      if (ownFoul && next.fielder != null && next.fielder === defense.CF?.id) {
+        const corner = defense[foulSide(game) === 1 ? '1B' : '3B']?.id
+        if (corner != null) next.fielder = corner
+      }
       // An infielder's ball is no deeper than he can reach: a ground ball
       // stays on the infield, and a pop or a liner short of medium depth.
       const grounder =
