@@ -81,6 +81,8 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
   const handle = handleRef.current
   // Android ignores the same source handed to it twice (`clearBeforeReload`).
   handle.clearBeforeReload = Platform.OS === 'android'
+  // And says it can play before it says it has a picture (`readyOnBuffer`).
+  handle.readyOnBuffer = Platform.OS === 'android'
   const playerRef = useRef<VideoRef | null>(null)
 
   const takePlayer = useCallback(
