@@ -75,7 +75,10 @@ describe('device scheduling persistence boundaries', () => {
     expect(new Set(migrations.map(item => item.name)).size).equals(
       migrations.length
     )
-    expect(migrations.slice(-3).map(item => item.name)).deep.equals([
+    // In order and together, wherever later migrations put them.
+    const names = migrations.map(item => item.name)
+    const first = names.indexOf('119deviceScheduling')
+    expect(names.slice(first, first + 3)).deep.equals([
       '119deviceScheduling',
       '120devicePreviews',
       '121deviceResultHash'

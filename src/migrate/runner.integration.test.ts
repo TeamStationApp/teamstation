@@ -119,8 +119,12 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back the imported records, scheduling and device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    // The records are data: going down removes none of them.
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '122importedRecords'
+    ])
     expect(await migrateDown(pool, migrations, 3)).deep.equals([
       '121deviceResultHash',
       '120devicePreviews',
@@ -657,7 +661,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '118deviceSessions',
           '119deviceScheduling',
           '120devicePreviews',
-          '121deviceResultHash'
+          '121deviceResultHash',
+          '122importedRecords'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(
