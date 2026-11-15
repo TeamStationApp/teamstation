@@ -921,7 +921,7 @@ describe('the scoring screen on the game socket', function () {
               gameId: 'g1',
               kind: 'plans',
               at: '2026-10-12T12:00:00Z',
-              data: { teamId: 'home' }
+              data: { teamId: 'home', inning: 1 }
             }
       )
       expect(planReads()).equals(2)
@@ -1476,7 +1476,7 @@ describe('the scoring screen on the game socket', function () {
       gameId: 'g1',
       kind: 'plans',
       at: '2026-10-12T12:00:00Z',
-      data: { teamId: 'home' }
+      data: { teamId: 'home', inning: 1 }
     })
     expect(planReads()).equals(2)
     await changes.emit({

@@ -381,8 +381,12 @@ export class GameFanout {
               }
             : change.kind === 'plans'
               ? // Every viewer hears it: the plan itself stays behind
-                // `GET /games/:gameId/plans`, which only its planners read.
-                { ...head, kind: 'plans', data: { teamId: change.teamId } }
+                // `GET /games/:gameId/plans`, which only its coaches read.
+                {
+                  ...head,
+                  kind: 'plans',
+                  data: { teamId: change.teamId, inning: change.inning }
+                }
               : {
                   ...head,
                   kind: 'playEdits',

@@ -1,13 +1,32 @@
 import { Router } from 'express'
 import type { Kysely } from 'kysely'
 
-import type { GamePlansResponse, SidePlan } from '../../common/api'
-import { forbidden, notFound, unauthorized } from '../../common/errors'
-import { asGamePlan } from '../../common/gamePlan'
-import { canSeeGame, lineupTeams, roleScopes, visibleScopes } from '../access'
+import type { GamePlansResponse, PlanInning, SidePlan } from '../../common/api'
+import {
+  conflict,
+  forbidden,
+  notFound,
+  unauthorized
+} from '../../common/errors'
+import { asGamePlan, MAX_PLAN_INNINGS } from '../../common/gamePlan'
+import {
+  canScore,
+  canSeeGame,
+  lineupTeams,
+  planTeams,
+  roleScopes,
+  visibleScopes
+} from '../access'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
-import { loadSidePlan, type PlanGame, saveGamePlan } from '../games/gamePlans'
+import {
+  loadPlanInning,
+  loadSidePlan,
+  openInning,
+  type PlanGame,
+  planGameState,
+  saveGamePlan
+} from '../games/gamePlans'
 import { cleanBody } from '../jsonBody'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -20,7 +39,15 @@ type PlannedGame = PlanGame & { home_team_id: string; away_team_id: string }
  * or a scorekeeper of either team), and answered with the Playing Time Rules
  * and same-day load its warnings are judged by. A plan is on
  * when it holds a position: the `enabled` a save sends is not read. A save is
- * announced on the game socket as a `plans` change naming only the team.
+ * announced on the game socket as a `plans` change naming the team and the
+ * inning, only when it changes the inning in play.
+ *
+ * A scorer reads one inning's column, `GET
+ * /games/:gameId/plans/:teamId/innings/:inning`: whoever scores either team,
+ * or a coach of the team (`planTeams`), once the game's start time has
+ * passed, for the inning in play alone, until the game is over. The reason
+ * for a refusal is in its `details` (`planNotStarted`, `planGameOver`,
+ * `planInningNotCurrent`).
  */
 export function gamePlanRoutes(db: Kysely<Database>): Router {
   const router = Router()
@@ -99,6 +126,56 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
         )
       await saveGamePlan(db, game, teamId, plan, actor.userId)
       res.json(await loadSidePlan(db, game, teamId))
+    })
+  )
+
+  router.get(
+    '/games/:gameId/plans/:teamId/innings/:inning',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const game = await visibleGame(actor, pathParam(req.params.gameId))
+      const teamId = pathParam(req.params.teamId)
+      const scopes = await roleScopes(db, actor.userId, actor.isAdmin)
+      const scores = [game.away_team_id, game.home_team_id].some(id =>
+        canScore(scopes, id)
+      )
+      if (
+        !scores &&
+        !(await planTeams(db, actor.userId, game)).includes(teamId)
+      )
+        throw forbidden(
+          "Only a scorekeeper or the team's coach may read an inning's plan"
+        )
+      const inning = Number(pathParam(req.params.inning))
+      if (
+        (teamId !== game.home_team_id && teamId !== game.away_team_id) ||
+        !Number.isInteger(inning) ||
+        inning < 1 ||
+        inning > MAX_PLAN_INNINGS
+      )
+        throw notFound()
+      const state = await planGameState(db, game.id)
+      const open = openInning(state, new Date())
+      if ('refused' in open && open.refused !== 'planInningNotCurrent')
+        throw forbidden(
+          open.refused === 'planNotStarted'
+            ? 'The game has not reached its start time'
+            : 'The game is over',
+          { reason: open.refused }
+        )
+      if (!('inning' in open) || open.inning !== inning)
+        throw conflict(`Inning ${inning} is not the inning in play`, {
+          reason: 'planInningNotCurrent',
+          inning: state.inning
+        })
+      const answer: PlanInning = {
+        teamId,
+        inning,
+        column: await loadPlanInning(db, game.id, teamId, inning)
+      }
+      res.json(answer)
     })
   )
 

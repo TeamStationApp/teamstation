@@ -61,7 +61,7 @@ class FakeChanges implements GameChanges {
           gameId: 'g1',
           kind: 'plans',
           at: '2026-10-12T12:00:00Z',
-          data: { teamId: 'home' }
+          data: { teamId: 'home', inning: 1 }
         })
     })
     await settle()

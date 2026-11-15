@@ -126,7 +126,7 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
       put: {
         summary: "Save one team's per-inning game plan",
         description:
-          "Replaces the team's plan in the game, as whoever may save its lineup. A plan with a cell that is no value, more than twelve innings, or a row whose cells are not one per inning is a 400. An all-blank plan is stored like any other. The game's viewers hear a `plans` change naming only the team.",
+          "Replaces the team's plan in the game, as whoever may save its lineup. A plan with a cell that is no value, more than twelve innings, or a row whose cells are not one per inning is a 400. An all-blank plan is stored like any other. When the save changes the inning in play of a game past its start time and not over, the game's viewers hear a `plans` change naming the team and that inning; a change to later innings only announces nothing.",
         security: [{ bearer: [] }],
         parameters: [
           gameId,
@@ -150,6 +150,66 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
           401: errorResponse,
           403: errorResponse,
           404: errorResponse
+        }
+      }
+    },
+    '/games/{gameId}/plans/{teamId}/innings/{inning}': {
+      get: {
+        summary: "One team's plan column for the inning in play",
+        description:
+          "What a scorer reads of a coach's plan: every row's cell for this inning, by jersey, and nothing else (no other inning, batting order, rules or warnings). Needs somebody who can see the game (404 otherwise) and who scores either team or coaches this one (403 otherwise). A team not in the game, or an inning outside 1 to 12, is a 404. Before the game's start time it is a 403 with `details.reason` `planNotStarted`; once the game is final or cancelled, a 403 with `planGameOver`; for any inning but the one in play, a 409 with `planInningNotCurrent` and `details.inning` the inning in play (null for none). A team with no plan holding a position, or no such inning in it, answers an empty column.",
+        security: [{ bearer: [] }],
+        parameters: [
+          gameId,
+          {
+            name: 'teamId',
+            in: 'path',
+            required: true,
+            schema: { type: 'string' }
+          },
+          {
+            name: 'inning',
+            in: 'path',
+            required: true,
+            schema: { type: 'integer', minimum: 1, maximum: MAX_PLAN_INNINGS }
+          }
+        ],
+        responses: {
+          200: {
+            description: '{ teamId, inning, column }',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['teamId', 'inning', 'column'],
+                  properties: {
+                    teamId: { type: 'string' },
+                    inning: { type: 'integer' },
+                    column: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['player', 'cell'],
+                        properties: {
+                          player:
+                            gamePlan.properties.rows.items.properties.player,
+                          cell: {
+                            type: 'string',
+                            enum: [...PLAN_CELLS, ''],
+                            description: 'Blank is the bench'
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          401: errorResponse,
+          403: errorResponse,
+          404: errorResponse,
+          409: errorResponse
         }
       }
     }
