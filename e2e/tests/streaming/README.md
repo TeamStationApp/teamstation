@@ -21,7 +21,7 @@ The streaming suite drives a real game's live video from publishers to every kin
 
 ## Which claims each targeted scenario tests
 
-The targeted scenarios test what the branches `paul/streamingReliabilityFixes` (findings S01–S10) and `paul/streamingReliabilityFixes2` (findings in its handoff) claim to fix, where simulated video can reach it.
+Each targeted scenario tests streaming reliability claims, named by a short id and described beside it, where simulated video can reach them.
 
 | Scenario | Claims |
 | --- | --- |
