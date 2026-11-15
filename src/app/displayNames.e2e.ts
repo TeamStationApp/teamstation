@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import type { Page } from 'puppeteer'
 
+import { makeId } from '../common/ids'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
 import type { MountExtra } from '../test/accountHarness'
@@ -401,7 +402,21 @@ async function main(): Promise<void> {
     }
 
     // D3 and D5. Barry Larkin, a member with no role, reads the public
-    // labels: Cal R, and two Josh S told apart by their lines.
+    // labels: Cal R, and two Josh S told apart by their lines. Nobody is on
+    // a league's list only for playing: the Joshes are its members here,
+    // and no longer once D5 is done, for D9's season list.
+    const joshes = [JOSH_SMITH, JOSH_STAUMONT].map(userIdOfGumbo)
+    await f.h.db
+      .insertInto('league_members')
+      .values(
+        joshes.map(userId => ({
+          id: makeId('leagueMember'),
+          user_id: userId,
+          league_id: f.leagueA,
+          joined_at: new Date()
+        }))
+      )
+      .execute()
     await signIn(BARRY)
     await open(LEAGUE_PEOPLE, 'Cal R')
     await absent(page, 'Cal Ripken')
@@ -443,6 +458,11 @@ async function main(): Promise<void> {
       userIdOfGumbo(JOSH_SMITH),
       userIdOfGumbo(JOSH_STAUMONT)
     )
+    await f.h.db
+      .deleteFrom('league_members')
+      .where('user_id', 'in', joshes)
+      .where('league_id', '=', f.leagueA)
+      .execute()
 
     if (!before) {
       // D8 (Barry). The same practice names the coach short.
@@ -452,16 +472,29 @@ async function main(): Promise<void> {
       for (const name of lou) expect(name).equals('Lou P')
       console.log('D8 PASS: Barry Larkin reads Lou P', lou)
 
-      // D9. Kirby Puckett coaches the season and no team of it: he reads
-      // the players Demo Hawks and Demo Owls hold in full, but Rickey
-      // Henderson, whom Demo Owls holds only by an open add, short, and no
-      // guardian of his.
+      // D9. Kirby Puckett coaches the season and no team of it. The
+      // season's list holds no players, only Ken Griffey, Josh Smith's
+      // guardian, in full. On the teams' Team tabs he reads the players
+      // Demo Hawks and Demo Owls hold in full, but Rickey Henderson, whom
+      // Demo Owls holds only by an open add, short, and no guardian of his.
       await signIn(KIRBY)
-      await open(SEASON_PEOPLE, 'Rickey H')
-      await absent(page, 'Rickey Henderson')
-      await contains(page, 'Josh Smith')
-      await contains(page, 'Josh Staumont')
+      await open(SEASON_PEOPLE, 'Ken Griffey')
+      for (const name of [
+        'Josh Smith',
+        'Josh Staumont',
+        'Rickey H',
+        'Rickey Henderson'
+      ])
+        // No row of theirs; Ken's line may still name the child he guards.
+        expect(
+          (await leavesWith(page, name)).filter(leaf => leaf === name),
+          name
+        ).deep.equals([])
+      await open(HAWKS, 'Josh Smith')
       await contains(page, 'Ken Griffey')
+      await open(`/teams/${world.owls}?tab=team`, 'Rickey H')
+      await absent(page, 'Rickey Henderson')
+      await contains(page, 'Josh Staumont')
       for (const name of ['Dave Winfield', 'Dave W', 'Winfield'])
         expect(await leavesWith(page, name), name).deep.equals([])
       // His row: the name and any affiliation line under it.
@@ -482,9 +515,10 @@ async function main(): Promise<void> {
       expect(rickeyLine).not.include('Dave')
       await scrollTo(page, 'Rickey H')
       await shot('held-player')
-      console.log('D9 PASS: Kirby Puckett reads Rickey H, no guardian', [
-        rickeyLine
-      ])
+      console.log(
+        'D9 PASS: no players on the season list; Kirby Puckett reads Rickey H, no guardian',
+        [rickeyLine]
+      )
     }
   } finally {
     await browser.disconnect()

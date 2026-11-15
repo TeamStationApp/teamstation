@@ -10147,12 +10147,16 @@ export function openApiDocument(version: string): OpenApiDocument {
               summary: `A ${collection.slice(0, -1)}\u2019s people, in the roster\u2019s sections`,
               description:
                 'Admins and Staff: roles given here and on the league ' +
-                'above. Players: everybody playing now on a team this ' +
-                'level reaches, with `teamNames`. Family members: their ' +
-                'guardians. Spectators: members here and of the league ' +
-                'above. Followers: people following this level. Each ' +
-                'person once, in the first that fits, with a pill for a ' +
-                'level above. For its members and role holders and site ' +
+                'above. Family members: the guardians of everybody ' +
+                'playing now on a team this level reaches. Spectators: ' +
+                'members here and of the league above. Followers: people ' +
+                'following this level. Each person once, in the first ' +
+                'that fits, with a pill for a level above. There is no ' +
+                'Players section: a player with another tie here is in ' +
+                'that section with `isPlayer: true` and `teamNames`, and ' +
+                'one who only plays is left out, though their profile ' +
+                'still opens from this level. For its members and role ' +
+                'holders and site ' +
                 'administrators; anybody else gets 404. `manages` and ' +
                 '`admin` say what this viewer may do with them.',
               security: [{ bearer: [] }],

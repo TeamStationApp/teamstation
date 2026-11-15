@@ -314,6 +314,14 @@ async function main(): Promise<void> {
     await signIn(SPRING_COACH)
     await open(`/groups/season/${f.seasonA}?tab=people`, 'Mike Trout')
     await capture(m, artifacts!, 'spring-people-after.png')
+    // The last row of the list, which the tab bar floats over until it is
+    // scrolled up.
+    await page.evaluate(() => {
+      const name = Array.from(document.querySelectorAll('body *')).find(
+        node => node.children.length === 0 && node.textContent === 'Mike Trout'
+      )
+      if (name !== undefined) name.scrollIntoView({ block: 'center' })
+    })
     await m.tapOn({ text: 'Mike Trout' })
     await page.waitForFunction(() => location.pathname.includes('/people/'))
     await contains(page, 'Mike Trout')

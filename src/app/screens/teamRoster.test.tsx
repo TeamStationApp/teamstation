@@ -398,10 +398,10 @@ describe('a season’s and a league’s People tab', function () {
 
   const levelPeople = [
     entry(101, 'Babe R', { section: 'admin' }),
+    // No section of players: Alfonso plays, and is listed as a member.
     entry(201, 'Alfonso S', {
-      section: 'player',
+      section: 'spectator',
       isPlayer: true,
-      positions: ['SS'],
       teamNames: ['Demo Hawks', 'Demo Owls'],
       affiliations: 'Guardians: Tim R · Demo Hawks · Demo Owls'
     }),
@@ -417,11 +417,10 @@ describe('a season’s and a league’s People tab', function () {
 
   it('lists the season’s people in sections, a player with their teams, and opens them for a manager', async function () {
     const { players, people } = await tab('season', true, levelPeople)
-    expect(headings().filter(at => at >= 0)).length(4)
-    // The teams are the affiliation line's, under the player's positions;
-    // the line is the server's, not built from `teamNames`.
+    expect(headings().filter(at => at >= 0)).length(3)
+    // The teams are the affiliation line's, not built from `teamNames`.
     expect(row('Alfonso S')).includes(
-      'SSGuardians: Tim R · Demo Hawks · Demo Owls'
+      'Guardians: Tim R · Demo Hawks · Demo Owls'
     )
     expect(row('Tim R')).includes(
       'Guardian of Alfonso S · Demo Hawks · Demo Owls'
