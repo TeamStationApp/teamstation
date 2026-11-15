@@ -21,7 +21,8 @@ import {
   removeStack,
   type StackEntry,
   stackHandleFor,
-  STACKS
+  STACKS,
+  writeStackEntry
 } from './attach'
 import {
   addToCorpus,
@@ -243,7 +244,7 @@ export async function main(argv: string[]): Promise<number> {
 
     case 'stack': {
       if (subcommand === 'up') {
-        mkdirSync(STACKS, { recursive: true })
+        mkdirSync(STACKS, { recursive: true, mode: 0o700 })
         const id = values.id ?? Math.random().toString(36).slice(2, 10)
         const args = [
           '-r',
@@ -310,7 +311,11 @@ export async function main(argv: string[]): Promise<number> {
           baselineManifest: stack.baselineManifest,
           errorLog
         }
-        writeFileSync(join(STACKS, `${stack.id}.json`), JSON.stringify(entry))
+        writeStackEntry(
+          STACKS,
+          join(STACKS, `${stack.id}.json`),
+          JSON.stringify(entry)
+        )
         await new Promise<void>(resolve => {
           process.once('SIGTERM', () => {
             resolve()

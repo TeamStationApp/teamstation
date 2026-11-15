@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -97,9 +98,20 @@ export function attachStack(dir: string, file: string): StackEntry {
     handle,
     handleFile
   }
-  mkdirSync(dir, { recursive: true })
-  writeFileSync(entryFile, JSON.stringify(entry, null, 2))
+  writeStackEntry(dir, entryFile, JSON.stringify(entry, null, 2))
   return entry
+}
+
+/**
+ * Writes a stack's entry where only this user can read it: an attached
+ * stack's handle carries its database URL, password and all, and the
+ * registry lives under the shared temporary directory.
+ */
+export function writeStackEntry(dir: string, file: string, text: string): void {
+  mkdirSync(dir, { recursive: true, mode: 0o700 })
+  chmodSync(dir, 0o700)
+  writeFileSync(file, text, { mode: 0o600 })
+  chmodSync(file, 0o600)
 }
 
 export function readStack(dir: string, id: string): StackEntry {
