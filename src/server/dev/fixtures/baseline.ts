@@ -23,7 +23,7 @@ export async function refuseRealAddresses(
   const real = rows.filter(row => !isTestAddress(mailbox, row.email))
   if (real.length > 0) {
     throw new Error(
-      `baseline refuses this database: ${real.length} address(es) are not test addresses`
+      `fixtures refuse this database: ${real.length} address(es) are not test addresses`
     )
   }
 }

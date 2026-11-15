@@ -174,7 +174,7 @@ describe('fixture worlds', function () {
       await rejection(async () => {
         await refuseRealAddresses(the(), other)
       })
-    ).includes('baseline refuses')
+    ).includes('fixtures refuse')
   })
 
   it('gives two worlds under different nonces no user or team in common', async function () {
@@ -219,7 +219,7 @@ describe('fixture worlds', function () {
       .execute()
     const of = (name: string): (typeof roles)[number] | undefined =>
       roles.find(row => row.user_id === world.accounts[name].userId)
-    expect(of('coach')?.role).equals('admin')
+    expect(of('coach')?.role).equals('owner')
     expect(of('viewer')?.role).equals('member')
     expect(of('player')?.is_player).equals(true)
     const videos = await the()
@@ -291,6 +291,16 @@ describe('fixture worlds', function () {
         mailbox: MAILBOX
       })
       expect(world.accounts.coach.role).equals('coach')
+      // Every world, not only the baseline, refuses another mailbox's database.
+      expect(
+        await rejection(
+          async () =>
+            await runFixture({
+              world: 'streaming',
+              mailbox: 'otherbox@example.test'
+            })
+        )
+      ).includes('fixtures refuse this database')
     } finally {
       serverConfig.testSettings = saved
       serverConfig.databaseUrl = savedUrl

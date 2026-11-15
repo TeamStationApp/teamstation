@@ -3,7 +3,7 @@ import { serverConfig } from '../../serverConfig'
 import type { FixtureManifest, WorldContext } from './accounts'
 import { makeNonce } from './accounts'
 import { splitMailbox } from './address'
-import { runBaseline } from './baseline'
+import { refuseRealAddresses, runBaseline } from './baseline'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -55,11 +55,16 @@ export function parseFixtureArgs(argv: string[]): FixtureArgs {
   return { world, mailbox }
 }
 
-/** Runs one world against the configured database and returns its manifest. */
+/**
+ * Runs one world against the configured database and returns its manifest.
+ * Every world refuses a database holding an address that is not the
+ * mailbox's.
+ */
 export async function runFixture(args: FixtureArgs): Promise<FixtureManifest> {
   refuseWithoutTestSettings(serverConfig.testSettings)
   const db = makeDatabase(serverConfig.databaseUrl)
   try {
+    await refuseRealAddresses(db, args.mailbox)
     if (args.world === 'baseline') return await runBaseline(db, args.mailbox)
     return await WORLDS[args.world]({
       db,
