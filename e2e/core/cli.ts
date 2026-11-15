@@ -56,6 +56,14 @@ import { startStack } from './stack'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
 
+/** `--retries`: a whole number, 0 or more. */
+function retryCount(value: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`--retries wants a whole number, 0 or more, not ${value}`)
+  }
+  return Number(value)
+}
+
 function stackState(id: string): StackEntry {
   return readStack(STACKS, id)
 }
@@ -335,7 +343,7 @@ export async function main(argv: string[]): Promise<number> {
         seat: values.seat,
         stack,
         runDir: values['run-dir'],
-        retries: values.retries == null ? 0 : Number(values.retries),
+        retries: values.retries == null ? 0 : retryCount(values.retries),
         concurrent: values.concurrent,
         browserCoverage: values['browser-coverage'],
         budgetUsd:
