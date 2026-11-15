@@ -834,14 +834,16 @@ describe('TeamStation pipeline Masonfile', () => {
     }
     try {
       writeFileSync(keystore, 'keystore')
-      // apksigner reports the certificate and its public key; only the
-      // certificate counts.
+      // apksigner 37 names each scheme's signer ("V2", "V3.0"), so one key
+      // prints its certificate more than once; a public key is not a
+      // certificate and does not count.
       tool(
         path.join(tools, '37.0.0', 'apksigner'),
         [
           `[ "$1" = sign ] && { echo "sign $*" >> '${root}/signed.log'; exit 0; }`,
-          `echo "Signer #1 certificate SHA-256 digest: $(cat '${root}/digest.txt')"`,
-          "echo 'Signer #1 public key SHA-256 digest: 0123'"
+          "echo 'V2 Signer: certificate DN: CN=TeamStation, O=TeamStation, C=US'",
+          `while read -r d; do echo "V2 Signer: certificate SHA-256 digest: $d"; echo "V3.0 Signer: certificate SHA-256 digest: $d"; done < '${root}/digest.txt'`,
+          "echo 'V3.0 Signer: public key SHA-256 digest: 0123'"
         ].join('\n')
       )
       tool(path.join(tools, '9.0.0', 'apksigner'), 'exit 9')
@@ -924,8 +926,10 @@ describe('TeamStation pipeline Masonfile', () => {
         assert.match(failed.out, new RegExp(message))
         assert.equal(failed.out.includes(password), false)
       }
-      signed(`${release}\n${release}`)
+      signed(`${release}\n51:0F:28:16`)
       assert.match(run(aab, {}).out, /does not have exactly one signer/)
+      signed(`${release.replace(/:/g, '').toLowerCase()}\n510f2816`)
+      assert.match(run(apk, {}).out, /does not have exactly one signer/)
       writeFileSync(path.join(apks, 'other.apk'), '')
       assert.match(run(apk, {}).out, /Expected one release APK to sign/)
       rmSync(bundles, { recursive: true })
