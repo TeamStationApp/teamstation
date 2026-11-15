@@ -2,7 +2,12 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import { PerspectiveCamera } from 'three'
 
-import { catcherBounds, coversCatcher, movedRect } from './catcherBounds'
+import {
+  catcherBounds,
+  coversCatcher,
+  inView,
+  movedRect
+} from './catcherBounds'
 
 /** A camera behind the plate, looking out to center field. */
 function behindThePlate(): PerspectiveCamera {
@@ -63,5 +68,14 @@ describe('whether a control covers the catcher', function () {
     expect(
       coversCatcher({ x: 565, y: 820, width: 70, height: 48 }, catcher)
     ).equals(false)
+  })
+
+  it('places a pill measured in the window on a screen offset under a header', function () {
+    // The screen starts 120 points down the window, beside a 300-point pane.
+    const pill = inView(
+      { x: 865, y: 844, width: 70, height: 48 },
+      { x: 300, y: 120 }
+    )
+    expect(pill).deep.equals({ x: 565, y: 724, width: 70, height: 48 })
   })
 })

@@ -36,7 +36,7 @@ import { UndoTicker } from '../scoring/UndoTicker'
 import { useHoldSelection } from '../scoring/useHoldSelection'
 import { useMenuEscape } from '../scoring/useMenuEscape'
 import { useTheme } from '../theme/ThemeContext'
-import { coversCatcher, type ScreenRect } from './catcherBounds'
+import { coversCatcher, inView, type ScreenRect } from './catcherBounds'
 import { FieldCanvas } from './FieldCanvas'
 import {
   compactToastBounds,
@@ -295,11 +295,31 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   const [undoSize, setUndoSize] = useState({ width: 96, y: 0 })
   // The Done pill's row, in the window, and the pill's own size.
   const doneRow = useRef<React.ComponentRef<typeof View>>(null)
+  const screenRoot = useRef<React.ComponentRef<typeof View>>(null)
   const [doneRowRect, setDoneRowRect] = useState<ScreenRect | null>(null)
+  /**
+   * The Done pill's row in the screen's own space, where the catcher is: it
+   * is measured in the window, and the screen need not start at the window's
+   * top left.
+   */
+  const measureDoneRow = useCallback((): void => {
+    const row = doneRow.current
+    const root = screenRoot.current
+    if (row == null || root == null) return
+    root.measureInWindow((rootX, rootY) => {
+      row.measureInWindow((x, y, width, height) => {
+        setDoneRowRect(inView({ x, y, width, height }, { x: rootX, y: rootY }))
+      })
+    })
+  }, [])
   const [doneSize, setDoneSize] = useState({ width: 0, height: 0 })
   const surface = useFieldSurface()
   const theme = useTheme()
   const band = props.topBand ?? 0
+  // The row moves with the band above the field without a layout of its own.
+  useEffect(() => {
+    measureDoneRow()
+  }, [band, measureDoneRow])
   const {
     field: bandedCanvas,
     bounds,
@@ -340,9 +360,11 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
   return (
     <View
       style={[surface.root, { backgroundColor: theme.backgroundColor }]}
+      ref={screenRoot}
       onLayout={event => {
         setViewportHeight(event.nativeEvent.layout.height)
         setViewportWidth(event.nativeEvent.layout.width)
+        measureDoneRow()
       }}
     >
       {historyBounds != null && (
@@ -549,13 +571,7 @@ export function BaseballScreen(props: BaseballScreenProps): React.ReactElement {
                       <View
                         ref={doneRow}
                         pointerEvents="box-none"
-                        onLayout={() => {
-                          doneRow.current?.measureInWindow(
-                            (x, y, width, height) => {
-                              setDoneRowRect({ x, y, width, height })
-                            }
-                          )
-                        }}
+                        onLayout={measureDoneRow}
                         style={{
                           position: 'absolute',
                           bottom: '100%',

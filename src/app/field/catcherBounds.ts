@@ -94,3 +94,19 @@ export function coversCatcher(
     control.y + control.height > top
   )
 }
+
+/**
+ * A rect measured in the window, as `measureInWindow` gives it, placed in a
+ * view whose own top left is at `origin` in the window: the scoring screen
+ * can sit below an app header or beside the chat pane.
+ */
+export function inView(
+  windowRect: ScreenRect,
+  origin: { x: number; y: number }
+): ScreenRect {
+  return {
+    ...windowRect,
+    x: windowRect.x - origin.x,
+    y: windowRect.y - origin.y
+  }
+}
