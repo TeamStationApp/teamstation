@@ -90,6 +90,21 @@ async function checkLook(
   }
 }
 
+/**
+ * Starts `work` now and gives a way to await it later: a rejection that
+ * comes meanwhile is kept for that await, never left unheard.
+ */
+function started(work: PromiseLike<void>): () => Promise<void> {
+  const settled = Promise.resolve(work).then(
+    () => null,
+    (error: unknown) => ({ error })
+  )
+  return async () => {
+    const outcome = await settled
+    if (outcome != null) throw outcome.error
+  }
+}
+
 /** Waits until the session's clock reaches `atMs`. */
 async function until(session: TargetedSession, atMs: number): Promise<void> {
   const wait = atMs - session.now()
@@ -266,7 +281,7 @@ export const publisherOutage: TargetedScenario = {
   setup: { synthetic: THREE, watchers: [...WATCHERS] },
   run: async session => {
     const outage = async (step: string, behindMs: number): Promise<void> => {
-      const cut = session.publishers.get('SynthA')!.cut(45)
+      const cut = started(session.publishers.get('SynthA')!.cut(45))
       await session.sleep(20_000)
       for (const watcher of session.watchers) {
         const look = await session.look(watcher)
@@ -281,7 +296,7 @@ export const publisherOutage: TargetedScenario = {
           { angle: 'SynthA' }
         )
       }
-      await cut
+      await cut()
       for (const watcher of session.watchers) {
         const back = await untilMoving(session, watcher, 30_000, look => {
           const a = tile(look, 'SynthA')

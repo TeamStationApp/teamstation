@@ -199,17 +199,6 @@ function watcher(
   return { role, surface, calls, head, look, ...extra }
 }
 
-/** A promise-like that does `work` only once something waits for it. */
-function awaited(work: () => void): PromiseLike<void> {
-  const lazy = {
-    then: (resolve: () => void) => {
-      work()
-      resolve()
-    }
-  }
-  return lazy as unknown as PromiseLike<void>
-}
-
 interface Fake {
   session: TargetedSession
   world: World
@@ -240,8 +229,9 @@ function session(
         world.publisherCalls.push(`stop ${label}`)
         world.ended.set(label, now())
       },
-      // The hole's end comes when the scenario waits for the cut, not before.
-      cut: (seconds: number): PromiseLike<void> => {
+      // The hole ends on the event loop's next turn: the scenario's own work
+      // meanwhile (its sleeps and looks on this clock) is all done by then.
+      cut: async (seconds: number): Promise<void> => {
         const start = now()
         const end = start + seconds * 1000
         world.publisherCalls.push(`cut ${label} ${seconds}`)
@@ -249,12 +239,11 @@ function session(
           ...(world.holes.get(label) ?? []),
           [start, end]
         ])
-        return awaited(() => {
-          world.clock.t = Math.max(world.clock.t, end)
-        })
+        await new Promise(resolve => setImmediate(resolve))
+        world.clock.t = Math.max(world.clock.t, end)
       }
     }
-    publishers.set(label, publisher as unknown as PublisherLike)
+    publishers.set(label, publisher)
   }
   const record = new Recorder(join(dir, 'targeted.jsonl'), name => name, now)
   const owner: OwnerApi = {
@@ -436,6 +425,39 @@ describe('the publisher-outage scenario', function () {
         .filter(step => step.step.endsWith('-during'))
         .map(step => step.verdict)
     ).deep.equals(['failed', 'failed'])
+  })
+
+  it('keeps a cut that fails at once for its await, never unheard meanwhile', async function () {
+    const world = makeWorld(THREE)
+    const fake = session(world, [watcher(world, 'chrome')])
+    fake.session.publishers.get('SynthA')!.cut = async () => {
+      throw new Error('the synthetic publisher is not running')
+    }
+    // Real turns of the event loop while the scenario sleeps, so a rejection
+    // nobody holds would be reported.
+    fake.session.sleep = async ms => {
+      world.clock.t += ms
+      await new Promise(resolve => setImmediate(resolve))
+    }
+    const unheard: unknown[] = []
+    const listener = (reason: unknown): void => {
+      unheard.push(reason)
+    }
+    const others = process.listeners('unhandledRejection')
+    process.removeAllListeners('unhandledRejection')
+    process.on('unhandledRejection', listener)
+    try {
+      const error = await publisherOutage.run(fake.session).then(
+        () => null,
+        (e: unknown) => e as Error
+      )
+      expect(error?.message).equals('the synthetic publisher is not running')
+      await new Promise(resolve => setImmediate(resolve))
+      expect(unheard).deep.equals([])
+    } finally {
+      process.removeListener('unhandledRejection', listener)
+      for (const other of others) process.on('unhandledRejection', other)
+    }
   })
 
   it('fails a watcher that freezes silently', async function () {
