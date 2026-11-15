@@ -28,10 +28,14 @@ import {
   DISTRIBUTOR_DEVELOP_APP,
   MAPS_KEY_CHECK,
   provenanceEnvironment,
+  RELEASE_KEYSTORE_SECRET,
+  RELEASE_PASSWORD_SECRET,
   releaseIos,
   seatEnvironment,
   setup,
+  signAabScript,
   signAndroid,
+  signApkScript,
   STABLE_APP,
   TV_APP
 } from '../../Masonfile'
@@ -414,7 +418,10 @@ describe('TeamStation pipeline Masonfile', () => {
       'cmake;3.22.1'
     ])
     assert.deepEqual(android[0]?.secrets, ['GOOGLE_MAPS_ANDROID_API_KEY'])
-    assert.equal(android[1]?.secrets, undefined)
+    assert.deepEqual(android[1]?.secrets, [
+      RELEASE_KEYSTORE_SECRET,
+      RELEASE_PASSWORD_SECRET
+    ])
     assert.equal(android[1]?.name, 'sign')
     assert.equal(android[1]?.on.type, 'macos-arm64')
     assert.deepEqual(android[1]?.on.labels, ['android-signing'])
@@ -435,10 +442,16 @@ describe('TeamStation pipeline Masonfile', () => {
             MASON_APP_VERSION?: string
             TS_API_BASE_URL?: string
             TS_BUILD_INFO?: string
+            TS_KEYSTORE?: string
+            TS_STORE_PASSWORD?: string
           }
         }
       ) {
         commands.push(command)
+        if (options?.env?.TS_KEYSTORE != null)
+          commands.push(
+            `signing:${options.env.TS_KEYSTORE}:${options.env.TS_STORE_PASSWORD ?? ''}`
+          )
         if (options?.env?.MASON_BUILD_NUMBER != null)
           commands.push(`build-number:${options.env.MASON_BUILD_NUMBER}`)
         if (options?.env?.MASON_APP_VERSION != null)
@@ -452,6 +465,14 @@ describe('TeamStation pipeline Masonfile', () => {
       getBuildNumber(key: string) {
         assert.equal(key, STABLE_APP)
         return '26103101'
+      },
+      secret(name: string) {
+        assert.equal(name, RELEASE_PASSWORD_SECRET)
+        return 'store-password'
+      },
+      secretFile(name: string) {
+        assert.equal(name, RELEASE_KEYSTORE_SECRET)
+        return '/private/secret-1'
       },
       async stash(name: string, paths?: string | string[]) {
         const listed = Array.isArray(paths) ? paths.join(',') : (paths ?? '')
@@ -564,11 +585,16 @@ describe('TeamStation pipeline Masonfile', () => {
       /stash:android-release:.*apk\/release\/\*\.apk,.*bundle\/release\/\*\.aab/
     )
     assert.match(log, /unstash:android-release/)
-    assert.match(log, /teamstation-sign-release-apk/)
-    assert.match(
-      log,
-      /teamstation-sign-release-aab" android\/app\/build\/outputs\/bundle\/release/
+    assert.equal(log.includes('.local/bin'), false)
+    const apkSign = commands.indexOf(
+      signApkScript('android/app/build/outputs/apk/release')
     )
+    const aabSign = commands.indexOf(
+      signAabScript('android/app/build/outputs/bundle/release')
+    )
+    assert.ok(apkSign >= 0 && aabSign > apkSign)
+    for (const at of [apkSign, aabSign])
+      assert.equal(commands[at + 1], 'signing:/private/secret-1:store-password')
     assert.match(log, /save:ios-ipa/)
     assert.match(log, /save:android-apk/)
     assert.match(log, /save:android-aab/)
@@ -774,6 +800,142 @@ describe('TeamStation pipeline Masonfile', () => {
     }
   })
 
+  it('signs release APKs and bundles with the release key from Mason secrets', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'release-sign-'))
+    const bin = path.join(root, 'bin')
+    const tools = path.join(root, 'sdk', 'build-tools')
+    const keystore = path.join(root, 'secret-1')
+    const password = 'store-password-1234'
+    const release = 'B6:10:7F:04:17:CD:7B:CB:B1:DB:9E:69:C6:C8:70:BA'
+    const tool = (file: string, body: string): void => {
+      mkdirSync(path.dirname(file), { recursive: true })
+      writeFileSync(file, `#!/bin/sh\n${body}\n`)
+      chmodSync(file, 0o755)
+    }
+    const run = (
+      script: string,
+      env: Record<string, string | undefined>
+    ): { status: number | null; out: string } => {
+      const result = spawnSync('sh', ['-c', script], {
+        cwd: root,
+        encoding: 'utf8',
+        env: {
+          PATH: `${bin}:${process.env.PATH ?? ''}`,
+          ANDROID_HOME: path.join(root, 'sdk'),
+          TS_KEYSTORE: keystore,
+          TS_STORE_PASSWORD: password,
+          ...env
+        }
+      })
+      return { status: result.status, out: result.stdout + result.stderr }
+    }
+    const signed = (digest: string): void => {
+      writeFileSync(path.join(root, 'digest.txt'), `${digest}\n`)
+    }
+    try {
+      writeFileSync(keystore, 'keystore')
+      // apksigner reports the certificate and its public key; only the
+      // certificate counts.
+      tool(
+        path.join(tools, '37.0.0', 'apksigner'),
+        [
+          `[ "$1" = sign ] && { echo "sign $*" >> '${root}/signed.log'; exit 0; }`,
+          `echo "Signer #1 certificate SHA-256 digest: $(cat '${root}/digest.txt')"`,
+          "echo 'Signer #1 public key SHA-256 digest: 0123'"
+        ].join('\n')
+      )
+      tool(path.join(tools, '9.0.0', 'apksigner'), 'exit 9')
+      tool(
+        path.join(bin, 'jarsigner'),
+        `echo "jarsigner $*" >> '${root}/signed.log'`
+      )
+      tool(
+        path.join(bin, 'keytool'),
+        `while read -r d; do printf '\\tSHA256: %s\\n' "$d"; done < '${root}/digest.txt'`
+      )
+      const apks = path.join(root, 'apk')
+      mkdirSync(apks)
+      writeFileSync(path.join(apks, 'app-release.apk'), '')
+      signed(release.replace(/:/g, '').toLowerCase())
+      const apk = signApkScript('apk')
+      assert.deepEqual(run(apk, {}), {
+        status: 0,
+        out: 'The release APK is signed with the release certificate.\n'
+      })
+      const log = readFileSync(path.join(root, 'signed.log'), 'utf8')
+      assert.match(
+        log,
+        /sign --ks .*secret-1 --ks-key-alias teamstation --ks-pass env:TS_STORE_PASSWORD --key-pass env:TS_STORE_PASSWORD apk\/app-release\.apk/
+      )
+      assert.equal(log.includes(password), false)
+
+      // Gradle's debug signature comes out of the bundle before jarsigner.
+      const bundles = path.join(root, 'aab')
+      const contents = path.join(root, 'contents')
+      mkdirSync(path.join(contents, 'META-INF'), { recursive: true })
+      mkdirSync(path.join(contents, 'base'))
+      writeFileSync(path.join(contents, 'base', 'x.txt'), 'x')
+      writeFileSync(path.join(contents, 'META-INF', 'ANDROIDD.SF'), 'x')
+      writeFileSync(path.join(contents, 'META-INF', 'ANDROIDD.RSA'), 'x')
+      mkdirSync(bundles)
+      spawnSync('zip', ['-qr', path.join(bundles, 'app-release.aab'), '.'], {
+        cwd: contents
+      })
+      signed(release)
+      const aab = signAabScript('aab')
+      assert.deepEqual(run(aab, {}), {
+        status: 0,
+        out: 'The release bundle is signed with the release certificate.\n'
+      })
+      const entries = spawnSync(
+        'unzip',
+        ['-Z1', path.join(bundles, 'app-release.aab')],
+        { encoding: 'utf8' }
+      ).stdout
+      assert.equal(/ANDROIDD\.(SF|RSA)/.test(entries), false)
+      assert.match(
+        readFileSync(path.join(root, 'signed.log'), 'utf8'),
+        /jarsigner -keystore .*secret-1 -storepass:env TS_STORE_PASSWORD -keypass:env TS_STORE_PASSWORD -sigalg SHA256withRSA -digestalg SHA-256 aab\/app-release\.aab teamstation/
+      )
+
+      signed('51:0F:28:16')
+      for (const [script, env, message] of [
+        [apk, {}, 'APK is not signed with the release certificate'],
+        [aab, {}, 'bundle is not signed with the release certificate'],
+        [
+          apk,
+          { TS_STORE_PASSWORD: '' },
+          'ANDROID_RELEASE_KEYSTORE_PASSWORD secret is empty'
+        ],
+        [
+          aab,
+          { TS_STORE_PASSWORD: undefined },
+          'ANDROID_RELEASE_KEYSTORE_PASSWORD secret is empty'
+        ],
+        [
+          apk,
+          { TS_KEYSTORE: path.join(root, 'none') },
+          'teamstation-release.keystore secret file is missing'
+        ],
+        [apk, { ANDROID_HOME: '' }, 'No build-tools apksigner']
+      ] as const) {
+        const failed = run(script, env)
+        assert.equal(failed.status, 1)
+        assert.match(failed.out, new RegExp(message))
+        assert.equal(failed.out.includes(password), false)
+      }
+      signed(`${release}\n${release}`)
+      assert.match(run(aab, {}).out, /does not have exactly one signer/)
+      writeFileSync(path.join(apks, 'other.apk'), '')
+      assert.match(run(apk, {}).out, /Expected one release APK to sign/)
+      rmSync(bundles, { recursive: true })
+      mkdirSync(bundles)
+      assert.match(run(aab, {}).out, /Expected one release bundle to sign/)
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it('fails the Android compile when the APK has no Google Maps key', async () => {
     const commands: string[] = []
     const ctx = {
@@ -821,6 +983,8 @@ describe('TeamStation pipeline Masonfile', () => {
           commands.push(command)
           return { code: 0, stdout: '', stderr: '' }
         },
+        secret: () => 'store-password',
+        secretFile: () => '/private/secret-1',
         async unstash() {},
         artifacts: {
           async save(name: string) {
@@ -856,7 +1020,10 @@ describe('TeamStation pipeline Masonfile', () => {
       'save:android-apk',
       'publish:app.teamstation.app'
     ])
-    assert.match(missing.commands[3] ?? '', /teamstation-sign-release-aab/)
+    assert.equal(
+      missing.commands[3],
+      signAabScript('android/app/build/outputs/bundle/release')
+    )
   })
 
   it('refuses a bundle that has no branch or commit to show', () => {
