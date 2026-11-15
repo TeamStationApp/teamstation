@@ -75,7 +75,7 @@ const teamSetups = new WeakMap<GameSetup, { key: string; setup: TeamSetup }>()
  * The record a play stores: version 3, its setup and its lineup changes by
  * team under the teams the engine played it with (`teams`).
  */
-function teamStationOf(
+export function teamStationOf(
   teams: SideTeams,
   stamp: PlayStamp,
   detail?: unknown
