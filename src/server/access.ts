@@ -74,7 +74,7 @@ async function guardedPeople(
  * one read of the links for all of their rows, one of the merges of everybody
  * linked.
  */
-async function guardedPeopleOfEach(
+export async function guardedPeopleOfEach(
   db: Kysely<Database>,
   actors: ReadonlyMap<string, OnePerson>
 ): Promise<Map<string, OnePerson[]>> {
@@ -289,7 +289,7 @@ export async function teamsPlayedOnNow(
 }
 
 /** `teamsPlayedOnNow` in one read, with the teams each row plays on. */
-async function teamsPlayedOnNowByRow(
+export async function teamsPlayedOnNowByRow(
   db: Kysely<Database>,
   userIds: readonly string[]
 ): Promise<Map<string, string[]>> {

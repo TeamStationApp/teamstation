@@ -24,6 +24,12 @@ import { followMerges } from '../teams/followMerges'
  * comes after. The site-admin flag adds nothing: `visibleScopes` is asked
  * with `false`, and its `isAdmin` bit is never read.
  *
+ * The account screen's Affiliations (`accountAffiliationsOf`) reads the same
+ * tables, on purpose not the same way: it lists admin and team owner or
+ * manager as ties, leaves the guarded players' teams to rows of their own,
+ * and re-points no merged team's follow. A change to what a tie is should be
+ * weighed in both.
+ *
  * A follow whose group is gone is left out, and the rest of the list still
  * returns. Merged and external teams are left out. A merged team that was
  * followed is the team it became.

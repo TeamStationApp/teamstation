@@ -4177,6 +4177,93 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/me/affiliations': {
+        get: {
+          summary:
+            'The leagues, seasons, teams and players the caller belongs to',
+          description:
+            'Each league, season and team the caller holds a tie to on the ' +
+            'group itself, and nothing a league or season carries down: ' +
+            '`roles` (`admin` and the staff flags set there, with ' +
+            '`headCoach`), `player` (plays on the team), `member` (a ' +
+            'membership with no role) and `following` (the signed-in ' +
+            'account follows it). Owners and managers of a team are ' +
+            '`admin`. Merged and external teams are left out. Groups come ' +
+            'leagues, seasons, then teams, each by name. `players` are the ' +
+            'players the caller is a guardian of, by the short name the ' +
+            'roster gives them, with the names of the teams they play on now.',
+          security: [{ bearer: [] }],
+          responses: {
+            200: {
+              description: 'The groups, then the guarded players',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['groups', 'players'],
+                    properties: {
+                      groups: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: [
+                            'kind',
+                            'id',
+                            'group',
+                            'roles',
+                            'headCoach',
+                            'player',
+                            'member',
+                            'following'
+                          ],
+                          properties: {
+                            kind: {
+                              type: 'string',
+                              enum: ['league', 'season', 'team']
+                            },
+                            id: { type: 'string' },
+                            group: { type: 'object' },
+                            roles: {
+                              type: 'array',
+                              items: { $ref: '#/components/schemas/Role' }
+                            },
+                            headCoach: { type: 'boolean' },
+                            player: { type: 'boolean' },
+                            member: { type: 'boolean' },
+                            following: { type: 'boolean' }
+                          }
+                        }
+                      },
+                      players: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: [
+                            'userId',
+                            'name',
+                            'avatarUrl',
+                            'teamNames'
+                          ],
+                          properties: {
+                            userId: { type: 'string' },
+                            name: { type: 'string' },
+                            avatarUrl: { type: 'string', nullable: true },
+                            teamNames: {
+                              type: 'array',
+                              items: { type: 'string' }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            401: errorResponse
+          }
+        }
+      },
       '/auth/me': {
         get: {
           summary: 'Who this token belongs to',
