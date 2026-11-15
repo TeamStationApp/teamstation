@@ -2,8 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
-import type { Browser } from 'puppeteer'
-
 import {
   applyEmulation,
   browserFor,
@@ -28,9 +26,10 @@ export async function openWebSession(
   const device = `web-${randomUUID().slice(0, 8)}`
   const daemon = await connectDaemon(settings, `e2e-${device}`)
   let m: MaestroDevice | undefined
-  let browser: Browser | undefined
+  let connected:
+    Awaited<ReturnType<typeof connectToMaestroChromium>> | undefined
   const close = async (): Promise<void> => {
-    await browser?.disconnect().catch(() => undefined)
+    await connected?.browser.disconnect().catch(() => undefined)
     await m?.detach().catch(() => undefined)
     await daemon.shutdown()
   }
@@ -52,9 +51,8 @@ export async function openWebSession(
         userDataDir: profile
       }
     })
-    const connected = await connectToMaestroChromium(profile, blank)
-    browser = connected.browser
-    const { page } = connected
+    connected = await connectToMaestroChromium(profile, blank)
+    const { browser, page } = connected
     await applyEmulation(page, emulation)
     return {
       m,
