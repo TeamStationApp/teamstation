@@ -321,12 +321,20 @@ export async function main(argv: string[]): Promise<number> {
           join(STACKS, `${stack.id}.json`),
           JSON.stringify(entry)
         )
-        await new Promise<void>(resolve => {
-          process.once('SIGTERM', () => {
-            resolve()
-          })
+        // Ctrl-C, a closed terminal and a crash take the stack down too, so
+        // its database, directory and Metro do not outlive it.
+        const failure = await new Promise<unknown>(resolve => {
+          for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+            process.once(signal, () => {
+              resolve(undefined)
+            })
+          }
+          process.once('uncaughtException', resolve)
+          process.once('unhandledRejection', resolve)
         })
         await stack.stop()
+        rmSync(join(STACKS, `${stack.id}.json`), { force: true })
+        if (failure != null) throw failure
         rmSync(errorLog, { force: true })
         return 0
       }
