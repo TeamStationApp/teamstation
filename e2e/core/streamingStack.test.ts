@@ -1,3 +1,4 @@
+import type { spawnSync } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -7,7 +8,13 @@ import { PassThrough } from 'node:stream'
 import { expect } from 'chai'
 
 import { daemonNames } from './daemons'
-import { attachedBlocker, sweepArgs, sweepLine } from './legacySweep'
+import {
+  attachedBlocker,
+  restartDaemon,
+  stopStartedDaemons,
+  sweepArgs,
+  sweepLine
+} from './legacySweep'
 import { BlockedError, HarnessError } from './result'
 import {
   attachedLegacyStack,
@@ -284,5 +291,32 @@ describe('the legacy sweep against an attached stack', function () {
     expect(() => daemonNames({ E2E_DAEMON_PREFIX: 'a b' })).to.throw(
       'not a daemon name'
     )
+  })
+})
+
+describe("a sweep's own daemons", function () {
+  it('stops at the end every daemon the run started, and only those', function () {
+    const calls: string[] = []
+    const run = ((bin: string, args: readonly string[]) => {
+      calls.push(args.join(' '))
+      // No daemon of that name is running before the run starts it.
+      return {
+        status: args[0] === 'status' ? 1 : 0,
+        stdout: '',
+        stderr: ''
+      }
+    }) as unknown as typeof spawnSync
+    restartDaemon('maestro-d', 'e2e-41-ios', run)
+    restartDaemon('maestro-d', 'e2e-41-android', run)
+    calls.length = 0
+    stopStartedDaemons('maestro-d', run)
+    expect(calls).deep.equals([
+      'stop --daemon e2e-41-ios',
+      'stop --daemon e2e-41-android'
+    ])
+    // Stopped once: a second stop has nothing left to stop.
+    calls.length = 0
+    stopStartedDaemons('maestro-d', run)
+    expect(calls).deep.equals([])
   })
 })

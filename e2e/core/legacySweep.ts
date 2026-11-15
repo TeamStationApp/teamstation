@@ -195,13 +195,17 @@ function maestroBin(): string {
   return join(homedir(), '.maestro-d/bin/maestro-d')
 }
 
-function daemonPid(bin: string, name: string): number | undefined {
-  const status = spawnSync(bin, ['status', '--daemon', name], {
+function daemonPid(
+  bin: string,
+  name: string,
+  run: typeof spawnSync = spawnSync
+): number | undefined {
+  const status = run(bin, ['status', '--daemon', name], {
     encoding: 'utf8',
     timeout: 20_000
   })
   if (status.status !== 0) return undefined
-  const match = /pid (\d+)/.exec(status.stdout)
+  const match = /pid (\d+)/.exec(String(status.stdout))
   return match == null ? undefined : Number(match[1])
 }
 
@@ -223,11 +227,32 @@ function daemonEnv(): NodeJS.ProcessEnv {
   return process.env
 }
 
+/**
+ * The daemons this run started, which it stops when it ends: each run names
+ * its own (`daemonNames`), and one left running would keep its devices.
+ */
+const startedDaemons = new Set<string>()
+
+/** Stops every daemon this run started. */
+export function stopStartedDaemons(
+  bin: string,
+  run: typeof spawnSync = spawnSync
+): void {
+  for (const name of startedDaemons) {
+    run(bin, ['stop', '--daemon', name], { timeout: 30_000 })
+    startedDaemons.delete(name)
+  }
+}
+
 /** Stops `name` however it is stuck, then starts it fresh. */
-export function restartDaemon(bin: string, name: string): void {
-  const pid = daemonPid(bin, name)
+export function restartDaemon(
+  bin: string,
+  name: string,
+  run: typeof spawnSync = spawnSync
+): void {
+  const pid = daemonPid(bin, name, run)
   if (pid != null) {
-    spawnSync(bin, ['stop', '--daemon', name], { timeout: 30_000 })
+    run(bin, ['stop', '--daemon', name], { timeout: 30_000 })
     try {
       process.kill(pid, 0)
       process.kill(pid, 'SIGKILL')
@@ -235,14 +260,15 @@ export function restartDaemon(bin: string, name: string): void {
       // `stop` ended it already.
     }
   }
-  const started = spawnSync(
-    bin,
-    ['start', '--daemon', name, '--idle-timeout', '0'],
-    { encoding: 'utf8', timeout: 60_000, env: daemonEnv() }
-  )
+  const started = run(bin, ['start', '--daemon', name, '--idle-timeout', '0'], {
+    encoding: 'utf8',
+    timeout: 60_000,
+    env: daemonEnv()
+  })
   if (started.status !== 0) {
-    throw new Error(`maestro-d start ${name} failed: ${started.stderr}`)
+    throw new Error(`maestro-d start ${name} failed: ${String(started.stderr)}`)
   }
+  startedDaemons.add(name)
 }
 
 /** Starts a daemon that is not running; leaves a running one alone. */
@@ -629,6 +655,8 @@ async function main(): Promise<void> {
       process.stdout.write(`${line}\t${seconds}s\n`)
     }
   } finally {
+    // This run's daemons go with it, and the devices they hold are free.
+    stopStartedDaemons(bin)
     // Every script has its line by now: a stop that waits on a connection
     // nobody closes (droplets' sweeps sat for hours) is given a minute.
     await Promise.race([
