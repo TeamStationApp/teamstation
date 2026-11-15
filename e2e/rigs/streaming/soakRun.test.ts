@@ -186,7 +186,45 @@ describe('the soak run', function () {
       'publisherC',
       'sampler'
     ])
-    expect(report.verdict).not.equals(undefined)
+    // The compressed schedule is too short for memory, which judges a
+    // process over 20 minutes, and the fake cuts end before any probe sees
+    // them: blocked on those alone, with every other gate passed.
+    expect(report.verdict).equals('blocked')
+    expect(report.exitCode).equals(2)
+    expect(
+      report.memory.map(row => [row.device, row.verdict, row.reason])
+    ).deep.equals([
+      ['ipad', 'blocked', 'no process lifetime lasted 20 minutes']
+    ])
+    const byVerdict = (verdict: string): string[] => [
+      ...new Set(
+        report.gates.instances
+          .filter(instance => instance.verdict === verdict)
+          .map(instance => instance.gate)
+      )
+    ]
+    expect(byVerdict('failed')).deep.equals([])
+    expect(byVerdict('blocked')).deep.equals(['syntheticOutage'])
+    expect(byVerdict('passed').sort()).deep.equals([
+      'cameraCut',
+      'continuousPlay',
+      'noCrash',
+      'noStuckTile',
+      'reentry',
+      'seekRecovery',
+      'surfaceSwitch'
+    ])
+    expect(
+      report.gates.counts
+        .filter(row => row.kind === 'syntheticOutage')
+        .map(row => [row.surface, row.run, row.blocked])
+    ).deep.equals(
+      ['iphone-safari', 'android', 'ipad', 'tv', 'chrome'].map(surface => [
+        surface,
+        run.schedule.cuts.length,
+        run.schedule.cuts.length
+      ])
+    )
     expect(existsSync(join(run.runDir, 'report.md'))).equals(true)
     expect(existsSync(join(run.runDir, 'memory.csv'))).equals(true)
   })
