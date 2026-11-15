@@ -295,7 +295,13 @@ const asPostEventsShape = asObject({
    * On a live post: the play generation the sender opened the game on. A
    * game reset since refuses the post. An older app sends none.
    */
-  generation: asOptional(asCount)
+  generation: asOptional(asCount),
+  /**
+   * A node administrator's repair of a final game an outside scorer posted:
+   * its plays are replaced whole, and the game stays final and its owner's.
+   * Only with `mode: 'replace'`; the route refuses anybody else.
+   */
+  replaceFinal: asOptional(asBoolean)
 })
 
 export type PostEventsBody = ReturnType<typeof asPostEventsShape>
@@ -350,7 +356,8 @@ export function asPostEventsBody(raw: unknown): PostEventsBody {
       throw new TypeError('remove is for a live post')
     if (body.currentPlay !== undefined)
       throw new TypeError('currentPlay is for a live post')
-  }
+  } else if (body.replaceFinal === true)
+    throw new TypeError('replaceFinal replaces a game whole, not live')
   const posted = new Set(body.plays.map(play => play.about.atBatIndex))
   if ((body.remove ?? []).some(index => posted.has(index)))
     throw new TypeError('A play is both posted and removed')

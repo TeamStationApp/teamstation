@@ -2048,6 +2048,9 @@ describe('posting and reading plays', function () {
       plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })]
     })
     expect(outsider.status).equals(409)
+    // A final game nobody scored here, whose plays hold no records, has
+    // nothing a scorer could correct; an import given its records does
+    // (importedRecords.integration.test.ts).
     const ownerless = await live(ownerlessFinalId, {
       plays: [play({ atBatIndex: 0, awayScore: 1, homeScore: 0 })]
     })

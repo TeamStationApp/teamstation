@@ -212,7 +212,21 @@ describe('adding events to stored plays', function () {
           plays: [{ atBatIndex: 1, playEvents: [pitch(61), pitch(65)] }]
         })
     )
-    expect(answer).deep.equals({ status: 200, body: { plays: 1, events: 2 } })
+    // Its plays name nobody, so the game is given no records.
+    expect(answer).deep.equals({
+      status: 200,
+      body: {
+        plays: 1,
+        events: 2,
+        imported: {
+          plays: 2,
+          pitches: 2,
+          records: 0,
+          corrections: 0,
+          unconvertible: 'unnamedPlayers'
+        }
+      }
+    })
     // A viewer of the game reads its plays again.
     expect(games).deep.equals([gameId])
 
@@ -499,7 +513,17 @@ describe('adding events to stored plays', function () {
     })
     expect(answer).deep.equals({
       status: 200,
-      body: { plays: 1, events: 6000 }
+      body: {
+        plays: 1,
+        events: 6000,
+        imported: {
+          plays: 2,
+          pitches: 6000,
+          records: 0,
+          corrections: 0,
+          unconvertible: 'unnamedPlayers'
+        }
+      }
     })
   })
 

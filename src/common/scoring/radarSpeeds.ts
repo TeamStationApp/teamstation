@@ -198,3 +198,42 @@ export function withRadarSpeeds<T>(
     copy.teamStation.radarMeasurements = measurements
   return copy as T
 }
+
+/**
+ * `withRadarSpeeds` for a play an outside scorer recorded: a speed the radar
+ * gave replaces the scorer's own, and every other pitch keeps the pitch and
+ * exit speeds the scorer recorded, as they came.
+ */
+export function withRadarSpeedsKeepingOwn<T>(
+  play: T,
+  readings: readonly RadarReading[],
+  settings: RadarSettings,
+  prior?: unknown,
+  context: readonly unknown[] = [play]
+): T {
+  const result = withRadarSpeeds(play, readings, settings, prior, context)
+  if (result === play || !object(play)) return result
+  const own = play as ObjectValue
+  const copy = result as ObjectValue
+  const measured = copy.teamStation?.radarMeasurements ?? {}
+  for (const target of radarTargets(play)) {
+    const before = own.playEvents?.[target.index]
+    const after = copy.playEvents?.[target.index]
+    if (!object(before) || !object(after)) continue
+    for (const [field, section, key] of [
+      ['pitchSpeed', 'pitchData', 'startSpeed'],
+      ['exitVelocity', 'hitData', 'launchSpeed']
+    ] as const) {
+      if (measured[target.index]?.[field] != null) continue
+      const recorded = before[section]?.[key]
+      if (recorded == null) {
+        if (object(after[section])) Reflect.deleteProperty(after[section], key)
+        if (object(after[section]) && Object.keys(after[section]).length === 0)
+          Reflect.deleteProperty(after, section)
+        continue
+      }
+      after[section] = { ...after[section], [key]: recorded }
+    }
+  }
+  return copy as T
+}

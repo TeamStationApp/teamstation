@@ -296,6 +296,7 @@ describe('a post in a long game', function () {
     scoringMutation: undefined,
     scoringBase: undefined,
     scoringHistory: undefined,
+    replaceFinal: undefined,
     mode: 'live',
     source: { system },
     plays: [],

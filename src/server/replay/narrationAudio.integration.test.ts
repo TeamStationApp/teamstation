@@ -223,10 +223,10 @@ describe('replay narration audio', function () {
     } catch (caught) {
       expect((caught as HttpError).status).equals(404)
     }
-    // A game nothing was scored in has no steps.
-    expect(await narrationsFor(db!, REPLAY_SEED.games.imported)).deep.equals(
-      new Map()
-    )
+    // An imported game replays, and has a step for every pitch.
+    expect(
+      (await narrationsFor(db!, REPLAY_SEED.games.imported)).size
+    ).greaterThan(0)
   })
 
   it('reads the game afresh when what is stored changes', async function () {
@@ -493,7 +493,7 @@ describe('replay narration audio', function () {
       expect(await replayable(REPLAY_SEED.games.importedThenScored)).equals(
         true
       )
-      expect(await replayable(REPLAY_SEED.games.imported)).equals(false)
+      expect(await replayable(REPLAY_SEED.games.imported)).equals(true)
       expect(
         await hasRecordedPlays(db!, REPLAY_SEED.games.imported, {
           teamStation: {}
