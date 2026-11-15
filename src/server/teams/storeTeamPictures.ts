@@ -335,13 +335,16 @@ export async function storePlayerAvatar(
       await namingUploaded(db, store.space, stored?.pathPrefix, async trx => {
         const before = await trx
           .selectFrom('users')
-          .select('avatar_path')
+          .select(['avatar_path', 'deleted_at'])
           .where('id', '=', userId)
           .forUpdate()
           .executeTakeFirst()
-        // Gone while the picture was being stored: nothing to write, and
-        // nothing will ever name the objects just uploaded.
-        if (before == null) return await unwritten(trx, store, stored)
+        // Gone, or the account deleted, while the picture was being stored
+        // (the delete holds this row until it has read the pictures it
+        // removes): nothing to write, and nothing will ever name the
+        // objects just uploaded.
+        if (before == null || before.deleted_at != null)
+          return await unwritten(trx, store, stored)
         let update = trx
           .updateTable('users')
           .set({

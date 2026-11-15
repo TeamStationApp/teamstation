@@ -25,7 +25,8 @@ import {
   asStandingsRow,
   type RequestOptions,
   type SaveLineupsBody,
-  TeamStationClient
+  TeamStationClient,
+  type TimedRequest
 } from './api'
 import { asChatAge, asChatAgeBody } from './chatAge'
 import { HttpError, isUpdateRequired } from './errors'
@@ -3748,6 +3749,229 @@ describe('the ids and pictures a group’s tile is drawn from', function () {
   })
 })
 
+describe('a timed request over XMLHttpRequest, as the phone sends one (1.harness-review.1)', function () {
+  /**
+   * The phone's request: after `at` ms the headers, then each piece of the
+   * body `at` ms after the last; with `stallAfter`, nothing more after
+   * that many, and with `never`, no answer at all.
+   */
+  function request(
+    status: number,
+    pieces: string[],
+    at: number,
+    options: {
+      stallAfter?: number
+      never?: boolean
+      error?: boolean
+      /** Pieces of the request body going up, `at` ms apart, first. */
+      uploads?: number
+    } = {}
+  ): { make: () => TimedRequest; aborted: () => boolean; sent: string[] } {
+    let aborted = false
+    const sent: string[] = []
+    const make = (): TimedRequest => {
+      const xhr: TimedRequest = {
+        readyState: 0,
+        status: 0,
+        responseText: '',
+        withCredentials: false,
+        onreadystatechange: null,
+        onprogress: null,
+        onload: null,
+        onerror: null,
+        ontimeout: null,
+        onabort: null,
+        upload: { onprogress: null },
+        open: () => undefined,
+        setRequestHeader: () => undefined,
+        abort: () => {
+          aborted = true
+          xhr.onabort?.()
+        },
+        send: body => {
+          sent.push(body ?? '')
+          if (options.never === true) return
+          const uploads = options.uploads ?? 0
+          for (let piece = 1; piece <= uploads; piece++)
+            setTimeout(() => {
+              if (!aborted) xhr.upload?.onprogress?.()
+            }, at * piece)
+          const set = (patch: Partial<TimedRequest>): void => {
+            Object.assign(xhr, patch)
+          }
+          setTimeout(
+            () => {
+              if (aborted) return
+              if (options.error === true) {
+                xhr.onerror?.()
+                return
+              }
+              set({ readyState: 2, status })
+              xhr.onreadystatechange?.()
+              let text = ''
+              pieces.forEach((piece, index) => {
+                if (index >= (options.stallAfter ?? Infinity)) return
+                setTimeout(
+                  () => {
+                    if (aborted) return
+                    text += piece
+                    set({ readyState: 3, responseText: text })
+                    xhr.onprogress?.()
+                    if (index === pieces.length - 1) {
+                      set({ readyState: 4 })
+                      xhr.onload?.()
+                    }
+                  },
+                  at * (index + 1)
+                )
+              })
+            },
+            at * (uploads + 1)
+          )
+        }
+      }
+      return xhr
+    }
+    return { make, aborted: () => aborted, sent }
+  }
+  class Sender extends TeamStationClient {
+    async send(
+      method: string,
+      path: string,
+      body?: unknown,
+      options?: RequestOptions
+    ): Promise<unknown> {
+      return await this.request(method, path, raw => raw, body, options)
+    }
+  }
+  const unused = (async () => {
+    throw new Error('fetch was used')
+  }) as unknown as typeof fetch
+  const sender = (
+    make: () => TimedRequest,
+    told: { missed: number; refused: number } = { missed: 0, refused: 0 }
+  ): Sender => {
+    const client = new Sender({
+      baseUrl: 'http://x/api/v1',
+      fetch: unused,
+      timedRequest: make,
+      requestDeadlineMs: 60,
+      onDeadlineMissed: () => {
+        told.missed++
+      }
+    })
+    client.onSessionRefused = () => {
+      told.refused++
+    }
+    return client
+  }
+  const failureOf = async (work: Promise<unknown>): Promise<unknown> =>
+    await work.then(
+      () => undefined,
+      (error: unknown) => error
+    )
+
+  it('reads a long answer on a slow link to its end, though it takes far longer than the deadline', async function () {
+    const json = JSON.stringify(Array.from({ length: 8 }, (_, i) => i))
+    const slow = request(200, json.match(/.{1,3}/g)!, 30)
+    const client = sender(slow.make)
+    const started = Date.now()
+    expect(await client.send('GET', '/games')).deep.equals(JSON.parse(json))
+    expect(Date.now() - started).greaterThan(120)
+    expect(client.offline).equals(false)
+  })
+
+  it('takes no answer by the deadline, or a body that stops arriving, as no signal, and lets go of the request', async function () {
+    for (const slow of [
+      request(200, ['[1]'], 10, { never: true }),
+      request(200, ['[1,', '2]'], 20, { stallAfter: 1 })
+    ]) {
+      const told = { missed: 0, refused: 0 }
+      const client = sender(slow.make, told)
+      const failure = await failureOf(client.send('GET', '/games'))
+      expect(failure).property('code', 'offline')
+      expect(client.offline).equals(true)
+      expect(told.missed).equals(1)
+      expect(slow.aborted(), 'nothing more of it is fetched').equals(true)
+    }
+  })
+
+  it('keeps a refusal whose body stalls the server’s, and tells a refused session', async function () {
+    const refused = request(409, ['{"code":'], 10, { stallAfter: 1 })
+    const failure = await failureOf(sender(refused.make).send('GET', '/games'))
+    expect(failure).instanceOf(HttpError)
+    expect(failure).not.property('code', 'offline')
+    const told = { missed: 0, refused: 0 }
+    const out = request(
+      401,
+      [JSON.stringify({ code: 'unauthorized', message: 'No' })],
+      5
+    )
+    await failureOf(sender(out.make, told).send('GET', '/me/roles'))
+    expect(told.refused).equals(1)
+  })
+
+  it('throws the caller’s own cancel as its own, and a request that never left as no signal', async function () {
+    const held = request(200, ['[1]'], 50)
+    const client = sender(held.make)
+    const controller = new AbortController()
+    const sent = client.send(
+      'POST',
+      '/games/g1/events',
+      { a: 1 },
+      {
+        signal: controller.signal,
+        deadline: true
+      }
+    )
+    controller.abort()
+    const failure = await failureOf(sent)
+    expect((failure as Error).name).equals('AbortError')
+    expect(client.offline).equals(false)
+    expect(held.sent).deep.equals(['{"a":1}'])
+    const lost = request(200, [], 5, { error: true })
+    const offline = sender(lost.make)
+    expect(await failureOf(offline.send('GET', '/games'))).property(
+      'code',
+      'offline'
+    )
+    expect(offline.offline).equals(true)
+  })
+
+  it('takes a write whose body is still going up as the link working, though the upload takes longer than the deadline (5.harness-review.1)', async function () {
+    // Five pieces of the body going up, 30 ms apart, then the answer.
+    const slow = request(200, ['{"ok":true}'], 30, { uploads: 5 })
+    const client = sender(slow.make)
+    const started = Date.now()
+    expect(
+      await client.send(
+        'POST',
+        '/games/g1/events',
+        { plays: [] },
+        { deadline: true }
+      )
+    ).deep.equals({ ok: true })
+    expect(Date.now() - started).greaterThan(150)
+    expect(client.offline).equals(false)
+  })
+
+  it('leaves a request with a body of bytes to fetch', async function () {
+    let fetched = false
+    const client = new Sender({
+      baseUrl: 'http://x/api/v1',
+      fetch: async () => {
+        fetched = true
+        return new Response('{}', { status: 200 })
+      },
+      timedRequest: () => {
+        throw new Error('the timed request was used')
+      }
+    })
+    await client.send('PUT', '/upload', new Uint8Array([1, 2]))
+    expect(fetched).equals(true)
+  })
+})
+
 describe('a highlight’s end', function () {
   const highlight = {
     eventId: 'evt_1',
@@ -4557,6 +4781,37 @@ describe('the request deadline', function () {
     expect(failure).instanceOf(HttpError)
     expect(failure).not.property('code', 'offline')
     expect(refused.offline).equals(false)
+  })
+
+  it('throws the caller’s own cancel during the body as its own, never as no signal (1.harness-review.2)', async function () {
+    const streaming = (async (_url: unknown, init: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"ok":'))
+            // The caller's cancel ends the body it is reading.
+            init.signal?.addEventListener('abort', () => {
+              controller.error(new DOMException('Aborted', 'AbortError'))
+            })
+          }
+        }),
+        { status: 200 }
+      )) as unknown as typeof fetch
+    const sender = client(streaming, 1000)
+    const controller = new AbortController()
+    const sent = sender.send('GET', '/games/g1/events', undefined, {
+      signal: controller.signal
+    })
+    setTimeout(() => {
+      controller.abort()
+    }, 10)
+    const failure = await sent.then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(failure).not.instanceOf(HttpError)
+    expect((failure as Error).name).equals('AbortError')
+    expect(sender.offline).equals(false)
   })
 
   it('tells onDeadlineMissed when no answer begins by the deadline, or a body stalls, and never for an answer in time', async function () {

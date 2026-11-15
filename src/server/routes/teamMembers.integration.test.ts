@@ -2571,6 +2571,9 @@ describe('a team’s people by external id', function () {
       const userId = await insertUser(database(), {
         display_name: 'Gone Player'
       })
+      const deletedId = await insertUser(database(), {
+        display_name: 'Deleted Player'
+      })
       const cases = [
         {
           store: async () =>
@@ -2605,6 +2608,33 @@ describe('a team’s people by external id', function () {
               .where('id', '=', userId)
               .execute()
           }
+        },
+        // The account deleted as its headshot uploads (6.harness-review.1):
+        // its row stays, and must take no picture.
+        {
+          store: async () =>
+            await storePlayerAvatar(
+              database(),
+              store,
+              deletedId,
+              {
+                contentType: 'image/png',
+                bytes: Buffer.from(red, 'base64'),
+                source: 'upload'
+              },
+              true
+            ),
+          remove: async () => {
+            await database()
+              .updateTable('users')
+              .set({
+                deleted_at: new Date(),
+                disabled_at: new Date(),
+                login_enabled: false
+              })
+              .where('id', '=', deletedId)
+              .execute()
+          }
         }
       ]
       for (const { store: send, remove } of cases) {
@@ -2632,6 +2662,12 @@ describe('a team’s people by external id', function () {
         for (const path of uploaded)
           expect(objects.has(path), path).equals(false)
       }
+      const deleted = await database()
+        .selectFrom('users')
+        .select('avatar_path')
+        .where('id', '=', deletedId)
+        .executeTakeFirstOrThrow()
+      expect(deleted.avatar_path).equals(null)
     })
 
     it('uploads nothing for the picture it already holds', async function () {

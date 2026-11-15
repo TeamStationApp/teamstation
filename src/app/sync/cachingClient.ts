@@ -88,7 +88,19 @@ export interface CachingClientOptions extends ClientOptions {
   outbox?: Pick<OutboxOptions, 'now' | 'random' | 'setTimer' | 'clearTimer'>
   /** The person's picture files; the platform's own unless a test swaps it. */
   pictureFiles?: PictureDirectories
+  /** `REFRESH_RETRY_MS` unless a test shortens it. */
+  refreshRetryMs?: number
 }
+
+/**
+ * How long a read behind a stored answer that the server refused for now (a
+ * 5xx, too many requests) first waits before it is tried again: twice as
+ * long each time after, and given up after `REFRESH_TRIES`.
+ */
+export const REFRESH_RETRY_MS = 5000
+
+/** How many refusals for now a read behind a stored answer is tried for. */
+export const REFRESH_TRIES = 4
 
 /**
  * What a new team, season or game says while the last request could not
@@ -151,6 +163,14 @@ function newestFirst(a: unknown, b: unknown): number {
 
 function isOffline(error: unknown): boolean {
   return error instanceof HttpError && error.code === 'offline'
+}
+
+/** A refusal the server may lift soon: a 5xx, or too many requests. */
+function refusedForNow(error: unknown): boolean {
+  return (
+    error instanceof HttpError &&
+    (error.status >= 500 || error.code === 'rateLimited')
+  )
 }
 
 /** The server's word that a record is gone, or not this person's to read. */
@@ -289,6 +309,28 @@ export class CachingClient extends TeamStationClient {
   private opened: Opened | undefined
 
   private prefetching: Promise<void> | undefined
+  /**
+   * The stored answers whose read behind them did not reach the server,
+   * by document: read again when the signal comes back, or after
+   * `refreshRetryMs` when the server refused for now.
+   */
+  private readonly unrefreshed = new Map<
+    string,
+    {
+      opened: Opened
+      path: string
+      shown: string
+      options: RequestOptions
+      /** How many reads of it in a row the server refused for now. */
+      refused: number
+    }
+  >()
+
+  /** The documents whose read behind is out: never sent twice at once. */
+  private readonly refreshing = new Set<string>()
+
+  private refreshTimer: ReturnType<typeof setTimeout> | undefined
+  private readonly refreshRetryMs: number
   private readonly outbox: Outbox
   /** Who hears that a stored-first read came back different, by game. */
   private readonly storedListeners = new Map<
@@ -311,6 +353,11 @@ export class CachingClient extends TeamStationClient {
   constructor(options: CachingClientOptions) {
     super(options)
     this.openCache = options.openCache
+    this.refreshRetryMs = options.refreshRetryMs ?? REFRESH_RETRY_MS
+    // The signal back: what the phone showed with none is read again.
+    this.subscribeOffline(offline => {
+      if (!offline) this.refreshUnrefreshed()
+    })
     this.pictureFiles = options.pictureFiles ?? pictureDirectories
     // A picture is fetched again only while the server answers.
     this.pictureFiles.offline = this.offline
@@ -319,6 +366,9 @@ export class CachingClient extends TeamStationClient {
     })
     this.outbox = new Outbox({
       store: async () => await this.owned?.store,
+      ...(options.requestDeadlineMs == null
+        ? {}
+        : { requestDeadlineMs: options.requestDeadlineMs }),
       // A give-up's deadline cut off a request with no answer: as for any
       // request that misses its deadline.
       onCutOff: () => {
@@ -630,6 +680,7 @@ export class CachingClient extends TeamStationClient {
       return
     }
     this.outbox.reset()
+    this.forgetUnrefreshed()
     this.pictureFiles.open(userId)
     const previous = this.opened
     this.opened = {
@@ -656,6 +707,7 @@ export class CachingClient extends TeamStationClient {
     this.opened = undefined
     this.ownerToken = undefined
     this.outbox.reset()
+    this.forgetUnrefreshed()
     const pictures = opened?.userId ?? this.pictureFiles.userId
     if (pictures != null) await this.pictureFiles.remove(pictures)
     const store = await opened?.store
@@ -672,6 +724,7 @@ export class CachingClient extends TeamStationClient {
     this.opened = undefined
     this.ownerToken = undefined
     this.outbox.reset()
+    this.forgetUnrefreshed()
     this.pictureFiles.close()
     await this.closeQuietly(opened?.store)
   }
@@ -908,6 +961,7 @@ export class CachingClient extends TeamStationClient {
       // The server says the record is gone, or no longer this person's: so
       // is the phone's copy, unless a queued write still holds it.
       if (isGone(error)) await this.forgetIn(opened.store, key)
+      if (options?.fromServer === true) throw error
       const held = await this.readFrom(opened.store, key)
       const stored =
         held?.pending === true
@@ -917,12 +971,30 @@ export class CachingClient extends TeamStationClient {
             : (held ??
               (await this.readFallback(opened.store, fallbackKeyOf(key))))
       if (stored == null) throw error
+      let answer: T
       try {
-        return cleaner(JSON.parse(stored.body))
+        answer = cleaner(JSON.parse(stored.body))
       } catch {
         // A document this version cannot read is no document.
         throw error
       }
+      // A screen that opens on the phone's copies learned of no signal as
+      // it read: the copy is read again once the signal comes back.
+      if (
+        options?.offlineFirst === true &&
+        isOffline(error) &&
+        !stored.pending
+      ) {
+        const { storedFirst: _first, offlineFirst: _offline, ...rest } = options
+        this.unrefreshed.set(key, {
+          opened,
+          path,
+          shown: stored.body,
+          options: rest,
+          refused: 0
+        })
+      }
+      return answer
     }
     this.outbox.wake(true)
     const team = candidatesTeamOf(path)
@@ -949,11 +1021,6 @@ export class CachingClient extends TeamStationClient {
   }
 
   /**
-   * The read behind a stored-first answer: to the server, stored as any
-   * read is, and told to the game's listeners when what the phone now holds
-   * differs from what it showed. A read that fails changes nothing.
-   */
-  /**
    * Whether `path` reads a roster or default lineup of a team the schedule
    * has listed as a placeholder (`PLACEHOLDER_TEAMS`): one the server
    * answers no one, so the phone never stores it.
@@ -972,16 +1039,34 @@ export class CachingClient extends TeamStationClient {
     return kept.includes(teamId)
   }
 
-  /** Adds the placeholder sides `games` list to the ones kept, newest first. */
-  private async keepPlaceholders(games: readonly SeasonGame[]): Promise<void> {
-    const listed = games.flatMap(game => [
-      ...(game.homeTeamExternal ? [game.homeTeamId] : []),
-      ...(game.awayTeamExternal ? [game.awayTeamId] : [])
-    ])
+  /**
+   * Adds the placeholder sides `games` list to the ones kept, newest first:
+   * from the read-ahead's games and from every schedule page stored, so a
+   * placeholder seen only on a team's or a past page is known too. A row
+   * that does not say is no placeholder.
+   */
+  private async keepPlaceholders(
+    games: readonly unknown[],
+    store: Promise<DocumentStore | undefined> | undefined = this.owned?.store
+  ): Promise<void> {
+    const listed = games.flatMap(raw => {
+      if (raw == null || typeof raw !== 'object') return []
+      const game = raw as Record<string, unknown>
+      return [
+        ...(game.homeTeamExternal === true &&
+        typeof game.homeTeamId === 'string'
+          ? [game.homeTeamId]
+          : []),
+        ...(game.awayTeamExternal === true &&
+        typeof game.awayTeamId === 'string'
+          ? [game.awayTeamId]
+          : [])
+      ]
+    })
     if (listed.length === 0) return
     try {
       await (
-        await this.owned?.store
+        await store
       )?.atomically(async tx => {
         const held = await tx.read(PLACEHOLDER_TEAMS)
         let kept: string[] = []
@@ -994,6 +1079,12 @@ export class CachingClient extends TeamStationClient {
           0,
           PLACEHOLDERS_KEPT
         )
+        // The same teams, newest first: nothing to write.
+        if (
+          next.length === kept.length &&
+          next.every((id, at) => id === kept[at])
+        )
+          return
         await tx.write(PLACEHOLDER_TEAMS, {
           body: JSON.stringify(next),
           revision: '0',
@@ -1006,6 +1097,69 @@ export class CachingClient extends TeamStationClient {
     }
   }
 
+  /** Another person's file, or none: nothing of the last one is read again. */
+  private forgetUnrefreshed(): void {
+    this.unrefreshed.clear()
+    this.refreshing.clear()
+    if (this.refreshTimer != null) clearTimeout(this.refreshTimer)
+    this.refreshTimer = undefined
+  }
+
+  /** Reads again every stored answer whose read behind it had no answer. */
+  private refreshUnrefreshed(): void {
+    if (this.refreshTimer != null) clearTimeout(this.refreshTimer)
+    this.refreshTimer = undefined
+    for (const [key, held] of [...this.unrefreshed]) {
+      // Another person's, or no screen's now: nobody to tell.
+      if (held.opened !== this.owned || !this.heardFor(held.path)) {
+        this.unrefreshed.delete(key)
+        continue
+      }
+      // Still out: its answer, or its deadline, settles it.
+      if (this.refreshing.has(key)) continue
+      this.refreshStored(
+        held.opened,
+        key,
+        held.path,
+        held.shown,
+        held.options
+      ).catch(() => undefined)
+    }
+  }
+
+  /**
+   * Once, after `refreshRetryMs`, twice as long for each refusal before: a
+   * server that refused for now.
+   */
+  private refreshLater(): void {
+    if (this.refreshTimer != null) return
+    const refused = Math.max(
+      1,
+      ...[...this.unrefreshed.values()].map(held => held.refused)
+    )
+    this.refreshTimer = setTimeout(
+      () => {
+        this.refreshTimer = undefined
+        if (!this.offline) this.refreshUnrefreshed()
+      },
+      this.refreshRetryMs * 2 ** (refused - 1)
+    )
+    ;(this.refreshTimer as { unref?: () => void }).unref?.()
+  }
+
+  /** Whether a screen listens for what a read of `path` changes. */
+  private heardFor(path: string): boolean {
+    const gameId = gameOfPath(path)
+    return gameId == null
+      ? this.storedListeners.size > 0
+      : (this.storedListeners.get(gameId)?.size ?? 0) > 0
+  }
+
+  /**
+   * The read behind a stored-first answer: to the server, stored as any
+   * read is, and told to the game's listeners when what the phone now holds
+   * differs from what it showed. A read that fails changes nothing.
+   */
   private async refreshStored(
     opened: Opened,
     key: string,
@@ -1013,11 +1167,33 @@ export class CachingClient extends TeamStationClient {
     shown: string,
     options: RequestOptions
   ): Promise<void> {
+    this.refreshing.add(key)
     try {
-      await this.request('GET', path, asRaw, undefined, options)
-    } catch {
+      await this.request('GET', path, asRaw, undefined, {
+        ...options,
+        fromServer: true
+      })
+    } catch (error: unknown) {
+      // Not read from the server: read again once it can be (no signal, or
+      // the server refusing for now, a few times, waiting longer each), so a
+      // screen that showed the phone's copy hears what changed. Any other
+      // refusal is the server's word.
+      const refused =
+        (this.unrefreshed.get(key)?.refused ?? 0) +
+        (refusedForNow(error) ? 1 : 0)
+      if (
+        this.owned === opened &&
+        (isOffline(error) || refusedForNow(error)) &&
+        refused < REFRESH_TRIES
+      )
+        this.unrefreshed.set(key, { opened, path, shown, options, refused })
+      else this.unrefreshed.delete(key)
+      if (refusedForNow(error) && !this.offline) this.refreshLater()
       return
+    } finally {
+      this.refreshing.delete(key)
     }
+    this.unrefreshed.delete(key)
     // Tag choices change no game.
     if (this.owned !== opened || path.startsWith('/tags')) return
     const now = await this.readFrom(opened.store, key)
@@ -1210,10 +1386,21 @@ export class CachingClient extends TeamStationClient {
     }
     this.outbox.wake(true)
     const kept = answered == null ? undefined : schedulePageOf(answered.raw, at)
-    if (kept != null)
+    if (kept != null) {
       await this.inStore(opened.store, async tx => {
         await tx.writeSchedule(read.shape, kept.page, kept.games)
       })
+      const raw = answered?.raw
+      // Into the file the page went to, and not waited for.
+      this.keepPlaceholders(
+        Array.isArray(raw)
+          ? raw
+          : Array.isArray((raw as { items?: unknown } | undefined)?.items)
+            ? (raw as { items: unknown[] }).items
+            : [],
+        opened.store
+      ).catch(() => undefined)
+    }
     return value
   }
 

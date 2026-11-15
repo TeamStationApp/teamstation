@@ -93,7 +93,8 @@ describe('a game under way, read ahead and opened with no signal', function () {
         executors.push(executor)
         return await openCacheStore(executor)
       },
-      outbox: { setTimer: () => 0, clearTimer: () => undefined }
+      outbox: { setTimer: () => 0, clearTimer: () => undefined },
+      refreshRetryMs: 100
     })
     client.openFor('usr_scorer')
     if (prefetch) await client.prefetch()
@@ -316,18 +317,19 @@ describe('a game under way, read ahead and opened with no signal', function () {
       />
     )
     expect(coach).includes('Box Score')
-    // The signal comes back, and no notice follows it.
-    net.requested.length = 0
-    net.hold = undefined
-    release()
-    await settle(300)
-    expect(client.offline).equals(false)
+    // Each copy the screen opened on is read from the server behind it,
+    // held while the link answers nothing; the signal comes back, and no
+    // notice follows it.
     for (const path of [
       '/games/g1/plans',
       '/games/g1/lineups',
       '/games/g1/box-score'
     ])
-      expect(net.requested, `${path} read again`).includes(path)
+      expect(net.requested, `${path} read behind`).includes(path)
+    net.hold = undefined
+    release()
+    await settle(300)
+    expect(client.offline).equals(false)
   })
 
   it('reads Coach Game again once the server answers, when no signal was learned while it opened, and again after a read again that failed', async function () {
@@ -347,14 +349,16 @@ describe('a game under way, read ahead and opened with no signal', function () {
     )
     expect(coach).includes('Box Score')
     expect(client.offline).equals(true)
-    // The signal comes back for a moment, and is gone again before the
-    // reads again set out: they fail.
-    net.offline = false
-    await client.serverTime().catch(() => undefined)
-    net.offline = true
+    // The phone takes the signal for back, and it is not: the reads again
+    // find none.
+    await act(async () => {
+      client.offline = false
+    })
     await settle(200)
     expect(client.offline).equals(true)
-    // Back for good: read again.
+    // Back for good: read again. Another device saved a plan meanwhile, so
+    // the screen, told, reads its plan too.
+    net.planNote = 'newer'
     net.requested.length = 0
     net.offline = false
     await act(async () => {
@@ -363,6 +367,10 @@ describe('a game under way, read ahead and opened with no signal', function () {
     await settle(300)
     for (const path of ['/games/g1/plans', '/games/g1/lineups'])
       expect(net.requested, `${path} read again`).includes(path)
+    expect(
+      net.requested.filter(path => path === '/games/g1/plans').length,
+      'the client’s read, and the screen’s'
+    ).greaterThan(1)
   })
 
   it('reads Coach Game again shortly when the server refuses its first read again, with the signal back (9.harness-review.6)', async function () {
@@ -380,7 +388,6 @@ describe('a game under way, read ahead and opened with no signal', function () {
         gameId="g1"
         teamId="home"
         userId="usr_scorer"
-        readAgainMs={100}
         onExit={() => undefined}
       />
     )
@@ -415,7 +422,6 @@ describe('a game under way, read ahead and opened with no signal', function () {
         gameId="g1"
         teamId="home"
         userId="usr_scorer"
-        readAgainMs={100}
         onExit={() => undefined}
       />
     )
@@ -423,27 +429,76 @@ describe('a game under way, read ahead and opened with no signal', function () {
     return { client, net, release }
   }
 
-  it('tries a refused read again no more once Coach Game is gone, even when the refusal comes after (10.harness-review.1)', async function () {
+  it('reads a refused copy again until the server answers it, then no more (10.harness-review.1, the client’s own)', async function () {
     const { net, release } = await coachOffline()
     net.refused.set('/games/g1/plans', 503)
-    // The reads again set out, and are held until the screen is gone.
-    let again = (): void => undefined
-    net.hold = new Promise<void>(resolve => {
-      again = resolve
-    })
+    net.hold = undefined
+    release()
+    await settle(150)
+    // Refused for now: read again after the wait, once answered.
+    net.refused.clear()
+    await settle(250)
+    expect(
+      net.requested.filter(path => path === '/games/g1/plans').length
+    ).greaterThan(1)
+    net.requested.length = 0
+    await settle(300)
+    expect(net.requested, 'answered: no more').not.includes('/games/g1/plans')
+  })
+
+  it('reads a refused copy again no more once no screen listens for it (3.harness-review.1)', async function () {
+    const { net, release } = await coachOffline()
+    net.refused.set('/games/g1/plans', 503)
+    net.hold = undefined
     release()
     await settle(60)
-    expect(net.requested).includes('/games/g1/plans')
     await act(async () => {
       root?.unmount()
     })
     root = undefined
-    net.hold = undefined
-    again()
-    await settle(60)
     net.requested.length = 0
+    await settle(400)
+    expect(net.requested, 'nobody to tell').not.includes('/games/g1/plans')
+  })
+
+  it('gives a copy the server keeps refusing up after a few tries, each wait longer (3.harness-review.1, 4.harness-review.1)', async function () {
+    const { net, release } = await coachOffline()
+    net.refused.set('/games/g1/plans', 503)
+    net.hold = undefined
+    release()
+    // When each read of the plan sets out, watched over the waits of 100,
+    // 200 and 400 ms the client takes.
+    const times: number[] = []
+    const started = Date.now()
+    let seen = 0
+    while (Date.now() - started < 1500) {
+      const count = net.requested.filter(
+        path => path === '/games/g1/plans'
+      ).length
+      for (; seen < count; seen++) times.push(Date.now())
+      await settle(5)
+    }
+    const gaps = times.slice(1).map((at, index) => at - times[index])
+    expect(gaps.length, 'tried again, then given up').within(2, 4)
+    // Each wait longer than the one before.
+    for (let at = 1; at < gaps.length; at++)
+      expect(gaps[at]).greaterThan(gaps[at - 1] * 1.5)
+    net.requested.length = 0
+    await settle(900)
+    expect(net.requested, 'given up').not.includes('/games/g1/plans')
+  })
+
+  it('reads Coach Game’s plan again when the server’s, read behind the phone’s copy, differs (2.harness-review.3)', async function () {
+    const { net, release } = await coachOffline()
+    // Another device saved a plan while the phone had no signal.
+    net.planNote = 'newer'
+    net.requested.length = 0
+    net.hold = undefined
+    release()
     await settle(300)
-    expect(net.requested).not.includes('/games/g1/plans')
+    // The client's read, held from before, differed: the screen reads its
+    // plan again.
+    expect(net.requested, 'the screen’s read again').includes('/games/g1/plans')
   })
 
   it('takes a 403 on a read again as the server’s last word, and does not try it again (10.harness-review.1)', async function () {

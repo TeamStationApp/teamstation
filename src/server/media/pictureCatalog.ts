@@ -107,10 +107,12 @@ export async function selectAccountCatalogPicture(
   await atomic(db, async trx => {
     const before = await trx
       .selectFrom('users')
-      .select('avatar_path')
+      .select(['avatar_path', 'deleted_at'])
       .where('id', '=', userId)
       .forUpdate()
       .executeTakeFirst()
+    // A deleted account takes no picture.
+    if (before == null || before.deleted_at != null) return
     await trx
       .updateTable('users')
       .set({

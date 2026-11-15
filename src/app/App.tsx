@@ -231,6 +231,7 @@ import {
 import type { HeldChain } from './sync/outbox'
 import { watchReachability } from './sync/reachability'
 import { leaveStalledConnections } from './sync/stalledConnections'
+import { timedRequest } from './sync/timedRequests'
 import {
   heldTeamText,
   offlineBannerText,
@@ -516,7 +517,8 @@ function Shell(props: AppProps): React.ReactElement {
             passwordKdf,
             deviceModel: signInDeviceModel(),
             openCache: documentCache,
-            onDeadlineMissed: leaveStalledConnections
+            onDeadlineMissed: leaveStalledConnections,
+            ...(timedRequest == null ? {} : { timedRequest })
           }),
     [apiBaseUrl, initialToken, documentCache]
   )

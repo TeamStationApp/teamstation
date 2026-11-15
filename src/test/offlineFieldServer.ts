@@ -47,6 +47,8 @@ export function fieldServer(stored: {
   requested: string[]
   /** Reads refused with their status while listed: 503 as a deploy would. */
   refused: Map<string, number>
+  /** While set, the plans answer differs: another device saved a plan. */
+  planNote?: string
   /** While set, a tag is refused: its event is not the server's. */
   refuseTags: boolean
   /** While set, a post of plays is refused for good, once `holdPlays` lets it go. */
@@ -193,7 +195,8 @@ export function fieldServer(stored: {
         plan: null,
         rules: null,
         sameDay: EMPTY_PLAN_SAME_DAY
-      }
+      },
+      ...(state.planNote == null ? {} : { note: state.planNote })
     }),
     '/teams': () => [],
     '/teams/away/roster': () => roster('away'),
@@ -224,6 +227,7 @@ export function fieldServer(stored: {
     writes: [] as string[],
     requested: [] as string[],
     refused: new Map<string, number>(),
+    planNote: undefined as string | undefined,
     refuseTags: false,
     refusePlays: false,
     staleOnSwap: false,

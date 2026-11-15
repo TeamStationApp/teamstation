@@ -1208,6 +1208,143 @@ describe('the phone outbox', function () {
     ])
   })
 
+  it('undoes a direct send’s reservation whose transaction fails, so a give-up of its game does not wait on it (1.harness-review.3)', async () => {
+    let failReservation = false
+    const p = phone(
+      server({ '/games/g1/events': eventsDoc('g1', 'D0') }, () => ({
+        body: eventsDoc('g1', 'D1')
+      })),
+      store => ({
+        ...store,
+        atomically: async run =>
+          await store.atomically(async tx => {
+            const value = await run(tx)
+            // The reservation's transaction fails as it commits.
+            if (
+              failReservation &&
+              value != null &&
+              typeof value === 'object' &&
+              'settle' in value
+            ) {
+              failReservation = false
+              throw new Error('disk I/O error')
+            }
+            return value
+          })
+      })
+    )
+    await p.client.gameEvents('g1')
+    failReservation = true
+    await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
+    expect(failReservation, 'the reservation failed').equals(false)
+    // Nothing is out for the game: the give-up settles with no deadline.
+    const given = await Promise.race([
+      p.client.giveUpGame('g1'),
+      new Promise<'waited'>(resolve =>
+        setTimeout(() => {
+          resolve('waited')
+        }, 200)
+      )
+    ])
+    expect(given).not.equals('waited')
+  })
+
+  it('leaves no error unheard when a save is let go after its answer came (5.harness-review.3)', async () => {
+    const p = phone(
+      server({ '/games/g1/events': eventsDoc('g1', 'D0') }, () => ({
+        body: eventsDoc('g1', 'D1')
+      }))
+    )
+    await p.client.gameEvents('g1')
+    const unheard: unknown[] = []
+    const hear = (reason: unknown): void => {
+      unheard.push(reason)
+    }
+    process.on('unhandledRejection', hear)
+    try {
+      let release = (): void => undefined
+      const handoff = {
+        taken: () => undefined,
+        release: new Promise<void>(resolve => {
+          release = resolve
+        })
+      }
+      await p.client.saveGameEvents(
+        'g1',
+        { plays: [play(1)], remove: [] },
+        handoff
+      )
+      // The scorer's next change lets the save go, after its answer.
+      release()
+      await new Promise(resolve => setTimeout(resolve, 20))
+      expect(unheard).deep.equals([])
+    } finally {
+      process.off('unhandledRejection', hear)
+    }
+  })
+
+  it('asks the server’s copy about a save that timed out on its own deadline, not counting it lost when the server kept it (7.harness-review.1)', async () => {
+    const reads: Record<string, unknown> = {
+      '/games/g1/events': eventsDoc('g1', 'D0')
+    }
+    const mutation = { at: 5, id: 'kept-late', revision: 0, frontier: 2 }
+    const p = phone(
+      server(reads, async () => {
+        // The server takes the save, and its answer comes too late.
+        reads['/games/g1/events'] = {
+          ...(eventsDoc('g1', 'D1') as Record<string, unknown>),
+          scoringMutation: mutation
+        }
+        await new Promise(resolve => setTimeout(resolve, 150))
+        return { body: eventsDoc('g1', 'D1') }
+      }),
+      undefined,
+      {},
+      40
+    )
+    await p.client.gameEvents('g1')
+    await p.client.saveGameEvents('g1', {
+      plays: [play(1)],
+      remove: [],
+      currentPlay: null,
+      scoringMutation: mutation
+    })
+    expect(p.rows(), 'queued as sent, its answer missed').has.length(1)
+    expect(await p.client.giveUpGame('g1')).deep.equals({ lost: 0, unsure: 0 })
+  })
+
+  it('counts saves queued one on another, none of which the server took, lost on a give-up (9.harness-review.1)', async () => {
+    const m0 = { at: 1, id: 'server', revision: 0, frontier: 1 }
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': {
+            ...(eventsDoc('g1', 'D0') as Record<string, unknown>),
+            scoringMutation: m0
+          }
+        },
+        () => 'offline'
+      )
+    )
+    await p.client.gameEvents('g1')
+    // Three saves with no signal, each on the one before, the first on the
+    // server's scoring.
+    let base = m0
+    for (let at = 2; at <= 4; at++) {
+      const own = { at, id: `phone-${at}`, revision: 0, frontier: at }
+      await p.client.saveGameEvents('g1', {
+        plays: [play(at)],
+        remove: [],
+        currentPlay: null,
+        scoringBase: base,
+        scoringMutation: own
+      })
+      base = own
+    }
+    expect(p.rows()).has.length(3)
+    expect(await p.client.giveUpGame('g1')).deep.equals({ lost: 3, unsure: 0 })
+  })
+
   it('reconciles scoring when a guest rename is the last queued events writer', async () => {
     let online = true
     const p = phone(
@@ -3452,6 +3589,56 @@ describe('the phone outbox', function () {
       await p.client.drainOutbox()
       expect(p.rows()).deep.equals([])
     })
+
+  it('keeps the server’s slow-down wait when another game’s send works before it is over (1.harness-review.6)', async function () {
+    let online = false
+    let slow = true
+    const p = phone(
+      server(
+        {
+          '/games/g1/events': eventsDoc('g1', 'D0'),
+          '/games/g2/events': eventsDoc('g2', 'E0'),
+          '/games/g3/events': eventsDoc('g3', 'F0')
+        },
+        sent => {
+          if (!online) return 'offline'
+          const gameId = sent.path.split('/')[2]
+          if (slow && gameId === 'g1')
+            return refusal(429, 'rateLimited', 'Slow down')
+          return { body: eventsDoc(gameId, `${gameId}-next`) }
+        }
+      )
+    )
+    const sentOf = (gameId: string): number =>
+      p
+        .posts()
+        .filter(
+          call => call.path === `/games/${gameId}/events` && call.key != null
+        ).length
+    await p.client.gameEvents('g1')
+    await p.client.gameEvents('g2')
+    await p.client.gameEvents('g3')
+    await p.client.saveGameEvents('g1', { plays: [play(1)], remove: [] })
+    await p.client.saveGameEvents('g2', { plays: [play(1)], remove: [] })
+    p.sent.splice(0)
+    online = true
+    p.clock.now += 60 * 60 * 1000
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    expect([sentOf('g1'), sentOf('g2')]).deep.equals([1, 0])
+    // A third game's save, with nothing of its own queued, goes at once
+    // and works, while the server's wait is not over.
+    slow = false
+    await p.client.saveGameEvents('g3', { plays: [play(1)], remove: [] })
+    expect(sentOf('g3')).equals(1)
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    expect([sentOf('g1'), sentOf('g2')], 'still waiting').deep.equals([1, 0])
+    p.clock.now += 60 * 60 * 1000
+    p.client.wakeOutbox(true)
+    await p.client.drainOutbox()
+    expect(p.rows()).deep.equals([])
+  })
 
   it('keeps a failing game’s backoff its own, growing, while another game’s writes land beside it', async function () {
     const p = phone(
@@ -5722,6 +5909,125 @@ describe('the phone outbox', function () {
       expect(p.rows()).deep.equals([])
     })
 
+    it('sends a reset again as its first send went, though newer plays were read since (2.harness-review.1)', async function () {
+      const g = gameServer()
+      const p = phone(g.handler)
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      g.online.value = false
+      await p.client.queueSwap('g1', 'reset')
+      // Its first send finds no signal.
+      g.online.value = true
+      g.refuse.swap = 'offline'
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const swaps = (): unknown[] =>
+        p
+          .posts()
+          .filter(call => call.path === '/games/g1/swap-sides')
+          .map(call => call.body)
+      expect(swaps()).has.length(1)
+      // Another device's plays, read in since: a newer server copy.
+      p.sql(
+        `UPDATE documents SET server_body = json_set(COALESCE(server_body, body), '$.playsDigest', 'plays-newer')
+         WHERE key = '${eventsKey('g1')}'`
+      )
+      g.refuse.swap = undefined
+      p.clock.now += 60 * 60 * 1000
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const [first, again] = swaps()
+      expect(again, 'the same body, under the same key').deep.equals(first)
+      expect(first).property('playsDigest').not.equals('plays-newer')
+    })
+
+    it('lets a give-up go once a send’s answer is stored, not after the reads that answer asks for (5.harness-review.2)', async function () {
+      const g = gameServer()
+      // From the swap's landing until the give-up begins, reads never
+      // answer: the ones the landing asks for; the give-up's own do.
+      const stall = { on: false, count: 0 }
+      const p = phone(async sent => {
+        if (stall.on && sent.method === 'GET') {
+          stall.count++
+          return await new Promise<never>(() => undefined)
+        }
+        const answer = await g.handler(sent)
+        if (sent.path === '/games/g1/swap-sides' && g.online.value)
+          stall.on = true
+        return answer
+      })
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      g.online.value = false
+      await p.client.queueSwap('g1', 'reset')
+      g.online.value = true
+      p.clock.now += 60 * 60 * 1000
+      p.client.wakeOutbox(true)
+      const draining = p.client.drainOutbox()
+      for (let tries = 0; stall.count === 0 && tries < 200; tries++)
+        await new Promise(resolve => setTimeout(resolve, 2))
+      expect(stall.count, 'the landing’s reads are out').greaterThan(0)
+      stall.on = false
+      const given = await Promise.race([
+        p.client.giveUpGame('g1').then(() => 'given'),
+        new Promise<string>(resolve =>
+          setTimeout(() => {
+            resolve('waited')
+          }, 200)
+        )
+      ])
+      expect(given).equals('given')
+      draining.catch(() => undefined)
+    })
+
+    it('keeps a reset a reset on its row when the phone holds nothing to confirm it by (1.harness-review.5)', async function () {
+      const g = gameServer()
+      const p = phone(g.handler)
+      g.online.value = true
+      await p.client.game('g1')
+      await p.client.gameLineups('g1')
+      await p.client.gameEvents('g1')
+      // No server copy, and no digest or generation in the bodies either.
+      p.sql('UPDATE documents SET server_body = NULL')
+      p.sql(
+        `UPDATE documents SET body = json_remove(body, '$.playsDigest', '$.generation')`
+      )
+      g.online.value = false
+      await p.client.queueSwap('g1', 'reset')
+      // Refused as a plain swap of a begun game: the row stays, held.
+      g.refuse.swap = {
+        status: 409,
+        body: { code: 'conflict', message: 'The game has begun' }
+      }
+      g.online.value = true
+      p.client.wakeOutbox(true)
+      await p.client.drainOutbox()
+      const sentSwap = p
+        .posts()
+        .find(call => call.path === '/games/g1/swap-sides')!
+      // On the wire, only what the server reads.
+      expect(sentSwap.body).not.has.property('effect')
+      const row = p
+        .rows()
+        .find(each => String(each.path) === '/games/g1/swap-sides')
+      expect(row, 'the refused reset is held').not.equals(undefined)
+      {
+        const queued = {
+          kind: 'swapSides' as const,
+          gameId: 'g1',
+          body: JSON.parse(String(row!.body)) as unknown
+        }
+        expect(
+          swapEffectOf(queued as Parameters<typeof swapEffectOf>[0])
+        ).equals('reset')
+        expect(JSON.parse(String(row!.body))).property('effect', 'reset')
+      }
+    })
+
     it('sends a reset the file cannot queue with the digest and generation an earlier build stored', async function () {
       const g = gameServer()
       let broken = false
@@ -6048,6 +6354,26 @@ describe('the phone outbox', function () {
           expect(writes(p)).deep.equals(['POST /games/g1/events'])
         })
 
+        it('counts a post the session let go whose request then had no answer unsure, not lost (10.harness-review.1)', async function () {
+          const { g, p, saving, letGo, release } = await heldPost()
+          g.online.value = false
+          release()
+          expect(await saving).to.have.property('answer')
+          await p.client.saveGameEvents('g1', {
+            plays: [play(2)],
+            remove: [],
+            lineupsBase: 'D0',
+            generation: 1
+          })
+          const given = p.client.giveUpGame('g1')
+          await p.client.drainOutbox()
+          await new Promise(resolve => setTimeout(resolve, 20))
+          // Its request comes to nothing: whether the server took it, no
+          // one can say. The save queued behind it never left.
+          letGo('offline')
+          expect(await given).deep.equals({ lost: 1, unsure: 1 })
+        })
+
         it('waits for a post the session let go while its request is still out, and counts it only when the server did not take it', async function () {
           for (const taken of [true, false]) {
             const { g, p, saving, letGo, release } = await heldPost()
@@ -6143,11 +6469,10 @@ describe('the phone outbox', function () {
 
         /** `giveUp`'s deadline timer, still set. */
         const deadlineOf = (
-          p: ReturnType<typeof phone>
+          p: ReturnType<typeof phone>,
+          ms = REQUEST_DEADLINE_MS
         ): { run: () => void } | undefined =>
-          p.timers.find(
-            timer => timer.ms === REQUEST_DEADLINE_MS && timer.cleared !== true
-          )
+          p.timers.find(timer => timer.ms === ms && timer.cleared !== true)
         /** Lets the queue's promises and the file's writes go on. */
         const turns = async (): Promise<void> => {
           for (let i = 0; i < 20; i++)
@@ -6374,7 +6699,10 @@ describe('the phone outbox', function () {
           expect(p.sent[p.sent.length - 1].method).equals('GET')
           const given = p.client.giveUpGame('g1')
           await turns()
-          deadlineOf(p)!.run()
+          // The give-up holds no longer than the client's own requests wait
+          // (1.harness-review.7).
+          expect(deadlineOf(p), 'no 10 s give-up').equals(undefined)
+          deadlineOf(p, 200)!.run()
           // Not kept on the closed game by the read: it is cut off. The
           // server answered the save, superseded, so it is lost, not unsure
           // (2.harness-review.3).

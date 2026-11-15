@@ -62,7 +62,7 @@ import {
   skipsScoringOverlay,
   withServerIds
 } from './optimistic'
-import { localTagRevision } from './tagRevisions'
+import { localTagRevision, nextLocalTagRevision } from './tagRevisions'
 
 /**
  * The phone's queue of writes the server has not answered: a roster player
@@ -538,6 +538,12 @@ export interface OutboxOptions {
   /** The open cache, or none. */
   store: () => Promise<DocumentStore | undefined>
   /**
+   * How long a request waits for its answer to begin: the client's, so a
+   * give-up holds the scorer no longer than its requests wait.
+   * `REQUEST_DEADLINE_MS` when not given.
+   */
+  requestDeadlineMs?: number
+  /**
    * Told when `giveUp`'s deadline cuts off a send or read of the chain that
    * had no answer: as a request that misses its own deadline, its
    * connection may have stopped answering.
@@ -696,7 +702,8 @@ const CUT = Symbol('cut')
 /** A direct send let go, its request still out: whether the server took it. */
 interface ReleasedSend {
   chain: string
-  kept: Promise<boolean>
+  /** Whether the server took it; `undefined` when nothing came to say. */
+  kept: Promise<boolean | undefined>
 }
 
 /**
@@ -709,17 +716,30 @@ export interface GivenUp {
   unsure: number
 }
 
+/** A save of scoring with an identity of its own, which `cutFate` can judge. */
+function judgedByServer(row: OutboxRow): boolean {
+  if (callOfRow(row).kind !== 'events') return false
+  try {
+    return parsed(row.body).scoringMutation != null
+  } catch {
+    return false
+  }
+}
+
 /**
- * What a save of plays cut off at `giveUp`'s deadline did, by the server's
- * copy of the game's events read after: `kept` when the game's accepted
- * scoring is the save's own, `lost` when it is still the scoring the save
- * was built on (the server took nothing of it, which would have moved it
- * on) or the plays were reset since, else `unsure`. A row that is no save of
- * plays, or with no events read back, is `unsure`.
+ * What a save of plays a give-up drops did, by the server's copy of the
+ * game's events read after, whether it was sent or not: `kept` when the
+ * game's accepted scoring is the save's own; `lost` when it is still the
+ * scoring the save was built on (the server took nothing of it, which would
+ * have moved it on), when the save was built on one already found `lost`
+ * (`lostBefore`, the saves queued ahead of it, in order), or when the plays
+ * were reset since; else `unsure`. A row that is no save of plays, or with
+ * no events read back, is `unsure`.
  */
 function cutFate(
   row: OutboxRow,
-  events: Json | undefined
+  events: Json | undefined,
+  lostBefore: readonly ScoringMutation[] = []
 ): 'kept' | 'lost' | 'unsure' {
   if (events == null || callOfRow(row).kind !== 'events') return 'unsure'
   const body = parsed(row.body)
@@ -734,15 +754,16 @@ function cutFate(
   )
     return 'lost'
   // Only a save with a scoring identity of its own moves the game's on.
-  if (
-    own != null &&
-    'scoringBase' in body &&
-    sameScoringMutation(
-      (body.scoringBase ?? undefined) as ScoringMutation | undefined,
-      server
+  if (own != null && 'scoringBase' in body) {
+    const base = (body.scoringBase ?? undefined) as ScoringMutation | undefined
+    if (sameScoringMutation(base, server)) return 'lost'
+    // Built on a save the server never took: neither could it take this.
+    if (
+      base != null &&
+      lostBefore.some(lost => sameScoringMutation(base, lost))
     )
-  )
-    return 'lost'
+      return 'lost'
+  }
   return 'unsure'
 }
 
@@ -902,12 +923,17 @@ function documentsOf(call: QueuedCall): Array<{ key: string; path: string }> {
 }
 
 /** A game's three documents, and the read that fills each. */
+/** The path a game's plays are read from. */
+function eventsPathOf(gameId: string): string {
+  return `/games/${encodeURIComponent(gameId)}/events`
+}
+
 function gameDocuments(gameId: string): Array<{ key: string; path: string }> {
   const game = `/games/${encodeURIComponent(gameId)}`
   return [
     { key: gameKey(gameId), path: game },
     { key: lineupsKey(gameId), path: `${game}/lineups` },
-    { key: eventsKey(gameId), path: `${game}/events` }
+    { key: eventsKey(gameId), path: eventsPathOf(gameId) }
   ]
 }
 
@@ -1000,6 +1026,13 @@ export class Outbox {
   /** No send before this, in epoch milliseconds: no signal stops them all. */
   private retryAt = 0
   /**
+   * How many sends in a row the server asked to slow down (a 429, a 503),
+   * and no send before `serverRetryAt`: a wait of its own, which a send that
+   * works before it is over does not end.
+   */
+  private serverFailures = 0
+  private serverRetryAt = 0
+  /**
    * Each chain a 5xx sent back: how many in a row, and no send of it before
    * `retryAt`. A game's trouble is its own: another chain's sends neither
    * wait on it nor end its backoff.
@@ -1067,11 +1100,12 @@ export class Outbox {
    * answer to each, as a queued write's would be.
    */
   private readonly ahead = new Map<string, { answer: unknown }>()
-  /** Tags answered on this phone, each later than the last. */
-  private tagRevisions = 0
+  /** The number of the phone's last queued tag (`nextLocalTagRevision`). */
+  private lastTagRevision = 0
 
   constructor(options: OutboxOptions) {
     this.options = {
+      requestDeadlineMs: REQUEST_DEADLINE_MS,
       now: Date.now,
       random: Math.random,
       setTimer: (run, ms) => setTimeout(run, ms),
@@ -1180,6 +1214,8 @@ export class Outbox {
     this.timerAt = 0
     this.failures = 0
     this.retryAt = 0
+    this.serverFailures = 0
+    this.serverRetryAt = 0
     this.chainWaits.clear()
     this.lastNetwork = false
     this.paused = undefined
@@ -1256,7 +1292,7 @@ export class Outbox {
         }
       }
       expire()
-    }, REQUEST_DEADLINE_MS)
+    }, this.options.requestDeadlineMs)
     const stop = (): void => {
       this.options.clearTimer(timer)
       this.cut.delete(chain)
@@ -1302,7 +1338,13 @@ export class Outbox {
           for (const [key] of out) this.released.delete(key)
           if (own.length === 0) return { lost: 0, cut: [], reads: [] }
           const taken = own.filter(row => !kept.has(row.idempotencyKey))
-          const cut = taken.filter(row => unanswered.has(row.idempotencyKey))
+          // Cut off at this give-up's deadline, and every save of scoring
+          // with an identity of its own, which the server's copy can judge:
+          // the copy says whether it was kept. A save that timed out on its
+          // own deadline, or was let go, may have reached the server.
+          const cut = taken.filter(
+            row => unanswered.has(row.idempotencyKey) || judgedByServer(row)
+          )
           return {
             lost: taken.length - cut.length,
             cut,
@@ -1325,13 +1367,8 @@ export class Outbox {
         // A send cut off with no answer is settled by the server's copy.
         const result: GivenUp = { lost: given.lost, unsure: 0 }
         if (given.cut.length === 0) return result
-        const eventsPath =
-          gameId == null
-            ? undefined
-            : gameDocuments(gameId).find(doc => doc.key === eventsKey(gameId))
-                ?.path
         const events =
-          gameId != null && eventsPath != null && back.has(eventsPath)
+          gameId != null && back.has(eventsPathOf(gameId))
             ? await store
                 .atomically(async tx =>
                   serverBodyOf(await tx.read(eventsKey(gameId)))
@@ -1339,9 +1376,16 @@ export class Outbox {
                 .then(body => (body == null ? undefined : parsed(body)))
                 .catch(() => undefined)
             : undefined
-        for (const row of given.cut) {
-          const fate = cutFate(row, events)
-          if (fate === 'lost') result.lost++
+        // In queue order, so a save is judged after the one it was built on.
+        const lostBefore: ScoringMutation[] = []
+        for (const row of [...given.cut].sort((a, b) => a.seq - b.seq)) {
+          const fate = cutFate(row, events, lostBefore)
+          if (fate === 'lost') {
+            result.lost++
+            const own = (parsed(row.body).scoringMutation ?? undefined) as
+              ScoringMutation | undefined
+            if (own != null) lostBefore.push(own)
+          }
           if (fate === 'unsure') result.unsure++
         }
         return result
@@ -1623,6 +1667,9 @@ export class Outbox {
       | { queued: unknown }
       | 'notOurs'
       | 'behindDirect'
+    // Set as the reservation is made, in its transaction: undone if the
+    // transaction does not commit, or a later give-up waits on it for good.
+    let reserving: { rowId: string; settle: () => void } | undefined
     try {
       reserved = await store.atomically(async tx => {
         // A session that is not the file's: its write is not this file's.
@@ -1679,13 +1726,19 @@ export class Outbox {
             settle = resolve
           })
         )
+        reserving = { rowId: row.id, settle }
         return {
           row: { ...row, state: 'inflight', leaseUntil },
-          body,
+          body: onTheWire(call, body),
           settle
         }
       })
     } catch {
+      if (reserving != null) {
+        this.direct.delete(reserving.rowId)
+        this.directSends.delete(chain)
+        reserving.settle()
+      }
       // A file that cannot be read queues nothing: the call is sent as is.
       return await this.options.send(
         method,
@@ -1711,6 +1764,14 @@ export class Outbox {
       return answer
     }
     const { row, body, settle } = reserved
+    let over = false
+    // Once: the chain's direct send is through, answered and stored or not.
+    const done = (): void => {
+      if (over) return
+      over = true
+      this.directSends.delete(chain)
+      settle()
+    }
     // Its row holds its place: what is queued from here on goes behind it.
     handoff?.taken()
     try {
@@ -1720,11 +1781,11 @@ export class Outbox {
         key,
         row,
         body,
-        handoff?.release
+        handoff?.release,
+        done
       )
     } finally {
-      this.directSends.delete(chain)
-      settle()
+      done()
     }
   }
 
@@ -1740,7 +1801,9 @@ export class Outbox {
     key: string,
     row: OutboxRow,
     body: unknown,
-    release?: Promise<void>
+    release?: Promise<void>,
+    /** Told once its answer is stored, before the reads it asks for. */
+    onLanded?: () => void
   ): Promise<unknown> {
     const method = methodOf(call)
     const chain = chainOf(call)
@@ -1800,9 +1863,15 @@ export class Outbox {
       if (released && sent != null)
         this.released.set(key, {
           chain,
+          // Let go with its request out: a refusal says the server did not
+          // take it; any other failure (no answer, no signal) says nothing,
+          // and the give-up counts it unsure (`undefined`).
           kept: sent.then(
             taken => (taken as Json | null)?.superseded !== true,
-            () => false
+            (failed: unknown) =>
+              failed instanceof HttpError && failed.code !== 'offline'
+                ? false
+                : undefined
           )
         })
       if (update) this.outdated.add(chain)
@@ -1857,6 +1926,9 @@ export class Outbox {
       this.ahead.delete(row.id)
       this.direct.delete(row.id)
     }
+    // Answered and stored: a give-up waits no more for this send, only
+    // for its answer, not the reads that answer asks for.
+    onLanded?.()
     await this.told(landing)
     this.notify()
     // What was queued behind it goes now, and a send that works ends the
@@ -2184,7 +2256,11 @@ export class Outbox {
     if (tag != null) await this.usedTag(tx, tag)
     // The phone's own revision, each later than the last, never compared
     // with the server's (`tagRevisions.ts`).
-    const revision = localTagRevision(this.options.now(), this.tagRevisions++)
+    this.lastTagRevision = nextLocalTagRevision(
+      this.options.now(),
+      this.lastTagRevision
+    )
+    const revision = localTagRevision(this.lastTagRevision)
     return { answer: { targetId: call.targetId, tag, revision } }
   }
 
@@ -2597,22 +2673,32 @@ export class Outbox {
   }
 
   /**
-   * A swap as it is sent, once the writes queued ahead of it have landed:
-   * without the `effect` the scorer confirmed, and for a reset with the
-   * plays digest and generation of the game's last answer from the server,
-   * which each landed play brought. A body sent before is sent as it went.
+   * A swap as it is sent, once the writes queued ahead of it have landed.
+   * A plain swap names the sides alone. A reset is prepared once, on its
+   * first send: with the plays digest and generation of the game's last
+   * answer from the server, which each landed play brought, and marked
+   * `prepared`, so every later send of it goes as the first did, under its
+   * key, whatever the phone has read since. A reset keeps its `effect` on
+   * its row, which says what the phone's documents were written as when
+   * there was nothing to confirm it by. Neither mark is sent
+   * (`onTheWire`).
    */
   private async preparedSwap(
     tx: CacheTransaction,
     call: Extract<QueuedCall, { kind: 'swapSides' }>,
     sent: unknown
   ): Promise<unknown> {
-    if (!isJson(sent) || !('effect' in sent)) return sent
+    // Prepared already, by this build or an older one, which sent a reset
+    // with no effect: as it went.
+    if (!isJson(sent) || !('effect' in sent) || sent.prepared === true)
+      return sent
     const { effect, ...rest } = sent
     if (effect !== 'reset') return rest
     return {
       ...rest,
-      ...(await confirmedPlays(async key => await tx.read(key), call.gameId))
+      ...(await confirmedPlays(async key => await tx.read(key), call.gameId)),
+      effect,
+      prepared: true
     }
   }
 
@@ -3325,11 +3411,19 @@ export class Outbox {
     const backoff = (failures: number): number =>
       BACKOFF_MS[Math.min(failures, BACKOFF_MS.length) - 1] *
       (1 + this.options.random() * JITTER)
-    // No signal, or a server asking to slow down: every chain waits.
-    if (outcome.network || outcome.shared === true) {
+    // No signal: every chain waits.
+    if (outcome.network) {
       this.failures++
       const wait = backoff(this.failures)
       this.retryAt = this.options.now() + wait
+      this.schedule(wait)
+      return
+    }
+    // A server asking to slow down: every chain waits, on its own backoff.
+    if (outcome.shared === true) {
+      this.serverFailures++
+      const wait = backoff(this.serverFailures)
+      this.serverRetryAt = this.options.now() + wait
       this.schedule(wait)
       return
     }
@@ -3348,6 +3442,8 @@ export class Outbox {
     this.retryAt = 0
     this.lastNetwork = false
     this.chainWaits.delete(chain)
+    // The server's slow-down is over only once its wait has passed.
+    if (this.options.now() >= this.serverRetryAt) this.serverFailures = 0
   }
 
   /**
@@ -3487,7 +3583,7 @@ export class Outbox {
       end = resolve
     })
     this.drainSend = { chain: row.chain, done, end }
-    return { row, call, body: JSON.parse(text) as unknown, changed }
+    return { row, call, body: onTheWire(call, JSON.parse(text)), changed }
   }
 
   /** The drain is through with the row it picked. */
@@ -3538,7 +3634,8 @@ export class Outbox {
         if (this.options.token() === this.paused.token) return
         this.paused = undefined
       }
-      const wait = this.retryAt - this.options.now()
+      const wait =
+        Math.max(this.retryAt, this.serverRetryAt) - this.options.now()
       if (wait > 0) {
         if (this.timer == null) this.schedule(wait)
         return
@@ -3807,6 +3904,8 @@ export class Outbox {
       }
       return { reads, notices }
     })
+    // Answered and stored: a give-up waits no more for this send.
+    this.endDrainSend()
     await this.told(landing)
     return true
   }
@@ -3971,6 +4070,8 @@ export class Outbox {
               landing
             )
           })
+          // Answered and stored: a give-up waits no more for this send.
+          this.endDrainSend()
           await this.told(landing)
         }
         return true
@@ -4030,6 +4131,8 @@ export class Outbox {
               outcome.message
             )
           })
+          // Answered and stored: a give-up waits no more for this send.
+          this.endDrainSend()
           await this.told(landing)
           return true
         }
@@ -4047,6 +4150,8 @@ export class Outbox {
         const reads = await store.atomically(
           async tx => await this.drop(tx, new Set([row.id]))
         )
+        // Answered and stored: a give-up waits no more for this send.
+        this.endDrainSend()
         await this.reread(reads)
         if (call.kind === 'lineups')
           await this.told({
@@ -4060,6 +4165,8 @@ export class Outbox {
         const reads = await store.atomically(
           async tx => await this.drop(tx, new Set([row.id]))
         )
+        // Answered and stored: a give-up waits no more for this send.
+        this.endDrainSend()
         await this.reread(reads)
         return true
       }
@@ -4122,6 +4229,13 @@ export async function confirmedPlays(
       : {}),
     ...(typeof generation === 'number' ? { generation } : {})
   }
+}
+
+/** A row's body as it is sent: a reset's `effect` and `prepared` stay on the phone. */
+function onTheWire(call: QueuedCall, body: unknown): unknown {
+  if (call.kind !== 'swapSides' || !isJson(body)) return body
+  const { effect: _effect, prepared: _prepared, ...rest } = body
+  return rest
 }
 
 /** What a queued swap confirmed: the sides alone, or a reset. */

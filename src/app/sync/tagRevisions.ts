@@ -11,9 +11,18 @@
 
 const LOCAL = 'local:'
 
-/** The phone's revision for its `n`th queued tag at `now`, each later than the last. */
-export function localTagRevision(now: number, n: number): string {
-  return `${LOCAL}${now * 1000 + (n % 1000)}`
+/**
+ * The number of the phone's next queued tag at `now`, after `last`: later
+ * than the last whatever the clock does (a correction can set it back), and
+ * from the clock where it is ahead, so a restarted queue still counts on.
+ */
+export function nextLocalTagRevision(now: number, last: number): number {
+  return Math.max(last + 1, now * 1000)
+}
+
+/** The phone's revision numbered `value` (`nextLocalTagRevision`). */
+export function localTagRevision(value: number): string {
+  return `${LOCAL}${value}`
 }
 
 export function isLocalTagRevision(revision: string): boolean {

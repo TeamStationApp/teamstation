@@ -3513,6 +3513,12 @@ export interface RequestOptions {
    */
   offlineFirst?: boolean
   /**
+   * The server's answer, or the failure: never the phone's stored copy in
+   * place of an answer that did not come. For the phone's read behind a
+   * stored answer, which must know whether the server was reached.
+   */
+  fromServer?: boolean
+  /**
    * `swap`: the phone queues a swap of home and away and answers it from
    * its own copy of the game (`CachingClient.queueSwap`). Without it the
    * swap goes to the server.
@@ -3660,11 +3666,54 @@ export interface StreamingRequest {
   onabort: (() => void) | null
 }
 
+/**
+ * The part of `XMLHttpRequest` a timed request uses (`timedRequest`): its
+ * `readyState` tells when the answer has begun, and `onprogress` sees the
+ * body's text grow, where React Native's `fetch` settles only once the
+ * whole body has come.
+ */
+export interface TimedRequest {
+  open: (method: string, url: string) => void
+  setRequestHeader: (name: string, value: string) => void
+  send: (body?: string) => void
+  abort: () => void
+  withCredentials: boolean
+  readonly readyState: number
+  readonly status: number
+  readonly responseText: string
+  /** The request body's upload: its progress counts as the link working. */
+  readonly upload?: { onprogress: (() => void) | null } | null
+  onreadystatechange: (() => void) | null
+  onprogress: (() => void) | null
+  onload: (() => void) | null
+  onerror: (() => void) | null
+  ontimeout: (() => void) | null
+  onabort: (() => void) | null
+}
+
+/** A timed request whose deadline passed, and the status, if one came. */
+class TimedOut extends DeadlinePassed {
+  constructor(
+    message: string,
+    readonly status: number | undefined
+  ) {
+    super(message)
+  }
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
   /** Swapped out in tests. Defaults to the platform's own. */
   fetch?: typeof fetch
+  /**
+   * Makes the request a timed request with a text body, or none, goes as,
+   * where the platform's `fetch` gives no answer until it has all of it
+   * (React Native). The deadline then covers only the wait for the answer
+   * to begin, and a body that keeps arriving is read to its end. None by
+   * default: such a request goes through `fetch`, as every other does.
+   */
+  timedRequest?: () => TimedRequest
   /** Makes the request a streamed call sends; the platform's `XMLHttpRequest` by default. */
   streamingRequest?: () => StreamingRequest
   passwordKdf?: PasswordKdf
@@ -4478,6 +4527,7 @@ export class TeamStationClient {
   private readonly doFetch: typeof fetch
   private readonly newStreamingRequest?: () => StreamingRequest
   private readonly deviceModel?: string
+  private readonly newTimedRequest?: () => TimedRequest
   private readonly passwordKdf?: PasswordKdf
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
@@ -4546,6 +4596,7 @@ export class TeamStationClient {
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
     this.deviceModel = options.deviceModel
+    this.newTimedRequest = options.timedRequest
     this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS
     this.onDeadlineMissed = options.onDeadlineMissed
   }
@@ -8126,6 +8177,49 @@ export class TeamStationClient {
       (options.deadline ?? method === 'GET') &&
       bytes == null &&
       (json == null || json.length <= UPLOAD_BODY_CHARS)
+    if (timed && this.newTimedRequest != null) {
+      let answer: { status: number; text: string }
+      try {
+        answer = await this.sendTimed(
+          this.newTimedRequest(),
+          method,
+          path,
+          headers,
+          json,
+          options.signal
+        )
+      } catch (caught: unknown) {
+        // The caller's own cancel is its own, never no signal.
+        if (caught instanceof Error && caught.name === 'AbortError')
+          throw caught
+        if (caught instanceof TimedOut) {
+          this.deadlineMissed()
+          // A refusal whose body stalled is still the server's answer.
+          if (
+            caught.status != null &&
+            (caught.status < 200 || caught.status > 299)
+          )
+            throw this.refusal(errorFrom(caught.status, ''))
+        }
+        this.offline = true
+        throw new HttpError(
+          'offline',
+          'Cannot reach TeamStation. Check your connection and try again.'
+        )
+      }
+      this.offline = false
+      if (
+        answer.status === 401 &&
+        !(method === 'POST' && path.startsWith('/auth/'))
+      )
+        this.onSessionRefused?.()
+      return this.answered(
+        answer.status >= 200 && answer.status <= 299,
+        answer.status,
+        answer.text,
+        cleaner
+      )
+    }
     let expired = false
     // The caller cancelled before the deadline passed: its own error.
     let cancelled = options.signal?.aborted === true
@@ -8207,6 +8301,12 @@ export class TeamStationClient {
         ? await bodyOf(response, this.requestDeadlineMs)
         : await response.text()
     } catch (caught: unknown) {
+      // The caller's own cancel, as the body arrives, is its own too.
+      if (
+        !(caught instanceof DeadlinePassed) &&
+        (cancelled || options.signal?.aborted === true)
+      )
+        throw caught
       if (caught instanceof DeadlinePassed) this.deadlineMissed()
       if (!response.ok) throw this.refusal(errorFrom(response.status, ''))
       this.offline = true
@@ -8215,9 +8315,18 @@ export class TeamStationClient {
         'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
-    if (!response.ok) throw this.refusal(errorFrom(response.status, text))
-    if (text === '') return cleaner(undefined)
+    return this.answered(response.ok, response.status, text, cleaner)
+  }
 
+  /** An answer's body, read: the refusal it says, or its JSON, cleaned. */
+  private answered<T>(
+    ok: boolean,
+    status: number,
+    text: string,
+    cleaner: Cleaner<T>
+  ): T {
+    if (!ok) throw this.refusal(errorFrom(status, text))
+    if (text === '') return cleaner(undefined)
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
@@ -8225,6 +8334,115 @@ export class TeamStationClient {
       throw new HttpError('internal', 'The server sent something unreadable')
     }
     return cleaner(parsed)
+  }
+
+  /**
+   * Sends a timed request over `xhr`: given up (`TimedOut`) once its answer
+   * has not begun within the deadline, or its body has stopped arriving for
+   * the deadline, and the request aborted, so nothing more of it is fetched.
+   * The caller's `signal` aborts it as its own (`AbortError`); a request
+   * that never left the device is a `TypeError`, as `fetch`'s is.
+   */
+  private async sendTimed(
+    xhr: TimedRequest,
+    method: string,
+    path: string,
+    headers: Record<string, string>,
+    json: string | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<{ status: number; text: string }> {
+    return await new Promise((resolve, reject) => {
+      let settled = false
+      let begun = false
+      let seen = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const settle = (
+        outcome: () => { status: number; text: string }
+      ): void => {
+        if (settled) return
+        settled = true
+        if (timer != null) clearTimeout(timer)
+        signal?.removeEventListener('abort', cancel)
+        try {
+          resolve(outcome())
+        } catch (error) {
+          reject(error)
+        }
+      }
+      const fail = (error: Error): void => {
+        settle(() => {
+          throw error
+        })
+      }
+      // From the send, and again from each piece of the body that arrives.
+      const wait = (): void => {
+        if (timer != null) clearTimeout(timer)
+        timer = setTimeout(() => {
+          fail(
+            new TimedOut(
+              begun
+                ? 'No body before the deadline'
+                : 'No answer before the deadline',
+              begun ? xhr.status : undefined
+            )
+          )
+          xhr.abort()
+        }, this.requestDeadlineMs)
+        ;(timer as { unref?: () => void }).unref?.()
+      }
+      const cancel = (): void => {
+        const error = new Error('The request was cancelled')
+        error.name = 'AbortError'
+        fail(error)
+        xhr.abort()
+      }
+      const begin = (): void => {
+        if (begun || xhr.status === 0) return
+        begun = true
+        wait()
+      }
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState >= 2) begin()
+      }
+      // A body still going up is the link working: its wait starts again,
+      // and the answer's starts once it has all gone.
+      if (xhr.upload != null)
+        xhr.upload.onprogress = () => {
+          if (!begun) wait()
+        }
+      xhr.onprogress = () => {
+        begin()
+        const length = xhr.responseText?.length ?? 0
+        if (length > seen) {
+          seen = length
+          wait()
+        }
+      }
+      xhr.onload = () => {
+        if (xhr.status === 0) fail(new TypeError('Network request failed'))
+        else
+          settle(() => ({ status: xhr.status, text: xhr.responseText ?? '' }))
+      }
+      xhr.onerror = () => {
+        fail(new TypeError('Network request failed'))
+      }
+      xhr.ontimeout = xhr.onerror
+      xhr.onabort = () => {
+        fail(new TypeError('Network request aborted'))
+      }
+      if (signal?.aborted === true) {
+        cancel()
+        return
+      }
+      signal?.addEventListener('abort', cancel)
+      xhr.open(method, `${this.baseUrl}${path}`)
+      // The session's cookie on the web, as `fetch`'s `include` sends it.
+      xhr.withCredentials = true
+      for (const [name, value] of Object.entries(headers))
+        xhr.setRequestHeader(name, value)
+      wait()
+      xhr.send(json)
+    })
   }
 
   /** A refusal, after telling `onUpdateRequired` of one this build is too old for. */

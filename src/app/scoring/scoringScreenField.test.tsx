@@ -1954,7 +1954,7 @@ describe('scoring screen field wiring', function () {
     const target = tagTargets(source.store.games.get('g1')!.currentPlay!)[0]
     const answers = [
       // Queued: the phone's revision, far longer than the server's.
-      { tag: 'queued tag', revision: localTagRevision(Date.now(), 0) },
+      { tag: 'queued tag', revision: localTagRevision(Date.now() * 1000) },
       // Sent directly afterwards: the server's own short revision.
       { tag: 'sent tag', revision: '8' }
     ]

@@ -923,6 +923,69 @@ describe('CachingClient', function () {
     )
   })
 
+  it('never sends a stored copy’s read again twice at once, however the signal flaps (3.harness-review.3, 4.harness-review.1)', async function () {
+    const net = server({ '/games/g1': { body: { ...gameFixture, id: 'g1' } } })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.game('g1')
+    const unheard = client.onStoredChanged('g1', () => undefined)
+    // No signal known: the copy answers, and its read behind it fails.
+    net.offline = true
+    await client.myRoles().catch(() => undefined)
+    await client.game('g1', { offlineFirst: true })
+    for (let tries = 0; tries < 20; tries++)
+      await new Promise(resolve => setTimeout(resolve, 2))
+    // Back, and the read again is held on a link that answers nothing.
+    net.offline = false
+    net.gate = new Promise<void>(() => undefined)
+    net.calls.length = 0
+    client.offline = false
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // The signal flaps while that read is out.
+    for (let flap = 0; flap < 3; flap++) {
+      client.offline = true
+      client.offline = false
+      await new Promise(resolve => setTimeout(resolve, 5))
+    }
+    expect(net.calls.filter(path => path === '/games/g1')).deep.equals([
+      '/games/g1'
+    ])
+    unheard()
+  })
+
+  it('knows a placeholder opponent seen only on a schedule page, so its roster answers at once with no signal (1.harness-review.10)', async function () {
+    const past = {
+      ...(upcomingGame('p1', 'tem_hawks', 'tem_ghost') as object),
+      awayTeamExternal: true
+    }
+    const net = server({
+      '/events?paged=1&when=past': { body: pageOf([past]) }
+    })
+    const client = clientOf(net.fetch)
+    client.openFor('usr_1')
+    await client.gamesPage({ when: 'past' })
+    // The placeholders are kept behind the page's answer, not before it.
+    await new Promise(resolve => setTimeout(resolve, 20))
+    // No signal known, and the link answers nothing.
+    net.offline = true
+    await client.myRoles().catch(() => undefined)
+    expect(client.offline).equals(true)
+    net.offline = false
+    net.gate = new Promise<void>(() => undefined)
+    const answer = await Promise.race([
+      client.roster('tem_ghost', { offlineFirst: true }).then(
+        () => 'answered',
+        (error: unknown) => (error as { code?: string }).code
+      ),
+      new Promise<string>(resolve =>
+        setTimeout(() => {
+          resolve('waited')
+        }, 100)
+      )
+    ])
+    expect(answer).equals('offline')
+  })
+
   it('reads ahead the games from the look-back on and what their page, scoring and Coach Game read, so each opens offline (Started games)', async function () {
     const at = (hours: number): string =>
       new Date(Date.now() + hours * 3_600_000).toISOString()

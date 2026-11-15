@@ -30,7 +30,6 @@ import {
   requestPasswordReset
 } from '../account/passwordReset'
 import { requireSignedInNodeAdmin } from '../admin/nodeAdministration'
-import { onePerson } from '../admin/people'
 import {
   createPasswordRecord,
   passwordMatches,
@@ -269,10 +268,12 @@ export function accountRoutes(
     '/me/account',
     withAsync(async (req, res) => {
       const userId = accountId(req)
-      // Read before the rows are emptied: a public picture's name does not
-      // say whose it is.
-      const pictures = await ownPictures(db, userId)
-      const emptied = await deleteAccount(db, userId)
+      // Read in the delete's own transaction, before the rows are emptied:
+      // a public picture's name does not say whose it is.
+      let pictures: string[] = []
+      const emptied = await deleteAccount(db, userId, undefined, found => {
+        pictures = found
+      })
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       clearSessionCookie(res, secureCookieFor(options.publicUrl))
       res.status(204).end()
@@ -578,20 +579,6 @@ export function accountRoutes(
     })
   )
   return router
-}
-
-/** The picture prefixes the person's rows hold, merged ones too. */
-async function ownPictures(
-  db: Kysely<Database>,
-  userId: string
-): Promise<string[]> {
-  const { userIds } = await onePerson(db, userId)
-  const rows = await db
-    .selectFrom('users')
-    .select('avatar_path')
-    .where('id', 'in', userIds)
-    .execute()
-  return rows.flatMap(row => (row.avatar_path == null ? [] : [row.avatar_path]))
 }
 
 /**
