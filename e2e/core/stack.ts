@@ -1,0 +1,503 @@
+import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
+import { createServer as createNetServer } from 'node:net'
+import { networkInterfaces, tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { Pool } from 'pg'
+
+import { type FaultProxy, startFaultProxy } from '../faults/proxy'
+import { checkStackId } from './attach'
+import {
+  baselineManifestPath,
+  runLocalFixture,
+  writeManifestFile
+} from './fixtures'
+import { startFront } from './front'
+import type { ServerError } from './invariants'
+import { ROOT } from './manifest'
+import { startPlacesStub } from './placesStub'
+import { BlockedError, HarnessError } from './result'
+import type { StackHandle } from './spec'
+
+export interface StackOptions {
+  id?: string
+  /** Bind where a phone can reach it. Every surface but desktop Chromium needs it. */
+  lan?: boolean
+  /** Start Metro with this stack's API, for a native app. */
+  native?: boolean
+  /** Which bundle to compile before the app asks, so a cold Metro is ready. */
+  platform?: 'ios' | 'android'
+  services: string[]
+  root?: string
+  /** Seeds `baseline` on this mailbox, so its accounts can sign in. */
+  mailbox?: string
+  /** Breaks the API this way, through a proxy between the front server and it. */
+  fault?: string
+  /** Appends each API 5xx here as JSON lines, for a process that did not start the stack. */
+  errorLog?: string
+}
+
+export interface RunningStack extends StackHandle {
+  id: string
+  dir: string
+  /** Where a native surface's Metro listens, on a stack that started one. */
+  metroPort?: number
+  stop: () => Promise<void>
+}
+
+export function lanAddress(interfaces = networkInterfaces()): string {
+  for (const rows of Object.values(interfaces)) {
+    for (const row of rows ?? []) {
+      if (row.family === 'IPv4' && !row.internal) return row.address
+    }
+  }
+  throw new HarnessError('This machine has no LAN address')
+}
+
+/** The port a debug iOS build probes for Metro after its saved location is cleared. */
+const PACKAGER_PORT = 8081
+
+async function waitForPackager(port: number): Promise<void> {
+  const deadline = Date.now() + 120000
+  while (Date.now() < deadline) {
+    try {
+      const reply = await fetch(`http://127.0.0.1:${port}/status`)
+      if ((await reply.text()).includes('packager-status:running')) return
+    } catch {
+      // Metro is still coming up.
+    }
+    await new Promise(resolve => setTimeout(resolve, 500))
+  }
+  throw new BlockedError('Metro did not start')
+}
+
+/** Compiles the app bundle before a phone asks, so the first screen is not a loader. */
+async function warmBundle(
+  port: number,
+  platform: 'ios' | 'android'
+): Promise<void> {
+  const url =
+    `http://127.0.0.1:${port}/index.bundle?platform=${platform}` +
+    '&dev=true&minify=false'
+  const reply = await fetch(url, { signal: AbortSignal.timeout(180000) })
+  if (!reply.ok) throw new BlockedError('Metro did not serve the bundle')
+  await reply.arrayBuffer()
+}
+
+export async function packagerPort(host = '127.0.0.1'): Promise<number> {
+  await new Promise<void>((resolve, reject) => {
+    const probe = createNetServer()
+    probe.once('error', () => {
+      reject(
+        new BlockedError(
+          `Metro needs port ${PACKAGER_PORT} so a cleared iOS launch can find the packager`
+        )
+      )
+    })
+    probe.listen(PACKAGER_PORT, host, () => {
+      probe.close(() => {
+        resolve()
+      })
+    })
+  })
+  return PACKAGER_PORT
+}
+
+export async function freePort(host = '127.0.0.1'): Promise<number> {
+  return await new Promise((resolve, reject) => {
+    const probe = createNetServer()
+    probe.once('error', reject)
+    probe.listen(0, host, () => {
+      const { port } = probe.address() as { port: number }
+      probe.close(() => {
+        resolve(port)
+      })
+    })
+  })
+}
+
+/** Builds the web app into `outDir` with `mediaOrigin` in its security policy. */
+export function buildWeb(
+  root: string,
+  outDir: string,
+  mediaOrigin: string
+): void {
+  const built = spawnSync(process.execPath, ['src/build.mjs'], {
+    cwd: root,
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      TS_WEB_OUT_DIR: outDir,
+      TS_MEDIA_ORIGINS: mediaOrigin
+    }
+  })
+  if (built.status !== 0) {
+    throw new HarnessError(`Web build failed: ${built.stderr}`)
+  }
+}
+
+function serverEnv(): NodeJS.ProcessEnv {
+  return { ...process.env, NODE_ENV: 'test' }
+}
+
+/**
+ * Waits for the API's own port to answer health. Not through the front server: a
+ * fault proxy there breaks `/api/v1/health` like every other API path.
+ */
+async function untilHealthy(url: string, proc: ChildProcess): Promise<void> {
+  const end = Date.now() + 60000
+  while (Date.now() < end) {
+    if (proc.exitCode != null) {
+      throw new HarnessError(`The API exited with ${proc.exitCode}`)
+    }
+    try {
+      const reply = await fetch(`${url}/api/v1/health`, {
+        signal: AbortSignal.timeout(5000)
+      })
+      if (reply.ok) return
+    } catch {
+      // Not listening yet.
+    }
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  throw new HarnessError('The API did not become healthy')
+}
+
+/** Appends each row pushed onto `errors` to `file` as it arrives. */
+function mirrorErrors(errors: ServerError[], file: string | undefined): void {
+  if (file == null) return
+  const push = errors.push.bind(errors)
+  errors.push = (...rows: ServerError[]): number => {
+    for (const row of rows) appendFileSync(file, `${JSON.stringify(row)}\n`)
+    return push(...rows)
+  }
+}
+
+/**
+ * Asks `child` to stop and waits for it to exit, killing it after `graceMs`, so
+ * the port it held is free when this returns.
+ */
+export async function stopProcess(
+  child: ChildProcess,
+  graceMs = 5000
+): Promise<void> {
+  if (child.pid == null || child.exitCode != null || child.signalCode != null)
+    return
+  const exited = new Promise<boolean>(resolve =>
+    child.once('exit', () => {
+      resolve(true)
+    })
+  )
+  const waited = async (ms: number): Promise<boolean> => {
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<boolean>(resolve => {
+      timer = setTimeout(() => {
+        resolve(false)
+      }, ms)
+    })
+    try {
+      return await Promise.race([exited, late])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  child.kill('SIGTERM')
+  if (await waited(graceMs)) return
+  child.kill('SIGKILL')
+  await waited(graceMs)
+}
+
+/**
+ * Runs every teardown step, last added first. One that fails does not skip
+ * the rest; what failed is reported once all have run.
+ */
+export async function runStops(
+  stops: Array<() => Promise<void> | void>
+): Promise<void> {
+  const failures: string[] = []
+  for (const fn of [...stops].reverse()) {
+    try {
+      await fn()
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error))
+    }
+  }
+  if (failures.length > 0) {
+    throw new HarnessError(
+      `The stack did not stop cleanly: ${failures.join('; ')}`
+    )
+  }
+}
+
+/**
+ * A scratch server on this machine: its own database, object store, Places stub, API
+ * and web build on one origin. Nothing here touches a seat.
+ */
+export async function startStack(options: StackOptions): Promise<RunningStack> {
+  // Server code loads only when a stack starts, so reading the suite stays free
+  // of its native addon and its configuration file.
+  const { testDatabaseUrl } = await import('../../src/migrate/testDatabase')
+  const { startFakeSpace } = await import('../../src/server/dev/fakeSpace')
+  const { publishPictureCatalog } =
+    await import('../../src/server/media/pictureCatalog')
+  const root = options.root ?? ROOT
+  const id = checkStackId(options.id ?? randomUUID().slice(0, 8))
+  const dir = join(tmpdir(), 'teamstation-e2e-stacks', id)
+  mkdirSync(dir, { recursive: true })
+  const host = options.lan === true ? lanAddress() : '127.0.0.1'
+  const stops: Array<() => Promise<void> | void> = []
+  const stop = async (): Promise<void> => {
+    try {
+      await runStops(stops.splice(0))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+  try {
+    const wantsApi = options.services.includes('api')
+    const wantsWeb = options.services.includes('web') || wantsApi
+
+    const storePort = await freePort(host)
+    const space = {
+      endpoint: `http://${host}:${storePort}`,
+      region: 'us-east-1',
+      bucket: 'e2e',
+      accessKeyId: 'e2e',
+      secretAccessKey: 'e2e-secret-key',
+      pathStyle: true
+    }
+    const store = await startFakeSpace({
+      space,
+      dir: join(dir, 'store'),
+      host,
+      port: storePort
+    })
+    stops.push(() => {
+      store.server.close()
+      store.server.closeAllConnections()
+    })
+
+    // A seat's dev Space already has the catalog that team creation reads.
+    if (wantsApi) {
+      await publishPictureCatalog(space, join(root, 'src/app/assets/sports'))
+    }
+
+    let webDir: string | undefined
+    if (wantsWeb) {
+      webDir = join(dir, 'web')
+      buildWeb(root, webDir, store.url)
+    }
+
+    const apiPort = await freePort()
+    const proxies: FaultProxy[] = []
+    // The proxies whose errors are this stack's: not the API's own, which
+    // the front server sits in front of and records already.
+    const recorded: FaultProxy[] = []
+    const addProxy = async (
+      target: string,
+      host_: string,
+      behindFront = false
+    ): Promise<FaultProxy> => {
+      const proxy = await startFaultProxy({
+        target,
+        fault: options.fault,
+        host: host_
+      })
+      proxies.push(proxy)
+      if (!behindFront) {
+        recorded.push(proxy)
+        mirrorErrors(proxy.errors, options.errorLog)
+      }
+      stops.push(async () => {
+        await proxy.close()
+      })
+      return proxy
+    }
+    const apiProxy =
+      options.fault == null
+        ? undefined
+        : await addProxy(`http://127.0.0.1:${apiPort}`, '127.0.0.1', true)
+    const front = await startFront({
+      webDir: webDir ?? dir,
+      apiPort: apiProxy?.port ?? apiPort,
+      host,
+      port: 0
+    })
+    mirrorErrors(front.errors, options.errorLog)
+    stops.push(() => {
+      front.server.close()
+      front.server.closeAllConnections()
+    })
+
+    if (wantsApi) {
+      const places = await startPlacesStub('127.0.0.1')
+      stops.push(() => {
+        places.server.close()
+        places.server.closeAllConnections()
+      })
+      const databaseName = `e2e_${id.replace(/-/g, '_')}`
+      const admin = new Pool({ connectionString: testDatabaseUrl })
+      try {
+        await admin.query(`create database ${databaseName}`)
+      } catch (error) {
+        await admin.end()
+        throw error
+      }
+      const databaseUrl = new URL(testDatabaseUrl)
+      databaseUrl.pathname = `/${databaseName}`
+      stops.push(async () => {
+        try {
+          await admin.query(
+            `drop database if exists ${databaseName} with (force)`
+          )
+        } finally {
+          await admin.end()
+        }
+      })
+      const origin = new URL(front.url)
+      writeFileSync(
+        join(dir, 'serverConfig.json'),
+        JSON.stringify({
+          databaseUrl: databaseUrl.toString(),
+          listenHost: '127.0.0.1',
+          listenPort: apiPort,
+          clusterWorkers: 1,
+          statsBuilder: false,
+          workDir: join(dir, 'work'),
+          mediaDir: join(dir, 'media'),
+          uploadsDir: join(dir, 'uploads'),
+          ffmpegPath: process.env.TS_FFMPEG ?? 'ffmpeg',
+          sessionSecret: 's'.repeat(32),
+          mediaSecret: 'm'.repeat(32),
+          serveMediaLocally: true,
+          testSettings: true,
+          primaryUrlOverride: origin.host,
+          corsOrigins: [front.url],
+          space,
+          googlePlaces: { apiKey: 'stub', baseUrl: places.url },
+          redis: {
+            url: process.env.TS_TEST_REDIS_URL ?? 'redis://127.0.0.1:6379/15',
+            prefix: `ts:e2e-${id}`,
+            caFile: ''
+          },
+          live: { enabled: false },
+          logRequests: true
+        })
+      )
+      const register = require.resolve('sucrase/register')
+      const migrated = spawnSync(
+        process.execPath,
+        ['-r', register, join(root, 'src/migrate/cli.ts')],
+        { cwd: dir, encoding: 'utf8', env: serverEnv() }
+      )
+      if (migrated.status !== 0) {
+        throw new HarnessError(`Migration failed: ${migrated.stderr}`)
+      }
+      const api = spawn(
+        process.execPath,
+        ['-r', register, join(root, 'src/server/index.ts')],
+        { cwd: dir, env: serverEnv(), stdio: 'ignore' }
+      )
+      stops.push(async () => {
+        await stopProcess(api)
+      })
+      await untilHealthy(`http://127.0.0.1:${apiPort}`, api)
+    }
+
+    let metroPort: number | undefined
+    if (options.native === true) {
+      // The API's address is inlined by Babel and cached by Metro, so an old one stays
+      // baked in without a reset.
+      // The iOS binary looks the packager up on 8081. A cleared launch drops any
+      // other address, so Metro has to be on that port or the app has no script.
+      metroPort = await packagerPort()
+      // A spec fixture has no app. Metro bundles the checkout that does.
+      const appRoot = existsSync(join(root, 'node_modules/.bin/react-native'))
+        ? root
+        : ROOT
+      const metro = spawn(
+        process.execPath,
+        [
+          'node_modules/.bin/react-native',
+          'start',
+          '--port',
+          String(metroPort),
+          '--no-interactive',
+          '--reset-cache'
+        ],
+        {
+          cwd: appRoot,
+          env: { ...process.env, TS_API_BASE_URL: `${front.url}/api/v1` },
+          stdio: 'ignore'
+        }
+      )
+      stops.push(async () => {
+        await stopProcess(metro)
+      })
+      await waitForPackager(metroPort)
+      if (options.platform != null)
+        await warmBundle(metroPort, options.platform)
+    }
+
+    // Waiting for the API to come up answers 502s that are nobody's failure.
+    front.errors.length = 0
+    for (const proxy of proxies) proxy.errors.length = 0
+    if (options.errorLog != null) writeFileSync(options.errorLog, '')
+
+    const manifestPath = baselineManifestPath({}, { kind: 'isolated', dir })
+    const { mailbox } = options
+    if (wantsApi && mailbox != null && manifestPath != null) {
+      writeManifestFile(
+        manifestPath,
+        runLocalFixture(root, dir, 'baseline', mailbox)
+      )
+    }
+
+    let origin = front.url
+    return {
+      id,
+      dir,
+      kind: 'isolated',
+      get origin() {
+        return origin
+      },
+      webDir,
+      adopt: async adopted => {
+        // The proxy listens where this stack does. A phone opens it, and the
+        // server it adopts may be only on loopback.
+        const proxy = await addProxy(adopted, host)
+        origin = proxy.url
+        // A native app's bundle names the front server, so with no API of its own the
+        // front server sends the app to what was adopted.
+        if (!wantsApi) front.retarget(proxy.port, host)
+        return proxy.url
+      },
+      baselineManifest: manifestPath,
+      metroPort,
+      seedWorld: async name => {
+        if (mailbox == null) {
+          throw new BlockedError(
+            'no test mailbox: set mailbox in the local settings'
+          )
+        }
+        return runLocalFixture(root, dir, name, mailbox)
+      },
+      serverErrors: async since =>
+        [front.errors, ...recorded.map(proxy => proxy.errors)]
+          .flat()
+          .filter(row => row.at >= since),
+      stop
+    }
+  } catch (error) {
+    await stop()
+    throw error
+  }
+}
