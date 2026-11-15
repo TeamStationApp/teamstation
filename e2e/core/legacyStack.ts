@@ -147,25 +147,25 @@ export async function refuseTakenPorts(ports: number[]): Promise<void> {
     )
 }
 
-/** Stops, by PID, whatever listens on `port`, and waits for the port to free. */
-async function stopListeners(port: number): Promise<void> {
+/** The PIDs listening on `port`, by lsof. */
+function portHolders(port: number): string[] {
   const found = spawnSync(
     '/usr/sbin/lsof',
     ['-t', `-iTCP:${port}`, '-sTCP:LISTEN'],
     { encoding: 'utf8' }
   )
-  const pids = found.stdout.split('\n').filter(line => /^\d+$/.test(line))
-  for (const pid of pids) {
-    try {
-      process.kill(Number(pid), 'SIGTERM')
-    } catch (error) {
-      // Gone between the listing and the signal.
-      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
-    }
-  }
+  return found.stdout.split('\n').filter(line => /^\d+$/.test(line))
+}
+
+/**
+ * Waits for `port` to free, and refuses to go on while something this stack
+ * did not start holds it: another agent's stack, or a script's own server,
+ * may have taken it, and is not this run's to stop.
+ */
+async function awaitFreePort(port: number): Promise<void> {
   const until = Date.now() + 20_000
   while (Date.now() < until) {
-    const left = await new Promise<boolean>(resolve => {
+    const held = await new Promise<boolean>(resolve => {
       const socket = connect(port, '127.0.0.1', () => {
         socket.destroy()
         resolve(true)
@@ -174,11 +174,12 @@ async function stopListeners(port: number): Promise<void> {
         resolve(false)
       })
     })
-    if (!left) return
+    if (!held) return
     await new Promise(resolve => setTimeout(resolve, 250))
   }
+  const holders = portHolders(port)
   throw new Error(
-    `port ${port} is still held after stopping ${pids.join(', ')}`
+    `port ${port} is held by ${holders.length > 0 ? holders.join(', ') : 'another process'}, which this stack did not start; stop it, or give the stack another port`
   )
 }
 
@@ -689,7 +690,15 @@ export async function startLegacyStack(
         if (api != null && api.exitCode == null && api.signalCode == null)
           return
         await stopChild(ingest)
-        await stopListeners(STACK_API_PORT)
+        // Only what this stack started: the dead API's own process group.
+        if (api?.pid != null && detached.has(api)) {
+          try {
+            process.kill(-api.pid, 'SIGTERM')
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+          }
+        }
+        await awaitFreePort(STACK_API_PORT)
         await startApi()
       },
       stop: async () => {
