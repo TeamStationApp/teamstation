@@ -35,7 +35,7 @@ import { stepHalfEnds } from './replayGaps'
  *     The final game's replay from its pill: the controls, the pitch pacing
  *     (each pitch held for the node's pitch delay, REPLAY_PITCH_MS),
  *     the first home run, pause and play, the box score's pitchers, the X,
- *     the imported game with nothing to replay, and the wide layout.
+ *     the imported game's own replay, and the wide layout.
  *
  *   REPLAY_SCENARIO=announcer   (the server's `speech` set)
  *     The announcer through the first half-inning: every sentence played as
@@ -88,7 +88,9 @@ import { stepHalfEnds } from './replayGaps'
  *     the box score back at the start) and playing, one sentence into the
  *     bottom of the 1st, two into the top of the 2nd and again within the
  *     words, paused, and after the end; the buttons' margins and the box
- *     score centred at both sizes and with the imported-innings note.
+ *     score centred at both sizes, and the game whose first innings were
+ *     imported with no imported-innings note (its imported plays carry
+ *     records).
  *     Writes rewind-notice.png, rewind-fade.mp4 and rewind-e2e.log.
  *
  *   REPLAY_SCENARIO=rewindLive
@@ -489,17 +491,19 @@ async function replay(m: Device): Promise<void> {
   const path = await evalJson<string>(m, 'return location.pathname')
   assert.equal(path, `/games/${FINAL}`)
 
-  // Nothing to replay: no pill, and the address shows the game instead.
+  // An imported game is given its records: its pill opens its replay, which
+  // steps through its pitches as the scored game's does.
   await openGame(m, IMPORTED)
-  assert.ok(!(await pillLabels(m)).includes('Replay'), 'imported has Replay')
+  assert.ok((await pillLabels(m)).includes('Replay'), 'imported has no Replay')
   await m.openBrowser({
     url: `${required('REPLAY_WEB_URL')}/games/${IMPORTED}/replay`
   })
-  await m.assertVisible({ text: 'Box score', timeout: 20000 })
+  await m.assertVisible({ id: 'replay-pause', timeout: 20000 })
   assert.equal(
     await evalJson<string>(m, 'return location.pathname'),
-    `/games/${IMPORTED}`
+    `/games/${IMPORTED}/replay`
   )
+  await m.tapOn({ id: 'replay-exit' })
 }
 
 /** The replay on a wide window: the box score in a column on the right. */
@@ -2198,8 +2202,9 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
     await m.detach()
   }
 
-  // R13 at a tablet's size, on the final game and on the game with
-  // imported innings and its note.
+  // R13 at a tablet's size, on the final game and on the game whose first
+  // innings were imported: posted before the scorer took over, they carry
+  // records, so it replays from its first play with no imported-innings note.
   const tablet = await attachWeb(daemon, '1024x1366', 'rewindTablet')
   try {
     await signInWeb(tablet, LEAGUE)
@@ -2211,11 +2216,8 @@ async function rewind(daemon: Parameters<typeof attachWeb>[0]): Promise<void> {
       note(
         `${gameId} at 1024: left gap ${measured.left}, right gap ${measured.right}, note ${JSON.stringify(measured.note)}`
       )
-      if (gameId === MIXED) {
-        assert.ok(measured.note != null, 'no imported-innings note')
-        assert.equal(measured.note.inColumn, false)
-        assert.equal(measured.note.align, 'center')
-      }
+      if (gameId === MIXED)
+        assert.equal(measured.note, null, 'an imported-innings note')
       const geometry = await evalJson<Geometry>(tablet, GEOMETRY)
       assert.deepEqual(geometry.rewind, geometry.pause)
     }

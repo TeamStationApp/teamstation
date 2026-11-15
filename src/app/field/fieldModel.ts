@@ -90,12 +90,28 @@ function middleInfield(side: 1 | -1): [number, number] {
   const x = fromX + (dx / length) * SHOULDER_LENGTH
   return [x, -Math.sqrt(DIRT_EDGE * DIRT_EDGE - x * x)]
 }
+/** Where a catcher crouches behind the plate. */
+export const CATCHER_SPOT: GroundPoint = { x: 0, z: 4 }
+
+/**
+ * Where the catcher is, or would crouch with nobody behind the plate (an
+ * imported game whose catcher no play names): the replay's card hangs there.
+ */
+export function catcherSpot(
+  players: ReadonlyArray<Pick<FieldPlayer, 'team' | 'label' | 'position'>>
+): GroundPoint {
+  return (
+    players.find(player => player.team === 'defense' && player.label === 'C')
+      ?.position ?? CATCHER_SPOT
+  )
+}
+
 export function createPlayers(): FieldPlayer[] {
   const [secondX, secondZ] = middleInfield(1)
   const [shortX, shortZ] = middleInfield(-1)
   const positions: Array<[string, string, number, number]> = [
     ['P', 'Pitcher', 0, -18.44],
-    ['C', 'Catcher', 0, 4],
+    ['C', 'Catcher', CATCHER_SPOT.x, CATCHER_SPOT.z],
     ['1B', 'First baseman', 24.17, -40.91],
     ['2B', 'Second baseman', secondX, secondZ],
     ['SS', 'Shortstop', shortX, shortZ],

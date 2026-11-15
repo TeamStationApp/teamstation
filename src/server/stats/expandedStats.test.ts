@@ -99,6 +99,20 @@ describe('expanded game statistics', function () {
     { type: 'pitch', call: 'C' },
     close
   ]
+  it('counts the pitches and strikes of an import that wrote only their codes', function () {
+    // Earlier imports wrote `code` and `call.code` and no isBall or isStrike.
+    const legacy = (code: string): Record<string, unknown> => ({
+      isPitch: true,
+      details: { code, call: { code } }
+    })
+    const result = lines([
+      play('single', {
+        playEvents: [legacy('B'), legacy('C'), legacy('F'), legacy('D')]
+      })
+    ])
+    expect(result.get(11)!.extra).includes({ pitches: 4, strikes: 3 })
+  })
+
   it('attributes recorded opening-PA pitches and GS to their actual pitchers', function () {
     const result = recorded(false, [
       { type: 'pitch', call: 'B' },

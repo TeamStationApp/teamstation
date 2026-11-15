@@ -10,17 +10,23 @@ export function isUnscoredGame(
 
 /**
  * How the Game page offers scoring: a game nobody has scored can be scored, a
- * game TeamStation is scoring — in progress, or final and open to correction —
- * can be taken up again, and anything else cannot.
+ * game TeamStation is scoring, and any game whose plays hold the records it
+ * replays from — scored here or imported, in progress, or final and open to
+ * correction — can be taken up again, and anything else cannot.
  */
 export function scoringEntry(
   game: Pick<
     GameDetail,
-    'linescore' | 'homeScore' | 'awayScore' | 'status' | 'scoringOwner'
+    | 'linescore'
+    | 'homeScore'
+    | 'awayScore'
+    | 'status'
+    | 'scoringOwner'
+    | 'replayable'
   >
 ): 'score' | 'continue' | null {
   if (game.status === 'cancelled') return null
-  if (game.scoringOwner === 'teamstation') return 'continue'
+  if (game.scoringOwner === 'teamstation' || game.replayable) return 'continue'
   if (game.status === 'final') return null
   return isUnscoredGame(game) ? 'score' : null
 }
