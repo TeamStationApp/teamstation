@@ -29,9 +29,10 @@ import {
  * brings them back after `seconds` with timestamps that carry on from where the stream
  * would have been. `{ discontinuity: true }` brings it back with timestamps from zero.
  *
- * When the ingest drops the connection itself, the publisher says so once, stops
- * ffmpeg and tries once to come back. An ingest that refuses (the camera was ended
- * on the server) leaves it down, and every later cut fails at once saying why.
+ * When the ingest drops the connection itself, or ffmpeg exits on its own, the
+ * publisher says so once, stops what is left and tries once to come back. An
+ * ingest that refuses (the camera was ended on the server), or an ffmpeg that
+ * cannot be started, leaves it down, and every later cut fails at once saying why.
  */
 
 export interface ChildLike {
@@ -48,7 +49,8 @@ export interface ChildLike {
   } | null
   stdio: unknown[]
   kill: (signal?: NodeJS.Signals) => unknown
-  on: (event: 'exit', listener: (code: number | null) => void) => unknown
+  /** `exit` with its code; `error` when it could not be started or signalled. */
+  on: (event: 'exit' | 'error', listener: (value: any) => void) => unknown
 }
 
 export interface PublisherDeps {
@@ -272,10 +274,22 @@ export class SyntheticPublisher {
       })
     }
     let gone = false
+    // Settled by either event: a spawn that failed may never exit.
     const exited = new Promise<void>(resolve => {
       child.on('exit', () => {
         gone = true
         resolve()
+        // An ffmpeg that dies on its own leaves the camera dead: as a lost connection.
+        if (this.leg?.child === child) this.lost(rtmp, 'ffmpeg exited')
+      })
+      child.on('error', (error: Error) => {
+        gone = true
+        resolve()
+        this.deps.log(`synthetic publisher: ffmpeg: ${error.message}`)
+        if (this.leg?.child === child) {
+          this.ended = `ffmpeg could not run: ${error.message}`
+          this.close(false).catch(() => undefined)
+        }
       })
     })
     const timer = this.deps.setInterval(
@@ -292,14 +306,16 @@ export class SyntheticPublisher {
   }
 
   /**
-   * The ingest closed this leg's connection, not a cut: said once, ffmpeg
-   * stopped, and one try to come back, which a refusal answers for good.
+   * The ingest closed this leg's connection, or its ffmpeg exited, not a cut:
+   * said once, the leg stopped, and one try to come back, which a refusal
+   * answers for good.
    */
-  private lost(rtmp: RtmpPublisher): void {
+  private lost(
+    rtmp: RtmpPublisher,
+    why = 'the ingest closed the connection'
+  ): void {
     if (this.leg?.rtmp !== rtmp || this.reopening != null) return
-    this.deps.log(
-      'synthetic publisher: the ingest closed the connection; reconnecting once'
-    )
+    this.deps.log(`synthetic publisher: ${why}; reconnecting once`)
     this.reopening = (async () => {
       await this.close(false)
       await this.deps.sleep(5000)
@@ -413,7 +429,7 @@ export class SyntheticPublisher {
     await this.reopening
     if (this.ended != null) {
       throw new Error(
-        `the synthetic camera is down: the ingest refused it (${this.ended})`
+        `the synthetic camera is down: ${this.ended.startsWith('ffmpeg') ? this.ended : `the ingest refused it (${this.ended})`}`
       )
     }
     if (this.leg == null)

@@ -119,10 +119,13 @@ interface FakeChild extends ChildLike {
   err: (data: Buffer) => void
   /** Fails a pipe the way a write to an ffmpeg that has gone does. */
   pipeError: (pipe: 'stdin' | 'audio') => void
+  /** Fails the child the way a spawn of a missing ffmpeg does. */
+  fail: (error: Error) => void
 }
 
 function fakeChild(exitOnEnd = true): FakeChild {
   const exits: Array<() => void> = []
+  const errors: Array<(error: Error) => void> = []
   let out: (data: Buffer) => void = () => {}
   let err: (data: Buffer) => void = () => {}
   const pipeListeners: Record<string, (error: Error) => void> = {}
@@ -161,10 +164,16 @@ function fakeChild(exitOnEnd = true): FakeChild {
       child.killed.push(String(signal))
       child.exit()
     },
-    on: (_event, listener) => {
-      exits.push(() => {
-        listener(0)
-      })
+    on: (event, listener) => {
+      if (event === 'error') errors.push(listener)
+      else {
+        exits.push(() => {
+          listener(0)
+        })
+      }
+    },
+    fail: error => {
+      for (const fn of errors) fn(error)
     },
     exit: () => {
       for (const fn of exits.splice(0)) fn()
@@ -382,6 +391,48 @@ describe('the synthetic publisher', function () {
       await new Promise(resolve => setImmediate(resolve))
   }
   const FINISHED = "This game's stream has already finished."
+
+  it('treats an ffmpeg that exits on its own as a lost connection, and comes back once', async function () {
+    const rig = harness()
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: 'ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    rig.children[0].exit()
+    await ticks()
+    expect(rig.logs).includes(
+      'synthetic publisher: ffmpeg exited; reconnecting once'
+    )
+    expect(rig.logs).includes('synthetic publisher: back on the ingest')
+    expect(rig.servers).length(2)
+    expect(rig.servers[0].socket.destroyed).equals(true)
+    expect(publisher.running).equals(true)
+    await publisher.stop()
+  })
+
+  it('stays down when ffmpeg cannot be started, without hanging its stop', async function () {
+    const rig = harness()
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: '/missing/ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    rig.children[0].fail(new Error('spawn /missing/ffmpeg ENOENT'))
+    await ticks()
+    expect(publisher.running).equals(false)
+    expect(publisher.down).equals(
+      'ffmpeg could not run: spawn /missing/ffmpeg ENOENT'
+    )
+    expect(rig.servers[0].socket.destroyed).equals(true)
+    expect(
+      await publisher.cut(5).then(
+        () => '',
+        (e: unknown) => (e as Error).message
+      )
+    ).match(/^the synthetic camera is down: .*ENOENT/)
+    await publisher.stop()
+  })
 
   it('opens nothing after a stop that came during a cut', async function () {
     const rig = harness()
