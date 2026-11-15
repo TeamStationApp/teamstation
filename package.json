@@ -148,7 +148,6 @@
     "coverage.e2e": "c8 --all --check-coverage --lines 90 --reporter=text --include 'e2e/core/**/*.ts' --include 'e2e/faults/**/*.ts' --exclude '**/*.test.ts' mocha --timeout 60000 --exit -r sucrase/register --extension ts --spec 'e2e/**/*.test.ts'"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^1.8.0",
     "@op-engineering/op-sqlite": "^18.2.5",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-clipboard/clipboard": "^1.16.3",
@@ -212,6 +211,7 @@
     "react-native-keyboard-controller": "1.22.8"
   },
   "devDependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@babel/core": "^7.29.7",
     "@babel/plugin-syntax-jsx": "^7.29.7",
     "@babel/plugin-syntax-typescript": "^7.29.7",
