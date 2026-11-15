@@ -20,11 +20,11 @@ export interface StreamingHandle extends AttachedHandle {
   api: string
   /** `user@host` this Mac reaches over SSH with its own key; nothing is forwarded. */
   ssh: string
-  /** The API's log on the droplet. */
+  /** The API's log on the stack's server. */
   serverLog: string
-  /** The HLS work directory on the droplet. */
+  /** The HLS work directory on the stack's server. */
   hlsRoot: string
-  /** The droplet's Postgres over TLS, open to the bench address only. */
+  /** A Postgres URL this Mac can reach. */
   databaseUrl: string
 }
 
@@ -43,10 +43,10 @@ export function requireStreamingHandle(
 }
 
 /**
- * The handle's database URL for node's `pg`, which reads `sslmode=require` as
- * full certificate verification. The droplet's Postgres has a self-signed
- * certificate, so the URL gets libpq's meaning of `require`: encrypted,
- * unverified. psql and other libpq clients take the handle's URL as it is.
+ * The handle's database URL for node's `pg`, with `sslmode=require` read as
+ * libpq reads it: encrypted, without verifying the certificate, as psql and
+ * other libpq clients take the handle's URL. `pg` alone would read it as
+ * full verification.
  */
 export function nodeDatabaseUrl(url: string): string {
   if (!/[?&]sslmode=require\b/.test(url) || /[?&]uselibpqcompat=/.test(url))
