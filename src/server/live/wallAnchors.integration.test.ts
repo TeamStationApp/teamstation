@@ -44,6 +44,7 @@ import { configureIngest, resetForTest } from './splitter'
 import {
   resumeScan,
   SCAN_FROM_START,
+  type ScanCursor,
   scanNewSegments,
   SEGMENTS_PER_SCAN,
   segmentWrittenAt
@@ -51,6 +52,19 @@ import {
 
 const START = 1_700_000_000_000
 const NOW = 1_800_000_000_000
+
+/**
+ * `scanNewSegments` on the test's clock alone: these files were written just
+ * now, on the real one, so their write times would place them instead.
+ */
+async function scan(
+  directory: string,
+  cursor?: ScanCursor,
+  now?: () => number,
+  limit?: number
+): ReturnType<typeof scanNewSegments> {
+  return await scanNewSegments(directory, cursor, now, limit, async () => null)
+}
 /** A clock stopped at `NOW`. */
 const atNow = (): number => NOW
 
@@ -82,7 +96,7 @@ describe('the wall clock of a live stream (U25)', function () {
   it('reads only listed segments, carries its cursor, and keeps one timeline across a reconnect', async function () {
     const live = join(dir, 'stamped')
     await mkdir(live)
-    expect(await scanNewSegments(live)).deep.equals({
+    expect(await scan(live)).deep.equals({
       points: [],
       cursor: SCAN_FROM_START,
       unreadable: []
@@ -94,7 +108,7 @@ describe('the wall clock of a live stream (U25)', function () {
     await writeFile(join(live, 'seg000003.m4s.tmp'), 'half')
     await writeFile(join(live, 'seg000009.m4s'), 'not listed')
 
-    const first = await scanNewSegments(live, undefined, atNow)
+    const first = await scan(live, undefined, atNow)
     expect(first.cursor.segments).equals(3)
     expect(first.cursor.startMs).equals(3000)
     expect(
@@ -110,7 +124,7 @@ describe('the wall clock of a live stream (U25)', function () {
     expect(first.points.every(point => point.source === 'sei')).equals(true)
 
     // Nothing new: nothing added, the cursor where it was.
-    const again = await scanNewSegments(live, first.cursor, atNow)
+    const again = await scan(live, first.cursor, atNow)
     expect(again).deep.equals({
       points: [],
       cursor: first.cursor,
@@ -125,7 +139,7 @@ describe('the wall clock of a live stream (U25)', function () {
       await readFile(join(live, 'master.m3u8'), 'utf8')
     )
     expect(playlist.segments[3].discontinuity).equals(true)
-    const second = await scanNewSegments(live, first.cursor, atNow)
+    const second = await scan(live, first.cursor, atNow)
     expect(second.cursor.segments).equals(playlist.segments.length)
     // Media time carries straight on from 3 s; the wall clock jumps by the
     // two seconds that never arrived.
@@ -145,10 +159,10 @@ describe('the wall clock of a live stream (U25)', function () {
     const live = join(dir, 'limited')
     await mkdir(live)
     await writeLive(stamped, live, { seconds: 3 })
-    const whole = await scanNewSegments(live, undefined, atNow)
-    const first = await scanNewSegments(live, undefined, atNow, 2)
+    const whole = await scan(live, undefined, atNow)
+    const first = await scan(live, undefined, atNow, 2)
     expect(first.cursor.segments).equals(2)
-    const rest = await scanNewSegments(live, first.cursor, atNow, 2)
+    const rest = await scan(live, first.cursor, atNow, 2)
     expect(rest.cursor).deep.equals(whole.cursor)
     expect([...first.points, ...rest.points]).deep.equals(whole.points)
     expect(SEGMENTS_PER_SCAN).within(2, 16)
@@ -158,7 +172,7 @@ describe('the wall clock of a live stream (U25)', function () {
     const live = join(dir, 'restamped-prefix')
     await mkdir(live)
     await writeLive(stamped, live, { seconds: 2 })
-    const first = await scanNewSegments(live, undefined, atNow)
+    const first = await scan(live, undefined, atNow)
     const playlistPath = join(live, 'master.m3u8')
     await writeFile(
       playlistPath,
@@ -168,7 +182,7 @@ describe('the wall clock of a live stream (U25)', function () {
       )
     )
     await writeLive(stamped, live, { fromSec: 4, seconds: 2, startNumber: 2 })
-    const second = await scanNewSegments(live, first.cursor, atNow, 1)
+    const second = await scan(live, first.cursor, atNow, 1)
     expect(second.points[0].mediaMs).equals(1900)
     const init = await readFile(join(live, 'init.mp4'))
     const listed = parseMediaPlaylist(await readFile(playlistPath, 'utf8'))
@@ -179,7 +193,7 @@ describe('the wall clock of a live stream (U25)', function () {
         placeSegmentOnTimeline(init, await readFile(path), 20)!
       )
     }
-    const third = await scanNewSegments(live, second.cursor, atNow)
+    const third = await scan(live, second.cursor, atNow)
     expect(third.points[0].mediaMs).equals(2900)
     expect(third.points[0].wallMs).equals(START + 5000)
   })
@@ -189,7 +203,7 @@ describe('the wall clock of a live stream (U25)', function () {
     await mkdir(live)
     await writeLive(plain, live, { seconds: 2 })
     // Both are found at one look; the second is not put at the first's moment.
-    const scanned = await scanNewSegments(live, undefined, atNow)
+    const scanned = await scan(live, undefined, atNow)
     expect(scanned.points).deep.equals([
       { mediaMs: 0, wallMs: NOW - 1000, source: 'arrival', corrected: true },
       { mediaMs: 1000, wallMs: NOW, source: 'arrival', corrected: true }
@@ -207,23 +221,19 @@ describe('the wall clock of a live stream (U25)', function () {
       reads += 1
       return ms
     }
-    const late = await scanNewSegments(live, undefined, clock(NOW + 5000))
+    const late = await scan(live, undefined, clock(NOW + 5000))
     expect(reads).equals(1)
     expect(late.points.map(point => point.wallMs)).deep.equals([NOW + 4000])
     // A prompt look after that late one: the next segment is put where the
     // one before it leaves off, not a second behind it.
     await writeLive(plain, live, { fromSec: 1, seconds: 1, startNumber: 1 })
-    const prompt = await scanNewSegments(live, late.cursor, clock(NOW + 5500))
+    const prompt = await scan(live, late.cursor, clock(NOW + 5500))
     expect(
       prompt.points.map(point => [point.mediaMs, point.wallMs])
     ).deep.equals([[1000, NOW + 5000]])
     // Across an outage the arrival moves on by the time that passed.
     await writeLive(plain, live, { fromSec: 2, seconds: 1, startNumber: 2 })
-    const after = await scanNewSegments(
-      live,
-      prompt.cursor,
-      clock(NOW + 30_000)
-    )
+    const after = await scan(live, prompt.cursor, clock(NOW + 30_000))
     expect(
       after.points.map(point => [point.mediaMs, point.wallMs])
     ).deep.equals([[2000, NOW + 29_000]])
@@ -280,7 +290,7 @@ describe('the wall clock of a live stream (U25)', function () {
     await mkdir(live)
     await writeLive(stamped, live, { seconds: 3 })
     await breakSegment(live, 'seg000001.m4s')
-    const scanned = await scanNewSegments(live, undefined, atNow)
+    const scanned = await scan(live, undefined, atNow)
     expect(scanned.cursor.segments).equals(3)
     expect(scanned.cursor.startMs).equals(3000)
     // No point for the damaged second: the one before runs on through it.
@@ -298,7 +308,7 @@ describe('the wall clock of a live stream (U25)', function () {
       /^seg000001\.m4s: MalformedBox: the trun box at byte \d+ runs past its end$/
     )
     // Passed over once: the next look starts after it.
-    expect(await scanNewSegments(live, scanned.cursor, atNow)).deep.equals({
+    expect(await scan(live, scanned.cursor, atNow)).deep.equals({
       points: [],
       cursor: scanned.cursor,
       unreadable: []
@@ -310,7 +320,7 @@ describe('the wall clock of a live stream (U25)', function () {
     await mkdir(live)
     await writeLive(plain, live, { seconds: 2 })
     await breakSegment(live, 'seg000000.m4s')
-    const scanned = await scanNewSegments(live, undefined, atNow)
+    const scanned = await scan(live, undefined, atNow)
     expect(scanned.points).deep.equals([
       { mediaMs: 0, wallMs: NOW - 1000, source: 'arrival', corrected: true },
       { mediaMs: 1000, wallMs: NOW, source: 'arrival', corrected: true }
@@ -323,7 +333,7 @@ describe('the wall clock of a live stream (U25)', function () {
     await mkdir(live)
     await writeLive(stamped, live, { seconds: 1 })
     await rm(join(live, 'init.mp4'))
-    const scanned = await scanNewSegments(live, undefined, atNow)
+    const scanned = await scan(live, undefined, atNow)
     expect(scanned.points.map(point => point.source)).deep.equals(['arrival'])
   })
 })
