@@ -286,7 +286,11 @@ if (serve) {
     // Overridable because two worktrees are often being served at once, and
     // the second one silently failing to bind is a confusing way to spend ten
     // minutes. `TS_API_BASE_URL` moves the API port to match.
-    port: Number(process.env.TS_SERVE_PORT ?? 8080)
+    port: Number(process.env.TS_SERVE_PORT ?? 8080),
+    // Loopback only: esbuild otherwise listens on every interface, and on a
+    // droplet that is its public address. A phone reaches the app through
+    // the end-to-end stack's own proxy, never this server directly.
+    host: '127.0.0.1'
   })
   console.log(`app on http://${hosts[0] ?? '127.0.0.1'}:${port}`)
   console.log(`talking to ${apiBaseUrl}`)

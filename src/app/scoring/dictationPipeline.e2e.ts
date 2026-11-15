@@ -1492,6 +1492,9 @@ describe('dictation, end to end', function () {
           gameId,
           'foulPopTagThird'
         )
+        // What the model sent, kept in the log: whether a fielder it was not
+        // told of comes from it or from the field.
+        console.log(`    foulPopTagThird: ${JSON.stringify(reply)}`)
         try {
           expect(reply.kind, JSON.stringify(reply)).equals('actions')
           await finishAtBat(page)

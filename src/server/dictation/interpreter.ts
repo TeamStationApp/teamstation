@@ -1285,6 +1285,16 @@ export class Interpretation {
         calls,
         said: written.length === 0 ? reply.said : ''
       })
+      // A question with one option has one answer: it is taken as the
+      // scorer's choice, rather than asked. "And it's a double steal" came
+      // back as "Which runners are stealing?" with the double steal its only
+      // option.
+      if (
+        typeof read !== 'number' &&
+        read.kind === 'ask' &&
+        read.options.length === 1
+      )
+        return await this.answer(0)
       if (typeof read !== 'number') return read
       // A ball in play sent without its result: asked once for the result,
       // if the words say how it ended.
