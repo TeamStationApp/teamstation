@@ -9,10 +9,11 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // install it. A master build then re-signs that IPA with the App Store
 // profile and uploads it to TestFlight. Other branches leave that stage
 // skipped. The Android release APK is compiled on Linux, then signed on the
-// node labelled android-signing, which provides teamstation-sign-release-apk,
-// and published from there. A master production build also compiles a Play
-// bundle, signs it there with teamstation-sign-release-aab and saves it for
-// Google Play. One platform failing leaves the other running.
+// node labelled android-signing with the release key, which this file reads
+// from the project's Mason secrets, and published from there. A master
+// production build also compiles a Play bundle, signs it there with the same
+// key and saves it for Google Play. One platform failing leaves the other
+// running.
 //
 // The `seat` parameter picks the server the app talks to. A development seat
 // N points the app at https://developN.teamstation.app. Left at `production`,
@@ -298,6 +299,7 @@ export function setup(m: Setup): void {
               timeout: '1h',
               publishes: [cameramanApp],
               buildNumbers: [cameramanApp],
+              secrets: [...RELEASE_SIGNING_SECRETS],
               run: signCameraman
             }
           ]
@@ -410,6 +412,7 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           timeout: '1h',
           publishes: [app],
           buildNumbers: [app],
+          secrets: [...RELEASE_SIGNING_SECRETS],
           run: signAndroid
         }
       ]
@@ -651,6 +654,84 @@ export const MAPS_KEY_CHECK = [
 const AAB_GLOB = 'android/app/build/outputs/bundle/release/*.aab'
 const PLAY_ARCHITECTURES = 'arm64-v8a,armeabi-v7a'
 
+/**
+ * The release key signs every Android APK and the Play bundle. Play App
+ * Signing holds the same key, so Play installs and sideloaded APKs update one
+ * another. Mason delivers the keystore file and its password only to the
+ * stages that declare these secrets.
+ */
+export const RELEASE_KEYSTORE_SECRET = 'teamstation-release.keystore'
+export const RELEASE_PASSWORD_SECRET = 'ANDROID_RELEASE_KEYSTORE_PASSWORD'
+export const RELEASE_SIGNING_SECRETS = [
+  RELEASE_KEYSTORE_SECRET,
+  RELEASE_PASSWORD_SECRET
+]
+const RELEASE_ALIAS = 'teamstation'
+// The start of the release certificate's SHA-256 fingerprint.
+const RELEASE_CERTIFICATE = 'b6107f04'
+
+const SIGNING_PRELUDE = [
+  'fail() { echo "$1" >&2; exit 1; }',
+  `[ -n "$TS_STORE_PASSWORD" ] || fail 'The ${RELEASE_PASSWORD_SECRET} secret is empty'`,
+  `[ -s "$TS_KEYSTORE" ] || fail 'The ${RELEASE_KEYSTORE_SECRET} secret file is missing'`
+]
+
+/** Fails unless `$report` names exactly one signer, the release certificate. */
+function certificateCheck(subject: string, extract: string): string[] {
+  return [
+    `digests="$(printf '%s\\n' "$report" | ${extract} | tr -d ':' | tr 'A-F' 'a-f')"`,
+    `[ "$(printf '%s\\n' "$digests" | grep -c .)" -eq 1 ] || fail '${subject} does not have exactly one signer'`,
+    `case "$digests" in ${RELEASE_CERTIFICATE}*) ;; *) fail '${subject} is not signed with the release certificate' ;; esac`,
+    `echo '${subject} is signed with the release certificate.'`
+  ]
+}
+
+/** Signs the one APK in `dir` with the release key and checks the signer. */
+export function signApkScript(dir: string): string {
+  return [
+    ...SIGNING_PRELUDE,
+    `set -- ${dir}/*.apk`,
+    `[ $# -eq 1 ] && [ -f "$1" ] || fail 'Expected one release APK to sign'`,
+    `tools="$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -n 1)"`,
+    `[ -n "$ANDROID_HOME" ] && [ -x "$tools"apksigner ] || fail 'No build-tools apksigner to sign the release APK with'`,
+    `"$tools"apksigner sign --ks "$TS_KEYSTORE" --ks-key-alias ${RELEASE_ALIAS} --ks-pass env:TS_STORE_PASSWORD --key-pass env:TS_STORE_PASSWORD "$1" || fail 'apksigner could not sign the release APK'`,
+    `report="$("$tools"apksigner verify --print-certs "$1")" || fail 'The signed release APK does not verify'`,
+    ...certificateCheck(
+      'The release APK',
+      "sed -n -E 's/^Signer #[0-9]+ certificate SHA-256 digest: *([0-9A-Fa-f]+).*/\\1/p'"
+    )
+  ].join('\n')
+}
+
+/**
+ * Signs the one Play bundle in `dir` with the release key. Gradle signs it
+ * with the debug key first, and Play refuses a bundle with two signers, so
+ * that signature comes out before the release key goes in.
+ */
+export function signAabScript(dir: string): string {
+  return [
+    ...SIGNING_PRELUDE,
+    `set -- ${dir}/*.aab`,
+    `[ $# -eq 1 ] && [ -f "$1" ] || fail 'Expected one release bundle to sign'`,
+    `signatures="$(unzip -Z1 "$1" | grep -E '^META-INF/[^/]+\\.(SF|RSA|DSA|EC)$')"`,
+    `[ -z "$signatures" ] || printf '%s\\n' "$signatures" | xargs zip -q -d "$1" || fail 'Could not remove the debug signature from the release bundle'`,
+    `jarsigner -keystore "$TS_KEYSTORE" -storepass:env TS_STORE_PASSWORD -keypass:env TS_STORE_PASSWORD -sigalg SHA256withRSA -digestalg SHA-256 "$1" ${RELEASE_ALIAS} || fail 'jarsigner could not sign the release bundle'`,
+    `report="$(keytool -printcert -jarfile "$1")" || fail 'keytool could not read the release bundle signer'`,
+    ...certificateCheck(
+      'The release bundle',
+      "sed -n -E 's/^[[:space:]]*SHA256: *([0-9A-Fa-f:]+).*/\\1/p'"
+    )
+  ].join('\n')
+}
+
+/** The keystore and password, for the signing command only. */
+function releaseSigningEnv(ctx: Stage): Record<string, string> {
+  return {
+    TS_KEYSTORE: ctx.secretFile(RELEASE_KEYSTORE_SECRET),
+    TS_STORE_PASSWORD: ctx.secret(RELEASE_PASSWORD_SECRET)
+  }
+}
+
 export async function compileAndroid(ctx: Stage): Promise<void> {
   await install(ctx)
   const app = runApp(ctx)
@@ -718,9 +799,9 @@ export async function compileAndroid(ctx: Stage): Promise<void> {
 
 export async function signAndroid(ctx: Stage): Promise<void> {
   await ctx.unstash('android-release')
-  await ctx.sh(
-    `"$HOME/.local/bin/teamstation-sign-release-apk" ${path.dirname(APK_GLOB)}`
-  )
+  await ctx.sh(signApkScript(path.dirname(APK_GLOB)), {
+    env: releaseSigningEnv(ctx)
+  })
   const apks = await ctx.fs.glob(APK_GLOB)
   const apk = apks[0]
   if (apk == null) throw new Error('No release APK was signed')
@@ -728,9 +809,9 @@ export async function signAndroid(ctx: Stage): Promise<void> {
   await ctx.artifacts.save('android-apk', apk)
   await ctx.publish({ app, platform: 'android', path: apk })
   if (app !== STABLE_APP) return
-  await ctx.sh(
-    `"$HOME/.local/bin/teamstation-sign-release-aab" ${path.dirname(AAB_GLOB)}`
-  )
+  await ctx.sh(signAabScript(path.dirname(AAB_GLOB)), {
+    env: releaseSigningEnv(ctx)
+  })
   const bundles = await ctx.fs.glob(AAB_GLOB)
   const bundle = bundles[0]
   if (bundle == null) throw new Error('No release bundle was signed')
@@ -1024,9 +1105,9 @@ export async function compileCameraman(ctx: Stage): Promise<void> {
 export async function signCameraman(ctx: Stage): Promise<void> {
   const app = fieldAppId(CAMERAMAN_APP, CAMERAMAN_DEVELOP_APP, ctx.run.branch)
   await ctx.unstash('cameraman-release')
-  await ctx.sh(
-    `"$HOME/.local/bin/teamstation-sign-release-apk" ${CAMERAMAN_APK_DIR}`
-  )
+  await ctx.sh(signApkScript(CAMERAMAN_APK_DIR), {
+    env: releaseSigningEnv(ctx)
+  })
   const apks = await ctx.fs.glob(`${CAMERAMAN_APK_DIR}/*.apk`)
   const apk = apks[0]
   if (apk == null) throw new Error('No Cameraman release APK was signed')
