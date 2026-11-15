@@ -367,6 +367,11 @@ export async function openWorld(
   }
 }
 
+/** One word to a POSIX shell, whatever it holds. */
+export function shellQuote(word: string): string {
+  return `'${word.replace(/'/g, "'\\''")}'`
+}
+
 /** Attaching and addressing bench devices for one run. */
 export interface DeviceKit {
   attachIos: (role: string) => Promise<any>
@@ -448,11 +453,12 @@ export function deviceKit(
           DEVELOP_APP
         ])
       } else {
+        // The device's shell reads the command: the link is one quoted word.
         await deps.run('adb', [
           '-s',
           id,
           'shell',
-          `am start -W -a android.intent.action.VIEW -d '${link}' ${DEVELOP_APP}`
+          `am start -W -a android.intent.action.VIEW -d ${shellQuote(link)} ${DEVELOP_APP}`
         ])
       }
       await new Promise(resolve => setTimeout(resolve, settleMs))

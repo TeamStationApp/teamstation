@@ -311,6 +311,10 @@ describe('the device kit', function () {
         ]
       ]
     ])
+    await kit.openIn('android', 'android')("teamstation://x?a='; reboot; '")
+    expect(ran.at(-1)![1][3]).equals(
+      `am start -W -a android.intent.action.VIEW -d 'teamstation://x?a='\\''; reboot; '\\''' ${DEVELOP_APP}`
+    )
     const shot = png(2, 2)
     expect(kit.saveShot('join-iphone.png', shot)).equals('join-iphone.png')
     expect(written).deep.equals([[join(dir, 'join-iphone.png'), shot]])
