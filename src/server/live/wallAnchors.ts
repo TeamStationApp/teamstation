@@ -70,14 +70,16 @@ export const SEGMENTS_PER_SCAN = 8
  * discontinuity, continues the one timeline.
  *
  * A segment with no stamped frame gives one `arrival` point: its start on the
- * playlist, at the moment it was found listed less its length. That moment
- * is read from `now` as soon as the playlist has been read, and not before:
- * a time taken earlier, ahead of a slow database or disk, would make a
- * segment listed meanwhile look as if it had arrived before it did. A point
- * is never earlier than the one before it plus the media time between them,
- * so segments found together, or a look that comes promptly after a slow
- * one, never run the timeline backwards. A directory with no playlist yet
- * gives nothing.
+ * playlist, at the moment its file was last written less its length — when
+ * its last frame came in. A segment whose write time cannot be read is timed
+ * from the look that found it listed, read from `now` as soon as the
+ * playlist has been read, and not before: a time taken earlier, ahead of a
+ * slow database or disk, would make a segment listed meanwhile look as if it
+ * had arrived before it did; and no write time is taken as later than that
+ * look. A point is never earlier than the one before it plus the media time
+ * between them, so segments found together, or a look that comes promptly
+ * after a slow one, never run the timeline backwards. A directory with no
+ * playlist yet gives nothing.
  *
  * A segment whose bytes cannot be read as a fragment, cut short or damaged,
  * is passed over and named in `unreadable`, and the scan goes on past it:
@@ -92,7 +94,9 @@ export async function scanNewSegments(
   directory: string,
   cursor: ScanCursor = SCAN_FROM_START,
   now: () => number = Date.now,
-  limit: number = SEGMENTS_PER_SCAN
+  limit: number = SEGMENTS_PER_SCAN,
+  /** When a segment's file was last written; null where that cannot be said. */
+  writtenAt: (path: string) => Promise<number | null> = segmentWrittenAt
 ): Promise<{
   points: StoredWallPoint[]
   cursor: ScanCursor
@@ -144,9 +148,19 @@ export async function scanNewSegments(
       ).placement
     }
   }
+  // First each segment's frames, in order: a placement carries from one
+  // segment to the next.
+  const read: Array<{
+    segment: PlaylistSegment
+    startMs: number
+    lengthMs: number
+    frames: ScannedFrame[]
+    failed: boolean
+  }> = []
   for (const [index, segment] of fresh.entries()) {
     const lengthMs = segment.durationSec * 1000
     let frames: ScannedFrame[] = []
+    let failed = false
     const track = await trackOf(segment)
     if (track != null) {
       const bytes = await readPart(join(directory, segment.uri))
@@ -167,29 +181,51 @@ export async function scanNewSegments(
         placement = scanned.placement
       } catch (error) {
         unreadable.push(`${segment.uri}: ${String(error)}`)
-        if (last != null) {
-          startMs += lengthMs
-          continue
-        }
+        failed = true
       }
     }
+    read.push({ segment, startMs, lengthMs, frames, failed })
+    startMs += lengthMs
+  }
+  // Then when each unstamped segment was written, asked for together rather
+  // than one after another; a stamped one needs none. One that cannot be said
+  // falls back to the look, as a missing file does.
+  const written = await Promise.all(
+    read.map(async row =>
+      row.frames.some(frame => frame.stamp != null)
+        ? null
+        : await writtenAt(join(directory, row.segment.uri)).catch(() => null)
+    )
+  )
+  for (const [index, row] of read.entries()) {
+    const { frames, lengthMs } = row
+    // A segment that could not be read is passed over once a stamp has been
+    // seen; before that it is placed by its arrival, as an unstamped one.
+    if (row.failed && last != null) continue
     const kept = thinStamps(frames, last)
     if (frames.some(frame => frame.stamp != null)) {
       points.push(...kept.map(point => ({ ...point, source: 'sei' as const })))
       last = kept.at(-1) ?? last
       if (last != null) latest = { mediaMs: last.mediaMs, wallMs: last.wallMs }
     } else {
-      const mediaMs = Math.round(startMs)
+      const mediaMs = Math.round(row.startMs)
+      // Its last frame arrived when the splitter last wrote it, which is
+      // anything up to a look before the look that found it listed. Timed
+      // from the look, every stream ran up to a second late, a different
+      // amount each — and since a point never goes behind the one before it,
+      // each stream's timeline settled at the latest of its looks: angles
+      // played side by side a second apart.
+      const writtenMs = written[index]
+      const arrivedAt = writtenMs == null ? seenAt : Math.min(writtenMs, seenAt)
       const wallMs = Math.round(
         Math.max(
-          seenAt - lengthMs,
+          arrivedAt - lengthMs,
           latest == null ? -Infinity : latest.wallMs + mediaMs - latest.mediaMs
         )
       )
       points.push({ mediaMs, wallMs, source: 'arrival', corrected: true })
       latest = { mediaMs, wallMs }
     }
-    startMs += lengthMs
   }
   return {
     points,
@@ -203,6 +239,12 @@ export async function scanNewSegments(
     },
     unreadable
   }
+}
+
+/** When the file at `path` was last written, or null when it cannot be read. */
+export async function segmentWrittenAt(path: string): Promise<number | null> {
+  const found = await stat(path).catch(() => undefined)
+  return found == null ? null : found.mtimeMs
 }
 
 /**
