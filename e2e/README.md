@@ -46,7 +46,7 @@ npm run e2e -- golden sync                                 # fetch master and ev
 npm run e2e -- golden rotate                               # retire history; dated branches keep old goldens
 ```
 
-`accept` pushes the PNG to the private store named by `goldenStore` and updates `goldens/manifest.json` in the working tree, which is what you commit. Review a golden change as that manifest diff, with the before and after in the handoff.
+`accept` pushes the PNG to the private store named by `goldenStore` and updates `goldens/manifest.json` in the working tree, which is what you commit. Review a golden change as that manifest diff, with the before and after in the pull request.
 
 ## The AI judge
 
