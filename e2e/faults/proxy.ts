@@ -8,6 +8,7 @@ import {
 import { connect } from 'node:net'
 import type { Duplex } from 'node:stream'
 
+import { sendReply, upstreamFailed } from '../core/forward'
 import type { ServerError } from '../core/invariants'
 
 /**
@@ -101,11 +102,13 @@ export async function startFaultProxy(
         if (status >= 500) record(req, status)
         const isJson = String(reply.headers['content-type']).includes('json')
         if (!alter || !isJson) {
-          res.writeHead(status, reply.headers)
-          reply.pipe(res)
+          sendReply(reply, res, status)
           return
         }
         const chunks: Buffer[] = []
+        reply.on('error', () => {
+          upstreamFailed(res)
+        })
         reply.on('data', (chunk: Buffer) => chunks.push(chunk))
         reply.on('end', () => {
           let body = Buffer.concat(chunks)
@@ -126,8 +129,7 @@ export async function startFaultProxy(
     )
     upstream.on('error', () => {
       record(req, 502)
-      res.writeHead(502)
-      res.end()
+      upstreamFailed(res)
     })
     req.pipe(upstream)
   }

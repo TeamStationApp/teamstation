@@ -8,6 +8,7 @@ import {
 import { connect } from 'node:net'
 import { extname, join, normalize } from 'node:path'
 
+import { sendReply, upstreamFailed } from './forward'
 import type { ServerError } from './invariants'
 
 /** The paths Caddy sends to the API on a seat. Everything else is the page. */
@@ -83,14 +84,12 @@ export async function startFront(options: {
         reply => {
           const status = reply.statusCode ?? 502
           if (status >= 500) record(req, status)
-          res.writeHead(status, reply.headers)
-          reply.pipe(res)
+          sendReply(reply, res, status)
         }
       )
       upstream.on('error', () => {
         record(req, 502)
-        res.writeHead(502)
-        res.end()
+        upstreamFailed(res)
       })
       req.pipe(upstream)
       return
