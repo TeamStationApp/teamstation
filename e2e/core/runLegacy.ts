@@ -4,6 +4,7 @@
 
 import { type ChildProcess, spawn } from 'node:child_process'
 import {
+  closeSync,
   existsSync,
   mkdirSync,
   openSync,
@@ -25,6 +26,10 @@ export interface LegacyRun {
   reason?: string
 }
 
+/**
+ * Starts `argv` in a process group of its own, so stopping it stops what it
+ * started too (`npx` runs mocha, which runs the script).
+ */
 function start(
   argv: string[],
   env: NodeJS.ProcessEnv,
@@ -32,10 +37,51 @@ function start(
   log: string
 ): ChildProcess {
   const out = openSync(log, 'a')
-  return spawn(argv[0], argv.slice(1), {
-    cwd,
-    env,
-    stdio: ['ignore', out, out]
+  try {
+    return spawn(argv[0], argv.slice(1), {
+      cwd,
+      env,
+      detached: true,
+      stdio: ['ignore', out, out]
+    })
+  } finally {
+    // The child has its own copy of the descriptor.
+    closeSync(out)
+  }
+}
+
+/**
+ * Stops `child`'s whole process group, SIGTERM then SIGKILL after `graceMs`,
+ * and waits for `child` to exit.
+ */
+export async function stopGroup(
+  child: ChildProcess,
+  graceMs = 10_000
+): Promise<void> {
+  if (child.pid == null) return
+  const pid = child.pid
+  const signal = (name: NodeJS.Signals): void => {
+    try {
+      process.kill(-pid, name)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error
+    }
+  }
+  if (child.exitCode != null || child.signalCode != null) {
+    // What it started may still hold a port.
+    signal('SIGKILL')
+    return
+  }
+  await new Promise<void>(resolve => {
+    const timer = setTimeout(() => {
+      signal('SIGKILL')
+    }, graceMs)
+    child.once('close', () => {
+      clearTimeout(timer)
+      signal('SIGKILL')
+      resolve()
+    })
+    signal('SIGTERM')
   })
 }
 
@@ -378,20 +424,30 @@ export async function runLegacy(
       }
     }
     const test = start(command.argv, childEnv, cwd, log)
+    let timedOut = false
     const timer =
       timeoutMs > 0
         ? setTimeout(() => {
-            test.kill('SIGTERM')
+            timedOut = true
+            stopGroup(test).catch(() => undefined)
           }, timeoutMs)
         : undefined
     const code = await exitOf(test)
     if (timer != null) clearTimeout(timer)
+    if (timedOut) {
+      return {
+        file,
+        status: 'failed',
+        exit: code,
+        reason: `timed out after ${Math.round(timeoutMs / 1000)}s`
+      }
+    }
     return {
       file,
       status: code === 0 ? 'passed' : 'failed',
       exit: code
     }
   } finally {
-    for (const server of servers) server.kill('SIGTERM')
+    for (const server of servers) await stopGroup(server)
   }
 }
