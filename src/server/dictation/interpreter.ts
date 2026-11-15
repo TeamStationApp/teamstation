@@ -28,7 +28,7 @@ import {
   type SaidRosterCommand
 } from '../../common/scoring/rosterCommands'
 import { DICTATION_VOCABULARY, heardAs } from '../../common/scoring/vocabulary'
-import { placeSections, placeTools } from './placeInstructions'
+import { placesCalled, placeSections, placeTools } from './placeInstructions'
 
 /**
  * Turns what the scorer said into scoring actions, through an LLM.
@@ -370,6 +370,85 @@ export const ASK_SCORER: OpenAiTool = {
       }
     }
   }
+}
+
+/**
+ * Rules given only to a sentence whose words call for them, in its game
+ * message, so every other sentence is read with the same prompt as before:
+ * each is a reading the model got wrong, and as a standing rule each moved
+ * how it read sentences it had nothing to do with.
+ */
+export const SENTENCE_RULES: ReadonlyArray<{
+  name: string
+  said: (transcript: string) => boolean
+  rule: string
+}> = [
+  {
+    name: 'A RUNNER WHO HOLDS',
+    said: transcript =>
+      /\b(?:holds?|held|stays?|stayed|holding|staying)\b/i.test(transcript),
+    rule: `- A runner who "holds", "stays" or is "held up" at a base ends there: send
+  his safe runnerMovement to that base after the result, or the hit scores
+  him. "Double to left center, and the runner on second holds at third" is
+  the double and runnerMovement of the "On second" runner to 3B, not out.`
+  },
+  {
+    name: 'A SWING ON A WILD PITCH',
+    said: transcript =>
+      /\b(?:wild pitch|passed ball)\b/i.test(transcript) &&
+      /\b(?:swing|swings|swinging|swung)\b/i.test(transcript),
+    rule: `- A swing said with a wild pitch or a passed ball — "but the batter's
+  swinging" — is pitch S, and the wild pitch stays; a steal on a wild pitch
+  is its advance, not baseRunning, and never a question. "Wild pitch, he
+  steals third, but the batter's swinging", runner on second, is pitch S,
+  then batteryEvent wild_pitch of the "On second" runner to 3B.`
+  },
+  {
+    name: 'A FIELDER AND NO PLACE',
+    // A ball in the air a named fielder took, with no part of the field said.
+    said: transcript => {
+      const named =
+        /\b(?:pitcher|catcher|(?:first|second|third) baseman|shortstop|(?:left|center|right) fielder)\b/i
+      const inTheAir =
+        /\b(?:fly|flies|flied|pop|pops|popped|popup|liner|lines|lined|caught|catch)\b/i
+      const place =
+        /\b(?:left|right|center|centre|middle|gap|alley|line|corner|hole|side)\b/i
+      const withoutFielders = transcript.replace(
+        /\b(?:left|center|right) fielder\b/gi,
+        'fielder'
+      )
+      // A sentence that says how deep is taught its depth instead.
+      return (
+        named.test(transcript) &&
+        inTheAir.test(transcript) &&
+        !placesCalled(transcript).ball &&
+        !place.test(withoutFielders.replace(/\bline drive\b/gi, 'liner'))
+      )
+    },
+    rule: `- A fielder the scorer names with no part of the field: leave direction
+  and depth off; the game puts the ball where he plays. Never invent a
+  direction. "Flies out to the pitcher" is trajectory fly_ball, the pitcher,
+  and result field_out with outBy catch, with no direction. A place he does
+  say still wins.`
+  },
+  {
+    name: "A FIELDER'S CHOICE AND NO KIND OF BALL",
+    said: transcript =>
+      /\bfielder['’]?s? choice\b/i.test(transcript) &&
+      !/\b(?:ground|grounder|roller|chopper|hopper|liner|line drive|fly|flies|pop|bunt|dribbler)/i.test(
+        transcript
+      ),
+    rule: `- "Fielder's choice, runner out at second" names no kind of ball: it is
+  ballInPlay with contact swing and no trajectory, result fielders_choice,
+  and the "On first" runner out at 2B.`
+  }
+]
+
+/** The sentence rules a sentence's words call for, each after a blank line. */
+export function sentenceRules(transcript: string): string {
+  return SENTENCE_RULES.filter(rule => rule.said(transcript))
+    .map(rule => `\n\n${rule.name}\n${rule.rule}`)
+    .join('')
 }
 
 const CHOICE_INSTRUCTIONS = `- Preserve every spoken throw on a fielder's choice, including late throws.
@@ -1192,7 +1271,7 @@ export class Interpretation {
       !(choiceRules !== '' && /\bthr(?:ows?|ew|own)\b/i.test(transcript))
         ? `\n\nBASE OUTS AND THE THIRD OUT\n${BASE_OUT_INSTRUCTIONS}`
         : ''
-    const game = `${gamePrompt(context)}${choiceRules}${baseOutRules}${placeSections(transcript)}`
+    const game = `${gamePrompt(context)}${choiceRules}${baseOutRules}${placeSections(transcript)}${sentenceRules(transcript)}`
     this.players = {
       ids: taggedIds(context),
       fielding: fieldingIds(context)

@@ -11,6 +11,12 @@ import { namesPitchType } from '../../common/scoring/pitchType'
  */
 /** Where a batted ball and an uncaught foul went. */
 export const BALL_PLACE_INSTRUCTIONS = `WHERE THE BALL WENT
+- Set trajectory only from a word for how the ball travelled: ground_ball
+  for a grounder, roller, hopper or dribbler; chopper for a chopper;
+  line_drive for a liner, line drive or rope; fly_ball for a fly, can of
+  corn, bloop, flare or loop; popup for a pop or popup. With none, leave
+  trajectory off: "Single to deep right center" has no trajectory. A run a
+  hit "drives in" is not a line drive.
 - How far a ball in play went is ballInPlay depth, when the words say it:
   shy_of_base, dribbler, infield, past_base, bloop, shallow, medium, deep,
   warning_track or wall. A distance said in feet is distanceFeet instead.
@@ -79,8 +85,18 @@ export const BALL_PLACE_INSTRUCTIONS = `WHERE THE BALL WENT
   "Slow roller short of third, he can't make the play, single." is depth
   shy_of_base, result single.
 - bloop: just behind the infield, a short fly that falls in. A bloop, a
-  blooper, a Texas leaguer, a flare, a dying quail, a duck snort, a ball in
-  no-man's land.
+  blooper, a Texas leaguer, a flare, a dying quail, a duck snort, a loop, a
+  looper, a looping fly, a ball in no-man's land.
+  "Loop single to center." is trajectory fly_ball, depth bloop, direction
+  center, result single.
+  "A looper to right, it falls in." is trajectory fly_ball, depth bloop,
+  direction right, result single.
+  "He loops one into center for a single." is trajectory fly_ball, depth
+  bloop, direction center, result single.
+  "Looped into right, it drops." is trajectory fly_ball, depth bloop,
+  direction right, result single.
+  "Looping fly to left, it drops." is trajectory fly_ball, depth bloop,
+  direction left, result single.
   "Bloop single to center." is trajectory fly_ball, depth bloop, direction
   center, result single.
   "A blooper to right, falls in for a hit." is depth bloop, direction right,
@@ -392,6 +408,8 @@ export const PLACE_KEYWORDS: readonly string[] = [
   'flare',
   'dying quail',
   'duck snort',
+  'loop',
+  'looper',
   "no-man's land",
   'shallow',
   'short center',
@@ -468,9 +486,28 @@ export const PLACE_KEYWORDS: readonly string[] = [
   'something soft'
 ]
 
-/** Words that say where a ball in play or a foul went. */
+/**
+ * A loop, a looper and a looping fly, matched as whole words: as a prefix,
+ * "loop" would also be "loops the lineup". The verb — "loops one into
+ * center", "looped into short right" — counts only before a ball or field
+ * word a few words on.
+ */
+const LOOP_WORDS: ReadonlySet<string> = new Set([
+  'loop',
+  'looper',
+  'looping fly'
+])
+const LOOP_VERB =
+  "\\bloop(?:s|ed)\\b(?=(?:\\W+[\\w'-]+){0,3}?\\W+(?:single|double|fly|ball|hit|left|center|right|field|outfield|shallow|infield)\\b)"
+const LOOP_SAID = new RegExp(
+  [...[...LOOP_WORDS].map(word => `\\b${word}\\b`), LOOP_VERB].join('|'),
+  'i'
+)
+/** Words that say where a ball in play or a foul went, read as prefixes. */
 const BALL_WORDS: readonly string[] = [
-  ...Object.values(DEPTH_WORDS).flat(),
+  ...Object.values(DEPTH_WORDS)
+    .flat()
+    .filter(word => !LOOP_WORDS.has(word)),
   'shy of',
   'short of',
   'foul',
@@ -527,7 +564,10 @@ export function placesCalled(transcript: string): {
   pitch: boolean
   ball: boolean
 } {
-  return { pitch: pitchSaid(transcript), ball: BALL_SAID.test(transcript) }
+  return {
+    pitch: pitchSaid(transcript),
+    ball: BALL_SAID.test(transcript) || LOOP_SAID.test(transcript)
+  }
 }
 
 /**

@@ -15,6 +15,7 @@ import {
   settleBetween,
   stealsByBase
 } from './dictatedCompletion'
+import { fielderSpot } from './dictatedGeometry'
 import { gameFixture } from './isUnscoredGame.test'
 import { atRest, initialScoringState, scoringReducer } from './scoringMachine'
 import { playerRef } from './scoringSelectors'
@@ -395,15 +396,17 @@ describe('a dictated sentence finishes the play', function () {
   })
 
   describe('fills in what a sentence leaves to be assumed', function () {
-    it('makes a hit with no trajectory a line drive, landing where it was sent', function () {
-      const [inPlay] = playDefaults(game().session, [
-        { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
-        { type: 'result', eventType: 'single' }
-      ])
-      expect(inPlay).deep.include({
-        trajectory: 'line_drive',
-        direction: 'left_center'
-      })
+    it('leaves a hit with no trajectory word without one, landing where it was sent', function () {
+      const [inPlay] = playDefaults(
+        game().session,
+        [
+          { type: 'ballInPlay', contact: 'swing', direction: 'left_center' },
+          { type: 'result', eventType: 'single' }
+        ],
+        'Single to left center.'
+      )
+      expect(inPlay).deep.include({ direction: 'left_center' })
+      expect(inPlay).not.have.property('trajectory')
       const { location } = inPlay as { location: { x: number; z: number } }
       expect(
         Math.round((Math.atan2(location.x, -location.z) * 180) / Math.PI)
@@ -420,6 +423,73 @@ describe('a dictated sentence finishes the play', function () {
         { type: 'result', eventType: 'double' }
       ]
       expect(playDefaults(game().session, said)).deep.equals(said)
+    })
+
+    it("takes a hit's trajectory from the words: a liner, or a bloop in the air", function () {
+      type InPlay = Extract<ScoringAction, { type: 'ballInPlay' }>
+      const hit = (
+        transcript: string,
+        ball: Partial<InPlay> = {}
+      ): ScoringAction => {
+        const inPlay: InPlay = {
+          type: 'ballInPlay',
+          contact: 'swing',
+          direction: 'center',
+          ...ball
+        }
+        return playDefaults(
+          game().session,
+          [inPlay, { type: 'result', eventType: 'single' }],
+          transcript
+        )[0]
+      }
+      for (const said of [
+        'Line drive single to center.',
+        'A liner to center, single.',
+        'A drive to center, single.',
+        'He ropes one to center for a single.'
+      ])
+        expect(hit(said), said).deep.include({ trajectory: 'line_drive' })
+      expect(hit('Single to deep right center.')).not.have.property(
+        'trajectory'
+      )
+      // A loop is a bloop, and a bloop is in the air.
+      expect(hit('Loop single to center.')).deep.include({
+        trajectory: 'fly_ball',
+        depth: 'bloop'
+      })
+      expect(
+        hit('Loop single to center field.', { trajectory: 'line_drive' })
+      ).deep.include({ trajectory: 'fly_ball', depth: 'bloop' })
+      // A line drive the words say stays one, bloop or not.
+      expect(
+        hit('A line drive bloop to center, single.', {
+          trajectory: 'line_drive'
+        })
+      ).deep.include({ trajectory: 'line_drive' })
+      // The run a hit drives in is no liner.
+      for (const said of [
+        'Single to center, drives in Casey.',
+        'Single to center, drives home Casey.',
+        'Single to center, drives two in.',
+        'Single to center, drives him home.',
+        'Single to center and it drives in.'
+      ])
+        expect(hit(said), said).not.have.property('trajectory')
+      expect(
+        hit('Bloop single to center, drives home a run.', {
+          trajectory: 'line_drive'
+        })
+      ).deep.include({ trajectory: 'fly_ball' })
+      expect(
+        hit('Bloop single to center, drives in two.', {
+          trajectory: 'line_drive'
+        })
+      ).deep.include({ trajectory: 'fly_ball' })
+      // Any other trajectory the model sent is its own.
+      expect(
+        hit('Single to center.', { trajectory: 'ground_ball' })
+      ).deep.include({ trajectory: 'ground_ball' })
     })
 
     it('makes a caught foul a caught pop-up in foul territory', function () {
@@ -2748,13 +2818,14 @@ describe('a dictated double play', function () {
         fielders: [SS, FIRST_BASEMAN]
       }
     ]
-    expect(
-      playDefaults(
-        game({ first: RUNNER }).session,
-        liner,
-        'Line drive to short, doubled off first, double play.'
-      )
-    ).deep.equals(liner)
+    // Kept as sent, the catch placed where the shortstop plays.
+    const [caughtBy, ...rest] = playDefaults(
+      game({ first: RUNNER }).session,
+      liner,
+      'Line drive to short, doubled off first, double play.'
+    )
+    expect(caughtBy).deep.equals({ ...liner[0], location: fielderSpot('SS') })
+    expect(rest).deep.equals(liner.slice(1))
     const twoOut = game({ first: RUNNER })
     twoOut.session.liveData.linescore.outs = 2
     expect(
@@ -2877,7 +2948,487 @@ describe('strike three in a sentence', function () {
   })
 })
 
+describe('a ball a named fielder took, with no place said', function () {
+  const PITCHER = 10
+  const CATCHER = 11
+  const caught: ScoringAction = {
+    type: 'result',
+    eventType: 'field_out',
+    outBy: 'catch'
+  }
+  const fly = (fielder: number, extra: object = {}): ScoringAction => ({
+    type: 'ballInPlay',
+    contact: 'swing',
+    trajectory: 'fly_ball',
+    fielder,
+    direction: 'center',
+    ...extra
+  })
+  const landing = (actions: ScoringAction[]): { x: number; z: number } => {
+    const inPlay = actions.find(action => action.type === 'ballInPlay')
+    if (inPlay?.type !== 'ballInPlay' || inPlay.location == null)
+      throw new Error(JSON.stringify(actions))
+    return inPlay.location
+  }
+
+  it('comes down at the mound for the pitcher, though the model sent center', function () {
+    const actions = playDefaults(
+      game().session,
+      [fly(PITCHER), caught],
+      'Fly out to the pitcher'
+    )
+    expect(landing(actions)).deep.equals({ x: 0, z: -18.44 })
+    expect(actions[0]).not.have.property('direction')
+    const state = settle(
+      sayAs('Fly out to the pitcher', game(), fly(PITCHER), caught)
+    )
+    const play = state.session.liveData.plays.allPlays.at(-1)
+    expect(
+      play?.runners.flatMap(runner =>
+        (runner.credits ?? []).map(c => `${c.credit} ${c.player?.id}`)
+      )
+    ).deep.equals([`f_putout ${PITCHER}`])
+    nothingToTap(state)
+  })
+
+  it('comes down at the mound when the model also sent a depth the words do not say', function () {
+    for (const depth of ['infield', 'shallow'] as const)
+      expect(
+        landing(
+          playDefaults(
+            game().session,
+            [fly(PITCHER, { depth }), caught],
+            'Flies out to the pitcher'
+          )
+        ),
+        depth
+      ).deep.equals({ x: 0, z: -18.44 })
+    expect(
+      landing(
+        playDefaults(
+          game().session,
+          [fly(PITCHER, { trajectory: 'line_drive' }), caught],
+          'Line drive caught by the pitcher'
+        )
+      )
+    ).deep.equals({ x: 0, z: -18.44 })
+  })
+
+  it("comes down at an infielder's spot when the model also sent a depth", function () {
+    expect(
+      landing(
+        playDefaults(
+          game().session,
+          [fly(SS, { depth: 'shallow' }), caught],
+          'Flies out to the shortstop'
+        )
+      ).x
+    ).closeTo(-10.92, 0.1)
+  })
+
+  it("comes down just in front of the plate for the catcher's pop", function () {
+    const actions = playDefaults(
+      game().session,
+      [fly(CATCHER, { trajectory: 'popup' }), caught],
+      'Pop fly caught by the catcher'
+    )
+    expect(landing(actions)).deep.equals({ x: 0, z: -4 })
+  })
+
+  it("comes down at an outfielder's own spot", function () {
+    expect(
+      landing(
+        playDefaults(
+          game().session,
+          [fly(LF), caught],
+          'Flies out to the left fielder'
+        )
+      )
+    ).deep.equals({ x: -44, z: -69 })
+  })
+
+  it('places a ball the model sent with only its fielder, as the prompt asks', function () {
+    const bare = (
+      fielder: number,
+      trajectory: 'fly_ball' | 'popup'
+    ): { x: number; z: number } =>
+      landing(
+        playDefaults(
+          game().session,
+          [
+            { type: 'ballInPlay', contact: 'swing', trajectory, fielder },
+            caught
+          ],
+          'Caught.'
+        )
+      )
+    expect(bare(PITCHER, 'fly_ball')).deep.equals({ x: 0, z: -18.44 })
+    expect(bare(SS, 'popup').x).lessThan(0)
+    // A placeholder on the plate is no place either.
+    expect(
+      landing(
+        playDefaults(
+          game().session,
+          [fly(PITCHER, { location: { x: 0, z: 0 } }), caught],
+          'Fly out to the pitcher.'
+        )
+      )
+    ).deep.equals({ x: 0, z: -18.44 })
+  })
+
+  it('leaves a hit past the fielder the model named its direction', function () {
+    const [inPlay] = playDefaults(
+      game().session,
+      [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'ground_ball',
+          fielder: SS,
+          direction: 'left'
+        },
+        { type: 'result', eventType: 'single' }
+      ],
+      'Ground ball single past the shortstop.'
+    )
+    expect(inPlay).deep.include({ direction: 'left' })
+  })
+
+  it('reads "right" beside the plate or a fielder, and a side retired, as no place', function () {
+    for (const said of [
+      'Pop up right behind the mound, the pitcher has it.',
+      'Popped up right over the plate, the pitcher has it.',
+      'Fly out to the pitcher, two left on base.',
+      'Fly out to the pitcher, and he retires the side.',
+      'Fly out to the pitcher, the runner on first left early.',
+      'Fastball down the middle, he pops it up to the pitcher.',
+      'Slider on the outside corner, flies out to the pitcher.',
+      'Paints the corner, then a fly out to the pitcher.'
+    ])
+      expect(
+        landing(playDefaults(game().session, [fly(PITCHER), caught], said)),
+        said
+      ).deep.equals({ x: 0, z: -18.44 })
+  })
+
+  it('reads "right back to" and "right in front of" as no side', function () {
+    expect(
+      landing(
+        playDefaults(
+          game().session,
+          [
+            fly(PITCHER, { trajectory: 'line_drive', direction: 'right' }),
+            caught
+          ],
+          'Line drive right back to the pitcher'
+        )
+      )
+    ).deep.equals({ x: 0, z: -18.44 })
+    expect(
+      landing(
+        playDefaults(
+          game().session,
+          [fly(CATCHER, { trajectory: 'popup' }), caught],
+          'Pop up right in front of the plate, the catcher has it'
+        )
+      )
+    ).deep.equals({ x: 0, z: -4 })
+  })
+
+  it('keeps a place the words say', function () {
+    for (const [said, direction] of [
+      ['Fly out to left center, caught by the center fielder', 'left_center'],
+      ['Single down the line, the third baseman dives', 'left'],
+      ['Fly out to the left fielder in left field', 'left'],
+      ['Ground ball up the middle, the pitcher knocks it down', 'center'],
+      ['Fly out to the right fielder in the corner', 'right'],
+      ['Pop fly toward the line, the first baseman has it', 'right'],
+      ['Fly out to left on the run, the center fielder makes the catch', 'left']
+    ] as const) {
+      const [inPlay] = playDefaults(
+        game().session,
+        [fly(PITCHER, { direction }), caught],
+        said
+      )
+      expect(inPlay, said).deep.include({ direction })
+    }
+  })
+
+  it("places an infield pop by the depth the words say, on its fielder's bearing", function () {
+    const [inPlay] = playDefaults(
+      game().session,
+      [
+        {
+          type: 'ballInPlay',
+          contact: 'swing',
+          trajectory: 'popup',
+          fielder: THIRD_BASEMAN,
+          depth: 'infield'
+        },
+        caught
+      ],
+      'Infield pop to the third baseman, caught.'
+    )
+    expect(inPlay).deep.include({ depth: 'infield' })
+    expect(inPlay).not.have.property('direction')
+  })
+})
+
+describe('a swing on a wild pitch', function () {
+  it('is a swinging strike and the wild pitch moves the runner, with nothing asked', function () {
+    const state = settle(
+      sayAs(
+        "Wild pitch, he steals third, but the batter's swinging",
+        game({ second: 6 }),
+        { type: 'pitch', call: 'S' },
+        {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 6, to: '3B' }]
+        }
+      )
+    )
+    const linescore = state.session.liveData.linescore
+    expect([linescore.balls, linescore.strikes]).deep.equals([0, 1])
+    expect(bases(state)).deep.equals([null, null, 6])
+    expect(state.dictationQuestion).equals(undefined)
+    expect(state.dictation?.problem).equals(undefined)
+  })
+})
+
 describe('a runner who holds', function () {
+  const holdSaid =
+    'Double to left center, and the runner on second holds at third'
+  const toLeftCenter: ScoringAction = {
+    type: 'ballInPlay',
+    contact: 'swing',
+    direction: 'left_center'
+  }
+  const double: ScoringAction = { type: 'result', eventType: 'double' }
+  const holdsAtThird: ScoringAction = {
+    type: 'runnerMovement',
+    runner: 6,
+    to: '3B'
+  }
+  for (const [when, actions] of [
+    ['after the double', [toLeftCenter, double, holdsAtThird]],
+    ['before the double', [holdsAtThird, toLeftCenter, double]],
+    ['between the ball and the double', [toLeftCenter, holdsAtThird, double]],
+    ['not at all', [toLeftCenter, double]]
+  ] as const)
+    it(`stays on third on a double, the hold sent ${when}`, function () {
+      const state = settle(sayAs(holdSaid, game({ second: 6 }), ...actions))
+      expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+      expect(bases(state)).deep.equals([null, BATTER, 6])
+      nothingToTap(state)
+    })
+
+  it('is held by name, or as the only runner on', function () {
+    for (const said of [
+      'Double to left center, and number 6 holds at third.',
+      'Double to left center, the runner holds at third.',
+      'Double to left center, the runner on second is held up at third.'
+    ]) {
+      const state = settle(
+        sayAs(said, game({ second: 6 }), toLeftCenter, double)
+      )
+      expect(state.session.liveData.linescore.teams.away.runs, said).equals(0)
+      expect(bases(state), said).deep.equals([null, BATTER, 6])
+    }
+  })
+
+  it('is held by his whole name or his last', function () {
+    for (const said of [
+      'Double to left center, Casey Jones holds at third.',
+      'Double to left center, Jones holds at third.'
+    ]) {
+      const start = game({ second: 6 })
+      const player = start.session.gameData.players[6]
+      player.fullName = 'Casey Jones'
+      player.lastName = 'Jones'
+      const state = settle(sayAs(said, start, toLeftCenter, double))
+      expect(state.session.liveData.linescore.teams.away.runs, said).equals(0)
+      expect(bases(state), said).deep.equals([null, BATTER, 6])
+    }
+  })
+
+  it('leaves out a hold the bases cannot take, and scores the rest', function () {
+    // The double sends the runner from first to third: the runner from
+    // second cannot be held there too.
+    for (const actions of [
+      [toLeftCenter, double, holdsAtThird],
+      [holdsAtThird, toLeftCenter, double],
+      [toLeftCenter, double]
+    ]) {
+      const state = settle(
+        sayAs(
+          'Double to left center, the runner on second holds at third',
+          game({ first: 5, second: 6 }),
+          ...actions
+        )
+      )
+      expect(state.dictation?.problem).equals(undefined)
+      expect(bases(state)).deep.equals([null, BATTER, 5])
+      expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    }
+  })
+
+  it('names one runner of two by his base', function () {
+    const state = settle(
+      sayAs(
+        'Double to left center, and the runner on second holds at third.',
+        game({ second: 6, third: 7 }),
+        toLeftCenter,
+        double
+      )
+    )
+    expect(bases(state)).deep.equals([null, BATTER, 6])
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    nothingToTap(state)
+  })
+
+  it('leaves a runner who took a base before the pitch to the hit', function () {
+    const before: ScoringAction[] = [
+      { type: 'pitch', call: 'B' },
+      {
+        type: 'batteryEvent',
+        kind: 'wild_pitch',
+        advances: [{ runner: 6, to: '3B' }]
+      },
+      { type: 'runnerMovement', runner: 6, to: 'home' }
+    ]
+    const said =
+      'Wild pitch, he takes third and scores, then a double to left center.'
+    const done = completeSentence(
+      game({ second: 6 }).session,
+      [...before, toLeftCenter, double],
+      said
+    )
+    expect(
+      'actions' in done && done.actions.slice(0, 4).map(a => a.type)
+    ).deep.equals(['pitch', 'batteryEvent', 'runnerMovement', 'ballInPlay'])
+    const state = settle(
+      sayAs(said, game({ second: 6 }), ...before, toLeftCenter, double)
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    expect(bases(state)).deep.equals([null, BATTER, null])
+  })
+
+  it('holds a runner at his own base against the hit', function () {
+    const state = settle(
+      sayAs(
+        'Single to right, number 7 stays at third.',
+        game({ third: 7 }),
+        { type: 'ballInPlay', contact: 'swing', direction: 'right' },
+        { type: 'result', eventType: 'single' }
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(state)).deep.equals([BATTER, null, 7])
+  })
+
+  it('leaves a move from his own steal or a throw before the hit where it was', function () {
+    const single: ScoringAction = { type: 'result', eventType: 'single' }
+    const toRight: ScoringAction = {
+      type: 'ballInPlay',
+      contact: 'swing',
+      direction: 'right'
+    }
+    const state = settle(
+      sayAs(
+        'He steals second and takes third when the throw gets away, then a single to right.',
+        game({ first: 5 }),
+        { type: 'baseRunning', runner: 5, kind: 'steal', to: '2B' },
+        {
+          type: 'runnerMovement',
+          runner: 5,
+          to: '3B',
+          reason: 'Throwing Error'
+        },
+        toRight,
+        single
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(1)
+    expect(bases(state)).deep.equals([BATTER, null, null])
+    const stole = playDefaults(
+      game({ second: 6 }).session,
+      [
+        { type: 'runnerMovement', runner: 6, to: '3B', reason: 'Steal' },
+        toLeftCenter,
+        double
+      ],
+      'He steals third, then a double to left center.'
+    )
+    expect(stole.map(action => action.type)).deep.equals([
+      'runnerMovement',
+      'ballInPlay',
+      'result'
+    ])
+  })
+
+  it('holds a runner a wild pitch moved earlier in the sentence', function () {
+    const state = settle(
+      sayAs(
+        'Swing and a miss, wild pitch, he takes second. Next pitch, double to left center, he holds at third.',
+        game({ first: 5 }),
+        { type: 'pitch', call: 'S' },
+        {
+          type: 'batteryEvent',
+          kind: 'wild_pitch',
+          advances: [{ runner: 5, to: '2B' }]
+        },
+        { type: 'runnerMovement', runner: 5, to: '3B' },
+        toLeftCenter,
+        double
+      )
+    )
+    expect(state.session.liveData.linescore.teams.away.runs).equals(0)
+    expect(bases(state)).deep.equals([null, BATTER, 5])
+  })
+
+  it("leaves the batter's own hold to the batter", function () {
+    for (const said of [
+      'Double to left, he holds at second.',
+      'Double to left, the batter-runner holds at second.'
+    ])
+      expect(
+        playDefaults(
+          game({ first: 5 }).session,
+          [
+            { type: 'ballInPlay', contact: 'swing', direction: 'left' },
+            { type: 'result', eventType: 'double' }
+          ],
+          said
+        ).filter(
+          action => action.type === 'runnerMovement' && action.runner === 5
+        ),
+        said
+      ).deep.equals([])
+  })
+
+  it('does not add a hold the words do not say, nor one on an out', function () {
+    const said = (
+      transcript: string,
+      ...actions: ScoringAction[]
+    ): ScoringAction[] =>
+      playDefaults(game({ second: 6 }).session, actions, transcript)
+    expect(
+      said('Double to left center, he scores.', toLeftCenter, double).filter(
+        action => action.type === 'runnerMovement'
+      )
+    ).deep.equals([])
+    expect(
+      said(
+        'Ground out to short, the runner on second holds at third.',
+        grounder,
+        { type: 'result', eventType: 'field_out', outBy: 'throw' }
+      ).filter(
+        action => action.type === 'runnerMovement' && action.runner === 6
+      )
+    ).deep.equals([])
+  })
+
   it('stays on third on a single, which would otherwise send him home', function () {
     const state = settle(
       sayAs(

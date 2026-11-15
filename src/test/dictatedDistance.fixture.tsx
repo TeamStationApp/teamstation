@@ -11,7 +11,7 @@ import {
 } from '../app/scoring/scoringMachine'
 import { scoringFieldPlayers } from '../app/scoring/scoringMotion'
 import * as presentation from '../app/scoring/scoringPresentation'
-import { scoreboardFor } from '../app/scoring/scoringSelectors'
+import { playerRef, scoreboardFor } from '../app/scoring/scoringSelectors'
 import type { ScoringEvent, ScoringState } from '../app/scoring/scoringTypes'
 import { ThemeProvider } from '../app/theme/ThemeContext'
 import { asGameDetail } from '../common/api'
@@ -26,15 +26,19 @@ import { scoringSession } from './scoringSession'
  * fence, and posts each picture — when it started, when its ball came down
  * and where — and what the play stored, to `/timeline`. It reads only fields
  * the scoring screen has always had, or reads new ones optionally, so the
- * same fixture shows the game as it was before.
+ * same fixture shows the game as it was before. A scenario may put runners
+ * on first, second and third before its sentence, and the report says the
+ * runs, the bases, any question the sentence left, and the ball's stored
+ * hit data and credits.
  */
 interface Scenario {
   name: string
   said: string
+  bases?: { first?: number; second?: number; third?: number }
   actions: ScoringAction[]
 }
 
-function fresh(): ScoringState {
+function fresh(bases: Scenario['bases'] = {}): ScoringState {
   // The unit tests' game: the visitors bat 1 to 9, the home team fields 10
   // P, 11 C, 12 1B, 13 2B, 14 SS, 15 3B, 16 LF, 17 CF, 18 RF.
   const state = initialScoringState(
@@ -61,6 +65,11 @@ function fresh(): ScoringState {
     true
   )
   state.session.gameData.venue = { fieldInfo: fieldInfoOf(200) }
+  const offense = state.session.liveData.linescore.offense
+  for (const key of ['first', 'second', 'third'] as const) {
+    const id = bases[key]
+    if (id != null) offense[key] = playerRef(state.session, id)
+  }
   return state
 }
 const now = (): number => performance.timeOrigin + performance.now()
@@ -147,6 +156,9 @@ function Preview(): React.ReactElement {
       ...(extra.foul == null ? {} : { foul: ground(extra.foul) })
     }
     timeline.current.push(picture.current)
+    // For a runner that photographs the ball as it comes down.
+    ;(globalThis as { dictatedPictures?: Entry[] }).dictatedPictures =
+      timeline.current
   }, [sequence])
   const { session } = state
   useEffect(() => {
@@ -161,12 +173,33 @@ function Preview(): React.ReactElement {
     const pitches = plays
       .flatMap(play => play.playEvents)
       .filter(event => event.isPitch)
+    const linescore = session.liveData.linescore
+    const batted = plays.findLast(play => play.hitData != null)
     fetch('/timeline', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         name,
-        outs: session.liveData.linescore.outs,
+        outs: linescore.outs,
+        runs: linescore.teams.away.runs,
+        bases: [
+          linescore.offense.first,
+          linescore.offense.second,
+          linescore.offense.third
+        ].map(ref => ref?.id ?? null),
+        question: state.dictationQuestion?.question ?? null,
+        problem: state.dictation?.problem ?? null,
+        events: plays.map(play => play.result.eventType ?? null),
+        hit: batted?.hitData ?? null,
+        // The ball as completion left it: its trajectory, depth and spot.
+        ball:
+          state.log.findLast(action => action.type === 'ballInPlay') ?? null,
+        credits: (batted?.runners ?? []).flatMap(runner =>
+          (runner.credits ?? []).map(credit => ({
+            credit: credit.credit,
+            player: credit.player?.id ?? null
+          }))
+        ),
         count: {
           balls: session.liveData.linescore.balls,
           strikes: session.liveData.linescore.strikes
@@ -182,14 +215,22 @@ function Preview(): React.ReactElement {
         timeline: timeline.current
       })
     }).catch(() => undefined)
-  }, [finished, name, session])
+  }, [
+    finished,
+    name,
+    session,
+    state.dictation,
+    state.dictationQuestion,
+    state.log
+  ])
   const play = (scenario: Scenario): void => {
     timeline.current = []
+    ;(globalThis as { dictatedPictures?: Entry[] }).dictatedPictures = []
     picture.current = null
     previous.current = []
     setName(scenario.name)
     setState(
-      scoringReducer(fresh(), {
+      scoringReducer(fresh(scenario.bases), {
         type: 'DICTATED',
         transcript: scenario.said,
         actions: scenario.actions

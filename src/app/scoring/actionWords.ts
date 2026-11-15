@@ -1,4 +1,5 @@
 import type { ScoringAction } from '../../common/scoring/actions'
+import { trajectoryOf } from '../../common/scoring/rules'
 import { lstrings, sprintf } from '../locales/strings'
 
 /** `camelCase` or `snake_case` as words: an enum's name, for want of a key. */
@@ -39,7 +40,17 @@ export function actionWords(action: ScoringAction): string {
     case 'pitch':
       return PITCHES[action.call]()
     case 'ballInPlay': {
-      const kind = capital(words(action.trajectory ?? action.contact))
+      // Its trajectory; else a bunt, or the trajectory a tapped launch angle
+      // is stored as; a swing with neither — dictated with no flight said,
+      // or tapped before its angle — is a ball in play.
+      const kind =
+        action.trajectory != null
+          ? capital(words(action.trajectory))
+          : action.contact === 'bunt'
+            ? capital(words(action.contact))
+            : action.launchAngle != null
+              ? capital(words(trajectoryOf(action.launchAngle)))
+              : lstrings.remote_log_ball_in_play
       return action.direction == null
         ? kind
         : sprintf(

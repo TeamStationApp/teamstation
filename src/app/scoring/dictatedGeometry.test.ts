@@ -4,6 +4,7 @@ import { describe, it } from 'mocha'
 import { scoringSession } from '../../test/scoringSession'
 import {
   directionPoint,
+  fielderSpot,
   foulFielder,
   foulPoint,
   foulSide
@@ -77,5 +78,36 @@ describe('where a dictated ball went', function () {
     ).equals(70)
     // The catcher's is behind the plate.
     expect(foulPoint(game('R'), 11)).deep.equals({ x: 3, z: 5 })
+  })
+})
+
+describe('where a fielder the words name, and no place, took the ball', function () {
+  it('is where he plays: the mound, each infielder and outfielder', function () {
+    expect(fielderSpot('P')).deep.equals({ x: 0, z: -18.44 })
+    expect(fielderSpot('1B')).deep.equals({ x: 24.17, z: -40.91 })
+    expect(fielderSpot('3B')).deep.equals({ x: -24.72, z: -40.12 })
+    expect(fielderSpot('LF')).deep.equals({ x: -44, z: -69 })
+    expect(fielderSpot('CF')).deep.equals({ x: 0, z: -88 })
+    expect(fielderSpot('RF')).deep.equals({ x: 44, z: -69 })
+    // The middle infielders stand on the dirt's edge, either side of second.
+    expect(fielderSpot('2B').x).greaterThan(0)
+    expect(fielderSpot('SS').x).lessThan(0)
+    expect(Math.hypot(fielderSpot('SS').x, fielderSpot('SS').z)).closeTo(
+      47.5,
+      0.01
+    )
+  })
+
+  it("is a catcher's just in front of the plate, in fair ground", function () {
+    const spot = fielderSpot('C')
+    expect(spot).deep.equals({ x: 0, z: -4 })
+    expect(isFair(spot)).equals(true)
+  })
+
+  it('is a fresh point each time, which a caller may change', function () {
+    fielderSpot('P').x = 99
+    fielderSpot('C').x = 99
+    expect(fielderSpot('P').x).equals(0)
+    expect(fielderSpot('C').x).equals(0)
   })
 })
