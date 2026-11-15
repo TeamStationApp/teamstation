@@ -99,18 +99,25 @@ describe('a defender drag while the screen redraws', () => {
       const sent = first.map(player => ({ ...player }))
       await renderer.update(scene(sent))
       await renderer.fireEvent(surface, 'pointerDown', world(x, 1, z))
-      await renderer.update(
-        scene(
-          sent.map(player =>
-            player.id === 'SS'
-              ? {
-                  ...player,
-                  target: { x: player.target.x + 5, z: player.target.z }
-                }
-              : { ...player }
-          )
-        )
+      const moved = sent.map(player =>
+        player.id === 'SS'
+          ? {
+              ...player,
+              position: { x: player.position.x + 5, z: player.position.z },
+              target: { x: player.target.x + 5, z: player.target.z },
+              // Built afresh from the game, as the screen builds its players.
+              dragging: undefined
+            }
+          : { ...player }
       )
+      await renderer.update(scene(moved))
+      // Drawn where the screen now puts him, not back where the grab began.
+      const shortMoved = moved.find(player => player.id === 'SS')!
+      expect(shortMoved.position.x).closeTo(
+        sent.find(player => player.id === 'SS')!.position.x + 5,
+        0.001
+      )
+      expect(shortMoved.dragging).not.equals(true)
       await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
       expect(placed).has.length(2)
 

@@ -274,7 +274,10 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         callbacks.current.onRunnerDrag?.(null)
       }
       if (drag.current != null) {
-        const player = callbacks.current.players.find(
+        // The object the grab began on: every cleanup runs before the new
+        // players are taken in, so this is still the list the drag knew. A
+        // player another device has moved keeps where the screen now puts him.
+        const player = drawnPlayers.current.find(
           item => item.id === drag.current?.id
         )
         const touch = drag.current.touch === true
