@@ -119,8 +119,22 @@ describe('migrations', function () {
     expect(second.alreadyApplied.length).equals(migrations.length)
   })
 
-  it('rolls back scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
+  it('rolls back device sessions, then scoring authorship and the statistics rebuild before scoring mutation and game plans', async () => {
     await migrateUp(pool, migrations)
+    const deviceSessions = async (): Promise<unknown> =>
+      (
+        await pool.query(
+          'select to_regclass(\'device_sessions\')::text as "table", to_regclass(\'auth_sessions_created\')::text as "index"'
+        )
+      ).rows[0]
+    expect(await deviceSessions()).deep.equals({
+      table: 'device_sessions',
+      index: 'auth_sessions_created'
+    })
+    expect(await migrateDown(pool, migrations)).deep.equals([
+      '118deviceSessions'
+    ])
+    expect(await deviceSessions()).deep.equals({ table: null, index: null })
     const columns = async (): Promise<string[]> =>
       (
         await pool.query(
@@ -634,7 +648,8 @@ for (const history of ['oauth', 'chat', 'deployed'] as const) {
           '114gamePlans',
           '115scoringMutation',
           '116pitchingStrikes',
-          '117scoringAuthorship'
+          '117scoringAuthorship',
+          '118deviceSessions'
         ])
       expect(result.alreadyApplied).deep.equals(priorNames)
       const { rows } = await pool.query(

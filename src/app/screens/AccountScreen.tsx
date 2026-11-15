@@ -2,7 +2,12 @@ import React, { useEffect, useRef, useState } from 'react'
 import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
-import type { Session, SessionUser, TeamStationClient } from '../../common/api'
+import type {
+  AccountApi,
+  Session,
+  SessionUser,
+  TeamStationClient
+} from '../../common/api'
 import type { GameSocket } from '../../common/gameSocket'
 import {
   type ClientPasswordCosts,
@@ -62,13 +67,18 @@ export interface AccountScreenProps {
   onSignOutRequest?: () => void
   /** The account was deleted, or its session ended mid-delete; leave without asking the server. */
   onAccountDeleted?: () => void
-  onNodeAdministration?: () => void
   pickPhoto?: typeof pickAccountPhoto
   /** Opens Create API key. */
   onCreateApiKey?: () => void
   onTeamStationTv?: () => void
   /** Where closing the Apple Music walkthrough is remembered. */
   readiness?: ReadinessStore
+  /**
+   * Another person's account, as a node administrator changes it from User
+   * Management: their name and photo, read and written through `api`, and
+   * their addresses to read. Nothing of the signed-in person's own is shown.
+   */
+  target?: { userId: string; api: AccountApi }
 }
 
 /** A person's identity and verified sign-in methods, all on their own account. */
@@ -84,9 +94,12 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     onAccountDeleted = onSignOut,
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
-    onNodeAdministration,
-    readiness = walkUpReadiness
+    readiness = walkUpReadiness,
+    target
   } = props
+  // Whose name and photo these are: the signed-in person's, or the person a
+  // node administrator opened.
+  const api: AccountApi = target?.api ?? client
   const theme = useTheme()
   const styles = getStyles(theme)
   const chatStore = props.chatStore ?? keyStore
@@ -98,7 +111,9 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [blockedPeople, setBlockedPeople] = useState(false)
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
-  const [name, setName] = useState(session.user.displayName)
+  const [name, setName] = useState(
+    target == null ? session.user.displayName : ''
+  )
   const [busy, setBusy] = useState('')
   const working = useRef(false)
   const [notice, setNotice] = useState<{ section: string; message: string }>()
@@ -159,7 +174,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     replaceEmailId?: string
   }>()
   const [code, setCode] = useState('')
-  const user = account?.user ?? session.user
+  // Another person's account shows nothing until it is theirs.
+  const user = account?.user ?? (target == null ? session.user : undefined)
 
   // What another screen changed about this account, as Node Administration
   // can. A name being typed here is left alone.
@@ -167,7 +183,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   useEffect(() => {
     let live = true
     setLoadError('')
-    client
+    api
       .accountSettings()
       .then(value => {
         if (!live) return
@@ -185,11 +201,13 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, reload, reveals])
+  }, [api, reload, reveals])
 
   const accept = (value: AccountSettings): void => {
     setAccount(value)
-    onAccountChanged?.(value.user)
+    // The signed-in person's own, whichever page changed it.
+    if (target == null || target.userId === session.user.id)
+      onAccountChanged?.(value.user)
   }
   const run = (
     section: string,
@@ -254,8 +272,35 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
       .catch(() => undefined)
   }
 
+  if (user == null)
+    return (
+      <Screen>
+        <Card style={styles.setting}>
+          <Text
+            accessibilityRole={loadError === '' ? undefined : 'alert'}
+            style={styles.email}
+          >
+            {loadError !== '' ? loadError : 'Loading account settings…'}
+          </Text>
+          {loadError !== '' && (
+            <Button
+              label="Retry"
+              onPress={() => {
+                setReload(value => value + 1)
+              }}
+            />
+          )}
+        </Card>
+      </Screen>
+    )
+
   return (
     <Screen>
+      {target != null && (
+        <Text accessibilityRole="header" style={styles.targetTitle}>
+          {`Account · ${user.displayName}`}
+        </Text>
+      )}
       <HeroCard
         // The account's id, so its tile is the colour its rows are.
         person={{ userId: user.id }}
@@ -286,11 +331,11 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
             setNotice(undefined)
             try {
               if (choice.image != null)
-                accept(await client.setAccountPhoto(choice.image))
+                accept(await api.setAccountPhoto(choice.image))
               else if (choice.catalogId != null) {
-                await client.chooseCatalogPicture(choice.catalogId)
-                accept(await client.accountSettings())
-              } else accept(await client.clearAccountPhoto())
+                await api.chooseCatalogPicture(choice.catalogId)
+                accept(await api.accountSettings())
+              } else accept(await api.clearAccountPhoto())
               setNotice({ section: 'photo', message: 'Photo saved' })
             } finally {
               working.current = false
@@ -329,7 +374,7 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
                 }
                 onPress={() => {
                   run('profile', async () => {
-                    const value = await client.setAccountName(name)
+                    const value = await api.setAccountName(name)
                     accept(value)
                     setName(value.user.displayName)
                     setNotice({ section: 'profile', message: 'Name saved' })
@@ -339,326 +384,352 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               {feedback('profile')}
             </Card>
           </View>
-          <View style={styles.section}>
-            <SectionHeader title="Password" />
-            <Card style={styles.setting}>
-              <Text style={styles.email}>
-                You can always sign in with an email code.
-              </Text>
-              {!passwordOpen ? (
-                <Button
-                  label={
-                    account.passwordNeedsUpgrade
-                      ? 'Verify email and set password'
-                      : account.hasPassword
-                        ? 'Change password'
-                        : 'Set password'
-                  }
-                  kind="secondary"
-                  disabled={busy !== ''}
-                  onPress={() => {
-                    if (account.passwordNeedsUpgrade) {
-                      run('password', async () => {
-                        setReset(await client.requestPasswordReset())
-                        setResetCode('')
-                        setPasswordOpen(true)
-                      })
-                    } else {
-                      setPasswordOpen(true)
-                      setNotice(undefined)
-                    }
-                  }}
-                />
-              ) : (
-                <>
-                  {reset != null ? (
-                    <>
-                      <Text style={styles.email}>
-                        Enter the code sent to {reset.email} to set a new
-                        password.
-                      </Text>
-                      <TextField
-                        label="Password reset code"
-                        value={resetCode}
-                        onChangeText={setResetCode}
-                        keyboardType="number-pad"
-                        autoComplete="one-time-code"
-                      />
-                      <Button
-                        label="Resend password code"
-                        kind="text"
-                        disabled={busy !== ''}
-                        onPress={() => {
+          {target != null ? (
+            <View style={styles.section}>
+              <SectionHeader title="Email addresses" />
+              <ListCard>
+                {account.emails.map(address => (
+                  <CardContent key={address.id} style={styles.setting}>
+                    <Text style={styles.settingLabel}>
+                      {address.email}
+                      {address.isPrimary ? ' · Primary' : ''}
+                      {address.isVerified === false ? ' · Unverified' : ''}
+                    </Text>
+                  </CardContent>
+                ))}
+              </ListCard>
+            </View>
+          ) : (
+            <>
+              <View style={styles.section}>
+                <SectionHeader title="Password" />
+                <Card style={styles.setting}>
+                  <Text style={styles.email}>
+                    You can always sign in with an email code.
+                  </Text>
+                  {!passwordOpen ? (
+                    <Button
+                      label={
+                        account.passwordNeedsUpgrade
+                          ? 'Verify email and set password'
+                          : account.hasPassword
+                            ? 'Change password'
+                            : 'Set password'
+                      }
+                      kind="secondary"
+                      disabled={busy !== ''}
+                      onPress={() => {
+                        if (account.passwordNeedsUpgrade) {
                           run('password', async () => {
                             setReset(await client.requestPasswordReset())
                             setResetCode('')
+                            setPasswordOpen(true)
                           })
-                        }}
-                      />
-                    </>
-                  ) : (
-                    account.hasPassword && (
-                      <TextField
-                        label="Current password"
-                        value={currentPassword}
-                        onChangeText={setCurrentPassword}
-                        secure
-                        autoComplete="current-password"
-                      />
-                    )
-                  )}
-                  {reset == null && account.hasPassword && (
-                    <Button
-                      label="Reset with an email code"
-                      kind="text"
-                      disabled={busy !== ''}
-                      onPress={() => {
-                        run('password', async () => {
-                          setReset(await client.requestPasswordReset())
-                          setResetCode('')
-                          setCurrentPassword('')
-                        })
+                        } else {
+                          setPasswordOpen(true)
+                          setNotice(undefined)
+                        }
                       }}
                     />
-                  )}
-                  <NewPasswordFields
-                    password={password}
-                    confirmation={confirmation}
-                    onPassword={setPassword}
-                    onConfirmation={setConfirmation}
-                  />
-                  {preparing && (
-                    <Text accessibilityLiveRegion="polite" style={styles.email}>
-                      Preparing password security… You can keep typing.
-                    </Text>
-                  )}
-                  {preparationError !== '' && (
+                  ) : (
                     <>
-                      <Text
-                        accessibilityLiveRegion="polite"
-                        style={styles.feedback}
-                      >
-                        {preparationError}
-                      </Text>
-                      <Button
-                        label="Retry password preparation"
-                        kind="text"
-                        disabled={busy !== ''}
-                        onPress={() => {
-                          setPreparationAttempt(value => value + 1)
-                        }}
+                      {reset != null ? (
+                        <>
+                          <Text style={styles.email}>
+                            Enter the code sent to {reset.email} to set a new
+                            password.
+                          </Text>
+                          <TextField
+                            label="Password reset code"
+                            value={resetCode}
+                            onChangeText={setResetCode}
+                            keyboardType="number-pad"
+                            autoComplete="one-time-code"
+                          />
+                          <Button
+                            label="Resend password code"
+                            kind="text"
+                            disabled={busy !== ''}
+                            onPress={() => {
+                              run('password', async () => {
+                                setReset(await client.requestPasswordReset())
+                                setResetCode('')
+                              })
+                            }}
+                          />
+                        </>
+                      ) : (
+                        account.hasPassword && (
+                          <TextField
+                            label="Current password"
+                            value={currentPassword}
+                            onChangeText={setCurrentPassword}
+                            secure
+                            autoComplete="current-password"
+                          />
+                        )
+                      )}
+                      {reset == null && account.hasPassword && (
+                        <Button
+                          label="Reset with an email code"
+                          kind="text"
+                          disabled={busy !== ''}
+                          onPress={() => {
+                            run('password', async () => {
+                              setReset(await client.requestPasswordReset())
+                              setResetCode('')
+                              setCurrentPassword('')
+                            })
+                          }}
+                        />
+                      )}
+                      <NewPasswordFields
+                        password={password}
+                        confirmation={confirmation}
+                        onPassword={setPassword}
+                        onConfirmation={setConfirmation}
                       />
-                    </>
-                  )}
-                  <View style={styles.actions}>
-                    <Button
-                      label="Save password"
-                      busy={busy === 'savePassword'}
-                      busyLabel="Saving password"
-                      disabled={
-                        busy !== '' ||
-                        !newPasswordRequirements(password).valid ||
-                        password !== confirmation ||
-                        preparationError !== '' ||
-                        (reset != null && resetCode.trim() === '')
-                      }
-                      onPress={() => {
-                        run(
-                          'password',
-                          async () => {
-                            if (password !== confirmation)
-                              throw new Error('The new passwords do not match')
-                            const signal = passwordLifetime.current?.signal
-                            const value = await client.setAccountPassword(
-                              password,
-                              currentPassword,
-                              reset == null
-                                ? undefined
-                                : {
-                                    requestId: reset.requestId,
-                                    code: resetCode
-                                  },
-                              preparation.current,
-                              signal
+                      {preparing && (
+                        <Text
+                          accessibilityLiveRegion="polite"
+                          style={styles.email}
+                        >
+                          Preparing password security… You can keep typing.
+                        </Text>
+                      )}
+                      {preparationError !== '' && (
+                        <>
+                          <Text
+                            accessibilityLiveRegion="polite"
+                            style={styles.feedback}
+                          >
+                            {preparationError}
+                          </Text>
+                          <Button
+                            label="Retry password preparation"
+                            kind="text"
+                            disabled={busy !== ''}
+                            onPress={() => {
+                              setPreparationAttempt(value => value + 1)
+                            }}
+                          />
+                        </>
+                      )}
+                      <View style={styles.actions}>
+                        <Button
+                          label="Save password"
+                          busy={busy === 'savePassword'}
+                          busyLabel="Saving password"
+                          disabled={
+                            busy !== '' ||
+                            !newPasswordRequirements(password).valid ||
+                            password !== confirmation ||
+                            preparationError !== '' ||
+                            (reset != null && resetCode.trim() === '')
+                          }
+                          onPress={() => {
+                            run(
+                              'password',
+                              async () => {
+                                if (password !== confirmation)
+                                  throw new Error(
+                                    'The new passwords do not match'
+                                  )
+                                const signal = passwordLifetime.current?.signal
+                                const value = await client.setAccountPassword(
+                                  password,
+                                  currentPassword,
+                                  reset == null
+                                    ? undefined
+                                    : {
+                                        requestId: reset.requestId,
+                                        code: resetCode
+                                      },
+                                  preparation.current,
+                                  signal
+                                )
+                                if (signal?.aborted === true) return
+                                accept(value)
+                                setReset(undefined)
+                                setResetCode('')
+                                setCurrentPassword('')
+                                setPassword('')
+                                setConfirmation('')
+                                setPasswordOpen(false)
+                                setNotice({
+                                  section: 'password',
+                                  message: 'Password saved'
+                                })
+                              },
+                              'savePassword'
                             )
-                            if (signal?.aborted === true) return
-                            accept(value)
+                          }}
+                        />
+                        <Button
+                          label="Cancel password change"
+                          kind="text"
+                          disabled={busy !== ''}
+                          onPress={() => {
                             setReset(undefined)
                             setResetCode('')
                             setCurrentPassword('')
                             setPassword('')
                             setConfirmation('')
                             setPasswordOpen(false)
-                            setNotice({
-                              section: 'password',
-                              message: 'Password saved'
-                            })
-                          },
-                          'savePassword'
-                        )
-                      }}
-                    />
-                    <Button
-                      label="Cancel password change"
-                      kind="text"
-                      disabled={busy !== ''}
-                      onPress={() => {
-                        setReset(undefined)
-                        setResetCode('')
-                        setCurrentPassword('')
-                        setPassword('')
-                        setConfirmation('')
-                        setPasswordOpen(false)
-                        setNotice(undefined)
-                      }}
-                    />
-                  </View>
-                </>
-              )}
-              {feedback('password')}
-            </Card>
-          </View>
-          <View style={styles.section}>
-            <SectionHeader title="Email addresses" />
-            <ListCard>
-              <CardContent>
-                <Text style={styles.email}>
-                  Sign in with any confirmed address. Your primary address
-                  appears on your account.
-                </Text>
-              </CardContent>
-              {account.emails.map(address => (
-                <CardContent key={address.id} style={styles.setting}>
-                  <Text style={styles.settingLabel}>
-                    {address.email}
-                    {address.isPrimary ? ' · Primary' : ''}
-                  </Text>
-                  <View style={styles.actions}>
-                    <Button
-                      label="Change"
-                      accessibilityLabel={`Change ${address.email}`}
-                      kind="text"
-                      disabled={busy !== '' || emailEdit != null}
-                      onPress={() => {
-                        setEmailEdit({
-                          replaceEmailId: address.id,
-                          previous: address.email
-                        })
-                        setEmail('')
-                        setNotice(undefined)
-                      }}
-                    />
-                    {!address.isPrimary && (
-                      <Button
-                        label="Make primary"
-                        accessibilityLabel={`Make ${address.email} primary`}
-                        kind="text"
-                        disabled={busy !== '' || emailEdit != null}
-                        onPress={() => {
-                          run('email', async () => {
-                            accept(
-                              await client.setAccountPrimaryEmail(address.id)
-                            )
-                            setNotice({
-                              section: 'email',
-                              message: 'Primary email updated'
-                            })
-                          })
-                        }}
-                      />
-                    )}
-                  </View>
-                </CardContent>
-              ))}
-              <CardContent style={styles.setting}>
-                {emailEdit == null ? (
-                  <Button
-                    label="Add email address"
-                    kind="secondary"
-                    disabled={busy !== ''}
-                    onPress={() => {
-                      setEmailEdit({})
-                      setNotice(undefined)
-                    }}
-                  />
-                ) : pending == null ? (
-                  <>
-                    {emailEdit.previous != null && (
-                      <Text style={styles.email}>
-                        Replacing {emailEdit.previous}. It stays active until
-                        you confirm the new address.
-                      </Text>
-                    )}
-                    <TextField
-                      label="New email address"
-                      value={email}
-                      onChangeText={setEmail}
-                      keyboardType="email-address"
-                      autoComplete="email"
-                    />
-                    <Button
-                      label="Send confirmation code"
-                      disabled={busy !== '' || email.trim() === ''}
-                      onPress={sendCode}
-                    />
-                  </>
-                ) : (
-                  <>
+                            setNotice(undefined)
+                          }}
+                        />
+                      </View>
+                    </>
+                  )}
+                  {feedback('password')}
+                </Card>
+              </View>
+              <View style={styles.section}>
+                <SectionHeader title="Email addresses" />
+                <ListCard>
+                  <CardContent>
                     <Text style={styles.email}>
-                      Enter the code sent to {pending.email}. The address is not
-                      active yet.
+                      Sign in with any confirmed address. Your primary address
+                      appears on your account.
                     </Text>
-                    <TextField
-                      label="Confirmation code"
-                      value={code}
-                      onChangeText={setCode}
-                      keyboardType="number-pad"
-                      autoComplete="one-time-code"
-                    />
-                    <View style={styles.actions}>
-                      <Button
-                        label="Confirm email"
-                        disabled={busy !== '' || code.trim() === ''}
-                        onPress={() => {
-                          run('email', async () => {
-                            accept(
-                              await client.confirmAccountEmail(
-                                pending.requestId,
-                                code
-                              )
-                            )
-                            closeEmail()
-                            setNotice({
-                              section: 'email',
-                              message: 'Email address confirmed'
+                  </CardContent>
+                  {account.emails.map(address => (
+                    <CardContent key={address.id} style={styles.setting}>
+                      <Text style={styles.settingLabel}>
+                        {address.email}
+                        {address.isPrimary ? ' · Primary' : ''}
+                      </Text>
+                      <View style={styles.actions}>
+                        <Button
+                          label="Change"
+                          accessibilityLabel={`Change ${address.email}`}
+                          kind="text"
+                          disabled={busy !== '' || emailEdit != null}
+                          onPress={() => {
+                            setEmailEdit({
+                              replaceEmailId: address.id,
+                              previous: address.email
                             })
-                          })
+                            setEmail('')
+                            setNotice(undefined)
+                          }}
+                        />
+                        {!address.isPrimary && (
+                          <Button
+                            label="Make primary"
+                            accessibilityLabel={`Make ${address.email} primary`}
+                            kind="text"
+                            disabled={busy !== '' || emailEdit != null}
+                            onPress={() => {
+                              run('email', async () => {
+                                accept(
+                                  await client.setAccountPrimaryEmail(
+                                    address.id
+                                  )
+                                )
+                                setNotice({
+                                  section: 'email',
+                                  message: 'Primary email updated'
+                                })
+                              })
+                            }}
+                          />
+                        )}
+                      </View>
+                    </CardContent>
+                  ))}
+                  <CardContent style={styles.setting}>
+                    {emailEdit == null ? (
+                      <Button
+                        label="Add email address"
+                        kind="secondary"
+                        disabled={busy !== ''}
+                        onPress={() => {
+                          setEmailEdit({})
+                          setNotice(undefined)
                         }}
                       />
+                    ) : pending == null ? (
+                      <>
+                        {emailEdit.previous != null && (
+                          <Text style={styles.email}>
+                            Replacing {emailEdit.previous}. It stays active
+                            until you confirm the new address.
+                          </Text>
+                        )}
+                        <TextField
+                          label="New email address"
+                          value={email}
+                          onChangeText={setEmail}
+                          keyboardType="email-address"
+                          autoComplete="email"
+                        />
+                        <Button
+                          label="Send confirmation code"
+                          disabled={busy !== '' || email.trim() === ''}
+                          onPress={sendCode}
+                        />
+                      </>
+                    ) : (
+                      <>
+                        <Text style={styles.email}>
+                          Enter the code sent to {pending.email}. The address is
+                          not active yet.
+                        </Text>
+                        <TextField
+                          label="Confirmation code"
+                          value={code}
+                          onChangeText={setCode}
+                          keyboardType="number-pad"
+                          autoComplete="one-time-code"
+                        />
+                        <View style={styles.actions}>
+                          <Button
+                            label="Confirm email"
+                            disabled={busy !== '' || code.trim() === ''}
+                            onPress={() => {
+                              run('email', async () => {
+                                accept(
+                                  await client.confirmAccountEmail(
+                                    pending.requestId,
+                                    code
+                                  )
+                                )
+                                closeEmail()
+                                setNotice({
+                                  section: 'email',
+                                  message: 'Email address confirmed'
+                                })
+                              })
+                            }}
+                          />
+                          <Button
+                            label="Resend code"
+                            kind="text"
+                            disabled={busy !== ''}
+                            onPress={sendCode}
+                          />
+                        </View>
+                      </>
+                    )}
+                    {emailEdit != null && (
                       <Button
-                        label="Resend code"
+                        label="Cancel email change"
                         kind="text"
                         disabled={busy !== ''}
-                        onPress={sendCode}
+                        onPress={() => {
+                          closeEmail()
+                          setNotice(undefined)
+                        }}
                       />
-                    </View>
-                  </>
-                )}
-                {emailEdit != null && (
-                  <Button
-                    label="Cancel email change"
-                    kind="text"
-                    disabled={busy !== ''}
-                    onPress={() => {
-                      closeEmail()
-                      setNotice(undefined)
-                    }}
-                  />
-                )}
-                {feedback('email')}
-              </CardContent>
-            </ListCard>
-          </View>
+                    )}
+                    {feedback('email')}
+                  </CardContent>
+                </ListCard>
+              </View>
+            </>
+          )}
         </>
       )}
       {busy !== '' && (
@@ -667,151 +738,152 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
         </Text>
       )}
 
-      {props.onTeamStationTv != null && (
-        <ListCard>
-          <ListRow
-            title="TeamStation TV"
-            emblemIcon="smart_display"
-            onPress={props.onTeamStationTv}
-          />
-        </ListCard>
-      )}
-      <View style={styles.section}>
-        <SectionHeader title={lstrings.account_chat} />
-        <ListCard>
-          {onChatDevices != null && (
-            <ListRow
-              title={lstrings.account_chat_devices}
-              subtitle={lstrings.account_chat_devices_detail}
-              emblemIcon="settings"
-              onPress={onChatDevices}
+      {target == null && (
+        <>
+          {props.onTeamStationTv != null && (
+            <ListCard>
+              <ListRow
+                title="TeamStation TV"
+                emblemIcon="smart_display"
+                onPress={props.onTeamStationTv}
+              />
+            </ListCard>
+          )}
+          <View style={styles.section}>
+            <SectionHeader title={lstrings.account_chat} />
+            <ListCard>
+              {onChatDevices != null && (
+                <ListRow
+                  title={lstrings.account_chat_devices}
+                  subtitle={lstrings.account_chat_devices_detail}
+                  emblemIcon="settings"
+                  onPress={onChatDevices}
+                />
+              )}
+              <ListRow
+                title={lstrings.chat_blocked_people}
+                subtitle={lstrings.chat_blocked_people_detail}
+                emblemIcon="settings"
+                onPress={() => {
+                  setBlockedPeople(true)
+                }}
+              />
+              {onChatReports != null && user.isAdmin && (
+                <>
+                  <ListRow
+                    title={lstrings.chat_reports_title}
+                    subtitle={lstrings.account_chat_reports_detail}
+                    emblemIcon="star"
+                    onPress={onChatReports}
+                  />
+                </>
+              )}
+            </ListCard>
+          </View>
+          {blockedPeople && (
+            <BlockedPeople
+              key={session.user.id}
+              client={client}
+              socket={props.socket}
+              onClose={() => {
+                setBlockedPeople(false)
+              }}
             />
           )}
-          <ListRow
-            title={lstrings.chat_blocked_people}
-            subtitle={lstrings.chat_blocked_people_detail}
-            emblemIcon="settings"
-            onPress={() => {
-              setBlockedPeople(true)
-            }}
-          />
-          {onChatReports != null && user.isAdmin && (
-            <>
-              <ListRow
-                title={lstrings.chat_reports_title}
-                subtitle={lstrings.account_chat_reports_detail}
-                emblemIcon="star"
-                onPress={onChatReports}
-              />
-            </>
-          )}
-        </ListCard>
-      </View>
-      {blockedPeople && (
-        <BlockedPeople
-          key={session.user.id}
-          client={client}
-          socket={props.socket}
-          onClose={() => {
-            setBlockedPeople(false)
-          }}
-        />
-      )}
-      {Platform.OS === 'ios' && (
-        <View style={styles.section}>
-          <SectionHeader title={lstrings.account_walkup} />
-          <ListCard>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={lstrings.account_walkup_apple_music}
-              onPress={() => {
-                setAppleMusicSetupUsed(true)
-                setAppleMusicSetup(true)
-              }}
-              style={[styles.settingRow, styles.paddedRow]}
-            >
-              <Text style={styles.settingLabel}>
-                {lstrings.account_walkup_apple_music}
-              </Text>
-              <ButtonIcon
-                name="chevron_right"
-                size={1.25}
-                color={theme.secondaryTextColor}
-              />
-            </Pressable>
-            <CardContent style={styles.setting}>
-              <View style={styles.settingRow}>
-                <Text style={styles.settingLabel}>
-                  {lstrings.account_walkup_fade}
-                </Text>
-                <Switch
-                  accessibilityLabel={lstrings.account_walkup_fade}
-                  value={walkUp.fadeAppleMusic}
-                  onValueChange={fadeAppleMusic => {
-                    setWalkUp({ ...walkUp, fadeAppleMusic })
+          {Platform.OS === 'ios' && (
+            <View style={styles.section}>
+              <SectionHeader title={lstrings.account_walkup} />
+              <ListCard>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={lstrings.account_walkup_apple_music}
+                  onPress={() => {
+                    setAppleMusicSetupUsed(true)
+                    setAppleMusicSetup(true)
+                  }}
+                  style={[styles.settingRow, styles.paddedRow]}
+                >
+                  <Text style={styles.settingLabel}>
+                    {lstrings.account_walkup_apple_music}
+                  </Text>
+                  <ButtonIcon
+                    name="chevron_right"
+                    size={1.25}
+                    color={theme.secondaryTextColor}
+                  />
+                </Pressable>
+                <CardContent style={styles.setting}>
+                  <View style={styles.settingRow}>
+                    <Text style={styles.settingLabel}>
+                      {lstrings.account_walkup_fade}
+                    </Text>
+                    <Switch
+                      accessibilityLabel={lstrings.account_walkup_fade}
+                      value={walkUp.fadeAppleMusic}
+                      onValueChange={fadeAppleMusic => {
+                        setWalkUp({ ...walkUp, fadeAppleMusic })
+                      }}
+                    />
+                  </View>
+                  <Text style={styles.email}>
+                    {lstrings.account_walkup_fade_detail}
+                  </Text>
+                </CardContent>
+              </ListCard>
+              {appleMusicSetupUsed && (
+                <AppleMusicSetup
+                  visible={appleMusicSetup}
+                  onClose={() => {
+                    setAppleMusicSetup(false)
+                    markOnboarded(readiness).catch(() => undefined)
                   }}
                 />
-              </View>
-              <Text style={styles.email}>
-                {lstrings.account_walkup_fade_detail}
-              </Text>
-            </CardContent>
-          </ListCard>
-          {appleMusicSetupUsed && (
-            <AppleMusicSetup
-              visible={appleMusicSetup}
-              onClose={() => {
-                setAppleMusicSetup(false)
-                markOnboarded(readiness).catch(() => undefined)
+              )}
+            </View>
+          )}
+          <ApiKeysSection client={client} onCreate={onCreateApiKey} />
+          <DangerText
+            label={lstrings.account_sign_out}
+            bold
+            disabled={busy !== '' || signingOut}
+            style={styles.centered}
+            onPress={signOut}
+          />
+          <DangerText
+            label={lstrings.account_delete}
+            bold
+            disabled={busy !== ''}
+            style={styles.centered}
+            onPress={() => {
+              setDeleteOpen(true)
+            }}
+          />
+          {deleteOpen && (
+            <DeleteAccountSheet
+              client={client}
+              userId={session.user.id}
+              store={chatStore}
+              onCancel={() => {
+                setDeleteOpen(false)
+              }}
+              onLeave={() => {
+                setDeleteOpen(false)
+                onAccountDeleted()
               }}
             />
           )}
-        </View>
-      )}
-      <ApiKeysSection client={client} onCreate={onCreateApiKey} />
-      <DangerText
-        label={lstrings.account_sign_out}
-        bold
-        disabled={busy !== '' || signingOut}
-        style={styles.centered}
-        onPress={signOut}
-      />
-      {user.isAdmin && onNodeAdministration != null && (
-        <Button
-          label="Node administration"
-          kind="secondary"
-          block
-          onPress={onNodeAdministration}
-        />
-      )}
-      <DangerText
-        label={lstrings.account_delete}
-        bold
-        disabled={busy !== ''}
-        style={styles.centered}
-        onPress={() => {
-          setDeleteOpen(true)
-        }}
-      />
-      {deleteOpen && (
-        <DeleteAccountSheet
-          client={client}
-          userId={session.user.id}
-          store={chatStore}
-          onCancel={() => {
-            setDeleteOpen(false)
-          }}
-          onLeave={() => {
-            setDeleteOpen(false)
-            onAccountDeleted()
-          }}
-        />
+        </>
       )}
     </Screen>
   )
 }
 
 const getStyles = cacheStyles((theme: Theme) => ({
+  targetTitle: {
+    color: theme.primaryTextColor,
+    fontSize: theme.rem(1.5),
+    fontFamily: theme.semiBoldTextFont
+  },
   actions: {
     flexDirection: 'row',
     flexWrap: 'wrap',

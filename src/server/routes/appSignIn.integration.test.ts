@@ -393,6 +393,75 @@ describe('signing in from an app', function () {
     expect(Math.round(browserDays)).lessThan(180)
   })
 
+  it('stores a device model where a name would go, for a browser’s month', async function () {
+    if (db == null) throw new Error('no database')
+    const sessionOf = async (
+      email: string
+    ): Promise<{ device_name: string | null; days: number }> => {
+      const row = await db!
+        .selectFrom('auth_sessions')
+        .innerJoin(
+          'user_emails',
+          'user_emails.user_id',
+          'auth_sessions.user_id'
+        )
+        .select([
+          'auth_sessions.device_name',
+          'auth_sessions.created_at',
+          'auth_sessions.expires_at'
+        ])
+        .where('user_emails.email', '=', email)
+        .orderBy('auth_sessions.created_at', 'desc')
+        .executeTakeFirstOrThrow()
+      return {
+        device_name: row.device_name,
+        days: Math.round(
+          (new Date(row.expires_at).getTime() -
+            new Date(row.created_at).getTime()) /
+            86400000
+        )
+      }
+    }
+    // A code sign-in from the phone app names the phone, and lasts a month.
+    await post('/auth/email-code', { email: 'model@example.com' })
+    const coded = await post('/auth/email-code/verify', {
+      email: 'model@example.com',
+      code: sent[sent.length - 1].code,
+      deviceModel: ' iPhone '
+    })
+    expect(coded.status).equals(200)
+    expect(await sessionOf('model@example.com')).deep.equals({
+      device_name: 'iPhone',
+      days: 30
+    })
+    // A named device keeps its name and its season, whatever model it is.
+    await post('/auth/email-code', {
+      email: 'named@example.com',
+      appOrigin: APP1
+    })
+    const token = LINK.exec(sent[sent.length - 1].link ?? '')?.[1]
+    const linked = await post('/auth/link/verify', {
+      token,
+      deviceName: 'Dugout iPad',
+      deviceModel: 'iPad'
+    })
+    expect(linked.status).equals(200)
+    expect(await sessionOf('named@example.com')).deep.equals({
+      device_name: 'Dugout iPad',
+      days: 180
+    })
+    // A model is a short name, never a blank or an essay.
+    await post('/auth/email-code', { email: 'long@example.com' })
+    for (const deviceModel of ['x'.repeat(81), '  ', 7]) {
+      const refused = await post('/auth/email-code/verify', {
+        email: 'long@example.com',
+        code: sent[sent.length - 1].code,
+        deviceModel
+      })
+      expect(refused.status).equals(400)
+    }
+  })
+
   it('preserves the game, video and tab through email links and approved requests', async function () {
     const next = '/games/gam_example?tab=watch&video=vid_example&t=42'
     const asked = await post('/auth/email-code', {

@@ -22,6 +22,8 @@ export interface AppSidebarProps {
   isAdmin?: boolean
   account?: AppHeaderProps['account']
   notifications?: AppHeaderProps['notifications']
+  /** Directly above the account row, for a node administrator only. */
+  nodeAdministration?: AppHeaderProps['nodeAdministration']
 }
 
 /** Labelled destinations beside the page, beneath the primary app header. */
@@ -107,6 +109,12 @@ export function AppSidebar(props: AppSidebarProps): React.ReactElement {
             props.notifications.pending
               ? lstrings.header_notifications_waiting
               : lstrings.header_notifications
+          )}
+        {props.nodeAdministration != null &&
+          row(
+            lstrings.header_node_administration,
+            <ButtonIcon name="settings" color={theme.navActiveColor} />,
+            props.nodeAdministration.onPress
           )}
         {props.account != null && (
           <Pressable

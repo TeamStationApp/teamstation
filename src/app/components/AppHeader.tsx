@@ -54,6 +54,8 @@ export interface AppHeaderProps {
   isAdmin?: boolean
   /** A row in the person's menu, and a dot on their picture when pending. */
   notifications?: { pending: boolean; onPress: () => void }
+  /** The person's menu's last row, for a node administrator only. */
+  nodeAdministration?: { onPress: () => void }
   /** The mark's menu's row that opens Tess, after About. Absent where she isn't offered. */
   tess?: { onPress: () => void }
   /** Closes an open menu when it changes: the address, say. */
@@ -144,6 +146,21 @@ export function AppHeader(props: AppHeaderProps): React.ReactElement {
                     </View>
                   ),
                   onPress: props.notifications.onPress
+                }
+              ]),
+          ...(props.nodeAdministration == null
+            ? []
+            : [
+                {
+                  label: lstrings.header_node_administration,
+                  icon: (
+                    <ButtonIcon
+                      name="settings"
+                      size={1.5}
+                      color={theme.headerTextColor}
+                    />
+                  ),
+                  onPress: props.nodeAdministration.onPress
                 }
               ])
         ]

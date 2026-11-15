@@ -23,10 +23,13 @@ export const nodeAdministrationTiming = { settingsWaitMs: 3000 }
 
 export function NodeAdministrationScreen({
   client,
-  onChanged
+  onChanged,
+  onUserManagement
 }: {
   client: TeamStationClient
   onChanged: (userId: string) => void
+  /** Opens User Management: logins, sessions and anybody's account. */
+  onUserManagement?: () => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
@@ -189,6 +192,15 @@ export function NodeAdministrationScreen({
   return (
     <Screen>
       <Text style={styles.title}>Node administration</Text>
+      {onUserManagement != null && (
+        <ListCard>
+          <ListRow
+            title="User Management"
+            subtitle="Recent logins, sessions and every account"
+            onPress={onUserManagement}
+          />
+        </ListCard>
+      )}
       {accountMessages != null && (
         <ListCard>
           <ListRow

@@ -83,6 +83,11 @@ export interface PagedRows<T> {
   /** The list has been read to its end and holds nothing. */
   empty: boolean
   /**
+   * The server has said there is nothing after the last row: the list is
+   * read to its end, whether or not it holds any.
+   */
+  atEnd: boolean
+  /**
    * The end is being read. An older page on its way says nothing: it lands
    * at rest above the reader, and a spinner after the last row would point
    * the wrong way.
@@ -547,6 +552,8 @@ export function usePagedList<T>(options: PagedListOptions<T>): PagedRows<T> {
       anchorId: shown.anchorId,
       loading: loading && error == null,
       empty: rows.length === 0 && !loading && failed == null && error == null,
+      atEnd:
+        !opening && !walking.next && shown.nextCursor == null && error == null,
       loadingMore: walking.next && rows.length > 0,
       failed: failed != null,
       failedWay: failed,

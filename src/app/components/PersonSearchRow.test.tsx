@@ -2,7 +2,8 @@ import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React from 'react'
 
-import { mount, press, text, unmount } from '../../test/gameFormDom'
+import { userIdOfGumbo } from '../../common/userId'
+import { find, mount, press, text, unmount } from '../../test/gameFormDom'
 import { PersonSearchRow } from './PersonSearchRow'
 
 describe('shared person search row', () => {
@@ -87,5 +88,50 @@ describe('shared person search row', () => {
     expect(
       document.querySelector('[data-testid^="candidate-affiliation-usr_jeter"]')
     ).equals(null)
+  })
+  it('puts an address beside the name, and draws only the name without one', async function () {
+    const pressed: string[] = []
+    await mount(
+      <>
+        <PersonSearchRow
+          userId={userIdOfGumbo(101)}
+          name="Babe Ruth"
+          detail="ruth@example.com"
+          affiliations="Demo Hawks"
+          onPress={() => {
+            pressed.push('ruth')
+          }}
+        />
+        <PersonSearchRow
+          userId={userIdOfGumbo(102)}
+          name="Lou Gehrig"
+          detail=""
+          onPress={() => {
+            pressed.push('gehrig')
+          }}
+        />
+      </>
+    )
+    const ruth = find('Babe Ruth')!
+    const lines = [...ruth.querySelectorAll('div[dir="auto"]')].map(
+      node => node.textContent
+    )
+    expect(lines).to.include.members(['Babe Ruth', 'ruth@example.com'])
+    const name = [
+      ...ruth.querySelectorAll<HTMLElement>('div[dir="auto"]')
+    ].find(node => node.textContent === 'Babe Ruth')!
+    const address = [
+      ...ruth.querySelectorAll<HTMLElement>('div[dir="auto"]')
+    ].find(node => node.textContent === 'ruth@example.com')!
+    // On the name's line, quieter: smaller and not bold.
+    expect(name.parentElement).equals(address.parentElement)
+    expect(parseFloat(getComputedStyle(address).fontSize)).lessThan(
+      parseFloat(getComputedStyle(name).fontSize)
+    )
+    expect(getComputedStyle(address).fontWeight).not.equals('600')
+    expect(text()).includes('Demo Hawks')
+    expect(find('Lou Gehrig')!.textContent).equals('LGLou Gehrig')
+    await press('Lou Gehrig')
+    expect(pressed).deep.equals(['gehrig'])
   })
 })

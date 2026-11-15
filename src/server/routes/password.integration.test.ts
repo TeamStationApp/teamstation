@@ -213,6 +213,55 @@ describe('password hashing and email-reset HTTP protocol', function () {
       ).user.id
     ).equals(userIdOfGumbo(101))
   })
+  it('names the device a password sign-in is on, for a browser’s month', async () => {
+    const costs = {
+      ...testPasswordParameters,
+      memoryKiB: 65536,
+      iterations: 16,
+      parallelism: 1
+    }
+    const server = { ...costs, iterations: 64, salt: 'ee'.repeat(16) }
+    const clientHash = await testPasswordKdf('model password', costs)
+    await h.db
+      .updateTable('users')
+      .set({
+        password_hash: JSON.stringify({
+          schema: 1,
+          client: costs,
+          server,
+          hash: await nativeArgon(Buffer.from(clientHash, 'hex'), server)
+        })
+      })
+      .where('id', '=', userIdOfGumbo(101))
+      .execute()
+    const signIn = async (deviceModel: unknown): Promise<Response> =>
+      await fetch(h.origin + '/api/v1/auth/password', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          email: 'alex@example.com',
+          clientHash,
+          deviceModel
+        })
+      })
+    expect((await signIn('x'.repeat(81))).status).equals(400)
+    expect((await signIn('Google Pixel 8')).status).equals(200)
+    const session = await h.db
+      .selectFrom('auth_sessions')
+      .select(['device_name', 'created_at', 'expires_at'])
+      .where('user_id', '=', userIdOfGumbo(101))
+      .orderBy('created_at', 'desc')
+      .executeTakeFirstOrThrow()
+    expect(session.device_name).equals('Google Pixel 8')
+    expect(
+      Math.round(
+        (new Date(session.expires_at).getTime() -
+          new Date(session.created_at).getTime()) /
+          86400000
+      )
+    ).equals(30)
+  })
+
   it('requires a fresh email code for legacy upgrade, stores parameters and refuses plaintext', async () => {
     expect((await update()).status).equals(400)
     expect(

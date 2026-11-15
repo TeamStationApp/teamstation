@@ -177,7 +177,8 @@ async function main(): Promise<void> {
     })
     await recipient.bringToFront()
     await login(recipient, f, 106)
-    await recipient.goto(f.h.origin + '/account', { waitUntil: 'networkidle0' })
+    // Node administration is the sidebar's row above the account.
+    await recipient.goto(f.h.origin + '/', { waitUntil: 'networkidle0' })
     await press(recipient, 'Node administration')
     await recipient.waitForSelector('[aria-label="Find an account"]')
     await team.bringToFront()

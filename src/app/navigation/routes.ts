@@ -37,6 +37,8 @@ export interface UmpireScheduleRoute {
   from?: string
   to?: string
 }
+export const USER_MANAGEMENT_TABS = ['logins', 'sessions', 'users'] as const
+export type UserManagementTab = (typeof USER_MANAGEMENT_TABS)[number]
 export type CreationRoute =
   | {
       name:
@@ -65,6 +67,10 @@ export type CreationRoute =
   /** A season's or a team's Playing Time Rules, set from its settings. */
   | { name: 'playingTimeRules'; kind: 'season' | 'team'; id: string }
   | { name: 'nodeAdministration' }
+  /** Node administration's User Management, on one of its tabs. */
+  | { name: 'userManagement'; tab?: UserManagementTab }
+  /** Another person's Account page, as a node administrator changes it. */
+  | { name: 'adminAccount'; userId: string }
   | { name: 'createGame'; kind: 'team' | 'season'; id: string; gameId?: string }
   | { name: 'gameSettings'; gameId: string }
   | { name: 'promoteExternal'; id: string }
@@ -117,6 +123,8 @@ export function isCreationRoute(route: {
     'umpireRequirementEdit',
     'umpireSchedule',
     'nodeAdministration',
+    'userManagement',
+    'adminAccount',
     'discover',
     'group',
     'groupSettings',
@@ -344,6 +352,20 @@ function peopleRoute(
 /** `/games/g1?video=v1&t=734` → the game, the video, and where in it. */
 export function parseRoute(path: string, search = ''): Route {
   if (path === '/node') return { name: 'nodeAdministration' }
+  if (path === '/node/users') {
+    const tab = new URLSearchParams(search).get('tab')
+    return USER_MANAGEMENT_TABS.includes(tab as UserManagementTab) &&
+      tab !== 'logins'
+      ? { name: 'userManagement', tab: tab as UserManagementTab }
+      : { name: 'userManagement' }
+  }
+  const account = /^\/node\/users\/([^/]+)\/account$/.exec(path)
+  if (account != null) {
+    const userId = personId(decodeURIComponent(account[1]))
+    return userId == null
+      ? { name: 'userManagement', tab: 'users' }
+      : { name: 'adminAccount', userId }
+  }
   const query = new URLSearchParams(search)
   const parts = path.split('/').filter(part => part !== '')
   if (parts.length === 0) return { name: 'home' }
@@ -786,6 +808,12 @@ export function routePath(route: Route): string {
       return `/oauth/native-approval/${route.handle}`
     case 'nodeAdministration':
       return '/node'
+    case 'userManagement':
+      return route.tab == null || route.tab === 'logins'
+        ? '/node/users'
+        : `/node/users?tab=${route.tab}`
+    case 'adminAccount':
+      return `/node/users/${encodeURIComponent(route.userId)}/account`
     case 'createGame':
       return `/groups/${route.kind}/${encodeURIComponent(route.id)}/create-game${route.gameId == null ? '' : '?game=' + encodeURIComponent(route.gameId)}`
     case 'gameSettings':

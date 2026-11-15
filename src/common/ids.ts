@@ -11,6 +11,7 @@ export const idPrefixes = {
   authSession: 'ses',
   chatAttachment: 'cat',
   chatDevice: 'cdv',
+  deviceSession: 'dvs',
   chatIdentity: 'cid',
   chatLink: 'clk',
   chatMessage: 'msg',

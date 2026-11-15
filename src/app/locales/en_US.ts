@@ -18,6 +18,7 @@ export const enUs = {
   header_account: 'Account',
   header_notifications: 'Notifications',
   header_notifications_waiting: 'Notifications waiting',
+  header_node_administration: 'Node administration',
   about_title: 'About TeamStation',
   about_version: 'Version',
   about_number: 'Build number',
