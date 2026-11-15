@@ -186,6 +186,10 @@ export class SyntheticPublisher {
   /** Why the source is down for good, once the ingest has refused it. */
   private ended: string | null = null
   private reopening: Promise<void> | null = null
+  /** A cut under way: `stop` waits for it, so it never reopens behind the stop. */
+  private cutting: Promise<void> | null = null
+  /** Set by `stop`: nothing reopens after it. */
+  private stopping = false
   /** Every argument list ffmpeg was started with, for the record (no URL in any). */
   readonly launches: string[][] = []
 
@@ -214,6 +218,7 @@ export class SyntheticPublisher {
     this.startMs = this.deps.now()
     this.nextIndex = 0
     this.ended = null
+    this.stopping = false
     await this.open(0)
   }
 
@@ -320,6 +325,7 @@ export class SyntheticPublisher {
    */
   private async reopen(offset: () => number): Promise<void> {
     for (let attempt = 1; ; attempt++) {
+      if (this.stopping) return
       try {
         await this.open(offset())
         return
@@ -386,10 +392,23 @@ export class SyntheticPublisher {
     await leg.exited
   }
 
-  /** Drops the source for `seconds`, then brings it back. */
+  /** Drops the source for `seconds`, then brings it back, unless it was stopped meanwhile. */
   async cut(
     seconds: number,
     options: { discontinuity?: boolean } = {}
+  ): Promise<void> {
+    const cutting = this.cutOnce(seconds, options)
+    this.cutting = cutting
+    try {
+      await cutting
+    } finally {
+      if (this.cutting === cutting) this.cutting = null
+    }
+  }
+
+  private async cutOnce(
+    seconds: number,
+    options: { discontinuity?: boolean }
   ): Promise<void> {
     await this.reopening
     if (this.ended != null) {
@@ -415,8 +434,14 @@ export class SyntheticPublisher {
     }
   }
 
-  /** Ends the stream as a camera that stopped: ffmpeg flushes, then the connection closes. */
+  /**
+   * Ends the stream as a camera that stopped: ffmpeg flushes, then the
+   * connection closes. A cut or a reconnect under way finishes first, and
+   * opens nothing more.
+   */
   async stop(): Promise<void> {
+    this.stopping = true
+    await this.cutting?.catch(() => undefined)
     await this.reopening
     await this.close(true)
   }

@@ -383,6 +383,36 @@ describe('the synthetic publisher', function () {
   }
   const FINISHED = "This game's stream has already finished."
 
+  it('opens nothing after a stop that came during a cut', async function () {
+    const rig = harness()
+    let wake: () => void = () => {}
+    const sleep = rig.deps.sleep
+    rig.deps.sleep = async ms => {
+      if (ms !== 20_000) {
+        await sleep(ms)
+        return
+      }
+      await new Promise<void>(resolve => {
+        wake = resolve
+      })
+    }
+    const publisher = new SyntheticPublisher(
+      { ffmpeg: 'ffmpeg', urlFile: '/x/url', label: 'C' },
+      rig.deps
+    )
+    await publisher.start()
+    const cut = publisher.cut(20)
+    await ticks()
+    const stopped = publisher.stop()
+    await ticks()
+    wake()
+    await cut
+    await stopped
+    expect(rig.servers).length(1)
+    expect(rig.children).length(1)
+    expect(publisher.running).equals(false)
+  })
+
   it('says once when the ingest drops it, and reconnects once', async function () {
     const rig = harness()
     const publisher = new SyntheticPublisher(
