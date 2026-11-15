@@ -350,16 +350,25 @@ export function applyRosterCommands(
   }
 }
 
+/** A sentence that changes more than one kind of thing, which is refused whoever it names. */
+function mixesCategories(
+  commands: ReadonlyArray<{ type: RosterCommand['type'] }>
+): boolean {
+  return (
+    new Set(commands.map(command => ROSTER_CATEGORY[command.type])).size > 1
+  )
+}
+
 /** Validate a sentence's scope before its persistent player creations begin. */
 export function rosterCommandScope(
   commands: readonly RosterCommand[],
   situation: RosterSituation
 ): { category: RosterCategory; side: Side } | { problem: string } {
   if (commands.length === 0) return { problem: 'Nothing to change' }
+  if (mixesCategories(commands)) return { problem: ONE_CATEGORY_AT_A_TIME }
   const categories = new Set(
     commands.map(command => ROSTER_CATEGORY[command.type])
   )
-  if (categories.size > 1) return { problem: ONE_CATEGORY_AT_A_TIME }
   const sideOf = (command: RosterCommand): Side =>
     'side' in command ? command.side : situation.battingSide
   const sides = new Set(commands.map(sideOf))
@@ -696,8 +705,7 @@ export function resolveRosterCommands(
 ): RosterResolution {
   // A sentence of two kinds of change is refused whoever it names: a name
   // the recogniser misheard must not hide that it mixed them.
-  if (new Set(said.map(command => ROSTER_CATEGORY[command.type])).size > 1)
-    return { problem: ONE_CATEGORY_AT_A_TIME }
+  if (mixesCategories(said)) return { problem: ONE_CATEGORY_AT_A_TIME }
   const { live, battingSide: batting, fixedSide } = situation
   // A pinch hitter or runner is the side at bat's even before the game,
   // when he is refused: there is nobody to ask about.
