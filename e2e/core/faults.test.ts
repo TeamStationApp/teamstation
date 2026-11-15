@@ -483,13 +483,14 @@ describe('e2e detect', function () {
     ).equals('test-crash')
   })
 
-  it('never counts a crash as the layer the catalogue expects', async function () {
+  it('never counts a crash as caught, or as the layer the catalogue expects', async function () {
     const root = project(`throw new TypeError('Invalid URL')`)
-    const { row: crashed, exitCode } = await detect(root, 'api-500')
-    expect(crashed.caught).equals(true)
+    const { row: crashed, exitCode, ledger } = await detect(root, 'api-500')
+    expect(crashed.caught).equals(false)
     expect(crashed.caughtBy).equals('test-crash')
     expect(crashed.expectedLayer).equals(false)
-    expect(exitCode).equals(0)
+    expect(exitCode).equals(1)
+    expect(ledger).deep.equals([crashed])
   })
 
   it('keeps a failure’s server errors and kind in the result', async function () {

@@ -42,7 +42,8 @@ export interface DetectOutcome {
 
 /**
  * Passes only when the scenario goes red under the fault. A run that could not start,
- * or a known failure, proves nothing, so neither counts as caught.
+ * a known failure, or a test that only crashed proves nothing, so none counts as
+ * caught.
  */
 export async function detectFault(
   options: RunOptions & { fault: string },
@@ -52,8 +53,9 @@ export async function detectFault(
     ...options,
     seat: undefined
   })
-  const caught = result.status === 'failed'
-  const caughtBy = caught ? caughtByLayer(result, options.fault) : 'none'
+  const failed = result.status === 'failed'
+  const caughtBy = failed ? caughtByLayer(result, options.fault) : 'none'
+  const caught = failed && caughtBy !== 'test-crash'
   const row: DetectRow = {
     kind: 'detect',
     at: new Date().toISOString(),
