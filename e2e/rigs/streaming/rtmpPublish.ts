@@ -335,6 +335,8 @@ export function parseRtmpUrl(url: string): RtmpTarget {
 
 const OUT_CHUNK_SIZE = 4096
 const HANDSHAKE = 1536
+/** How long a server has to finish the handshake and start the publish. */
+export const OPEN_TIMEOUT_MS = 15_000
 
 export class RtmpPublisher {
   private readonly reader = new ChunkReader()
@@ -456,10 +458,28 @@ export class RtmpPublisher {
     })
   }
 
-  /** Handshake, connect, createStream and publish; resolves once publishing starts. */
-  async open(): Promise<void> {
+  /**
+   * Handshake, connect, createStream and publish; resolves once publishing
+   * starts. A server that has not got that far within `timeoutMs` (one that
+   * takes the connection and answers nothing) has its socket closed, and the
+   * open fails saying it timed out.
+   */
+  async open(timeoutMs = OPEN_TIMEOUT_MS): Promise<void> {
     const failed = new Promise<never>((resolve, reject) => {
       this.failure = reject
+    })
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const late = new Promise<never>((resolve, reject) => {
+      timer = setTimeout(() => {
+        this.failure = null
+        this.closed = true
+        this.socket.destroy()
+        reject(
+          new Error(
+            `the RTMP server did not start the publish within ${timeoutMs / 1000} s: timed out`
+          )
+        )
+      }, timeoutMs)
     })
     const steps = async (): Promise<void> => {
       await new Promise<void>(resolve => {
@@ -512,7 +532,11 @@ export class RtmpPublisher {
       this.command(['publish', 5, null, key, 'live'], this.streamId)
       await started
     }
-    await Promise.race([steps(), failed])
+    try {
+      await Promise.race([steps(), failed, late])
+    } finally {
+      clearTimeout(timer)
+    }
     // From here a failure is reported when the next tag is sent.
     this.failure = () => {}
   }

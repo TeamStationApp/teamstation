@@ -301,4 +301,18 @@ describe('RTMP publishing', function () {
     closed.emit('close')
     expect(await waiting).match(/closed the connection/)
   })
+
+  it('gives up on a server that takes the connection and never answers', async function () {
+    const silent = new FakeRtmpServer({ hold: true })
+    const publisher = new RtmpPublisher(silent.socket, parseRtmpUrl(URL))
+    const message = await publisher.open(20).then(
+      () => 'opened',
+      (error: unknown) => (error as Error).message
+    )
+    expect(message).equals(
+      'the RTMP server did not start the publish within 0.02 s: timed out'
+    )
+    expect(silent.socket.destroyed).equals(true)
+    expect(publisher.closed).equals(true)
+  })
 })
