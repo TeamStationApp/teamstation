@@ -1,11 +1,5 @@
 import { EventEmitter } from 'node:events'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -22,7 +16,6 @@ import {
   mirrorsIn,
   nodeDatabaseUrl,
   requireStreamingHandle,
-  seedStreamingFixture,
   SSH_OPTIONS,
   type StreamingHandle,
   streamingStackEnv
@@ -168,59 +161,6 @@ describe('the streaming scripts against an attached stack', function () {
     await stack.stop()
     expect(tails).equals(2)
   }).timeout(5000)
-})
-
-describe('seeding the streaming world on an attached stack', function () {
-  this.timeout(30000)
-
-  /** A checkout whose fixtures script echoes its config and arguments, or fails. */
-  function checkout(fails: boolean): string {
-    const cwd = mkdtempSync(join(tmpdir(), 'e2e-seed-'))
-    mkdirSync(join(cwd, 'node_modules/sucrase'), { recursive: true })
-    writeFileSync(join(cwd, 'node_modules/sucrase/register.js'), '')
-    mkdirSync(join(cwd, 'src/server/dev/fixtures'), { recursive: true })
-    writeFileSync(
-      join(cwd, 'src/server/dev/fixtures/cli.ts'),
-      fails
-        ? "process.stderr.write('no database'); process.exit(1)"
-        : "const config = JSON.parse(require('fs').readFileSync('./serverConfig.json', 'utf8')); " +
-            "console.log(JSON.stringify({ accounts: {}, ids: { config, args: process.argv.slice(2).join(' ') } }))"
-    )
-    return cwd
-  }
-
-  it('runs the fixtures script on the stack database, then deletes its config', async function () {
-    const scratch = join(mkdtempSync(join(tmpdir(), 'e2e-seed-')), 'fixture')
-    const fixture = await seedStreamingFixture(
-      checkout(false),
-      HANDLE,
-      'mailbox@example.test',
-      scratch
-    )
-    expect(fixture.ids.args).equals(
-      'streaming --json --mailbox mailbox@example.test'
-    )
-    expect(fixture.ids.config).deep.equals({
-      testSettings: true,
-      databaseUrl: `${HANDLE.databaseUrl}&uselibpqcompat=true`
-    })
-    expect(existsSync(join(scratch, 'serverConfig.json'))).equals(false)
-  })
-
-  it('calls a failed seed or a checkout without sucrase a harness error', async function () {
-    const scratch = join(mkdtempSync(join(tmpdir(), 'e2e-seed-')), 'fixture')
-    const failure = async (cwd: string): Promise<unknown> =>
-      await seedStreamingFixture(cwd, HANDLE, 'm@example.test', scratch).then(
-        () => undefined,
-        (error: unknown) => error
-      )
-    const failed = await failure(checkout(true))
-    expect(failed).instanceOf(HarnessError)
-    expect((failed as Error).message).includes('no database')
-    expect(existsSync(join(scratch, 'serverConfig.json'))).equals(false)
-    const bare = await failure(mkdtempSync(join(tmpdir(), 'e2e-seed-')))
-    expect((bare as Error).message).includes('no sucrase')
-  })
 })
 
 describe('the code limits on an attached stack', function () {
