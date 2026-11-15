@@ -271,8 +271,25 @@ describe('NativeVideoHandle', function () {
     handle.sourceConfig = first
     handle.sourceConfig = { ...first }
     expect(handle.readyState).equals(4)
-    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
+    // Nor one with the same settings built in another order.
+    const settled = {
+      uri: first.uri,
+      bufferConfig: { minBufferMs: 2000, maxBufferMs: 30000 }
+    }
+    handle.sourceConfig = settled
+    handle.handleReadyForDisplay()
+    handle.sourceConfig = {
+      bufferConfig: { maxBufferMs: 30000, minBufferMs: 2000 },
+      uri: first.uri
+    }
+    expect(handle.readyState).equals(4)
+    let emptied = 0
+    handle.addEventListener('emptied', () => {
+      emptied += 1
+    })
+    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 5000 } }
     expect(handle.readyState).equals(0)
+    expect(emptied).equals(1)
   })
 
   it('on iOS, keeps what it has when only the settings around the same address change', function () {

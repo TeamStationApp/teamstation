@@ -154,10 +154,11 @@ export class NativeVideoHandle implements VideoHandle {
     if (
       this.readyOnBuffer &&
       this.config != null &&
-      JSON.stringify(config) !== JSON.stringify(this.config)
+      canonical(config) !== canonical(this.config)
     ) {
       this.state = 0
       this.loaded = false
+      this.emit('emptied')
     }
     this.config = config
   }
@@ -726,4 +727,15 @@ export class NativeVideoHandle implements VideoHandle {
       entry.fn()
     }
   }
+}
+
+/** A value as text with its keys in order, so two equal sources compare equal however they were built. */
+function canonical(value: unknown): string {
+  return JSON.stringify(value, (_key, inner: unknown) =>
+    inner != null && typeof inner === 'object' && !Array.isArray(inner)
+      ? Object.fromEntries(
+          Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        )
+      : inner
+  )
 }
