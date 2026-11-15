@@ -84,7 +84,7 @@ const policy = cspFor(
  * Where the build is written. `dist/` always, except for the tests of the
  * build itself, which must not replace a served bundle.
  */
-const out = process.env.TS_WEB_OUT_DIR ?? 'dist'
+const out = workerOutDir()
 
 /**
  * Chat's crypto core, as the WebAssembly module every browser loads
@@ -121,7 +121,7 @@ const wasmFile = serve
 const workerOptions = {
   entryPoints: ['src/app/platform/passwordWorker.ts'],
   bundle: true,
-  outdir: workerOutDir(),
+  outdir: out,
   entryNames: serve ? 'password-worker' : 'password-worker-[hash]',
   format: 'iife',
   target: ['es2021'],
@@ -175,9 +175,7 @@ const options = {
     TS_API_BASE_URL: JSON.stringify(apiBaseUrl),
     TS_CHAT_WASM_URL: JSON.stringify(`/${wasmFile}`),
     TS_CHAT_WASM_INTEGRITY: JSON.stringify(integrityOf(wasmBytes)),
-    TS_PASSWORD_WORKER_URL: JSON.stringify(
-      workerUrl(workerFile, workerOutDir())
-    ),
+    TS_PASSWORD_WORKER_URL: JSON.stringify(workerUrl(workerFile, out)),
     TS_FIELD_PREVIEW: process.env.TS_FIELD_PREVIEW === '1' ? 'true' : 'false',
     // A dev-server stand-in for Apple's age-range answer. Production and a
     // serve that was not given a finite integer define `''`, which the app
