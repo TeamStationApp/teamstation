@@ -266,8 +266,10 @@ describe('NativeVideoHandle', function () {
     const first = { uri: 'https://media.example.test/a/index.m3u8' }
     handle.sourceConfig = first
     handle.handleReadyForDisplay()
-    // The same source again on the next render changes nothing.
+    // The same source again on the next render changes nothing, nor does an
+    // equal one built afresh, which ExoPlayer does not reopen.
     handle.sourceConfig = first
+    handle.sourceConfig = { ...first }
     expect(handle.readyState).equals(4)
     handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
     expect(handle.readyState).equals(0)

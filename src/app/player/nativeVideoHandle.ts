@@ -149,7 +149,13 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   set sourceConfig(config: ReactVideoSource | null) {
-    if (this.readyOnBuffer && this.config != null && config !== this.config) {
+    // By value, as ExoPlayer compares them: a new object for the same source
+    // opens nothing, and nothing would raise the tile again.
+    if (
+      this.readyOnBuffer &&
+      this.config != null &&
+      JSON.stringify(config) !== JSON.stringify(this.config)
+    ) {
       this.state = 0
       this.loaded = false
     }
