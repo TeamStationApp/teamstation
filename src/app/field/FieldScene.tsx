@@ -241,12 +241,18 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   // save answered, a roster read) hands over new objects for the same ids.
   // A player who has been sent somewhere else, as another device's play
   // moves a runner, is not the same: the grab's origin is gone, so it ends.
-  const playersKey = players
-    .map(
-      player =>
-        `${player.id}@${player.target.x.toFixed(2)},${player.target.z.toFixed(2)}`
-    )
-    .join()
+  // Read as the screen handed the players over: a runner's drag moves its
+  // target in place, and a re-render of the same list must not end the grab.
+  const playersKey = useMemo(
+    () =>
+      players
+        .map(
+          player =>
+            `${player.id}@${player.target.x.toFixed(2)},${player.target.z.toFixed(2)}`
+        )
+        .join(),
+    [players]
+  )
   const drawnPlayers = useRef(players)
   useEffect(() => {
     const grabbed = players.find(item => item.id === drag.current?.id)

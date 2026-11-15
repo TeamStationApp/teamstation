@@ -79,6 +79,22 @@ describe('a defender drag while the screen redraws', () => {
       await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
       expect(placed.map(placement => placement.entityId)).deep.equals(['SS'])
 
+      // The same list drawn again while the drag moves its player's target in
+      // place, as a runner's drag does, keeps the grab.
+      const same = first.map(player => ({ ...player }))
+      await renderer.update(scene(same))
+      const shortSame = same.find(player => player.id === 'SS')!
+      await renderer.fireEvent(
+        surface,
+        'pointerDown',
+        world(shortSame.position.x, 1, shortSame.position.z)
+      )
+      shortSame.target = { x: shortSame.target.x + 3, z: shortSame.target.z }
+      await renderer.update(scene(same))
+      await renderer.fireEvent(surface, 'pointerMove', world(x, 1, z - 4))
+      await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
+      expect(placed).has.length(2)
+
       // The grabbed player sent somewhere else mid-drag ends the grab.
       const sent = first.map(player => ({ ...player }))
       await renderer.update(scene(sent))
@@ -96,7 +112,7 @@ describe('a defender drag while the screen redraws', () => {
         )
       )
       await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
-      expect(placed).has.length(1)
+      expect(placed).has.length(2)
 
       // A player leaving mid-drag ends it.
       const now = first.map(player => ({ ...player }))
@@ -109,7 +125,7 @@ describe('a defender drag while the screen redraws', () => {
       )
       await renderer.update(scene(now.filter(player => player.id !== 'LF')))
       await renderer.fireEvent(surface, 'pointerUp', world(x, 1, z - 4))
-      expect(placed).has.length(1)
+      expect(placed).has.length(2)
     } finally {
       await renderer.unmount()
     }
