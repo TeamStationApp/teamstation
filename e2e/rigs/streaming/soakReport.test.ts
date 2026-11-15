@@ -159,6 +159,24 @@ describe('the soak report', function () {
     expect(report.markdown).contains('| ipad-xctrace | sampler | blocked |')
   })
 
+  it('keeps the app in front through a switch that threw', function () {
+    expect(
+      iphoneForeground(
+        [
+          {
+            atMs: T0 + MIN,
+            target: 'iphone',
+            action: 'switchSurface',
+            args: { to: 'safari' },
+            error: 'Safari would not open'
+          }
+        ],
+        T0,
+        T0 + 10 * MIN
+      )
+    ).deep.equals({ app: [[T0, T0 + 10 * MIN]], safari: [] })
+  })
+
   it('judges the iPhone Safari process only while Safari was in front', function () {
     const report = reduceRun(run())
     const safari = report.memory.find(row => row.device === 'iphone')!

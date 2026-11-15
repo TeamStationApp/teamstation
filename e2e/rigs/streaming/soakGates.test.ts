@@ -378,9 +378,16 @@ describe('the soak gates', function () {
     })
 
     it('judges nothing once the publishers stop', function () {
+      // As runSoak writes them: one stopPublisher per publisher, in turn.
       const events = [
         ...base(),
-        { atMs: T0 + 50_000, target: 'publishers', action: 'stopPublishers' }
+        ...['publisherA', 'publisherB', 'publisherC'].map((target, i) => ({
+          atMs: T0 + 50_000 + i * 100,
+          doneMs: T0 + 50_000 + i * 100 + 50,
+          target,
+          action: 'stopPublisher',
+          args: {}
+        }))
       ]
       const { instances } = evaluateGates(events, [
         probe('tv', T0 + 60_000, { PhoneA: false })
@@ -420,6 +427,80 @@ describe('the soak gates', function () {
       )
       expect(instances.find(i => i.kind === 'skip')!.verdict).equals('blocked')
       expect(only(instances, 'surfaceSwitch')[0].verdict).equals('blocked')
+    })
+
+    it('blocks the angle of a publisher that did not start, rather than failing every gate on it', function () {
+      const events = base().map(event =>
+        event.target === 'publisherB'
+          ? { ...event, error: 'the phone would not publish' }
+          : event
+      )
+      const { instances, verdict } = evaluateGates(events, [
+        probe('tv', T0 + 60_000, { PhoneB: undefined })
+      ])
+      expect(
+        only(instances, 'continuousPlay', 'tv').map(i => [i.kind, i.verdict])
+      ).deep.equals([
+        ['startPublisher', 'blocked'],
+        ['continuousPlay', 'passed']
+      ])
+      expect(instances.find(i => i.kind === 'startPublisher')!.reason).equals(
+        'publisherB did not start (the phone would not publish): PhoneB is not judged'
+      )
+      expect(verdict).equals('blocked')
+    })
+
+    it('blocks the outage of a cut that threw, and judges C no more after it', function () {
+      const at = T0 + 60_000
+      const events = [
+        ...base(),
+        {
+          atMs: at,
+          doneMs: at + 5000,
+          target: 'publisherC',
+          action: 'syntheticCut',
+          args: { seconds: 30 },
+          error: 'the ingest refused it'
+        }
+      ]
+      const { instances } = evaluateGates(events, [
+        probe('tv', at + 120_000, { Synthetic: false })
+      ])
+      const outage = only(instances, 'syntheticOutage', 'tv')
+      expect(outage.map(i => [i.verdict, i.reason])).deep.equals([
+        ['blocked', 'the cut failed: the ingest refused it']
+      ])
+      expect(
+        only(instances, 'continuousPlay', 'tv').map(i => i.verdict)
+      ).deep.equals(['passed'])
+    })
+
+    it('keeps the app in front after a switch to Safari that threw', function () {
+      const at = T0 + 60_000
+      const events = [
+        ...base(),
+        {
+          atMs: at,
+          doneMs: at + 1000,
+          target: 'iphone',
+          action: 'switchSurface',
+          args: { to: 'safari' },
+          error: 'Safari would not open'
+        },
+        {
+          atMs: at + 30_000,
+          doneMs: at + 60_000,
+          target: 'publisherC',
+          action: 'syntheticCut',
+          args: { seconds: 30 }
+        }
+      ]
+      const { instances } = evaluateGates(events, [])
+      expect(only(instances, 'surfaceSwitch')[0].verdict).equals('blocked')
+      // The outage is judged on whatever is in front: still the app.
+      const watching = only(instances, 'syntheticOutage').map(i => i.surface)
+      expect(watching).includes('iphone-app')
+      expect(watching).not.includes('iphone-safari')
     })
   })
 

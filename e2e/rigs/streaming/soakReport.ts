@@ -62,8 +62,9 @@ export function iphoneForeground(
   }
   let front: 'app' | 'safari' = 'app'
   let since = runStartMs
+  // A switch that threw put nothing in front.
   const switches = events
-    .filter(event => event.action === 'switchSurface')
+    .filter(event => event.action === 'switchSurface' && event.error == null)
     .sort((a, b) => a.atMs - b.atMs)
   for (const change of switches) {
     const to = change.args?.to === 'safari' ? 'safari' : 'app'

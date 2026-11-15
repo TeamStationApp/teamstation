@@ -103,11 +103,19 @@ function gateFor(action: string): { gate: GateName; limit: keyof GateLimits } {
 interface Outage {
   atMs: number
   restoredMs: number
+  /** The cut threw: when, or whether, C came back is unknown. */
+  error?: string
 }
 
-/** What the timeline says about when each angle is up. */
+/**
+ * What the timeline says about when each angle is up. An event whose driver
+ * threw says nothing of what happened: a publisher that did not start is not
+ * required (its gates are blocked), a cut that threw leaves C out from then
+ * on, and a switch that threw changes nothing in front.
+ */
 class Timeline {
   readonly starts = new Map<string, number>()
+  readonly failedStarts: RecordedEvent[] = []
   readonly outages: Outage[] = []
   readonly stopMs: number
   readonly switches: RecordedEvent[]
@@ -119,19 +127,28 @@ class Timeline {
     for (const event of events) {
       if (event.action === 'startPublisher') {
         const angle = PUBLISHER_ANGLE[event.target]
-        if (angle != null) this.starts.set(angle, event.doneMs ?? event.atMs)
+        if (angle == null) continue
+        if (event.error != null) this.failedStarts.push(event)
+        else this.starts.set(angle, event.doneMs ?? event.atMs)
       }
       if (event.action === 'syntheticCut') {
         const seconds = Number(event.args?.seconds ?? 0)
-        this.outages.push({
-          atMs: event.atMs,
-          restoredMs: event.doneMs ?? event.atMs + seconds * 1000
-        })
+        this.outages.push(
+          event.error == null
+            ? {
+                atMs: event.atMs,
+                restoredMs: event.doneMs ?? event.atMs + seconds * 1000
+              }
+            : { atMs: event.atMs, restoredMs: Infinity, error: event.error }
+        )
       }
     }
+    // The run stops each publisher in turn as it ends.
     this.stopMs =
-      events.find(event => event.action === 'stopPublishers')?.atMs ?? Infinity
-    this.switches = events.filter(event => event.action === 'switchSurface')
+      events.find(event => event.action === 'stopPublisher')?.atMs ?? Infinity
+    this.switches = events.filter(
+      event => event.action === 'switchSurface' && event.error == null
+    )
   }
 
   /** Angles that should be advancing: started, not stopped, C outside its outage. */
@@ -342,7 +359,10 @@ function judgeSwitches(
   bySurface: Map<SoakSurface, RecordedProbe[]>
 ): GateInstance[] {
   const { limits } = timeline
-  return timeline.switches.map(event => {
+  const switches = timeline.events.filter(
+    event => event.action === 'switchSurface'
+  )
+  return switches.map(event => {
     const surface: SoakSurface =
       event.args?.to === 'safari' ? 'iphone-safari' : 'iphone-app'
     const base = {
@@ -398,6 +418,14 @@ function judgeOutages(
         surface,
         kind: 'syntheticOutage',
         atMs: outage.atMs
+      }
+      if (outage.error != null) {
+        out.push({
+          ...base,
+          verdict: 'blocked',
+          reason: `the cut failed: ${outage.error}`
+        })
+        continue
       }
       const probes = bySurface.get(surface) ?? []
       const excused = recoveryWindows(timeline, surface)
@@ -485,6 +513,20 @@ function judgeOutages(
     }
   }
   return out
+}
+
+/** A publisher that did not start: its angle is not judged, so every watcher's play is blocked. */
+function judgeStarts(timeline: Timeline): GateInstance[] {
+  return timeline.failedStarts.flatMap(event =>
+    timeline.watchers(event.atMs).map(surface => ({
+      gate: 'continuousPlay' as const,
+      surface,
+      kind: 'startPublisher',
+      atMs: event.atMs,
+      verdict: 'blocked' as const,
+      reason: `${event.target} did not start (${event.error}): ${PUBLISHER_ANGLE[event.target]} is not judged`
+    }))
+  )
 }
 
 function judgeContinuous(
@@ -713,7 +755,8 @@ export function evaluateGates(
   const instances: GateInstance[] = [
     ...judgeActions(timeline, bySurface),
     ...judgeSwitches(timeline, bySurface),
-    ...judgeOutages(timeline, bySurface)
+    ...judgeOutages(timeline, bySurface),
+    ...judgeStarts(timeline)
   ]
   for (const [surface, list] of bySurface) {
     instances.push(
