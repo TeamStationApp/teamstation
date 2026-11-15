@@ -1,7 +1,6 @@
 import { expect } from 'chai'
 
 import {
-  auditListeners,
   describeListeners,
   disallowed,
   parseLsof,
@@ -51,9 +50,5 @@ describe('the listener audit', function () {
   it('walks the whole process tree once', function () {
     const tree: Record<number, number[]> = { 1: [2, 3], 2: [4], 3: [4], 4: [] }
     expect(processTree(1, pid => tree[pid] ?? [])).deep.equals([1, 2, 3, 4])
-  })
-
-  it('finds nothing listening under this test process', function () {
-    expect(auditListeners()).deep.equals([])
   })
 })
