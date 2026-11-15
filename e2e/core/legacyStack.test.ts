@@ -14,7 +14,13 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { backUpServerConfig, frontProxy, refuseTakenPorts } from './legacyStack'
+import {
+  backUpServerConfig,
+  frontProxy,
+  mayDropStackDatabase,
+  refuseTakenPorts,
+  STACK_DATABASE_MARK
+} from './legacyStack'
 
 describe('legacy stack ports', function () {
   it('refuses a port something answers on, and passes free ones', async function () {
@@ -147,5 +153,31 @@ describe('legacy stack server config', function () {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('legacy stack database', function () {
+  it('drops only a database that is not there, or one the stack marked as its own', function () {
+    expect(
+      mayDropStackDatabase({ exists: false, mark: null, reclaim: false })
+    ).equals(true)
+    expect(
+      mayDropStackDatabase({
+        exists: true,
+        mark: STACK_DATABASE_MARK,
+        reclaim: false
+      })
+    ).equals(true)
+    // A seat's database named alike, with no mark or another one.
+    expect(
+      mayDropStackDatabase({ exists: true, mark: null, reclaim: false })
+    ).equals(false)
+    expect(
+      mayDropStackDatabase({ exists: true, mark: 'seat', reclaim: false })
+    ).equals(false)
+    // The stack's own from before it marked them, when the run says so.
+    expect(
+      mayDropStackDatabase({ exists: true, mark: null, reclaim: true })
+    ).equals(true)
   })
 })

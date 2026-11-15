@@ -211,10 +211,56 @@ async function stopChild(child: ChildProcess | undefined): Promise<void> {
 }
 
 /** A fresh `teamstation_e2eStack`: fixtures with fixed ids refuse a second run. */
+/** What the stack writes on the database it makes, and looks for before dropping one. */
+export const STACK_DATABASE_MARK =
+  'teamstation e2e stack: dropped and made again each run'
+
+/**
+ * Whether the stack may drop the database it is about to make again: one
+ * that is not there, or one it made itself and marked. Any other, such as a
+ * development seat's database named alike on a cluster the variables point
+ * at, is refused, unless the run says it is the stack's own from before the
+ * mark (`TS_STACK_DATABASE_RECLAIM=1`).
+ */
+export function mayDropStackDatabase(found: {
+  exists: boolean
+  mark: string | null
+  reclaim: boolean
+}): boolean {
+  return !found.exists || found.mark === STACK_DATABASE_MARK || found.reclaim
+}
+
 function freshDatabase(): void {
   const { clusterArgs, password } = STACK_SERVERS
   const env =
     password == null ? process.env : { ...process.env, PGPASSWORD: password }
+  const looked = spawnSync(
+    'psql',
+    [
+      ...clusterArgs,
+      '-d',
+      'postgres',
+      '-At',
+      '-c',
+      `select coalesce(shobj_description(oid, 'pg_database'), '') from pg_database where datname = '${STACK_DATABASE}'`
+    ],
+    { encoding: 'utf8', env }
+  )
+  if (looked.status !== 0) throw new Error(`psql failed: ${looked.stderr}`)
+  // One line for a database that is there, its comment or nothing; no line for one that is not.
+  const answer = looked.stdout.trim()
+  if (
+    !mayDropStackDatabase({
+      exists: looked.stdout !== '',
+      mark: answer === '' ? null : answer,
+      reclaim: process.env.TS_STACK_DATABASE_RECLAIM === '1'
+    })
+  ) {
+    throw new Error(
+      `${STACK_DATABASE} exists and is not one the stack made; it is not dropped. ` +
+        'Name another with TS_STACK_DATABASE, or, for a stack database from before the stack marked its own, run once with TS_STACK_DATABASE_RECLAIM=1'
+    )
+  }
   const dropped = spawnSync(
     'dropdb',
     [...clusterArgs, '--if-exists', '--force', STACK_DATABASE],
@@ -226,6 +272,18 @@ function freshDatabase(): void {
     env
   })
   if (made.status !== 0) throw new Error(`createdb failed: ${made.stderr}`)
+  const marked = spawnSync(
+    'psql',
+    [
+      ...clusterArgs,
+      '-d',
+      'postgres',
+      '-c',
+      `comment on database "${STACK_DATABASE}" is '${STACK_DATABASE_MARK}'`
+    ],
+    { encoding: 'utf8', env }
+  )
+  if (marked.status !== 0) throw new Error(`psql failed: ${marked.stderr}`)
 }
 
 /** Paths the API answers at the origin's root, as the deployed proxy sends them. */
