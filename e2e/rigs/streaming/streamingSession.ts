@@ -323,41 +323,47 @@ export async function openWorld(
   const links = gameLinks(handle.origin, world.gameId)
 
   const mirror = deps.mirror(handle, ctx.artifact('mirror'))
-  // The mirror follows new lines only: let its SSH connect before the first
-  // request whose line it must catch.
-  await deps.sleep(5000)
-  const stack: SignInStack = {
-    api: handle.api,
-    serverLog: mirror.apiLog,
-    // A connection of its own each time: one left idle between sign-ins is
-    // dropped on the way to the droplet, and its next read times out.
-    resetLimits: async () => {
-      await deps.onDatabase(handle, async client => {
-        await client.query(
-          "delete from rate_events where scope like 'emailCode.%'"
-        )
-      })
+  try {
+    // The mirror follows new lines only: let its SSH connect before the first
+    // request whose line it must catch.
+    await deps.sleep(5000)
+    const stack: SignInStack = {
+      api: handle.api,
+      serverLog: mirror.apiLog,
+      // A connection of its own each time: one left idle between sign-ins is
+      // dropped on the way to the droplet, and its next read times out.
+      resetLimits: async () => {
+        await deps.onDatabase(handle, async client => {
+          await client.query(
+            "delete from rate_events where scope like 'emailCode.%'"
+          )
+        })
+      }
     }
-  }
-  // Devices keep sessions for earlier runs' accounts, and a signed-in app or
-  // page ignores a sign-in link: every session but the TV's ends, so each
-  // surface signs in afresh as the account SIGN_IN_AS gives it.
-  await deps.onDatabase(handle, async client => {
-    await client.query(REVOKE_SESSIONS)
-  })
-  const ownerToken = await deps.sessionToken(stack, emails.owner)
-  return {
-    handle,
-    settings,
-    world,
-    emails,
-    links,
-    stack,
-    ownerToken,
-    link: who => async () => await deps.signInToken(stack, emails[who]),
-    close: async () => {
-      await mirror.stop()
+    // Devices keep sessions for earlier runs' accounts, and a signed-in app or
+    // page ignores a sign-in link: every session but the TV's ends, so each
+    // surface signs in afresh as the account SIGN_IN_AS gives it.
+    await deps.onDatabase(handle, async client => {
+      await client.query(REVOKE_SESSIONS)
+    })
+    const ownerToken = await deps.sessionToken(stack, emails.owner)
+    return {
+      handle,
+      settings,
+      world,
+      emails,
+      links,
+      stack,
+      ownerToken,
+      link: who => async () => await deps.signInToken(stack, emails[who]),
+      close: async () => {
+        await mirror.stop()
+      }
     }
+  } catch (error) {
+    // A world that never opened lets go of its mirror before it says why.
+    await mirror.stop().catch(() => undefined)
+    throw error
   }
 }
 

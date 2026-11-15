@@ -295,198 +295,210 @@ export async function soakParts(
 ): Promise<{ parts: SoakParts; cleanup: () => Promise<void> }> {
   const { ctx, schedule, cwd } = inputs
   const opened = await deps.openWorld({ ctx, cwd })
-  const { handle, settings, world, links, link } = opened
-  const { attachIos, attachAndroid, openIn, saveShot } = deps.deviceKit(
-    ctx,
-    settings
-  )
-
-  const publisherA = await attachIos('publisherA')
-  const publisherB = await attachAndroid('publisherB')
-  const iphone = await attachIos('iphone')
-  const android = await attachAndroid('android')
-  const ipad = await attachIos('ipad')
-  for (const [role, device, platform] of [
-    ['publisherA', publisherA, 'ios'],
-    ['publisherB', publisherB, 'android'],
-    ['iphone', iphone, 'ios'],
-    ['android', android, 'android'],
-    ['ipad', ipad, 'ios']
-  ] as const) {
-    await deps.signInApp(device, DEVELOP_APP, link(SIGN_IN_AS[role]), {
-      openIn: openIn(role, platform)
-    })
-  }
-
-  const web = await ctx.browser({ width: 1440, height: 900 }, { h264: true })
-  await web.m.openLink({
-    link: `${handle.origin}/signin/${await link(SIGN_IN_AS.chrome)()}`
-  })
-  // Safari keeps its own sign-in: opened once here, before minute 0.
-  await iphone.openLink({
-    link: `${handle.origin}/signin/${await link(SIGN_IN_AS['iphone-safari'])()}`
-  })
-
-  const { tv, remote } = deps.tvKit(ctx, settings)
-  await deps.signInTv(remote, opened)
-  await deps.recordSessions(opened, ctx.artifact('sessions.json'))
-
-  const app = new NativeAppSurface({
-    name: 'iphone-app',
-    device: iphone,
-    appId: DEVELOP_APP,
-    gameLink: links.app,
-    openIn: openIn('iphone', 'ios'),
-    saveShot
-  })
-  const safari = new MobileSafariSurface({
-    name: 'iphone-safari',
-    device: iphone,
-    gameUrl: links.web,
-    saveShot
-  })
-  const phone = new IphoneSurface({ device: iphone, app, safari })
-  const safariWindows: Array<[number, number]> = []
-  const iphoneFront = {
-    get surface() {
-      return phone.surface
-    },
-    switchTo: async (to: 'app' | 'safari') => {
-      const switched = await phone.switchTo(to)
-      if (to === 'safari') safariWindows.push([Date.now(), Infinity])
-      else {
-        const open = safariWindows.at(-1)
-        if (open != null) open[1] = Date.now()
-      }
-      return switched
-    }
-  }
-
   const urlFile = join(tmpdir(), `soak-rtmp-${process.pid}`)
-  const synthetic = world.streams.find(stream => stream.label === 'Synthetic')
-  if (synthetic == null)
-    throw new Error('the soak world has no Synthetic camera')
-  writeFileSync(urlFile, rtmpUrl(handle, synthetic.key), { mode: 0o600 })
+  let closeWeb: (() => Promise<void>) | undefined
+  try {
+    const { handle, settings, world, links, link } = opened
+    const { attachIos, attachAndroid, openIn, saveShot } = deps.deviceKit(
+      ctx,
+      settings
+    )
 
-  const page = web.page
-  const browserCdp = await page.browser().target().createCDPSession()
-  const pageCdp = await page.createCDPSession()
-  const traces = ctx.artifact('traces')
-
-  const parts: SoakParts = {
-    schedule,
-    runDir: ctx.artifact('soak'),
-    surfaces: {
-      'iphone-app': app,
-      'iphone-safari': safari,
-      android: new NativeAppSurface({
-        name: 'android',
-        device: android,
-        appId: DEVELOP_APP,
-        gameLink: links.app,
-        openIn: openIn('android', 'android'),
-        saveShot,
-        maxHoldMs: ANDROID_MAX_HOLD_MS
-      }),
-      ipad: new NativeAppSurface({
-        name: 'ipad',
-        device: ipad,
-        appId: DEVELOP_APP,
-        gameLink: links.app,
-        openIn: openIn('ipad', 'ios'),
-        saveShot
-      }),
-      tv,
-      chrome: new ChromeSurface({
-        device: web.m,
-        page: {
-          evaluate: async (script: string) => await page.evaluate(script)
-        },
-        gameUrl: links.web
+    const publisherA = await attachIos('publisherA')
+    const publisherB = await attachAndroid('publisherB')
+    const iphone = await attachIos('iphone')
+    const android = await attachAndroid('android')
+    const ipad = await attachIos('ipad')
+    for (const [role, device, platform] of [
+      ['publisherA', publisherA, 'ios'],
+      ['publisherB', publisherB, 'android'],
+      ['iphone', iphone, 'ios'],
+      ['android', android, 'android'],
+      ['ipad', ipad, 'ios']
+    ] as const) {
+      await deps.signInApp(device, DEVELOP_APP, link(SIGN_IN_AS[role]), {
+        openIn: openIn(role, platform)
       })
-    },
-    iphone: iphoneFront,
-    publishers: {
-      publisherA: new PhonePublisher({
-        device: publisherA,
-        appId: DEVELOP_APP,
-        gameLink: links.app,
-        angle: 'PhoneA',
-        openIn: openIn('publisherA', 'ios')
-      }),
-      publisherB: new PhonePublisher({
-        device: publisherB,
-        appId: DEVELOP_APP,
-        gameLink: links.app,
-        angle: 'PhoneB',
-        openIn: openIn('publisherB', 'android')
-      }),
-      publisherC: new SyntheticPublisher({
-        ffmpeg: settings.ffmpeg,
-        urlFile,
-        label: 'Synthetic',
-        ...(settings.offsetMinutes == null
-          ? {}
-          : { offsetMinutes: settings.offsetMinutes })
-      })
-    },
-    samplers: [
-      xctraceSampler({
-        name: 'publisherA',
-        udid: ctx.device('publisherA'),
-        dir: traces
-      }),
-      xctraceSampler({
-        name: 'iphone',
-        udid: ctx.device('iphone'),
-        dir: traces,
-        webContentDuring: () =>
-          safariWindows.map(([from, to]) => [
-            from,
-            Number.isFinite(to) ? to : Date.now()
-          ])
-      }),
-      xctraceSampler({
-        name: 'ipad',
-        udid: ctx.device('ipad'),
-        dir: traces,
-        // Its all-process recording takes minutes to save; the sampling runs
-        // beside the schedule, so the wait costs only the gap until the next piece.
-        stopMs: 10 * 60_000
-      }),
-      // The TV's all-process recording has hung at full CPU and ignored
-      // SIGINT in every run so far, holding the run's end for up to 40 min,
-      // and never gave a sample: SOAK_TV_MEMORY=off leaves it out.
-      ...(process.env.SOAK_TV_MEMORY === 'off'
-        ? []
-        : [
-            xctraceSampler({
-              name: 'tv',
-              udid: ctx.device('tv'),
-              dir: traces,
-              stopMs: 10 * 60_000,
-              appName: TV_PROCESS
-            })
-          ]),
-      adbSampler('publisherB', ctx.device('publisherB')),
-      adbSampler('android', ctx.device('android')),
-      chromeSampler(browserCdp, pageCdp),
-      dropletSampler(handle)
-    ],
-    provenance: {
-      stack: handle.id,
-      origin: handle.origin,
-      ...(handle.ref == null ? {} : { serverRef: handle.ref }),
-      build: process.env.SOAK_BUILD ?? null,
-      schedule: { seed: schedule.seed, layout: schedule.layout }
     }
-  }
-  return {
-    parts,
-    cleanup: async () => {
-      rmSync(urlFile, { force: true })
-      await opened.close()
+
+    const web = await ctx.browser({ width: 1440, height: 900 }, { h264: true })
+    closeWeb = async () => {
       await web.close()
     }
+    await web.m.openLink({
+      link: `${handle.origin}/signin/${await link(SIGN_IN_AS.chrome)()}`
+    })
+    // Safari keeps its own sign-in: opened once here, before minute 0.
+    await iphone.openLink({
+      link: `${handle.origin}/signin/${await link(SIGN_IN_AS['iphone-safari'])()}`
+    })
+
+    const { tv, remote } = deps.tvKit(ctx, settings)
+    await deps.signInTv(remote, opened)
+    await deps.recordSessions(opened, ctx.artifact('sessions.json'))
+
+    const app = new NativeAppSurface({
+      name: 'iphone-app',
+      device: iphone,
+      appId: DEVELOP_APP,
+      gameLink: links.app,
+      openIn: openIn('iphone', 'ios'),
+      saveShot
+    })
+    const safari = new MobileSafariSurface({
+      name: 'iphone-safari',
+      device: iphone,
+      gameUrl: links.web,
+      saveShot
+    })
+    const phone = new IphoneSurface({ device: iphone, app, safari })
+    const safariWindows: Array<[number, number]> = []
+    const iphoneFront = {
+      get surface() {
+        return phone.surface
+      },
+      switchTo: async (to: 'app' | 'safari') => {
+        const switched = await phone.switchTo(to)
+        if (to === 'safari') safariWindows.push([Date.now(), Infinity])
+        else {
+          const open = safariWindows.at(-1)
+          if (open != null) open[1] = Date.now()
+        }
+        return switched
+      }
+    }
+
+    const synthetic = world.streams.find(stream => stream.label === 'Synthetic')
+    if (synthetic == null)
+      throw new Error('the soak world has no Synthetic camera')
+    writeFileSync(urlFile, rtmpUrl(handle, synthetic.key), { mode: 0o600 })
+
+    const page = web.page
+    const browserCdp = await page.browser().target().createCDPSession()
+    const pageCdp = await page.createCDPSession()
+    const traces = ctx.artifact('traces')
+
+    const parts: SoakParts = {
+      schedule,
+      runDir: ctx.artifact('soak'),
+      surfaces: {
+        'iphone-app': app,
+        'iphone-safari': safari,
+        android: new NativeAppSurface({
+          name: 'android',
+          device: android,
+          appId: DEVELOP_APP,
+          gameLink: links.app,
+          openIn: openIn('android', 'android'),
+          saveShot,
+          maxHoldMs: ANDROID_MAX_HOLD_MS
+        }),
+        ipad: new NativeAppSurface({
+          name: 'ipad',
+          device: ipad,
+          appId: DEVELOP_APP,
+          gameLink: links.app,
+          openIn: openIn('ipad', 'ios'),
+          saveShot
+        }),
+        tv,
+        chrome: new ChromeSurface({
+          device: web.m,
+          page: {
+            evaluate: async (script: string) => await page.evaluate(script)
+          },
+          gameUrl: links.web
+        })
+      },
+      iphone: iphoneFront,
+      publishers: {
+        publisherA: new PhonePublisher({
+          device: publisherA,
+          appId: DEVELOP_APP,
+          gameLink: links.app,
+          angle: 'PhoneA',
+          openIn: openIn('publisherA', 'ios')
+        }),
+        publisherB: new PhonePublisher({
+          device: publisherB,
+          appId: DEVELOP_APP,
+          gameLink: links.app,
+          angle: 'PhoneB',
+          openIn: openIn('publisherB', 'android')
+        }),
+        publisherC: new SyntheticPublisher({
+          ffmpeg: settings.ffmpeg,
+          urlFile,
+          label: 'Synthetic',
+          ...(settings.offsetMinutes == null
+            ? {}
+            : { offsetMinutes: settings.offsetMinutes })
+        })
+      },
+      samplers: [
+        xctraceSampler({
+          name: 'publisherA',
+          udid: ctx.device('publisherA'),
+          dir: traces
+        }),
+        xctraceSampler({
+          name: 'iphone',
+          udid: ctx.device('iphone'),
+          dir: traces,
+          webContentDuring: () =>
+            safariWindows.map(([from, to]) => [
+              from,
+              Number.isFinite(to) ? to : Date.now()
+            ])
+        }),
+        xctraceSampler({
+          name: 'ipad',
+          udid: ctx.device('ipad'),
+          dir: traces,
+          // Its all-process recording takes minutes to save; the sampling runs
+          // beside the schedule, so the wait costs only the gap until the next piece.
+          stopMs: 10 * 60_000
+        }),
+        // The TV's all-process recording has hung at full CPU and ignored
+        // SIGINT in every run so far, holding the run's end for up to 40 min,
+        // and never gave a sample: SOAK_TV_MEMORY=off leaves it out.
+        ...(process.env.SOAK_TV_MEMORY === 'off'
+          ? []
+          : [
+              xctraceSampler({
+                name: 'tv',
+                udid: ctx.device('tv'),
+                dir: traces,
+                stopMs: 10 * 60_000,
+                appName: TV_PROCESS
+              })
+            ]),
+        adbSampler('publisherB', ctx.device('publisherB')),
+        adbSampler('android', ctx.device('android')),
+        chromeSampler(browserCdp, pageCdp),
+        dropletSampler(handle)
+      ],
+      provenance: {
+        stack: handle.id,
+        origin: handle.origin,
+        ...(handle.ref == null ? {} : { serverRef: handle.ref }),
+        build: process.env.SOAK_BUILD ?? null,
+        schedule: { seed: schedule.seed, layout: schedule.layout }
+      }
+    }
+    return {
+      parts,
+      cleanup: async () => {
+        rmSync(urlFile, { force: true })
+        await opened.close()
+        await web.close()
+      }
+    }
+  } catch (error) {
+    // Parts that never came together let go of what they had made so far.
+    rmSync(urlFile, { force: true })
+    await closeWeb?.().catch(() => undefined)
+    await opened.close().catch(() => undefined)
+    throw error
   }
 }

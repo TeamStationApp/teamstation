@@ -561,6 +561,23 @@ describe('building the soak parts', function () {
     }
   })
 
+  it('lets go of the world and the browser when a surface will not sign in', async function () {
+    const r = partsRig()
+    r.deps.signInTv = async () => {
+      throw new Error('the TV is still signing in after 8 looks')
+    }
+    const message = await soakParts(
+      { ctx: r.ctx, schedule, cwd: '/repo' },
+      r.deps
+    ).then(
+      () => '',
+      (error: unknown) => (error as Error).message
+    )
+    expect(message).equals('the TV is still signing in after 8 looks')
+    expect(r.log.slice(-2)).deep.equals(['browser closed', 'world closed'])
+    expect(existsSync(join(tmpdir(), `soak-rtmp-${process.pid}`))).equals(false)
+  })
+
   it("leaves the TV's memory out with SOAK_TV_MEMORY=off, and needs a Synthetic camera", async function () {
     const before = process.env.SOAK_TV_MEMORY
     process.env.SOAK_TV_MEMORY = 'off'

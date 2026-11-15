@@ -191,6 +191,18 @@ describe('opening a streaming world', function () {
     expect(stopped).deep.equals([join(dir, 'mirror')])
   })
 
+  it('stops the log mirror when signing the owner in fails', async function () {
+    const { ctx, dir } = context()
+    const { deps, stopped } = worldDeps({
+      sessionToken: async () => {
+        throw new Error('no code in the log')
+      }
+    })
+    const error = await rejection(openWorld({ ctx, cwd: '/repo' }, deps))
+    expect(error.message).equals('no code in the log')
+    expect(stopped).deep.equals([join(dir, 'mirror')])
+  })
+
   it("seeds the soak's own world when no cameras are named", async function () {
     const { ctx } = context()
     const { deps, seeded } = worldDeps()
