@@ -388,37 +388,40 @@ async function main(): Promise<void> {
     stack = attachedLegacyStack(handle, join(artifacts, 'mirror'))
     // A short clip for the scripts that upload a recording.
     uploadFile = join(artifacts, 'upload.mp4')
-    const made = spawnSync(
-      process.env.TS_FFMPEG ?? 'ffmpeg',
-      [
-        '-y',
-        '-loglevel',
-        'error',
-        '-f',
-        'lavfi',
-        '-i',
-        'testsrc2=size=1280x720:rate=30',
-        '-f',
-        'lavfi',
-        '-i',
-        'sine=frequency=440:sample_rate=48000',
-        '-t',
-        '12',
-        '-c:v',
-        'libx264',
-        '-pix_fmt',
-        'yuv420p',
-        '-c:a',
-        'aac',
-        uploadFile
-      ],
-      { encoding: 'utf8' }
-    )
-    if (made.status !== 0) throw new Error(`the upload clip: ${made.stderr}`)
   }
-  // Once, so the phones' daemons carry this sweep's environment.
-  for (const name of DAEMONS.slice(1)) restartDaemon(bin, name)
+  // Everything from here runs with the stack up, so it stops it on the way out.
   try {
+    if (uploadFile != null) {
+      const made = spawnSync(
+        process.env.TS_FFMPEG ?? 'ffmpeg',
+        [
+          '-y',
+          '-loglevel',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          'testsrc2=size=1280x720:rate=30',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=440:sample_rate=48000',
+          '-t',
+          '12',
+          '-c:v',
+          'libx264',
+          '-pix_fmt',
+          'yuv420p',
+          '-c:a',
+          'aac',
+          uploadFile
+        ],
+        { encoding: 'utf8' }
+      )
+      if (made.status !== 0) throw new Error(`the upload clip: ${made.stderr}`)
+    }
+    // Once, so the phones' daemons carry this sweep's environment.
+    for (const name of DAEMONS.slice(1)) restartDaemon(bin, name)
     for (const file of files) {
       const off = disabledFor(file)
       if (off != null) {
