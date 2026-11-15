@@ -7,6 +7,7 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import {
+  chmodSync,
   copyFileSync,
   existsSync,
   mkdirSync,
@@ -290,6 +291,40 @@ export function frontProxy(apiPort: number, webPort: number): Server {
   return server
 }
 
+/**
+ * Backs up the developer's `configFile` to `backup`, outside the scratch
+ * directory each run wipes, and gives the config to build on and how to put
+ * it back. A config naming `stackDatabaseUrl` is the stack's own copy, left by
+ * a run that stopped before it could restore (its machine restarted): the
+ * backup that run made is kept, and with none the developer had no config.
+ */
+export function backUpServerConfig(
+  configFile: string,
+  backup: string,
+  stackDatabaseUrl: string
+): { base: Json; restore: () => void } {
+  const read = (file: string): Json =>
+    JSON.parse(readFileSync(file, 'utf8')) as Json
+  const leftByAStoppedRun =
+    existsSync(configFile) && read(configFile).databaseUrl === stackDatabaseUrl
+  if (!leftByAStoppedRun) {
+    rmSync(backup, { force: true })
+    if (existsSync(configFile)) {
+      copyFileSync(configFile, backup)
+      chmodSync(backup, 0o600)
+    }
+  }
+  const hadConfig = existsSync(backup)
+  return {
+    base: hadConfig ? read(backup) : {},
+    restore: () => {
+      if (!hadConfig) rmSync(configFile, { force: true })
+      else if (existsSync(backup)) copyFileSync(backup, configFile)
+      rmSync(backup, { force: true })
+    }
+  }
+}
+
 /** Starts the stack from `cwd`, writing its logs under `artifacts`. */
 export async function startLegacyStack(
   cwd: string,
@@ -312,19 +347,11 @@ export async function startLegacyStack(
   mkdirSync(workDir, { recursive: true })
 
   const configFile = join(cwd, 'serverConfig.json')
-  const original = join(scratch, 'serverConfig.original.json')
-  const hadConfig = existsSync(configFile)
-  // A run stopped before it could restore (its machine restarted) leaves the
-  // stack's config in place: keep the backup it made, never back that up.
-  const leftByAStoppedRun =
-    hadConfig &&
-    existsSync(original) &&
-    (JSON.parse(readFileSync(configFile, 'utf8')) as Json).databaseUrl ===
-      STACK_DATABASE_URL
-  if (hadConfig && !leftByAStoppedRun) copyFileSync(configFile, original)
-  const base: Json = hadConfig
-    ? (JSON.parse(readFileSync(original, 'utf8')) as Json)
-    : {}
+  const { base, restore } = backUpServerConfig(
+    configFile,
+    join(tmpdir(), 'teamstation-e2eSuite-serverConfig.original.json'),
+    STACK_DATABASE_URL
+  )
 
   const anthropic = anthropicKey()
   const speech = speechKey()
@@ -386,10 +413,6 @@ export async function startLegacyStack(
     return next
   }
   writePrivate(configFile, config(true))
-  const restore = (): void => {
-    if (hadConfig) copyFileSync(original, configFile)
-    else rmSync(configFile, { force: true })
-  }
   const children: Array<ChildProcess | undefined> = []
   let store: Server | undefined
   try {

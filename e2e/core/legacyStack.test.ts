@@ -1,10 +1,20 @@
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createServer as createHttpServer } from 'node:http'
 import { type AddressInfo, createServer, type Server } from 'node:net'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { frontProxy, refuseTakenPorts } from './legacyStack'
+import { backUpServerConfig, frontProxy, refuseTakenPorts } from './legacyStack'
 
 describe('legacy stack ports', function () {
   it('refuses a port something answers on, and passes free ones', async function () {
@@ -75,6 +85,67 @@ describe('legacy stack front', function () {
             resolve()
           })
         )
+    }
+  })
+})
+
+describe('legacy stack server config', function () {
+  const stackUrl = 'postgres://127.0.0.1/teamstation_e2eStack'
+  const setUp = (): { dir: string; config: string; backup: string } => {
+    const dir = mkdtempSync(join(tmpdir(), 'legacyStackConfig-'))
+    return {
+      dir,
+      config: join(dir, 'serverConfig.json'),
+      backup: join(dir, 'backup', 'serverConfig.original.json')
+    }
+  }
+  const write = (file: string, value: unknown): void => {
+    writeFileSync(file, JSON.stringify(value))
+  }
+  const read = (file: string): unknown => JSON.parse(readFileSync(file, 'utf8'))
+
+  it("keeps the developer's config through a run that stopped before restoring", function () {
+    const { dir, config, backup } = setUp()
+    mkdirSync(join(dir, 'backup'))
+    try {
+      write(config, { databaseUrl: 'postgres://mine', name: 'mine' })
+      backUpServerConfig(config, backup, stackUrl)
+      // The stopped run left the stack's copy; the scratch directory is gone.
+      write(config, { databaseUrl: stackUrl })
+      const next = backUpServerConfig(config, backup, stackUrl)
+      expect(next.base).deep.equals({
+        databaseUrl: 'postgres://mine',
+        name: 'mine'
+      })
+      write(config, { databaseUrl: stackUrl })
+      next.restore()
+      expect(read(config)).deep.equals({
+        databaseUrl: 'postgres://mine',
+        name: 'mine'
+      })
+      expect(existsSync(backup)).equals(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  it('removes the stack copy when the developer had no config', function () {
+    const { dir, config, backup } = setUp()
+    mkdirSync(join(dir, 'backup'))
+    try {
+      // A stopped run of a developer with no config left only the stack's.
+      write(config, { databaseUrl: stackUrl })
+      const { base, restore } = backUpServerConfig(config, backup, stackUrl)
+      expect(base).deep.equals({})
+      restore()
+      expect(existsSync(config)).equals(false)
+
+      const fresh = backUpServerConfig(config, backup, stackUrl)
+      write(config, { databaseUrl: stackUrl })
+      fresh.restore()
+      expect(existsSync(config)).equals(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })
