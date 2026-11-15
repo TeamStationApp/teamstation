@@ -270,11 +270,14 @@ describe('the legacy sweep against an attached stack', function () {
   })
 
   it('names its daemons for the run, or keeps the suite names', function () {
-    expect(daemonNames({})).deep.equals({
-      web: 'e2eSuite',
-      ios: 'e2eSuite-ios',
-      android: 'e2eSuite-android'
+    // Without a prefix, the run's own, kept in the environment for its scripts.
+    const env: NodeJS.ProcessEnv = {}
+    expect(daemonNames(env)).deep.equals({
+      web: `e2e-${process.pid}`,
+      ios: `e2e-${process.pid}-ios`,
+      android: `e2e-${process.pid}-android`
     })
+    expect(env.E2E_DAEMON_PREFIX).equals(`e2e-${process.pid}`)
     expect(
       daemonNames({ E2E_DAEMON_PREFIX: 'streamingBaseline-202611121400' }).ios
     ).equals('streamingBaseline-202611121400-ios')

@@ -1,5 +1,6 @@
 import { expect } from 'chai'
 
+import { daemonNames } from './daemons'
 import { concreteEnv, headerNames, legacyCommand } from './legacyCommand'
 
 const settings = {
@@ -25,7 +26,7 @@ describe('legacyCommand', function () {
     expect(command.blocked).equals(undefined)
     expect(command.argv[0]).equals('npx')
     expect(command.argv.at(-1)).equals('src/app/player/liveOutage.e2e.ts')
-    expect(command.env.MAESTRO_D).equals('e2eSuite')
+    expect(command.env.MAESTRO_D).equals(daemonNames().web)
     expect(command.env.MAESTRO_D_CLIENT_ROOT).equals('/opt/maestro-client')
     expect(command.env.E20_BROWSER).equals('<binary>')
   })
@@ -44,18 +45,20 @@ describe('legacyCommand', function () {
     expect(command.setup.map(step => step.argv[0])).deep.equals(['npm'])
     expect(command.setup[0].background).equals(true)
     expect(command.argv[0]).equals('node_modules/.bin/mocha')
-    expect(command.env.MAESTRO_D).equals('e2eSuite')
+    expect(command.env.MAESTRO_D).equals(daemonNames().web)
   })
 
   it('falls back to mocha when the header names no command', function () {
     const source = `
 import { describe, it } from 'mocha'
+
+import { daemonNames } from './daemons'
 describe('account', function () {})
 `
     const command = legacyCommand(source, 'src/app/accountSettings.e2e.ts')
     expect(command.argv.slice(0, 2)).deep.equals(['npx', 'mocha'])
     expect(command.argv.at(-1)).equals('src/app/accountSettings.e2e.ts')
-    expect(command.env.MAESTRO_D).equals('e2eSuite')
+    expect(command.env.MAESTRO_D).equals(daemonNames().web)
   })
 
   it('falls back to node for a main script and an mjs', function () {
@@ -115,7 +118,7 @@ const note = 1
       '-r',
       'sucrase/register'
     ])
-    expect(command.env.MAESTRO_D).equals('e2eSuite')
+    expect(command.env.MAESTRO_D).equals(daemonNames().web)
   })
 
   it('replaces a known value and blocks a placeholder that remains', function () {
