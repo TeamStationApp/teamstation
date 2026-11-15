@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from 'node:util'
 
-import { asString } from 'cleaners'
+import { asArray, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
 import type { Kysely, Transaction } from 'kysely'
 
@@ -23,6 +23,7 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
+import { asExternalIdAt } from '../../common/externalIds'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -90,6 +91,7 @@ import {
   storedLineupsDigest,
   type TeamSideLineups
 } from '../events/teamLineups'
+import { ensureExternalGuests } from '../games/externalGuests'
 import { fenceDistanceFor, gameHasPlays } from '../games/fenceDistance'
 import {
   addExistingGuest,
@@ -318,6 +320,22 @@ export function lineupRoutes(
         }
       })
       res.status(answer.status).json(answer.body)
+    })
+  )
+
+  // An outside scorer's players with no account: one guest each, made once
+  // under the scorer's id for them and reused for every game they play.
+  router.post(
+    '/games/:gameId/guests/external',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const body = cleanBody(asExternalGuestsBody, req.body)
+      res.json({
+        guests: await ensureExternalGuests(db, actor, gameId, body.guests)
+      })
     })
   )
 
@@ -1243,3 +1261,16 @@ function userIdParam(value: string | string[] | undefined): string {
     throw badRequest('Expected a canonical user id')
   }
 }
+
+/** `POST /games/:gameId/guests/external`: who to seat, side by side. */
+const asExternalGuestsBody = asObject({
+  guests: asArray(
+    asObject({
+      side: asLiteral('away', 'home'),
+      externalId: (raw: unknown) => asExternalIdAt(raw, 'externalId'),
+      firstName: asOptional(asString, ''),
+      lastName: asOptional(asString, ''),
+      jersey: asOptional(asString, '')
+    })
+  )
+})
