@@ -213,6 +213,111 @@ describe('NativeVideoHandle', function () {
     expect(canPlay).equals(1)
   })
 
+  it('keeps the picture it has when the load is reported after it, as Android can', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    handle.handleReadyForDisplay()
+    handle.handleLoad({
+      currentTime: 104,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(handle.readyState).equals(4)
+    // A reload is a fresh start: nothing in hand until it loads again.
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    handle.reload()
+    expect(handle.readyState).equals(0)
+  })
+
+  it('on Android, is ready once its loaded player says it holds enough, picture reported or not', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.readyOnBuffer = true
+    let canPlay = 0
+    handle.addEventListener('canplay', () => {
+      canPlay += 1
+    })
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(handle.readyState).equals(1)
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(4)
+    expect(canPlay).equals(1)
+  })
+
+  it('on iOS, waits for a picture however ready the player says it is', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(1)
+    handle.handleReadyForDisplay()
+    expect(handle.readyState).equals(4)
+  })
+
+  it('on Android, starts from nothing loaded each time its player opens an item, and keeps what is reported before the load', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.readyOnBuffer = true
+    const load = {
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0]
+    // ExoPlayer's order on every open: load start, first picture and
+    // buffer-ready, then the load.
+    const open = (): void => {
+      handle.handleLoadStart()
+      expect(handle.readyState).equals(0)
+      handle.handleReadyForDisplay()
+      handle.handleBuffer({ isBuffering: false })
+      handle.handleLoad(load)
+    }
+    open()
+    expect(handle.readyState).equals(4)
+    // Opened again by the player itself, back from the background.
+    open()
+    expect(handle.readyState).equals(4)
+    // A source the view builds afresh, which the player does not reopen.
+    handle.sourceConfig = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = { uri: 'https://media.example.test/a/index.m3u8' }
+    expect(handle.readyState).equals(4)
+  })
+
+  it('on iOS, takes no notice of a load start, nor of settings around the same address', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const first = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = first
+    handle.handleReadyForDisplay()
+    handle.handleLoadStart()
+    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
+    expect(handle.readyState).equals(4)
+  })
+
+  it('on iOS, drops back to metadata when the same item is reported loaded again', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const load = {
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0]
+    handle.handleReadyForDisplay()
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(4)
+    // AVPlayer opening the item once more by itself: nothing drawn yet.
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(1)
+    // A new source's first load keeps a picture reported ahead of it again.
+    handle.reset()
+    handle.handleReadyForDisplay()
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(4)
+  })
+
   it('has ended once it plays to the end, until it is moved back', function () {
     const handle = new NativeVideoHandle(() => undefined)
     handle.attach(fakePlayer().ref)
