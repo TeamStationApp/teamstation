@@ -657,7 +657,10 @@ function judgeCrash(
   for (const event of timeline.events) {
     const done = event.doneMs ?? event.atMs
     if (event.action === 'switchSurface') {
-      excused.push({ fromMs: event.atMs, toMs: done + limits.switchMs })
+      // Only the iPhone's own surfaces leave the front in a switch.
+      if (surface === 'iphone-app' || surface === 'iphone-safari') {
+        excused.push({ fromMs: event.atMs, toMs: done + limits.switchMs })
+      }
     } else if (
       (event.action === 'relaunch' || event.action === 'join') &&
       surfaceOfTarget(timeline, event) === surface

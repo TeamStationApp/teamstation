@@ -429,6 +429,28 @@ describe('the soak gates', function () {
       expect(only(instances, 'surfaceSwitch')[0].verdict).equals('blocked')
     })
 
+    it("sees another surface's crash during an iPhone switch", function () {
+      const at = T0 + 60_000
+      const events = [
+        ...base(),
+        {
+          atMs: at,
+          doneMs: at + 2000,
+          target: 'iphone',
+          action: 'switchSurface',
+          args: { to: 'safari' }
+        }
+      ]
+      const { instances } = evaluateGates(events, [
+        probe('android', at + 5000, {}, { foreground: false }),
+        probe('iphone-safari', at + 5000, {}, { foreground: false })
+      ])
+      expect(only(instances, 'noCrash', 'android')[0].verdict).equals('failed')
+      expect(only(instances, 'noCrash', 'iphone-safari')[0].verdict).equals(
+        'blocked'
+      )
+    })
+
     it('blocks the angle of a publisher that did not start, rather than failing every gate on it', function () {
       const events = base().map(event =>
         event.target === 'publisherB'
