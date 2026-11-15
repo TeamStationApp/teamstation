@@ -152,7 +152,7 @@ export function FieldCanvas(props: FieldCanvasProps): React.ReactElement {
       data-presentation={activity.presentation}
       data-presentation-id={activity.id}
       data-moving={activity.moving}
-      role="img"
+      role="group"
       aria-label="Baseball field"
       ref={node => {
         if (node != null) setEventHost(node)
