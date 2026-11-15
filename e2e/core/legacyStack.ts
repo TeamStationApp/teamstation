@@ -291,6 +291,20 @@ export function frontProxy(apiPort: number, webPort: number): Server {
 }
 
 /** Starts the stack from `cwd`, writing its logs under `artifacts`. */
+/**
+ * Where the stack's front proxy listens: every interface while a phone is
+ * attached, which reaches it on this machine's LAN address, and loopback
+ * otherwise. A simulator shares the machine's loopback, and on a droplet,
+ * where no phone is, every interface is its public address.
+ */
+export function proxyHost(env: NodeJS.ProcessEnv): string {
+  return [env.E2E_IOS_UDID, env.E2E_ANDROID_SERIAL].some(
+    device => device != null && device !== ''
+  )
+    ? '0.0.0.0'
+    : '127.0.0.1'
+}
+
 export async function startLegacyStack(
   cwd: string,
   artifacts: string
@@ -555,7 +569,7 @@ export async function startLegacyStack(
     const front = frontProxy(STACK_API_PORT, STACK_WEB_PORT)
     await new Promise<void>((resolve, reject) => {
       front.once('error', reject)
-      front.listen(STACK_PROXY_PORT, '0.0.0.0', resolve)
+      front.listen(STACK_PROXY_PORT, proxyHost(process.env), resolve)
     })
 
     const env: Record<string, string> = {

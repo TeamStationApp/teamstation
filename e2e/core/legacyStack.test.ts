@@ -4,7 +4,7 @@ import { type AddressInfo, createServer, type Server } from 'node:net'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { frontProxy, refuseTakenPorts } from './legacyStack'
+import { frontProxy, proxyHost, refuseTakenPorts } from './legacyStack'
 
 describe('legacy stack ports', function () {
   it('refuses a port something answers on, and passes free ones', async function () {
@@ -44,6 +44,15 @@ describe('legacy stack ports', function () {
 })
 
 describe('legacy stack front', function () {
+  it('listens on loopback unless a phone is attached, which reaches it over the LAN', function () {
+    expect(proxyHost({})).equals('127.0.0.1')
+    expect(proxyHost({ E2E_IOS_UDID: '', E2E_SIM_UDID: 'sim' })).equals(
+      '127.0.0.1'
+    )
+    expect(proxyHost({ E2E_IOS_UDID: 'phone' })).equals('0.0.0.0')
+    expect(proxyHost({ E2E_ANDROID_SERIAL: 'serial' })).equals('0.0.0.0')
+  })
+
   it("sends the API's paths and local media to the API, pages to the web app", async function () {
     const answering = (name: string): ReturnType<typeof createHttpServer> =>
       createHttpServer((_req, res) => {
