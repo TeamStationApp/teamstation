@@ -1210,6 +1210,17 @@ describe('TeamStation pipeline Masonfile', () => {
           commands.push(`save:${name}:${paths}`)
         }
       },
+      describe(text: string) {
+        commands.push(`describe:${text}`)
+      },
+      log: {
+        info(message: string) {
+          commands.push(`info:${message}`)
+        },
+        warn(message: string) {
+          commands.push(`warn:${message}`)
+        }
+      },
       apple: {
         async resign(options: {
           path: string
@@ -1228,7 +1239,7 @@ describe('TeamStation pipeline Masonfile', () => {
           whatToTest?: string
         }) {
           commands.push(
-            `testflight:${options.path}:${(options.groups ?? []).join(',')}:${String(options.usesNonExemptEncryption)}:${options.whatToTest ?? ''}`
+            `testflight:${options.path}:${JSON.stringify(options.groups)}:${String(options.usesNonExemptEncryption)}:${options.whatToTest ?? ''}`
           )
           return {
             buildId: '1',
@@ -1254,7 +1265,15 @@ describe('TeamStation pipeline Masonfile', () => {
     )
     assert.match(
       log,
-      /testflight:build\/mason-archive\/TeamStation-appStore\.ipa:TeamStation testers:false:TeamStation production build\./
+      /testflight:build\/mason-archive\/TeamStation-appStore\.ipa:undefined:false:TeamStation production build\./
+    )
+    assert.match(
+      log,
+      /info:TestFlight has 1\.0 \(26103101\)\. Add it to the TeamStation testers group and submit it for beta review in App Store Connect\./
+    )
+    assert.match(
+      log,
+      /describe:TestFlight 1\.0 \(26103101\) needs beta review in App Store Connect/
     )
   })
 

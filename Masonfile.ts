@@ -62,6 +62,7 @@ const SIGN = {
   labels: ['android-signing']
 } as const
 const APPLE = { type: 'macos-arm64', os: 'macos', arch: 'arm64' } as const
+// The external TestFlight group, which App Store Connect fills by hand.
 const TESTFLIGHT_GROUP = 'TeamStation testers'
 // The same shape ctx.apple.archive and ctx.apple.resign accept.
 const versionPattern = /^[0-9]+(\.[0-9]+){0,2}$/
@@ -602,12 +603,22 @@ async function uploadAppStore(
     ...(buildNumber == null ? {} : { buildNumber })
   })
   await ctx.artifacts.save('ios-appstore', ipa)
-  await ctx.apple.testflight({
+  // No beta groups. Mason 1.1.0 submits a build for Beta App Review when one
+  // of its groups is external (finish() in Mason's src/apple/testflight.ts),
+  // and Apple refuses that while another build of the version is in review,
+  // which failed the stage. The external group and the review submission
+  // are done by hand in App Store Connect.
+  const build = await ctx.apple.testflight({
     path: ipa,
     whatToTest: 'TeamStation production build.',
-    groups: [TESTFLIGHT_GROUP],
     usesNonExemptEncryption: false
   })
+  ctx.log.info(
+    `TestFlight has ${build.version} (${build.buildNumber}). Add it to the ${TESTFLIGHT_GROUP} group and submit it for beta review in App Store Connect.`
+  )
+  ctx.describe(
+    `TestFlight ${build.version} (${build.buildNumber}) needs beta review in App Store Connect`
+  )
 }
 
 export async function releaseIos(ctx: Stage): Promise<void> {
