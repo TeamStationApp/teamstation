@@ -1,6 +1,12 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createServer as createNetServer } from 'node:net'
 import { networkInterfaces, tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -14,6 +20,7 @@ import {
   writeManifestFile
 } from './fixtures'
 import { startFront } from './front'
+import type { ServerError } from './invariants'
 import { ROOT } from './manifest'
 import { startPlacesStub } from './placesStub'
 import { BlockedError, HarnessError } from './result'
@@ -33,6 +40,8 @@ export interface StackOptions {
   mailbox?: string
   /** Breaks the API this way, through a proxy between the front server and it. */
   fault?: string
+  /** Appends each API 5xx here as JSON lines, for a process that did not start the stack. */
+  errorLog?: string
 }
 
 export interface RunningStack extends StackHandle {
@@ -159,6 +168,16 @@ async function untilHealthy(url: string, proc: ChildProcess): Promise<void> {
     await new Promise(resolve => setTimeout(resolve, 250))
   }
   throw new HarnessError('The API did not become healthy')
+}
+
+/** Appends each row pushed onto `errors` to `file` as it arrives. */
+function mirrorErrors(errors: ServerError[], file: string | undefined): void {
+  if (file == null) return
+  const push = errors.push.bind(errors)
+  errors.push = (...rows: ServerError[]): number => {
+    for (const row of rows) appendFileSync(file, `${JSON.stringify(row)}\n`)
+    return push(...rows)
+  }
 }
 
 /**
@@ -288,6 +307,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         host: host_
       })
       proxies.push(proxy)
+      mirrorErrors(proxy.errors, options.errorLog)
       stops.push(async () => {
         await proxy.close()
       })
@@ -303,6 +323,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       host,
       port: 0
     })
+    mirrorErrors(front.errors, options.errorLog)
     stops.push(() => {
       front.server.close()
       front.server.closeAllConnections()
@@ -421,6 +442,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
     // Waiting for the API to come up answers 502s that are nobody's failure.
     front.errors.length = 0
     for (const proxy of proxies) proxy.errors.length = 0
+    if (options.errorLog != null) writeFileSync(options.errorLog, '')
 
     const manifestPath = baselineManifestPath({}, { kind: 'isolated', dir })
     const { mailbox } = options

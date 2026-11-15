@@ -1369,6 +1369,34 @@ describe('the isolated stack', function () {
     }
   })
 
+  it('logs each 5xx for a process that did not start the stack', async function () {
+    this.timeout(180000)
+    const errorLog = join(tempRoot(), 'errors.jsonl')
+    const stack = await startStack({ services: ['web'], errorLog })
+    const adopted = createServer((_req, res) => {
+      res.statusCode = 503
+      res.end('down')
+    })
+    await new Promise<void>(resolve => adopted.listen(0, '127.0.0.1', resolve))
+    try {
+      const { port } = adopted.address() as { port: number }
+      await stack.adopt(`http://127.0.0.1:${port}`)
+      expect((await fetch(`${stack.origin}/api/v1/teams`)).status).equals(503)
+      const logged = readFileSync(errorLog, 'utf8')
+        .trim()
+        .split('\n')
+        .map(line => JSON.parse(line) as { path: string; status: number })
+      expect(logged.map(row => [row.path, row.status])).deep.includes([
+        '/api/v1/teams',
+        503
+      ])
+    } finally {
+      adopted.close()
+      adopted.closeAllConnections()
+      await stack.stop()
+    }
+  })
+
   it('starts a real API behind the front, with its store and catalog', async function () {
     this.timeout(180000)
     const stack = await startStack({ services: ['web', 'api'] })
