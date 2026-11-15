@@ -238,7 +238,8 @@ describe('a season’s People tab, and a team’s roster, through the group page
       positions: [],
       isPlayer: true,
       role: 'member',
-      section: 'player',
+      // Nobody is listed for playing on a season: Alfonso is also a member.
+      section: 'spectator',
       staffRoles: [],
       inheritedFrom: null,
       teamNames: ['Demo Hawks'],
@@ -273,10 +274,14 @@ describe('a season’s People tab, and a team’s roster, through the group page
     api.levelPeople = async () => ({ people, manages: true, admin: true })
     const players: unknown[] = []
     const persons: unknown[] = []
+    const adds: unknown[] = []
     await mount(
       <GroupScreen
         client={api}
         groupRef={{ kind: 'season', id: season.id }}
+        onAddPeople={group => {
+          adds.push(group)
+        }}
         initialTab="people"
         onOpen={() => {}}
         onCreate={() => {}}
@@ -299,6 +304,12 @@ describe('a season’s People tab, and a team’s roster, through the group page
     ])
     expect(persons).deep.equals([
       [{ kind: 'season', id: season.id }, userIdOfGumbo(106)]
+    ])
+    await press('Add Staff to Demo Spring')
+    await press('Add Spectator to Demo Spring')
+    expect(adds).deep.equals([
+      { kind: 'season', id: season.id },
+      { kind: 'season', id: season.id }
     ])
   })
 

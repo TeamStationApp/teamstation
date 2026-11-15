@@ -49,6 +49,38 @@ describe('addresses', function () {
     expect(parseRoute('/node')).deep.equals({ name: 'nodeAdministration' })
   })
 
+  it('writes and reads Add People opened by Add Admin, with or without a team return', () => {
+    expect(
+      routePath({
+        name: 'groupAddPeople',
+        kind: 'season',
+        id: 'sea_regular',
+        role: 'admin'
+      })
+    ).equals('/groups/season/sea_regular/settings/people?role=admin')
+    for (const route of [
+      {
+        name: 'groupAddPeople',
+        kind: 'league',
+        id: 'lea_a',
+        role: 'admin'
+      },
+      {
+        name: 'groupAddPeople',
+        kind: 'team',
+        id: 'tem_hawks',
+        role: 'admin',
+        teamReturn: { id: 'tem_hawks', address: 'team', tab: 'team' }
+      },
+      { name: 'groupAddPeople', kind: 'season', id: 'sea_regular' }
+    ] as Route[])
+      expect(roundTrip(route)).deep.equals(route)
+    // Only admin is a role Add People opens with.
+    expect(
+      parseRoute('/groups/season/sea_regular/settings/people', 'role=coach')
+    ).deep.equals({ name: 'groupAddPeople', kind: 'season', id: 'sea_regular' })
+  })
+
   it('round-trips team return context on every settings child', () => {
     for (const name of [
       'groupLocation',

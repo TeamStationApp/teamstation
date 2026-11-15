@@ -23,6 +23,9 @@ export function TeamPage({
   onSettings,
   onCreateGame,
   onLoaded,
+  onAddPeople,
+  onAddExistingPlayer,
+  onCreatePlayer,
   ...presentation
 }: Omit<
   TeamScreenProps,
@@ -32,6 +35,8 @@ export function TeamPage({
   | 'nonMemberView'
   | 'managesPeople'
   | 'onCreateGame'
+  | 'onAddPeople'
+  | 'onAddPlayer'
 > & {
   client: TeamStationClient
   id: string
@@ -40,6 +45,10 @@ export function TeamPage({
   onCreateGame?: (id: string) => void
   /** The team as the server named it, each time it loads. */
   onLoaded?: (team: { id: string; name: string }) => void
+  /** Add People, Add Player and Create Player, offered as settings offers them. */
+  onAddPeople?: (id: string, role?: 'admin') => void
+  onAddExistingPlayer?: (id: string) => void
+  onCreatePlayer?: (id: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const [refreshRevision, setRefreshRevision] = useState(0)
@@ -148,6 +157,28 @@ export function TeamPage({
         detail.canManagePeople === true && onCreateGame != null
           ? () => {
               onCreateGame(group.id)
+            }
+          : undefined
+      }
+      onAddPeople={
+        detail.canManage && !group.external && onAddPeople != null
+          ? role => {
+              onAddPeople(group.id, role)
+            }
+          : undefined
+      }
+      onAddPlayer={
+        detail.canManageRoster &&
+        !group.external &&
+        onAddExistingPlayer != null &&
+        onCreatePlayer != null
+          ? {
+              existing: () => {
+                onAddExistingPlayer(group.id)
+              },
+              create: () => {
+                onCreatePlayer(group.id)
+              }
             }
           : undefined
       }

@@ -465,7 +465,7 @@ describe('restored access-aware team presentation', () => {
         </ThemeProvider>
       )
     })
-    expect(document.body.textContent).includes('Nobody has been added')
+    expect(document.body.textContent).includes('PLAYERS0')
     expect(reads).equals(1)
   })
   it('keeps custodial settings available without granting private collections', async () => {
