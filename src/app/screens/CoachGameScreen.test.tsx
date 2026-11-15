@@ -2669,6 +2669,27 @@ describe('the coach’s game plan', function () {
     expect(cell(1, 1)).equals(null)
     expect(saveDisabled()).equals(true)
   })
+
+  it('tells somebody the server answers no plan, an admin who is not the team’s coach, that it is the coaches’, and saves none', async function () {
+    const held = accepted()
+    held.client.gamePlans = async () => ({ away: null, home: null })
+    let plansSaved = 0
+    held.client.saveGamePlan = async () => {
+      plansSaved++
+      throw new Error('No plan should be saved')
+    }
+    await coach(held)
+    await click('Plan', 'tab')
+    expect(document.body.textContent).includes(
+      "Only the team's coaches can see its game plan."
+    )
+    expect(document.body.textContent).not.includes(
+      'Unable to load the game plan'
+    )
+    expect(cell(1, 1)).equals(null)
+    expect(saveDisabled()).equals(true)
+    expect(plansSaved).equals(0)
+  })
 })
 
 describe('a game swapped under the coach screen', function () {

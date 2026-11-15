@@ -2174,6 +2174,143 @@ describe('Coach Plan', function () {
   })
 
   /**
+   * P23: the home team's admin, who is not its coach, opens the coach
+   * screen by its address (an admin has no Coach pill) and finds the Plan
+   * tab saying the plan is the coaches'.
+   */
+  it('P23 tells a team admin who is not its coach that the plan is the coaches’', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    await coach.as(fixture, 'teamAdmin')
+    await coach.page.goto(
+      `${APP}/games/${fixture.gameId}/coach/${fixture.teams.home}`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await coach.page.waitForSelector('[aria-label="Save Rosters"]', {
+      timeout: 60000
+    })
+    await coach.tap('Plan', 'tab')
+    await coach.page.waitForFunction(
+      () =>
+        String(document.body.textContent).includes(
+          "Only the team's coaches can see its game plan."
+        ),
+      { timeout: 15000 }
+    )
+    expect(await coach.page.$('[data-testid="Plan cell 1-1"]')).equals(null)
+    await coach.shot('coach-plan-team-admin-after.png')
+  })
+
+  /**
+   * P24: who reads and saves the home team's plan, and what the inning
+   * route answers a scorekeeper, through the API, each request on a `$`
+   * line with its status and body after it. Tee'd as `plan-access.log`.
+   */
+  it('P24 answers the full plan to the team’s coach alone, and a scorer only the inning in play, after the start time and before the game is over', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    const call = async (
+      who: Person,
+      method: 'GET' | 'PUT',
+      path: string,
+      body?: unknown
+    ): Promise<{ status: number; body: unknown }> => {
+      console.log(`$ ${method} ${path} as ${who}`)
+      const answer = await fetch(`${API}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${await tokenOf(fixture, who)}`,
+          ...(body == null ? {} : { 'content-type': 'application/json' })
+        },
+        ...(body == null ? {} : { body: JSON.stringify(body) })
+      })
+      const read: unknown = await answer.json()
+      console.log(`${answer.status} ${JSON.stringify(read)}`)
+      return { status: answer.status, body: read }
+    }
+    const plansPath = `/games/${fixture.gameId}/plans`
+    const homePath = `${plansPath}/${fixture.teams.home}`
+    const stored = (
+      (await call('headCoach', 'GET', plansPath)).body as {
+        home: { plan: GamePlan } | null
+      }
+    ).home
+    expect(stored).not.equals(null)
+    for (const who of ['scorekeeper', 'assistant', 'teamAdmin'] as const) {
+      expect((await call(who, 'GET', plansPath)).body).deep.equals({
+        away: null,
+        home: null
+      })
+      expect((await call(who, 'PUT', homePath, stored!.plan)).status).equals(
+        403
+      )
+    }
+    expect(
+      (await call('headCoach', 'PUT', homePath, stored!.plan)).status
+    ).equals(200)
+    // The inning route, as the scorekeeper.
+    const reasonOf = (body: unknown): unknown =>
+      (body as { details?: { reason?: unknown } }).details?.reason
+    const place = async (changes: {
+      started: boolean
+      inning: number | null
+      status: 'scheduled' | 'inProgress' | 'final'
+    }): Promise<void> => {
+      const db = makeDatabase(serverConfig.databaseUrl)
+      try {
+        await db
+          .updateTable('games')
+          .set({
+            start_at: new Date(
+              Date.now() + (changes.started ? -1 : 1) * 3600_000
+            ),
+            status: changes.status,
+            currentPlay:
+              changes.inning == null
+                ? null
+                : JSON.stringify({
+                    about: {
+                      atBatIndex: 6,
+                      inning: changes.inning,
+                      halfInning: 'top',
+                      isTopInning: true,
+                      isComplete: false,
+                      hasOut: false,
+                      hasReview: false
+                    }
+                  })
+          })
+          .where('id', '=', fixture.gameId)
+          .execute()
+      } finally {
+        await db.destroy()
+      }
+    }
+    console.log(
+      '# the game set to start in an hour, its innings moved on to the 2nd'
+    )
+    await place({ started: false, inning: 2, status: 'inProgress' })
+    const early = await call('scorekeeper', 'GET', `${homePath}/innings/2`)
+    expect(early.status).equals(403)
+    expect(reasonOf(early.body)).equals('planNotStarted')
+    console.log('# the game started an hour ago, in the 2nd')
+    await place({ started: true, inning: 2, status: 'inProgress' })
+    const now = await call('scorekeeper', 'GET', `${homePath}/innings/2`)
+    expect(now.status).equals(200)
+    expect((now.body as { column: unknown[] }).column).has.length(9)
+    const next = await call('scorekeeper', 'GET', `${homePath}/innings/3`)
+    expect(next.status).equals(409)
+    expect(reasonOf(next.body)).equals('planInningNotCurrent')
+    console.log('# the game final after two innings')
+    await place({ started: true, inning: null, status: 'final' })
+    const over = await call('scorekeeper', 'GET', `${homePath}/innings/3`)
+    expect(over.status).equals(403)
+    expect(reasonOf(over.body)).equals('planGameOver')
+  })
+
+  /**
    * P25: a scoring screen reopened in the 3rd, which has scored nothing
    * since, reads in a lineup edit made elsewhere and then the head coach's
    * change to inning 3, and puts the coach's column on the field.

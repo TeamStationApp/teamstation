@@ -327,6 +327,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   // His side's game plan as the server answered it (undefined until read,
   // or when it could not be), the plan being edited and the one saved.
   const [sidePlan, setSidePlan] = useState<SidePlan>()
+  /** The plan was read, and this side was not answered: not this team's coach. */
+  const [planRefused, setPlanRefused] = useState(false)
   const [plan, setPlan] = useState<GamePlan>()
   const [savedPlan, setSavedPlan] = useState<GamePlan>()
   const [planNotice, setPlanNotice] = useState<SuccessNotice>()
@@ -605,10 +607,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
           .then(found => found.lineup)
           .catch(() => null),
         // A plan that cannot be read leaves the Plan tab saying so, and
-        // nothing of it is saved over the server's.
+        // nothing of it is saved over the server's. A side the server does
+        // not answer is a team this person does not coach.
         client
           .gamePlans(gameId, OFFLINE_FIRST)
-          .then(both => both[of] ?? undefined)
+          .then(both => both[of] ?? null)
           .catch(() => undefined)
       ])
       ownDefault.current = kept
@@ -627,7 +630,8 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       setState(next)
       setHeld({ draft: next.session, side: of, mode: 'boxScore' })
       const stored = plans == null ? undefined : (plans.plan ?? NO_PLAN)
-      setSidePlan(plans)
+      setSidePlan(plans ?? undefined)
+      setPlanRefused(plans === null)
       setPlan(stored)
       setSavedPlan(stored)
       setDetail(game)
@@ -687,9 +691,11 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       pending.current = null
     }
   }, [refreshBox])
-  // His side's plan, read again when a save of it is announced (his other
-  // device's, or a scorekeeper's) and after the socket was down, since a
-  // notice missed then is never sent again. The saved plan is replaced, so
+  // His side's plan, read again when a save of it is announced and after the
+  // socket was down, since a notice missed then is never sent again. Only a
+  // save that changes the inning in play of a started game is announced: a
+  // co-coach's, or his other device's, save of a later inning is not, and
+  // reaches this screen when it opens again. The saved plan is replaced, so
   // Cancel goes back to the newer one; the plan being edited too, unless it
   // has changes not saved. Those are kept, and his next Save stores them
   // over the newer plan, as the last save of a plan always wins.
@@ -1255,6 +1261,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
               }}
               plan={plan}
               planContext={planContext}
+              {...(planRefused
+                ? { planMessage: lstrings.coach_plan_coaches_only }
+                : {})}
               planChanged={planChanged}
               onPlanChange={setPlan}
               onReload={() => {

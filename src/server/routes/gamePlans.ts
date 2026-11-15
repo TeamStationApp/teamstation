@@ -12,7 +12,6 @@ import { asGamePlan, MAX_PLAN_INNINGS } from '../../common/gamePlan'
 import {
   canScore,
   canSeeGame,
-  lineupTeams,
   planTeams,
   roleScopes,
   visibleScopes
@@ -34,11 +33,12 @@ import { withAsync } from '../middleware/withErrors'
 type PlannedGame = PlanGame & { home_team_id: string; away_team_id: string }
 
 /**
- * A coach's per-inning game plans. Each side's plan is read and saved by
- * whoever may save that side's lineup (`lineupTeams`: the team's head coach,
- * or a scorekeeper of either team), and answered with the Playing Time Rules
- * and same-day load its warnings are judged by. A plan is on
- * when it holds a position: the `enabled` a save sends is not read. A save is
+ * A coach's per-inning game plans. Each side's plan is read and saved only
+ * by a coach of that team (`planTeams`: given the coach flag on the team, a
+ * season it belongs to or its league, head coach or not), and answered with
+ * the Playing Time Rules and same-day load its warnings are judged by. No
+ * administrator, assistant or scorekeeper reads it. A plan is on when it
+ * holds a position: the `enabled` a save sends is not read. A save is
  * announced on the game socket as a `plans` change naming the team and the
  * inning, only when it changes the inning in play.
  *
@@ -82,12 +82,15 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
     return game
   }
 
-  /** The teams of the game whose plans the actor may read and save. */
+  /**
+   * The teams of the game whose plans the actor may read and save: the ones
+   * they were given the coach flag on (`planTeams`). No administrator,
+   * assistant or scorekeeper is one.
+   */
   const plannedTeams = async (
     actor: Actor,
     game: PlannedGame
-  ): Promise<string[]> =>
-    lineupTeams(await roleScopes(db, actor.userId, actor.isAdmin), game)
+  ): Promise<string[]> => await planTeams(db, actor.userId, game)
 
   router.get(
     '/games/:gameId/plans',
@@ -121,9 +124,7 @@ export function gamePlanRoutes(db: Kysely<Database>): Router {
       if (teamId !== game.home_team_id && teamId !== game.away_team_id)
         throw notFound()
       if (!(await plannedTeams(actor, game)).includes(teamId))
-        throw forbidden(
-          "Only the team's head coach or a scorekeeper may save its game plan"
-        )
+        throw forbidden('Only a coach of the team may save its game plan')
       await saveGamePlan(db, game, teamId, plan, actor.userId)
       res.json(await loadSidePlan(db, game, teamId))
     })

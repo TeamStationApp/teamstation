@@ -173,6 +173,8 @@ export const enUs = {
   coach_plan_saved_defense_warnings:
     'Saved. Defense set from the plan\u2019s inning 1. Plan has %s.',
   coach_plan_load_failed: 'Unable to load the game plan. Please try again.',
+  /** The Plan tab, for somebody who is not a coach of the team. */
+  coach_plan_coaches_only: "Only the team's coaches can see its game plan.",
   /**
    * The roster screen's Help and Clear, at the Defense field's top corners,
    * and the sheet Help slides up.

@@ -98,7 +98,7 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
       get: {
         summary: "Both sides' per-inning game plans",
         description:
-          "Needs somebody who can see the game; 404 for anybody else. A side is answered only to whoever may save its lineup (the team's head coach, or a scorekeeper of either team), and is null for anybody else.",
+          'Needs somebody who can see the game; 404 for anybody else. A side is answered only to a coach of that team: somebody given the coach flag on the team, a season it belongs to or its league, head coach or not. It is null for anybody else, administrators of every level, assistants and scorekeepers included; a scorer reads the inning in play from `/games/{gameId}/plans/{teamId}/innings/{inning}`.',
         security: [{ bearer: [] }],
         parameters: [gameId],
         responses: {
@@ -126,7 +126,7 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
       put: {
         summary: "Save one team's per-inning game plan",
         description:
-          "Replaces the team's plan in the game, as whoever may save its lineup. A plan with a cell that is no value, more than twelve innings, or a row whose cells are not one per inning is a 400. An all-blank plan is stored like any other. When the save changes the inning in play of a game past its start time and not over, the game's viewers hear a `plans` change naming the team and that inning; a change to later innings only announces nothing.",
+          "Replaces the team's plan in the game, as a coach of the team (anybody else, administrators included, is a 403). A plan with a cell that is no value, more than twelve innings, or a row whose cells are not one per inning is a 400. An all-blank plan is stored like any other. When the save changes the inning in play of a game past its start time and not over, the game's viewers hear a `plans` change naming the team and that inning; a change to later innings only announces nothing.",
         security: [{ bearer: [] }],
         parameters: [
           gameId,

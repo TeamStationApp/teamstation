@@ -23,18 +23,19 @@ import {
  * scheduled game, with thirteen players a side named for major leaguers. Each
  * team's default lineup is its first nine, batting one to nine and playing P
  * to RF; the other four, a Freeman among them on each side, start on the
- * bench. Five people sign in with `--password`:
+ * bench. Six people sign in with `--password`:
  *
  * - a scorekeeper of both teams;
  * - the home team's head coach and its assistant;
  * - the away team's head coach;
- * - a member of the home team, who neither scores nor coaches.
+ * - a member of the home team, who neither scores nor coaches;
+ * - an admin of the home team, who is not its coach.
  *
  *   npm run lineup-fixture -- --password <password>
  *
  * Prints the game, the teams, each person's e-mail and user id, and each
  * side's players in that order, as JSON. The password is never printed. Run
- * again, it makes a new game and gives the same five people their roles on
+ * again, it makes a new game and gives the same six people their roles on
  * its teams.
  */
 export const LINEUP_NAMES: Record<'home' | 'away', readonly string[]> = {
@@ -70,7 +71,13 @@ export const LINEUP_NAMES: Record<'home' | 'away', readonly string[]> = {
   ]
 }
 
-type Person = 'scorekeeper' | 'headCoach' | 'assistant' | 'awayCoach' | 'member'
+type Person =
+  | 'scorekeeper'
+  | 'headCoach'
+  | 'assistant'
+  | 'awayCoach'
+  | 'member'
+  | 'teamAdmin'
 const PEOPLE: Record<
   Person,
   { email: string; name: string; teams: Array<'home' | 'away'>; role?: Role }
@@ -103,6 +110,12 @@ const PEOPLE: Record<
     email: 'lineup.member@example.test',
     name: 'Jeter',
     teams: ['home']
+  },
+  teamAdmin: {
+    email: 'lineup.teamadmin@example.test',
+    name: 'Cashman',
+    teams: ['home'],
+    role: 'admin'
   }
 }
 
@@ -188,7 +201,8 @@ export async function createLineupFixture(
     headCoach: await person(PEOPLE.headCoach),
     assistant: await person(PEOPLE.assistant),
     awayCoach: await person(PEOPLE.awayCoach),
-    member: await person(PEOPLE.member)
+    member: await person(PEOPLE.member),
+    teamAdmin: await person(PEOPLE.teamAdmin)
   }
   const sidePlayers = async (
     side: 'home' | 'away'
