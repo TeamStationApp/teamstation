@@ -316,19 +316,62 @@ describe('the soak wiring', function () {
       expect(spawned).equals(2)
     })
 
-    it('says when the recording ended before the run did', async function () {
+    it('reads what a recording that ended early recorded, and says when it cannot', async function () {
       const dir = join(mkdtempSync(join(tmpdir(), 'soak-xc-')), 'traces')
       const r = recorder(true)
       const sampler = xctraceSampler(
-        { name: 'tv', udid: 'udid-2', dir },
+        { name: 'tv', udid: 'udid-2', dir, appName: 'TeamStation' },
         { spawn: r.spawn, exec: async () => xml, now: () => 0 }
+      )
+      await sampler.start!()
+      await new Promise(resolve => setImmediate(resolve))
+      expect((await sampler.stop!())!.length).greaterThan(0)
+      expect(r.kills).deep.equals([])
+      const unread = xctraceSampler(
+        { name: 'tv', udid: 'udid-2', dir },
+        {
+          spawn: recorder(true).spawn,
+          exec: async () => {
+            throw new Error('no such trace')
+          },
+          now: () => 0
+        }
+      )
+      await unread.start!()
+      await new Promise(resolve => setImmediate(resolve))
+      expect(
+        await unread.stop!().catch((e: unknown) => (e as Error).message)
+      ).equals(
+        'tv: the Activity Monitor recording ended early (1), and what it recorded could not be read: no such trace'
+      )
+    })
+
+    it('hears an xcrun that could not start, rather than dying of it', async function () {
+      const dir = join(mkdtempSync(join(tmpdir(), 'soak-xc-')), 'traces')
+      const sampler = xctraceSampler(
+        { name: 'ipad', udid: 'udid-1', dir },
+        {
+          spawn: () => {
+            const child: any = new EventEmitter()
+            child.kill = () => undefined
+            setImmediate(() =>
+              child.emit('error', new Error('spawn xcrun ENOENT'))
+            )
+            return child
+          },
+          exec: async () => {
+            throw new Error('no such trace')
+          },
+          now: () => 0
+        }
       )
       await sampler.start!()
       await new Promise(resolve => setImmediate(resolve))
       expect(
         await sampler.stop!().catch((e: unknown) => (e as Error).message)
-      ).equals('tv: the Activity Monitor recording ended early (1)')
-      expect(r.kills).deep.equals([])
+      ).match(
+        /^ipad: the Activity Monitor recording ended early \(spawn xcrun ENOENT\)/
+      )
     })
 
     it('has nothing to give when it never started', async function () {

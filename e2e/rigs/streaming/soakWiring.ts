@@ -87,7 +87,8 @@ export function xctraceSampler(
   const pieceMs = options.pieceMs ?? 15 * 60_000
   let piece = 0
   let child: ChildProcess | undefined
-  let exited: Promise<number | null> | undefined
+  /** How the recording ended: its exit code, or why it could not run. */
+  let exited: Promise<string> | undefined
   let ended = false
   let startMs = 0
   const begin = (): void => {
@@ -101,33 +102,56 @@ export function xctraceSampler(
     const started = deps.spawn(command, args)
     child = started
     ended = false
+    // Settled by either event: an xcrun that could not start may never exit.
     exited = new Promise(resolve => {
       started.once('exit', code => {
         ended = true
-        resolve(code)
+        resolve(String(code))
+      })
+      started.once('error', (error: Error) => {
+        ended = true
+        resolve(error.message)
       })
     })
   }
+  const read = async (trace: string, from: number): Promise<MemorySample[]> =>
+    samplesFromExport(await exportTrace(deps.exec, trace), {
+      device: options.name,
+      appName: options.appName ?? APP_PROCESS,
+      traceStartMs: from,
+      ...(options.webContentDuring == null
+        ? {}
+        : { webContent: { during: options.webContentDuring() } })
+    })
   const finish = async (): Promise<MemorySample[]> => {
     if (child == null || exited == null) return []
-    if (ended) {
-      throw new Error(
-        `${options.name}: the Activity Monitor recording ended early (${String(await exited)})`
-      )
-    }
     const from = startMs
     const trace = join(options.dir, `${options.name}-${piece}.trace`)
+    if (ended) {
+      // What it recorded before it ended is read all the same.
+      child = undefined
+      const why = await exited
+      try {
+        return await read(trace, from)
+      } catch (error) {
+        throw new Error(
+          `${options.name}: the Activity Monitor recording ended early (${why}), and what it recorded could not be read: ${(error as Error).message}`
+        )
+      }
+    }
     child.kill('SIGINT')
     // A recording saves on SIGINT; one that has not after a minute is stuck
     // (the TV's has hung at full CPU), and its piece is lost.
+    let timer: ReturnType<typeof setTimeout> | undefined
     const stopped = await Promise.race([
       exited.then(() => true),
-      new Promise<boolean>(resolve =>
-        setTimeout(() => {
+      new Promise<boolean>(resolve => {
+        timer = setTimeout(() => {
           resolve(false)
         }, options.stopMs ?? 60_000)
-      )
+      })
     ])
+    clearTimeout(timer)
     if (!stopped) {
       child.kill('SIGKILL')
       child = undefined
@@ -136,15 +160,7 @@ export function xctraceSampler(
       )
     }
     child = undefined
-    const xml = await exportTrace(deps.exec, trace)
-    return samplesFromExport(xml, {
-      device: options.name,
-      appName: options.appName ?? APP_PROCESS,
-      traceStartMs: from,
-      ...(options.webContentDuring == null
-        ? {}
-        : { webContent: { during: options.webContentDuring() } })
-    })
+    return await read(trace, from)
   }
   return {
     name: `${options.name}-xctrace`,
