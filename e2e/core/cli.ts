@@ -334,7 +334,11 @@ export async function main(argv: string[]): Promise<number> {
         })
         await stack.stop()
         rmSync(join(STACKS, `${stack.id}.json`), { force: true })
-        if (failure != null) throw failure
+        if (failure != null) {
+          throw failure instanceof Error
+            ? failure
+            : new Error(`stack serve failed: ${JSON.stringify(failure)}`)
+        }
         rmSync(errorLog, { force: true })
         return 0
       }
