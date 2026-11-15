@@ -37,7 +37,6 @@
   "src/app/field/FieldCanvas.tsx",
   "src/app/field/scoreboardTexture.ts",
   "src/app/field/scoreboardPalette.ts",
-  "src/app/field/fieldKeyboard.ts",
   "src/app/field/scoreboardBounds.ts",
   "src/app/theme/tsBallpark.ts",
   "src/app/theme/tsDark.ts",
