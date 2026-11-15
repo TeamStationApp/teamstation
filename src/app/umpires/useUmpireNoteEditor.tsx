@@ -42,7 +42,6 @@ interface Edit extends NoteCell {
   value: string
 }
 
-/** One editor per grid; a blur and the following click share the same save. */
 /**
  * Selects a web input's whole text now, and once more after the focus if
  * nothing has been typed and the selection fell back to a caret, as Safari
@@ -63,6 +62,7 @@ function selectOnWeb(into: unknown): void {
   }, 0)
 }
 
+/** One editor per grid; a blur and the following click share the same save. */
 export function useUmpireNoteEditor({
   client,
   scope,
