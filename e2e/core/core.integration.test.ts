@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import {
   chmodSync,
   existsSync,
@@ -53,7 +53,13 @@ import {
   settingsPath
 } from './settings'
 import { defineE2e, type E2eSpec, specProblems } from './spec'
-import { freePort, lanAddress, startStack } from './stack'
+import {
+  freePort,
+  lanAddress,
+  runStops,
+  startStack,
+  stopProcess
+} from './stack'
 import { trackedFiles, validate } from './validate'
 
 const CORE = resolve(__dirname)
@@ -1118,6 +1124,48 @@ describe('maestro connection', function () {
 })
 
 describe('the isolated stack', function () {
+  it('waits for a stopped process to exit, killing one that ignores SIGTERM', async function () {
+    const stubborn = spawn(
+      process.execPath,
+      ['-e', "process.on('SIGTERM', () => {}); setInterval(() => {}, 1000)"],
+      { stdio: 'ignore' }
+    )
+    await new Promise(resolve => setTimeout(resolve, 300))
+    await stopProcess(stubborn, 200)
+    expect(stubborn.signalCode).equals('SIGKILL')
+    const polite = spawn(
+      process.execPath,
+      ['-e', 'setInterval(() => {}, 1000)'],
+      {
+        stdio: 'ignore'
+      }
+    )
+    await stopProcess(polite, 5000)
+    expect(polite.signalCode).equals('SIGTERM')
+    await stopProcess(polite)
+  })
+
+  it('runs every teardown step though one fails, then says which', async function () {
+    const ran: string[] = []
+    let failure: unknown
+    await runStops([
+      () => {
+        ran.push('store')
+      },
+      () => {
+        throw new Error('database in use')
+      },
+      () => {
+        ran.push('api')
+      }
+    ]).catch((error: unknown) => {
+      failure = error
+    })
+    expect(ran).deep.equals(['api', 'store'])
+    expect(failure).instanceOf(HarnessError)
+    expect(String(failure)).includes('database in use')
+  })
+
   it('finds a LAN address, or says there is none', function () {
     expect(
       lanAddress({

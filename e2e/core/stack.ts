@@ -162,6 +162,62 @@ async function untilHealthy(url: string, proc: ChildProcess): Promise<void> {
 }
 
 /**
+ * Asks `child` to stop and waits for it to exit, killing it after `graceMs`, so
+ * the port it held is free when this returns.
+ */
+export async function stopProcess(
+  child: ChildProcess,
+  graceMs = 5000
+): Promise<void> {
+  if (child.pid == null || child.exitCode != null || child.signalCode != null)
+    return
+  const exited = new Promise<boolean>(resolve =>
+    child.once('exit', () => {
+      resolve(true)
+    })
+  )
+  const waited = async (ms: number): Promise<boolean> => {
+    let timer: NodeJS.Timeout | undefined
+    const late = new Promise<boolean>(resolve => {
+      timer = setTimeout(() => {
+        resolve(false)
+      }, ms)
+    })
+    try {
+      return await Promise.race([exited, late])
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  child.kill('SIGTERM')
+  if (await waited(graceMs)) return
+  child.kill('SIGKILL')
+  await waited(graceMs)
+}
+
+/**
+ * Runs every teardown step, last added first. One that fails does not skip
+ * the rest; what failed is reported once all have run.
+ */
+export async function runStops(
+  stops: Array<() => Promise<void> | void>
+): Promise<void> {
+  const failures: string[] = []
+  for (const fn of [...stops].reverse()) {
+    try {
+      await fn()
+    } catch (error) {
+      failures.push(error instanceof Error ? error.message : String(error))
+    }
+  }
+  if (failures.length > 0) {
+    throw new HarnessError(
+      `The stack did not stop cleanly: ${failures.join('; ')}`
+    )
+  }
+}
+
+/**
  * A scratch server on this machine: its own database, object store, Places stub, API
  * and web build on one origin. Nothing here touches a seat.
  */
@@ -179,8 +235,11 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
   const host = options.lan === true ? lanAddress() : '127.0.0.1'
   const stops: Array<() => Promise<void> | void> = []
   const stop = async (): Promise<void> => {
-    for (const fn of stops.reverse()) await fn()
-    rmSync(dir, { recursive: true, force: true })
+    try {
+      await runStops(stops.splice(0))
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   }
   try {
     const wantsApi = options.services.includes('api')
@@ -257,14 +316,22 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       })
       const databaseName = `e2e_${id.replace(/\W/g, '')}`
       const admin = new Pool({ connectionString: testDatabaseUrl })
-      await admin.query(`create database ${databaseName}`)
+      try {
+        await admin.query(`create database ${databaseName}`)
+      } catch (error) {
+        await admin.end()
+        throw error
+      }
       const databaseUrl = new URL(testDatabaseUrl)
       databaseUrl.pathname = `/${databaseName}`
       stops.push(async () => {
-        await admin.query(
-          `drop database if exists ${databaseName} with (force)`
-        )
-        await admin.end()
+        try {
+          await admin.query(
+            `drop database if exists ${databaseName} with (force)`
+          )
+        } finally {
+          await admin.end()
+        }
       })
       const origin = new URL(front.url)
       writeFileSync(
@@ -311,9 +378,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         { cwd: dir, env: serverEnv(), stdio: 'ignore' }
       )
       stops.push(async () => {
-        api.kill('SIGTERM')
-        await new Promise(resolve => setTimeout(resolve, 200))
-        api.kill('SIGKILL')
+        await stopProcess(api)
       })
       await untilHealthy(`http://127.0.0.1:${apiPort}`, api)
     }
@@ -345,8 +410,8 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
           stdio: 'ignore'
         }
       )
-      stops.push(() => {
-        metro.kill('SIGTERM')
+      stops.push(async () => {
+        await stopProcess(metro)
       })
       await waitForPackager(metroPort)
       if (options.platform != null)
