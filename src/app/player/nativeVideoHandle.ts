@@ -20,6 +20,7 @@ import {
 import {
   HAVE_CURRENT_DATA,
   HAVE_ENOUGH_DATA,
+  HAVE_METADATA,
   type VideoEventName,
   type VideoHandle,
   type VideoListenerOptions
@@ -136,8 +137,35 @@ export class NativeVideoHandle implements VideoHandle {
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
 
-  /** The source as the view built it, buffer and live settings included. */
-  sourceConfig: ReactVideoSource | null = null
+  /**
+   * The source as the view built it, buffer and live settings included. On
+   * Android a different one, the same address with other settings among
+   * them, is a new item ExoPlayer opens from nothing, so what was loaded no
+   * longer counts. AVPlayer reads none of those settings and need not reopen
+   * an address it holds, so on iOS only a new address starts again.
+   */
+  get sourceConfig(): ReactVideoSource | null {
+    return this.config
+  }
+
+  set sourceConfig(config: ReactVideoSource | null) {
+    // By value, as ExoPlayer compares them: a new object for the same source
+    // opens nothing, and nothing would raise the tile again.
+    if (
+      this.readyOnBuffer &&
+      this.config != null &&
+      JSON.stringify(config) !== JSON.stringify(this.config)
+    ) {
+      this.state = 0
+      this.loaded = false
+    }
+    this.config = config
+  }
+
+  /** The item has been reported loaded since it was last opened. */
+  private loaded = false
+
+  private config: ReactVideoSource | null = null
 
   /**
    * Whether `reload` has to clear the player's source before handing it the
@@ -150,6 +178,15 @@ export class NativeVideoHandle implements VideoHandle {
    * source a new one. iOS loads whatever it is handed.
    */
   clearBeforeReload = false
+
+  /**
+   * Whether a loaded player's buffer-ready report is enough to play, picture
+   * reported or not. Set by the view on Android, whose player can report its
+   * first picture before its load and so leave a tile looking short for
+   * good. AVPlayer says it is ready before it has a picture, so on iOS the
+   * picture is still what is waited for.
+   */
+  readyOnBuffer = false
 
   /**
    * The player has run out of picture and is waiting for more, from the
@@ -340,7 +377,17 @@ export class NativeVideoHandle implements VideoHandle {
     this.length = length
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
-    this.state = 1
+    // The first load never lowers: ExoPlayer can draw its first frame, and
+    // say so, before it reports the load, and knocking that picture back to
+    // "metadata only" left every tile of a phone's grid short for good — the
+    // grid waits for `HAVE_ENOUGH_DATA` before it plays, so it held them
+    // frozen on their first frame until somebody scrubbed. A load reported
+    // again for the same item is the player opening it once more by itself,
+    // with nothing drawn yet.
+    this.state = this.loaded
+      ? HAVE_METADATA
+      : Math.max(this.state, HAVE_METADATA)
+    this.loaded = true
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -475,7 +522,8 @@ export class NativeVideoHandle implements VideoHandle {
    *
    * Android's player says ready only once it holds what it was told to start
    * with (`bufferForPlaybackMs`); AVPlayer says it when it judges playback
-   * likely to keep up.
+   * likely to keep up. On Android it is enough to play once the source has
+   * loaded, picture reported or not (`readyOnBuffer`).
    */
   handleBuffer = (data: OnBufferData): void => {
     this.rebase()
@@ -501,7 +549,8 @@ export class NativeVideoHandle implements VideoHandle {
       }
       return
     }
-    if (this.state < HAVE_CURRENT_DATA || this.state === HAVE_ENOUGH_DATA) {
+    const floor = this.readyOnBuffer ? HAVE_METADATA : HAVE_CURRENT_DATA
+    if (this.state < floor || this.state === HAVE_ENOUGH_DATA) {
       return
     }
     this.state = HAVE_ENOUGH_DATA
@@ -596,8 +645,10 @@ export class NativeVideoHandle implements VideoHandle {
       this.props = { ...this.props, paused: true }
       this.onPropsChange()
     }
-    // A fresh attempt, paused until somebody plays it.
+    // A fresh attempt, paused until somebody plays it, with nothing loaded yet.
     this.failed = false
+    this.state = 0
+    this.loaded = false
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
     // live offset travel with it, and a bare address put ExoPlayer back on
@@ -614,6 +665,7 @@ export class NativeVideoHandle implements VideoHandle {
     this.timeAt = this.clock()
     this.length = Number.POSITIVE_INFINITY
     this.state = 0
+    this.loaded = false
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null

@@ -213,6 +213,97 @@ describe('NativeVideoHandle', function () {
     expect(canPlay).equals(1)
   })
 
+  it('keeps the picture it has when the load is reported after it, as Android can', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.attach(fakePlayer().ref)
+    handle.handleReadyForDisplay()
+    handle.handleLoad({
+      currentTime: 104,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(handle.readyState).equals(4)
+    // A reload is a fresh start: nothing in hand until it loads again.
+    handle.source = 'https://media.example.test/a/index.m3u8'
+    handle.reload()
+    expect(handle.readyState).equals(0)
+  })
+
+  it('on Android, is ready once its loaded player says it holds enough, picture reported or not', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.readyOnBuffer = true
+    let canPlay = 0
+    handle.addEventListener('canplay', () => {
+      canPlay += 1
+    })
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    expect(handle.readyState).equals(1)
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(4)
+    expect(canPlay).equals(1)
+  })
+
+  it('on iOS, waits for a picture however ready the player says it is', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.handleLoad({
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0])
+    handle.handleBuffer({ isBuffering: false })
+    expect(handle.readyState).equals(1)
+    handle.handleReadyForDisplay()
+    expect(handle.readyState).equals(4)
+  })
+
+  it('on Android, starts from nothing loaded when the view hands it a source with other settings', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    handle.readyOnBuffer = true
+    const first = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = first
+    handle.handleReadyForDisplay()
+    // The same source again on the next render changes nothing, nor does an
+    // equal one built afresh, which ExoPlayer does not reopen.
+    handle.sourceConfig = first
+    handle.sourceConfig = { ...first }
+    expect(handle.readyState).equals(4)
+    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
+    expect(handle.readyState).equals(0)
+  })
+
+  it('on iOS, keeps what it has when only the settings around the same address change', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const first = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = first
+    handle.handleReadyForDisplay()
+    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
+    expect(handle.readyState).equals(4)
+  })
+
+  it('drops back to metadata when the same item is reported loaded again', function () {
+    const handle = new NativeVideoHandle(() => undefined)
+    const load = {
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0]
+    handle.handleReadyForDisplay()
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(4)
+    // ExoPlayer preparing the item once more by itself: nothing drawn yet.
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(1)
+    // A new source's first load keeps a picture reported ahead of it again.
+    handle.reset()
+    handle.handleReadyForDisplay()
+    handle.handleLoad(load)
+    expect(handle.readyState).equals(4)
+  })
+
   it('has ended once it plays to the end, until it is moved back', function () {
     const handle = new NativeVideoHandle(() => undefined)
     handle.attach(fakePlayer().ref)
