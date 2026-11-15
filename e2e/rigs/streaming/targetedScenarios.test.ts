@@ -52,6 +52,8 @@ type Bug =
   | 'noTiles'
   | 'unknownMotion'
   | 'notRecordingYet'
+  /** A camera that is out or ended loses its tile, rather than saying so. */
+  | 'hidesOut'
 
 interface FakeWatcher extends Watcher {
   calls: string[]
@@ -146,7 +148,12 @@ function watcher(
               : 0)
       }
     })
-    return { atMs: t, tiles }
+    return {
+      atMs: t,
+      tiles: bugs.includes('hidesOut')
+        ? tiles.filter(tile => tile.notice == null)
+        : tiles
+    }
   }
   const surface: TargetedDriver = {
     name: role,
@@ -339,6 +346,25 @@ describe('the gap-seek scenario', function () {
     expect(fake.steps[0].observed).match(/^landed unread;/)
     expect(fake.steps[0].verdict).equals('failed')
   })
+
+  it('blocks a look whose clocks could not be read, and fails one without the hole', async function () {
+    const world = makeWorld(THREE)
+    const fake = session(world, [
+      watcher(world, 'chrome', ['noClocks']),
+      watcher(world, 'iphone', ['hidesOut'])
+    ])
+    await gapSeek.run(fake.session)
+    expect(verdictsOf(fake.steps)).deep.equals([
+      ['chrome', 'gap-seek-paused-in-hole', 'blocked'],
+      ['chrome', 'gap-seek-resumed', 'passed'],
+      ['chrome', 'gap-seek-before-take', 'blocked'],
+      ['iphone', 'gap-seek-paused-in-hole', 'failed'],
+      ['iphone', 'gap-seek-resumed', 'passed'],
+      ['iphone', 'gap-seek-before-take', 'passed']
+    ])
+    expect(fake.steps[0].observed).match(/^no tile clock read; /)
+    expect(fake.steps[3].observed).match(/^no SynthB tile; /)
+  })
 })
 
 describe('the angle-ends scenario', function () {
@@ -373,6 +399,18 @@ describe('the angle-ends scenario', function () {
     expect(fake.steps[0].observed).match(/^said catching up; /)
     expect(fake.steps[1].observed).match(/^landed unread;/)
   })
+
+  it('fails a watcher whose ended camera is simply gone, and one with no player', async function () {
+    const world = makeWorld(THREE)
+    const fake = session(world, [
+      watcher(world, 'iphone', ['hidesOut']),
+      watcher(world, 'android', ['noTiles'])
+    ])
+    await angleEnds.run(fake.session)
+    expect(
+      fake.steps.filter(step => step.step === 'angle-ends').map(s => s.verdict)
+    ).deep.equals(['failed', 'failed'])
+  })
 })
 
 describe('the publisher-outage scenario', function () {
@@ -387,6 +425,17 @@ describe('the publisher-outage scenario', function () {
       ['chrome', 'publisher-outage-rewound-after', 'passed']
     ])
     expect(world.publisherCalls).deep.equals(['cut SynthA 45', 'cut SynthA 45'])
+  })
+
+  it('fails a watcher whose camera that is out is simply gone', async function () {
+    const world = makeWorld(THREE)
+    const fake = session(world, [watcher(world, 'chrome', ['hidesOut'])])
+    await publisherOutage.run(fake.session)
+    expect(
+      fake.steps
+        .filter(step => step.step.endsWith('-during'))
+        .map(step => step.verdict)
+    ).deep.equals(['failed', 'failed'])
   })
 
   it('fails a watcher that freezes silently', async function () {
@@ -761,8 +810,25 @@ describe('the TV scenario', function () {
       ['tv', 'tv-cold-start', 'passed'],
       ['tv', 'tv-cameras-offered', 'failed'],
       ['tv', 'tv-skip-inside', 'failed'],
-      ['tv', 'tv-publisher-outage', 'passed'],
+      ['tv', 'tv-publisher-outage', 'failed'],
       ['tv', 'tv-camera-ended', 'failed']
     ])
+  })
+
+  it('blocks the skips of a TV whose clocks cannot be read', async function () {
+    const world = makeWorld(['SynthA', 'SynthB', 'SynthC', 'SynthD'])
+    const fake = session(world, [
+      watcher(world, 'tv', ['noClocks'], {
+        tv: {
+          coldLaunch: async () => {},
+          dump: async () => 'Welcome',
+          approve: async () => false
+        }
+      })
+    ])
+    await tvCameras.run(fake.session)
+    expect(
+      fake.steps.find(step => step.step === 'tv-skip-inside')?.verdict
+    ).equals('blocked')
   })
 })

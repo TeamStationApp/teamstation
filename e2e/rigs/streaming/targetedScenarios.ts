@@ -51,6 +51,45 @@ function describe(look: Look): string {
     .join('; ')
 }
 
+/**
+ * Records a check on a look only where the look can bear it: a player with
+ * no tiles, or without the `angle` the check is about, fails; a check that
+ * needs clock readings (`read`) and has none is blocked, since the harness
+ * could not tell.
+ */
+async function checkLook(
+  session: TargetedSession,
+  watcher: Watcher,
+  step: string,
+  expected: string,
+  observed: string,
+  look: Look,
+  ok: boolean,
+  needs: { angle?: string; read?: number[] } = {}
+): Promise<void> {
+  if ((look.tiles ?? []).length === 0) {
+    await session.record.step(watcher, step, expected, observed, 'failed')
+  } else if (needs.angle != null && tile(look, needs.angle) == null) {
+    await session.record.step(
+      watcher,
+      step,
+      expected,
+      `no ${needs.angle} tile; ${observed}`,
+      'failed'
+    )
+  } else if (needs.read?.length === 0) {
+    await session.record.step(
+      watcher,
+      step,
+      expected,
+      `no tile clock read; ${observed}`,
+      'blocked'
+    )
+  } else {
+    await session.record.check(watcher, step, expected, observed, ok)
+  }
+}
+
 /** Waits until the session's clock reaches `atMs`. */
 async function until(session: TargetedSession, atMs: number): Promise<void> {
   const wait = atMs - session.now()
@@ -110,15 +149,19 @@ export const gapSeek: TargetedScenario = {
         hole?.notice != null &&
         TILE_NOTICE.test(hole.notice) &&
         (hole.wallMs == null || hole.wallMs <= holeStart + 1000)
-      const aligned = moments(others(look, 'SynthB')).every(
+      const rest = moments(others(look, 'SynthB'))
+      const aligned = rest.every(
         at => landed != null && Math.abs(at - landed) <= 1500
       )
-      await session.record.check(
+      await checkLook(
+        session,
         watcher,
         'gap-seek-paused-in-hole',
         "SynthB shows a notice and no frame past the hole's start; the others hold the hole's middle ± 1.5 s",
         `landed ${landed == null ? 'unread' : new Date(landed).toISOString().slice(11, 23)}; ${describe(look)}`,
-        holeShown && aligned
+        look,
+        holeShown && aligned,
+        { angle: 'SynthB', read: rest }
       )
       await watcher.surface.togglePause!()
       const resumed = await untilMoving(session, watcher, 30_000)
@@ -131,18 +174,20 @@ export const gapSeek: TargetedScenario = {
       )
       await session.seekTo(watcher, session.takeStartMs - 5000)
       const early = await session.look(watcher)
-      const beforeTake = moments(early.tiles ?? []).some(
-        at => at < session.takeStartMs - 1000
-      )
+      const shown = moments(early.tiles ?? [])
+      const beforeTake = shown.some(at => at < session.takeStartMs - 1000)
       const notYet = (early.tiles ?? []).some(
         t => t.wallMs != null && /not recording yet/i.test(t.notice ?? '')
       )
-      await session.record.check(
+      await checkLook(
+        session,
         watcher,
         'gap-seek-before-take',
         'no tile shows a moment before the take, nor "Not recording yet" over footage',
         describe(early),
-        !beforeTake && !notYet
+        early,
+        !beforeTake && !notYet,
+        { read: shown }
       )
       await watcher.surface.jumpToPresent().catch(() => undefined)
     }
@@ -174,15 +219,19 @@ export const angleEnds: TargetedScenario = {
     for (const watcher of session.watchers) {
       const look = last.get(watcher)!
       const ended = tile(look, 'SynthC')
-      const ok =
-        caughtUp.get(watcher) !== true &&
-        (ended == null || /ended/i.test(ended.notice ?? ''))
-      await session.record.check(
+      const rest = others(look, 'SynthC')
+      await checkLook(
+        session,
         watcher,
         'angle-ends',
         'the ended camera says it ended, never "catching up"; the others keep moving',
         `${caughtUp.get(watcher) === true ? 'said catching up; ' : ''}${describe(look)}`,
-        ok && others(look, 'SynthC').every(t => t.advancing === true)
+        look,
+        caughtUp.get(watcher) !== true &&
+          /ended/i.test(ended?.notice ?? '') &&
+          rest.length > 0 &&
+          rest.every(t => t.advancing === true),
+        { angle: 'SynthC' }
       )
     }
     for (const label of ['SynthA', 'SynthB']) {
@@ -221,13 +270,15 @@ export const publisherOutage: TargetedScenario = {
       await session.sleep(20_000)
       for (const watcher of session.watchers) {
         const look = await session.look(watcher)
-        const during = tile(look, 'SynthA')
-        await session.record.check(
+        await checkLook(
+          session,
           watcher,
           `${step}-during`,
           'the camera that is out says so, rather than freezing silently',
           describe(look),
-          during == null || during.notice != null
+          look,
+          tile(look, 'SynthA')?.notice != null,
+          { angle: 'SynthA' }
         )
       }
       await cut
@@ -533,18 +584,25 @@ export const tvCameras: TargetedScenario = {
     await tv.surface.cut('SynthD')
     await tv.surface.skip([10, -10, -10])
     const skipped = await session.look(tv)
-    await session.record.check(
+    const landed = moments(skipped.tiles ?? [])
+    await checkLook(
+      session,
       tv,
       'tv-skip-inside',
-      'skips keep the bar inside the take',
+      'skips keep the bar inside the take: every tile shows a moment between its start and now',
       describe(skipped),
-      skipped.tiles != null
+      skipped,
+      landed.every(
+        at => at >= session.takeStartMs - 1000 && at <= session.now() + 1000
+      ),
+      { read: landed }
     )
     await session.publishers.get('SynthB')!.cut(45)
     const back = await waitFor(
       async () => {
         const look = await session.look(tv)
-        return { ok: tile(look, 'SynthB')?.notice == null, value: look }
+        const b = tile(look, 'SynthB')
+        return { ok: b != null && b.notice == null, value: look }
       },
       {
         timeoutMs: 30_000,
@@ -553,12 +611,15 @@ export const tvCameras: TargetedScenario = {
         now: session.now
       }
     )
-    await session.record.check(
+    await checkLook(
+      session,
       tv,
       'tv-publisher-outage',
       'within 30 s of its return the camera shows no notice',
       describe(back.value),
-      back.ok
+      back.value,
+      back.ok,
+      { angle: 'SynthB' }
     )
     await session.publishers.get('SynthD')!.stop()
     await session.owner.endCamera(
