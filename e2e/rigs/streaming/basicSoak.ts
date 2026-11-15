@@ -261,10 +261,13 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
       const chrome = session.watchers.find(w => w.evaluate != null)
       const frames: PresentedFrame[] = []
       const quiet: Array<[number, number]> = []
+      // The logger is put in again before each drain: a rejoin that loads
+      // the page afresh loses it, and what it missed shows as a stall.
       const drain = async (): Promise<void> => {
         if (chrome?.evaluate == null) return
         try {
           frames.push(...parseFrames(await chrome.evaluate(FRAME_DRAIN_SCRIPT)))
+          await chrome.evaluate(frameLogScript())
         } catch {
           // A drain that fails loses nothing: the page keeps the frames for the next.
         }
@@ -373,7 +376,14 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
         await gather(sampler, 'stop', async () => await sampler.stop?.())
       }
       await drain()
-      const analysis = chrome == null ? null : analyseFrames(frames, quiet)
+      const analysis =
+        chrome == null
+          ? null
+          : analyseFrames(frames, quiet, {
+              startMs,
+              endMs: session.now(),
+              expected: BASIC_ANGLES
+            })
       if (analysis != null && chrome != null) {
         for (const angle of analysis.angles) {
           await session.record.check(

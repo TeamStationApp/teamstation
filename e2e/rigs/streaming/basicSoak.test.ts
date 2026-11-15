@@ -69,6 +69,8 @@ function fakeSession(): {
   calls: string[]
   written: Map<string, string>
   clock: { t: number }
+  /** How often the frame logger was put into the page. */
+  installs: () => number
 } {
   const clock = { t: T0 }
   const now = (): number => clock.t
@@ -80,12 +82,16 @@ function fakeSession(): {
     now
   )
   let drained = 0
+  let installs = 0
   let lastDrain = T0
   const chrome: Watcher = {
     role: 'chrome',
     surface: driver('chrome', calls),
     evaluate: async script => {
-      if (script !== FRAME_DRAIN_SCRIPT) return 'installed'
+      if (script !== FRAME_DRAIN_SCRIPT) {
+        installs++
+        return 'installed'
+      }
       // Each drain hands over every frame since the last, SynthA's picture freezing after the third.
       drained++
       const rows: unknown[] = []
@@ -163,7 +169,14 @@ function fakeSession(): {
       written.set(name, text)
     }
   }
-  return { session, steps: record.steps, calls, written, clock }
+  return {
+    session,
+    steps: record.steps,
+    calls,
+    written,
+    clock,
+    installs: () => installs
+  }
 }
 
 describe('the basic streaming soak', function () {
@@ -235,6 +248,8 @@ describe('the basic streaming soak', function () {
     expect(report).match(/\| android \| 0\/\d+ \|/)
     expect(report).contains('## Chrome, every presented frame')
     expect(report).match(/SynthA frozen for/)
+    // The logger goes in again with every drain, for a page loaded afresh.
+    expect(fake.installs()).greaterThan(2)
     expect(
       fake.written.get('chrome-frames.jsonl')!.split('\n').length
     ).greaterThan(100)

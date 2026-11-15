@@ -52,9 +52,10 @@ export function digitPatterns(): Record<string, string> {
 }
 
 /**
- * Runs in the page once: logs each presented frame of each tile as
+ * Runs in the page: logs each presented frame of each tile as
  * `[angle, presentedFrames, mediaTimeSec, displayEpochMs, clockMsOfDay | -1]`.
- * Installing again replaces nothing that is already logging.
+ * Installing again replaces nothing that is already logging, so it is run
+ * before every drain: a page loaded afresh (a rejoin) logs again.
  */
 export function frameLogScript(): string {
   return `(() => {
@@ -179,26 +180,67 @@ function inAny(atMs: number, windows: Array<[number, number]>): boolean {
 }
 
 /**
- * Stalls longer than `gapMs` between presented frames, frozen runs of frames
- * whose clock stays within `gapMs`, and the angles' spread, leaving out the
- * `quiet` windows (just after a scrub).
+ * Stalls longer than `gapMs` between presented frames, and from an angle's
+ * last frame to `endMs`; frozen runs of frames whose clock stays within
+ * `gapMs`; and the angles' spread, leaving out the `quiet` windows (just after
+ * a scrub). An `expected` angle that presented no frame at all is one stall
+ * over the whole run.
  */
 export function analyseFrames(
   frames: PresentedFrame[],
   quiet: Array<[number, number]> = [],
-  gapMs = 1000
+  options: {
+    gapMs?: number
+    startMs?: number
+    endMs?: number
+    expected?: string[]
+  } = {}
 ): FrameAnalysis {
+  const gapMs = options.gapMs ?? 1000
   const byAngle = new Map<string, PresentedFrame[]>()
   for (const frame of frames) {
     byAngle.set(frame.angle, [...(byAngle.get(frame.angle) ?? []), frame])
+  }
+  for (const angle of options.expected ?? []) {
+    if (!byAngle.has(angle)) byAngle.set(angle, [])
   }
   const gaps: FrameGap[] = []
   const angles: AngleFrames[] = []
   for (const [angle, list] of byAngle) {
     list.sort((a, b) => a.displayMs - b.displayMs)
+    if (list.length === 0) {
+      const fromMs = options.startMs ?? options.endMs ?? 0
+      const toMs = options.endMs ?? fromMs
+      gaps.push({ angle, kind: 'stall', fromMs, toMs })
+      angles.push({
+        angle,
+        frames: 0,
+        readable: 0,
+        stalls: 1,
+        frozen: 0,
+        longestMs: toMs - fromMs
+      })
+      continue
+    }
     let stalls = 0
     let frozen = 0
     let longest = 0
+    // An angle that stops and never comes back stalls until the run's end.
+    const last = list[list.length - 1]
+    const tail =
+      options.endMs != null &&
+      options.endMs - last.displayMs > gapMs &&
+      !inAny(last.displayMs, quiet)
+    if (tail) {
+      stalls++
+      longest = options.endMs! - last.displayMs
+      gaps.push({
+        angle,
+        kind: 'stall',
+        fromMs: last.displayMs,
+        toMs: options.endMs!
+      })
+    }
     for (let i = 1; i < list.length; i++) {
       const gap = list[i].displayMs - list[i - 1].displayMs
       if (gap > gapMs && !inAny(list[i - 1].displayMs, quiet)) {
@@ -244,10 +286,7 @@ export function analyseFrames(
     angles.push({
       angle,
       frames: list.length,
-      readable:
-        list.length === 0
-          ? 0
-          : list.filter(f => f.clockMsOfDay != null).length / list.length,
+      readable: list.filter(f => f.clockMsOfDay != null).length / list.length,
       stalls,
       frozen,
       longestMs: longest

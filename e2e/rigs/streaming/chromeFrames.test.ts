@@ -120,4 +120,32 @@ describe("Chrome's frame log", function () {
       analysis.spreads.every(s => s.atMs < 14_000 || s.atMs >= 18_000)
     ).equals(true)
   })
+
+  it('stalls an angle that stops for good until the end, and one that never presented a frame', function () {
+    const frames = [
+      ...run('SynthA', 0, 20_000, ms => ms),
+      ...run('SynthB', 0, 6_000, ms => ms)
+    ]
+    const analysis = analyseFrames(frames, [], {
+      startMs: 0,
+      endMs: 20_000,
+      expected: ['SynthA', 'SynthB', 'SynthC']
+    })
+    const byAngle = Object.fromEntries(analysis.angles.map(a => [a.angle, a]))
+    expect(byAngle.SynthA).deep.include({ stalls: 0 })
+    expect(byAngle.SynthB).deep.include({ stalls: 1 })
+    expect(byAngle.SynthB.longestMs).closeTo(14_000, 40)
+    expect(byAngle.SynthC).deep.equals({
+      angle: 'SynthC',
+      frames: 0,
+      readable: 0,
+      stalls: 1,
+      frozen: 0,
+      longestMs: 20_000
+    })
+    expect(analysis.gaps.map(g => [g.angle, g.kind])).deep.equals([
+      ['SynthB', 'stall'],
+      ['SynthC', 'stall']
+    ])
+  })
 })
