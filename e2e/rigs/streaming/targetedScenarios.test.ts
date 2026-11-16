@@ -289,7 +289,7 @@ function verdictsOf(steps: StepRecord[]): Array<[string, string, Verdict]> {
 }
 
 const THREE = ['SynthA', 'SynthB', 'SynthC']
-const SHAPER = 'https://shaper.example.test'
+const SHAPER = '/Users/dev/.config/teamstation-e2e/shaper.mjs'
 
 describe('the gap-seek scenario', function () {
   it('pauses into the hole, plays on, and finds nothing before the take', async function () {

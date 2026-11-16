@@ -346,7 +346,7 @@ function rig(
     tvJoinSteps: [],
     ffmpeg: 'f',
     iosApp: 'a',
-    shaper: 'https://shaper.example.test',
+    shaper: '/Users/dev/.config/teamstation-e2e/shaper.mjs',
     shapedIps: { iphone: '192.0.2.1' },
     ...options.settings
   }
@@ -501,7 +501,9 @@ describe('running a targeted scenario', function () {
         )
         expect(session.takeStartMs).equals(T0)
         expect(session.now()).equals(T0 + 60_000)
-        expect(session.shaper).equals('https://shaper.example.test')
+        expect(session.shaper).equals(
+          '/Users/dev/.config/teamstation-e2e/shaper.mjs'
+        )
         expect(session.shapedIps).deep.equals({ iphone: '192.0.2.1' })
         expect(session.offsetMinutes).equals(0)
         expect(session.streamId('SynthB')).equals('st-b')

@@ -141,8 +141,11 @@ describe('the soak wiring', function () {
     expect(soakSettings(base)).not.have.property('shapedIps')
     expect(soakSettings(base)).not.have.property('shaper')
     expect(
-      soakSettings({ ...base, shaper: 'https://shaper.example.test' }).shaper
-    ).equals('https://shaper.example.test')
+      soakSettings({
+        ...base,
+        shaper: '/Users/dev/.config/teamstation-e2e/shaper.mjs'
+      }).shaper
+    ).equals('/Users/dev/.config/teamstation-e2e/shaper.mjs')
     expect(soakSettings({ ...base, shapedIps: 'x' })).not.have.property(
       'shapedIps'
     )

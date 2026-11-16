@@ -1,4 +1,4 @@
-import { type Shaper, shaper as makeShaper } from './shaper'
+import { loadShaper, type Shaper } from './shaper'
 import { tvCodeIn } from './soakSignIn'
 import { TILE_NOTICE } from './surfaces/surface'
 import {
@@ -334,7 +334,7 @@ export const publisherOutage: TargetedScenario = {
 
 /** S07–S09: a watcher's own network out for three minutes. */
 export function receiverOutage(
-  newShaper: (base: string) => Shaper = base => makeShaper({ base })
+  newShaper: (module: string) => Shaper = loadShaper
 ): TargetedScenario {
   return {
     setup: { synthetic: THREE, watchers: ['iphone', 'android', 'ipad'] },

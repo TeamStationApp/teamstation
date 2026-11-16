@@ -315,7 +315,7 @@ export interface TargetedSession {
   seekTo: (watcher: Watcher, targetMs: number) => Promise<number | null>
   sleep: (ms: number) => Promise<void>
   now: () => number
-  /** The network conditioner's address, from the local settings, when they give one. */
+  /** The module that makes the network conditioner, from the local settings, when they give one. */
   shaper?: string
   /** Each watcher role's address on a test network, from the local settings. */
   shapedIps: Record<string, string>
