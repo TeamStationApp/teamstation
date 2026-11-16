@@ -8,6 +8,7 @@ import type {
   WorldContext
 } from '../../../src/server/dev/fixtures/accounts'
 import { testAddress } from '../../../src/server/dev/fixtures/address'
+import { refuseRealAddresses } from '../../../src/server/dev/fixtures/baseline'
 import type { LiveSettings } from '../../../src/server/serverConfigSchema'
 import { ANGLES, SYNTHETIC_ANGLE } from './soakSchedule'
 
@@ -310,6 +311,9 @@ export async function runSoakFixture(
   }
   const db = options.makeDatabase(options.databaseUrl)
   try {
+    // Read from the database itself, not from a flag its caller sets: one
+    // that holds anybody's account but the test mailbox's is not seeded.
+    await refuseRealAddresses(db, options.mailbox)
     return await seedSoakFixture(
       {
         db,

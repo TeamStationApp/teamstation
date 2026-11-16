@@ -6,7 +6,8 @@ import { promisify } from 'node:util'
 
 import { Client } from 'pg'
 
-import { BlockedError } from '../../core/result'
+import { isTestAddress } from '../../../src/server/dev/fixtures/address'
+import { BlockedError, HarnessError } from '../../core/result'
 import { loadSettings } from '../../core/settings'
 import type { E2eContext } from '../../core/spec'
 import {
@@ -89,6 +90,26 @@ export function soakAccounts(world: Pick<SoakFixtureManifest, 'accounts'>): {
  * holds any account's session, the owner's included, signs in afresh as the
  * account `SIGN_IN_AS` gives it.
  */
+/**
+ * Refuses a database holding anybody's address but the test mailbox's: the
+ * soak signs every session out, and that must only ever be a throwaway
+ * stack's. Read from the database, since a handle file can name any.
+ */
+export async function refuseRealAccounts(
+  client: Pick<Client, 'query'>,
+  mailbox: string
+): Promise<void> {
+  const { rows } = await client.query<{ email: string }>(
+    'select email from user_emails'
+  )
+  const real = rows.filter(row => !isTestAddress(mailbox, row.email))
+  if (real.length > 0) {
+    throw new HarnessError(
+      `the attached stack's database holds ${real.length} address(es) that are not test addresses`
+    )
+  }
+}
+
 export const REVOKE_SESSIONS =
   "update auth_sessions set revoked_at = now() where revoked_at is null and device_name is distinct from 'Apple TV'"
 
@@ -344,6 +365,7 @@ export async function openWorld(
     // page ignores a sign-in link: every session but the TV's ends, so each
     // surface signs in afresh as the account SIGN_IN_AS gives it.
     await deps.onDatabase(handle, async client => {
+      await refuseRealAccounts(client, mailbox)
       await client.query(REVOKE_SESSIONS)
     })
     const ownerToken = await deps.sessionToken(stack, emails.owner)

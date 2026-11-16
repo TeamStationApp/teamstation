@@ -14,7 +14,7 @@ import {
 
 const LIVE = JSON.parse('{"enabled": true}') as never
 
-function fakeDb(): {
+function fakeDb(emails: string[] = []): {
   db: never
   rows: Array<[string, unknown]>
   destroyed: () => boolean
@@ -22,6 +22,11 @@ function fakeDb(): {
   const rows: Array<[string, unknown]> = []
   let destroyed = false
   const db = {
+    selectFrom: () => ({
+      select: () => ({
+        execute: async () => emails.map(email => ({ email }))
+      })
+    }),
     insertInto: (table: string) => ({
       values: (values: unknown) => ({
         execute: async () => {
@@ -147,6 +152,26 @@ describe('the soak fixture', function () {
       'Soak Hosts n0n0',
       { userId: 'user_1', isAdmin: false }
     ])
+  })
+
+  it('seeds nothing into a database that holds a real address, and lets go of it', async function () {
+    const { db, rows, destroyed } = fakeDb(['someone@example.test'])
+    let failure: unknown
+    try {
+      await runSoakFixture({
+        databaseUrl: 'postgres://soak@db.example.test/soak',
+        mailbox: 'qa@example.test',
+        sessionSecret: 'secret',
+        live: LIVE,
+        makeDatabase: () => db,
+        deps: fakeDeps().deps
+      })
+    } catch (error) {
+      failure = error
+    }
+    expect(String(failure)).includes('not test addresses')
+    expect(rows).deep.equals([])
+    expect(destroyed()).equals(true)
   })
 
   it('runs against the database a URL names, and lets go of it after', async function () {

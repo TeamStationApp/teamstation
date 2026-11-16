@@ -6,7 +6,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import type { Client } from 'pg'
 
-import { BlockedError } from '../../core/result'
+import { BlockedError, HarnessError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
 import type { StreamingHandle } from '../../core/streamingStack'
 import type { SoakFixtureManifest } from './soakFixture'
@@ -17,6 +17,7 @@ import {
   localSoak,
   openWorld,
   recordSessions,
+  refuseRealAccounts,
   REVOKE_SESSIONS,
   signInTv,
   type SoakSettings,
@@ -179,9 +180,13 @@ describe('opening a streaming world', function () {
     )
     expect(world.ownerToken).equals('owner-token')
     expect(world.stack.serverLog).equals(join(dir, 'mirror', 'api.log'))
-    expect(queries).deep.equals([REVOKE_SESSIONS])
+    // The addresses are read before anybody is signed out.
+    expect(queries).deep.equals([
+      'select email from user_emails',
+      REVOKE_SESSIONS
+    ])
     await world.stack.resetLimits!()
-    expect(queries[1]).contains('delete from rate_events')
+    expect(queries[2]).contains('delete from rate_events')
     expect(await world.link('viewer')()).equals('tok-viewer@example.test')
     expect(signedIn).deep.equals([
       'session owner@example.test',
@@ -211,6 +216,39 @@ describe('opening a streaming world', function () {
       '--json',
       '--mailbox',
       'bench@example.test'
+    ])
+  })
+
+  it('signs nobody out of a database that holds a real address', async function () {
+    const seen: string[] = []
+    const client = (
+      emails: string[]
+    ): {
+      query: (sql: string) => Promise<{ rows: Array<{ email: string }> }>
+    } => ({
+      query: async (sql: string) => {
+        seen.push(sql)
+        return { rows: emails.map(email => ({ email })) }
+      }
+    })
+    await refuseRealAccounts(
+      client(['qa+soak-owner@example.test']) as never,
+      'qa@example.test'
+    )
+    expect(
+      await rejection(
+        refuseRealAccounts(
+          client([
+            'qa+soak-owner@example.test',
+            'someone@example.test'
+          ]) as never,
+          'qa@example.test'
+        )
+      )
+    ).instanceOf(HarnessError)
+    expect(seen).deep.equals([
+      'select email from user_emails',
+      'select email from user_emails'
     ])
   })
 
