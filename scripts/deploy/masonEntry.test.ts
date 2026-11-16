@@ -38,12 +38,9 @@ import {
   RELEASE_KEYSTORE_SECRET,
   RELEASE_PASSWORD_SECRET,
   releaseIos,
-<<<<<<< HEAD
   releasePlayTesting,
   releaseToPlayTrack,
-=======
   SEAT_PARAM,
->>>>>>> 2bebf4815 (Let a develop build's server be set by a deep link or About TeamStation, and a Mason build name its host)
   seatEnvironment,
   setup,
   signAabScript,
