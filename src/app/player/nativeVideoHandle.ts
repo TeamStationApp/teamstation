@@ -12,15 +12,19 @@ import type {
 } from 'react-native-video'
 
 import {
+  nextReadiness,
+  NOTHING_LOADED,
+  type Readiness,
+  type ReadinessEvent
+} from './nativeReadiness'
+import {
   answersSeek,
   SEEK_TOLERANCE,
   shouldAdoptProgress,
   shouldResumeAfterSeek
 } from './seekTracker'
 import {
-  HAVE_CURRENT_DATA,
   HAVE_ENOUGH_DATA,
-  HAVE_METADATA,
   type VideoEventName,
   type VideoHandle,
   type VideoListenerOptions
@@ -101,7 +105,8 @@ export class NativeVideoHandle implements VideoHandle {
   /** When, on `clock`, `time` was true. */
   private timeAt = 0
   private length = Number.POSITIVE_INFINITY
-  private state = 0
+  /** Changed only by `advance`. */
+  private readiness: Readiness = NOTHING_LOADED
   private width = 0
   private height = 0
   /**
@@ -139,9 +144,6 @@ export class NativeVideoHandle implements VideoHandle {
 
   /** The source as the view built it, buffer and live settings included. */
   sourceConfig: ReactVideoSource | null = null
-
-  /** The item has been reported loaded since it was last opened. */
-  private loaded = false
 
   /**
    * Whether `reload` has to clear the player's source before handing it the
@@ -273,7 +275,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   get readyState(): number {
-    return this.state
+    return this.readiness.state
   }
 
   get videoWidth(): number {
@@ -350,9 +352,7 @@ export class NativeVideoHandle implements VideoHandle {
    * one it holds opens nothing and says nothing, and changes nothing here.
    */
   handleLoadStart = (): void => {
-    if (!this.readyOnBuffer) return
-    this.state = 0
-    this.loaded = false
+    this.advance('loadStart')
   }
 
   handleLoad = (data: OnLoadData): void => {
@@ -366,18 +366,12 @@ export class NativeVideoHandle implements VideoHandle {
     this.length = length
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
-    // The first load never lowers: ExoPlayer can draw its first frame, and
-    // say so, before it reports the load, and knocking that picture back to
+    // The first load never lowers: ExoPlayer draws its first frame, and
+    // says so, before it reports the load, and knocking that picture back to
     // "metadata only" left every tile of a phone's grid short for good — the
     // grid waits for `HAVE_ENOUGH_DATA` before it plays, so it held them
-    // frozen on their first frame until somebody scrubbed. On iOS a load
-    // reported again for the same item is the player opening it once more by
-    // itself, with nothing drawn yet. Android says when it opens an item
-    // (`handleLoadStart`), and its readiness reports come before the load.
-    this.state = this.loaded
-      ? HAVE_METADATA
-      : Math.max(this.state, HAVE_METADATA)
-    this.loaded = true
+    // frozen on their first frame until somebody scrubbed.
+    this.advance('load')
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -493,9 +487,7 @@ export class NativeVideoHandle implements VideoHandle {
   handleReadyForDisplay = (): void => {
     this.rebase()
     this.failed = false
-    // A picture is up: what a browser calls `HAVE_ENOUGH_DATA`, which is what
-    // the multi-camera grid asks before it believes a tile has started.
-    this.state = Math.max(this.state, HAVE_ENOUGH_DATA)
+    this.advance('picture')
     this.emit('canplay')
     this.emit('loadeddata')
   }
@@ -525,7 +517,7 @@ export class NativeVideoHandle implements VideoHandle {
     const stoppedAt = this.playerStoppedAt
     this.playerStoppedAt = null
     if (data.isBuffering) {
-      this.state = Math.min(this.state, HAVE_CURRENT_DATA)
+      this.advance('bufferStart')
       // The player's "not playing" just before this was the stall, not a
       // pause: it is still meant to be playing, and plays on by itself.
       if (
@@ -539,12 +531,9 @@ export class NativeVideoHandle implements VideoHandle {
       }
       return
     }
-    const floor = this.readyOnBuffer ? HAVE_METADATA : HAVE_CURRENT_DATA
-    if (this.state < floor || this.state === HAVE_ENOUGH_DATA) {
-      return
-    }
-    this.state = HAVE_ENOUGH_DATA
-    this.emit('canplay')
+    const before = this.readiness.state
+    this.advance('bufferEnd')
+    if (this.readiness.state !== before) this.emit('canplay')
   }
 
   handleVideoTracks = (data: OnVideoTracksData): void => {
@@ -637,8 +626,7 @@ export class NativeVideoHandle implements VideoHandle {
     }
     // A fresh attempt, paused until somebody plays it, with nothing loaded yet.
     this.failed = false
-    this.state = 0
-    this.loaded = false
+    this.advance('reopen')
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
     // live offset travel with it, and a bare address put ExoPlayer back on
@@ -651,11 +639,10 @@ export class NativeVideoHandle implements VideoHandle {
     this.reportedPlaying = false
     this.actuallyPlaying = false
     this.emit('emptied')
+    this.advance('reopen')
     this.time = 0
     this.timeAt = this.clock()
     this.length = Number.POSITIVE_INFINITY
-    this.state = 0
-    this.loaded = false
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null
@@ -677,7 +664,7 @@ export class NativeVideoHandle implements VideoHandle {
       this.props.paused ||
       this.failed ||
       this.over ||
-      this.state !== HAVE_ENOUGH_DATA ||
+      this.readiness.state !== HAVE_ENOUGH_DATA ||
       this.pendingSeekTo != null
     ) {
       return 0
@@ -690,6 +677,18 @@ export class NativeVideoHandle implements VideoHandle {
       (elapsed / 1000) * this.props.rate,
       Math.max(0, this.length - this.time)
     )
+  }
+
+  /**
+   * Moves the readiness on for what the player reported. The carried
+   * playhead reads it, so the playhead is fixed first whenever it changes.
+   */
+  private advance(event: ReadinessEvent): void {
+    const next = nextReadiness(this.readiness, event, {
+      readyOnBuffer: this.readyOnBuffer
+    })
+    if (next.state !== this.readiness.state) this.rebase()
+    this.readiness = next
   }
 
   /**

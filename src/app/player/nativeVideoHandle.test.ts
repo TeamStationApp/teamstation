@@ -527,6 +527,17 @@ function progress(handle: NativeVideoHandle, currentTime: number): void {
 }
 
 describe('the native playhead between reports (U37)', function () {
+  it('keeps the playhead where it was when Android starts opening the item again', async function () {
+    const { handle, advance } = await playing()
+    handle.readyOnBuffer = true
+    progress(handle, 10)
+    advance(500)
+    expect(handle.currentTime).closeTo(10.5, 1e-9)
+    handle.handleLoadStart()
+    expect(handle.readyState).equals(0)
+    expect(handle.currentTime).closeTo(10.5, 1e-9)
+  })
+
   it('moves on at the rate it plays while playing', async function () {
     const { handle, advance } = await playing()
     progress(handle, 10)
