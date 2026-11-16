@@ -30,7 +30,7 @@ import { applyFieldCamera } from './cameraModel'
 import { catcherBounds, movedRect, type ScreenRect } from './catcherBounds'
 import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
-import { BASES, clampToField } from './fieldModel'
+import { BASES, catcherSpot, clampToField } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import { frameThrottle } from './frameThrottle'
@@ -114,20 +114,15 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       }
     }
     if (callbacks.current.onCatcherBounds != null) {
-      const catcher = callbacks.current.players.find(
-        player => player.team === 'defense' && player.label === 'C'
+      const rect = catcherBounds(
+        camera,
+        size.width,
+        size.height,
+        catcherSpot(callbacks.current.players)
       )
-      if (catcher != null) {
-        const rect = catcherBounds(
-          camera,
-          size.width,
-          size.height,
-          catcher.position
-        )
-        if (movedRect(catcherRect.current, rect)) {
-          catcherRect.current = rect
-          callbacks.current.onCatcherBounds(rect)
-        }
+      if (movedRect(catcherRect.current, rect)) {
+        catcherRect.current = rect
+        callbacks.current.onCatcherBounds(rect)
       }
     }
     if (callbacks.current.onScoreboardBounds != null) {

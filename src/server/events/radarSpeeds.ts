@@ -8,7 +8,8 @@ import type { RadarSettings } from '../../common/nodeSettings'
 import {
   type RadarReading,
   radarTargets,
-  withRadarSpeeds
+  withRadarSpeeds,
+  withRadarSpeedsKeepingOwn
 } from '../../common/scoring/radarSpeeds'
 import type { Database } from '../db/database'
 import { radarSettings } from '../nodeSettings'
@@ -56,16 +57,16 @@ export async function refreshRadarSpeeds(
   await db.transaction().execute(async trx => {
     const game = await trx
       .selectFrom('games')
-      .select(['scoringOwner', 'currentPlay'])
+      .select(['currentPlay', 'scoringOwner'])
       .where('id', '=', gameId)
       .forUpdate()
       .executeTakeFirst()
-    if (game?.scoringOwner !== 'teamstation') return
+    if (game == null) return
+    // Every game's pitches take the radar's speeds, whoever scored them.
     const rows = await trx
       .selectFrom('events')
       .select(['id', 'gumbo'])
       .where('gameId', '=', gameId)
-      .where('source', '=', 'teamstation')
       .execute()
     const settings = await radarSettings(trx)
     const readings = await radarReadings(
@@ -74,9 +75,15 @@ export async function refreshRadarSpeeds(
       [...rows.map(r => r.gumbo), game.currentPlay],
       settings
     )
+    // An outside scorer's plays keep their own speeds where the radar has
+    // no reading.
+    const speeds =
+      game.scoringOwner === 'teamstation'
+        ? withRadarSpeeds
+        : withRadarSpeedsKeepingOwn
     let changed = false
     for (const row of rows) {
-      const gumbo = withRadarSpeeds(row.gumbo, readings, settings, row.gumbo)
+      const gumbo = speeds(row.gumbo, readings, settings, row.gumbo)
       if (isDeepStrictEqual(gumbo, row.gumbo)) continue
       await trx
         .updateTable('events')

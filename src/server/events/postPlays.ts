@@ -80,6 +80,7 @@ import {
   teamIdsOnCredits,
   upsertGameEvents
 } from './eventWrite'
+import { type ImportedCounts, writeImportedRecords } from './importedWrite'
 import { radarReadings, scheduleRadarRefresh } from './radarSpeeds'
 import { namedScoringAuthorship } from './scoringAuthorship'
 import {
@@ -131,6 +132,11 @@ export interface PostedDigests {
   priorPlaysDigest: string | null
   /** The game's play generation, which a post never changes. */
   generation: number
+  /**
+   * An outside or typed-in post's plays and the records they now hold
+   * (`writeImportedRecords`). A TeamStation post answers none.
+   */
+  imported?: ImportedCounts
 }
 
 /** A post's answer of every stored play (`all`). */
@@ -215,6 +221,11 @@ export interface PostOptions {
    * delivering the notice reads and names the plays itself.
    */
   cache?: ValkeyCache
+  /**
+   * A node administrator's repair of an outside scorer's final game: the
+   * route sets it for a body asking `replaceFinal`, and nothing else does.
+   */
+  replaceFinal?: boolean
 }
 
 /** The refusal of a post made against the game before its last reset. */
@@ -335,12 +346,27 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     const priorRows = await readPlays(trx, gameId)
     const hadPlays = priorRows.length > 0
     const live = body.mode === 'live'
+    // A final game takes a scorer's correction, whoever scored it before:
+    // the post takes it over, as any TeamStation post does. An outside
+    // scorer's final game takes a node administrator's repair of its plays.
+    const repair =
+      options.replaceFinal === true &&
+      system === 'external' &&
+      game.scoringOwner !== 'teamstation'
+    // Only a game whose plays hold the records a scorer replays can be
+    // corrected: one owned here, or an import given its records.
+    const correctable =
+      game.scoringOwner === 'teamstation' ||
+      priorRows.some(row => storedRecordOf(row.gumbo) != null)
     if (
       game.status === 'final' &&
-      !(live && system === 'teamstation' && game.scoringOwner === 'teamstation')
+      !(live && system === 'teamstation' && correctable) &&
+      !repair
     ) {
       throw conflict('This game is final')
     }
+    if (repair && body.plays.length < priorRows.length)
+      throw badRequest('replaceFinal needs every play of the game')
     if (authorize != null) await authorize(trx, game)
     if (system === 'external' && game.scoringOwner === 'teamstation') {
       throw conflict('This game is scored in TeamStation')
@@ -724,6 +750,9 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       source: system
     }))
 
+    // A TeamStation post's pitches take the radar's speeds here; an outside
+    // post's plays have no records yet, and `writeImportedRecords` gives
+    // them their speeds once it has built them.
     if (system === 'teamstation') {
       const settings = await radarSettings(trx)
       const priorByIndex = new Map(
@@ -772,12 +801,13 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       const remaining = Math.max(...future)
       if (remaining >= 0)
         refreshDelay = Math.min(remaining, settings.pitchWindowSec * 1000) + 50
+    }
+    if (system === 'teamstation')
       await trx
         .updateTable('games')
         .set({ scoringOwner: 'teamstation' })
         .where('id', '=', gameId)
         .execute()
-    }
     // The at-bat in progress is stored as every play is, naming nobody.
     if (currentPlay != null && typeof currentPlay === 'object')
       currentPlay = withoutNames(currentPlay, { source: system })
@@ -792,11 +822,63 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     } else {
       await replaceGameEvents(trx, write)
     }
+    // An outside or typed-in post's game is given its records again
+    // (`writeImportedRecords`); a TeamStation post's carry their own. A post
+    // that finishes the game converts it as final, so its last record ends
+    // it: the status this post leaves, as worked out below, is final when
+    // its plays carry the final score.
+    const finalAfter = async (): Promise<boolean> => {
+      if (game.status === 'cancelled') return false
+      const written = await readPlays(trx, gameId)
+      return live
+        ? written.some(row => row.eventType === 'final_score')
+        : game.status === 'final' ||
+            Object.values(scoresOf(written)).every(score => score != null)
+    }
+    const imported =
+      system !== 'teamstation'
+        ? await writeImportedRecords(
+            trx,
+            {
+              id: gameId,
+              home_team_id: game.home_team_id,
+              away_team_id: game.away_team_id,
+              status: (await finalAfter()) ? 'final' : game.status,
+              scoringOwner: game.scoringOwner
+            },
+            {
+              // A post that only adds plays after the last, or takes away
+              // the last ones, continues from those before.
+              rebuild:
+                !live ||
+                body.plays.some(
+                  play =>
+                    storedBefore.has(play.about.atBatIndex) ||
+                    play.about.atBatIndex < Math.max(-1, ...storedBefore)
+                ) ||
+                (body.remove ?? []).some(index =>
+                  [...storedBefore].some(
+                    kept => kept > index && !(body.remove ?? []).includes(kept)
+                  )
+                )
+            }
+          )
+        : null
+    // Records just built give their pitches the times the radar waits on.
+    if (imported?.radarDelay != null)
+      refreshDelay = Math.min(refreshDelay ?? Infinity, imported.radarDelay)
+    const postedIndexes = new Set(
+      plays.map(play => play.gumbo.about.atBatIndex)
+    )
+    const convertedOthers =
+      imported?.rewritten.some(index => !postedIndexes.has(index)) === true
     // A live post writes the plays it names and no other, and this one holds
-    // the game's row: the rest stand as they were read.
-    const stored = live
-      ? await playsAfterLivePost(trx, gameId, priorRows, plays, body.remove)
-      : await readPlays(trx, gameId)
+    // the game's row: the rest stand as they were read, unless their records
+    // were built again.
+    const stored =
+      live && !convertedOthers
+        ? await playsAfterLivePost(trx, gameId, priorRows, plays, body.remove)
+        : await readPlays(trx, gameId)
     // A reopened at-bat keeps its event row for stable identity and metadata,
     // but its former completed result is no longer part of the score.
     const openIndex = (currentPlay as CurrentPlay | null)?.about.atBatIndex
@@ -987,7 +1069,8 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
     // rewrote; the indexes it took away that it did not write again.
     const edited = new Set([
       ...body.plays.map(play => play.about.atBatIndex),
-      ...rewritten
+      ...rewritten,
+      ...(imported?.rewritten ?? [])
     ])
     const storedAt = new Set(taggedStored.map(row => row.atBatIndex))
     const removed = [...new Set(body.remove ?? [])].filter(
@@ -1010,7 +1093,10 @@ export async function postGamePlays<A extends PostAnswer = 'all'>(
       lineupsDigest: lineups.lineups_digest ?? game.lineups_digest,
       playsDigest: playsDigest(taggedStored, taggedCurrent),
       priorPlaysDigest: prior,
-      generation: game.play_generation
+      generation: game.play_generation,
+      ...(system === 'teamstation' || imported == null
+        ? {}
+        : { imported: imported.counts })
     }
     const senderHalves = (await options.halves?.(trx, game)) ?? []
     // Every viewer of the game may be sent what this post wrote, named as

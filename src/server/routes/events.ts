@@ -51,6 +51,7 @@ import {
   tagChoices,
   writeEventTag
 } from '../events/eventTags'
+import type { ImportedCounts } from '../events/importedWrite'
 import { addPlayEvents, asPlayEventsBody } from '../events/playEventTimes'
 import {
   documentOf,
@@ -313,6 +314,12 @@ export function eventRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asPostEventsBody, req.body)
+      if (body.replaceFinal === true)
+        await requireNodeAdmin(
+          db,
+          actor,
+          "Only a node administrator can replace a final game's plays"
+        )
       requireCurrentApp(
         req,
         actor,
@@ -378,7 +385,10 @@ export function eventRoutes(
                   const kept: LivePostDigests = {
                     superseded: posted.superseded,
                     priorPlaysDigest: posted.priorPlaysDigest,
-                    lineupsDigest: posted.lineupsDigest
+                    lineupsDigest: posted.lineupsDigest,
+                    ...(posted.imported == null
+                      ? {}
+                      : { imported: posted.imported })
                   }
                   await claim(trx, {
                     status: 200,
@@ -396,7 +406,8 @@ export function eventRoutes(
                 ),
               answer: edits ? 'edits' : 'all',
               listFullNamesFor: readerOf(actor),
-              cache: options.cache
+              cache: options.cache,
+              replaceFinal: body.replaceFinal === true
             }
           )
           wrote = response.superseded !== true
@@ -713,6 +724,8 @@ interface LivePostDigests {
   superseded?: boolean
   priorPlaysDigest: string | null
   lineupsDigest: string | null
+  /** What an outside post said its plays hold (`writeImportedRecords`). */
+  imported?: ImportedCounts
 }
 
 /** A game's plays as `GET /games/:gameId/events` answers them. */

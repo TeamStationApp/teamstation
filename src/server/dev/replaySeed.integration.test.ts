@@ -119,7 +119,8 @@ describe('replay seed', function () {
         .execute()
     ).filter(row => 'teamStation' in (row.gumbo as object))
     const gamesWithRecords = new Set(recorded.map(row => row.gameId))
-    expect(gamesWithRecords.has(REPLAY_SEED.games.imported)).equals(false)
+    // The imported game's plays are given records as they are posted.
+    expect(gamesWithRecords.has(REPLAY_SEED.games.imported)).equals(true)
     expect(gamesWithRecords.has(REPLAY_SEED.games.final)).equals(true)
   })
 

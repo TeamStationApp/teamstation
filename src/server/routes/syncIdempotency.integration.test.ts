@@ -519,6 +519,7 @@ describe('Idempotency-Key on the writes a phone queues', function () {
       priorPlaysDigest: string | null
       lineupsDigest: string | null
       playsDigest: string
+      imported?: unknown
     }
     const row = async (): Promise<Record<string, unknown>> =>
       await f.h.db
@@ -526,13 +527,15 @@ describe('Idempotency-Key on the writes a phone queues', function () {
         .select(['status', 'body', 'result_id'])
         .where('key', '=', 'k-live')
         .executeTakeFirstOrThrow()
-    // Not every play of the game: the status and the post's two digests.
+    // Not every play of the game: the status, the post's two digests, and
+    // what an outside post's plays hold.
     expect(await row()).deep.equals({
       status: 200,
       body: null,
       result_id: JSON.stringify({
         priorPlaysDigest: answered.priorPlaysDigest,
-        lineupsDigest: answered.lineupsDigest
+        lineupsDigest: answered.lineupsDigest,
+        ...(answered.imported == null ? {} : { imported: answered.imported })
       })
     })
     // Sent again at once, the answer is the first one.

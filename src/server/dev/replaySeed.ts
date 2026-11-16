@@ -8,7 +8,7 @@ import type { StoredGame } from '../../common/scoring/session'
 import { withoutNames } from '../../common/scoring/storedNames'
 import type { UserId } from '../../common/userId'
 import {
-  asImported,
+  asImportedWithPitches,
   AWAY_PLAYERS,
   finalGame,
   HOME_PLAYERS,
@@ -197,7 +197,10 @@ async function post(
   gameId: string,
   plays: GumboPlay[],
   currentPlay: StoredGame['currentPlay'],
-  system: 'teamstation' | 'importer'
+  system: 'teamstation' | 'importer',
+  // An importer following a game still being played posts live, as a
+  // scorer does; one posting a game whole replaces its plays.
+  live = system === 'teamstation'
 ): Promise<void> {
   // Posted as the app posts them, naming nobody: ids and structured credits
   // only, every name read from the accounts.
@@ -206,7 +209,7 @@ async function post(
     gameId,
     asPostEventsBody({
       plays: plays.map(play => withoutNames(play)),
-      ...(system === 'teamstation'
+      ...(live
         ? {
             currentPlay:
               currentPlay == null ? currentPlay : withoutNames(currentPlay),
@@ -362,20 +365,16 @@ export async function seedReplay(
   )
   const mixed = await importedThenScoredGame(setup)
   const imported = mixed.plays.filter(play => !('teamStation' in play))
+  // The importer followed the game while it was being played, and the
+  // scorer picked it up from there.
   await post(
     db,
     REPLAY_SEED.games.importedThenScored,
     imported,
     null,
-    'importer'
+    'importer',
+    true
   )
-  // Plays that carry both scores finish a game posted from outside; the
-  // scorer picked it up while it was still being played.
-  await db
-    .updateTable('games')
-    .set({ status: 'inProgress' })
-    .where('id', '=', REPLAY_SEED.games.importedThenScored)
-    .execute()
   await post(
     db,
     REPLAY_SEED.games.importedThenScored,
@@ -394,7 +393,7 @@ export async function seedReplay(
   await post(
     db,
     REPLAY_SEED.games.imported,
-    final.plays.map(asImported),
+    final.plays.map(asImportedWithPitches),
     null,
     'importer'
   )
