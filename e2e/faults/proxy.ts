@@ -183,6 +183,13 @@ export async function startFaultProxy(
       upstream.pipe(socket)
       socket.pipe(upstream)
     })
+    // Each side ends with the other, and both are closed with the proxy.
+    open.add(upstream)
+    upstream.on('close', () => {
+      open.delete(upstream)
+      socket.destroy()
+    })
+    socket.on('close', () => upstream.destroy())
     upstream.on('error', () => socket.destroy())
     socket.on('error', () => upstream.destroy())
   })
