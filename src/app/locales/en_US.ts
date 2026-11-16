@@ -217,6 +217,11 @@ export const enUs = {
   plan_warning_yellow: 'Yellow warning: %s',
   plan_clear: 'Clear',
   plan_clear_label: 'Clear the plan',
+  plan_share: 'Share',
+  plan_share_label: 'Share the game plan as a PDF',
+  plan_print: 'Print',
+  plan_print_label: 'Print the game plan',
+  plan_document_failed: "Couldn't make the game plan PDF.",
   plan_clear_title: 'Clear the whole plan?',
   plan_clear_detail:
     'Every inning is emptied for every player. Nothing is saved until Save Rosters.',

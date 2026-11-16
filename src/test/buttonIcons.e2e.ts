@@ -58,6 +58,8 @@ async function main(): Promise<void> {
             for (const [text, result] of [
               ['Team settings', 'settings'],
               ['Share', 'share'],
+              ['Share plan', 'shareOut'],
+              ['Print plan', 'print'],
               ['Videos', 'videos']
             ] as const) {
               await m.tapOn({ text, timeout: 10000 })
@@ -66,6 +68,27 @@ async function main(): Promise<void> {
                 timeout: 10000
               })
             }
+            // The game plan's drawn icons sit inside their pills.
+            const drawn = await page.evaluate(() =>
+              ['shareOut', 'print'].map(name => {
+                const pill = document
+                  .querySelector(`[data-testid="icon-${name}"]`)!
+                  .getBoundingClientRect()
+                // The artwork's box is the pill's first child, before its word.
+                const art = document
+                  .querySelector(`[data-testid="icon-${name}"]`)!
+                  .firstElementChild!.getBoundingClientRect()
+                return (
+                  art.width > 0 &&
+                  art.left >= pill.left &&
+                  art.right <= pill.right &&
+                  Math.abs(
+                    art.top + art.height / 2 - (pill.top + pill.height / 2)
+                  ) <= 1
+                )
+              })
+            )
+            assert.deepEqual(drawn, [true, true], 'plan icons drawn centred')
             await m.tapOn({ text: 'Show scoring', timeout: 10000 })
             await capture(m, directory, `web-${label}-scoring-${phase}.png`)
             await m.tapOn({ text: 'Open scoring menu', timeout: 10000 })
@@ -73,7 +96,7 @@ async function main(): Promise<void> {
             await m.tapOn({ text: 'Mute game sounds', timeout: 10000 })
             await m.assertVisible({ text: 'Action: sound', timeout: 10000 })
             log.push(
-              `PASS ${label}: settings/share/menu/sound/navigation actions`
+              `PASS ${label}: settings/share/shareOut/print/menu/sound/navigation actions`
             )
             for (const screen of [
               'chat',

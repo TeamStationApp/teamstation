@@ -41,6 +41,11 @@ export const PLAN_PLAYER_WIDTH = 136 + PLAN_COLUMN_WIDTH
  * leaves its field in the 3:2 of the field's art.
  */
 export const PLAN_PICKER_WIDTH = 272
+/**
+ * The Share and Print pills' blue, the same in both themes: white text on
+ * it reads at 5.8 to 1.
+ */
+export const PLAN_PILL_BLUE = '#1565C0'
 export const PLAN_PICKER_HEIGHT = 262
 /** Space between the picker and the row it edits. */
 const PICKER_GAP = 4

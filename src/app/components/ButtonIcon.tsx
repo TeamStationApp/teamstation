@@ -16,7 +16,29 @@ import { useTheme } from '../theme/ThemeContext'
 import { Icon, type IconName } from './Icon'
 import { iconText } from './iconText'
 
-const customNames = ['menu', 'reply', 'more', 'check', 'pin'] as const
+const customNames = [
+  'menu',
+  'reply',
+  'more',
+  'check',
+  'pin',
+  'shareOut',
+  'print'
+] as const
+/**
+ * The drawn custom names' strokes, in a 24-unit box. Share Out is an open
+ * box with an arrow leaving it, arcing up and to the right; Print is a
+ * printer, its paper above and its tray below.
+ */
+const customPaths: Partial<Record<CustomName, string>> = {
+  pin: 'M12 2 V7 M12 17 V22 M2 12 H7 M17 12 H22 M18 12 A6 6 0 1 1 6 12 A6 6 0 1 1 18 12',
+  check: 'M4 12 L9 17 L20 6',
+  reply: 'M10 5 L4 11 L10 17 M4 11 H15 Q20 11 20 19',
+  shareOut:
+    'M13 4 H6 A2 2 0 0 0 4 6 V18 A2 2 0 0 0 6 20 H18 A2 2 0 0 0 20 18 V12 M9 15 Q11 7 20 5 M15.5 3 L20 5 L18 9.5',
+  print:
+    'M7 9 V3 H17 V9 M7 18 H5 A1 1 0 0 1 4 17 V11 A2 2 0 0 1 6 9 H18 A2 2 0 0 1 20 11 V17 A1 1 0 0 1 19 18 H17 M7 14 H17 V21 H7 Z'
+}
 type CustomName = (typeof customNames)[number]
 function isCustomName(name: IconName | CustomName): name is CustomName {
   return customNames.some(custom => custom === name)
@@ -189,16 +211,10 @@ function Artwork({
         name != null && { width: points, height: points }
       ]}
     >
-      {name === 'reply' || name === 'check' || name === 'pin' ? (
+      {name != null && isCustomName(name) && customPaths[name] != null ? (
         <Svg width={points} height={points} viewBox="0 0 24 24">
           <Path
-            d={
-              name === 'pin'
-                ? 'M12 2 V7 M12 17 V22 M2 12 H7 M17 12 H22 M18 12 A6 6 0 1 1 6 12 A6 6 0 1 1 18 12'
-                : name === 'check'
-                  ? 'M4 12 L9 17 L20 6'
-                  : 'M10 5 L4 11 L10 17 M4 11 H15 Q20 11 20 19'
-            }
+            d={customPaths[name]}
             stroke={color}
             strokeWidth={2}
             strokeLinecap="round"
@@ -241,7 +257,7 @@ function Artwork({
             />
           ))}
         </View>
-      ) : name != null ? (
+      ) : name != null && !isCustomName(name) ? (
         <Text
           selectable={false}
           allowFontScaling={false}

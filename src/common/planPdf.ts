@@ -370,3 +370,98 @@ export function planPdf({ plan, rows, title }: PlanPdfInput): Uint8Array {
   for (let at = 0; at < file.length; at++) bytes[at] = file.charCodeAt(at)
   return bytes
 }
+
+/** The game a plan is for, as its PDF names it. */
+export interface PlanDocumentInfo {
+  /** The team the plan is for. */
+  team: string
+  opponent: string
+  /** The game's local date, `yyyy-mm-dd`. */
+  date: string
+}
+
+/**
+ * The PDF's title: "Hawks game plan - Owls - 2027-04-11", with no date for
+ * a game with no start, or "Game plan" when the game is not known.
+ */
+export function planDocumentTitle(info?: PlanDocumentInfo): string {
+  if (info == null) return 'Game plan'
+  const title = `${info.team} game plan - ${info.opponent}`
+  return info.date === '' ? title : `${title} - ${info.date}`
+}
+
+/** Letters a file name spells out in plain letters. */
+const FILE_LETTERS: Readonly<Record<string, string>> = {
+  ß: 'ss',
+  Æ: 'AE',
+  æ: 'ae',
+  Ø: 'O',
+  ø: 'o',
+  Œ: 'OE',
+  œ: 'oe',
+  Þ: 'Th',
+  þ: 'th',
+  Ð: 'D',
+  ð: 'd'
+}
+
+/**
+ * The PDF's file name: "Hawks-game-plan-2027-04-11.pdf", only plain letters,
+ * digits and single dashes; "game-plan.pdf" when the game is not known.
+ */
+export function planDocumentFileName(info?: PlanDocumentInfo): string {
+  const name =
+    info == null ? 'game plan' : `${info.team} game plan ${info.date}`
+  // "Équipe" is "Equipe" and "Straße" "Strasse": accents go, letters stay.
+  const safe = Array.from(
+    name,
+    char => FILE_LETTERS[char] ?? PLAIN_LETTERS[char] ?? char
+  )
+    .join('')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^A-Za-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+  return `${safe === '' ? 'game-plan' : safe}.pdf`
+}
+
+/**
+ * What names a side's plan PDF, from its game: the side's team, the other
+ * team, and the date the game starts on where it is played (or its UTC
+ * date, where the zone is not known; '' with no start).
+ */
+export function planDocumentInfo(
+  game: {
+    homeTeamName: string
+    awayTeamName: string
+    startAt: string | null
+    timezone: string
+  },
+  side: 'away' | 'home'
+): PlanDocumentInfo {
+  const home = side === 'home'
+  return {
+    team: home ? game.homeTeamName : game.awayTeamName,
+    opponent: home ? game.awayTeamName : game.homeTeamName,
+    date: localGameDate(game.startAt, game.timezone)
+  }
+}
+
+function localGameDate(startAt: string | null, timezone: string): string {
+  if (startAt == null) return ''
+  const at = new Date(startAt)
+  if (Number.isNaN(at.getTime())) return ''
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit'
+    }).formatToParts(at)
+    const part = (type: string): string =>
+      parts.find(each => each.type === type)?.value ?? ''
+    return `${part('year')}-${part('month')}-${part('day')}`
+  } catch {
+    return at.toISOString().slice(0, 10)
+  }
+}

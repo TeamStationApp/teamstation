@@ -10,6 +10,9 @@ import {
   PDF_PAGE_WIDTH,
   pdfText,
   pdfTextWidth,
+  planDocumentFileName,
+  planDocumentInfo,
+  planDocumentTitle,
   planPdf
 } from './planPdf'
 
@@ -250,5 +253,63 @@ describe('the game plan PDF', function () {
       'Gehrig'
     ])
     expectInside(read)
+  })
+
+  it('names the PDF for its team, opponent and date, or as a game plan', function () {
+    const info = { team: 'Demo Hawks', opponent: 'Owls', date: '2027-04-11' }
+    expect(planDocumentTitle(info)).equals(
+      'Demo Hawks game plan - Owls - 2027-04-11'
+    )
+    expect(planDocumentTitle()).equals('Game plan')
+    // A game with no start time has no date to name.
+    expect(planDocumentTitle({ ...info, date: '' })).equals(
+      'Demo Hawks game plan - Owls'
+    )
+    expect(planDocumentFileName(info)).equals(
+      'Demo-Hawks-game-plan-2027-04-11.pdf'
+    )
+    expect(
+      planDocumentFileName({ ...info, team: '  Peña / “Ñ” Club!' })
+    ).equals('Pena-N-Club-game-plan-2027-04-11.pdf')
+    expect(planDocumentFileName({ ...info, team: '', date: '' })).equals(
+      'game-plan.pdf'
+    )
+    expect(planDocumentFileName()).equals('game-plan.pdf')
+    for (const [team, file] of [
+      ['Straße', 'Strasse'],
+      ['Ærø', 'AEro'],
+      ['Ørsted', 'Orsted'],
+      ['Łódź', 'Lodz'],
+      ['Œuvre', 'OEuvre']
+    ])
+      expect(planDocumentFileName({ ...info, team })).equals(
+        `${file}-game-plan-2027-04-11.pdf`
+      )
+  })
+
+  it('names a side’s plan from its game, dated where it is played', function () {
+    const game = {
+      homeTeamName: 'Hosts',
+      awayTeamName: 'Visitors',
+      // 9 p.m. on the 11th in Los Angeles is the 12th in UTC.
+      startAt: '2027-04-12T04:00:00Z',
+      timezone: 'America/Los_Angeles'
+    }
+    expect(planDocumentInfo(game, 'home')).deep.equals({
+      team: 'Hosts',
+      opponent: 'Visitors',
+      date: '2027-04-11'
+    })
+    expect(planDocumentInfo(game, 'away')).deep.include({
+      team: 'Visitors',
+      opponent: 'Hosts'
+    })
+    expect(
+      planDocumentInfo({ ...game, timezone: 'Not/AZone' }, 'home').date
+    ).equals('2027-04-12')
+    expect(planDocumentInfo({ ...game, startAt: null }, 'home').date).equals('')
+    expect(planDocumentInfo({ ...game, startAt: 'never' }, 'home').date).equals(
+      ''
+    )
   })
 })

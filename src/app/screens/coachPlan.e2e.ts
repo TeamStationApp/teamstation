@@ -1,5 +1,6 @@
 import { execFile, execFileSync } from 'node:child_process'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { existsSync } from 'node:fs'
+import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { promisify } from 'node:util'
@@ -23,6 +24,7 @@ import type { LineupFixture } from '../../server/dev/lineupFixture'
 import { serverConfig } from '../../server/serverConfig'
 import { type AccountHarness, accountHarness } from '../../test/accountHarness'
 import { signInTestAccount } from '../../test/passwordFixtures'
+import { readPlanPdf } from '../../test/planPdfReader'
 import {
   type BrowserSession,
   browserSession,
@@ -2506,6 +2508,194 @@ describe('Coach Plan', function () {
       await cdp.send('Emulation.clearDeviceMetricsOverride')
       await cdp.detach()
     }
+  })
+
+  /**
+   * P28: Share and Print at the very bottom of the plan, in the browser:
+   * blue pills, Share left of Print, after the errors and the warnings.
+   * Share hands the browser's share sheet one PDF where it shares files,
+   * and downloads it where it does not; Print loads it in a hidden frame
+   * and calls that frame's print, recorded instead of opening the dialog.
+   * The downloaded PDF is one Letter page holding the whole plan.
+   */
+  it('P28 shares and prints the plan as a one-page Letter PDF from blue pills at its very bottom', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, ERROR_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.page.$eval('[data-testid="Plan print"]', node => {
+      node.scrollIntoView({ block: 'end' })
+    })
+    const layout = await coach.page.evaluate(() => {
+      const box = (
+        id: string
+      ): {
+        top: number
+        bottom: number
+        left: number
+        right: number
+      } | null => {
+        const node = document.querySelector(`[data-testid="${id}"]`)
+        if (node == null) return null
+        const r = node.getBoundingClientRect()
+        return { top: r.top, bottom: r.bottom, left: r.left, right: r.right }
+      }
+      const fill = (id: string): string =>
+        getComputedStyle(document.querySelector(`[data-testid="${id}"]`)!)
+          .backgroundColor
+      return {
+        share: box('Plan share'),
+        print: box('Plan print'),
+        errors: box('Plan position errors'),
+        warnings: box('Plan warnings'),
+        shareFill: fill('Plan share'),
+        printFill: fill('Plan print'),
+        words: Array.from(
+          document.querySelectorAll(
+            '[data-testid="Plan share"] [dir="auto"], [data-testid="Plan print"] [dir="auto"]'
+          )
+        ).map(node => [String(node.textContent), getComputedStyle(node).color]),
+        canShare: typeof navigator.canShare === 'function'
+      }
+    })
+    console.log(`    P28 layout: ${JSON.stringify(layout)}`)
+    const { share, print, errors, warnings } = layout
+    expect(share!.right).lessThan(print!.left)
+    expect(Math.abs(share!.top - print!.top)).lessThan(1)
+    // The fixture's team plays by no rules, so it has no warnings to show.
+    expect(warnings).equals(null)
+    expect(errors!.bottom).lessThan(share!.top)
+    expect([layout.shareFill, layout.printFill]).deep.equals([
+      'rgb(21, 101, 192)',
+      'rgb(21, 101, 192)'
+    ])
+    expect(layout.words).deep.equals([
+      ['Share', 'rgb(255, 255, 255)'],
+      ['Print', 'rgb(255, 255, 255)']
+    ])
+    // Where the browser shares files: one PDF, by the game's name.
+    await coach.page.evaluate(() => {
+      const shared: Array<{ name: string; type: string; title: string }> = []
+      Object.assign(window, { __planShares: shared })
+      Object.defineProperty(navigator, 'canShare', {
+        configurable: true,
+        value: () => true
+      })
+      Object.defineProperty(navigator, 'share', {
+        configurable: true,
+        value: async (data: ShareData) => {
+          for (const file of data.files!)
+            shared.push({
+              name: file.name,
+              type: file.type,
+              title: String(data.title)
+            })
+        }
+      })
+    })
+    await coach.tapCss('[data-testid="Plan share"]')
+    await coach.page.waitForFunction(
+      () =>
+        (window as unknown as { __planShares: unknown[] }).__planShares
+          .length === 1
+    )
+    const shared = await coach.page.evaluate(
+      () => (window as unknown as { __planShares: unknown[] }).__planShares[0]
+    )
+    const name = (shared as { name: string }).name
+    expect(name).match(/^Hosts-game-plan-\d{4}-\d{2}-\d{2}\.pdf$/)
+    expect(shared).deep.include({ type: 'application/pdf' })
+    // Where it does not: a download, which is the whole plan on one page.
+    const downloads = await mkdtemp(join(tmpdir(), 'plan-download-'))
+    const cdp = await coach.page.createCDPSession()
+    try {
+      await cdp.send('Browser.setDownloadBehavior', {
+        behavior: 'allow',
+        downloadPath: downloads
+      })
+      await coach.page.evaluate(() => {
+        Object.defineProperty(navigator, 'canShare', {
+          configurable: true,
+          value: undefined
+        })
+      })
+      await coach.tapCss('[data-testid="Plan share"]')
+      const file = join(downloads, name)
+      const deadline = Date.now() + 15000
+      while (!existsSync(file) && Date.now() < deadline)
+        await new Promise(resolve => setTimeout(resolve, 200))
+      const read = readPlanPdf(new Uint8Array(await readFile(file)))
+      console.log(
+        `    P28 download: ${name}, ${read.pages} page, MediaBox ${JSON.stringify(read.mediaBox)}`
+      )
+      expect(read.pages).equals(1)
+      expect(read.mediaBox).deep.equals([0, 0, 612, 792])
+      const drawn = read.texts.map(text => text.text)
+      expect(drawn[0]).match(/^Hosts game plan - Visitors - /)
+      for (const row of await coach.planPlayers()) expect(drawn).includes(row)
+      const held: string[] = ERROR_PLAN.flat().filter(cell => cell !== '')
+      expect(
+        read.texts
+          .filter(text => text.bold && held.includes(text.text))
+          .map(text => text.text)
+          .sort()
+      ).deep.equals([...held].sort())
+      for (const text of read.texts) {
+        expect(text.x).at.least(54)
+        expect(text.y).within(54, 738)
+      }
+      if (ARTIFACTS != null)
+        await writeFile(
+          join(ARTIFACTS, 'plan-download.pdf'),
+          await readFile(file)
+        )
+    } finally {
+      await cdp.detach()
+    }
+    // Print: the frame's print is called, recorded here, once it loads.
+    await coach.page.evaluate(() => {
+      const prints = { count: 0 }
+      Object.assign(window, { __planPrints: prints })
+      const own = Object.getOwnPropertyDescriptor(
+        HTMLIFrameElement.prototype,
+        'contentWindow'
+      )!
+      Object.defineProperty(HTMLIFrameElement.prototype, 'contentWindow', {
+        configurable: true,
+        get(this: HTMLIFrameElement) {
+          const view = own.get!.call(this) as Window | null
+          if (view == null) return view
+          return new Proxy(view, {
+            get: (target, key) =>
+              key === 'print'
+                ? () => {
+                    prints.count++
+                  }
+                : key === 'focus'
+                  ? () => undefined
+                  : Reflect.get(target, key)
+          })
+        }
+      })
+    })
+    await coach.tapCss('[data-testid="Plan print"]')
+    await coach.page.waitForFunction(
+      () =>
+        (window as unknown as { __planPrints: { count: number } }).__planPrints
+          .count === 1,
+      { timeout: 15000 }
+    )
+    const frame = await coach.page.$eval('iframe', node => ({
+      src: String(node.getAttribute('src')),
+      title: node.title
+    }))
+    expect(frame.src).match(/^blob:/)
+    expect(frame.title).equals(name)
+    expect(await coach.page.$('[data-testid="Plan document failed"]')).equals(
+      null
+    )
   })
 
   /**

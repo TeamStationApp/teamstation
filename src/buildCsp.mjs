@@ -10,8 +10,9 @@ import { createHash } from 'node:crypto'
  * Fonts, fonts from itself (its bundled text and icon faces) and Google
  * Fonts, pictures and video from itself, `blob:` and `data:` URLs and the media origins the deployment names, and talk to
  * itself, its API, the API's socket and those media origins. Workers come
- * from itself or `blob:` (hls.js builds its transmuxer from a Blob). No
- * plugins and no `<base>`. Framing is the reverse proxy's to refuse, by its
+ * from itself or `blob:` (hls.js builds its transmuxer from a Blob), and so
+ * do frames: the coaching plan's Print loads its PDF in a frame of a `blob:`
+ * URL, which only the page can make. No plugins and no `<base>`. Framing is the reverse proxy's to refuse, by its
  * response headers, because browsers ignore `frame-ancestors` in a `<meta>`
  * policy and log an error for it on every page. Those headers must leave the
  * app's own origin able to frame `/mapFrame.html`, where the maps draw.
@@ -60,6 +61,7 @@ export function cspFor(origins) {
     `media-src ${list("'self'", 'blob:', media)}`,
     `connect-src ${list("'self'", origins.api, origins.socket, media)}`,
     "worker-src 'self' blob:",
+    "frame-src 'self' blob:",
     "object-src 'none'",
     "base-uri 'none'"
   ].join('; ')

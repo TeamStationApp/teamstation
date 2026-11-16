@@ -20,6 +20,7 @@
         "WalkUpMusic": "RCTWalkUpMusic",
         "DictationMicrophone": "RCTDictationMicrophone",
         "TSHaptics": "RCTHaptics",
+        "TSPlanDocument": "RCTPlanDocument",
         "TSPhoneStream": "RCTPhoneStream",
         "CueSounds": "RCTCueSounds",
         "NativeChatCrypto": "ChatCryptoProvider"

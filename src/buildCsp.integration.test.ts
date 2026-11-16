@@ -85,7 +85,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         "img-src 'self' data: blob: http://127.0.0.1:9120 http://127.0.0.1:9197; " +
         "media-src 'self' blob: http://127.0.0.1:9120 http://127.0.0.1:9197; " +
         "connect-src 'self' http://127.0.0.1:9120 ws://127.0.0.1:9120 http://127.0.0.1:9197; " +
-        "worker-src 'self' blob:; object-src 'none'; base-uri 'none'"
+        "worker-src 'self' blob:; frame-src 'self' blob:; " +
+        "object-src 'none'; base-uri 'none'"
     )
     // A `<meta>` cannot refuse framing; the reverse proxy's headers do.
     expect(policy).not.contains('frame-ancestors')
@@ -170,6 +171,8 @@ describe('the web page’s Content-Security-Policy and integrity', function () {
         'https://fonts.gstatic.com'
       ])
       expect(policy['worker-src']).deep.equals(["'self'", 'blob:'])
+      // The Plan tab prints its PDF from a frame of a blob: URL.
+      expect(policy['frame-src']).deep.equals(["'self'", 'blob:'])
       expect(policy['media-src']).includes('blob:')
       expect(policy['img-src']).includes(
         'https://dev-media-bucket.sfo3.digitaloceanspaces.com'

@@ -27,6 +27,7 @@ import {
   inningDefense,
   planHasPositions
 } from '../../common/gamePlan'
+import { planDocumentInfo } from '../../common/planPdf'
 import { planWarnings, warningSummary } from '../../common/planWarnings'
 import { begun } from '../../common/scoring/lineup'
 import type { Lineup } from '../../common/scoring/lineupHistory'
@@ -412,8 +413,13 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     () =>
       sidePlan == null || shownSession == null
         ? undefined
-        : planContextOf(sidePlan, shownSession),
-    [sidePlan, shownSession]
+        : {
+            ...planContextOf(sidePlan, shownSession),
+            ...(opened == null || side == null
+              ? {}
+              : { document: planDocumentInfo(opened.game, side) })
+          },
+    [sidePlan, shownSession, opened, side]
   )
   const unsaved = dirty || planChanged
   const dirtyNow = useRef(unsaved)

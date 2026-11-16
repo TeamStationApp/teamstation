@@ -1,8 +1,9 @@
 import React, { useState } from 'react'
-import { Text, View } from 'react-native'
+import { Pressable, Text, View } from 'react-native'
 
 import { AppNav, type NavTabId } from '../app/components/AppNav'
 import { Button } from '../app/components/Button'
+import { ButtonIcon } from '../app/components/ButtonIcon'
 import { HeroCard } from '../app/components/HeroCard'
 import { SettingsGear } from '../app/components/SettingsGear'
 import { BaseballScreen } from '../app/field/BaseballScreen'
@@ -57,6 +58,34 @@ export function ButtonIconsFixture(): React.ReactElement {
                   setAction('share')
                 }}
               />
+              {/* The game plan's pills: drawn artwork, white on blue. */}
+              {(['shareOut', 'print'] as const).map(name => (
+                <Pressable
+                  key={name}
+                  testID={`icon-${name}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={
+                    name === 'print' ? 'Print plan' : 'Share plan'
+                  }
+                  onPress={() => {
+                    setAction(name)
+                  }}
+                  style={{
+                    minHeight: 44,
+                    paddingHorizontal: 14,
+                    borderRadius: 999,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 8,
+                    backgroundColor: '#1565C0'
+                  }}
+                >
+                  <ButtonIcon name={name} color="#ffffff" />
+                  <Text style={{ color: '#ffffff', fontWeight: '700' }}>
+                    {name === 'print' ? 'Print' : 'Share'}
+                  </Text>
+                </Pressable>
+              ))}
               <RosterRemoveButton
                 label="Remove player"
                 onPress={() => {

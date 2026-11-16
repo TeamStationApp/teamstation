@@ -249,6 +249,20 @@ function placeTargets(): void {
   }
 }
 
+/** Replaces a property for a test, answering how to put it back. */
+function replaced(target: object, key: string, value: unknown): () => void {
+  const was = Object.getOwnPropertyDescriptor(target, key)
+  Object.defineProperty(target, key, {
+    configurable: true,
+    writable: true,
+    value
+  })
+  return () => {
+    if (was == null) Reflect.deleteProperty(target, key)
+    else Object.defineProperty(target, key, was)
+  }
+}
+
 describe('the game plan tab', function () {
   it('lists the lineup in batting order, name then jersey, under six inning columns and a plus', async function () {
     await mount()
@@ -1062,6 +1076,174 @@ describe('the game plan tab', function () {
     const red = colour(byId('Plan position duplicate 1')!)
     expect(colour(cell(1, 1))).equals(red)
     expect(colour(cell(3, 1))).not.equals(red)
+  })
+
+  it('puts blue Share and Print pills last, which share and print a PDF of the plan as shown, named for its game', async function () {
+    const made: Blob[] = []
+    const clicked: HTMLAnchorElement[] = []
+    let refuse = false
+    const restore = [
+      replaced(URL, 'createObjectURL', (blob: Blob): string => {
+        if (refuse) throw new Error('No room')
+        made.push(blob)
+        return `blob:plan-${made.length}`
+      }),
+      replaced(URL, 'revokeObjectURL', () => undefined),
+      replaced(
+        window.HTMLAnchorElement.prototype,
+        'click',
+        function (this: HTMLAnchorElement) {
+          clicked.push(this)
+        }
+      )
+    ]
+    try {
+      await mount({
+        context: ruled(
+          {},
+          {
+            document: { team: 'Hosts', opponent: 'Owls', date: '2027-04-11' }
+          }
+        ),
+        plan: {
+          ...PLAN,
+          rows: [
+            { player: LINEUP[0], cells: ['SS', 'P', '', '', '', ''] },
+            { player: LINEUP[1], cells: ['SS', '', '', '', '', ''] },
+            { player: LINEUP[2], cells: ['C', '', '', '', '', ''] }
+          ]
+        }
+      })
+      const share = byId('Plan share')!
+      const print = byId('Plan print')!
+      expect(share.textContent).equals('Share')
+      expect(print.textContent).equals('Print')
+      expect(share.getAttribute('aria-label')).equals(
+        'Share the game plan as a PDF'
+      )
+      expect(print.getAttribute('aria-label')).equals('Print the game plan')
+      // Last: after the errors and the warnings, Share left of Print.
+      const follows = (a: Element, b: Element): boolean =>
+        (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+      expect(
+        follows(byId('Plan position errors')!, byId('Plan warnings')!)
+      ).equals(true)
+      expect(follows(byId('Plan warnings')!, share)).equals(true)
+      expect(follows(share, print)).equals(true)
+      // Blue pills with white words and white artwork.
+      for (const pill of [share, print]) {
+        expect(getComputedStyle(pill).backgroundColor).equals(
+          'rgb(21, 101, 192)'
+        )
+        expect(
+          getComputedStyle(pill.querySelector('[dir="auto"]')!).color
+        ).equals('rgb(255, 255, 255)')
+        expect(pill.querySelector('path')!.getAttribute('stroke')).equals(
+          '#ffffff'
+        )
+      }
+      const pdfText = async (blob: Blob): Promise<string> =>
+        new TextDecoder().decode(await blob.arrayBuffer())
+      await press(share)
+      await settle()
+      expect(clicked.map(link => link.download)).deep.equals([
+        'Hosts-game-plan-2027-04-11.pdf'
+      ])
+      const shared = await pdfText(made[0])
+      expect(shared.startsWith('%PDF-1.4')).equals(true)
+      expect(shared).includes('(Hosts game plan - Owls - 2027-04-11) Tj')
+      for (const name of ['Babe Ruth #3', 'Lou Gehrig #4', 'Willie Mays #24'])
+        expect(shared).includes(`(${name}) Tj`)
+      await press(print)
+      await settle()
+      const frame = document.querySelector('iframe')!
+      expect(frame.getAttribute('src')).equals('blob:plan-2')
+      expect(frame.title).equals('Hosts-game-plan-2027-04-11.pdf')
+      expect(await pdfText(made[1])).equals(shared)
+      expect(byId('Plan document failed')).equals(null)
+      // A second press while the first is still opening does nothing.
+      await press(print)
+      await settle()
+      expect(made).has.length(2)
+      expect(document.querySelectorAll('iframe')).has.length(1)
+      // The frame loads and is asked to print, which ends the hand-off.
+      let printed = 0
+      Object.defineProperty(frame, 'contentWindow', {
+        configurable: true,
+        value: {
+          focus: () => undefined,
+          print: () => {
+            printed++
+          }
+        }
+      })
+      await act(async () => {
+        frame.dispatchEvent(new window.Event('load'))
+      })
+      await settle()
+      expect(printed).equals(1)
+      // A PDF that cannot be handed off says so, until the next press.
+      refuse = true
+      await press(print)
+      await settle()
+      expect(byId('Plan document failed')!.textContent).equals(
+        "Couldn't make the game plan PDF."
+      )
+      refuse = false
+      await press(share)
+      await settle()
+      expect(byId('Plan document failed')).equals(null)
+      frame.remove()
+    } finally {
+      for (const back of restore) back()
+      for (const frame of document.querySelectorAll('iframe')) frame.remove()
+    }
+  })
+
+  it('measures the pressed pill on a phone, for its sheet to open from', async function () {
+    const made: Blob[] = []
+    const restore = replaced(URL, 'createObjectURL', (blob: Blob): string => {
+      made.push(blob)
+      return 'blob:plan'
+    })
+    try {
+      await mount({ os: 'ios' })
+      const print = byId('Plan print')!
+      let measured = 0
+      print.getBoundingClientRect = () => {
+        measured++
+        return box(210, 778, 100, 44)
+      }
+      await press(print)
+      for (let i = 0; i < 10 && made.length === 0; i++)
+        await new Promise(resolve => setTimeout(resolve, 20))
+      await settle()
+      expect(measured).greaterThan(0)
+      expect(made).has.length(1)
+    } finally {
+      restore()
+      for (const frame of document.querySelectorAll('iframe')) frame.remove()
+    }
+  })
+
+  it('names the PDF a game plan when the game is not known', async function () {
+    const made: Blob[] = []
+    const restore = replaced(URL, 'createObjectURL', (blob: Blob): string => {
+      made.push(blob)
+      return 'blob:plan'
+    })
+    try {
+      await mount()
+      await press(byId('Plan print'))
+      await settle()
+      expect(document.querySelector('iframe')!.title).equals('game-plan.pdf')
+      expect(new TextDecoder().decode(await made[0].arrayBuffer())).includes(
+        '(Game plan) Tj'
+      )
+    } finally {
+      restore()
+      for (const frame of document.querySelectorAll('iframe')) frame.remove()
+    }
   })
 
   it('says a team with rules has nothing to warn of, and shows nothing for one with none', async function () {
