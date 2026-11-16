@@ -246,6 +246,7 @@ export function RosterEditor({
   onReload,
   bottomInset,
   plan,
+  planMessage,
   planContext,
   planChanged = false,
   onPlanChange,
@@ -295,6 +296,8 @@ export function RosterEditor({
    * Without them the tab says the plan could not be read.
    */
   plan?: GamePlan
+  /** Why the Plan tab holds no plan, in place of saying it failed to load. */
+  planMessage?: string
   planContext?: PlanContext
   /** Whether the plan differs from the one saved: Save Rosters lights. */
   planChanged?: boolean
@@ -1051,7 +1054,9 @@ export function RosterEditor({
           }}
         >
           {plan == null || planContext == null ? (
-            <ScoringError message={lstrings.coach_plan_load_failed} />
+            <ScoringError
+              message={planMessage ?? lstrings.coach_plan_load_failed}
+            />
           ) : (
             <PlanTab
               plan={plan}

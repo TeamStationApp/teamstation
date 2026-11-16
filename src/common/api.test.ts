@@ -23,6 +23,7 @@ import {
   asSeasonSummary,
   asSession,
   asStandingsRow,
+  planRefusal,
   type RequestOptions,
   type SaveLineupsBody,
   TeamStationClient,
@@ -942,6 +943,116 @@ describe('api client', function () {
       }
       expect(refused, JSON.stringify(bad)).equals(true)
     }
+  })
+
+  it('reads one team’s column for the inning in play, aborts it on its signal, and tells why the route refused', async function () {
+    const column = [
+      {
+        player: { gumboId: null, fullName: 'Yogi Berra', jersey: '8' },
+        cell: ''
+      },
+      {
+        player: { gumboId: 7, fullName: 'Lou Gehrig', jersey: '4' },
+        cell: '1B'
+      }
+    ]
+    const read = stubFetch(200, { teamId: 'tem 1', inning: 3, column })
+    const answer = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: read.fetch
+    }).planInning('gam 1', 'tem 1', 3)
+    expect(read.calls[0]).deep.include({
+      url: 'http://x/api/v1/games/gam%201/plans/tem%201/innings/3',
+      method: 'GET'
+    })
+    expect(answer).deep.equals({ teamId: 'tem 1', inning: 3, column })
+    for (const bad of [
+      { teamId: 'tem 1', inning: 3 },
+      { teamId: 'tem 1', inning: 3, column: [{ ...column[0], cell: 'XX' }] }
+    ]) {
+      let refused = false
+      try {
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stubFetch(200, bad).fetch
+        }).planInning('g', 't', 1)
+      } catch {
+        refused = true
+      }
+      expect(refused, JSON.stringify(bad)).equals(true)
+    }
+
+    // The signal reaches fetch, which aborts.
+    let signal: AbortSignal | undefined
+    const aborting = (async (
+      _url: unknown,
+      init?: { signal?: AbortSignal }
+    ) => {
+      signal = init?.signal
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      })
+    }) as unknown as typeof fetch
+    const controller = new AbortController()
+    const pending = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: aborting
+    }).planInning('g', 't', 1, { signal: controller.signal })
+    controller.abort()
+    let aborted = false
+    try {
+      await pending
+    } catch {
+      aborted = true
+    }
+    expect(aborted).equals(true)
+    expect(signal?.aborted).equals(true)
+
+    const refusal = async (status: number, body: unknown): Promise<unknown> => {
+      try {
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stubFetch(status, body).fetch
+        }).planInning('g', 't', 1)
+      } catch (error) {
+        return planRefusal(error)
+      }
+      throw new Error('Expected a refusal')
+    }
+    expect(
+      await refusal(403, {
+        code: 'forbidden',
+        message: 'Not yet',
+        details: { reason: 'planNotStarted' }
+      })
+    ).equals('planNotStarted')
+    expect(
+      await refusal(403, {
+        code: 'forbidden',
+        message: 'Over',
+        details: { reason: 'planGameOver' }
+      })
+    ).equals('planGameOver')
+    expect(
+      await refusal(409, {
+        code: 'conflict',
+        message: 'Not in play',
+        details: { reason: 'planInningNotCurrent', inning: 2 }
+      })
+    ).equals('planInningNotCurrent')
+    expect(await refusal(403, { code: 'forbidden', message: 'No' })).equals(
+      null
+    )
+    expect(
+      await refusal(403, {
+        code: 'forbidden',
+        message: 'No',
+        details: { reason: 'somethingElse' }
+      })
+    ).equals(null)
+    expect(planRefusal(new Error('offline'))).equals(null)
   })
 
   it('cleans a lineup save, refusing an index past its players', function () {

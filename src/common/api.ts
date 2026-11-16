@@ -50,7 +50,12 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
-import { asGamePlan, type GamePlan } from './gamePlan'
+import {
+  asGamePlan,
+  asPlanColumnCell,
+  type GamePlan,
+  type PlanColumnCell
+} from './gamePlan'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
@@ -3902,6 +3907,49 @@ export interface SidePlan {
   sameDay: PlanSameDay
 }
 
+/**
+ * One team's column for the inning in play, as `GET
+ * /games/:gameId/plans/:teamId/innings/:inning` answers a scorer: every row
+ * of the plan with that inning's cell, by jersey, and nothing else. Empty
+ * when the team has no plan with a position, or none for that inning.
+ */
+export interface PlanInning {
+  teamId: string
+  inning: number
+  column: PlanColumnCell[]
+}
+
+export const asPlanInning: Cleaner<PlanInning> = asObject({
+  teamId: asString,
+  inning: asNumber,
+  column: asArray(asPlanColumnCell)
+})
+
+/** Why the inning route refused, from the refusal's `details`. */
+export type PlanRefusal =
+  'planNotStarted' | 'planGameOver' | 'planInningNotCurrent'
+
+const PLAN_REFUSALS: readonly string[] = [
+  'planNotStarted',
+  'planGameOver',
+  'planInningNotCurrent'
+]
+
+/**
+ * The reason the inning route gave for refusing, or null for any other
+ * error: the route sends it in `details`, as `forbidden` and `conflict`
+ * carry it.
+ */
+export function planRefusal(error: unknown): PlanRefusal | null {
+  if (!(error instanceof HttpError)) return null
+  const details: unknown = error.details
+  if (typeof details !== 'object' || details == null) return null
+  const reason = (details as { reason?: unknown }).reason
+  return typeof reason === 'string' && PLAN_REFUSALS.includes(reason)
+    ? (reason as PlanRefusal)
+    : null
+}
+
 /** Both sides' plans in a game; a side the caller may not plan is null. */
 export interface GamePlansResponse {
   away: SidePlan | null
@@ -6457,6 +6505,26 @@ export class TeamStationClient {
       asGamePlansResponse,
       undefined,
       readOptions(options)
+    )
+  }
+
+  /**
+   * One team's column for the inning in play (`PlanInning`). Refused before
+   * the game's start time, once it is over, and for any inning but the one
+   * in play; `planRefusal` reads why. `options.signal` aborts it.
+   */
+  async planInning(
+    gameId: string,
+    teamId: string,
+    inning: number,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<PlanInning> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/plans/${encodeURIComponent(teamId)}/innings/${inning}`,
+      asPlanInning,
+      undefined,
+      options
     )
   }
 

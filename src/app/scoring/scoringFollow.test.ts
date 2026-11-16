@@ -44,16 +44,15 @@ describe('scoring follow ownership', function () {
     ).equals(false)
   })
 
-  it('keeps a plan refresh passive without invalidating a remote read', () => {
+  it('takes an applied inning plan as scoring, so a read begun before it is not adopted over it', () => {
     const follow = new ScoringFollow()
-    follow.adopt(follow.snapshot())
     const reading = follow.snapshot()
     expect(
-      follow.input({ type: 'PLANS', plans: { away: null, home: null } })
-    ).equals(false)
-    expect(follow.current(reading)).equals(true)
-    expect(follow.observing).equals(true)
-    expect(follow.locallyAuthored).equals(false)
+      follow.input({ type: 'PLAN_INNING', side: 'home', inning: 2, column: [] })
+    ).equals(true)
+    expect(follow.current(reading)).equals(false)
+    expect(follow.observing).equals(false)
+    expect(follow.locallyAuthored).equals(true)
   })
 
   it('keeps observing after a canceled runner drag while invalidating a read begun before the drag', () => {

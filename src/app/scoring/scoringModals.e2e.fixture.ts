@@ -233,10 +233,13 @@ export async function modalFixture(
               ? null
               : withNames(stored.currentPlay, playerNames)
         }
-      } else if (/^\/api\/v1\/games\/[^/]+\/plans$/.test(u.pathname))
-        // No game here has a plan: inning ends move nobody.
-        body = { away: null, home: null }
-      else if (/\/games\/[^/]+$/.test(u.pathname)) {
+      } else if (
+        /^\/api\/v1\/games\/[^/]+\/plans\/[^/]+\/innings\/\d+$/.test(u.pathname)
+      ) {
+        // No game here has a plan: each inning's column is empty.
+        const [, , , , , , teamId, , inning] = u.pathname.split('/')
+        body = { teamId, inning: Number(inning), column: [] }
+      } else if (/\/games\/[^/]+$/.test(u.pathname)) {
         loaded = u.pathname.split('/').at(-1) ?? ''
         body = {
           id: loaded,

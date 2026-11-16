@@ -52,12 +52,14 @@ export interface PlayEditsNotice {
 /**
  * The payloads: one game's change, or a player's song on one team. A game
  * plan's save names its team as `teamId`, never `team`, which is the song's:
- * the plan is the game's own change, and only its viewers hear it.
+ * the plan is the game's own change, and only its viewers hear it. It is
+ * sent only for a save that changed the inning in play, which it names as
+ * `inning`, so a scoring screen reads that inning's column again.
  */
 export type GameChangePayload =
   | { game: string; kind: 'game' }
   | { game: string; kind: 'lineups' }
-  | { game: string; kind: 'plans'; teamId: string }
+  | { game: string; kind: 'plans'; teamId: string; inning: number }
   | PlayEditsNotice
   | { team: string; kind: 'walkUpSong'; userId: string }
 
@@ -97,7 +99,8 @@ export const asGameChangePayload = asEither(
   asObject({
     game: asString,
     kind: asLiteral('plans'),
-    teamId: asString
+    teamId: asString,
+    inning: asNumber
   }),
   asObject({
     team: asString,

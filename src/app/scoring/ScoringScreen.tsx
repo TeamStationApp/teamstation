@@ -63,7 +63,7 @@ import { scoringMenuFrame, WEB_MENU_BUTTON } from '../field/fieldSafeArea'
 import type { BaseProjection } from '../field/fieldTypes'
 import { homeRunKind, homeRunLabel } from '../field/stadiumBoundary'
 import { useFieldSurface } from '../field/useFieldSurface'
-import { lstrings, sprintf } from '../locales/strings'
+import { lstrings } from '../locales/strings'
 import type { Route } from '../navigation/routes'
 import { useInsets } from '../platform/safeArea'
 import { CachingClient, type QueuedSwap } from '../sync/cachingClient'
@@ -120,6 +120,8 @@ import { MoreMenu } from './MoreMenu'
 import { OutcomeControls } from './OutcomeControls'
 import { OverridesEditor } from './OverridesEditor'
 import { addPlaceholderPlayers } from './placeholderPlayers'
+import { gameSaved, planTeamsOf, usePlanInnings } from './planInning'
+import { PlanSyncNotice } from './PlanSyncNotice'
 import {
   describeCompletedPlays,
   describeEntryPlays,
@@ -146,9 +148,11 @@ import {
   actsOnOpening,
   atRest,
   copyState,
+  planInningWaits,
   resumedScoringState,
   rosterRefusal,
   type SavedUndone,
+  scoringReducer,
   type ScoringScreenModel,
   scoringScreenModel,
   scoringScreenReducer,
@@ -188,7 +192,6 @@ import {
 } from './scoringStatusPlacement'
 import {
   type HistoryEntry,
-  type PlanNotice,
   type Position,
   POSITIONS,
   type ScoringEvent,
@@ -1133,48 +1136,6 @@ export function ScoringScreen(props: ScoringScreenProps): React.ReactElement {
     </FieldKeeper>
   )
 }
-/**
- * What an inning shift did, as the screen tells the scorer. With every
- * planned side applied the teams go unnamed; with one refused, each line
- * names its team, the side applied (at most one then) with its warnings.
- */
-function planNoticeText(
-  notice: PlanNotice,
-  teams: Record<Side, { name: string }>
-): string {
-  if (notice.refused.length === 0)
-    return notice.summary === ''
-      ? sprintf(lstrings.scoring_plan_applied, notice.inning)
-      : sprintf(
-          lstrings.scoring_plan_applied_warnings,
-          notice.inning,
-          notice.summary
-        )
-  return [
-    ...notice.sides.map(side =>
-      notice.summary === ''
-        ? sprintf(
-            lstrings.scoring_plan_team_applied,
-            teams[side].name,
-            notice.inning
-          )
-        : sprintf(
-            lstrings.scoring_plan_team_applied_warnings,
-            teams[side].name,
-            notice.inning,
-            notice.summary
-          )
-    ),
-    ...notice.refused.map(({ side, reason }) =>
-      sprintf(
-        lstrings.scoring_plan_refused,
-        teams[side].name,
-        notice.inning,
-        reason
-      )
-    )
-  ].join('\n')
-}
 
 /**
  * The sessions whose screens have closed with changes still unsaved, and
@@ -1898,10 +1859,20 @@ function ScoringPanel(props: {
   )
   // The state as its reader may read it now, for everything that draws a
   // name. What it does still goes through `state`: only the names differ.
-  const readableState = useMemo(() => {
-    const named = readable(state.session)
-    return named === state.session ? state : { ...state, session: named }
-  }, [readable, state])
+  // Named from the session alone, so a change to the rest of the state (a
+  // grab's gesture flag) keeps the same game, and the field the same
+  // players: a new players array would cancel the grab under the finger.
+  const readableSession = useMemo(
+    () => readable(state.session),
+    [readable, state.session]
+  )
+  const readableState = useMemo(
+    () =>
+      readableSession === state.session
+        ? state
+        : { ...state, session: readableSession },
+    [readableSession, state]
+  )
   // Words the scoring wrote of a player by the full name the game holds
   // (a step's label, a dictated question), by the label he may be read by.
   const publicText = useMemo(() => {
@@ -1917,8 +1888,8 @@ function ScoringPanel(props: {
       swaps.reduce((out, [full, label]) => out.split(full).join(label), text)
   }, [state.session, readableState])
   const displaySession = useMemo(
-    () => withRosterDetails(readableState.session, props.rosters),
-    [readableState, props.rosters]
+    () => withRosterDetails(readableSession, props.rosters),
+    [readableSession, props.rosters]
   )
   const missing = missingDefense(session)
   const battingCount =
@@ -2697,37 +2668,50 @@ function ScoringPanel(props: {
   noticed.current = props.game
   /** The status a game called scored elsewhere was last read again for. */
   const unmarked = useRef<string | undefined>(undefined)
-  // Both sides' game plans, read as the screen opens, again when a coach
-  // saves one, and again after the socket was down, since a notice missed
-  // then is never sent again. A read that fails keeps the plans the screen
-  // has (none, if it never read them): scoring goes on without a shift.
-  const plansRead = useRef(0)
-  const readPlans = useRef<() => void>(() => undefined)
-  readPlans.current = () => {
-    if (!persistent) return
-    const read = ++plansRead.current
-    client.gamePlans(gameId).then(
-      plans => {
-        if (read === plansRead.current) dispatch({ type: 'PLANS', plans })
-      },
-      () => undefined
-    )
-  }
-  useEffect(() => {
-    readPlans.current()
-    const reads = plansRead
-    return () => {
-      reads.current++
-    }
-  }, [client, persistent, gameId])
+  // The coach's plan column for each inning entered here, downloaded once
+  // the game as scored here is saved, so the server holds that inning. A
+  // download that fails leaves a card offering Try again and Accept.
+  const scoringNow = useRef(state)
+  scoringNow.current = state
+  const { openedSides } = props
+  const awayName = state.session.gameData.teams.away.name
+  const homeName = state.session.gameData.teams.home.name
+  const planTeams = useMemo(
+    () =>
+      planTeamsOf(openedSides, {
+        away: { name: awayName },
+        home: { name: homeName }
+      }),
+    [openedSides, awayName, homeName]
+  )
+  const {
+    cards: planCards,
+    retry: retryPlan,
+    accept: acceptPlan
+  } = usePlanInnings({
+    enabled: persistent && state.watching !== true && !state.session.final,
+    client,
+    gameId,
+    teams: planTeams,
+    inningStart: state.inningStart,
+    currentInning: () =>
+      scoringNow.current.session.liveData.linescore.currentInning,
+    saved: async () => await gameSaved(props.game, client, gameId),
+    socket,
+    // A column waits while the screen is busy; only one the game takes is
+    // scored, so one that changes nothing leaves a following screen as it
+    // was.
+    apply: event => {
+      const now = scoringNow.current
+      if (planInningWaits(now)) return false
+      if (scoringReducer(now, event) !== now) dispatch(event)
+      return true
+    },
+    scoring: state
+  })
   useEffect(() => {
     if (socket == null || !persistent) return
     return listen(socket, gameId, event => {
-      if (
-        event.type === 'resync' ||
-        (event.type === 'change' && event.kind === 'plans')
-      )
-        readPlans.current()
       if (
         event.type === 'change' &&
         (event.kind === 'playEdits' || event.kind === 'lineups')
@@ -4398,37 +4382,11 @@ function ScoringPanel(props: {
           )}
         </View>
       )}
-      {state.planNotice != null && (
-        <View
-          pointerEvents="none"
-          style={{
-            position: 'absolute',
-            // Below the scoreboard, clear of its names, as the swap notice.
-            top: '30%',
-            left: 16,
-            right: 16,
-            zIndex: 98,
-            alignItems: 'center'
-          }}
-        >
-          <Text
-            testID="scoringPlanNotice"
-            accessibilityLiveRegion="polite"
-            style={{
-              color: theme.scoringSurface.text,
-              backgroundColor: theme.scoringSurface.background,
-              fontFamily: theme.regularTextFont,
-              paddingHorizontal: 16,
-              paddingVertical: 10,
-              borderRadius: 12,
-              overflow: 'hidden',
-              textAlign: 'center'
-            }}
-          >
-            {planNoticeText(state.planNotice, state.session.gameData.teams)}
-          </Text>
-        </View>
-      )}
+      <PlanSyncNotice
+        cards={planCards}
+        onRetry={retryPlan}
+        onAccept={acceptPlan}
+      />
       {state.session.final && (
         <View
           pointerEvents="none"

@@ -140,7 +140,8 @@ describe('development game fixtures', function () {
         'headCoach',
         'assistant',
         'awayCoach',
-        'member'
+        'member',
+        'teamAdmin'
       ])
       for (const user of Object.values(parsed.users))
         expect(Object.keys(user)).to.deep.equal(['email', 'userId'])

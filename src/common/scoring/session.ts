@@ -1208,6 +1208,15 @@ export class ScoringSession {
     return this.isOffline
   }
 
+  /**
+   * Why the last save failed while the device was online, until a save
+   * succeeds; null when it did. A failure it retries (a server error, a
+   * stale read) and one it waits on alike.
+   */
+  get saveFailure(): string | null {
+    return this.failure
+  }
+
   /** The server refused to be written to, and said why. */
   get readOnly(): boolean {
     return this.refusal != null
