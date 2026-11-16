@@ -43,6 +43,8 @@ export interface StackOptions {
   fault?: string
   /** Appends each API 5xx here as JSON lines, for a process that did not start the stack. */
   errorLog?: string
+  /** Gives up on the start: what has started is stopped, and the start throws. */
+  signal?: AbortSignal
 }
 
 export interface RunningStack extends StackHandle {
@@ -65,9 +67,13 @@ export function lanAddress(interfaces = networkInterfaces()): string {
 /** The port a debug iOS build probes for Metro after its saved location is cleared. */
 const PACKAGER_PORT = 8081
 
-async function waitForPackager(port: number): Promise<void> {
+async function waitForPackager(
+  port: number,
+  signal?: AbortSignal
+): Promise<void> {
   const deadline = Date.now() + 120000
   while (Date.now() < deadline) {
+    signal?.throwIfAborted()
     try {
       const reply = await fetch(`http://127.0.0.1:${port}/status`)
       if ((await reply.text()).includes('packager-status:running')) return
@@ -82,12 +88,16 @@ async function waitForPackager(port: number): Promise<void> {
 /** Compiles the app bundle before a phone asks, so the first screen is not a loader. */
 async function warmBundle(
   port: number,
-  platform: 'ios' | 'android'
+  platform: 'ios' | 'android',
+  signal?: AbortSignal
 ): Promise<void> {
   const url =
     `http://127.0.0.1:${port}/index.bundle?platform=${platform}` +
     '&dev=true&minify=false'
-  const reply = await fetch(url, { signal: AbortSignal.timeout(180000) })
+  const timeout = AbortSignal.timeout(180000)
+  const reply = await fetch(url, {
+    signal: signal == null ? timeout : AbortSignal.any([timeout, signal])
+  })
   if (!reply.ok) throw new BlockedError('Metro did not serve the bundle')
   await reply.arrayBuffer()
 }
@@ -152,9 +162,14 @@ function serverEnv(): NodeJS.ProcessEnv {
  * Waits for the API's own port to answer health. Not through the front server: a
  * fault proxy there breaks `/api/v1/health` like every other API path.
  */
-async function untilHealthy(url: string, proc: ChildProcess): Promise<void> {
+async function untilHealthy(
+  url: string,
+  proc: ChildProcess,
+  signal?: AbortSignal
+): Promise<void> {
   const end = Date.now() + 60000
   while (Date.now() < end) {
+    signal?.throwIfAborted()
     if (proc.exitCode != null) {
       throw new HarnessError(`The API exited with ${proc.exitCode}`)
     }
@@ -261,7 +276,12 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       rmSync(dir, { recursive: true, force: true })
     }
   }
+  // Checked between the steps; the waits check it as they poll.
+  const live = (): void => {
+    options.signal?.throwIfAborted()
+  }
   try {
+    live()
     const wantsApi = options.services.includes('api')
     const wantsWeb = options.services.includes('web') || wantsApi
 
@@ -296,6 +316,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       buildWeb(root, webDir, store.url)
     }
 
+    live()
     const apiPort = await freePort()
     const proxies: FaultProxy[] = []
     // The proxies whose errors are this stack's: not the API's own, which
@@ -337,6 +358,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       front.server.closeAllConnections()
     })
 
+    live()
     if (wantsApi) {
       const places = await startPlacesStub('127.0.0.1')
       stops.push(() => {
@@ -401,6 +423,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       if (migrated.status !== 0) {
         throw new HarnessError(`Migration failed: ${migrated.stderr}`)
       }
+      live()
       const api = spawn(
         process.execPath,
         ['-r', register, join(root, 'src/server/index.ts')],
@@ -409,9 +432,10 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       stops.push(async () => {
         await stopProcess(api)
       })
-      await untilHealthy(`http://127.0.0.1:${apiPort}`, api)
+      await untilHealthy(`http://127.0.0.1:${apiPort}`, api, options.signal)
     }
 
+    live()
     let metroPort: number | undefined
     if (options.native === true) {
       // The API's address is inlined by Babel and cached by Metro, so an old one stays
@@ -442,9 +466,9 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       stops.push(async () => {
         await stopProcess(metro)
       })
-      await waitForPackager(metroPort)
+      await waitForPackager(metroPort, options.signal)
       if (options.platform != null)
-        await warmBundle(metroPort, options.platform)
+        await warmBundle(metroPort, options.platform, options.signal)
     }
 
     // Waiting for the API to come up answers 502s that are nobody's failure.
@@ -461,6 +485,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       )
     }
 
+    live()
     let origin = front.url
     return {
       id,

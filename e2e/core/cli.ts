@@ -62,7 +62,7 @@ import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
 import { loadSettings, type LocalSettings, readSecret } from './settings'
 import type { StackHandle } from './spec'
-import { startStack } from './stack'
+import { type RunningStack, startStack } from './stack'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
 
@@ -302,26 +302,44 @@ export async function main(argv: string[]): Promise<number> {
         )
         const errorLog = join(STACKS, `${id}.errors.jsonl`)
         // Ctrl-C, a closed terminal and a crash take the stack down too, so
-        // its database, directory and Metro do not outlive it. Heard from the
-        // start: one that arrives while the stack is starting (`stack up`
-        // giving up on it) stops it as soon as it has started.
+        // its database, directory and Metro do not outlive it. One that
+        // arrives while the stack is starting (`stack up` giving up on it)
+        // abandons the start, which stops whatever had started.
+        const abandon = new AbortController()
         const ended = new Promise<unknown>(resolve => {
+          const end = (failure?: unknown): void => {
+            abandon.abort()
+            resolve(failure)
+          }
           for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
             process.once(signal, () => {
-              resolve(undefined)
+              end()
             })
           }
-          process.once('uncaughtException', resolve)
-          process.once('unhandledRejection', resolve)
+          process.once('uncaughtException', end)
+          process.once('unhandledRejection', end)
         })
-        const stack = await startStack({
-          id,
-          lan: values.lan,
-          native: values.native,
-          services: values.services ?? ['web', 'api'],
-          mailbox: settings.mailbox,
-          errorLog
-        })
+        const asError = (failure: unknown): Error =>
+          failure instanceof Error
+            ? failure
+            : new Error(`stack serve failed: ${JSON.stringify(failure)}`)
+        let stack: RunningStack
+        try {
+          stack = await startStack({
+            id,
+            lan: values.lan,
+            native: values.native,
+            services: values.services ?? ['web', 'api'],
+            mailbox: settings.mailbox,
+            errorLog,
+            signal: abandon.signal
+          })
+        } catch (error) {
+          if (!abandon.signal.aborted) throw error
+          const failure = await ended
+          if (failure != null) throw asError(failure)
+          return 0
+        }
         const entry: StackEntry = {
           id: stack.id,
           origin: stack.origin,
@@ -340,11 +358,7 @@ export async function main(argv: string[]): Promise<number> {
         const failure = await ended
         await stack.stop()
         rmSync(join(STACKS, `${stack.id}.json`), { force: true })
-        if (failure != null) {
-          throw failure instanceof Error
-            ? failure
-            : new Error(`stack serve failed: ${JSON.stringify(failure)}`)
-        }
+        if (failure != null) throw asError(failure)
         rmSync(errorLog, { force: true })
         return 0
       }
