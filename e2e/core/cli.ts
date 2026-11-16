@@ -131,15 +131,6 @@ function roleMap(values: string[] | undefined): Record<string, string> {
   return out
 }
 
-function targetFor(
-  values: { seat?: string; stack?: string },
-  settings: LocalSettings
-): string | undefined {
-  if (values.seat != null) return settings.seats?.[values.seat]?.origin
-  if (values.stack != null) return stackState(values.stack).origin
-  return undefined
-}
-
 /** A capture with the app's failure screen over it, drawn by a real browser. */
 async function renderErrorDialog(
   settings: LocalSettings,
@@ -359,15 +350,10 @@ export async function main(argv: string[]): Promise<number> {
       if (values.app == null || values.device == null) {
         throw new Error('prepare wants --app and --device')
       }
-      const origin = targetFor(values, settings)
-      if (values.package == null && origin == null) {
-        throw new Error('prepare wants --stack, --seat or --package')
-      }
       prepareApp({
         app: values.app,
         device: values.device[0],
-        packagePath: values.package,
-        origin
+        packagePath: values.package
       })
       print({ prepared: values.app })
       return 0

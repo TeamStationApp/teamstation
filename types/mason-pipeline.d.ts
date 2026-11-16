@@ -156,9 +156,15 @@ declare module '@mason/types' {
     choices: string[]
     default?: string
   }
+  export interface StringParam {
+    type: 'string'
+    /** A regular expression the value must match. */
+    pattern?: string
+    default?: string
+  }
   export interface WorkflowOptions {
     triggers?: Array<{ request: true }>
-    params?: Record<string, ChoiceParam>
+    params?: Record<string, ChoiceParam | StringParam>
     timeout?: string
   }
   export interface Setup {

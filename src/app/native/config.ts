@@ -35,8 +35,24 @@ if (
   )
 }
 
+/** The API this build was made for. */
 export const apiBaseUrl: string =
   configured ?? `${httpOrigin(PRIMARY_HOST)}/api/v1`
+
+/**
+ * The API this launch talks to: the built one, or a develop build's server
+ * override, set once at boot (`native/index.tsx`) before anything reads it.
+ */
+let current = apiBaseUrl
+
+export function currentApiBaseUrl(): string {
+  return current
+}
+
+/** Called at boot only, with the launch's API base. */
+export function setLaunchApiBaseUrl(value: string): void {
+  current = value
+}
 
 /**
  * The app's own link host, which its sign-in links are mailed to and which its
