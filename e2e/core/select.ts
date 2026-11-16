@@ -1,8 +1,17 @@
 import { matchesAny } from './glob'
 import type { Manifest, ManifestEntry } from './manifest'
 
-/** The harness every scenario runs on: a change to it can break any of them. */
-const HARNESS = ['e2e/core/**']
+/**
+ * The harness every scenario runs on: a change to it can break any of them.
+ * Its faults, its shared rigs and the fixture worlds are part of it; a
+ * module's own rigs are in that module's scenarios' `covers`.
+ */
+const HARNESS = [
+  'e2e/core/**',
+  'e2e/faults/**',
+  'e2e/rigs/*.ts',
+  'src/server/dev/fixtures/**'
+]
 
 /**
  * Scenarios whose `covers` match any changed file, or whose own spec file
