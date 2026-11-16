@@ -194,10 +194,15 @@ describe('fixture worlds', function () {
     expect(emails.every(email => isTestAddress(MAILBOX, email))).equals(true)
     const members = await the()
       .selectFrom('memberships')
-      .select('user_id')
+      .select(['user_id', 'is_player'])
       .where('team_id', '=', a.ids.team)
       .execute()
     expect(members.length).greaterThanOrEqual(2)
+    // The two players are on the roster as players.
+    for (const role of ['player', 'teammate']) {
+      const row = members.find(m => m.user_id === a.accounts[role].userId)
+      expect(row?.is_player, role).equals(true)
+    }
     const team = await the()
       .selectFrom('teams')
       .select('name')

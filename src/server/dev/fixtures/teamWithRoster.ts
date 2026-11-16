@@ -38,7 +38,8 @@ export async function runTeamWithRoster(
         id: makeId('membership'),
         user_id: member.userId as never,
         team_id: team.id,
-        role: 'member'
+        role: 'member',
+        is_player: true
       })
       .execute()
   }
