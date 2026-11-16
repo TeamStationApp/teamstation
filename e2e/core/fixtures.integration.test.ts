@@ -238,6 +238,12 @@ describe('ctx.address', function () {
     expect(a).matches(/^box\+invite-[0-9a-f]{8}@example\.test$/)
     expect(c).matches(/^box\+guardian-/)
     expect(new Set([a, b, c]).size).equals(3)
+    // As the server makes them: lowercase, and never on a + or bare mailbox.
+    expect(testAddressFor('Box@Example.test', 'Invite')).matches(
+      /^box\+invite-[0-9a-f]{8}@example\.test$/
+    )
+    expect(() => testAddressFor('box+x@example.test', 'invite')).to.throw()
+    expect(() => testAddressFor('box', 'invite')).to.throw()
   })
 })
 

@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 
+import { testAddress } from '../../src/server/dev/fixtures/address'
 import { BlockedError, HarnessError } from './result'
 import type { LocalSettings } from './settings'
 
@@ -17,10 +18,9 @@ export interface MailMessage {
 
 export type GogRunner = (args: string[]) => string
 
+/** A fresh address on the mailbox, as the fixtures make theirs. */
 export function testAddressFor(mailbox: string, label: string): string {
-  const at = mailbox.indexOf('@')
-  const nonce = randomBytes(4).toString('hex')
-  return `${mailbox.slice(0, at)}+${label}-${nonce}@${mailbox.slice(at + 1)}`
+  return testAddress(mailbox, `${label}-${randomBytes(4).toString('hex')}`)
 }
 
 export function gogRunner(settings: LocalSettings): GogRunner {

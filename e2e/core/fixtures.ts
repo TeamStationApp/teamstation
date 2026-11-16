@@ -2,29 +2,21 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
+import type {
+  FixtureAccount,
+  FixtureManifest
+} from '../../src/server/dev/fixtures/accounts'
 import { BlockedError, HarnessError } from './result'
 import { runSeatCommand } from './seatLog'
 import type { LocalSettings } from './settings'
 import { typeInto } from './typeInto'
 
 /**
- * What a fixture made. A manifest holds passwords, so one for a world stays in the
- * running scenario's memory, and only `baseline`'s is ever on disk, mode 0600.
+ * What a fixture made, as the fixtures script writes it. A manifest holds
+ * passwords, so one for a world stays in the running scenario's memory, and
+ * only `baseline`'s is ever on disk, mode 0600.
  */
-export interface FixtureAccount {
-  role: string
-  email: string
-  password: string
-  userId: string
-  displayName: string
-}
-
-export interface FixtureManifest {
-  world: string
-  nonce: string
-  accounts: Record<string, FixtureAccount>
-  ids: Record<string, string>
-}
+export type { FixtureAccount, FixtureManifest }
 
 export function requireMailbox(settings: LocalSettings): string {
   if (settings.mailbox == null) {
