@@ -29,7 +29,8 @@ export function placesAnswer(
 
 export async function startPlacesStub(
   host: string,
-  file = PLACES_ANSWERS
+  file = PLACES_ANSWERS,
+  port = 0
 ): Promise<{ server: Server; url: string }> {
   const answers = JSON.parse(readFileSync(file, 'utf8')) as Record<
     string,
@@ -44,7 +45,7 @@ export async function startPlacesStub(
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, host, resolve)
+    server.listen(port, host, resolve)
   })
   const address = server.address() as { port: number }
   return { server, url: `http://${host}:${address.port}` }
