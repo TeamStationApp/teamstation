@@ -7,6 +7,7 @@ import { describe, it } from 'mocha'
 
 import { Budget, type Judge } from './judge'
 import { runScenario } from './run'
+import type { StackHandle } from './spec'
 
 const CORE = resolve(__dirname)
 
@@ -15,7 +16,11 @@ const CORE = resolve(__dirname)
  * the attempts listed in `differOn` (1 is the first) and matches otherwise.
  * A mismatch is recorded, not thrown, as a moved screen is.
  */
-function goldenRoot(differOn: number[], checkpoint = '{ golden: {} }'): string {
+function goldenRoot(
+  differOn: number[],
+  checkpoint = '{ golden: {} }',
+  stack = 'none'
+): string {
   const root = mkdtempSync(join(tmpdir(), 'e2e-run-'))
   const dir = join(root, 'e2e', 'tests', 'area', 'feature')
   mkdirSync(dir, { recursive: true })
@@ -30,7 +35,7 @@ export default {
   title: 'A thing',
   kind: 'e2e',
   covers: ['src/**'],
-  stack: 'none',
+  stack: '${stack}',
   fixtures: [],
   exclusive: false,
   surfaces: { 'web-chromium': { devices: [] } },
@@ -160,5 +165,55 @@ describe('run, with a golden checkpoint', function () {
         'utf8'
       )
     ).equals('1')
+  })
+
+  it('is blocked when it needs a stack and none is named', async function () {
+    const root = goldenRoot([], '{ golden: {} }', 'isolated')
+    const { result } = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir: join(root, 'run')
+    })
+    expect(result.status).equals('blocked')
+    expect(result.reason).includes('needs a stack')
+  })
+
+  it('sets a proxy fault on the stack it runs on, and clears it after', async function () {
+    const root = goldenRoot([1], '{ golden: {} }', 'isolated')
+    const set: Array<string | null> = []
+    const stack: StackHandle = {
+      kind: 'isolated',
+      origin: 'https://e2e-01.example.test',
+      webDir: undefined,
+      adopt: async origin => origin,
+      serverErrors: async () => [],
+      setFault: async fault => {
+        set.push(fault)
+      }
+    }
+    await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir: join(root, 'run'),
+      stack,
+      fault: 'api-500'
+    })
+    expect(set).deep.equals(['api-500', null])
+    // A stack with no fault server cannot carry one.
+    const bare = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir: join(root, 'bare'),
+      stack: { ...stack, setFault: undefined },
+      fault: 'api-500'
+    })
+    expect(bare.result.status).equals('blocked')
+    expect(bare.result.reason).includes('needs a stack with a fault server')
   })
 })

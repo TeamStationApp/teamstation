@@ -29,6 +29,13 @@ export interface LocalSettings {
   sweepRef?: string
   /** Where runs and fault proofs are recorded, on the machine that ran them. */
   ledger?: string
+  /**
+   * The command that brings droplet stacks up and down: the devops repo's
+   * e2e-stack, e.g. ["npm", "--prefix", "~/git/teamstation-devops", "run", "-s", "e2e-stack", "--"].
+   * `stack up` adds `up --ref <ref>`, `stack down` adds `down <id>`, and
+   * `stack prune` adds `reap`.
+   */
+  stackProvider?: { command: string[] }
 }
 
 export function settingsPath(env = process.env): string {

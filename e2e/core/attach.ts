@@ -1,4 +1,3 @@
-import { randomBytes } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -12,9 +11,8 @@ import {
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import { runLocalFixture } from './fixtures'
-import type { ServerError } from './invariants'
-import { BlockedError, HarnessError } from './result'
+import { dropletStackHandle } from './dropletStack'
+import { HarnessError } from './result'
 import type { StackHandle } from './spec'
 
 /**
@@ -32,24 +30,14 @@ export interface AttachedHandle {
   [field: string]: unknown
 }
 
-/** What the registry holds for one stack, whether `stack up` or `attach` made it. */
+/** What the registry holds for one stack: the handle it was attached from. */
 export interface StackEntry {
   id: string
   origin: string
-  webDir?: string
-  /** The process serving a `stack up` stack; an attached stack has none. */
-  pid?: number
-  /** A `stack up` stack's directory, whose server config its fixtures seed through. */
-  dir?: string
-  /** The checkout a `stack up` stack runs, whose fixture scripts seed it. */
-  root?: string
-  /** Where a `stack up` stack's `baseline` manifest is. */
-  baselineManifest?: string
-  /** The JSON lines file a `stack up` stack appends each API 5xx to. */
-  errorLog?: string
-  /** The handle an attached stack was registered from. */
   handle?: AttachedHandle
   handleFile?: string
+  /** Where its `baseline` manifest is, mode 0600, once seeded. */
+  baselineManifest?: string
 }
 
 /** Where `stack up` and `stack attach` register stacks. */
@@ -91,9 +79,6 @@ export function attachStack(dir: string, file: string): StackEntry {
   if (!existsSync(handleFile)) throw new HarnessError(`No handle ${file}`)
   const handle = parseHandle(readFileSync(handleFile, 'utf8'), file)
   const entryFile = join(dir, `${handle.id}.json`)
-  if (existsSync(entryFile) && readStack(dir, handle.id).handle == null) {
-    throw new HarnessError(`Stack "${handle.id}" is a running stack up stack`)
-  }
   const entry: StackEntry = {
     id: handle.id,
     origin: handle.origin.replace(/\/$/, ''),
@@ -120,47 +105,10 @@ export function writeStackEntry(dir: string, file: string, text: string): void {
   renameSync(part, file)
 }
 
-/**
- * A stack this machine starts is named for its project and six random hex
- * digits, `streamingFixes_1ef39d`, and never by whoever starts it: two stacks
- * cannot share an id, so none can take another's database or directory.
- */
-const LOCAL_ID = /^[A-Za-z][A-Za-z0-9]{0,40}_[0-9a-f]{6}$/
-
-/** A project's name as an id's first part: letters and digits, starting with a letter. */
-export function projectKey(name: string): string {
-  const key = name.replace(/[^A-Za-z0-9]/g, '')
-  return (/^[A-Za-z]/.test(key) ? key : `stack${key}`).slice(0, 40)
-}
-
-export function newStackId(project: string): string {
-  return `${projectKey(project)}_${randomBytes(3).toString('hex')}`
-}
-
-/** Refuses an id this machine's stacks are not named by. */
-export function checkLocalStackId(id: string): string {
-  if (!LOCAL_ID.test(id)) {
-    throw new HarnessError(
-      `Stack id "${id}" is not <project>_<six hex digits>, as stack up names them`
-    )
-  }
-  return id
-}
-
-/** Whether an id is a stack this machine started, not an attached one. */
-export function isLocalStackId(id: string): boolean {
-  return LOCAL_ID.test(id)
-}
-
-/**
- * Refuses an id that is neither a stack this machine starts nor an attached
- * stack's (a-z, 0-9 and -): the id names files and a database.
- */
+/** Refuses an id other than a stack handle's (a-z, 0-9 and -): the id names files. */
 export function checkStackId(id: string): string {
-  if (!ID.test(id) && !LOCAL_ID.test(id)) {
-    throw new HarnessError(
-      `Stack id "${id}" is not <project>_<six hex digits>, nor an attached stack's a-z, 0-9 and -`
-    )
+  if (!ID.test(id)) {
+    throw new HarnessError(`Stack id "${id}" is not a-z, 0-9 and -`)
   }
   return id
 }
@@ -179,72 +127,20 @@ export function listStacks(dir: string): StackEntry[] {
     .map(name => readStack(dir, name.slice(0, -'.json'.length)))
 }
 
-/**
- * Forgets a stack, stopping it first when this machine started it. `kill`
- * says whether it stopped anything: a `stack serve` that died without
- * cleaning up leaves an entry whose process is gone, and the entry still
- * goes.
- */
-export function removeStack(
-  dir: string,
-  id: string,
-  kill: (pid: number) => boolean
-): { id: string; stopped: boolean } {
-  const entry = readStack(dir, id)
-  const stopped = entry.handle == null && entry.pid != null && kill(entry.pid)
-  rmSync(join(dir, `${id}.json`), { force: true })
-  return { id, stopped }
+/** Where a stack's `baseline` manifest is kept, beside its entry (not a `.json`, so no entry). */
+export const baselineFile = (dir: string, id: string): string =>
+  join(dir, `${checkStackId(id)}.baseline`)
+
+/** Forgets a stack: its entry and its baseline manifest. The stack itself is the provider's to stop. */
+export function forgetStack(dir: string, id: string): void {
+  rmSync(join(dir, `${checkStackId(id)}.json`), { force: true })
+  rmSync(baselineFile(dir, id), { force: true })
 }
 
-/** The 5xx a `stack up` stack has logged since `since`. */
-export function loggedServerErrors(file: string, since: number): ServerError[] {
-  if (!existsSync(file)) return []
-  return readFileSync(file, 'utf8')
-    .split('\n')
-    .filter(Boolean)
-    .map(line => JSON.parse(line) as ServerError)
-    .filter(row => row.at >= since)
-}
-
-/**
- * The handle a scenario gets for a registered stack. A `stack up` stack has its
- * own database and front, so it seeds worlds (on `mailbox`) and reports its 5xx;
- * an attached one can do neither from here.
- */
+/** The handle a scenario gets for a registered stack: a droplet's. */
 export function stackHandleFor(
   entry: StackEntry,
   mailbox?: string
 ): StackHandle {
-  const { dir, root, errorLog } = entry
-  return {
-    kind: 'isolated',
-    origin: entry.origin,
-    webDir: entry.webDir,
-    attached: entry.handle,
-    adopt: async origin => origin,
-    baselineManifest: entry.baselineManifest,
-    ...(dir == null || root == null
-      ? {}
-      : {
-          seedWorld: async (name: string) => {
-            if (mailbox == null) {
-              throw new BlockedError(
-                'no test mailbox: set mailbox in the local settings'
-              )
-            }
-            return runLocalFixture(root, dir, name, mailbox)
-          }
-        }),
-    serverErrors: async since =>
-      errorLog == null ? undefined : loggedServerErrors(errorLog, since)
-  }
-}
-
-/** Fault runs need the suite's own proxy in front of the server, which an attached stack lacks. */
-export function refuseAttachedForFaults(entry: StackEntry): void {
-  if (entry.handle != null) {
-    throw new BlockedError(
-      `stack "${entry.id}" is attached: it has no fault proxy, so faults cannot be proven on it`
-    )
-  }
+  return dropletStackHandle(entry, { mailbox })
 }

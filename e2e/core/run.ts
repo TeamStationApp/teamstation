@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { killApp, refuseUnreachable, styleScript } from '../faults/apply'
+import { FAULTS } from '../faults/catalogue'
 import {
   Checkpoints,
   type CheckpointTarget,
@@ -27,7 +28,7 @@ import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
 import { attachDevice, connectDaemon, type MaestroDevice } from './maestro'
 import { gogRunner, readMail, testAddressFor, waitForMail } from './mail'
 import { findScenario, ROOT } from './manifest'
-import { iosBuiltApp, iosIsSimulator, prepareApp } from './prepare'
+import { iosBuiltApp, iosIsSimulator } from './prepare'
 import {
   BlockedError,
   exitCodeFor,
@@ -46,7 +47,6 @@ import {
   type WatchedDevice,
   type WebSession
 } from './spec'
-import { type RunningStack, startStack } from './stack'
 import { openWebSession } from './web'
 
 export interface RunOptions {
@@ -60,12 +60,10 @@ export interface RunOptions {
   budgetUsd?: number
   /** Other scenarios share this seat, so a 5xx must name this one's world to count. */
   concurrent?: boolean
-  /** The fault this run proves. Only an isolated stack can carry one. */
+  /** The fault this run proves. A proxy fault is set on the stack's fault server. */
   fault?: string
   /** Records what the browser executed into this directory. */
   browserCoverage?: string
-  /** Stands in for building and installing an app, in tests. */
-  prepare?: typeof prepareApp
   /** Stands in for the configured judge, in tests. */
   judges?: JudgeRuntime
   settings: LocalSettings
@@ -246,7 +244,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     }
     for (const close of attached.splice(0)) await close().catch(() => undefined)
   }
-  let stack: RunningStack | undefined
+  // The proxy fault set on the stack, cleared when the run ends.
+  let faultSet: StackHandle | undefined
   try {
     const { entry, spec } = findScenario(options.id, root)
     const surface = options.surface as Surface
@@ -310,33 +309,20 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           throw new BlockedError(`${service} needs a seat: use --seat <name>`)
         }
       }
-      stack = await startStack({
-        lan: surface !== 'web-chromium',
-        native: surface === 'ios-app' || surface === 'android-app',
-        platform:
-          surface === 'ios-app'
-            ? 'ios'
-            : surface === 'android-app'
-              ? 'android'
-              : undefined,
-        services: spec.services,
-        root,
-        fault: options.fault,
-        mailbox: options.settings.mailbox
-      })
-      handle = stack
-      if (surface === 'ios-app' || surface === 'android-app') {
-        // A native app's server is fixed when its bundle is made, so it is built here,
-        // for this stack.
-        const [device] = needs.devices
-        ;(options.prepare ?? prepareApp)({
-          app:
-            surface === 'ios-app' ? 'teamstation-ios' : 'teamstation-android',
-          device: devices[device.role],
-          origin: stack.origin,
-          metroPort: stack.metroPort
-        })
+      // Every stack is a droplet of its own, brought up beforehand.
+      throw new BlockedError(
+        'needs a stack: npm run -s e2e -- stack up --ref <ref>, then --stack <id>'
+      )
+    }
+
+    if (options.fault != null && FAULTS[options.fault]?.how === 'proxy') {
+      if (handle.setFault == null) {
+        throw new BlockedError(
+          `${options.fault} needs a stack with a fault server: --stack <id> of a stack up stack`
+        )
       }
+      await handle.setFault(options.fault)
+      faultSet = handle
     }
 
     targetKind =
@@ -575,6 +561,9 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     return finish(quarantined ? 'quarantined' : 'failed', message)
   } finally {
     await release()
-    await stack?.stop()
+    // Cleared whatever happened, so the stack's next run finds no fault set.
+    await faultSet?.setFault?.(null).catch((error: unknown) => {
+      console.error(`could not clear the stack's fault: ${String(error)}`)
+    })
   }
 }

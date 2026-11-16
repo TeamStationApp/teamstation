@@ -1,10 +1,4 @@
-import {
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  statSync,
-  writeFileSync
-} from 'node:fs'
+import { mkdtempSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -12,26 +6,27 @@ import { expect } from 'chai'
 
 import {
   attachStack,
-  checkLocalStackId,
+  baselineFile,
   checkStackId,
+  forgetStack,
   listStacks,
-  newStackId,
   parseHandle,
-  projectKey,
   readStack,
-  refuseAttachedForFaults,
-  removeStack,
   stackHandleFor
 } from './attach'
 import { BlockedError, HarnessError } from './result'
 
 const HANDLE = {
-  version: 1,
-  id: 'streamtest-202611121400',
-  origin: 'https://streamtest.example.test/',
-  api: 'https://streamtest.example.test/api/v1',
-  ssh: 'stack@streamtest.example.test',
-  serverLog: '/var/log/teamstation/api.log'
+  version: 2,
+  id: 'e2e-stack-20261112-140000',
+  name: 'e2e-01',
+  origin: 'https://e2e-01.example.test/',
+  api: 'https://e2e-01.example.test/api/v1',
+  ssh: 'observer@203.0.113.7',
+  serverLog: '/srv/e2e/log/api.log',
+  hlsRoot: '/srv/e2e/media/work/videos',
+  databaseUrl:
+    'postgres://u:p@e2e-01.example.test:5432/teamstation?sslmode=require'
 }
 
 function scratch(): { dir: string; handle: (value: unknown) => string } {
@@ -65,7 +60,7 @@ describe('attached stacks', function () {
     const file = handle(HANDLE)
     const entry = attachStack(dir, file)
     expect(entry.id).equals(HANDLE.id)
-    expect(entry.origin).equals('https://streamtest.example.test')
+    expect(entry.origin).equals('https://e2e-01.example.test')
     expect(entry.handleFile).equals(file)
     expect(listStacks(dir).map(row => row.id)).deep.equals([HANDLE.id])
     expect(readStack(dir, HANDLE.id).handle?.serverLog).equals(HANDLE.serverLog)
@@ -81,83 +76,56 @@ describe('attached stacks', function () {
   it('keeps fields a later handle version adds, and re-attaching replaces it', function () {
     const { dir, handle } = scratch()
     attachStack(dir, handle(HANDLE))
-    attachStack(dir, handle({ ...HANDLE, version: 2, bucket: 'stream-b' }))
+    attachStack(dir, handle({ ...HANDLE, version: 3, bucket: 'stream-b' }))
     const entry = readStack(dir, HANDLE.id)
-    expect(entry.handle?.version).equals(2)
+    expect(entry.handle?.version).equals(3)
     expect(entry.handle?.bucket).equals('stream-b')
     expect(listStacks(dir)).has.length(1)
   })
 
-  it('gives a scenario the attached origin, with no proxy and no error feed', async function () {
+  it('gives a scenario the droplet’s origin, its seeding, and no fault control without a fault server', async function () {
     const { dir, handle } = scratch()
     const stack = stackHandleFor(attachStack(dir, handle(HANDLE)))
     expect(stack.kind).equals('isolated')
-    expect(stack.origin).equals('https://streamtest.example.test')
+    expect(stack.origin).equals('https://e2e-01.example.test')
     expect(stack.attached?.api).equals(HANDLE.api)
     expect(await stack.adopt('http://elsewhere.test')).equals(
       'http://elsewhere.test'
     )
     expect(await stack.serverErrors(0)).equals(undefined)
-  })
-
-  it('gives a stack up stack its baseline, fixtures and logged 5xx', async function () {
-    const { dir } = scratch()
-    const errorLog = join(dir, '..', 'up.errors.jsonl')
-    writeFileSync(
-      errorLog,
-      [
-        { at: 1, method: 'GET', path: '/api/v1/old', status: 500 },
-        { at: 5, method: 'POST', path: '/api/v1/new', status: 503 }
-      ]
-        .map(row => JSON.stringify(row))
-        .join('\n') + '\n'
-    )
-    const entry = {
-      id: 'up',
-      origin: 'http://127.0.0.1:1',
-      pid: 1,
-      dir: join(dir, 'up'),
-      root: '/checkout',
-      baselineManifest: join(dir, 'up', 'baseline.json'),
-      errorLog
-    }
-    const stack = stackHandleFor(entry)
-    expect(stack.baselineManifest).equals(entry.baselineManifest)
-    expect((await stack.serverErrors(2))?.map(row => row.path)).deep.equals([
-      '/api/v1/new'
-    ])
-    let failure: unknown
+    expect(stack.setFault).equals(undefined)
+    // Seeding needs the test mailbox.
+    let blocked: unknown
     await stack.seedWorld?.('team-with-roster').catch((error: unknown) => {
-      failure = error
+      blocked = error
     })
-    expect(failure).instanceOf(BlockedError)
-    expect(String(failure)).includes('no test mailbox')
-    expect(
-      await stackHandleFor({
-        ...entry,
-        errorLog: join(dir, 'none')
-      }).serverErrors(0)
-    ).deep.equals([])
+    expect(blocked).instanceOf(BlockedError)
+    // With a fault server, it sets the fault through it.
+    const faulted = stackHandleFor(
+      attachStack(
+        dir,
+        handle({
+          ...HANDLE,
+          faults: { url: 'https://e2e-01.example.test/__e2e/', token: 't' }
+        })
+      )
+    )
+    expect(faulted.setFault).a('function')
   })
 
-  it('names a stack for its project and six random hex digits', function () {
-    const id = newStackId('streamingFixes')
-    expect(id).matches(/^streamingFixes_[0-9a-f]{6}$/)
-    expect(newStackId('streamingFixes')).not.equals(id)
-    expect(checkLocalStackId(id)).equals(id)
-    expect(projectKey('paul-stream.fixes')).equals('paulstreamfixes')
-    expect(projectKey('2026plan')).equals('stack2026plan')
-    for (const bad of [
-      'streamingFixes',
-      'streamingFixes_1EF39D',
-      'stream-1a',
-      'a_1ef39'
-    ]) {
-      expect(
-        thrown(() => checkLocalStackId(bad)),
-        bad
-      ).instanceOf(HarnessError)
-    }
+  it('refuses a handle older than a droplet stack’s', function () {
+    const { dir, handle } = scratch()
+    const old = attachStack(dir, handle({ ...HANDLE, version: 1 }))
+    expect(thrown(() => stackHandleFor(old)).message).includes(
+      'bring it up again with stack up'
+    )
+    const partial = attachStack(
+      dir,
+      handle({ ...HANDLE, databaseUrl: undefined })
+    )
+    expect(thrown(() => stackHandleFor(partial)).message).includes(
+      'no databaseUrl'
+    )
   })
 
   it('refuses a stack id that could leave the registry or change case in Postgres', function () {
@@ -169,62 +137,15 @@ describe('attached stacks', function () {
     expect(thrown(() => readStack(dir, '../escape'))).instanceOf(HarnessError)
   })
 
-  it('refuses fault runs on an attached stack as blocked, not on one it started', function () {
-    const { dir, handle } = scratch()
-    const entry = attachStack(dir, handle(HANDLE))
-    expect(
-      thrown(() => {
-        refuseAttachedForFaults(entry)
-      })
-    ).instanceOf(BlockedError)
-    expect(() => {
-      refuseAttachedForFaults({ id: 'up', origin: 'http://x.test', pid: 1 })
-    }).not.to.throw()
-  })
-
-  it('forgets an attached stack without stopping anything, and stops a started one', function () {
+  it('forgets a stack: its entry and its baseline manifest', function () {
     const { dir, handle } = scratch()
     attachStack(dir, handle(HANDLE))
-    const killed: number[] = []
-    const kill = (pid: number): boolean => {
-      killed.push(pid)
-      return true
-    }
-    expect(removeStack(dir, HANDLE.id, kill)).deep.equals({
-      id: HANDLE.id,
-      stopped: false
-    })
-    writeFileSync(
-      join(dir, 'up.json'),
-      JSON.stringify({ id: 'up', origin: 'http://x.test', pid: 4242 })
-    )
-    expect(removeStack(dir, 'up', kill).stopped).equals(true)
-    expect(killed).deep.equals([4242])
-    // One whose stack serve is already gone is forgotten all the same.
-    writeFileSync(
-      join(dir, 'gone.json'),
-      JSON.stringify({ id: 'gone', origin: 'http://x.test', pid: 4243 })
-    )
-    expect(removeStack(dir, 'gone', () => false)).deep.equals({
-      id: 'gone',
-      stopped: false
-    })
+    writeFileSync(baselineFile(dir, HANDLE.id), '{}')
+    // The manifest is no entry of its own.
+    expect(listStacks(dir).map(row => row.id)).deep.equals([HANDLE.id])
+    forgetStack(dir, HANDLE.id)
     expect(listStacks(dir)).deep.equals([])
-  })
-
-  it('will not attach over a stack that stack up is running', function () {
-    const { dir, handle } = scratch()
-    attachStack(dir, handle({ ...HANDLE, id: 'other' }))
-    writeFileSync(
-      join(dir, `${HANDLE.id}.json`),
-      JSON.stringify({ id: HANDLE.id, origin: 'http://x.test', pid: 1 })
-    )
-    expect(thrown(() => attachStack(dir, handle(HANDLE))).message).includes(
-      'running stack up stack'
-    )
-    expect(
-      JSON.parse(readFileSync(join(dir, `${HANDLE.id}.json`), 'utf8')).pid
-    ).equals(1)
+    expect(readdirSync(dir)).deep.equals([])
   })
 
   it('calls a malformed or missing handle a harness error', function () {
@@ -234,7 +155,7 @@ describe('attached stacks', function () {
       [[1], 'not a stack handle object'],
       [{ ...HANDLE, version: undefined }, 'no handle version'],
       [{ ...HANDLE, id: 'Has Spaces' }, 'no stack id'],
-      [{ ...HANDLE, origin: 'streamtest.example.test' }, 'no origin URL'],
+      [{ ...HANDLE, origin: 'e2e-01.example.test' }, 'no origin URL'],
       [{ ...HANDLE, api: 7 }, 'no api URL']
     ]
     for (const [value, message] of cases) {

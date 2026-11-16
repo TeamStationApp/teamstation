@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { expect } from 'chai'
 
+import { seedOnStack } from './dropletStack'
 import {
   baselineManifestPath,
   findAccount,
@@ -24,7 +25,6 @@ import {
   waitForMail
 } from './mail'
 import { BlockedError, HarnessError } from './result'
-import { startStack } from './stack'
 
 const WORLD: FixtureManifest = {
   world: 'w',
@@ -382,41 +382,49 @@ describe('the address lint', function () {
   })
 })
 
-describe('a stack’s fixtures', function () {
+describe('seeding a stack through its handle', function () {
   this.timeout(120000)
 
-  it('seeds baseline from nothing, at mode 0600, and seeds worlds for a scenario', async function () {
-    const stack = await startStack({
-      services: ['api'],
-      mailbox: 'box@example.test'
-    })
+  it('seeds baseline and a world on the database the handle names, and refuses one with a real address', async function () {
+    const { Pool } = await import('pg')
+    const {
+      createMigratedDatabase,
+      dropScratchDatabase,
+      testDatabaseUrl,
+      testDatabaseUrlOf
+    } = await import('../../src/migrate/testDatabase')
+    const { migrations } = await import('../../src/migrate/migrations')
+    const admin = new Pool({ connectionString: testDatabaseUrl })
+    const name = `teamstation_e2e_seed_${process.pid}`
     try {
-      const path = stack.baselineManifest ?? ''
-      expect(statSync(path).mode & 0o777).equals(0o600)
-      const baseline = readBaselineManifest(path)
-      expect(Object.keys(baseline?.accounts ?? {}).sort()).deep.equals([
+      await createMigratedDatabase(admin, name, migrations)
+      const handle = {
+        id: 'e2e-stack-seed',
+        databaseUrl: testDatabaseUrlOf(name)
+      }
+      const baseline = await seedOnStack(handle, 'baseline', 'box@example.test')
+      expect(Object.keys(baseline.accounts).sort()).deep.equals([
         'admin',
         'member'
       ])
-      const world = await stack.seedWorld?.('team-with-roster')
-      expect(world?.accounts.coach.email).matches(
+      const world = await seedOnStack(
+        handle,
+        'team-with-roster',
+        'box@example.test'
+      )
+      expect(world.accounts.coach.email).matches(
         /^box\+team-with-roster-coach-/
       )
-    } finally {
-      await stack.stop()
-    }
-  })
-
-  it('has no baseline with no mailbox, and blocks seeding a world', async function () {
-    const stack = await startStack({ services: ['api'] })
-    try {
-      expect(readBaselineManifest(stack.baselineManifest)).equals(undefined)
-      const error = await rejection(
-        async () => await stack.seedWorld?.('team-with-roster')
+      // Another mailbox's addresses are real ones to it: it seeds nothing there.
+      const refused = await rejection(
+        async () =>
+          await seedOnStack(handle, 'team-with-roster', 'other@example.test')
       )
-      expect(error).instanceOf(BlockedError)
+      expect(refused).instanceOf(HarnessError)
+      expect(String(refused)).includes('not test addresses')
     } finally {
-      await stack.stop()
+      await dropScratchDatabase(admin, name)
+      await admin.end()
     }
   })
 })

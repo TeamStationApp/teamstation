@@ -1,17 +1,32 @@
 import { type ChildProcess, spawn } from 'node:child_process'
-import {
-  createWriteStream,
-  existsSync,
-  mkdirSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
-import { dirname, join } from 'node:path'
+import { createWriteStream, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 
 import type { AttachedHandle } from './attach'
-import type { LegacyStack } from './legacyStack'
+import { nodeDatabaseUrl, runOnStack } from './dropletStack'
 import { BlockedError, HarnessError } from './result'
 import type { StreamingFixture } from './streaming'
+
+export { nodeDatabaseUrl, runOnStack }
+
+/** What the streaming scripts drive on a stack. */
+export interface LegacyStack {
+  /** Variables every legacy script sees while the stack is up. */
+  env: Record<string, string>
+  apiLog: string
+  /** Whether the API has an xAI speech key. */
+  speech: boolean
+  /** Seeds the accounts again, after something dropped the database. */
+  reseed: () => void
+  /** Restarts the API, with `speech` left out of its config when `speech` is false. */
+  restartApi: (options?: { speech?: boolean }) => Promise<void>
+  /**
+   * Starts the stack's own API again when a script stopped it and left a
+   * server of its own on the API port (scoreboardServer's restart).
+   */
+  ensureApi: () => Promise<void>
+  stop: () => Promise<void>
+}
 
 /** What an attached stack's handle must carry for the streaming scripts. */
 export interface StreamingHandle extends AttachedHandle {
@@ -38,18 +53,6 @@ export function requireStreamingHandle(
     )
   }
   return handle as StreamingHandle
-}
-
-/**
- * The handle's database URL for node's `pg`, with `sslmode=require` read as
- * libpq reads it: encrypted, without verifying the certificate, as psql and
- * other libpq clients take the handle's URL. `pg` alone would read it as
- * full verification.
- */
-export function nodeDatabaseUrl(url: string): string {
-  if (!/[?&]sslmode=require\b/.test(url) || /[?&]uselibpqcompat=/.test(url))
-    return url
-  return `${url}&uselibpqcompat=true`
 }
 
 /** Where the droplet's files are mirrored on this Mac. */
@@ -217,56 +220,6 @@ export function attachedLegacyStack(
       log.end()
     }
   }
-}
-
-/**
- * Runs a fixture script of this checkout against the attached stack's
- * database, from a scratch directory whose server config names that database,
- * allows fixtures, and adds `config`. Returns the JSON the script prints.
- */
-export async function runOnStack(options: {
-  cwd: string
-  handle: StreamingHandle
-  script: string
-  args: string[]
-  scratch: string
-  config?: Record<string, unknown>
-}): Promise<unknown> {
-  const { cwd, handle, script, args, scratch } = options
-  mkdirSync(scratch, { recursive: true })
-  const config = join(scratch, 'serverConfig.json')
-  writeFileSync(
-    config,
-    JSON.stringify({
-      ...options.config,
-      testSettings: true,
-      databaseUrl: nodeDatabaseUrl(handle.databaseUrl)
-    }),
-    { mode: 0o600 }
-  )
-  const register = join(cwd, 'node_modules/sucrase/register')
-  if (!existsSync(dirname(register))) {
-    rmSync(config, { force: true })
-    throw new HarnessError(`no sucrase under ${cwd}: run npm install there`)
-  }
-  const child = spawn(
-    process.execPath,
-    ['-r', register, join(cwd, script), ...args],
-    { cwd: scratch, stdio: ['ignore', 'pipe', 'pipe'] }
-  )
-  let stdout = ''
-  let stderr = ''
-  child.stdout.on('data', (bytes: Buffer) => (stdout += String(bytes)))
-  child.stderr.on('data', (bytes: Buffer) => (stderr += String(bytes)))
-  const status = await new Promise<number | null>(resolve => {
-    child.on('close', resolve)
-  })
-  // It names the database's password: gone as soon as the seed is.
-  rmSync(config, { force: true })
-  if (status !== 0) {
-    throw new HarnessError(`${script} failed: ${stderr.slice(-2000)}`)
-  }
-  return JSON.parse(stdout)
 }
 
 /** Seeds the streaming world on the attached stack's database. */
