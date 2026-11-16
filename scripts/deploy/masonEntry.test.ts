@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
+import { createVerify, generateKeyPairSync } from 'node:crypto'
 import {
   chmodSync,
   mkdirSync,
@@ -27,10 +28,18 @@ import {
   DISTRIBUTOR_APP,
   DISTRIBUTOR_DEVELOP_APP,
   MAPS_KEY_CHECK,
+  PLAY_NOTES_LIMIT,
+  PLAY_PUBLISHER_SECRET,
+  PLAY_RELEASE_NOTES,
+  PLAY_TRACK,
+  playAccessToken,
+  playAssertion,
   provenanceEnvironment,
   RELEASE_KEYSTORE_SECRET,
   RELEASE_PASSWORD_SECRET,
   releaseIos,
+  releasePlayTesting,
+  releaseToPlayTrack,
   seatEnvironment,
   setup,
   signAabScript,
@@ -427,6 +436,20 @@ describe('TeamStation pipeline Masonfile', () => {
     assert.deepEqual(android[1]?.on.labels, ['android-signing'])
     assert.equal(android[1]?.tools.androidLicenses, 'accept')
     assert.deepEqual(android[1]?.publishes, ['app.teamstation.app'])
+    const play = android[2] as (typeof android)[number] & {
+      checkout?: { depth: number }
+      when?: { branch?: string[]; params?: Record<string, string> }
+    }
+    assert.equal(play?.name, 'play')
+    assert.equal(play?.on.type, 'macos-arm64')
+    assert.deepEqual(play?.on.labels, ['android-signing'])
+    assert.deepEqual(play?.secrets, [PLAY_PUBLISHER_SECRET])
+    assert.deepEqual(play?.checkout, { depth: 1 })
+    assert.deepEqual(play?.when, {
+      branch: ['master'],
+      params: { seat: 'production' }
+    })
+    assert.equal(android.length, 3)
     const commands: string[] = []
     const ctx = {
       run: {
@@ -557,6 +580,10 @@ describe('TeamStation pipeline Masonfile', () => {
     )
     assert.equal(log.includes('CODE_SIGNING_ALLOWED'), false)
     assert.match(log, /cargo install cargo-ndk/)
+    assert.match(
+      log,
+      /stash:play-bundle:android\/app\/build\/outputs\/bundle\/release\/app-release\.aab/
+    )
     assert.match(log, /MASON_BUILD_NUMBER/)
     assert.match(log, /build-number:26103101/)
     assert.match(
@@ -1656,5 +1683,291 @@ describe('request-only Apple TV workflow', () => {
       }),
       /No tvOS IPA was exported/
     )
+  })
+})
+
+describe('Google Play closed-testing release', () => {
+  const { privateKey, publicKey } = generateKeyPairSync('rsa', {
+    modulusLength: 2048
+  })
+  const key = {
+    client_email: 'publisher@example.iam.gserviceaccount.com',
+    private_key: privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+    token_uri: 'https://oauth2.example.test/token'
+  }
+  interface Call {
+    url: string
+    method: string
+    headers: Record<string, string>
+    body: unknown
+  }
+  const reply = (status: number, body: unknown): Response =>
+    new Response(JSON.stringify(body), { status })
+  const recorder = (
+    answer: (call: Call) => Response
+  ): {
+    calls: Call[]
+    fetcher: (url: string, init?: RequestInit) => Promise<Response>
+  } => {
+    const calls: Call[] = []
+    return {
+      calls,
+      async fetcher(url, init) {
+        const call = {
+          url,
+          method: init?.method ?? 'GET',
+          headers: (init?.headers ?? {}) as Record<string, string>,
+          body: init?.body
+        }
+        calls.push(call)
+        return answer(call)
+      }
+    }
+  }
+
+  it('keeps the en-US release notes within Play’s limit', () => {
+    assert.equal(PLAY_NOTES_LIMIT, 500)
+    assert.ok(PLAY_RELEASE_NOTES.length <= PLAY_NOTES_LIMIT)
+    for (const section of [
+      'Coaching:',
+      'Scoring:',
+      'Replay:',
+      'Video:',
+      'Chat:'
+    ])
+      assert.ok(PLAY_RELEASE_NOTES.includes(section), section)
+    assert.equal(PLAY_TRACK, 'alpha')
+  })
+
+  it('signs a service-account assertion for the Android publisher scope', () => {
+    const jwt = playAssertion(key, 1_800_000_000_500)
+    const [head, claims, signature] = jwt.split('.')
+    assert.deepEqual(JSON.parse(Buffer.from(head, 'base64url').toString()), {
+      alg: 'RS256',
+      typ: 'JWT'
+    })
+    assert.deepEqual(JSON.parse(Buffer.from(claims, 'base64url').toString()), {
+      iss: key.client_email,
+      scope: 'https://www.googleapis.com/auth/androidpublisher',
+      aud: key.token_uri,
+      iat: 1_800_000_000,
+      exp: 1_800_003_600
+    })
+    const verifier = createVerify('RSA-SHA256')
+    verifier.update(`${head}.${claims}`)
+    assert.ok(verifier.verify(publicKey, Buffer.from(signature, 'base64url')))
+  })
+
+  it('trades the assertion for a token and reports a refusal without credentials', async () => {
+    const ok = recorder(() => reply(200, { access_token: 'token-1' }))
+    assert.equal(
+      await playAccessToken(key, ok.fetcher, 1_800_000_000_000),
+      'token-1'
+    )
+    assert.equal(ok.calls[0]?.url, key.token_uri)
+    const form = new URLSearchParams(String(ok.calls[0]?.body))
+    assert.equal(
+      form.get('grant_type'),
+      'urn:ietf:params:oauth:grant-type:jwt-bearer'
+    )
+    assert.equal(form.get('assertion'), playAssertion(key, 1_800_000_000_000))
+
+    const refused = recorder(() => reply(400, { error: 'invalid_grant' }))
+    await assert.rejects(
+      playAccessToken(key, refused.fetcher),
+      (error: Error) =>
+        error.message ===
+        'Google Play sign-in failed with HTTP 400: invalid_grant'
+    )
+    const empty = recorder(() => reply(200, {}))
+    await assert.rejects(playAccessToken(key, empty.fetcher), /no access token/)
+  })
+
+  it('uploads the bundle, completes it on the track and commits one edit', async () => {
+    const api = recorder(call => {
+      if (call.url.endsWith('/edits')) return reply(200, { id: 'edit-7' })
+      if (call.url.includes('/bundles?uploadType=media'))
+        return reply(200, { versionCode: 26111501 })
+      return reply(200, {})
+    })
+    const bundle = new Uint8Array([1, 2, 3])
+    const result = await releaseToPlayTrack({
+      token: 'token-1',
+      bundle,
+      track: 'alpha',
+      notes: 'Notes',
+      fetcher: api.fetcher
+    })
+    assert.deepEqual(result, { editId: 'edit-7', versionCode: 26111501 })
+    const base =
+      'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.teamstation.app'
+    assert.deepEqual(
+      api.calls.map(call => `${call.method} ${call.url}`),
+      [
+        `POST ${base}/edits`,
+        'POST https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/app.teamstation.app/edits/edit-7/bundles?uploadType=media',
+        `PUT ${base}/edits/edit-7/tracks/alpha`,
+        `POST ${base}/edits/edit-7:commit`
+      ]
+    )
+    for (const call of api.calls)
+      assert.equal(call.headers.Authorization, 'Bearer token-1')
+    assert.equal(api.calls[1]?.body, bundle)
+    assert.equal(
+      api.calls[1]?.headers['Content-Type'],
+      'application/octet-stream'
+    )
+    assert.deepEqual(JSON.parse(String(api.calls[2]?.body)), {
+      track: 'alpha',
+      releases: [
+        {
+          versionCodes: ['26111501'],
+          status: 'completed',
+          releaseNotes: [{ language: 'en-US', text: 'Notes' }]
+        }
+      ]
+    })
+  })
+
+  it('deletes the edit when a step after opening it fails', async () => {
+    const api = recorder(call => {
+      if (call.url.endsWith('/edits')) return reply(200, { id: 'edit-8' })
+      if (call.url.includes('/bundles'))
+        return reply(200, { versionCode: 26111502 })
+      if (call.url.endsWith('/tracks/alpha'))
+        return reply(403, {
+          error: { message: 'The caller does not have permission' }
+        })
+      return reply(200, {})
+    })
+    await assert.rejects(
+      releaseToPlayTrack({
+        token: 'token-1',
+        bundle: new Uint8Array([1]),
+        track: 'alpha',
+        notes: 'Notes',
+        fetcher: api.fetcher
+      }),
+      (error: Error) =>
+        error.message ===
+          'Google Play alpha release failed with HTTP 403: The caller does not have permission' &&
+        !error.message.includes('token-1')
+    )
+    assert.deepEqual(api.calls.at(-1)?.method, 'DELETE')
+    assert.match(api.calls.at(-1)?.url ?? '', /\/edits\/edit-8$/)
+    assert.equal(
+      api.calls.some(call => call.url.endsWith(':commit')),
+      false
+    )
+
+    const noId = recorder(() => reply(200, {}))
+    await assert.rejects(
+      releaseToPlayTrack({
+        token: 't',
+        bundle: new Uint8Array([1]),
+        track: 'alpha',
+        notes: 'Notes',
+        fetcher: noId.fetcher
+      }),
+      /without an id/
+    )
+    const noCode = recorder(call =>
+      call.url.endsWith('/edits')
+        ? reply(200, { id: 'edit-9' })
+        : reply(200, {})
+    )
+    await assert.rejects(
+      releaseToPlayTrack({
+        token: 't',
+        bundle: new Uint8Array([1]),
+        track: 'alpha',
+        notes: 'Notes',
+        fetcher: noCode.fetcher
+      }),
+      /no versionCode/
+    )
+    assert.equal(noCode.calls.at(-1)?.method, 'DELETE')
+  })
+
+  it('releases the stashed bundle from the play stage and logs the versionCode', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'play-stage-'))
+    const realFetch = globalThis.fetch
+    try {
+      const keyFile = path.join(dir, 'key.json')
+      writeFileSync(keyFile, JSON.stringify(key))
+      const aab = 'android/app/build/outputs/bundle/release/app-release.aab'
+      mkdirSync(path.join(dir, path.dirname(aab)), { recursive: true })
+      writeFileSync(path.join(dir, aab), 'bundle-bytes')
+      const events: string[] = []
+      const api = recorder(call => {
+        if (call.url === key.token_uri)
+          return reply(200, { access_token: 'token-2' })
+        if (call.url.endsWith('/edits')) return reply(200, { id: 'edit-10' })
+        if (call.url.includes('/bundles'))
+          return reply(200, { versionCode: 26111503 })
+        return reply(200, {})
+      })
+      globalThis.fetch = (async (input: string, init?: RequestInit) =>
+        await api.fetcher(input, init)) as typeof fetch
+      const ctx = {
+        workspace: dir,
+        run: { branch: 'master', commit: 'abc' },
+        async unstash(name: string) {
+          events.push(`unstash:${name}`)
+        },
+        fs: {
+          async glob(pattern: string) {
+            events.push(`glob:${pattern}`)
+            return [aab]
+          }
+        },
+        secretFile(name: string) {
+          assert.equal(name, PLAY_PUBLISHER_SECRET)
+          return keyFile
+        },
+        log: {
+          info(message: string) {
+            events.push(`info:${message}`)
+          },
+          warn() {}
+        },
+        describe(text: string) {
+          events.push(`describe:${text}`)
+        }
+      } as unknown as Parameters<typeof releasePlayTesting>[0]
+      await releasePlayTesting(ctx)
+      assert.deepEqual(events, [
+        'unstash:play-bundle',
+        'glob:android/app/build/outputs/bundle/release/*.aab',
+        'info:Google Play alpha has versionCode 26111503 (edit edit-10).',
+        'describe:Google Play closed testing has versionCode 26111503'
+      ])
+      const upload = api.calls.find(call => call.url.includes('/bundles'))
+      assert.equal(
+        Buffer.from(upload?.body as Uint8Array).toString(),
+        'bundle-bytes'
+      )
+      const track = api.calls.find(call => call.url.endsWith('/tracks/alpha'))
+      assert.equal(
+        JSON.parse(String(track?.body)).releases[0].releaseNotes[0].text,
+        PLAY_RELEASE_NOTES
+      )
+
+      const empty = {
+        ...ctx,
+        fs: {
+          async glob() {
+            return []
+          }
+        }
+      } as unknown as Parameters<typeof releasePlayTesting>[0]
+      await assert.rejects(
+        releasePlayTesting(empty),
+        /No signed Play bundle was stashed/
+      )
+    } finally {
+      globalThis.fetch = realFetch
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

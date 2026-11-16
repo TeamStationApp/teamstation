@@ -1,3 +1,4 @@
+import { createSign } from 'node:crypto'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 
@@ -12,14 +13,14 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // node labelled android-signing with the release key, which this file reads
 // from the project's Mason secrets, and published from there. A master
 // production build also compiles a Play bundle, signs it there with the same
-// key and saves it for Google Play. One platform failing leaves the other
-// running.
+// key, saves it, and the play stage releases it to Google Play's closed
+// testing track (alpha). One platform failing leaves the other running.
 //
 // The `seat` parameter picks the server the app talks to. A development seat
 // N points the app at https://developN.teamstation.app. Left at `production`,
 // a master build keeps the app's own server, and every other branch points
 // at https://develop.teamstation.app. Only a master build of production goes
-// to TestFlight.
+// to TestFlight and to Google Play.
 //
 // `master` publishes `app.teamstation.app`. Any other branch, and any build
 // aimed at a development seat, publishes `app.teamstation.develop` under the
@@ -414,6 +415,17 @@ function buildStages(w: WorkflowBuilder, app: string): void {
           buildNumbers: [app],
           secrets: [...RELEASE_SIGNING_SECRETS],
           run: signAndroid
+        },
+        {
+          name: 'play',
+          on: SIGN,
+          tools: { node: '24' },
+          timeout: '1h',
+          // Uploads the bundle the sign stage stashed; nothing is compiled.
+          checkout: { depth: 1 },
+          when: { branch: ['master'], params: { seat: 'production' } },
+          secrets: [PLAY_PUBLISHER_SECRET],
+          run: releasePlayTesting
         }
       ]
     },
@@ -822,6 +834,195 @@ export async function signAndroid(ctx: Stage): Promise<void> {
   const bundle = bundles[0]
   if (bundle == null) throw new Error('No release bundle was signed')
   await ctx.artifacts.save('android-aab', bundle)
+  await ctx.stash(PLAY_BUNDLE_STASH, [bundle])
+}
+
+/**
+ * Google Play's closed-testing track and the service account that may release
+ * to it. The key is a Mason file secret; only the `play` stage declares it.
+ */
+export const PLAY_PUBLISHER_SECRET = 'teamstation-play-publisher.json'
+export const PLAY_TRACK = 'alpha'
+const PLAY_BUNDLE_STASH = 'play-bundle'
+const PLAY_API = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${STABLE_APP}`
+const PLAY_UPLOAD = `https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/${STABLE_APP}`
+const PLAY_SCOPE = 'https://www.googleapis.com/auth/androidpublisher'
+/** Play refuses release notes longer than this, per language. */
+export const PLAY_NOTES_LIMIT = 500
+/**
+ * The en-US release notes: the 1.2.0 App Store "What's New", shortened to
+ * fit Play's limit.
+ */
+export const PLAY_RELEASE_NOTES = [
+  'Coaching: a game plan sets the defense for every inning, and playing-time rules warn when a player would fall short.',
+  "Scoring: fields the game plan's defense each inning, lets several people score one game, adds pitch counts to box scores and works offline.",
+  'Replay: a new layout, with crowd noise on big plays.',
+  'Video: tap to focus on previews.',
+  'Chat: a one-time age confirmation, and you can block a person.'
+].join('\n')
+
+export interface PlayServiceAccount {
+  client_email: string
+  private_key: string
+  token_uri: string
+}
+type Fetch = (input: string, init?: RequestInit) => Promise<Response>
+
+const base64url = (value: string | Buffer): string =>
+  Buffer.from(value).toString('base64url')
+
+/** The signed JWT the service account trades for an access token. */
+export function playAssertion(key: PlayServiceAccount, now: number): string {
+  const issued = Math.floor(now / 1000)
+  const unsigned = [
+    base64url(JSON.stringify({ alg: 'RS256', typ: 'JWT' })),
+    base64url(
+      JSON.stringify({
+        iss: key.client_email,
+        scope: PLAY_SCOPE,
+        aud: key.token_uri,
+        iat: issued,
+        exp: issued + 3600
+      })
+    )
+  ].join('.')
+  const signer = createSign('RSA-SHA256')
+  signer.update(unsigned)
+  return `${unsigned}.${base64url(signer.sign(key.private_key))}`
+}
+
+/** The Play API's error message, without the request's credentials. */
+async function playFailure(what: string, response: Response): Promise<Error> {
+  const body = (await response.json().catch(() => ({}))) as {
+    error?: { message?: unknown } | string
+  }
+  const reason =
+    typeof body.error === 'string'
+      ? body.error
+      : typeof body.error?.message === 'string'
+        ? body.error.message
+        : ''
+  return new Error(
+    `Google Play ${what} failed with HTTP ${response.status}${reason === '' ? '' : `: ${reason}`}`
+  )
+}
+
+export async function playAccessToken(
+  key: PlayServiceAccount,
+  fetcher: Fetch,
+  now = Date.now()
+): Promise<string> {
+  const response = await fetcher(key.token_uri, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion: playAssertion(key, now)
+    }).toString()
+  })
+  if (!response.ok) throw await playFailure('sign-in', response)
+  const { access_token: token } = (await response.json()) as {
+    access_token?: unknown
+  }
+  if (typeof token !== 'string' || token === '')
+    throw new Error('Google Play sign-in returned no access token')
+  return token
+}
+
+/**
+ * Uploads `bundle` and releases it to `track` with status completed, in one
+ * edit that is committed at the end. An edit that fails part way is deleted.
+ */
+export async function releaseToPlayTrack(options: {
+  token: string
+  bundle: Uint8Array
+  track: string
+  notes: string
+  fetcher: Fetch
+}): Promise<{ editId: string; versionCode: number }> {
+  const { token, track, fetcher } = options
+  const auth = { Authorization: `Bearer ${token}` }
+  const json = { ...auth, 'Content-Type': 'application/json' }
+  const opened = await fetcher(`${PLAY_API}/edits`, {
+    method: 'POST',
+    headers: json,
+    body: '{}'
+  })
+  if (!opened.ok) throw await playFailure('edit', opened)
+  const { id: editId } = (await opened.json()) as { id?: unknown }
+  if (typeof editId !== 'string' || editId === '')
+    throw new Error('Google Play opened an edit without an id')
+  const edit = `${PLAY_API}/edits/${editId}`
+  try {
+    const uploaded = await fetcher(
+      `${PLAY_UPLOAD}/edits/${editId}/bundles?uploadType=media`,
+      {
+        method: 'POST',
+        headers: { ...auth, 'Content-Type': 'application/octet-stream' },
+        body: options.bundle
+      }
+    )
+    if (!uploaded.ok) throw await playFailure('bundle upload', uploaded)
+    const { versionCode } = (await uploaded.json()) as {
+      versionCode?: unknown
+    }
+    if (typeof versionCode !== 'number')
+      throw new Error('Google Play returned no versionCode for the bundle')
+    const released = await fetcher(`${edit}/tracks/${track}`, {
+      method: 'PUT',
+      headers: json,
+      body: JSON.stringify({
+        track,
+        releases: [
+          {
+            versionCodes: [String(versionCode)],
+            status: 'completed',
+            releaseNotes: [{ language: 'en-US', text: options.notes }]
+          }
+        ]
+      })
+    })
+    if (!released.ok) throw await playFailure(`${track} release`, released)
+    const committed = await fetcher(`${edit}:commit`, {
+      method: 'POST',
+      headers: auth
+    })
+    if (!committed.ok) throw await playFailure('commit', committed)
+    return { editId, versionCode }
+  } catch (error) {
+    await fetcher(edit, { method: 'DELETE', headers: auth }).catch(
+      () => undefined
+    )
+    throw error
+  }
+}
+
+/** Releases the signed Play bundle to the closed-testing track. */
+export async function releasePlayTesting(ctx: Stage): Promise<void> {
+  if (PLAY_RELEASE_NOTES.length > PLAY_NOTES_LIMIT)
+    throw new Error(
+      `The Play release notes are ${PLAY_RELEASE_NOTES.length} characters; Play allows ${PLAY_NOTES_LIMIT}`
+    )
+  await ctx.unstash(PLAY_BUNDLE_STASH)
+  const bundles = await ctx.fs.glob(AAB_GLOB)
+  const bundle = bundles[0]
+  if (bundle == null) throw new Error('No signed Play bundle was stashed')
+  const key: PlayServiceAccount = JSON.parse(
+    readFileSync(ctx.secretFile(PLAY_PUBLISHER_SECRET), 'utf8')
+  )
+  const fetcher: Fetch = async (input, init) => await fetch(input, init)
+  const token = await playAccessToken(key, fetcher)
+  const { editId, versionCode } = await releaseToPlayTrack({
+    token,
+    bundle: readFileSync(workspacePath(ctx, bundle)),
+    track: PLAY_TRACK,
+    notes: PLAY_RELEASE_NOTES,
+    fetcher
+  })
+  ctx.log.info(
+    `Google Play ${PLAY_TRACK} has versionCode ${versionCode} (edit ${editId}).`
+  )
+  ctx.describe(`Google Play closed testing has versionCode ${versionCode}`)
 }
 
 /**
