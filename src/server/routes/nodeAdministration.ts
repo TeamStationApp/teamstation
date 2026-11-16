@@ -1,5 +1,6 @@
 import { asBoolean, asObject } from 'cleaners'
 import { Router } from 'express'
+import { rateLimit } from 'express-rate-limit'
 import type { Kysely } from 'kysely'
 
 import { badRequest, unauthorized } from '../../common/errors'
@@ -11,6 +12,16 @@ import {
   nodeAccounts,
   requireNodeAdmin
 } from '../admin/nodeAdministration'
+import {
+  activityQueryOf,
+  recentLogins,
+  recentSessions
+} from '../admin/userActivity'
+import {
+  directoryQueryOf,
+  directorySearch,
+  personAdministration
+} from '../admin/userDirectory'
 import type { Database } from '../db/database'
 import { accountMailEnabled, setAccountMailEnabled } from '../email/accountMail'
 import { cleanBody } from '../jsonBody'
@@ -22,14 +33,45 @@ import { highlightSettings } from '../settings'
 
 const asAccountMail = asObject({ accountMessages: asBoolean })
 
+/**
+ * How often one address may read User Management's people and activity: a
+ * minute's worth of pages and searches, well past what a person scrolling
+ * and typing asks for, and short of a script walking every account.
+ */
+export const USER_MANAGEMENT_LIMIT = { windowMs: 60_000, limit: 120 }
+
 export function nodeAdministrationRoutes(
   db: Kysely<Database>,
   space?: SpaceSettings
 ): Router {
   const router = Router()
+  const peopleLimit = rateLimit({
+    ...USER_MANAGEMENT_LIMIT,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    // The `/users` collection's other views are not User Management's.
+    skip: req => req.path === '/users' && req.query.view !== 'directory',
+    message: {
+      code: 'rateLimited',
+      message: 'Too many User Management requests. Try again shortly.'
+    }
+  })
   router.get(
     '/users',
+    peopleLimit,
     withAsync(async (req, res, next) => {
+      if (req.query.view === 'directory') {
+        if (req.actor == null) throw unauthorized()
+        res.json(
+          await directorySearch(
+            db,
+            req.actor,
+            directoryQueryOf(req.query),
+            space
+          )
+        )
+        return
+      }
       if (req.query.view !== 'administration') {
         if (req.query.nodeAdmin != null)
           throw badRequest('nodeAdmin requires view=administration')
@@ -56,6 +98,16 @@ export function nodeAdministrationRoutes(
       )
     })
   )
+  router.get(
+    '/users/:userId/administration',
+    peopleLimit,
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      const userId = cleanBody(asUserId, req.params.userId)
+      res.json(await personAdministration(db, req.actor, userId, space))
+    })
+  )
   router.patch(
     '/users/:userId/administration',
     requireActor,
@@ -69,6 +121,28 @@ export function nodeAdministrationRoutes(
         cleanBody(asNodeAccountChange, req.body)
       )
       res.json({ ok: true })
+    })
+  )
+  router.get(
+    '/node/logins',
+    peopleLimit,
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json(
+        await recentLogins(db, req.actor, activityQueryOf(req.query), space)
+      )
+    })
+  )
+  router.get(
+    '/node/sessions',
+    peopleLimit,
+    requireActor,
+    withAsync(async (req, res) => {
+      if (req.actor == null) throw unauthorized()
+      res.json(
+        await recentSessions(db, req.actor, activityQueryOf(req.query), space)
+      )
     })
   )
   router.get(

@@ -70,6 +70,12 @@ const LARGE_BODIES: ReadonlyArray<{
     path: /^\/api\/v1\/me\/account\/photo$/,
     parser: pictureBody
   },
+  // The same photo, as a node administrator stores it for somebody.
+  {
+    method: 'PUT',
+    path: /^\/api\/v1\/users\/[^/]+\/account\/photo$/,
+    parser: pictureBody
+  },
   {
     method: 'PUT',
     path: /^\/api\/v1\/me\/onboarding\/photo$/,

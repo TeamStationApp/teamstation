@@ -11,6 +11,7 @@ export function PersonSearchRow({
   name,
   avatarUrl,
   affiliations,
+  detail,
   onPress,
   disabled,
   accessibilityLabel = name,
@@ -20,6 +21,8 @@ export function PersonSearchRow({
   name: string
   avatarUrl?: string | null
   affiliations?: string
+  /** Beside the name, quieter: an email address, in a node search. */
+  detail?: string | null
   onPress: () => void
   disabled?: boolean
   accessibilityLabel?: string
@@ -41,9 +44,20 @@ export function PersonSearchRow({
         initialsSize={0.875}
       />
       <View style={styles.text}>
-        <Text numberOfLines={1} style={styles.name}>
-          {name}
-        </Text>
+        {detail == null || detail === '' ? (
+          <Text numberOfLines={1} style={styles.name}>
+            {name}
+          </Text>
+        ) : (
+          <View style={styles.line}>
+            <Text numberOfLines={1} style={[styles.name, styles.shrink]}>
+              {name}
+            </Text>
+            <Text numberOfLines={1} style={[styles.detail, styles.shrink]}>
+              {detail}
+            </Text>
+          </View>
+        )}
         <PersonAffiliationLine
           affiliations={affiliations}
           testID={affiliationTestID}
@@ -67,5 +81,16 @@ const getStyles = cacheStyles((theme: Theme) => ({
     fontSize: theme.rem(1),
     fontWeight: '600' as const,
     color: theme.primaryTextColor
+  },
+  line: {
+    flexDirection: 'row' as const,
+    alignItems: 'baseline' as const,
+    gap: theme.rem(0.5)
+  },
+  shrink: { flexShrink: 1 },
+  detail: {
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(0.875),
+    color: theme.secondaryTextColor
   }
 }))

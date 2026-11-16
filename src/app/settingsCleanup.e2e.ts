@@ -695,7 +695,7 @@ async function main(): Promise<void> {
     await fill(m, 'Name', 'Mookie Betts')
     await tap(m, 'Save name')
     await contains(page, 'Name saved')
-    await m.scrollUntilVisible({ element: { text: 'Node administration' } })
+    await m.scrollUntilVisible({ element: { text: 'Delete account' } })
     await capture(m, artifacts!, 'account-bottom-after.png')
     const order = await page.evaluate(() => {
       const actions = [
@@ -704,17 +704,22 @@ async function main(): Promise<void> {
       const signOut = actions.find(
         node => node.getAttribute('aria-label') === 'Sign out'
       )!
-      const administration = actions.find(
-        node => node.textContent === 'Node administration'
+      // Node administration is no longer on Account: Delete account follows.
+      const deletion = actions.find(
+        node => node.textContent === 'Delete account'
       )!
       return {
+        absent: !actions.some(
+          node => node.textContent === 'Node administration'
+        ),
         follows: Boolean(
-          signOut.compareDocumentPosition(administration) &
+          signOut.compareDocumentPosition(deletion) &
           Node.DOCUMENT_POSITION_FOLLOWING
         ),
         background: getComputedStyle(signOut).backgroundColor
       }
     })
+    expect(order.absent).equals(true)
     expect(order.follows).equals(true)
     expect(order.background).equals('rgba(0, 0, 0, 0)')
     await tap(m, 'Sign out')

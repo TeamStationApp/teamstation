@@ -676,10 +676,14 @@ const SIGNING_PRELUDE = [
   `[ -s "$TS_KEYSTORE" ] || fail 'The ${RELEASE_KEYSTORE_SECRET} secret file is missing'`
 ]
 
-/** Fails unless `$report` names exactly one signer, the release certificate. */
+/**
+ * Fails unless `$report` names exactly one signer, the release certificate.
+ * A tool may print the same signer once per signature scheme, so the check
+ * counts distinct certificates.
+ */
 function certificateCheck(subject: string, extract: string): string[] {
   return [
-    `digests="$(printf '%s\\n' "$report" | ${extract} | tr -d ':' | tr 'A-F' 'a-f')"`,
+    `digests="$(printf '%s\\n' "$report" | ${extract} | tr -d ':' | tr 'A-F' 'a-f' | sort -u)"`,
     `[ "$(printf '%s\\n' "$digests" | grep -c .)" -eq 1 ] || fail '${subject} does not have exactly one signer'`,
     `case "$digests" in ${RELEASE_CERTIFICATE}*) ;; *) fail '${subject} is not signed with the release certificate' ;; esac`,
     `echo '${subject} is signed with the release certificate.'`
@@ -698,7 +702,9 @@ export function signApkScript(dir: string): string {
     `report="$("$tools"apksigner verify --print-certs "$1")" || fail 'The signed release APK does not verify'`,
     ...certificateCheck(
       'The release APK',
-      "sed -n -E 's/^Signer #[0-9]+ certificate SHA-256 digest: *([0-9A-Fa-f]+).*/\\1/p'"
+      // apksigner prints "V3.0 Signer: certificate SHA-256 digest: <hex>",
+      // and "Signer #1 certificate …" in its verbose form.
+      "sed -n -E 's/^.*[Ss]igner.* certificate SHA-256 digest: *([0-9A-Fa-f]+).*/\\1/p'"
     )
   ].join('\n')
 }

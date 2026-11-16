@@ -205,4 +205,24 @@ describe('compact node access', () => {
     })
     expect(text()).includes('No accounts match').and.not.includes('Hank Aaron')
   })
+  it('opens User Management from its row, and has no row without somewhere to go', async () => {
+    const f = fixture()
+    let opened = 0
+    await mount(
+      <NodeAdministrationScreen
+        client={f.client}
+        onChanged={() => undefined}
+        onUserManagement={() => {
+          opened += 1
+        }}
+      />
+    )
+    const row = find('User Management')
+    expect(row?.textContent).includes('chevron_right')
+    await press('User Management')
+    expect(opened).equals(1)
+    await unmount()
+    await open(f)
+    expect(text()).not.includes('User Management')
+  })
 })

@@ -9,14 +9,24 @@ import {
   selectAccountCatalogPicture
 } from '../media/pictureCatalog'
 import type { SpaceSettings } from '../media/spacesHls'
+import { setAudit } from '../middleware/withAudit'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
+import { administeredId } from './account'
 
 export function pictureRoutes(
   db: Kysely<Database>,
   space: SpaceSettings
 ): Router {
   const router = Router()
+  /** A catalog picture for this account; one it does not offer is a 400. */
+  const choose = async (userId: string, catalogId: unknown): Promise<void> => {
+    await selectAccountCatalogPicture(db, userId, catalogId).catch(
+      (error: unknown) => {
+        throw error instanceof TypeError ? badRequest(error.message) : error
+      }
+    )
+  }
   router.get(
     '/pictures',
     withAsync(async (_req, res) => {
@@ -29,12 +39,18 @@ export function pictureRoutes(
     withAsync(async (req, res) => {
       const actor = req.actor
       if (actor == null || isMachine(actor)) throw unauthorized()
-      try {
-        await selectAccountCatalogPicture(db, actor.userId, req.body?.catalogId)
-      } catch (error) {
-        if (error instanceof TypeError) throw badRequest(error.message)
-        throw error
-      }
+      await choose(actor.userId, req.body?.catalogId)
+      res.json({ ok: true })
+    })
+  )
+  router.put(
+    '/users/:userId/account/catalog-picture',
+    requireActor,
+    withAsync(async (req, res) => {
+      // A node administrator choosing for somebody, from User Management.
+      const userId = await administeredId(db, req)
+      await choose(userId, req.body?.catalogId)
+      setAudit(res.locals, { entityType: 'user', entityId: userId })
       res.json({ ok: true })
     })
   )

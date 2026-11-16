@@ -17,6 +17,38 @@ const roundTrip = (route: Route): Route => {
 }
 
 describe('addresses', function () {
+  it('writes and reads User Management, its tabs and another person’s account', () => {
+    expect(routePath({ name: 'userManagement' })).equals('/node/users')
+    expect(routePath({ name: 'userManagement', tab: 'logins' })).equals(
+      '/node/users'
+    )
+    expect(routePath({ name: 'userManagement', tab: 'sessions' })).equals(
+      '/node/users?tab=sessions'
+    )
+    for (const route of [
+      { name: 'userManagement' },
+      { name: 'userManagement', tab: 'sessions' },
+      { name: 'userManagement', tab: 'users' },
+      { name: 'adminAccount', userId: 'usr_1111111111111111111112' }
+    ] as const)
+      expect(roundTrip(route)).deep.equals(route)
+    expect(parseRoute('/node/users', 'tab=logins')).deep.equals({
+      name: 'userManagement'
+    })
+    expect(parseRoute('/node/users', 'tab=elsewhere')).deep.equals({
+      name: 'userManagement'
+    })
+    expect(parseRoute('/node/users/101/account')).deep.equals({
+      name: 'adminAccount',
+      userId: 'usr_111111111111111111112k'
+    })
+    expect(parseRoute('/node/users/nobody/account')).deep.equals({
+      name: 'userManagement',
+      tab: 'users'
+    })
+    expect(parseRoute('/node')).deep.equals({ name: 'nodeAdministration' })
+  })
+
   it('round-trips team return context on every settings child', () => {
     for (const name of [
       'groupLocation',

@@ -117,6 +117,24 @@ describe('AppHeader', () => {
       expect(pressed).deep.equals(['account', 'notifications'])
     })
 
+    it('ends with Node administration for a node administrator, and only then', async () => {
+      let opened = 0
+      await header({
+        account,
+        notifications,
+        nodeAdministration: { onPress: () => opened++ }
+      })
+      await openMenu(PICTURE)
+      expect(rows()).deep.equals([
+        'Account',
+        'Notifications',
+        'Node administration'
+      ])
+      await click(byLabel('Node administration'))
+      await settle()
+      expect(opened).equals(1)
+    })
+
     it('leaves out Notifications where the header has none', async () => {
       await header({ account })
       await openMenu(PICTURE)

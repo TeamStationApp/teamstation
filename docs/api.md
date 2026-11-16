@@ -100,6 +100,15 @@ anybody, signed in or not, with `when`, `order`, `hasVideo`, `cursor` and
 the whole filtered list, each with its `optionalHeader` text, so a table's
 columns do not depend on which rows are loaded.
 
+**Node activity.** `GET /node/logins` and `GET /node/sessions`, for node
+administrators, always answer a `Page<ActivityRow>`, newest first, with
+`limit` (1 to 100, 50 by default) and `cursor`. They take no `paged` and
+nothing else. A cursor holds the last row's time to the microsecond and its
+id, so a page never repeats or skips a row that ties within a millisecond,
+and rows that arrive meanwhile sort above every cursor. `prevCursor`,
+`anchorId` and `counts` are always null. The sessions' first page adds
+`recordedSince`.
+
 **Lists with their own cursor.** `GET /players/:userId/highlights` pages with
 `before`, passing back a `nextBefore` of `<iso>|<id>`. It reads on until a page
 is full or it has scanned 500 plays, so a short page with `nextBefore` set can

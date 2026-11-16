@@ -73,6 +73,7 @@ export const DEV_ONLY_ROUTES = new Set(['chatBench'])
 /** The routes whose screens are settings, listed with their text. */
 const SETTINGS_ROUTES = new Set([
   'account',
+  'adminAccount',
   'gameSettings',
   'groupAddPeople',
   'groupInvites',
@@ -88,6 +89,7 @@ const SETTINGS_ROUTES = new Set([
   'umpireNoteTypes',
   'umpireRequirementEdit',
   'umpireRequirements',
+  'userManagement',
   'umpireTypes'
 ])
 

@@ -244,6 +244,17 @@ const argonParameters = {
     salt: { type: 'string', pattern: '^[0-9a-f]{32}$' }
   }
 }
+/** What make of device a sign-in is on, from the native app (`asDeviceModel`). */
+const deviceModelSchema = {
+  type: 'string',
+  minLength: 1,
+  maxLength: 80,
+  description:
+    'The device the native app is signing in on ("iPhone", "Samsung ' +
+    'SM-S911B", "Apple TV"). Stored as the session’s device name, which ' +
+    'node administrators see in User Management; the session still lasts ' +
+    'a browser’s 30 days. A `deviceName` beside it wins'
+}
 const clientHashSchema = {
   type: 'string',
   pattern: '^[0-9a-f]{64}$',
@@ -1061,6 +1072,96 @@ const userIdsBody = {
   }
 }
 
+/** One login or device session, as User Management lists them. */
+const activityRowSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: [
+    'id',
+    'at',
+    'userId',
+    'displayName',
+    'email',
+    'avatarUrl',
+    'lastActiveAt',
+    'device',
+    'appType'
+  ],
+  properties: {
+    id: { type: 'string' },
+    at: {
+      type: 'string',
+      format: 'date-time',
+      description: 'When they signed in, or when the session started'
+    },
+    userId: { type: 'string' },
+    displayName: { type: 'string' },
+    email: {
+      type: ['string', 'null'],
+      description: 'The verified primary address, else the oldest'
+    },
+    avatarUrl: { type: ['string', 'null'] },
+    lastActiveAt: {
+      type: ['string', 'null'],
+      format: 'date-time',
+      description:
+        'The account’s latest use of any sign-in, token or key, to the minute: the same on every row of one person'
+    },
+    device: {
+      type: 'string',
+      description:
+        'The name the device signed in with, the name it gave chat, or what its user agent says; `Unknown device` otherwise'
+    },
+    appType: {
+      type: 'string',
+      enum: ['Web', 'iOS', 'Android', 'tvOS', 'Unknown']
+    }
+  }
+}
+const activityParameters = [
+  {
+    name: 'limit',
+    in: 'query',
+    required: false,
+    schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 }
+  },
+  {
+    name: 'cursor',
+    in: 'query',
+    required: false,
+    description: 'A `nextCursor` this list answered',
+    schema: { type: 'string' }
+  }
+]
+const activityPage = (recordedSince: boolean): object => ({
+  type: 'object',
+  additionalProperties: false,
+  required: ['items', 'nextCursor', 'prevCursor', 'anchorId', 'counts'],
+  properties: {
+    items: { type: 'array', items: activityRowSchema },
+    nextCursor: { type: ['string', 'null'] },
+    prevCursor: { type: 'null' },
+    anchorId: { type: 'null' },
+    counts: { type: 'null' },
+    ...(recordedSince
+      ? {
+          recordedSince: {
+            type: ['string', 'null'],
+            format: 'date-time',
+            description:
+              'On a first page: when device sessions began to be recorded. There are none before it'
+          }
+        }
+      : {})
+  }
+})
+/** The account a node administrator is changing, in a path. */
+const targetUser = {
+  name: 'userId',
+  in: 'path',
+  required: true,
+  schema: { type: 'string' }
+}
 const errorResponse = {
   description: 'The one error shape used by every failure',
   content: {
@@ -3522,6 +3623,122 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/users/{userId}/account': {
+        get: {
+          summary:
+            'A node administrator reads another account as its owner would, without its password',
+          description:
+            'For User Management’s Account page. A signed-in node administrator only: machines, Tess and API keys get 403. `hasPassword` is false and no password parameters or salt are sent. A merged, deleted or switched-off account is 404.',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          responses: {
+            200: accountResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account/name': {
+        put: {
+          summary: 'A node administrator saves another account’s name',
+          description:
+            'As `PUT /me/account/name` does for the person, with the same body; audited under the administrator.',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['displayName'],
+                  properties: {
+                    displayName: {
+                      type: 'string',
+                      minLength: 1,
+                      maxLength: 120
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            200: accountResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account/photo': {
+        put: {
+          summary: 'A node administrator stores another account’s picture',
+          description:
+            'As `PUT /me/account/photo` does for the person, with the same body.',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['image'],
+                  properties: { image: { type: 'object' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: accountResponse,
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
+        delete: {
+          summary: 'A node administrator sets another account back to initials',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          responses: {
+            200: accountResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
+      '/users/{userId}/account/catalog-picture': {
+        put: {
+          summary:
+            'A node administrator chooses a shared picture for another account',
+          security: [{ bearer: [] }],
+          parameters: [targetUser],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['catalogId'],
+                  properties: { catalogId: { type: 'string' } }
+                }
+              }
+            }
+          },
+          responses: {
+            200: { description: 'Picture reference saved' },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        }
+      },
       '/me/account/catalog-picture': {
         put: {
           summary: 'Select a shared picture for your own account',
@@ -3745,7 +3962,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   required: ['email', 'clientHash'],
                   properties: {
                     email: { type: 'string' },
-                    clientHash: clientHashSchema
+                    clientHash: clientHashSchema,
+                    deviceModel: deviceModelSchema
                   }
                 }
               }
@@ -3830,7 +4048,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   required: ['email', 'code'],
                   properties: {
                     email: { type: 'string' },
-                    code: { type: 'string' }
+                    code: { type: 'string' },
+                    deviceModel: deviceModelSchema
                   }
                 }
               }
@@ -6979,6 +7198,49 @@ export function openApiDocument(version: string): OpenApiDocument {
           }
         }
       },
+      '/node/logins': {
+        get: {
+          summary:
+            'Every stored sign-in, newest first, for a node administrator',
+          description:
+            'Each sign-in is a login, so one person signing in three times is three rows; a restored session or a refreshed token is none. ' +
+            'Pages walk down from a cursor, so sign-ins that arrive meanwhile never repeat or skip a row. Anything but `limit` and `cursor` is a 400. ' +
+            'Signed-in node administrators only: machines, API keys and Tess get 403.',
+          security: [{ bearer: [] }],
+          parameters: activityParameters,
+          responses: {
+            200: {
+              description: 'A page of logins',
+              content: { 'application/json': { schema: activityPage(false) } }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            429: errorResponse
+          }
+        }
+      },
+      '/node/sessions': {
+        get: {
+          summary:
+            'Every device session, newest start first, for a node administrator',
+          description:
+            'A device session starts when a sign-in is used for the first time, or after an hour or more without use; each sign-in is one device. ' +
+            'Paged as `/node/logins` is. The first page carries `recordedSince`.',
+          security: [{ bearer: [] }],
+          parameters: activityParameters,
+          responses: {
+            200: {
+              description: 'A page of sessions',
+              content: { 'application/json': { schema: activityPage(true) } }
+            },
+            400: errorResponse,
+            401: errorResponse,
+            403: errorResponse,
+            429: errorResponse
+          }
+        }
+      },
       '/node/mail': {
         get: {
           summary:
@@ -7043,6 +7305,27 @@ export function openApiDocument(version: string): OpenApiDocument {
         }
       },
       '/users/{userId}/administration': {
+        get: {
+          summary:
+            'A signed-in node administrator reads one account: every address, its last use, and every team, season and league it belongs to, holds a role on or follows',
+          description:
+            'Across every row merged into the account. Each affiliation is `{kind, id, name, roles}`, teams first, then seasons, then leagues, by name; roles are any of admin, head coach, coach, assistant, scorekeeper, songkeeper, videographer, player, member and following, in that order. A team’s owner or manager is its admin. Merged-away teams are left out. A merged or unknown account is 404.',
+          security: [{ bearer: [] }],
+          parameters: [
+            {
+              name: 'userId',
+              in: 'path',
+              required: true,
+              schema: userIdSchema
+            }
+          ],
+          responses: {
+            200: { description: 'The account, its addresses and affiliations' },
+            401: errorResponse,
+            403: errorResponse,
+            404: errorResponse
+          }
+        },
         patch: {
           summary:
             'A human node administrator changes node role or reversible account suspension',
@@ -7108,6 +7391,11 @@ export function openApiDocument(version: string): OpenApiDocument {
             'state, filtered by query (name or verified email, at most 120 ' +
             'characters). This view requires no externalId and does not alter ' +
             'the default identity-lookup response. ' +
+            'With view=directory, a signed-in node administrator searches ' +
+            'open accounts by name or any address, and receives at most 10 ' +
+            '`{userId, displayName, avatarUrl, email, affiliations}`: `email` ' +
+            'is the address that matched, else the primary, and ' +
+            '`affiliations` the line Add Person shows under a name. ' +
             'With `forTeam` instead, the answer is the players a roster ' +
             'manager of that team (or, with `forGame`, a scorekeeper of either ' +
             'team in that game) may add to it: every live player, and every ' +
@@ -7158,9 +7446,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             {
               name: 'view',
               in: 'query',
-              schema: { type: 'string', enum: ['administration'] },
+              schema: { type: 'string', enum: ['administration', 'directory'] },
               description:
-                'Omitted: existing external-ID lookup. administration: human node administrator account view.'
+                'Omitted: existing external-ID lookup. administration: human node administrator account view. directory: User Management’s people search for a human node administrator, which takes only q and limit.'
             },
             {
               name: 'query',
@@ -7209,7 +7497,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents.'
+                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents. With view=directory: at most 120 characters, matched anywhere in the display name or any address, ignoring case; those whose name or an address starts with it come first, then by name; empty answers [].'
             },
             {
               name: 'limit',
@@ -7221,7 +7509,7 @@ export function openApiDocument(version: string): OpenApiDocument {
                 default: 100
               },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100.'
+                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100. With view=directory: default and maximum 10.'
             },
             {
               name: 'capped',
@@ -10748,7 +11036,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                         'The sign-in request the spender is itself polling ' +
                         'for. When it is this link’s, the poll is not ' +
                         'approved as well, so the spender gets one session'
-                    }
+                    },
+                    deviceModel: deviceModelSchema
                   }
                 }
               }
@@ -11058,7 +11347,8 @@ export function openApiDocument(version: string): OpenApiDocument {
                   properties: {
                     requestId: { type: 'string' },
                     clientSecret: { type: 'string' },
-                    deviceName: { type: 'string' }
+                    deviceName: { type: 'string' },
+                    deviceModel: deviceModelSchema
                   }
                 }
               }

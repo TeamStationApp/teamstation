@@ -74,7 +74,7 @@ it is changed.
 
 At window widths below the 60rem content maximum plus a 16rem sidebar, the header's actions live in two small menus rather than as loose icons. The
 TeamStation mark opens About TeamStation and features such as Ask Tess, and the
-person's picture opens Account and Notifications. Each is a `HeaderMenu`: a
+person's picture opens Account and Notifications (and, for a node administrator, Node administration). Each is a `HeaderMenu`: a
 dropdown lined up with its button's edge, with a blurred background and a drop
 shadow. With no picture and no Tess, as when signed out, the mark opens About
 directly. A new header action is a row in one of these, not a new icon in the
@@ -88,9 +88,12 @@ Ask Tess appears at the right of the primary header when available. Tess opens
 in her own full-height panel on the right, outside that header, with a resize
 divider on her left edge. At narrow widths Tess fills the screen until closed.
 The top-left mark has no action. Notifications and its pending indicator sit above
-a bottom-pinned account row in the sidebar. The account row shows the avatar and
-display name; its whole area opens Account directly. The header account menu
-remains available when the sidebar is absent.
+a bottom-pinned account row in the sidebar. For a node administrator, Node
+administration sits between them, directly above the account row. The account
+row shows the avatar and display name; its whole area opens Account directly.
+The header account menu remains available when the sidebar is absent, and for a
+node administrator ends with Node administration. Account itself does not offer
+it.
 
 ## Cards and collections
 

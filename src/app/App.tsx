@@ -69,7 +69,7 @@ import { entityChats, entityPreviewLoader } from './chat/entityChats'
 import { keyStore } from './chat/keyStore'
 import { LinkDeviceScreen } from './chat/LinkDeviceScreen'
 import { NewDmScreen } from './chat/NewDmScreen'
-import { thisDevice } from './chat/thisDevice'
+import { signInDeviceModel, thisDevice } from './chat/thisDevice'
 import {
   AppHeader,
   AppNav,
@@ -169,6 +169,7 @@ import { ScoringScreen } from './scoring/ScoringScreen'
 import { ServerScoringSource } from './scoring/scoringSource'
 import { AccountScreen } from './screens/AccountScreen'
 import { AddPlayerScene } from './screens/AddPlayerScene'
+import { AdminAccountScreen } from './screens/AdminAccountScreen'
 import { AutoSchedulerScreen } from './screens/AutoSchedulerScreen'
 import { ChatReportsScreen } from './screens/ChatReportsScreen'
 import { CoachGameScreen } from './screens/CoachGameScreen'
@@ -215,6 +216,7 @@ import {
   TeamStationTvScreen,
   TvBrowserHandoff
 } from './screens/TeamStationTvScreen'
+import { UserManagementScreen } from './screens/UserManagementScreen'
 import { VenueScreen } from './screens/VenueScreen'
 import { startSentry, useSentryUser } from './sentry'
 import { ErrorBoundary } from './sentrySdk'
@@ -501,12 +503,14 @@ function Shell(props: AppProps): React.ReactElement {
         ? new TeamStationClient({
             baseUrl: apiBaseUrl,
             token: initialToken,
-            passwordKdf
+            passwordKdf,
+            deviceModel: signInDeviceModel()
           })
         : new CachingClient({
             baseUrl: apiBaseUrl,
             token: initialToken,
             passwordKdf,
+            deviceModel: signInDeviceModel(),
             openCache: documentCache
           }),
     [apiBaseUrl, initialToken, documentCache]
@@ -3112,9 +3116,47 @@ function Shell(props: AppProps): React.ReactElement {
           push({ name: 'promoteExternal', id: group.id })
         }}
       />
+    ) : top.name === 'userManagement' ? (
+      <UserManagementScreen
+        client={client}
+        allowed={session?.user.isAdmin === true}
+        tab={top.tab}
+        onTab={next => {
+          replace({
+            name: 'userManagement',
+            ...(next === 'logins' ? {} : { tab: next })
+          })
+        }}
+        onEditAccount={userId => {
+          push({ name: 'adminAccount', userId })
+        }}
+        onOpenGroup={group => {
+          push({ name: 'group', ...group })
+        }}
+      />
+    ) : top.name === 'adminAccount' && session != null ? (
+      <AdminAccountScreen
+        client={client}
+        session={session}
+        allowed={session.user.isAdmin}
+        userId={top.userId}
+        onAccountChanged={user => {
+          setSession(current =>
+            current?.user.id !== user.id ? current : { ...current, user }
+          )
+        }}
+      />
     ) : top.name === 'nodeAdministration' ? (
       <NodeAdministrationScreen
         client={client}
+        // Offered only where it opens: to a node administrator.
+        onUserManagement={
+          session?.user.isAdmin === true
+            ? () => {
+                push({ name: 'userManagement' })
+              }
+            : undefined
+        }
         onChanged={userId => {
           refreshRoles()
           if (session?.user.id === userId)
@@ -3432,9 +3474,6 @@ function Shell(props: AppProps): React.ReactElement {
         }}
         onCreateApiKey={() => {
           push({ name: 'apiKeyNew' })
-        }}
-        onNodeAdministration={() => {
-          push({ name: 'nodeAdministration' })
         }}
         onAccountChanged={user => {
           setSession(current =>
@@ -3899,6 +3938,16 @@ function Shell(props: AppProps): React.ReactElement {
             if (top?.name !== 'notifications') push({ name: 'notifications' })
           }
         }
+  // Node administration is reached from beside the account: the sidebar's
+  // row above it, or the account menu's last row where there is no sidebar.
+  const nodeAdministration = isAdmin
+    ? {
+        onPress: () => {
+          if (top?.name !== 'nodeAdministration')
+            push({ name: 'nodeAdministration' })
+        }
+      }
+    : undefined
   const account =
     session == null
       ? undefined
@@ -3915,6 +3964,7 @@ function Shell(props: AppProps): React.ReactElement {
     <AppHeader
       apiBaseUrl={apiBaseUrl}
       isAdmin={isAdmin}
+      nodeAdministration={nodeAdministration}
       buildsClient={session == null ? undefined : client}
       title={
         chromeFrame?.name === 'conversation'
@@ -4104,6 +4154,7 @@ function Shell(props: AppProps): React.ReactElement {
                           <AppSidebar
                             account={account}
                             notifications={notifications}
+                            nodeAdministration={nodeAdministration}
                             selected={tab}
                             onSelect={selectTab}
                             unread={chatOn && hasUnread(chatList)}

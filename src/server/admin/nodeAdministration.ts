@@ -7,10 +7,11 @@ import type {
   NodeAccount,
   NodeAccountChange
 } from '../../common/nodeAdministration'
-import { type Actor, signOutEverywhere } from '../auth/sessions'
+import { type Actor, isHumanSession, signOutEverywhere } from '../auth/sessions'
 import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
+import { likeLiteral } from '../db/likeText'
 import { requireDirectAdmin } from '../groups/adminGuard'
 import { currentActor } from '../groups/rights'
 import { revokeStreams } from '../live/revokeStreams'
@@ -26,6 +27,20 @@ export async function requireNodeAdmin(
   if (!fresh.isAdmin) throw forbidden(message)
   return fresh
 }
+/**
+ * A node administrator signed in themselves: never a machine, Tess or an API
+ * key acting for one. What User Management reads and changes is for their
+ * own eyes and hands.
+ */
+export async function requireSignedInNodeAdmin(
+  db: Kysely<Database>,
+  actor: Actor,
+  message: string
+): Promise<Actor> {
+  if (!isHumanSession(actor)) throw forbidden(message)
+  return await requireNodeAdmin(db, actor, message)
+}
+
 /** Node administrators who can still sign in and act. */
 export async function activeNodeIds(db: Kysely<Database>): Promise<string[]> {
   return (
@@ -77,21 +92,13 @@ export async function nodeAccounts(
   if (query.trim() !== '')
     rows = rows.where(eb =>
       eb.or([
-        eb(
-          'display_name',
-          'ilike',
-          '%' + query.replace(/[\\%_]/g, '\\$&') + '%'
-        ),
+        eb('display_name', 'ilike', '%' + likeLiteral(query) + '%'),
         eb.exists(
           eb
             .selectFrom('user_emails')
             .select('id')
             .whereRef('user_emails.user_id', '=', 'users.id')
-            .where(
-              'email',
-              'ilike',
-              '%' + query.replace(/[\\%_]/g, '\\$&') + '%'
-            )
+            .where('email', 'ilike', '%' + likeLiteral(query) + '%')
         )
       ])
     )

@@ -22,9 +22,42 @@ export default [
   // on three casts that are load-bearing — `--fix` removed them and broke the
   // build.
   {
-    files: ['src/app/**/*.ts', 'src/app/**/*.tsx', 'src/common/**/*.ts'],
+    files: [
+      'src/app/**/*.ts',
+      'src/app/**/*.tsx',
+      'src/common/**/*.ts',
+      // The app's own test helpers, in its project.
+      'src/test/fakeScoreboardSocket.ts',
+      'src/test/PagedListStandIn.tsx',
+      'src/test/responderDrag.ts',
+      'src/test/scoringHelpers.ts',
+      'src/test/scoreboardServer.e2e.ts'
+    ],
     languageOptions: {
       parserOptions: { projectService: false, project: './tsconfig.app.json' }
+    }
+  },
+
+  // The server and its tests read their types from the server's own project,
+  // as `npm run typecheck` does. Under the root tsconfig every one of them
+  // would share a program holding the whole app as well, and one ESLint
+  // process holding both ran out of an 8 GB heap.
+  {
+    files: ['src/server/**/*.ts', 'src/migrate/**/*.ts', 'src/test/**/*.ts'],
+    ignores: [
+      'src/test/fakeScoreboardSocket.ts',
+      'src/test/scoringHelpers.ts',
+      'src/test/scoreboardServer.e2e.ts',
+      'src/test/scoringBrowser.e2e.ts',
+      'src/test/chatBrowserLegacyActions.e2e.ts',
+      'src/test/nativeLocationFailure.ts',
+      'src/test/responderDrag.ts'
+    ],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.server.test.json'
+      }
     }
   },
 
