@@ -279,6 +279,22 @@ describe('the wall clock of a live stream (U25)', function () {
     expect(await segmentWrittenAt(join(live, 'missing.m4s'))).equals(null)
   })
 
+  it('asks for a batch’s write times together, not one after another', async function () {
+    const live = join(dir, 'writtenTogether')
+    await mkdir(live)
+    await writeLive(plain, live, { seconds: 4 })
+    let inFlight = 0
+    let most = 0
+    await scanNewSegments(live, undefined, atNow, undefined, async () => {
+      inFlight++
+      most = Math.max(most, inFlight)
+      await new Promise(resolve => setTimeout(resolve, 20))
+      inFlight--
+      return NOW - 500
+    })
+    expect(most).equals(4)
+  })
+
   /** Damages one listed segment of a live directory, as `withBrokenRun`. */
   async function breakSegment(live: string, uri: string): Promise<void> {
     const path = join(live, uri)

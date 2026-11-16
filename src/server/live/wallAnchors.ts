@@ -148,6 +148,14 @@ export async function scanNewSegments(
       ).placement
     }
   }
+  // Asked for together, not one segment at a time: a listed segment is
+  // written in full, and each stream's poll would otherwise wait on them in
+  // series.
+  const writes = fresh.map(
+    async segment => await writtenAt(join(directory, segment.uri))
+  )
+  // Read only for an unstamped segment; the rest are dropped unread.
+  for (const write of writes) write.catch(() => undefined)
   for (const [index, segment] of fresh.entries()) {
     const lengthMs = segment.durationSec * 1000
     let frames: ScannedFrame[] = []
@@ -190,7 +198,7 @@ export async function scanNewSegments(
       // amount each — and since a point never goes behind the one before it,
       // each stream's timeline settled at the latest of its looks: angles
       // played side by side a second apart.
-      const written = await writtenAt(join(directory, segment.uri))
+      const written = await writes[index]
       const arrivedAt = written == null ? seenAt : Math.min(written, seenAt)
       const wallMs = Math.round(
         Math.max(
