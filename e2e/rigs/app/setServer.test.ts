@@ -40,7 +40,7 @@ describe('setServer', function () {
   it('opens the link on a phone, waits for the app to keep it, then launches it fresh', async function () {
     const { device, calls } = phone()
     await setServer({
-      platform: 'ios',
+      platform: 'android',
       udid: 'phone-1',
       appId: 'app.teamstation.develop',
       origin: 'https://e2e-03.teamstation.app',
@@ -53,7 +53,7 @@ describe('setServer', function () {
       'launchApp'
     ])
     expect(calls[1][1]).deep.equals({
-      link: serverLink('ios', 'https://e2e-03.teamstation.app')
+      link: serverLink('android', 'https://e2e-03.teamstation.app')
     })
     expect(String((calls[2][1] as { text: string }).text)).includes(
       'e2e-03\\.teamstation\\.app'
@@ -62,6 +62,39 @@ describe('setServer', function () {
       appId: 'app.teamstation.develop',
       stopApp: true
     })
+    // An iPhone gets the link handed to the develop app by its id.
+    const iphone = phone()
+    const ran: string[][] = []
+    await setServer({
+      platform: 'ios',
+      udid: 'phone-2',
+      appId: 'app.teamstation.develop',
+      origin: 'https://e2e-03.teamstation.app',
+      device: iphone.device,
+      run: async (file, args) => {
+        ran.push([file, ...args])
+      }
+    })
+    expect(iphone.calls.map(([name]) => name)).deep.equals([
+      'stopApp',
+      'assertVisible',
+      'launchApp'
+    ])
+    expect(ran).deep.equals([
+      [
+        'xcrun',
+        'devicectl',
+        'device',
+        'process',
+        'launch',
+        '--device',
+        'phone-2',
+        '--terminate-existing',
+        '--payload-url',
+        serverLink('ios', 'https://e2e-03.teamstation.app'),
+        'app.teamstation.develop'
+      ]
+    ])
     let failure: unknown
     await setServer({
       platform: 'android',

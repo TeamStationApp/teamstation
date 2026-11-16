@@ -92,7 +92,24 @@ export async function setServer(options: {
   if (device == null)
     throw new Error(`setServer on ${platform} needs a maestro-d device`)
   await device.stopApp({ appId })
-  await device.openLink({ link })
+  if (platform === 'ios') {
+    // Handed to the develop app by its id: on a phone, the system's own
+    // handling of a link stops short of the app it names.
+    await (options.run ?? realRun)('xcrun', [
+      'devicectl',
+      'device',
+      'process',
+      'launch',
+      '--device',
+      udid,
+      '--terminate-existing',
+      '--payload-url',
+      link,
+      appId
+    ])
+  } else {
+    await device.openLink({ link })
+  }
   await device.assertVisible({
     text: `.*${hostOf(origin).replace(/\./g, '\\.')}.*Restart TeamStation.*`
   })
