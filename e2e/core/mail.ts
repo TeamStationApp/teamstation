@@ -30,15 +30,17 @@ export function gogRunner(settings: LocalSettings): GogRunner {
       'no mail access: set gogEnvFile in the local settings'
     )
   }
+  // gog prints its dates in the local zone with no offset, and `parseSearch`
+  // reads them as UTC: run it in UTC, after the env file, so they are.
   return args =>
     execFileSync(
       '/bin/zsh',
-      ['-c', 'source "$0"; exec gog "$@"', gogEnvFile, ...args],
+      ['-c', 'source "$0"; TZ=UTC exec gog "$@"', gogEnvFile, ...args],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }
     )
 }
 
-/** The `-p` table: id, date, from and subject, in fixed columns. */
+/** The `-p` table: id, date (UTC, as `gogRunner` runs it), from and subject, in fixed columns. */
 export function parseSearch(output: string): MailMessage[] {
   const lines = output.split('\n').filter(Boolean)
   const header = lines[0] ?? ''

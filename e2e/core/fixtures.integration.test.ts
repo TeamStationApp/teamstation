@@ -340,13 +340,19 @@ describe('ctx.mail', function () {
     expect(() => gogRunner({})).to.throw(BlockedError)
     const dir = mkdtempSync(join(tmpdir(), 'gog-'))
     const env = join(dir, 'env')
-    writeFileSync(env, `export PATH="${dir}:$PATH"\n`)
-    writeFileSync(join(dir, 'gog'), '#!/bin/sh\necho "args: $*"\n', {
-      mode: 0o755
-    })
-    expect(gogRunner({ gogEnvFile: env })(['gmail', 'read', 'x'])).includes(
-      'args: gmail read x'
+    writeFileSync(
+      env,
+      `export PATH="${dir}:$PATH"\nexport TZ=America/Los_Angeles\n`
     )
+    writeFileSync(
+      join(dir, 'gog'),
+      '#!/bin/sh\necho "args: $*"\necho "zone: $TZ"\n',
+      { mode: 0o755 }
+    )
+    const output = gogRunner({ gogEnvFile: env })(['gmail', 'read', 'x'])
+    expect(output).includes('args: gmail read x')
+    // Its dates are read as UTC, so it runs in UTC whatever the env file says.
+    expect(output).includes('zone: UTC')
   })
 })
 
