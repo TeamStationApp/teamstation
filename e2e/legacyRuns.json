@@ -2085,6 +2085,15 @@
       "needs": "web"
     }
   ],
+  "src/app/deviceAutoSchedulerIOS.e2e.ts": [
+    {
+      "label": "ipad",
+      "needs": "ipad-sim",
+      "env": {
+        "TS_AUTO_SCHEDULER_IOS_PORT": "8095"
+      }
+    }
+  ],
   "src/app/autoSchedulerFixesIOS.e2e.ts": [
     {
       "label": "I1-I3-I4",
