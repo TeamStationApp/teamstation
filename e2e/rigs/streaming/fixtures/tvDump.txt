@@ -1,0 +1,15 @@
+Attributes: Application, 0x6000aa00, pid: 4242, label: 'TeamStation TV'
+Element subtree:
+ →Application, 0x6000aa00, pid: 4242, label: 'TeamStation TV'
+    Window (Main), 0x6000aa10, {{0.0, 0.0}, {1920.0, 1080.0}}
+      Other, 0x6000aa20, {{0.0, 0.0}, {960.0, 540.0}}, label: 'PhoneA angle'
+      Other, 0x6000aa30, {{960.0, 0.0}, {960.0, 540.0}}, label: 'PhoneB angle'
+      Other, 0x6000aa40, {{0.0, 540.0}, {960.0, 540.0}}, label: 'Synthetic angle'
+        StaticText, 0x6000aa41, {{100.0, 780.0}, {700.0, 60.0}}, label: 'Camera catching up…'
+      Button, 0x6000aa50, {{1100.0, 700.0}, {200.0, 80.0}}, identifier: 'camera-PhoneA', label: 'PhoneA', Focused
+      Button, 0x6000aa51, {{1320.0, 700.0}, {200.0, 80.0}}, identifier: 'camera-PhoneB', label: 'PhoneB'
+      Button, 0x6000aa52, {{1540.0, 700.0}, {200.0, 80.0}}, identifier: 'camera-Synthetic', label: 'Synthetic'
+      Button, 0x6000aa60, {{1540.0, 900.0}, {300.0, 80.0}}, label: 'Jump to present'
+      Slider, 0x6000aa70, {{100.0, 1000.0}, {1720.0, 20.0}}, label: 'Position in the game', value: 25%
+      StaticText, 0x6000aa80, {{100.0, 40.0}, {300.0, 40.0}}, label: 'It\'s live'
+Path to element:

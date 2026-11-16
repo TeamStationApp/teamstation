@@ -179,3 +179,104 @@ describe('BuildInfoModal localBuildTime', function () {
     expect(localBuildTime('not a date')).equals('not a date')
   })
 })
+
+describe('BuildInfoModal server', function () {
+  afterEach(async function () {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+    if (host?.parentNode != null) host.parentNode.removeChild(host)
+    host = undefined
+  })
+
+  /** Types into the server field as a person would. */
+  async function typeServer(text: string): Promise<void> {
+    const field = document.querySelector<HTMLInputElement>(
+      '[aria-label="server-origin-field"]'
+    )
+    if (field == null) throw new Error('no server field')
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        'value'
+      )!.set!.call(field, text)
+      field.dispatchEvent(new window.Event('input', { bubbles: true }))
+    })
+  }
+
+  const pressLabel = async (label: string): Promise<void> => {
+    const target = document.querySelector<HTMLElement>(
+      `[aria-label="${label}"]`
+    )
+    if (target == null) throw new Error(`no ${label}`)
+    await act(async () => {
+      target.click()
+    })
+  }
+
+  it('shows the server plain, and changes nothing, in a build without the control', async function () {
+    await render(
+      <BuildInfoModal
+        apiBaseUrl="https://app.teamstation.app/api/v1"
+        info={info}
+        onClose={() => undefined}
+      />
+    )
+    expect(document.body.textContent).includes('https://app.teamstation.app')
+    expect(document.querySelector('[aria-label="server-origin"]')).equals(null)
+  })
+
+  it('keeps another server for the next launch, and the build’s own when cleared', async function () {
+    const kept: Array<string | null> = []
+    await render(
+      <BuildInfoModal
+        apiBaseUrl="https://develop.teamstation.app/api/v1"
+        info={info}
+        onClose={() => undefined}
+        serverControl={async origin => {
+          kept.push(origin)
+          return origin == null ? null : origin.replace(/^https:\/\//, '')
+        }}
+      />
+    )
+    await pressLabel('server-origin')
+    const field = document.querySelector<HTMLInputElement>(
+      '[aria-label="server-origin-field"]'
+    )
+    expect(field?.value).equals('develop.teamstation.app')
+    await typeServer('e2e-03.teamstation.app')
+    await pressLabel('server-origin-save')
+    expect(kept).deep.equals(['e2e-03.teamstation.app'])
+    expect(document.body.textContent).includes(
+      'Server set to e2e-03.teamstation.app. Restart TeamStation to use it.'
+    )
+    expect(document.querySelector('[aria-label="server-origin-field"]')).equals(
+      null
+    )
+    await pressLabel('server-origin')
+    await typeServer('')
+    await pressLabel('server-origin-save')
+    expect(kept).deep.equals(['e2e-03.teamstation.app', null])
+    expect(document.body.textContent).includes('reset to this build')
+  })
+
+  it('says why a server was refused', async function () {
+    await render(
+      <BuildInfoModal
+        apiBaseUrl="https://develop.teamstation.app/api/v1"
+        info={info}
+        onClose={() => undefined}
+        serverControl={async origin => {
+          throw new Error(`${String(origin)} is not a server's host name`)
+        }}
+      />
+    )
+    await pressLabel('server-origin')
+    await typeServer('not a host')
+    await pressLabel('server-origin-save')
+    expect(document.body.textContent).includes(
+      "not a host is not a server's host name"
+    )
+  })
+})

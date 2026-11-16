@@ -1,0 +1,27 @@
+{
+  "type": "Application",
+  "text": "Safari",
+  "bounds": { "x": 0, "y": 0, "width": 390, "height": 844 },
+  "children": [
+    { "type": "Button", "id": "TabOverviewButton", "bounds": { "x": 340, "y": 790, "width": 44, "height": 44 } },
+    { "type": "TextField", "id": "URL", "text": "app.example.test", "bounds": { "x": 20, "y": 790, "width": 300, "height": 44 } },
+    {
+      "type": "WebView",
+      "bounds": { "x": 0, "y": 47, "width": 390, "height": 730 },
+      "children": [
+        { "type": "Image", "text": "PhoneA angle", "bounds": { "x": 0, "y": 100, "width": 195, "height": 110 } },
+        {
+          "type": "Image",
+          "text": "PhoneB angle",
+          "bounds": { "x": 195, "y": 100, "width": 195, "height": 110 },
+          "children": [
+            { "type": "StaticText", "text": "Camera catching up…", "bounds": { "x": 220, "y": 140, "width": 150, "height": 20 } }
+          ]
+        },
+        { "type": "Image", "text": "Synthetic angle", "bounds": { "x": 0, "y": 210, "width": 195, "height": 110 } },
+        { "type": "Slider", "text": "Position in the game", "bounds": { "x": 10, "y": 330, "width": 370, "height": 24 } },
+        { "type": "StaticText", "text": "Tap for sound", "bounds": { "x": 120, "y": 360, "width": 150, "height": 30 } }
+      ]
+    }
+  ]
+}

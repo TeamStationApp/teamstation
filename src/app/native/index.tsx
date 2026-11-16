@@ -1,10 +1,12 @@
 import React, { useEffect, useState } from 'react'
-import { Linking, StatusBar, View } from 'react-native'
+import { Alert, Linking, StatusBar, View } from 'react-native'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 import { SafeAreaProvider } from 'react-native-safe-area-context'
 
 import { App } from '../App'
+import { lstrings, sprintf } from '../locales/strings'
 import { seedRoute } from '../navigation/useAddressBar'
+import { deviceStorage } from '../platform/deviceStorage'
 import {
   loadToken,
   loadUser,
@@ -14,7 +16,36 @@ import {
 import type { StoredUser } from '../platform/storedUser'
 import { openDocumentCache } from '../sync/cache'
 import { getTheme } from '../theme/ThemeContext'
-import { apiBaseUrl } from './config'
+import { apiBaseUrl, appOrigin, setLaunchApiBaseUrl } from './config'
+import {
+  apiBaseFor,
+  loadServerOverride,
+  saveServerOverride,
+  serverLinkOf
+} from './serverOverride'
+
+/**
+ * A develop build's `teamstation-develop://server?origin=…` link keeps the
+ * server for the next launch, and says so; it changes nothing now. Answers
+ * whether `url` was such a link.
+ */
+function keepServerLink(url: string | null | undefined): boolean {
+  const link = serverLinkOf(url)
+  if (link == null) return false
+  saveServerOverride(deviceStorage, appOrigin, link.origin).then(
+    host => {
+      Alert.alert(
+        host == null
+          ? lstrings.about_server_cleared
+          : sprintf(lstrings.about_server_set, host)
+      )
+    },
+    (error: unknown) => {
+      Alert.alert(String(error instanceof Error ? error.message : error))
+    }
+  )
+  return true
+}
 
 /**
  * The native entry point, and the twin of `app/web/index.tsx`.
@@ -47,7 +78,7 @@ import { apiBaseUrl } from './config'
 export function Root(): React.ReactElement {
   const theme = getTheme()
   const [opened, setOpened] = useState<
-    { token?: string; user?: StoredUser } | undefined
+    { token?: string; user?: StoredUser; api: string } | undefined
   >(undefined)
 
   useEffect(() => {
@@ -55,20 +86,28 @@ export function Root(): React.ReactElement {
     const settle = async (): Promise<void> => {
       // Both at once: neither waits on the other, and a slow storage read
       // should not hold up an address that is already in hand.
-      const [url, token, user] = await Promise.all([
+      const [url, token, user, override] = await Promise.all([
         Linking.getInitialURL().catch(() => null),
         loadToken(),
-        loadUser()
+        loadUser(),
+        loadServerOverride(deviceStorage, appOrigin)
       ])
       if (!live) return
-      seedRoute(url)
-      setOpened({ token, user })
+      // A server link is kept for the next launch, not opened as a route.
+      seedRoute(keepServerLink(url) ? null : (url ?? null))
+      const api = apiBaseFor(override, apiBaseUrl)
+      setLaunchApiBaseUrl(api)
+      setOpened({ token, user, api })
     }
     settle().catch(() => {
-      if (live) setOpened({})
+      if (live) setOpened({ api: apiBaseUrl })
+    })
+    const links = Linking.addEventListener('url', ({ url }) => {
+      keepServerLink(url)
     })
     return () => {
       live = false
+      links.remove()
     }
   }, [])
 
@@ -87,7 +126,7 @@ export function Root(): React.ReactElement {
           <View style={{ flex: 1, backgroundColor: theme.backgroundColor }} />
         ) : (
           <App
-            apiBaseUrl={apiBaseUrl}
+            apiBaseUrl={opened.api}
             initialToken={opened.token}
             initialUser={opened.user}
             onToken={token => {

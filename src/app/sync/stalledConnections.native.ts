@@ -1,12 +1,13 @@
 import { NativeModules, Platform } from 'react-native'
 
-import { apiBaseUrl } from '../native/config'
+import { currentApiBaseUrl } from '../native/config'
 import { renewOnDeadline } from './renewOnDeadline'
 
 /** TeamStation's API host: only its requests' progress says the link works. */
 // The host alone, as `NSURL` names it: React Native's `URL.host` adds a
 // port the URL names.
-const apiHost = new URL(apiBaseUrl).hostname
+// Read when asked, so a develop build's server override, set at boot, counts.
+const apiHost = (): string => new URL(currentApiBaseUrl()).hostname
 
 /**
  * The phone's answer to a request that missed its deadline. On iOS every
@@ -24,6 +25,6 @@ export const leaveStalledConnections: (() => void) | undefined =
           (await (
             NativeModules.TSConnections as
               { renew?: (host: string) => Promise<boolean> } | undefined
-          )?.renew?.(apiHost)) ?? false
+          )?.renew?.(apiHost())) ?? false
       )
     : undefined

@@ -1,0 +1,15 @@
+{
+  "seats": { "tester": { "origin": "https://tester.example.test" } },
+  "seatCommand": "~/git/deploy-tools/src/deploy/testerSeat.sh",
+  "goldenStore": "~/git/teamstation-e2e-goldens",
+  "mailbox": "testmailbox@example.test",
+  "seatManifest": "~/e2e-runs/tester-manifest.json",
+  "gogEnvFile": "~/.keys/gog-keyring.env",
+  "maestroClientRoot": "~/git/maestro-d/npm/maestro-d",
+  "maestroBin": "~/.maestro-d/bin/maestro-d",
+  "maestroHome": "~/.maestro-d",
+  "secretsFile": "~/.keys/e2e-secrets.json",
+  "judgeBudgetUsd": 1,
+  "sweepRef": "origin/master",
+  "ledger": "~/.config/teamstation-e2e/ledger.jsonl"
+}
