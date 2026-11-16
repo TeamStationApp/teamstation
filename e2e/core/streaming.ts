@@ -67,12 +67,6 @@ const GAME_WITH_VIDEOS = new Set([
 ])
 
 /**
- * The `TS_STREAM_*` values a streaming script names that come from the
- * `streaming` fixture world: who films, who only watches, which game, and
- * whose walk-up song. Only the names the script uses are returned, so a
- * script's own value wins over nothing it did not ask for.
- */
-/**
  * Every value the streaming world fills. A script may read one through a
  * helper its header never names (twoDevices reads TS_STREAM_EMAIL so).
  */
@@ -83,6 +77,12 @@ export const STREAMING_FIXTURE_NAMES = [
   'TS_STREAM_WALKUP_PLAYER'
 ] as const
 
+/**
+ * The `TS_STREAM_*` values a streaming script names that come from the
+ * `streaming` fixture world: who films, who only watches, which game, and
+ * whose walk-up song. Only the names the script uses are returned, so a
+ * script's own value wins over nothing it did not ask for.
+ */
 export function streamingKnown(
   file: string,
   names: readonly string[],
