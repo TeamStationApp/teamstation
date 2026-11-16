@@ -5,7 +5,7 @@
  */
 
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
+import { createHash, randomBytes } from 'node:crypto'
 import {
   chmodSync,
   copyFileSync,
@@ -351,6 +351,19 @@ export function frontProxy(apiPort: number, webPort: number): Server {
 }
 
 /**
+ * Where a checkout's own server config waits while a stack's stands in for
+ * it: one per checkout, so a run killed in one cannot lose that config to
+ * the next run in another.
+ */
+export function configBackupPath(cwd: string): string {
+  const key = createHash('sha256').update(cwd).digest('hex').slice(0, 12)
+  return join(
+    tmpdir(),
+    `teamstation-e2eSuite-serverConfig.original-${key}.json`
+  )
+}
+
+/**
  * Backs up the developer's `configFile` to `backup`, outside the scratch
  * directory each run wipes, and gives the config to build on and how to put
  * it back. A config naming `stackDatabaseUrl` is the stack's own copy, left by
@@ -408,7 +421,7 @@ export async function startLegacyStack(
   const configFile = join(cwd, 'serverConfig.json')
   const { base, restore } = backUpServerConfig(
     configFile,
-    join(tmpdir(), 'teamstation-e2eSuite-serverConfig.original.json'),
+    configBackupPath(cwd),
     STACK_DATABASE_URL
   )
 

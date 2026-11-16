@@ -16,6 +16,7 @@ import { describe, it } from 'mocha'
 
 import {
   backUpServerConfig,
+  configBackupPath,
   frontProxy,
   mayDropStackDatabase,
   refuseTakenPorts,
@@ -109,6 +110,14 @@ describe('legacy stack server config', function () {
     writeFileSync(file, JSON.stringify(value))
   }
   const read = (file: string): unknown => JSON.parse(readFileSync(file, 'utf8'))
+
+  it('keeps each checkout’s config backup apart', function () {
+    const a = configBackupPath('/Users/dev/git/teamstation')
+    expect(configBackupPath('/Users/dev/git/teamstation')).equals(a)
+    expect(
+      configBackupPath('/Users/dev/git-worktrees/teamstation_other')
+    ).not.equals(a)
+  })
 
   it("keeps the developer's config through a run that stopped before restoring", function () {
     const { dir, config, backup } = setUp()
