@@ -13,32 +13,21 @@ import { NODE_SETTINGS } from './nodeSettings'
 /**
  * Settings this fixture changes are only safe where nothing real lives, so it refuses
  * a database holding any address but a test one. An empty database satisfies that;
- * a copy of production cannot.
+ * a copy of production cannot. Returns the addresses it read.
  */
 export async function refuseRealAddresses(
   db: Kysely<Database>,
   mailbox: string
-): Promise<void> {
+): Promise<string[]> {
   const rows = await db.selectFrom('user_emails').select('email').execute()
-  const real = rows.filter(row => !isTestAddress(mailbox, row.email))
+  const emails = rows.map(row => row.email)
+  const real = emails.filter(email => !isTestAddress(mailbox, email))
   if (real.length > 0) {
     throw new Error(
       `fixtures refuse this database: ${real.length} address(es) are not test addresses`
     )
   }
-}
-
-async function findBaselineAccount(
-  db: Kysely<Database>,
-  mailbox: string,
-  role: string
-): Promise<boolean> {
-  const rows = await db.selectFrom('user_emails').select('email').execute()
-  return rows.some(
-    row =>
-      isTestAddress(mailbox, row.email) &&
-      row.email.includes(`+baseline-${role}-`)
-  )
+  return emails
 }
 
 const ROLES = {
@@ -55,21 +44,31 @@ export async function runBaseline(
   db: Kysely<Database>,
   mailbox: string
 ): Promise<FixtureManifest> {
-  await refuseRealAddresses(db, mailbox)
-  for (const [key, value] of Object.entries(NODE_SETTINGS)) {
-    await db
-      .insertInto('system_settings')
-      .values({ key, value: value as never })
-      .onConflict(oc => oc.column('key').doUpdateSet({ value: value as never }))
-      .execute()
-  }
-  const context = { db, mailbox, nonce: makeNonce() }
-  const accounts: Record<string, FixtureAccount> = {}
-  for (const [role, { person, isAdmin }] of Object.entries(ROLES)) {
-    if (await findBaselineAccount(db, mailbox, role)) continue
-    accounts[role] = await createAccount(context, 'baseline', role, person, {
-      isAdmin
-    })
-  }
-  return { world: 'baseline', nonce: context.nonce, accounts, ids: {} }
+  // Read once: every address is a test one, and a role whose address is
+  // among them already has its account.
+  const emails = await refuseRealAddresses(db, mailbox)
+  const nonce = makeNonce()
+  // One transaction, so a run that fails part way leaves no account whose
+  // password nobody was told; the next run makes them all.
+  const accounts = await db.transaction().execute(async trx => {
+    for (const [key, value] of Object.entries(NODE_SETTINGS)) {
+      await trx
+        .insertInto('system_settings')
+        .values({ key, value: value as never })
+        .onConflict(oc =>
+          oc.column('key').doUpdateSet({ value: value as never })
+        )
+        .execute()
+    }
+    const context = { db: trx, mailbox, nonce }
+    const made: Record<string, FixtureAccount> = {}
+    for (const [role, { person, isAdmin }] of Object.entries(ROLES)) {
+      if (emails.some(email => email.includes(`+baseline-${role}-`))) continue
+      made[role] = await createAccount(context, 'baseline', role, person, {
+        isAdmin
+      })
+    }
+    return made
+  })
+  return { world: 'baseline', nonce, accounts, ids: {} }
 }

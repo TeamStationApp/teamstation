@@ -64,8 +64,9 @@ export async function runFixture(args: FixtureArgs): Promise<FixtureManifest> {
   refuseWithoutTestSettings(serverConfig.testSettings)
   const db = makeDatabase(serverConfig.databaseUrl)
   try {
-    await refuseRealAddresses(db, args.mailbox)
+    // The baseline reads the addresses once, for this and for its own use.
     if (args.world === 'baseline') return await runBaseline(db, args.mailbox)
+    await refuseRealAddresses(db, args.mailbox)
     return await WORLDS[args.world]({
       db,
       mailbox: args.mailbox,

@@ -134,6 +134,31 @@ describe('fixture worlds', function () {
     }
   })
 
+  it('baseline makes all its accounts or none, so no password is lost to a failure part way', async function () {
+    const { sql } = await import('kysely')
+    // The member's insert fails after the admin's has gone in.
+    await sql`create function e2e_refuse_griffey() returns trigger language plpgsql as $$
+      begin
+        if new.last_name = 'Griffey' then raise exception 'refused for the test'; end if;
+        return new;
+      end $$`.execute(the())
+    await sql`create trigger e2e_refuse_griffey before insert on users
+      for each row execute function e2e_refuse_griffey()`.execute(the())
+    try {
+      expect(
+        await rejection(async () => await runBaseline(the(), MAILBOX))
+      ).includes('refused for the test')
+    } finally {
+      await sql`drop trigger e2e_refuse_griffey on users`.execute(the())
+      await sql`drop function e2e_refuse_griffey()`.execute(the())
+    }
+    const emails = await the()
+      .selectFrom('user_emails')
+      .select('email')
+      .execute()
+    expect(emails).deep.equals([])
+  })
+
   it('baseline succeeds on an empty database, and a second run is idempotent', async function () {
     const first = await runBaseline(the(), MAILBOX)
     expect(Object.keys(first.accounts).sort()).deep.equals(['admin', 'member'])
