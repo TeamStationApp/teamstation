@@ -50,10 +50,11 @@ import { type PlanResource, planScenarios } from './plan'
 import { prepareApp } from './prepare'
 import { BlockedError, HarnessError } from './result'
 import { runScenario } from './run'
+import { runMany } from './runMany'
 import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
 import { loadSettings, type LocalSettings, readSecret } from './settings'
-import type { StackHandle } from './spec'
+import type { StackHandle, Surface } from './spec'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
 
@@ -179,6 +180,7 @@ const OPTIONS = {
   resources: { type: 'string' },
   seat: { type: 'string' },
   stack: { type: 'string' },
+  stacks: { type: 'string' },
   ledger: { type: 'string' },
   lan: { type: 'boolean' },
   native: { type: 'boolean' },
@@ -369,6 +371,38 @@ export async function main(argv: string[]): Promise<number> {
       })
       print({ prepared: values.app })
       return 0
+    }
+
+    case 'run-many': {
+      const scenarios = positionals.slice(1)
+      if (
+        scenarios.length === 0 ||
+        values.surface == null ||
+        values.stacks == null
+      ) {
+        throw new Error(
+          'run-many wants <scenario-id>… --stacks <id,id,…> --surface <s> [--device role=id]…'
+        )
+      }
+      const { rows, exitCode } = await runMany({
+        scenarios,
+        stacks: values.stacks.split(',').map(id => ({
+          id,
+          handle: stackHandleFor(stackState(id), settings.mailbox)
+        })),
+        surface: values.surface as Surface,
+        devices: roleMap(values.device),
+        settings,
+        ...(values.retries == null
+          ? {}
+          : { retries: retryCount(values.retries) }),
+        run: runScenario,
+        say: line => {
+          console.error(line)
+        }
+      })
+      print({ rows, exitCode })
+      return exitCode
     }
 
     case 'run': {

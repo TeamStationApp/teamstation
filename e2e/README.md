@@ -9,13 +9,14 @@ npm run -s e2e -- select --changed <file>… | --base <ref>
 npm run -s e2e -- plan --resources <list-resources output> [--seat <name>]
 npm run -s e2e -- run <category/feature/behaviour#scenario> --surface <s> \\
   [--device role=id]… [--seat <name> | --stack <id>] [--budget-usd n]
+npm run -s e2e -- run-many <scenario-id>… --stacks <id,id,…> --surface <s> [--device role=id]…
 npm run -s e2e -- stack up [--ref <ref>] [--name e2e-NN]
 npm run -s e2e -- stack down <id>
 npm run -s e2e -- stack prune
 npm run -s e2e -- prepare --app <app> --device <id> (--stack <id> | --seat <name> | --package <path>)
 ```
 
-A stack is a throwaway TeamStation server on a droplet of its own: the ref's API and ingest, Postgres, Valkey, its own Space, the fault server and the Places stand-in, behind HTTPS at a pool name, `e2e-01.teamstation.app` … `e2e-16.teamstation.app`. `stack up` asks the provider the local settings name (`stackProvider`, the devops repo's `e2e-stack`) for one, attaches the handle it prints, and seeds `baseline` on it. Several can be up at once, from any number of worktrees, agents or machines. A scenario that needs a stack runs on one named with `--stack <id>`; without it, it is blocked. `stack down <id>` has the provider copy the droplet's logs to this machine and destroy the rest; `stack prune` has it remove whatever runs left behind, and forgets stacks whose handle went with them. Nothing of a stack but its logs is left on this machine.
+A stack is a throwaway TeamStation server on a droplet of its own: the ref's API and ingest, Postgres, Valkey, its own Space, the fault server and the Places stand-in, behind HTTPS at a pool name, `e2e-01.teamstation.app` … `e2e-16.teamstation.app`. `stack up` asks the provider the local settings name (`stackProvider`, the devops repo's `e2e-stack`) for one, attaches the handle it prints, and seeds `baseline` on it. Several can be up at once, from any number of worktrees, agents or machines. A scenario that needs a stack runs on one named with `--stack <id>`; without it, it is blocked. `run-many` spreads scenarios across several stacks at once, one at a time on each, holding back a scenario while another running one has a device it needs, and prints one summary. `stack down <id>` has the provider copy the droplet's logs to this machine and destroy the rest; `stack prune` has it remove whatever runs left behind, and forgets stacks whose handle went with them. Nothing of a stack but its logs is left on this machine.
 
 `run` exits 0 for passed or passed-degraded, 1 for failed or quarantined, 2 for blocked, 3
 when the harness itself failed, and 4 for inconclusive: needs-review or unbaselined. Read
