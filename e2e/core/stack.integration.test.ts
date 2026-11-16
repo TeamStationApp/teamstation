@@ -7,7 +7,7 @@ import { join } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { startStack } from './stack'
+import { failedStart, startStack } from './stack'
 
 describe('a stack with a fault proxy in front of its API', function () {
   this.timeout(120000)
@@ -88,5 +88,27 @@ describe('a stack abandoned while it starts', function () {
     expect(existsSync(join(tmpdir(), 'teamstation-e2e-stacks', late))).equals(
       false
     )
+  })
+})
+
+describe('a start that fails', function () {
+  it('throws why it failed, with a teardown that failed too as its cause', async function () {
+    const why = new Error('Migration failed: no such table')
+    let thrown: unknown
+    try {
+      await failedStart(why, async () => {
+        throw new Error('The stack did not stop cleanly: Metro')
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).equals(why)
+    expect(String((thrown as Error).cause)).includes('did not stop cleanly')
+    let stopped = false
+    const clean = await failedStart(new Error('API unhealthy'), async () => {
+      stopped = true
+    }).catch((error: unknown) => error)
+    expect(String(clean)).includes('API unhealthy')
+    expect(stopped).equals(true)
   })
 })

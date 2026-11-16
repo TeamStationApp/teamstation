@@ -527,7 +527,25 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       stop
     }
   } catch (error) {
-    await stop()
-    throw error
+    return await failedStart(error, stop)
   }
+}
+
+/**
+ * Stops what a start that failed had started, and throws why it failed: a
+ * teardown that fails as well travels with it as its `cause`, and never
+ * takes its place.
+ */
+export async function failedStart(
+  error: unknown,
+  stop: () => Promise<void>
+): Promise<never> {
+  try {
+    await stop()
+  } catch (teardown) {
+    if (error instanceof Error && error.cause === undefined) {
+      error.cause = teardown
+    }
+  }
+  throw error
 }
