@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Platform, Pressable, Switch, Text, View } from 'react-native'
 
 import type { AccountSettings } from '../../common/accountSettings'
@@ -35,9 +35,21 @@ import {
 import { AffiliationList } from '../components/AffiliationList'
 import { NewPasswordFields } from '../components/NewPasswordFields'
 import { useSceneReveals } from '../components/sceneShown'
+import { SettingToggleRow } from '../components/settings/SettingToggleRow'
 import { sportsPicturesEnabled } from '../components/sportsPictures'
+import { useForegroundEntry } from '../hooks/useForegroundEntry'
 import { lstrings } from '../locales/strings'
+import {
+  anySwitchOn,
+  type NotificationSwitches,
+  switchesKey
+} from '../platform/notificationSwitches'
 import { pickAccountPhoto } from '../platform/pickAccountPhoto'
+import {
+  type PushDevice,
+  pushDevice as thisDevice,
+  type PushState
+} from '../platform/pushDevice'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { AppleMusicSetup } from '../walkup/AppleMusicSetup'
 import { useWalkUpPreferences } from '../walkup/walkUpPreferences'
@@ -85,6 +97,20 @@ export interface AccountScreenProps {
   onOpenGroup?: (group: GroupRef) => void
   /** An Affiliations row: a player the person guards, on their page. */
   onOpenPlayer?: (userId: string, name: string) => void
+  /**
+   * This device's notifications, and the switches it keeps; the platform's
+   * own by default.
+   */
+  pushDevice?: PushDevice
+}
+
+/** What a browser's `storage` event says: the key another tab changed. */
+type StorageListener = (event: { key: string | null }) => void
+
+/** The part of the page's `window` that hears another tab's storage. */
+interface StorageEvents {
+  addEventListener: (type: 'storage', listener: StorageListener) => void
+  removeEventListener: (type: 'storage', listener: StorageListener) => void
 }
 
 /** A person's identity and verified sign-in methods, all on their own account. */
@@ -101,7 +127,8 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     onAccountChanged,
     pickPhoto = pickAccountPhoto,
     readiness = walkUpReadiness,
-    target
+    target,
+    pushDevice = thisDevice
   } = props
   // Whose name and photo these are: the signed-in person's, or the person a
   // node administrator opened.
@@ -115,6 +142,9 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
   const [appleMusicSetupUsed, setAppleMusicSetupUsed] = useState(false)
   const [account, setAccount] = useState<AccountSettings>()
   const [blockedPeople, setBlockedPeople] = useState(false)
+  const [permission, setPermission] = useState<PushState>()
+  /** This device's notification switches for the signed-in person. */
+  const [switches, setSwitches] = useState<NotificationSwitches>()
   const [loadError, setLoadError] = useState('')
   const [reload, setReload] = useState(0)
   const [name, setName] = useState(
@@ -209,6 +239,73 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     }
   }, [api, reload, reveals])
 
+  // The switches are this device's own for the signed-in person, so another
+  // person's account, as an administrator opens it, has none here, and its
+  // permission is not read.
+  const own = target == null
+  const me = session.user.id
+  // Read again whenever the app comes back to the foreground, and not on a
+  // timer: the permission may have been changed in the phone's or the
+  // browser's settings meanwhile, and the switches in another tab.
+  const permissionRead = useRef(0)
+  useEffect(
+    () => () => {
+      permissionRead.current++
+    },
+    [pushDevice]
+  )
+  const readPermission = useCallback(async (): Promise<void> => {
+    if (!own) return
+    const version = ++permissionRead.current
+    const value = await pushDevice.state()
+    if (version === permissionRead.current) setPermission(value)
+  }, [own, pushDevice])
+  useForegroundEntry(readPermission)
+  /** The switches as last shown, which the next change starts from. */
+  const switchesNow = useRef<NotificationSwitches | undefined>(undefined)
+  /**
+   * Counts reads and changes of the switches, so an answer is shown only
+   * while nothing has begun since it was asked for.
+   */
+  const switchesTurn = useRef(0)
+  useEffect(
+    () => () => {
+      switchesTurn.current++
+    },
+    [me, own, pushDevice]
+  )
+  const show = (value: NotificationSwitches | undefined): void => {
+    switchesNow.current = value
+    setSwitches(value)
+  }
+  const readStoredSwitches = useCallback(async (): Promise<void> => {
+    if (!own) return
+    const turn = ++switchesTurn.current
+    const read = await pushDevice.switches(me)
+    if (turn !== switchesTurn.current) return
+    switchesNow.current = read
+    setSwitches(read)
+  }, [me, own, pushDevice])
+  useEffect(() => {
+    switchesNow.current = undefined
+    setSwitches(undefined)
+  }, [me, own, pushDevice])
+  useForegroundEntry(readStoredSwitches)
+  // Another tab of this browser changed them (or cleared its storage).
+  useEffect(() => {
+    const page = (globalThis as { window?: StorageEvents }).window
+    if (!own || Platform.OS !== 'web' || page == null) return
+    const key = switchesKey(me)
+    const changed: StorageListener = event => {
+      if (event.key === key || event.key == null)
+        readStoredSwitches().catch(() => undefined)
+    }
+    page.addEventListener('storage', changed)
+    return () => {
+      page.removeEventListener('storage', changed)
+    }
+  }, [me, own, readStoredSwitches])
+
   const accept = (value: AccountSettings): void => {
     setAccount(value)
     // The signed-in person's own, whichever page changed it.
@@ -262,6 +359,39 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
     })
   }
   const [signingOut, setSigningOut] = useState(false)
+
+  /**
+   * Asks this device for permission, while the tap still counts as the
+   * person's. The answer can wait on the person, so nothing waits on it.
+   */
+  const ask = (): void => {
+    pushDevice.enable().then(
+      value => {
+        // A read begun before the answer would show what it replaced.
+        permissionRead.current++
+        setPermission(value)
+      },
+      () => undefined
+    )
+  }
+  /**
+   * Keeps a switch on this device (`setSwitches`). Turning one on asks this
+   * device for permission when it has not been asked.
+   */
+  const notify = (change: Partial<NotificationSwitches>, on: boolean): void => {
+    const current = switchesNow.current
+    if (current == null) return
+    const turn = ++switchesTurn.current
+    show({ ...current, ...change })
+    pushDevice.setSwitches(me, change).then(
+      stored => {
+        if (turn === switchesTurn.current) show(stored)
+      },
+      () => undefined
+    )
+    if (on) ask()
+  }
+  const wanted = switches != null && anySwitchOn(switches)
 
   /**
    * The session ends. This account's chat keys stay, and the device stays
@@ -791,6 +921,40 @@ export function AccountScreen(props: AccountScreenProps): React.ReactElement {
               )}
             </ListCard>
           </View>
+          {switches != null && (
+            <View style={styles.section}>
+              <SectionHeader title={lstrings.account_notifications} />
+              <ListCard>
+                <SettingToggleRow
+                  label={lstrings.account_notifications_messages}
+                  value={switches.messages}
+                  onChange={messages => {
+                    notify({ messages }, messages)
+                  }}
+                />
+                <SettingToggleRow
+                  label={lstrings.account_notifications_rsvp_events}
+                  value={switches.rsvpEvents}
+                  onChange={rsvpEvents => {
+                    notify({ rsvpEvents }, rsvpEvents)
+                  }}
+                />
+              </ListCard>
+              {wanted && permission === 'denied' && (
+                <Text accessibilityLiveRegion="polite" style={styles.email}>
+                  {lstrings.account_notifications_blocked}
+                </Text>
+              )}
+              {wanted && permission === 'prompt' && (
+                <Button
+                  label={lstrings.account_notifications_allow}
+                  kind="secondary"
+                  style={{ alignSelf: 'flex-start' }}
+                  onPress={ask}
+                />
+              )}
+            </View>
+          )}
           {blockedPeople && (
             <BlockedPeople
               key={session.user.id}

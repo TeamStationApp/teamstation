@@ -20,6 +20,14 @@ import { newRecord } from '../chat/keyRecord'
 import { KEY_DATABASE, keyStore } from '../chat/keyStore'
 import { parseRoute } from '../navigation/routes'
 import { showRoute } from '../navigation/useAddressBar'
+import {
+  type NotificationSwitches,
+  readSwitches,
+  switchesKey,
+  writeSwitches
+} from '../platform/notificationSwitches'
+import type { PushDevice, PushState } from '../platform/pushDevice'
+import type { UserSettingStorage } from '../platform/userSetting'
 import { SLIDE_TRAVEL } from '../stream/overlay/SlideToStop'
 import { ThemeProvider } from '../theme/ThemeContext'
 import {
@@ -125,6 +133,9 @@ function fixture(
   calls: string[]
   controls: { fail: string; loadFailures: number; affiliations: unknown }
   fetcher: typeof fetch
+  switchStorage: UserSettingStorage & { kept: Map<string, string> }
+  /** What this device kept for the signed-in person on an earlier visit. */
+  kept: (switches: NotificationSwitches) => void
 } {
   let state: AccountSettings = {
     user: {
@@ -287,8 +298,87 @@ function fixture(
     passwordKdf: async () => 'ab'.repeat(32)
   })
   const session = { token: '', expiresAt: '', user: state.user }
-  return { client, session, calls, controls, fetcher }
+  const kept = new Map<string, string>()
+  const switchStorage = {
+    kept,
+    getItem: async (key: string) => kept.get(key) ?? null,
+    setItem: async (key: string, value: string) => {
+      kept.set(key, value)
+    }
+  }
+  fixtureStorage = switchStorage
+  return {
+    client,
+    session,
+    calls,
+    controls,
+    fetcher,
+    switchStorage,
+    kept: switches => {
+      kept.set(switchesKey(state.user.id), JSON.stringify(switches))
+    }
+  }
 }
+
+/** Where the last fixture's device keeps its switches. */
+let fixtureStorage: UserSettingStorage | undefined
+
+/** A fake device: how it was asked, and the switch changes it was given. */
+type FakeDevice = PushDevice & {
+  asked: number
+  /** How often its permission was read. */
+  reads: number
+  /** Each `enable`, and each `setSwitches` with its change. */
+  given: Array<[string] | [string, Partial<NotificationSwitches>]>
+}
+/**
+ * A device whose permission is `now`, which `enable` changes to `answer`,
+ * keeping its switches in the last fixture's storage.
+ */
+function device(now: PushState, answer: PushState = now): FakeDevice {
+  const storage = fixtureStorage
+  const fake: FakeDevice = {
+    asked: 0,
+    reads: 0,
+    given: [],
+    state: async () => {
+      fake.reads++
+      return now
+    },
+    switches: async userId => await readSwitches(userId, storage),
+    sync: async () => now,
+    setSwitches: async (userId, change) => {
+      fake.given.push(['set', change])
+      const next = { ...(await readSwitches(userId, storage)), ...change }
+      await writeSwitches(userId, next, storage)
+      return next
+    },
+    enable: async () => {
+      fake.asked++
+      fake.given.push(['enable'])
+      now = answer
+      return now
+    }
+  }
+  return fake
+}
+/** The notification switch named `label`: react-native-web draws a checkbox. */
+const toggle = (label: string): HTMLInputElement | null =>
+  document.querySelector<HTMLInputElement>(
+    `input[aria-label="${label}"][type="checkbox"]`
+  )
+async function flip(label: string): Promise<void> {
+  const input = toggle(label)
+  expect(input, label).not.equals(null)
+  await act(async () => {
+    input!.click()
+    await delay()
+  })
+}
+const MESSAGES = 'Notify for direct messages and mentions'
+const RSVP_EVENTS = 'Notify for RSVPed events'
+const BLOCKED = 'Notifications are blocked by this device'
+const ALLOW = 'Allow notifications on this device'
 afterEach(async () => {
   await act(async () => {
     root?.unmount()
@@ -398,6 +488,229 @@ describe('Account settings screen', () => {
     await press('Save photo')
     expect(f.calls).includes('/me/account/photo')
     expect(button('Add photo')).not.equals(undefined)
+  })
+  it('shows Notifications after Chat, before Walk-up songs and API keys, with both switches off', async () => {
+    const web = Platform.OS
+    try {
+      Platform.OS = 'ios'
+      await render(
+        <AccountScreen
+          {...fixture()}
+          onSignOut={() => undefined}
+          pushDevice={device('granted')}
+        />
+      )
+      const page = text()
+      const at = (title: string): number => page.indexOf(title)
+      expect(at('NOTIFICATIONS')).greaterThan(at('CHAT'))
+      expect(at('WALK-UP SONGS')).greaterThan(at('NOTIFICATIONS'))
+      expect(at('API KEYS')).greaterThan(at('WALK-UP SONGS'))
+      expect(toggle(MESSAGES)?.checked).equals(false)
+      expect(toggle(RSVP_EVENTS)?.checked).equals(false)
+      expect(page).not.includes(BLOCKED)
+      expect(button(ALLOW)).equals(undefined)
+    } finally {
+      Platform.OS = web
+    }
+  })
+  it('keeps each switch on this device, asking it only when turning one on, and saves nothing on the account', async () => {
+    const f = fixture()
+    const phone = device('prompt', 'granted')
+    await render(
+      <AccountScreen {...f} onSignOut={() => undefined} pushDevice={phone} />
+    )
+    await flip(MESSAGES)
+    expect(phone.asked).equals(1)
+    expect(toggle(MESSAGES)?.checked).equals(true)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(false)
+    await flip(RSVP_EVENTS)
+    await flip(MESSAGES)
+    // Each change goes to this device, which keeps it; turning one on also
+    // asks, and turning one off asks nothing.
+    expect(phone.asked).equals(2)
+    expect(phone.given).deep.equals([
+      ['set', { messages: true }],
+      ['enable'],
+      ['set', { rsvpEvents: true }],
+      ['enable'],
+      ['set', { messages: false }]
+    ])
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(true)
+    expect(text()).not.includes(BLOCKED)
+    // Kept on this device for this person, and nothing saved on the account.
+    expect([...f.switchStorage.kept]).deep.equals([
+      [
+        switchesKey(f.session.user.id),
+        JSON.stringify({ messages: false, rsvpEvents: true })
+      ]
+    ])
+    expect(f.calls.filter(call => call.includes('notifications'))).deep.equals(
+      []
+    )
+  })
+  it('opens on what this device kept, keeps it after a reload, and starts another person here from their own', async () => {
+    const f = fixture()
+    f.kept({ messages: false, rsvpEvents: true })
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => undefined}
+        pushDevice={device('granted')}
+      />
+    )
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(true)
+    await flip(MESSAGES)
+    // A reload, as signing out and back in on this device: still on.
+    await act(async () => {
+      root?.unmount()
+      root = undefined
+    })
+    document.body.replaceChildren()
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => undefined}
+        pushDevice={device('granted')}
+      />
+    )
+    expect(toggle(MESSAGES)?.checked).equals(true)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(true)
+    // Somebody else signed in on this device has none of them.
+    await act(async () => {
+      root?.unmount()
+      root = undefined
+    })
+    document.body.replaceChildren()
+    await render(
+      <AccountScreen
+        {...f}
+        session={{
+          ...f.session,
+          user: { ...f.session.user, id: userIdOfGumbo(102) }
+        }}
+        onSignOut={() => undefined}
+        pushDevice={device('granted')}
+      />
+    )
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(false)
+  })
+  it('reads the switches again at each foreground, and when another tab changes them, and builds on what is stored', async () => {
+    const f = fixture()
+    f.kept({ messages: true, rsvpEvents: true })
+    const browser = device('granted')
+    await render(
+      <AccountScreen {...f} onSignOut={() => undefined} pushDevice={browser} />
+    )
+    expect(toggle(MESSAGES)?.checked).equals(true)
+    // Another tab turns Messages off: its storage event shows it here.
+    f.kept({ messages: false, rsvpEvents: true })
+    await act(async () => {
+      window.dispatchEvent(
+        Object.assign(new window.Event('storage'), {
+          key: switchesKey(f.session.user.id)
+        })
+      )
+      await delay()
+    })
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    // Another key changing reads nothing.
+    f.kept({ messages: true, rsvpEvents: true })
+    await act(async () => {
+      window.dispatchEvent(
+        Object.assign(new window.Event('storage'), { key: 'other' })
+      )
+      await delay()
+    })
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    // Coming back to the foreground reads them again.
+    try {
+      for (const state of ['hidden', 'visible'])
+        await act(async () => {
+          Object.defineProperty(document, 'visibilityState', {
+            configurable: true,
+            get: () => state
+          })
+          document.dispatchEvent(new window.Event('visibilitychange'))
+          await delay()
+        })
+    } finally {
+      Reflect.deleteProperty(document, 'visibilityState')
+    }
+    expect(toggle(MESSAGES)?.checked).equals(true)
+    // A change sends only itself, and the device keeps it on what is stored.
+    f.kept({ messages: false, rsvpEvents: true })
+    await flip(RSVP_EVENTS)
+    expect(browser.given).deep.equals([['set', { rsvpEvents: false }]])
+    expect(f.switchStorage.kept.get(switchesKey(f.session.user.id))).equals(
+      JSON.stringify({ messages: false, rsvpEvents: false })
+    )
+    expect(toggle(MESSAGES)?.checked).equals(false)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(false)
+  })
+  it('shows no Notifications in an administrator’s view of another person’s account', async () => {
+    const f = fixture(false, true)
+    f.kept({ messages: true, rsvpEvents: true })
+    const admin = device('granted')
+    await render(
+      <AccountScreen
+        {...f}
+        target={{ userId: userIdOfGumbo(103), api: f.client }}
+        onSignOut={() => undefined}
+        pushDevice={admin}
+      />
+    )
+    expect(text()).not.includes('NOTIFICATIONS')
+    expect(toggle(MESSAGES)).equals(null)
+    expect(toggle(RSVP_EVENTS)).equals(null)
+    expect(text()).not.includes(BLOCKED)
+    expect(admin.given).deep.equals([])
+    // Nor is this device's permission read, for a section it does not show.
+    expect(admin.reads).equals(0)
+  })
+  it('keeps a switch on, and says so, when this device refuses notifications', async () => {
+    const f = fixture()
+    const refused = device('prompt', 'denied')
+    await render(
+      <AccountScreen {...f} onSignOut={() => undefined} pushDevice={refused} />
+    )
+    await flip(RSVP_EVENTS)
+    expect(refused.asked).equals(1)
+    expect(toggle(RSVP_EVENTS)?.checked).equals(true)
+    expect(text()).includes(BLOCKED)
+    expect(button(ALLOW)).equals(undefined)
+    // With both off, there is nothing to block.
+    await flip(RSVP_EVENTS)
+    expect(text()).not.includes(BLOCKED)
+  })
+  it('offers to allow notifications in a browser that has not asked yet', async () => {
+    const f = fixture()
+    f.kept({ messages: true, rsvpEvents: false })
+    const browser = device('prompt', 'granted')
+    await render(
+      <AccountScreen {...f} onSignOut={() => undefined} pushDevice={browser} />
+    )
+    expect(text()).not.includes(BLOCKED)
+    await press(ALLOW)
+    expect(browser.asked).equals(1)
+    expect(browser.given).deep.equals([['enable']])
+    expect(button(ALLOW)).equals(undefined)
+    expect(text()).not.includes(BLOCKED)
+    // A device already refused, with a switch on, shows the line at once.
+    await act(async () => {
+      root?.unmount()
+      root = undefined
+    })
+    await render(
+      <AccountScreen
+        {...f}
+        onSignOut={() => undefined}
+        pushDevice={device('denied')}
+      />
+    )
+    expect(text()).includes(BLOCKED)
   })
   it('opens the Apple Music settings walkthrough from Walk-up songs, on an iPhone only', async () => {
     const web = Platform.OS

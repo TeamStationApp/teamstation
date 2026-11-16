@@ -496,7 +496,7 @@ const accountPaths = {
       security: [{ bearer: [] }],
       summary: 'Delete your account (signed-in sessions only)',
       description:
-        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags and notifications; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last effective administrator of a team, season or league, naming every such group.',
+        'Irrecoverable. For the account and every account merged into it: renames it "Deleted user", which every play, highlight, lineup, scoreboard and notification naming it reads, none keeping a copy; removes its email addresses, password, uploaded pictures, bats and throws, walk-up songs, family links, roles, follows, tags, notifications and push addresses; spends pending sign-in codes; marks it deleted, which keeps it disabled for good; and revokes its sessions, tokens, grants and stream keys. Plays, stats, roster places, RSVPs and import ids stay, under that name. Refused for the last node administrator and for the last effective administrator of a team, season or league, naming every such group.',
       responses: {
         204: { description: 'Deleted' },
         409: {
