@@ -298,9 +298,13 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
 
     const apiPort = await freePort()
     const proxies: FaultProxy[] = []
+    // The proxies whose errors are this stack's: not the API's own, which
+    // the front server sits in front of and records already.
+    const recorded: FaultProxy[] = []
     const addProxy = async (
       target: string,
-      host_: string
+      host_: string,
+      behindFront = false
     ): Promise<FaultProxy> => {
       const proxy = await startFaultProxy({
         target,
@@ -308,7 +312,10 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         host: host_
       })
       proxies.push(proxy)
-      mirrorErrors(proxy.errors, options.errorLog)
+      if (!behindFront) {
+        recorded.push(proxy)
+        mirrorErrors(proxy.errors, options.errorLog)
+      }
       stops.push(async () => {
         await proxy.close()
       })
@@ -317,7 +324,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
     const apiProxy =
       options.fault == null
         ? undefined
-        : await addProxy(`http://127.0.0.1:${apiPort}`, '127.0.0.1')
+        : await addProxy(`http://127.0.0.1:${apiPort}`, '127.0.0.1', true)
     const front = await startFront({
       webDir: webDir ?? dir,
       apiPort: apiProxy?.port ?? apiPort,
@@ -484,7 +491,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         return runLocalFixture(root, dir, name, mailbox)
       },
       serverErrors: async since =>
-        [front.errors, ...proxies.map(proxy => proxy.errors)]
+        [front.errors, ...recorded.map(proxy => proxy.errors)]
           .flat()
           .filter(row => row.at >= since),
       stop
