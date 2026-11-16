@@ -56,6 +56,9 @@ const DEVELOP_ORIGIN = 'https://develop.teamstation.app'
 const CAMERAMAN_APK_DIR =
   'mobile/apps/tsCameramanAndroid/app/build/outputs/apk/release'
 const IOS = { type: 'nomac', os: 'macos', arch: 'arm64' } as const
+// Nomac ships one Xcode and cannot install another. 27.0, 27.1, and 27.2
+// all place; the node uses the newest of those it has.
+const NOMAC_XCODE = '>=27.0 <27.3'
 const ANDROID = { type: 'do-linux', os: 'linux', arch: 'x64' } as const
 const SIGN = {
   type: 'macos-arm64',
@@ -206,7 +209,7 @@ export function setup(m: Setup): void {
     w => {
       w.stage('archive', {
         on: IOS,
-        tools: { node: '24', xcode: '27.0', cocoapods: '1.16.2' },
+        tools: { node: '24', xcode: NOMAC_XCODE, cocoapods: '1.16.2' },
         timeout: '6h',
         apple: { distribution: 'adHoc', app: TV_APP, platform: 'tvos' },
         publishes: [TV_APP],
@@ -347,12 +350,12 @@ function buildStages(w: WorkflowBuilder, app: string): void {
         {
           name: 'archive',
           on: IOS,
-          // Nomac provides Xcode 27.0 and cannot install another version.
-          // Rust is installed into the worker tools directory; the archive
+          // Nomac ships one Xcode and cannot install another. Rust is
+          // installed into the worker tools directory; the archive
           // environment points the Xcode script phase at that cargo.
           tools: {
             node: '24',
-            xcode: '27.0',
+            xcode: NOMAC_XCODE,
             cocoapods: '1.16.2',
             rust: '1.98.0'
           },
