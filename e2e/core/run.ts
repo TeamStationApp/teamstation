@@ -110,6 +110,9 @@ async function keepEvidence(
   }
 }
 
+/** A checkpoint the scenario recorded as failed, without throwing. */
+class CheckpointFailure extends Error {}
+
 /**
  * A check that failed, as opposed to the test itself breaking. A crash under a fault
  * goes red without proving any layer saw it.
@@ -520,6 +523,14 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       running.reset()
       try {
         await scenario(ctx)
+        // A golden or judge checkpoint records its failure without throwing;
+        // it fails the attempt all the same, so it is retried and keeps its
+        // evidence like any other.
+        const recorded = statusFromCheckpoints(running.records)
+        if (recorded.status === 'failed') {
+          failure = new CheckpointFailure(recorded.reason)
+          continue
+        }
         break
       } catch (error) {
         failure = error instanceof Error ? error : new Error(error as string)
@@ -527,16 +538,15 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
     }
     if (failure != null) {
       await keepEvidence(targets, runDir)
-      failureKind = isAssertion(failure) ? 'assertion' : 'crash'
+      failureKind =
+        failure instanceof CheckpointFailure || isAssertion(failure)
+          ? 'assertion'
+          : 'crash'
       serverErrors = (await handle.serverErrors(attemptStarted)) ?? []
     }
     await recordCoverage()
     if (failure != null) throw failure
     const verdict = statusFromCheckpoints(running.records)
-    if (verdict.status === 'failed') {
-      failureKind = 'assertion'
-      throw new Error(verdict.reason)
-    }
     if (verdict.status !== 'passed')
       return finish(verdict.status, verdict.reason)
     return finish(degradations.length > 0 ? 'passed-degraded' : 'passed')
