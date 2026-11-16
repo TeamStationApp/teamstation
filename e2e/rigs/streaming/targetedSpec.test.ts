@@ -55,7 +55,7 @@ describe('a targeted scenario as the suite runs it', function () {
       (reason: unknown) => reason as Error
     )
     expect(error).instanceOf(BlockedError)
-    expect(error!.message).contains('needs an attached stack')
+    expect(error!.message).contains('needs a stack')
     // A run that never got going is not judged.
     expect(judged).deep.equals([])
   })

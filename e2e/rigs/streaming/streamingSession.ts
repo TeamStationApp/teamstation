@@ -317,7 +317,7 @@ export async function openWorld(
   const { ctx, cwd } = options
   if (ctx.stack.attached == null) {
     throw new BlockedError(
-      'a streaming scenario needs an attached stack: e2e stack attach'
+      'a streaming scenario needs a stack: npm run -s e2e -- stack up --ref <ref>, then --stack <id>'
     )
   }
   const handle = requireStreamingHandle(ctx.stack.attached)

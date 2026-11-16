@@ -38,8 +38,8 @@ Not tested here: TV01 (needs more than four cameras; runs use at most four), IOS
 
 ## What a run needs
 
-- **A stack:** a streaming stack made by the operations tooling outside this repository, attached with `npm run -s e2e -- stack attach <handle file>`.
-- **The app builds for that stack:** develop app builds pointed at the stack's address, installed on every watcher device; on Android, uninstall first when the signing key changed and grant `CAMERA`, `RECORD_AUDIO` and `POST_NOTIFICATIONS`.
+- **A stack:** a droplet of its own from the pool, `npm run -s e2e -- stack up --ref <ref>` (see `e2e/README.md`), named to the scenario with `--stack <id>`. Several scenarios can run on several stacks at once with `run-many`, as long as they do not share a device.
+- **The app builds:** TeamStation Develop and TeamStation TV develop builds, installed on every watcher device and pointed at the stack with `e2e/rigs/app/setServer.ts`, which sets the server for the next fresh launch; on Android, uninstall first when the signing key changed and grant `CAMERA`, `RECORD_AUDIO` and `POST_NOTIFICATIONS`.
 - **Every device reserved** for the scenario's minutes plus about 15.
 - **Local settings** (`~/.config/teamstation-e2e/local.json`, untracked), block `soak`:
   - `tvRemote`, `ndiCapture`, `tvJoinSteps`, `ffmpeg`, `offsetMinutes`: the bench's TV remote helper, NDI capture, TV join steps, the pinned ffmpeg and the bench clock's offset from UTC;
