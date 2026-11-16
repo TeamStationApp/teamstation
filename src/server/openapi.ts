@@ -5169,9 +5169,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'plays: a scorekeeper of either team, which every admin of it ' +
             'is. `canDj` is whether the caller may DJ it: a songkeeper or ' +
             'scorekeeper of either team, which every admin of it is. ' +
-            '`coachSides` is the sides whose team the caller head-coaches ' +
-            '(the coach flag, which every admin of the team holds; not an ' +
-            'assistant), and so whose lineup they may save. ' +
+            '`coachSides` is the sides whose team the caller coaches or ' +
+            'assists (the coach or assistant flag, which every admin of the ' +
+            'team holds), and so whose lineup they may save. ' +
             '`assignedRoles` lists the caller’s roles by `away` and `home`, ' +
             'including season/league inheritance but excluding implied privileges. ' +
             'It filters hero actions only; authorization flags remain unchanged. ' +
@@ -5918,7 +5918,7 @@ export function openApiDocument(version: string): OpenApiDocument {
         put: {
           summary: 'Change one roster player’s availability for this game',
           description:
-            'Only the head coach of the selected side may toggle a team player. Off removes the player from lineup and defense options and current placements; on restores the option without placing the player. Guests cannot be toggled. The exclusion and lineup changes commit together, and a play awaiting its result refuses the change. Repeating the current value is idempotent.',
+            'Only a coach or assistant of the selected side may toggle a team player. Off removes the player from lineup and defense options and current placements; on restores the option without placing the player. Guests cannot be toggled. The exclusion and lineup changes commit together, and a play awaiting its result refuses the change. Repeating the current value is idempotent.',
           security: [{ bearer: [] }],
           parameters: [gameIdParam],
           requestBody: {
@@ -6149,7 +6149,7 @@ export function openApiDocument(version: string): OpenApiDocument {
             'every read of every game names him anew; no stored play ' +
             'changes, and nothing else does: a lineup save never renames a ' +
             "guest. The caller may save the lineup of the guest's side (that " +
-            "team's head coach, or a scorekeeper of either team); anybody " +
+            "team's coach or an assistant, or a scorekeeper of either team); anybody " +
             'else, and a guest whose account can sign in, get 403. Somebody ' +
             'who is no guest of this game, a merged account and a deleted ' +
             'one get 404. Save Rosters sends it for each game-only player ' +
@@ -6240,9 +6240,9 @@ export function openApiDocument(version: string): OpenApiDocument {
             'The answer’s `digest` is the one this save left, read as it was ' +
             'written, or the one it found when it changed nothing. `base` is the ' +
             '`digest` the caller last read; it is not compared, and the ' +
-            'last save wins. **Who may call:** a head coach of the side’s ' +
-            'team (the coach flag, or an admin of the team; not an ' +
-            'assistant) or a scorekeeper of either team, and a site admin. ' +
+            'last save wins. **Who may call:** a coach or an assistant of the ' +
+            'side’s team (either flag, or an admin of the team) or a ' +
+            'scorekeeper of either team, and a site admin. ' +
             'Anybody else who can see the game gets 403; a game the caller ' +
             'cannot see, 404. A change the game cannot take now (a play to ' +
             'finish first, a game over) is 409 with its reason, and one it ' +

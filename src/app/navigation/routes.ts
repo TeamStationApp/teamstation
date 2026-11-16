@@ -163,8 +163,8 @@ export type Route =
   | { name: 'scoreGame'; gameId: string }
   | { name: 'scoreOptions'; gameId: string }
   /**
-   * Coach Game: a head coach's own team in a game, its box score, roster,
-   * lineup and defence, which he saves for it.
+   * Coach Game: a coach's or assistant's own team in a game, its box score,
+   * roster, lineup, defence and plan, which they save for it.
    */
   | { name: 'coachGame'; gameId: string; teamId: string }
   /** The game replayed in 3D, or followed live while it is scored. */

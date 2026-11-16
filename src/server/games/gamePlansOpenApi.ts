@@ -98,7 +98,7 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
       get: {
         summary: "Both sides' per-inning game plans",
         description:
-          'Needs somebody who can see the game; 404 for anybody else. A side is answered only to a coach of that team: somebody given the coach flag on the team, a season it belongs to or its league, head coach or not. It is null for anybody else, administrators of every level, assistants and scorekeepers included; a scorer reads the inning in play from `/games/{gameId}/plans/{teamId}/innings/{inning}`.',
+          'Needs somebody who can see the game; 404 for anybody else. A side is answered only to a coach or assistant of that team: somebody given the coach or the assistant flag on the team, a season it belongs to or its league, head coach or not. It is null for anybody else, administrators of every level and scorekeepers included; a scorer reads the inning in play from `/games/{gameId}/plans/{teamId}/innings/{inning}`.',
         security: [{ bearer: [] }],
         parameters: [gameId],
         responses: {
@@ -126,7 +126,7 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
       put: {
         summary: "Save one team's per-inning game plan",
         description:
-          "Replaces the team's plan in the game, as a coach of the team (anybody else, administrators included, is a 403). A plan with a cell that is no value, more than twelve innings, or a row whose cells are not one per inning is a 400. An all-blank plan is stored like any other. When the save changes the inning in play of a game past its start time and not over, the game's viewers hear a `plans` change naming the team and that inning; a change to later innings only announces nothing.",
+          "Replaces the team's plan in the game, as a coach or assistant of the team (anybody else, administrators included, is a 403). A plan with a cell that is no value, more than twelve innings, or a row whose cells are not one per inning is a 400. An all-blank plan is stored like any other. When the save changes the inning in play of a game past its start time and not over, the game's viewers hear a `plans` change naming the team and that inning; a change to later innings only announces nothing.",
         security: [{ bearer: [] }],
         parameters: [
           gameId,
@@ -157,7 +157,7 @@ export function gamePlanPaths(errorResponse: unknown): Record<string, unknown> {
       get: {
         summary: "One team's plan column for the inning in play",
         description:
-          "What a scorer reads of a coach's plan: every row's cell for this inning, by jersey, and nothing else (no other inning, batting order, rules or warnings). Needs somebody who can see the game (404 otherwise) and who scores either team or coaches this one (403 otherwise). A team not in the game, or an inning outside 1 to 12, is a 404. Before the game's start time it is a 403 with `details.reason` `planNotStarted`; once the game is final or cancelled, a 403 with `planGameOver`; for any inning but the one in play, a 409 with `planInningNotCurrent` and `details.inning` the inning in play (null for none). A team with no plan holding a position, or no such inning in it, answers an empty column.",
+          "What a scorer reads of a coach's plan: every row's cell for this inning, by jersey, and nothing else (no other inning, batting order, rules or warnings). Needs somebody who can see the game (404 otherwise) and who scores either team or coaches or assists this one (403 otherwise). A team not in the game, or an inning outside 1 to 12, is a 404. Before the game's start time it is a 403 with `details.reason` `planNotStarted`; once the game is final or cancelled, a 403 with `planGameOver`; for any inning but the one in play, a 409 with `planInningNotCurrent` and `details.inning` the inning in play (null for none). A team with no plan holding a position, or no such inning in it, answers an empty column.",
         security: [{ bearer: [] }],
         parameters: [
           gameId,

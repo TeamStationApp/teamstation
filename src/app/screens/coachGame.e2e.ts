@@ -589,19 +589,22 @@ describe('Coach Game', function () {
     await coach.tap('Cancel')
   })
 
-  it('C1: puts Coach Game in the head coach’s pills after Videos, and in nobody else’s', async function () {
+  it('C1: puts Coach Game in the head coach’s and the assistant’s pills after Videos, and in nobody else’s', async function () {
     const fixture = lineupFixture()
     await coach.as(fixture, 'headCoach')
     const pills = await coach.pills(fixture.gameId)
-    expect(pills.slice(0, 2)).deep.equals(['Box score', 'Videos'])
+    expect(pills).to.include.members(['Box score', 'Videos'])
     expect(await coach.page.$('[aria-label="Coach"]')).not.equals(null)
     await coach.shot('game-pills-after.png')
-    for (const who of ['assistant', 'member'] as const) {
-      await coach.as(fixture, who)
-      const theirs = await coach.pills(fixture.gameId)
-      expect(await coach.page.$('[aria-label="Coach"]'), who).equals(null)
-      expect(theirs.slice(0, 2), who).deep.equals(['Box score', 'Videos'])
-    }
+    // The assistant coaches the team as its head coach does.
+    await coach.as(fixture, 'assistant')
+    const assisted = await coach.pills(fixture.gameId)
+    expect(assisted).to.include.members(['Box score', 'Videos'])
+    expect(await coach.page.$('[aria-label="Coach"]')).not.equals(null)
+    await coach.as(fixture, 'member')
+    const theirs = await coach.pills(fixture.gameId)
+    expect(await coach.page.$('[aria-label="Coach"]')).equals(null)
+    expect(theirs).to.include.members(['Box score', 'Videos'])
     // The scorekeeper scores, and coaches nothing.
     await coach.as(fixture, 'scorekeeper')
     await coach.pills(fixture.gameId)

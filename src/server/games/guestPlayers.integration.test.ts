@@ -360,6 +360,7 @@ describe("correcting a game-only player's name", function () {
   const AWAY_COACH = 203
   const VIEWER = 204
   const ROSTERED = 205
+  const HOME_ASSISTANT = 206
   const babe = asNewRosterPlayer({
     firstName: 'Babe',
     lastName: 'Ruth',
@@ -387,7 +388,8 @@ describe("correcting a game-only player's name", function () {
         [HOME_COACH, 'Casey Stengel'],
         [AWAY_COACH, 'Connie Mack'],
         [VIEWER, 'Lou Gehrig'],
-        [ROSTERED, 'Mickey Mantle']
+        [ROSTERED, 'Mickey Mantle'],
+        [HOME_ASSISTANT, 'Elston Howard']
       ].map(([id, display]) => ({
         id: id as number,
         legacyId: makeId('user'),
@@ -425,7 +427,8 @@ describe("correcting a game-only player's name", function () {
           [SCORER, 'team-r-away', 'scorekeeper'],
           [HOME_COACH, 'team-r-home', 'coach'],
           [AWAY_COACH, 'team-r-away', 'coach'],
-          [VIEWER, 'team-r-home', 'videographer']
+          [VIEWER, 'team-r-home', 'videographer'],
+          [HOME_ASSISTANT, 'team-r-home', 'assistant']
         ].map(([user, team, role]) => ({
           id: makeId('scopeRole'),
           user_id: userIdOfGumbo(user as number),
@@ -467,7 +470,7 @@ describe("correcting a game-only player's name", function () {
     return undefined
   }
 
-  it("renames the guest's account for a scorekeeper and for his team's head coach", async function () {
+  it("renames the guest's account for a scorekeeper and for his team's coach and assistant", async function () {
     const renamed = await renameGuestPlayer(
       db,
       as(SCORER),
@@ -500,6 +503,20 @@ describe("correcting a game-only player's name", function () {
       first_name: null,
       last_name: 'Ruth',
       display_name: 'Ruth'
+    })
+    // The team's assistant corrects it too, as a coach does.
+    await renameGuestPlayer(db, as(HOME_ASSISTANT), 'gam_rename', homeGuest, {
+      firstName: 'George',
+      lastName: 'Ruth'
+    })
+    expect(await nameOf(homeGuest)).deep.equals({
+      first_name: 'George',
+      last_name: 'Ruth',
+      display_name: 'George Ruth'
+    })
+    await renameGuestPlayer(db, as(HOME_ASSISTANT), 'gam_rename', homeGuest, {
+      firstName: '',
+      lastName: 'Ruth'
     })
     expect(renamed.changed).equals(true)
   })
@@ -556,6 +573,8 @@ describe("correcting a game-only player's name", function () {
     // Another team's coach, and somebody who only sees the game.
     expect(await rename(AWAY_COACH, homeGuest)).equals('forbidden')
     expect(await rename(VIEWER, homeGuest)).equals('forbidden')
+    // The home team's assistant may not correct the other side's guest.
+    expect(await rename(HOME_ASSISTANT, awayGuest)).equals('forbidden')
     // The away team's head coach may correct his own side's guest.
     expect(await rename(HOME_COACH, awayGuest)).equals('forbidden')
     // A rostered player, a guest of another game, a game that is not there.

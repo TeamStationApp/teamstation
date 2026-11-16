@@ -380,8 +380,14 @@ describe('atomic game availability', function () {
       .where('id', '=', 'gam_empty')
       .execute()
   })
-  it('refuses every non-head-coach role, the other team, missing users, nonplayers and guests', async () => {
-    for (const userId of [124, 125, 126, 127, 128, 129])
+  it('refuses every role but coach and assistant, the other team, missing users, nonplayers and guests', async () => {
+    // 124 is the away team's assistant, who coaches it.
+    await toggle('gam_empty', 1, false, {
+      ...actor,
+      userId: userIdOfGumbo(124)
+    })
+    await toggle('gam_empty', 1, true, { ...actor, userId: userIdOfGumbo(124) })
+    for (const userId of [125, 126, 127, 128, 129])
       await rejected(
         async () =>
           await toggle('gam_empty', 1, false, {

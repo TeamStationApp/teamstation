@@ -2174,11 +2174,11 @@ describe('Coach Plan', function () {
   })
 
   /**
-   * P23: the home team's admin, who is not its coach, opens the coach
-   * screen by its address (an admin has no Coach pill) and finds the Plan
-   * tab saying the plan is the coaches'.
+   * P23: the home team's admin, who is neither its coach nor its assistant,
+   * opens the coach screen by its address (an admin has no Coach pill) and
+   * finds the Plan tab saying the plan is the coaches' and assistants'.
    */
-  it('P23 tells a team admin who is not its coach that the plan is the coaches’', async function () {
+  it('P23 tells a team admin who is not its coach or assistant that the plan is the coaches’ and assistants’', async function () {
     if (CAPTURING) this.skip()
     const fixture = await lineupFixture()
     await savePlan(fixture, SHIFT_PLAN)
@@ -2194,7 +2194,7 @@ describe('Coach Plan', function () {
     await coach.page.waitForFunction(
       () =>
         String(document.body.textContent).includes(
-          "Only the team's coaches can see its game plan."
+          "Only the team's coaches and assistants can see its game plan."
         ),
       { timeout: 15000 }
     )
@@ -2207,7 +2207,7 @@ describe('Coach Plan', function () {
    * route answers a scorekeeper, through the API, each request on a `$`
    * line with its status and body after it. Tee'd as `plan-access.log`.
    */
-  it('P24 answers the full plan to the team’s coach alone, and a scorer only the inning in play, after the start time and before the game is over', async function () {
+  it('P24 answers the full plan to the team’s coach and assistant alone, and a scorer only the inning in play, after the start time and before the game is over', async function () {
     if (CAPTURING) this.skip()
     const fixture = await lineupFixture()
     await savePlan(fixture, SHIFT_PLAN)
@@ -2238,7 +2238,15 @@ describe('Coach Plan', function () {
       }
     ).home
     expect(stored).not.equals(null)
-    for (const who of ['scorekeeper', 'assistant', 'teamAdmin'] as const) {
+    // The assistant reads and saves it as the head coach does.
+    expect(
+      ((await call('assistant', 'GET', plansPath)).body as { home: unknown })
+        .home
+    ).deep.equals(stored)
+    expect(
+      (await call('assistant', 'PUT', homePath, stored!.plan)).status
+    ).equals(200)
+    for (const who of ['scorekeeper', 'teamAdmin'] as const) {
       expect((await call(who, 'GET', plansPath)).body).deep.equals({
         away: null,
         home: null

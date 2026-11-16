@@ -167,8 +167,8 @@ export interface GuestRenamed {
  * no stored play changes. Only a guest of this game (`games.guests`) whose
  * account cannot sign in, and who is no pool player (an existing player
  * added for this game), may be renamed here, by a caller who may save the
- * lineup of the guest's side (`lineupTeams`: that team's head coach, or a
- * scorekeeper of the game). Anybody else is refused 403; somebody who is no
+ * lineup of the guest's side (`lineupTeams`: that team's coach or assistant,
+ * or a scorekeeper of the game). Anybody else is refused 403; somebody who is no
  * guest of this game, a merged account and a deleted one are 404, as nobody.
  * The answer is the guest's entry as `createGuestPlayer` answers it. A name
  * the account already has writes nothing: no account, no scope change.
@@ -222,7 +222,7 @@ export async function renameGuestPlayer(
     const roles = await roleScopes(trx, actor.userId, actor.isAdmin)
     if (!lineupTeams(roles, game).includes(teams[side].id))
       throw forbidden(
-        "Only the team's head coach or a scorekeeper may correct a guest's name"
+        "Only the team's coach, an assistant or a scorekeeper may correct a guest's name"
       )
     if (guest.loginEnabled)
       throw forbidden('This player signs in and keeps his own name')

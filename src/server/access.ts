@@ -755,17 +755,8 @@ export function canCoach(scopes: RoleScopes, teamId: string): boolean {
 }
 
 /**
- * The team's head coach: the coach flag itself, which every administrator of
- * the team holds. An assistant is not one, so he may not save the team's
- * lineup in a game.
- */
-export function isHeadCoach(scopes: RoleScopes, teamId: string): boolean {
-  return hasRole(scopes, 'coach', teamId)
-}
-
-/**
  * The teams of a game whose lineups these scopes may save: both, for a
- * scorekeeper of either team; otherwise each team they are head coach of.
+ * scorekeeper of either team; otherwise each team they coach or assist.
  * Whoever may save a side's lineup is answered its players' first and last
  * names: he may correct a game-only player's, and his tools export the
  * lineup and match spoken names by them.
@@ -776,18 +767,18 @@ export function lineupTeams(
 ): string[] {
   const teams = [game.away_team_id, game.home_team_id]
   if (teams.some(teamId => canScore(scopes, teamId))) return teams
-  return teams.filter(teamId => isHeadCoach(scopes, teamId))
+  return teams.filter(teamId => canCoach(scopes, teamId))
 }
 
 /**
  * The teams of a game whose coaching plans this person may read and save:
- * each one they were given the coach flag on, on the team, a season it
- * belongs to or its league, head coach or not.
+ * each one they were given the coach or the assistant flag on, on the team,
+ * a season it belongs to or its league, head coach or not.
  *
  * Unlike `roleScopes`, nothing an administrator holds counts: not the flags
  * `admin` implies, not a team's owner or manager, and not a site
- * administrator. An administrator who wants the plan is given the coach
- * flag, which the team's people show. A disabled or merged account holds
+ * administrator. An administrator who wants the plan is given the coach or
+ * the assistant flag, which the team's people show. A disabled or merged account holds
  * nothing.
  */
 export async function planTeams(
@@ -803,12 +794,14 @@ export async function planTeams(
     .where('merged_into', 'is', null)
     .executeTakeFirst()
   if (open == null) return []
-  // The coach flag as given: not the flags an administrator implies, and not
-  // the administrator a team's owner or manager is.
-  const { coach } = (await directRolesOfEach(db, [userId])).get(userId)!
-  await inheritSets(db, [coach])
-  return [game.away_team_id, game.home_team_id].filter(teamId =>
-    coach.teamIds.has(teamId)
+  // The coach and assistant flags as given: not the flags an administrator
+  // implies, and not the administrator a team's owner or manager is.
+  const { coach, assistant } = (await directRolesOfEach(db, [userId])).get(
+    userId
+  )!
+  await inheritSets(db, [coach, assistant])
+  return [game.away_team_id, game.home_team_id].filter(
+    teamId => coach.teamIds.has(teamId) || assistant.teamIds.has(teamId)
   )
 }
 

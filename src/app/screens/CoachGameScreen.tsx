@@ -254,8 +254,8 @@ export function planContextOf(side: SidePlan, session: GameState): PlanContext {
 }
 
 /**
- * Coach Game: a head coach's own team in a game, on a screen of its own —
- * the box score, and the roster screen's Roster, Lineup, Defense and Plan,
+ * Coach Game: a coach's or assistant's own team in a game, on a screen of its
+ * own — the box score, and the roster screen's Roster, Lineup, Defense and Plan,
  * with its bar and dictation. Save Rosters saves his side's lineup through
  * `client.saveLineups` when it changed, then his game plan through
  * `client.saveGamePlan` when that changed, and stays; before the first
