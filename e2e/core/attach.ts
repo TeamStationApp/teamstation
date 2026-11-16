@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
@@ -111,8 +112,12 @@ export function attachStack(dir: string, file: string): StackEntry {
 export function writeStackEntry(dir: string, file: string, text: string): void {
   mkdirSync(dir, { recursive: true, mode: 0o700 })
   chmodSync(dir, 0o700)
-  writeFileSync(file, text, { mode: 0o600 })
-  chmodSync(file, 0o600)
+  // Written beside it and renamed into place, so a reader polling for the
+  // entry finds the whole of it or none of it.
+  const part = `${file}.${process.pid}.part`
+  writeFileSync(part, text, { mode: 0o600 })
+  chmodSync(part, 0o600)
+  renameSync(part, file)
 }
 
 /**

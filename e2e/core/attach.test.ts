@@ -1,4 +1,10 @@
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  statSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -66,6 +72,10 @@ describe('attached stacks', function () {
     // Its database URL is in the entry: only this user may read it.
     expect(statSync(dir).mode & 0o777).equals(0o700)
     expect(statSync(join(dir, `${HANDLE.id}.json`)).mode & 0o777).equals(0o600)
+    // Written whole and renamed into place: no part is left beside it.
+    expect(readdirSync(dir).filter(name => name.endsWith('.part'))).deep.equals(
+      []
+    )
   })
 
   it('keeps fields a later handle version adds, and re-attaching replaces it', function () {
