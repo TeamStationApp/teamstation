@@ -1,13 +1,5 @@
-import { execFileSync, spawn, spawnSync } from 'node:child_process'
-import {
-  closeSync,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { execFileSync, spawn } from 'node:child_process'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { parseArgs } from 'node:util'
 
@@ -15,12 +7,10 @@ import { PNG } from 'pngjs'
 
 import {
   attachStack,
-  checkLocalStackId,
+  baselineFile,
+  forgetStack,
   listStacks,
-  newStackId,
   readStack,
-  refuseAttachedForFaults,
-  removeStack,
   type StackEntry,
   stackHandleFor,
   STACKS,
@@ -36,6 +26,7 @@ import {
 } from './corpus'
 import { mergeCoverage } from './coverage'
 import { detectFault } from './detect'
+import { requireDropletHandle, seedOnStack } from './dropletStack'
 import {
   acceptGolden,
   type GoldenManifest,
@@ -63,7 +54,6 @@ import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
 import { loadSettings, type LocalSettings, readSecret } from './settings'
 import type { StackHandle } from './spec'
-import { projectOf, pruneStacks, type RunningStack, startStack } from './stack'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
 
@@ -75,33 +65,55 @@ function retryCount(value: string): number {
   return Number(value)
 }
 
-/** Whether a process's command line is `stack serve` for exactly `id`. */
-export function servesStack(command: string, id: string): boolean {
-  // An id is letters, digits, - and _ (`checkStackId`): nothing to escape.
-  return new RegExp(`\\bstack serve\\b.*--id ${id}(\\s|$)`).test(command.trim())
-}
-
 /**
- * Stops the `stack serve` for `id`, if that is still what `pid` is: after a
- * crash or a reboot the number can be gone, or another process's.
+ * Runs the stack provider (`stackProvider` in the local settings) with
+ * `args`, passing its progress through to stderr, and answers what it
+ * printed. A provider that fails is a harness error carrying its last words.
  */
-function stopServe(pid: number, id: string): boolean {
-  if (!isServing(pid, id)) return false
-  try {
-    process.kill(pid, 'SIGTERM')
-    return true
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
-    throw error
+export async function runProvider(
+  settings: LocalSettings,
+  args: string[],
+  spawnFn: typeof spawn = spawn
+): Promise<string[]> {
+  const command = settings.stackProvider?.command
+  if (command == null || command.length === 0) {
+    throw new BlockedError(
+      'no stack provider: set stackProvider.command in the local settings'
+    )
   }
+  const child = spawnFn(command[0], [...command.slice(1), ...args], {
+    stdio: ['ignore', 'pipe', 'pipe']
+  })
+  let out = ''
+  let err = ''
+  child.stdout?.on('data', (bytes: Buffer) => {
+    out += String(bytes)
+    process.stderr.write(bytes)
+  })
+  child.stderr?.on('data', (bytes: Buffer) => {
+    err += String(bytes)
+    process.stderr.write(bytes)
+  })
+  const code = await new Promise<number | null>((resolve, reject) => {
+    child.once('error', reject)
+    child.once('close', resolve)
+  })
+  const lines = out.split('\n').filter(Boolean)
+  if (code !== 0) {
+    throw new HarnessError(
+      `the stack provider failed (${args[0]}): ${[...lines, ...err.split('\n')].filter(Boolean).slice(-5).join(' | ')}`
+    )
+  }
+  return lines
 }
 
-/** Whether `pid` is still the `stack serve` for `id`. */
-function isServing(pid: number, id: string): boolean {
-  const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
-    encoding: 'utf8'
-  }).stdout
-  return servesStack(command, id)
+/** The handle path `up` prints on its last `handle: <path>` line. */
+export function handleOf(lines: string[]): string {
+  const line = [...lines].reverse().find(row => row.startsWith('handle: '))
+  if (line == null) {
+    throw new HarnessError('the stack provider printed no handle')
+  }
+  return line.slice('handle: '.length).trim()
 }
 
 function stackState(id: string): StackEntry {
@@ -171,6 +183,8 @@ const OPTIONS = {
   lan: { type: 'boolean' },
   native: { type: 'boolean' },
   id: { type: 'string' },
+  ref: { type: 'string' },
+  name: { type: 'string' },
   services: { type: 'string', multiple: true },
   app: { type: 'string' },
   device: { type: 'string', multiple: true },
@@ -275,137 +289,55 @@ export async function main(argv: string[]): Promise<number> {
 
     case 'stack': {
       if (subcommand === 'up') {
-        mkdirSync(STACKS, { recursive: true, mode: 0o700 })
-        if (values.id != null) {
-          throw new HarnessError(
-            'stack up names its own stack, <project>_<six hex digits>: leave out --id'
+        // A droplet of its own, from the provider's pool, attached once it is up.
+        const ref = values.ref ?? 'develop'
+        const lines = await runProvider(settings, [
+          'up',
+          '--ref',
+          ref,
+          ...(values.name == null ? [] : ['--name', values.name])
+        ])
+        const entry = attachStack(STACKS, handleOf(lines))
+        if (settings.mailbox != null) {
+          const handle = requireDropletHandle(
+            entry.handle ?? { version: 0, id: entry.id, origin: entry.origin }
+          )
+          const baseline = await seedOnStack(
+            handle,
+            'baseline',
+            settings.mailbox
+          )
+          const file = baselineFile(STACKS, entry.id)
+          writeFileSync(file, JSON.stringify(baseline), { mode: 0o600 })
+          entry.baselineManifest = file
+          writeStackEntry(
+            STACKS,
+            join(STACKS, `${entry.id}.json`),
+            JSON.stringify(entry, null, 2)
           )
         }
-        const id = newStackId(projectOf(ROOT))
-        const file = join(STACKS, `${id}.json`)
-        const args = [
-          '-r',
-          require.resolve('sucrase/register'),
-          __filename,
-          'stack',
-          'serve',
-          '--id',
-          id,
-          ...(values.lan === true ? ['--lan'] : []),
-          ...(values.native === true ? ['--native'] : []),
-          ...(values.services ?? ['web', 'api']).flatMap(s => ['--services', s])
-        ]
-        // The server's stderr, so a stack that did not start says why.
-        const log = join(STACKS, `${id}.log`)
-        const err = openSync(log, 'w')
-        const child = spawn(process.execPath, args, {
-          cwd: ROOT,
-          detached: true,
-          stdio: ['ignore', 'ignore', err]
-        })
-        closeSync(err)
-        let exited: string | undefined
-        child.once('exit', (code, signal) => {
-          exited = signal ?? String(code)
-        })
-        child.once('error', error => {
-          exited = error.message
-        })
-        child.unref()
-        const end = Date.now() + 300000
-        const why = (): string => readFileSync(log, 'utf8').trim().slice(-2000)
-        // Its own entry: the one this child writes once its stack is up.
-        const started = (): boolean =>
-          existsSync(file) && readStack(STACKS, id).pid === child.pid
-        while (!started()) {
-          if (exited != null) {
-            throw new Error(`The stack exited (${exited}): ${why()}`)
-          }
-          if (Date.now() > end) {
-            // Left running, it would go on to make a database, an API and a
-            // Metro that nothing will stop.
-            if (child.pid != null) process.kill(child.pid, 'SIGTERM')
-            throw new Error(`The stack did not start in 5 minutes: ${why()}`)
-          }
-          await new Promise(resolve => setTimeout(resolve, 250))
-        }
-        print(stackState(id))
-        return 0
-      }
-      if (subcommand === 'serve') {
-        // Named by the `stack up` that started it.
-        if (values.id == null) throw new Error('stack serve wants --id')
-        const id = checkLocalStackId(values.id)
-        const errorLog = join(STACKS, `${id}.errors.jsonl`)
-        // Ctrl-C, a closed terminal and a crash take the stack down too, so
-        // its database, directory and Metro do not outlive it. One that
-        // arrives while the stack is starting (`stack up` giving up on it)
-        // abandons the start, which stops whatever had started.
-        const abandon = new AbortController()
-        const ended = new Promise<unknown>(resolve => {
-          const end = (failure?: unknown): void => {
-            abandon.abort()
-            resolve(failure)
-          }
-          for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
-            process.once(signal, () => {
-              end()
-            })
-          }
-          process.once('uncaughtException', end)
-          process.once('unhandledRejection', end)
-        })
-        const asError = (failure: unknown): Error =>
-          failure instanceof Error
-            ? failure
-            : new Error(`stack serve failed: ${JSON.stringify(failure)}`)
-        let stack: RunningStack
-        try {
-          stack = await startStack({
-            id,
-            lan: values.lan,
-            native: values.native,
-            services: values.services ?? ['web', 'api'],
-            mailbox: settings.mailbox,
-            errorLog,
-            signal: abandon.signal
-          })
-        } catch (error) {
-          if (!abandon.signal.aborted) throw error
-          const failure = await ended
-          if (failure != null) throw asError(failure)
-          return 0
-        }
-        const entry: StackEntry = {
-          id: stack.id,
-          origin: stack.origin,
-          webDir: stack.webDir,
-          pid: process.pid,
-          dir: stack.dir,
-          root: ROOT,
-          baselineManifest: stack.baselineManifest,
-          errorLog
-        }
-        writeStackEntry(
-          STACKS,
-          join(STACKS, `${stack.id}.json`),
-          JSON.stringify(entry)
-        )
-        const failure = await ended
-        await stack.stop()
-        rmSync(join(STACKS, `${stack.id}.json`), { force: true })
-        if (failure != null) throw asError(failure)
-        rmSync(errorLog, { force: true })
+        print(entry)
         return 0
       }
       if (subcommand === 'down') {
         const id = positionals[2]
         if (id == null) throw new Error('stack down wants <id>')
-        print(removeStack(STACKS, id, pid => stopServe(pid, id)))
+        readStack(STACKS, id)
+        await runProvider(settings, ['down', id])
+        forgetStack(STACKS, id)
+        print({ id, down: true })
         return 0
       }
       if (subcommand === 'prune') {
-        print(await pruneStacks())
+        // The provider removes what runs left; the registry forgets stacks whose handle went with them.
+        await runProvider(settings, ['reap'])
+        const forgotten = listStacks(STACKS)
+          .filter(
+            entry => entry.handleFile == null || !existsSync(entry.handleFile)
+          )
+          .map(entry => entry.id)
+        for (const id of forgotten) forgetStack(STACKS, id)
+        print({ forgotten })
         return 0
       }
       if (subcommand === 'attach') {
@@ -418,7 +350,7 @@ export async function main(argv: string[]): Promise<number> {
         print(listStacks(STACKS))
         return 0
       }
-      throw new Error('stack wants up, down, serve, attach or list')
+      throw new Error('stack wants up, down, prune, attach or list')
     }
 
     case 'prepare': {
@@ -481,21 +413,23 @@ export async function main(argv: string[]): Promise<number> {
       const id = subcommand
       if (id == null || values.surface == null || values.fault == null) {
         throw new Error(
-          'detect wants <scenario-id> --fault <fault> --surface <s>'
+          'detect wants <scenario-id> --fault <fault> --surface <s> [--stack <id>]'
         )
       }
-      // A fault runs on a stack of its own, never one named here.
-      if (values.stack != null) {
-        refuseAttachedForFaults(stackState(values.stack))
-        throw new HarnessError(
-          'detect runs on its own isolated stack; leave out --stack'
-        )
-      }
+      // A proxy fault is set on the named stack's fault server, and cleared after.
       const outcome = await detectFault(
         {
           id,
           surface: values.surface,
           fault: values.fault,
+          ...(values.stack == null
+            ? {}
+            : {
+                stack: stackHandleFor(
+                  stackState(values.stack),
+                  settings.mailbox
+                )
+              }),
           devices: roleMap(values.device),
           runDir: values['run-dir'],
           settings

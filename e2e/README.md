@@ -9,13 +9,13 @@ npm run -s e2e -- select --changed <file>… | --base <ref>
 npm run -s e2e -- plan --resources <list-resources output> [--seat <name>]
 npm run -s e2e -- run <category/feature/behaviour#scenario> --surface <s> \\
   [--device role=id]… [--seat <name> | --stack <id>] [--budget-usd n]
-npm run -s e2e -- stack up [--lan] [--native]
+npm run -s e2e -- stack up [--ref <ref>] [--name e2e-NN]
 npm run -s e2e -- stack down <id>
 npm run -s e2e -- stack prune
 npm run -s e2e -- prepare --app <app> --device <id> (--stack <id> | --seat <name> | --package <path>)
 ```
 
-A stack started on this machine is named for its project, the branch's last part, and six random hex digits: `streamingFixes_1ef39d`, with its database `e2e_streamingFixes_1ef39d`. `stack up` prints the id; nobody chooses one, so two stacks never share a database or a directory, whichever worktree or agent starts them. A stack whose process was killed never stops, and no later stack reuses its id: `stack prune` removes the registry entries, directories and databases of this machine's stacks whose process has gone. Each stack records its owner as this machine and its process; a database another machine on the same test cluster owns, or one whose owner cannot be read, is kept and listed.
+A stack is a throwaway TeamStation server on a droplet of its own: the ref's API and ingest, Postgres, Valkey, its own Space, the fault server and the Places stand-in, behind HTTPS at a pool name, `e2e-01.teamstation.app` … `e2e-16.teamstation.app`. `stack up` asks the provider the local settings name (`stackProvider`, the devops repo's `e2e-stack`) for one, attaches the handle it prints, and seeds `baseline` on it. Several can be up at once, from any number of worktrees, agents or machines. A scenario that needs a stack runs on one named with `--stack <id>`; without it, it is blocked. `stack down <id>` has the provider copy the droplet's logs to this machine and destroy the rest; `stack prune` has it remove whatever runs left behind, and forgets stacks whose handle went with them. Nothing of a stack but its logs is left on this machine.
 
 `run` exits 0 for passed or passed-degraded, 1 for failed or quarantined, 2 for blocked, 3
 when the harness itself failed, and 4 for inconclusive: needs-review or unbaselined. Read
@@ -70,19 +70,19 @@ The corpus lives in the private golden store. `add` turns one clean capture into
 `e2e/faults/catalogue.ts` lists every fault, each applied from outside the app, and the layers meant to catch it. A spec names the faults it must catch in `faults`.
 
 ```sh
-npm run e2e -- detect <scenario-id> --fault <fault> --surface <surface> [--device role=id]
+npm run e2e -- detect <scenario-id> --fault <fault> --surface <surface> [--stack <id>] [--device role=id]
 npm run e2e -- scorecard
 ```
 
-`detect` passes only when the scenario goes red under the fault, and records in the ledger which layer turned it red. A test that merely crashed is recorded as `test-crash`, which no fault expects, because it proves no layer saw anything. A quarantined scenario proves nothing, and a fault that cannot run on the surface reports `blocked` and records nothing. Fault runs use an isolated stack and can never make a golden.
+`detect` passes only when the scenario goes red under the fault, and records in the ledger which layer turned it red. A test that merely crashed is recorded as `test-crash`, which no fault expects, because it proves no layer saw anything. A quarantined scenario proves nothing, and a fault that cannot run on the surface reports `blocked` and records nothing. Fault runs can never make a golden.
 
-API faults come from a proxy between the front server and the API. `ctx.stack.adopt(origin)` puts the same proxy in front of a server a scenario started, and returns the origin to use, so its 5xx are seen too. Sign-in stays up by default, so a fault reaches the screens a scenario checks. A scenario whose fixture must carry a fault reads `ctx.fault`.
+API faults come from the stack's fault server, between its HTTPS front and its API on the droplet: `detect --stack <id>` sets the fault there before the scenario and clears it after, and the stack's 5xx are read from the same server. Sign-in stays up by default, so a fault reaches the screens a scenario checks. A scenario whose fixture must carry a fault reads `ctx.fault`.
 
 Once a category leaves `pendingCategories` in `legacy.json`, `validate` fails unless its specs name every fault, or `EXCUSED` in the catalogue says why one cannot reach it. A fault that survives is a blind spot: add a checkpoint, or record the reason.
 
 ## Fixtures, accounts and mail
 
-A scenario never shares data with another. `ctx.fixture(name)` seeds a world under its own nonce, and the manifest it returns, with its passwords, stays in the scenario's memory. `baseline`'s accounts, `admin` and `member`, exist on an isolated stack and on the tester seat. A branch seat has none, so a scenario needing them reports `blocked` there. Worlds live in `src/server/dev/fixtures/`.
+A scenario never shares data with another. `ctx.fixture(name)` seeds a world under its own nonce, and the manifest it returns, with its passwords, stays in the scenario's memory. `baseline`'s accounts, `admin` and `member`, exist on a stack (seeded at `stack up`) and on the tester seat. A branch seat has none, so a scenario needing them reports `blocked` there. Worlds live in `src/server/dev/fixtures/`.
 
 ```sh
 npm run fixtures -- <world> --json --mailbox <mailbox>

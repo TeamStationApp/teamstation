@@ -113,6 +113,8 @@ export interface StackHandle {
   serverErrors: (since: number) => Promise<ServerError[] | undefined>
   /** The handle of a stack the suite attached rather than started. */
   attached?: AttachedHandle
+  /** Sets the proxy fault the stack's fault server applies, or clears it. */
+  setFault?: (fault: string | null) => Promise<void>
 }
 
 export interface WebSession {
