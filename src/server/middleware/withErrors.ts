@@ -79,6 +79,14 @@ export const errorHandler: ErrorRequestHandler = (error, req, res, next) => {
     sendError(res, tooLarge('That request body is too large'))
     return
   }
+  // The caller hung up before its body arrived: a phone that gave up on a
+  // stalled send closes it and sends it again later. Nothing is wrong here and
+  // nobody is left to answer, so it is neither logged nor reported.
+  if (isAborted(error)) {
+    if (!res.headersSent)
+      sendError(res, badRequest('The request ended before its body arrived'))
+    return
+  }
   // No database connection for the moment: nothing is wrong with the request,
   // so it is told to come back. The pool reports its own shortage, but nothing
   // else reports a pooler that went away, so crash reporting hears of these
@@ -120,5 +128,14 @@ function isTooLarge(error: unknown): boolean {
     typeof error === 'object' &&
     error != null &&
     (error as { type?: unknown }).type === 'entity.too.large'
+  )
+}
+
+/** express.json() rejects a body its caller stopped sending with `request.aborted`. */
+function isAborted(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error != null &&
+    (error as { type?: unknown }).type === 'request.aborted'
   )
 }

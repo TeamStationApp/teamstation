@@ -459,6 +459,20 @@ describe('the stand-in Space’s access headers', function () {
     await rm(dir, { recursive: true, force: true })
   })
 
+  it('serves a picture under a random public name unsigned', async function () {
+    const key = `images/team/${'9e'.repeat(16)}-96.png`
+    await putObject({
+      space,
+      key,
+      body: Buffer.from('mark'),
+      contentType: 'image/png',
+      acl: 'public-read'
+    })
+    const got = await fetch(plain(key))
+    expect(got.status).equals(200)
+    expect(await got.text()).equals('mark')
+  })
+
   it('serves a public-read object unsigned, with its cache header, and refuses a private one', async function () {
     await putObject({
       space,

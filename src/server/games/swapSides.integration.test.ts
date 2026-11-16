@@ -20,7 +20,9 @@ import {
   type SessionContext
 } from '../../common/scoring/session'
 import { type GameSetup, setupOf } from '../../common/scoring/state'
-import { recordBySide } from '../../common/scoring/teamRecord'
+import { swappedDocuments } from '../../common/scoring/swapDocuments'
+import { recordBySide, type SideTeams } from '../../common/scoring/teamRecord'
+import { playForWire } from '../../common/scoring/wireRecord'
 import { teamsOfRow } from '../../common/teamLists'
 import { storedUnrostered } from '../../common/unroster'
 import { userIdOfGumbo } from '../../common/userId'
@@ -35,11 +37,12 @@ import { lockKeys } from '../db/advisoryLocks'
 import { atomic } from '../db/atomic'
 import { type Database, makeDatabase } from '../db/database'
 import { atBatOf } from '../events/atBatInProgress'
-import { postGamePlays, readPlays } from '../events/postPlays'
+import { gamePlaysDigest, postGamePlays, readPlays } from '../events/postPlays'
 import { lineupsAnswer, storedLineupsDigest } from '../events/teamLineups'
 import { GAME_CHANGES_CHANNEL } from '../socket/gameChanges'
 import { SCREEN_SCOPES_CHANNEL } from '../socket/syncRevision'
 import { createGuestPlayer } from './guestPlayers'
+import { swapOrReset } from './resetSwap'
 import { retargetGameTeams } from './retargetTeams'
 import { gameAvailability } from './rosterAvailability'
 import { SWAP_REFUSED, swapGameSides } from './swapSides'
@@ -769,6 +772,120 @@ describe('swapping a game’s home and away teams', function () {
     expect(now.setupBefore).deep.equals(was.setupBefore)
     expect(now.actions).deep.equals(was.actions)
     expect(game.pregame).deep.equals(before.pregame)
+  })
+
+  describe('beside the phone’s own swapped copy (swappedDocuments)', function () {
+    /** The game, its plays and its at-bat as the API answers them. */
+    const onWire = async (
+      id: string
+    ): Promise<{
+      game: Record<string, unknown>
+      events: { plays: unknown[]; currentPlay: unknown }
+      teams: SideTeams
+    }> => {
+      const game = await row(id)
+      const teams = teamsOfRow(game)
+      const plays = await readPlays(db, id)
+      return {
+        game: { homeTeamId: game.home_team_id, awayTeamId: game.away_team_id },
+        events: {
+          plays: plays.map(play => ({ gumbo: playForWire(play.gumbo, teams) })),
+          currentPlay: playForWire(atBatOf(game, plays.length > 0), teams)
+        },
+        teams
+      }
+    }
+    /** What a record keeps by side: its lineups and each lineup change's. */
+    const sidesIn = (play: unknown, teams: SideTeams): unknown => {
+      const record = recordOf(play, teams)
+      return record == null
+        ? null
+        : {
+            sides: record.setupBefore.sides,
+            changes: record.actions.map(action =>
+              action.type === 'lineup'
+                ? {
+                    side: action.side,
+                    sides: action.setup?.sides,
+                    confirmed: action.confirmed,
+                    unseen: action.unseen
+                  }
+                : action.type
+            )
+          }
+    }
+    /** The phone's copy and the server's after it, read by the new sides. */
+    const compare = (
+      local: ReturnType<typeof swappedDocuments>,
+      server: Awaited<ReturnType<typeof onWire>>
+    ): void => {
+      expect(local.game).deep.include(server.game)
+      const plays = local.events!.plays as unknown[]
+      expect(plays.length).equals(server.events.plays.length)
+      const gumbo = (row: unknown): unknown => (row as { gumbo: unknown }).gumbo
+      plays.forEach((row, i) => {
+        expect(sidesIn(gumbo(row), server.teams)).deep.equals(
+          sidesIn(gumbo(server.events.plays[i]), server.teams)
+        )
+      })
+      const answered = sidesIn(server.events.currentPlay, server.teams)
+      expect(answered).not.equals(null)
+      expect(sidesIn(local.events!.currentPlay, server.teams)).deep.equals(
+        answered
+      )
+    }
+
+    it('holds each team’s lineups on the side the server answers after a swap', async function () {
+      await prepared('gam_phone_swap')
+      const phone = await onWire('gam_phone_swap')
+      const local = swappedDocuments(
+        { game: phone.game, lineups: null, events: phone.events },
+        'swap',
+        'local'
+      )
+      await swap('gam_phone_swap')
+      const server = await onWire('gam_phone_swap')
+      compare(local, server)
+      // The hosts, away now, lead off with their own lineup.
+      const record = recordOf(server.events.currentPlay, server.teams)!
+      expect(record.setupBefore.sides.away.battingOrder).deep.equals([
+        10, 11, 12, 13, 14, 15, 16, 17, 18
+      ])
+    })
+
+    it('holds each team’s lineups on the side the server answers after a Reset and Swap', async function () {
+      await prepared('gam_phone_reset')
+      await score('gam_phone_reset', () => [
+        { type: 'pitch', call: 'C' },
+        { type: 'pitch', call: 'C' },
+        { type: 'pitch', call: 'C' },
+        { type: 'pitch', call: 'B' }
+      ])
+      const phone = await onWire('gam_phone_reset')
+      expect(phone.events.plays).length(1)
+      const local = swappedDocuments(
+        { game: phone.game, lineups: null, events: phone.events },
+        'reset',
+        'local'
+      )
+      await atomic(db, async trx => {
+        await lockPlayerEdits(trx)
+        const game = await row('gam_phone_reset')
+        const done = await swapOrReset(
+          trx,
+          'gam_phone_reset',
+          AWAY_COACH.userId,
+          {
+            playsDigest: await gamePlaysDigest(trx, game),
+            generation: game.play_generation
+          }
+        )
+        expect(done.reset).equals(true)
+      })
+      const server = await onWire('gam_phone_reset')
+      expect(server.events.plays).deep.equals([])
+      compare(local, server)
+    })
   })
 
   it('leaves nothing and says nothing when its transaction rolls back', async function () {

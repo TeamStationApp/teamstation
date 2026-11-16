@@ -21,7 +21,7 @@ export function pictureRoutes(
   const router = Router()
   /** A catalog picture for this account; one it does not offer is a 400. */
   const choose = async (userId: string, catalogId: unknown): Promise<void> => {
-    await selectAccountCatalogPicture(db, userId, catalogId).catch(
+    await selectAccountCatalogPicture(db, space, userId, catalogId).catch(
       (error: unknown) => {
         throw error instanceof TypeError ? badRequest(error.message) : error
       }

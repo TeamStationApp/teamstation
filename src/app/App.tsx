@@ -81,6 +81,7 @@ import {
 } from './components'
 import { FLOATING_HEIGHT_REM } from './components/AppNav'
 import { AppSidebar } from './components/AppSidebar'
+import { PictureDirectoriesContext } from './components/CachedPicture'
 import { ChoiceSheet } from './components/ChoiceSheet'
 import { errorScreen } from './components/ErrorFallback'
 import { OfflineBanner } from './components/OfflineBanner'
@@ -156,6 +157,7 @@ import {
   useAnalytics
 } from './observability/AnalyticsContext'
 import { passwordKdf } from './platform/passwordKdf'
+import { useInsets } from './platform/safeArea'
 import { signInRequest } from './platform/signInRequest'
 import {
   sessionUserOf,
@@ -228,6 +230,8 @@ import {
 } from './sync/cachingClient'
 import type { HeldChain } from './sync/outbox'
 import { watchReachability } from './sync/reachability'
+import { leaveStalledConnections } from './sync/stalledConnections'
+import { timedRequest } from './sync/timedRequests'
 import {
   heldTeamText,
   offlineBannerText,
@@ -477,6 +481,7 @@ function Shell(props: AppProps): React.ReactElement {
   // The existing bar layout remains below the sidebar's window threshold.
   const isWide = useBreakpoint() !== 'phone'
   const windowSidebarWidth = useSidebarWidth()
+  const insets = useInsets()
   // Measured rather than repeated. The content's top padding and the pegged
   // player both have to clear the header, and a second copy of its height is a
   // second thing to forget.
@@ -511,7 +516,9 @@ function Shell(props: AppProps): React.ReactElement {
             token: initialToken,
             passwordKdf,
             deviceModel: signInDeviceModel(),
-            openCache: documentCache
+            openCache: documentCache,
+            onDeadlineMissed: leaveStalledConnections,
+            ...(timedRequest == null ? {} : { timedRequest })
           }),
     [apiBaseUrl, initialToken, documentCache]
   )
@@ -4067,16 +4074,15 @@ function Shell(props: AppProps): React.ReactElement {
   )
   const bannerShown =
     bannerText != null || createRefused || heldTeams.length > 0
+  const bottomBanner = bannerShown ? bannerHeight : 0
+  // The offline banner is the last chrome: the bottom strip, on the safe-area
+  // inset, under the floating capsule, which sits on top of it. A wide window
+  // has no capsule, and the banner still sits on the inset, beside the
+  // sidebar when there is one.
   const chrome = (
     <>
       <View key="header" style={styles.headerLayer}>
         {header}
-        <OfflineBanner
-          text={bannerText}
-          refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
-          held={heldTeams}
-          onLayout={setBannerHeight}
-        />
       </View>
       {!isWide && sidebarWidth === 0 && !tessLayer && (
         <AppNav
@@ -4087,8 +4093,20 @@ function Shell(props: AppProps): React.ReactElement {
           chatActive={top?.name === 'conversation' || tab === 'chat'}
           onSelect={selectTab}
           dots={{ chat: chatOn && hasUnread(chatList) }}
+          bannerHeight={bottomBanner}
         />
       )}
+      <OfflineBanner
+        key="banner"
+        style={[
+          styles.bannerLayer,
+          { bottom: insets.bottom, left: sidebarWidth }
+        ]}
+        text={bannerText}
+        refusal={createRefused ? OFFLINE_CREATE_MESSAGE : undefined}
+        held={heldTeams}
+        onLayout={setBannerHeight}
+      />
     </>
   )
   /** A scene's node, told which scene it is (see `useChatAgeAsk`). */
@@ -4184,12 +4202,11 @@ function Shell(props: AppProps): React.ReactElement {
                       }
                       predictiveBackNow={predictiveBackNow}
                       popPending={popPending}
-                      headerHeight={
-                        headerHeight + (bannerShown ? bannerHeight : 0)
-                      }
+                      headerHeight={headerHeight}
                       navigationHeight={
                         isWide || sidebarWidth > 0 ? 0 : navigationHeight
                       }
+                      bannerHeight={bottomBanner}
                       onHandoff={setHandoff}
                       onHandoffHeight={setHandoffHeight}
                       onBackOverride={setBack}
@@ -4204,7 +4221,12 @@ function Shell(props: AppProps): React.ReactElement {
                 </PaneBesideTess>
               </View>
               {tessPanel}
-              <SuccessToast notice={successNotice} />
+              {/* Over an immersive scene (the scorer) the chrome, and the
+                  banner in it, is not drawn: nothing to clear. */}
+              <SuccessToast
+                notice={successNotice}
+                bannerHeight={immersiveTop ? 0 : bottomBanner}
+              />
               {chatOn && <DeviceApprovalPrompt />}
               <ChatAgeHost
                 state={chatAge}
@@ -4271,7 +4293,16 @@ function Shell(props: AppProps): React.ReactElement {
     </GestureHandlerRootView>
   )
   return (
-    <ChatAgeContext.Provider value={chatAge}>{shell}</ChatAgeContext.Provider>
+    <ChatAgeContext.Provider value={chatAge}>
+      {caching == null ? (
+        shell
+      ) : (
+        // The phone draws each picture from its file of it, offline too.
+        <PictureDirectoriesContext.Provider value={caching.pictureFiles}>
+          {shell}
+        </PictureDirectoriesContext.Provider>
+      )}
+    </ChatAgeContext.Provider>
   )
 }
 
@@ -4908,6 +4939,14 @@ const getStyles = cacheStyles((theme: Theme) => ({
     left: 0,
     right: 0,
     zIndex: 4
+  },
+  // The bottom strip, across the window right of any sidebar (its `left`);
+  // its `bottom` is the safe-area inset.
+  bannerLayer: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 5
   }
 }))
 

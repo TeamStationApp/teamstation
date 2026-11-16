@@ -238,7 +238,11 @@ export interface OnceSteps {
  * write that wrote nothing, and so claimed nothing, has the key claimed with
  * its answer afterwards. Two requests with the same key at once: the second
  * claim is refused as the first commits, its transaction rolls back, and it
- * is answered what the first stored.
+ * is answered what the first stored. The same when the second's write is
+ * refused because the first committed while it waited (a lineup's base the
+ * first moved on): any failure of a write whose key is now held is answered
+ * as the request that holds it was. There is no in-progress answer: a
+ * second request waits for the first.
  */
 export async function answerOnce(
   db: Kysely<Database>,
@@ -264,8 +268,18 @@ export async function answerOnce(
       claimed = claim
     })
   } catch (error: unknown) {
-    if (!isClaimTaken(error)) throw error
-    const raced = await heldKey(db, call)
+    // Whatever refused this write, a request with the same key may have
+    // committed while it ran: a phone's retry of a send it gave up on that
+    // overlapped the first, which this one waited for. It is that request's
+    // answer, never a refusal of a change that landed.
+    // Held by another body: the key's own 409, which a phone reads again
+    // from rather than showing as refused.
+    let raced: HeldKey | undefined
+    try {
+      raced = await heldKey(db, call)
+    } catch (lookup: unknown) {
+      throw lookup instanceof KeyReused ? lookup : error
+    }
     if (raced == null) throw error
     return await replay(raced)
   }

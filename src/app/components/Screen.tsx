@@ -75,7 +75,8 @@ export interface ScreenProps {
 
 /**
  * The space below a screen's last row: the column's own margin, or on a phone
- * the clearance the floating nav capsule needs.
+ * the clearance the floating nav capsule needs, and either way the offline
+ * banner's height while it shows.
  *
  * The capsule floats above the home indicator. On iOS it sits against that
  * inset, so the clearance drops the extra margin; Android and the web keep
@@ -86,13 +87,16 @@ export function useScreenBottom(): number {
   const theme = useTheme()
   const breakpoint = useBreakpoint()
   const insets = useInsets()
-  if (breakpoint !== 'phone') return theme.rem(theme.spaceLgRem)
+  const banner = useHeaderSlot().bannerHeight ?? 0
+  if (breakpoint !== 'phone') return theme.rem(theme.spaceLgRem) + banner
   return (
     navClearanceAboveInset(
       Platform.OS,
       theme.rem(NAV_CLEARANCE_REM),
       theme.rem(FLOATING_BOTTOM_REM)
-    ) + insets.bottom
+    ) +
+    insets.bottom +
+    banner
   )
 }
 

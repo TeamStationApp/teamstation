@@ -48,12 +48,12 @@ export async function maySwapSides(
  *
  * Runs in the caller's transaction, which took `lockPlayerEdits` before any
  * `games` row lock, as every roster writer does; it may hold this game's
- * row already.
+ * row already. Answers the lineups digest it gave the new sides.
  */
 export async function swapGameSides(
   trx: Transaction<Database>,
   gameId: string
-): Promise<void> {
+): Promise<string> {
   const game = await trx
     .selectFrom('games')
     .selectAll()
@@ -124,4 +124,5 @@ export async function swapGameSides(
     await notifyPlaysChanged(trx, gameId)
     await notifyGameChange(trx, { game: gameId, kind: 'lineups' })
   }
+  return digest
 }

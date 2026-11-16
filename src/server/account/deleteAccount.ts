@@ -50,7 +50,13 @@ export { DELETED_NAME }
 export async function deleteAccount(
   db: Kysely<Database>,
   userId: string,
-  at = new Date()
+  at = new Date(),
+  /**
+   * Told the picture prefixes the person's rows held, read in the delete's
+   * own transaction with those rows locked, so a picture saved meanwhile
+   * is one of them, or waits for the delete and finds no account.
+   */
+  onPictures?: (prefixes: string[]) => void
 ): Promise<string[]> {
   return await atomic(db, async trx => {
     await lockKeys(trx, [
@@ -73,6 +79,17 @@ export async function deleteAccount(
       )
 
     const { userIds } = await onePerson(trx, userId)
+    if (onPictures != null)
+      onPictures(
+        (
+          await trx
+            .selectFrom('users')
+            .select('avatar_path')
+            .where('id', 'in', userIds)
+            .forUpdate()
+            .execute()
+        ).flatMap(row => (row.avatar_path == null ? [] : [row.avatar_path]))
+      )
     const emails = (
       await trx
         .selectFrom('user_emails')

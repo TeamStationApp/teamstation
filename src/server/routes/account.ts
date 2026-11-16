@@ -38,10 +38,15 @@ import {
 } from '../auth/passwords'
 import { checkLimits, type LimitRule, recordAttempts } from '../auth/rateLimit'
 import { isMachine } from '../auth/sessions'
+import { atomic } from '../db/atomic'
 import type { Database } from '../db/database'
 import { applyWaitingInvitations } from '../invites/personRequests'
 import { cleanBody } from '../jsonBody'
 import { imageUrl, PROFILE_SIZE } from '../media/imageUrls'
+import {
+  releasePictures,
+  releaseReplacedPicture
+} from '../media/republishImages'
 import { spaceConfigured } from '../media/spacesHls'
 import { deleteSpacePrefix } from '../media/spacesVideo'
 import { setAudit } from '../middleware/withAudit'
@@ -263,7 +268,12 @@ export function accountRoutes(
     '/me/account',
     withAsync(async (req, res) => {
       const userId = accountId(req)
-      const emptied = await deleteAccount(db, userId)
+      // Read in the delete's own transaction, before the rows are emptied:
+      // a public picture's name does not say whose it is.
+      let pictures: string[] = []
+      const emptied = await deleteAccount(db, userId, undefined, found => {
+        pictures = found
+      })
       setAudit(res.locals, { entityType: 'user', entityId: userId })
       clearSessionCookie(res, secureCookieFor(options.publicUrl))
       res.status(204).end()
@@ -271,7 +281,9 @@ export function accountRoutes(
       // After the answer, which does not wait on storage: the account is gone
       // whatever storage says, and a slow Space must not make it look kept.
       if (spaceConfigured(options.space))
-        removePictures(options.space, emptied).catch(() => undefined)
+        removePictures(db, options.space, emptied, pictures).catch(
+          () => undefined
+        )
     })
   )
   // A person's own name and photo, and the same for a node administrator
@@ -335,7 +347,7 @@ export function accountRoutes(
           image: req.body?.image,
           source: 'upload'
         })
-        await db.transaction().execute(async tx => {
+        await atomic(db, async tx => {
           await lockAccount(tx, userId, closed)
           // The person, or a node administrator for them, may replace it.
           await storePlayerAvatar(tx, options, userId, picture, true)
@@ -354,8 +366,13 @@ export function accountRoutes(
       requireActor,
       withAsync(async (req, res) => {
         const userId = await who(req)
-        await db.transaction().execute(async tx => {
+        await atomic(db, async tx => {
           await lockAccount(tx, userId, closed)
+          const before = await tx
+            .selectFrom('users')
+            .select('avatar_path')
+            .where('id', '=', userId)
+            .executeTakeFirst()
           await tx
             .updateTable('users')
             .set({
@@ -368,6 +385,7 @@ export function accountRoutes(
             })
             .where('id', '=', userId)
             .execute()
+          await releaseReplacedPicture(tx, options.space, before?.avatar_path)
         })
         setAudit(res.locals, { entityType: 'user', entityId: userId })
         res.json(await read(userId))
@@ -563,11 +581,21 @@ export function accountRoutes(
   return router
 }
 
-/** Each account's own uploads, one at a time, saying which could not go. */
+/**
+ * Each account's own uploads, one at a time, saying which could not go: the
+ * picture each row held, unless another row still names it, and everything
+ * under the account's own prefix, where pictures were stored before names
+ * were random.
+ */
 async function removePictures(
+  db: Kysely<Database>,
   space: AccountOptions['space'],
-  userIds: readonly string[]
+  userIds: readonly string[],
+  prefixes: readonly string[]
 ): Promise<void> {
+  await releasePictures(db, space, prefixes, message => {
+    console.error(`deleting picture: ${message}`)
+  })
   for (const id of userIds)
     await deleteSpacePrefix(space, `images/user/${id}/`).catch(
       (error: unknown) => {

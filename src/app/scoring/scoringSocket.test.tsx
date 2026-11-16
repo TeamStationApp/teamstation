@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import {
   type GameLineupsResponse,
   type GamePlansResponse,
+  REQUEST_DEADLINE_MS,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
@@ -1727,11 +1728,18 @@ describe('a game swapped under the scoring screen on the socket', function () {
       swapNoticeMs?: number
       /** Each read of the game after the first takes this long. */
       slowReadsMs?: number
+      /**
+       * Once the held save is released, a read of the game's plays before
+       * the game opens again never settles: a rebase's, on a stalled link.
+       */
+      rebaseReadsHang?: boolean
     } = {}
   ): Promise<{
     changes: FakeChanges
     opens: () => number
     reloads: () => number
+    /** The reads `rebaseReadsHang` held, which never settle. */
+    rebaseReads: () => number
     session: () => GameSession
     release: () => void
     /** The games whose queued writes were given up. */
@@ -1771,15 +1779,23 @@ describe('a game swapped under the scoring screen on the socket', function () {
     const pregame = store.games.get('g1')!
     let opens = 0
     let reloads = 0
+    let rebaseReads = 0
     let listening = 0
     let opened: GameSession | undefined
     // As the server source does: every read gives the context for the
     // game's teams as they stand.
+    let released = false
     const reads: EventStore = {
-      load: async gameId => ({
-        ...(await store.load(gameId)),
-        context: context(game)
-      }),
+      load: async gameId => {
+        if (options.rebaseReadsHang === true && released && opens < 2) {
+          rebaseReads++
+          return await new Promise<never>(() => undefined)
+        }
+        return {
+          ...(await store.load(gameId)),
+          context: context(game)
+        }
+      },
       save: async (gameId, change) => await store.save(gameId, change)
     }
     const source: ScoringSource = {
@@ -1832,7 +1848,10 @@ describe('a game swapped under the scoring screen on the socket', function () {
     let release = (): void => undefined
     if (options.holdSaves === true) {
       const held = new Promise<void>(resolve => {
-        release = resolve
+        release = () => {
+          released = true
+          resolve()
+        }
       })
       const save = store.save.bind(store)
       let refused = options.staleOnRelease !== true
@@ -1884,6 +1903,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
               discardGame: async (gameId: string) => {
                 discarded.push(gameId)
                 return true
+              },
+              giveUpGame: async (gameId: string) => {
+                const count = queued[`game:${gameId}`] ?? 0
+                if (count > 0) discarded.push(gameId)
+                return { lost: count, unsure: 0 }
               }
             }
           )
@@ -1924,6 +1948,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
       changes,
       opens: () => opens,
       reloads: () => reloads,
+      rebaseReads: () => rebaseReads,
       session: () => opened!,
       release,
       discarded,
@@ -2030,6 +2055,108 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.session().state.gameData.teams.home.id).equals('away')
   })
 
+  /**
+   * The screen's `REQUEST_DEADLINE_MS` timers, held for the test to run;
+   * every other timer runs as it would.
+   */
+  function deadlineTimers(): {
+    pending: () => number
+    run: () => void
+    restore: () => void
+  } {
+    const real = globalThis.setTimeout
+    const realClear = globalThis.clearTimeout
+    const held = new Map<number, () => void>()
+    let next = 0
+    globalThis.setTimeout = ((run: () => void, ms?: number) => {
+      if (ms !== REQUEST_DEADLINE_MS) return real(run, ms)
+      const id = --next
+      held.set(id, run)
+      return id
+    }) as typeof setTimeout
+    globalThis.clearTimeout = ((
+      id: Parameters<typeof clearTimeout>[0] | number
+    ) => {
+      if (typeof id === 'number' && held.delete(id)) return
+      realClear(id)
+    }) as typeof clearTimeout
+    return {
+      pending: () => held.size,
+      run: () => {
+        const runs = [...held.values()]
+        held.clear()
+        for (const run of runs) run()
+      },
+      restore: () => {
+        globalThis.setTimeout = real
+        globalThis.clearTimeout = realClear
+      }
+    }
+  }
+
+  it('reopens with the notice when a save on its way is refused as stale, reading nothing for the closed session (9.harness-review.1)', async function () {
+    const timers = deadlineTimers()
+    try {
+      const screen = await swappable({
+        holdSaves: true,
+        staleOnRelease: true,
+        rebaseReadsHang: true
+      })
+      await click('Called Strike')
+      await settle()
+      expect(screen.session().saving).equals(true)
+      screen.swap()
+      await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+      await settle()
+      expect(screen.opens()).equals(1)
+      screen.release()
+      await settle()
+      await settle()
+      // No rebase read is begun for the closed session, and the screen does
+      // not wait for one: it reopens at once, the pitch counted as lost.
+      expect(screen.rebaseReads()).equals(0)
+      expect(screen.opens()).equals(2)
+      expect(document.body.textContent).includes(
+        'Home and away were swapped, so changes not yet saved before the swap were not kept.'
+      )
+      expect(screen.session().state.gameData.teams.home.id).equals('away')
+      // Its wait was stopped with it.
+      expect(timers.pending()).equals(0)
+    } finally {
+      timers.restore()
+    }
+  })
+
+  it('waits for a save on its way no longer than a request, then reopens and says its changes may not have been kept (9.harness-review.1)', async function () {
+    const timers = deadlineTimers()
+    try {
+      const screen = await swappable({ holdSaves: true })
+      await click('Called Strike')
+      await settle()
+      screen.swap()
+      await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+      await settle()
+      expect(screen.opens()).equals(1)
+      expect(timers.pending()).equals(1)
+      // The save is never answered: the request deadline passes.
+      await act(async () => {
+        timers.run()
+      })
+      await settle()
+      expect(screen.opens()).equals(2)
+      expect(document.body.textContent).includes(
+        'Home and away were swapped, so changes not yet saved before the swap may not have been kept.'
+      )
+      expect(screen.session().state.gameData.teams.home.id).equals('away')
+      // Its late answer opens nothing more.
+      screen.release()
+      await settle()
+      expect(screen.opens()).equals(2)
+    } finally {
+      timers.restore()
+    }
+  })
+
   it('on a phone, gives up the writes queued for the game before the swap', async function () {
     const screen = await swappable({ phone: { 'game:g1': 1 } })
     const before = screen.session()
@@ -2043,6 +2170,17 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(document.body.textContent).includes(
       'changes not yet saved before the swap were not kept'
     )
+  })
+
+  it('on a phone with nothing queued, gives up nothing on another device’s swap', async function () {
+    const screen = await swappable({ phone: {} })
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await settle()
+    expect(screen.discarded).deep.equals([])
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes('Home and away were swapped.')
+    expect(document.body.textContent).not.includes('were not kept')
   })
 
   it('stops waiting for a save on its way when the screen goes', async function () {

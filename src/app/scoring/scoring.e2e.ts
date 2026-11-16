@@ -8351,6 +8351,8 @@ describe('pitch animation, hit flight and celebration timing (E9)', function () 
   interface TimelineWindow {
     qaTimeline: Frame[]
     qaStop: boolean
+    /** Samples the page once more, now. */
+    qaSample: () => void
   }
   async function openField(): Promise<Page> {
     const { page } = await open(
@@ -8426,6 +8428,7 @@ describe('pitch animation, hit flight and celebration timing (E9)', function () 
       // Sampled on a timer as well as drawn frames: a slow frame must not
       // hide when the page changed.
       const timer = setInterval(step, 10)
+      host.qaSample = step
       step()
     })
   }
@@ -8440,6 +8443,9 @@ describe('pitch animation, hit flight and celebration timing (E9)', function () 
   async function timeline(page: Page): Promise<Frame[]> {
     return await page.evaluate(() => {
       const host = window as unknown as TimelineWindow
+      // The page may have changed after the last tick: a wait that saw the
+      // change returns before the next one.
+      host.qaSample()
       host.qaStop = true
       return host.qaTimeline
     })

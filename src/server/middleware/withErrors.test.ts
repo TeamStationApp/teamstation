@@ -1,8 +1,8 @@
 import type { Server } from 'node:http'
-import type { AddressInfo } from 'node:net'
+import { type AddressInfo, connect } from 'node:net'
 
 import { expect } from 'chai'
-import express from 'express'
+import express, { type ErrorRequestHandler } from 'express'
 import { after, before, describe, it } from 'mocha'
 
 import { forbidden } from '../../common/errors'
@@ -45,9 +45,14 @@ describe('errorHandler', function () {
     planned: forbidden('No')
   }
   const quiet = console.error
+  const logged: unknown[][] = []
+  const aborted: number[] = []
 
   before(async function () {
     const app = express()
+    app.post('/body', express.json(), (req, res) => {
+      res.json({})
+    })
     app.get('/fail/:kind', (req, res, next) => {
       next(errorOf[req.params.kind])
     })
@@ -55,11 +60,17 @@ describe('errorHandler', function () {
       res.write('so far')
       next(errorOf.waiting)
     })
+    app.use('/body', ((error, req, res, next) => {
+      errorHandler(error, req, res, next)
+      aborted.push(res.statusCode)
+    }) satisfies ErrorRequestHandler)
     app.use(errorHandler)
     server = app.listen(0, '127.0.0.1')
     await new Promise<void>(resolve => server.once('listening', resolve))
     base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
-    console.error = () => undefined
+    console.error = (...args: unknown[]) => {
+      logged.push(args)
+    }
   })
 
   after(async function () {
@@ -99,6 +110,23 @@ describe('errorHandler', function () {
     expect(response.status).equals(500)
     expect(response.headers.get('retry-after')).equals(null)
     expect(await response.text()).not.contains('secrets')
+  })
+
+  it('answers 400, and logs nothing, when the caller hangs up before its body arrives', async function () {
+    const port = (server.address() as AddressInfo).port
+    const before = logged.length
+    const socket = connect(port, '127.0.0.1')
+    await new Promise<void>(resolve => socket.once('connect', resolve))
+    socket.write(
+      'POST /body HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n' +
+        'Content-Length: 18626\r\n\r\n'
+    )
+    await new Promise(resolve => setTimeout(resolve, 50))
+    socket.destroy()
+    for (let i = 0; i < 100 && aborted.length === 0; i++)
+      await new Promise(resolve => setTimeout(resolve, 10))
+    expect(aborted).deep.equals([400])
+    expect(logged.slice(before)).deep.equals([])
   })
 
   it('keeps a planned error as itself', async function () {

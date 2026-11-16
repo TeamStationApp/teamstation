@@ -91,6 +91,9 @@ import { ScopedThemeProvider, useTheme } from '../theme/ThemeContext'
 import { BoxScore, type LineupBatter } from './BoxScore'
 import { PlayerSettingsTab } from './PlayerSettingsTab'
 
+/** The screen's opening reads: from the phone at once while no signal is known. */
+const OFFLINE_FIRST = { offlineFirst: true } as const
+
 /** How often, at most, the box score is read again as plays arrive. */
 export const BOX_SCORE_EVERY_MS = 5000
 
@@ -567,7 +570,9 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     setOpened(undefined)
     setFailed(undefined)
     const load = async (): Promise<void> => {
-      const game = await client.game(gameId)
+      // With no signal known, each read answers what the phone stored at
+      // once, rather than after its deadline.
+      const game = await client.game(gameId, OFFLINE_FIRST)
       const of: Side | undefined =
         teamId === game.homeTeamId
           ? 'home'
@@ -584,26 +589,36 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
       const roster = async (id: string): Promise<RosterEntry[]> =>
         id === teamId
           ? await client
-              .roster(id, { includeFullNames: true })
-              .catch(async () => withoutPrivateNames(await client.roster(id)))
-          : withoutPrivateNames(await client.roster(id).catch(() => []))
+              .roster(id, { includeFullNames: true, ...OFFLINE_FIRST })
+              .catch(async () =>
+                withoutPrivateNames(await client.roster(id, OFFLINE_FIRST))
+              )
+          : withoutPrivateNames(
+              await client.roster(id, OFFLINE_FIRST).catch(() => [])
+            )
       const [away, home, lineups, kept, plans] = await Promise.all([
         roster(game.awayTeamId),
         roster(game.homeTeamId),
-        client.gameLineups(gameId),
+        client.gameLineups(gameId, OFFLINE_FIRST),
         client
-          .defaultLineup(teamId)
+          .defaultLineup(teamId, OFFLINE_FIRST)
           .then(found => found.lineup)
           .catch(() => null),
         // A plan that cannot be read leaves the Plan tab saying so, and
         // nothing of it is saved over the server's.
         client
-          .gamePlans(gameId)
+          .gamePlans(gameId, OFFLINE_FIRST)
           .then(both => both[of] ?? undefined)
           .catch(() => undefined)
       ])
       ownDefault.current = kept
-      const session = await source.open(game, away, home)
+      const session = await source.open(
+        game,
+        away,
+        home,
+        undefined,
+        OFFLINE_FIRST
+      )
       if (!current) return
       sessionRef.current = session
       heard(lineups, of)
@@ -646,8 +661,14 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
     const wait = Math.max(0, lastRead.current + every - Date.now())
     pending.current = setTimeout(() => {
       pending.current = null
+      // Only the read as the screen opens may be the phone's copy: a later
+      // one follows a notice, whose news is the server's.
+      const opening = lastRead.current === 0 ? OFFLINE_FIRST : {}
       lastRead.current = Date.now()
-      Promise.all([client.game(gameId), client.boxScore(gameId)])
+      Promise.all([
+        client.game(gameId, opening),
+        client.boxScore(gameId, opening)
+      ])
         .then(([game, rows]) => {
           setDetail(game)
           setBox(rows)
@@ -675,21 +696,18 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
   const planReads = useRef(0)
   const planChangedNow = useRef(planChanged)
   planChangedNow.current = planChanged
-  const rereadPlan = useCallback((): void => {
+  /** Fails as the read failed, for a read again after no signal. */
+  const rereadPlan = useCallback(async (): Promise<void> => {
     const of = sideRef.current
     if (of == null) return
     const read = ++planReads.current
-    client.gamePlans(gameId).then(
-      both => {
-        const answer = both[of]
-        if (read !== planReads.current || answer == null) return
-        const stored = answer.plan ?? NO_PLAN
-        setSidePlan(answer)
-        setSavedPlan(stored)
-        if (!planChangedNow.current) setPlan(stored)
-      },
-      () => undefined
-    )
+    const both = await client.gamePlans(gameId)
+    const answer = both[of]
+    if (read !== planReads.current || answer == null) return
+    const stored = answer.plan ?? NO_PLAN
+    setSidePlan(answer)
+    setSavedPlan(stored)
+    if (!planChangedNow.current) setPlan(stored)
   }, [client, gameId])
   useEffect(() => {
     if (socket == null) return
@@ -706,10 +724,26 @@ function CoachGame(props: CoachGameScreenProps): React.ReactElement {
           event.kind === 'plans' &&
           event.data.teamId === teamId)
       )
-        rereadPlan()
+        rereadPlan().catch(() => undefined)
     })
   }, [socket, gameId, teamId, refreshBox, rereadPlan])
   useGameReplaced(socket, gameId, opened?.game, readSides, reopenSwapped)
+  // What the phone answered from its copies, as the scoring screen's own
+  // reads, the client reads again from the server once it can, and says
+  // when the answer differs (`onStoredChanged`): then the lineups, the plan
+  // and the box score are read again from it. A plan or lineup being edited
+  // is kept.
+  useEffect(() => {
+    if (opened == null) return
+    return client.onStoredChanged(gameId, () => {
+      refreshBox()
+      rereadPlan().catch(() => undefined)
+      reload(
+        false,
+        () => !dirtyNow.current && openedNow.current === opened
+      ).catch(() => undefined)
+    })
+  }, [client, gameId, opened, refreshBox, rereadPlan, reload])
 
   // The dictation model the coach chose in the scoring screen's Settings.
   const [model, setModel] = useState<RosterDictationOptions['model']>()
