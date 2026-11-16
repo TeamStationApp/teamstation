@@ -205,6 +205,8 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
   let attempts = 0
   const degradations: string[] = []
   let checkpoints: Checkpoints | undefined
+  // What the judge cost on attempts a retry has since cleared.
+  let spentBefore = 0
   let targetKind: RunResult['target']
   let deviceClass: string | undefined
   let failureKind: RunResult['failureKind']
@@ -218,7 +220,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       status,
       ...(reason == null ? {} : { reason }),
       durationMs: Date.now() - started,
-      costUsd: spentOn(checkpoints),
+      costUsd: spentBefore + spentOn(checkpoints),
       degradations,
       ...(targetKind == null ? {} : { target: targetKind }),
       ...(options.fault == null ? {} : { fault: options.fault }),
@@ -520,6 +522,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
       }
       attempts = attempt + 1
       failure = undefined
+      spentBefore += spentOn(running)
       running.reset()
       try {
         await scenario(ctx)

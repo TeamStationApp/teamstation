@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import { Budget, type Judge } from './judge'
 import { runScenario } from './run'
 
 const CORE = resolve(__dirname)
@@ -14,7 +15,7 @@ const CORE = resolve(__dirname)
  * the attempts listed in `differOn` (1 is the first) and matches otherwise.
  * A mismatch is recorded, not thrown, as a moved screen is.
  */
-function goldenRoot(differOn: number[]): string {
+function goldenRoot(differOn: number[], checkpoint = '{ golden: {} }'): string {
   const root = mkdtempSync(join(tmpdir(), 'e2e-run-'))
   const dir = join(root, 'e2e', 'tests', 'area', 'feature')
   mkdirSync(dir, { recursive: true })
@@ -59,7 +60,7 @@ export default {
         }
       }
       ctx.watch(device, { deviceClass: 'class-1' })
-      await ctx.checkpoint('screen', { golden: {} })
+      await ctx.checkpoint('screen', ${checkpoint})
     }
   }
 }
@@ -97,5 +98,35 @@ describe('run, with a golden checkpoint', function () {
     expect(result.reason).includes('screens differ')
     expect(result.failureKind).equals('assertion')
     expect(result.attempts).equals(2)
+  })
+
+  it('reports what the judge cost on every attempt, not only the last', async function () {
+    const root = goldenRoot([], "{ ask: 'The score reads 3' }")
+    let asks = 0
+    const judge: Judge = {
+      id: 'fake',
+      ask: async () => ({
+        verdict: ++asks === 1 ? 'fail' : 'pass',
+        confidence: 1,
+        observed: 'seen',
+        model: 'm',
+        escalated: false,
+        costUsd: 0.25,
+        latencyMs: 1
+      }),
+      annotate: async () => undefined
+    }
+    const { result } = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir: join(root, 'run'),
+      retries: 1,
+      judges: { judge, budget: new Budget(1), authoritative: true }
+    })
+    expect(result.status).equals('passed')
+    expect(result.attempts).equals(2)
+    expect(result.costUsd).equals(0.5)
   })
 })
