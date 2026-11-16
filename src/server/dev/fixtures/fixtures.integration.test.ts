@@ -85,6 +85,12 @@ describe('the fixtures script', function () {
   it('refuses to run without a mailbox or a known world', function () {
     expect(() => parseFixtureArgs(['baseline', '--json'])).to.throw('Usage')
     expect(() => parseFixtureArgs(['--mailbox', MAILBOX])).to.throw('Usage')
+    for (const name of ['constructor', 'toString', '__proto__']) {
+      expect(
+        () => parseFixtureArgs([name, '--mailbox', MAILBOX]),
+        name
+      ).to.throw('No fixture world')
+    }
     expect(() => parseFixtureArgs(['nowhere', '--mailbox', MAILBOX])).to.throw(
       'No fixture world'
     )

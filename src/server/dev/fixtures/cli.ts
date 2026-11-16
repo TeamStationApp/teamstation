@@ -49,7 +49,8 @@ export function parseFixtureArgs(argv: string[]): FixtureArgs {
     )
   }
   splitMailbox(mailbox)
-  if (world !== 'baseline' && WORLDS[world] == null) {
+  // Its own worlds only: `constructor` and the like are not one.
+  if (world !== 'baseline' && !Object.hasOwn(WORLDS, world)) {
     throw new Error(`No fixture world "${world}"`)
   }
   return { world, mailbox }
