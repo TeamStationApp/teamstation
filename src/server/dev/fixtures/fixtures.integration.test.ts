@@ -340,6 +340,10 @@ describe('settings a node holds outside migrations', function () {
       NODE_SETTINGS[key] != null ||
       Object.keys(UNSET_SETTINGS).some(prefix => key.startsWith(prefix))
     expect([...keys].filter(key => !known(key))).deep.equals([])
+    // And every setting a fixture writes is one the server reads.
+    expect(
+      Object.keys(NODE_SETTINGS).filter(key => !keys.has(key))
+    ).deep.equals([])
     expect(keys.has('creation.hierarchyReady')).equals(true)
   })
 })

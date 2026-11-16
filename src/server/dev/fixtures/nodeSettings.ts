@@ -8,9 +8,7 @@ export const NODE_SETTINGS: Record<string, unknown> = {
   // has nothing to fail that check.
   'creation.hierarchyReady': true,
   // Off in production. Everything a test sends goes to a test address.
-  'mail.accountMessages': true,
-  // Ordinary scenarios never hit a limit. The rate-limit block lowers it.
-  'test.rateLimitScale': 100
+  'mail.accountMessages': true
 }
 
 /** Keys the server reads that need no row, and why. */

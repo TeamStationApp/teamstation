@@ -91,7 +91,7 @@ The script refuses unless `serverConfig.testSettings` is true, which production 
 - `ctx.address(label)` returns a fresh `+` address on the test mailbox. Lint rejects any other address in a test, unless it is on `example.test` in a spec marked `sendsNoMail: true`.
 - `ctx.mail(address, from)` waits up to three minutes for what the app really sent, with one targeted, time-bounded search at a time. Nothing it reads goes to the run directory.
 
-`test.rateLimitScale` in `system_settings` multiplies every rate limit except a paid provider's, read only where `testSettings` is true. `baseline` sets it to 100, so ordinary scenarios never hit a limit.
+Rate limits are production's on every stack: an address may ask for five sign-in codes in fifteen minutes. A scenario that signs the same account in more often than that clears the limit on its own stack's database (the streaming rigs' `resetLimits` does).
 
 ## Coverage
 
