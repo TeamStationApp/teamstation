@@ -150,12 +150,12 @@ export async function scanNewSegments(
   }
   // Asked for together, not one segment at a time: a listed segment is
   // written in full, and each stream's poll would otherwise wait on them in
-  // series.
+  // series. One that cannot be said falls back to the look, as a missing
+  // file does.
   const writes = fresh.map(
-    async segment => await writtenAt(join(directory, segment.uri))
+    async segment =>
+      await writtenAt(join(directory, segment.uri)).catch(() => null)
   )
-  // Read only for an unstamped segment; the rest are dropped unread.
-  for (const write of writes) write.catch(() => undefined)
   for (const [index, segment] of fresh.entries()) {
     const lengthMs = segment.durationSec * 1000
     let frames: ScannedFrame[] = []

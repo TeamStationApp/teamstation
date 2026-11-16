@@ -293,6 +293,17 @@ describe('the wall clock of a live stream (U25)', function () {
       return NOW - 500
     })
     expect(most).equals(4)
+    // A write time that cannot be read is the look's.
+    const unread = await scanNewSegments(
+      live,
+      undefined,
+      atNow,
+      undefined,
+      async () => {
+        throw new Error('stat failed')
+      }
+    )
+    expect(unread.points[0].wallMs).equals(NOW - 1000)
   })
 
   /** Damages one listed segment of a live directory, as `withBrokenRun`. */
