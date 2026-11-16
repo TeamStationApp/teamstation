@@ -164,7 +164,7 @@ describe('the soak sign-ins', function () {
       },
       hierarchy: () => ({
         children: [
-          { text: 'Account, Alex Lee' },
+          { text: 'Account, Clayton Kershaw' },
           { text: 'Account', bounds: { x: 10, y: 20, width: 100, height: 40 } },
           {
             text: 'Sign out',
@@ -218,7 +218,7 @@ describe('the soak sign-ins', function () {
       { x: 60, y: 120 }
     ])
     expect(held.calls.find(call => call[0] === 'tapOn')![1]).deep.equals({
-      text: 'Account, Alex Lee'
+      text: 'Account, Clayton Kershaw'
     })
   })
 

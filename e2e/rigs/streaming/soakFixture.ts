@@ -29,13 +29,13 @@ import { ANGLES, SYNTHETIC_ANGLE } from './soakSchedule'
 
 export const WORLD = 'streaming-soak'
 export const GAME_TITLE = 'Streaming baseline'
-const OWNER: Person = { first: 'Alex', last: 'Lee' }
+const OWNER: Person = { first: 'Clayton', last: 'Kershaw' }
 /**
  * Every watching surface signs in as this person: a member of the home team who
  * holds no role, so the game page offers no camera's End or ⋯, which an owner's
  * stray tap would reach (`canFilm`, `CameraAnglesPanel`).
  */
-const VIEWER: Person = { first: 'Sam', last: 'Park' }
+const VIEWER: Person = { first: 'Shohei', last: 'Ohtani' }
 /** A person's cameras on one game (`MAX_CAMERAS` in `streamKeys.ts`); a world seeds at most these. */
 const MAX_SYNTHETIC = 4
 

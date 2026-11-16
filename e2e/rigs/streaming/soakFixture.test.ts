@@ -112,8 +112,8 @@ describe('the soak fixture', function () {
     )
     expect(manifest.world).equals(WORLD)
     expect(manifest.nonce).equals('n0n0')
-    expect(manifest.accounts.owner.displayName).equals('Alex Lee')
-    expect(manifest.accounts.viewer.displayName).equals('Sam Park')
+    expect(manifest.accounts.owner.displayName).equals('Clayton Kershaw')
+    expect(manifest.accounts.viewer.displayName).equals('Shohei Ohtani')
     expect(
       manifest.streams.map(stream => [stream.label, stream.key])
     ).deep.equals([['Synthetic', 'sk_3']])
@@ -390,12 +390,12 @@ describe('the soak fixture', function () {
     expect(reused.accounts.owner).deep.include({
       userId: 'user_9',
       email: 'qa+streaming-soak-owner-stack@example.test',
-      displayName: 'Alex Lee'
+      displayName: 'Clayton Kershaw'
     })
     expect(reused.accounts.viewer).deep.include({
       userId: 'user_8',
       email: 'qa+streaming-soak-viewer-stack@example.test',
-      displayName: 'Sam Park'
+      displayName: 'Shohei Ohtani'
     })
     expect(again.calls.find(call => call[0] === 'team')![2]).deep.equals({
       userId: 'user_9',

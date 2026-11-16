@@ -8,7 +8,7 @@ import {
 
 const PEOPLE = {
   coach: { first: 'Dave', last: 'Roberts' },
-  viewer: { first: 'Alex', last: 'Lee' },
+  viewer: { first: 'Clayton', last: 'Kershaw' },
   player: { first: 'Mookie', last: 'Betts' }
 }
 
