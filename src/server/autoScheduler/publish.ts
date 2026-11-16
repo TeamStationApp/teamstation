@@ -146,7 +146,16 @@ async function recheck(
     [...holdings, ...games.map(holdingOf)],
     headCoaches
   )
+  const liveKeys = new Set(holdings.map(holding => holding.key))
   for (const game of games) {
+    if (liveKeys.has(game.key)) {
+      stale.push({
+        gameKey: game.key,
+        problem:
+          'A game identifier now matches an existing booking. Recalculate this preview.'
+      })
+      continue
+    }
     if (Date.parse(game.startAt) <= now.getTime()) {
       stale.push({ gameKey: game.key, problem: 'This game’s time has passed.' })
       continue
@@ -262,6 +271,8 @@ export async function publishPreview(
       }
     }
     if (row.status === 'published') return await counts()
+    if (row.status === 'building')
+      throw conflict('The device has not finished this schedule')
     if (row.status === 'discarded')
       throw conflict('This preview was replaced by a newer one')
     const option = optionsOf(row)[optionIndex]

@@ -97,6 +97,8 @@ async function grid(): Promise<void> {
       onEdit={() => undefined}
       onSaveNumber={async () => null}
       onOpenSeason={() => undefined}
+      onOpenSeasonPage={() => undefined}
+      onChooseDays={() => undefined}
     />
   )
   // The test DOM's element.scroll moves nothing; scroll as a browser does.

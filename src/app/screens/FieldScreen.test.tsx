@@ -222,7 +222,7 @@ describe('the field screen', () => {
         ...(changes.startsOn === undefined
           ? {}
           : { startsOn: changes.startsOn, endsOn: changes.endsOn }),
-        ...(changes.hours === undefined ? {} : { hours: changes.hours }),
+        ...(changes.windows === undefined ? {} : { windows: changes.windows }),
         ...(changes.blackouts === undefined
           ? {}
           : { blackouts: changes.blackouts })
@@ -261,14 +261,14 @@ describe('the field screen', () => {
     // Its own hours, starting from the venue's.
     await tapText('Its own hours')
     await settle()
-    await press('Field hours: Saturday, 8:00 AM – 6:00 PM')
+    await press('Field hours from Existing hours: Saturday, 8:00 AM – 6:00 PM')
     await tapLabel('Closes 6:00 PM')
     await tapLabel('Hour 10')
     await tapText('Use time')
     await tapText('Done')
     await settle()
     // A closed day turned open starts at 9:00 AM to 5:00 PM.
-    await press('Field hours: Monday, Closed')
+    await press('Field hours from Existing hours: Monday, Closed')
     await tapText('Open')
     expect(hasLabel('Opens 9:00 AM')).equals(true)
     await tapText('Done')
@@ -285,15 +285,34 @@ describe('the field screen', () => {
     await settle()
     expect(record.updates.slice(1)).deep.equals([
       { startsOn: null, endsOn: null },
-      { hours: [{ weekday: 6, start: '08:00', end: '18:00' }] },
-      { hours: [{ weekday: 6, start: '08:00', end: '22:00' }] },
       {
-        hours: [
-          { weekday: 1, start: '09:00', end: '17:00' },
-          { weekday: 6, start: '08:00', end: '22:00' }
+        windows: [
+          {
+            from: '0001-01-01',
+            hours: [{ weekday: 6, start: '08:00', end: '18:00' }]
+          }
         ]
       },
-      { hours: null },
+      {
+        windows: [
+          {
+            from: '0001-01-01',
+            hours: [{ weekday: 6, start: '08:00', end: '22:00' }]
+          }
+        ]
+      },
+      {
+        windows: [
+          {
+            from: '0001-01-01',
+            hours: [
+              { weekday: 1, start: '09:00', end: '17:00' },
+              { weekday: 6, start: '08:00', end: '22:00' }
+            ]
+          }
+        ]
+      },
+      { windows: null },
       { blackouts: ['2027-03-10', '2027-03-11'] },
       { blackouts: [] }
     ])

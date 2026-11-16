@@ -1,3 +1,4 @@
+import { seasonZones } from '../../common/autoScheduler/seasonZones'
 import type { Availability } from '../../common/fieldAvailability'
 import { coversGame } from '../../common/fieldAvailability'
 import { gameCalendarDay } from '../../common/gameTime'
@@ -33,10 +34,13 @@ export interface RuleContext {
   seasons: Map<
     string,
     {
+      fieldIds?: string[]
       bufferMinutes: number
       doubleheaders: Doubleheaders
       maxGamesOnWeekdays?: number
       maxGamesOnWeekend?: number
+      /** The zone of a retained game outside the run for a game of this size, worked out ahead. */
+      fallback?: { size: string; zone: string }
     }
   >
   /** Everything else holding the run's fields and teams. */
@@ -44,6 +48,9 @@ export interface RuleContext {
   /** Live season games for weekly caps while other rules use preview holdings. */
   weeklyOthers?: Holding[]
 }
+
+// A holding's local day by zone and start: checking many games reads the same holdings again.
+const holdingDays = new WeakMap<Holding, Map<string, string>>()
 
 type ManagerBooking = Pick<Holding, 'key' | 'start' | 'end' | 'teamIds'>
 
@@ -91,26 +98,35 @@ export function ruleProblem(
   )
     return `${where} is not open for all of this game.`
   const season = context.seasons.get(game.seasonId)
+  if (!(season?.fieldIds ?? []).includes(game.fieldId))
+    return 'Choose one of this season’s selected fields.'
   const bufferMs = (season?.bufferMinutes ?? 0) * 60 * 1000
-  // Each game's day is read in its own field's zone, as the engine reads it.
-  // A game on a field outside the run takes the zone of the run's first
-  // field of the season's size. Only games of this season are compared by
-  // day, and they play on its size, this game's, which this game's field
-  // takes, so there is always such a field.
-  let fallbackZone = field.availability.timezone
-  for (const each of context.fields.values())
-    if (each.sizes.includes(game.size)) {
-      fallbackZone = each.availability.timezone
-      break
-    }
-  const day = (holding: Holding): string =>
-    gameCalendarDay(
-      new Date(holding.start).toISOString(),
+  // A retained game outside the run uses this season's selected-field zone.
+  const fallbackZone =
+    (season?.fallback?.size === game.size ? season.fallback.zone : undefined) ??
+    seasonZones(
+      [...context.fields].map(([id, each]) => ({ id, ...each })),
+      { fieldIds: season?.fieldIds, fieldSize: game.size }
+    )[0]
+  const day = (holding: Holding): string => {
+    const zone =
       (holding.fieldId == null
         ? undefined
         : context.fields.get(holding.fieldId)?.availability.timezone) ??
-        fallbackZone
-    )
+      fallbackZone
+    let byZone = holdingDays.get(holding)
+    if (byZone == null) {
+      byZone = new Map()
+      holdingDays.set(holding, byZone)
+    }
+    const key = `${zone}|${holding.start}`
+    let found = byZone.get(key)
+    if (found == null) {
+      found = gameCalendarDay(new Date(holding.start).toISOString(), zone)
+      byZone.set(key, found)
+    }
+    return found
+  }
   const partOf = (holding: Holding): ReturnType<typeof gameWeekPart> =>
     gameWeekPart(Math.round(Date.parse(`${day(holding)}T00:00:00Z`) / 86400000))
   const portion = partOf(game)

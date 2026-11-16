@@ -94,7 +94,7 @@ export function schedulingSetupRoutes(
         'preferGameOn'
       ] as const)
         if (req.body[key] === undefined) settings[key] = undefined
-      res.json(await saveSeasonScheduleSettings(db, seasonId, settings))
+      res.json(await saveSeasonScheduleSettings(db, seasonId, settings, clock))
     })
   )
   router.get(

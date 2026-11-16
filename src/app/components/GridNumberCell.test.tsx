@@ -20,7 +20,9 @@ const TITLES: Record<NumberColumn, string> = {
   gameMinutes: 'Game MINS',
   bufferMinutes: 'Between MINS',
   regularGames: '# Regular',
-  exhibitionGames: '# Exhibition'
+  exhibitionGames: '# Exhibition',
+  maxGamesOnWeekdays: 'Max weekday games',
+  maxGamesOnWeekend: 'Max weekend games'
 }
 
 const START: Values = {
@@ -28,9 +30,18 @@ const START: Values = {
     gameMinutes: 90,
     bufferMinutes: 10,
     regularGames: 4,
-    exhibitionGames: 1
+    exhibitionGames: 1,
+    maxGamesOnWeekdays: 1,
+    maxGamesOnWeekend: 2
   },
-  b: { gameMinutes: 60, bufferMinutes: 5, regularGames: 8, exhibitionGames: 0 }
+  b: {
+    gameMinutes: 60,
+    bufferMinutes: 5,
+    regularGames: 8,
+    exhibitionGames: 0,
+    maxGamesOnWeekdays: 0,
+    maxGamesOnWeekend: 1
+  }
 }
 
 type Save = (
@@ -193,7 +204,7 @@ describe('the grid’s spreadsheet number cells', () => {
     const ids = ['a', 'b']
     expect(
       nextGridCell(
-        { seasonId: 'a', column: 'exhibitionGames' },
+        { seasonId: 'a', column: 'maxGamesOnWeekend' },
         ids,
         NUMBER_COLUMNS,
         'next'
@@ -206,7 +217,7 @@ describe('the grid’s spreadsheet number cells', () => {
         NUMBER_COLUMNS,
         'previous'
       )
-    ).deep.equals({ seasonId: 'a', column: 'exhibitionGames' })
+    ).deep.equals({ seasonId: 'a', column: 'maxGamesOnWeekend' })
     expect(
       nextGridCell(
         { seasonId: 'a', column: 'gameMinutes' },
@@ -217,7 +228,7 @@ describe('the grid’s spreadsheet number cells', () => {
     ).equals(undefined)
     expect(
       nextGridCell(
-        { seasonId: 'b', column: 'exhibitionGames' },
+        { seasonId: 'b', column: 'maxGamesOnWeekend' },
         ids,
         NUMBER_COLUMNS,
         'next'
@@ -360,14 +371,14 @@ describe('the grid’s spreadsheet number cells', () => {
     await key('Tab', { shiftKey: true })
     selected('a', 'bufferMinutes')
     expect(input().value).equals('5')
-    await tap('b', 'exhibitionGames')
+    await tap('b', 'maxGamesOnWeekend')
     await fill('2')
     await key('Tab')
     expect(document.querySelector('input')).equals(null)
     expect(writes).deep.equals([
       ['a', 'gameMinutes', 100],
       ['a', 'bufferMinutes', 5],
-      ['b', 'exhibitionGames', 2]
+      ['b', 'maxGamesOnWeekend', 2]
     ])
     // Opening another cell saves the open one first.
     await tap('b', 'regularGames')

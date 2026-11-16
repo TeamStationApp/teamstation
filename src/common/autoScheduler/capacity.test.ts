@@ -105,6 +105,7 @@ describe('capacityCause', () => {
       }
     )
     run.fields.push({ ...run.fields[0], id: 'second' })
+    run.seasons[0].settings.fieldIds = run.fields.map(field => field.id)
     const [home, away, other, visitor] = run.seasons[0].participants
     run.headCoaches = { [home]: 'coach', [other]: 'coach' }
     run.seed = 1
