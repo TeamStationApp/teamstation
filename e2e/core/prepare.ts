@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
-import { existsSync, readdirSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 import { BlockedError, HarnessError } from './result'
 
@@ -64,31 +64,31 @@ function installPackage(options: PrepareOptions, run: Run): void {
   }
 }
 
+/** Where `prepare` notes the package it put on each device. */
+export const INSTALLED_DIR = join(
+  homedir(),
+  '.config',
+  'teamstation-e2e',
+  'installed'
+)
+
 /**
- * The Debug app `run-ios` just installed. Clearing state on a phone needs the
- * bundle, which the host cannot read back off the device.
+ * The package `prepare` last installed on `device`, or undefined. A phone's
+ * attach names it so that clearing state, which reinstalls on a real iPhone,
+ * puts back that same build and no other.
  */
-export function iosBuiltApp(
-  root = join(homedir(), 'Library/Developer/Xcode/DerivedData')
-): string {
-  const found: Array<{ path: string; mtimeMs: number }> = []
-  if (existsSync(root)) {
-    for (const name of readdirSync(root)) {
-      if (!name.startsWith('TeamStation-')) continue
-      const path = join(
-        root,
-        name,
-        'Build/Products/Debug-iphoneos/TeamStation.app'
-      )
-      if (!existsSync(path)) continue
-      found.push({ path, mtimeMs: statSync(path).mtimeMs })
-    }
+export function installedPackage(
+  device: string,
+  dir = INSTALLED_DIR
+): string | undefined {
+  const file = join(dir, `${device}.json`)
+  if (!existsSync(file)) return undefined
+  const { packagePath } = JSON.parse(readFileSync(file, 'utf8')) as {
+    packagePath?: unknown
   }
-  found.sort((a, b) => b.mtimeMs - a.mtimeMs)
-  if (found[0] == null) {
-    throw new HarnessError('No Debug-iphoneos TeamStation.app has been built')
-  }
-  return found[0].path
+  return typeof packagePath === 'string' && existsSync(packagePath)
+    ? packagePath
+    : undefined
 }
 
 /** Whether `device` is a simulator UDID. A phone's UDID is not in this list. */
@@ -109,7 +109,11 @@ export function iosIsSimulator(device: string): boolean {
  * its build named until `e2e/rigs/app/setServer.ts` points it at a stack for
  * its next fresh launch. A failed install blocks the run.
  */
-export function prepareApp(options: PrepareOptions, run: Run = realRun): void {
+export function prepareApp(
+  options: PrepareOptions,
+  run: Run = realRun,
+  dir = INSTALLED_DIR
+): void {
   if (options.packagePath == null) {
     throw new HarnessError(
       'prepare installs a Mason develop build: --package <path>, then point it at a stack with e2e/rigs/app/setServer.ts'
@@ -118,4 +122,9 @@ export function prepareApp(options: PrepareOptions, run: Run = realRun): void {
   onDevice(() => {
     installPackage(options, run)
   })
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(
+    join(dir, `${options.device}.json`),
+    `${JSON.stringify({ app: options.app, packagePath: resolve(options.packagePath) })}\n`
+  )
 }

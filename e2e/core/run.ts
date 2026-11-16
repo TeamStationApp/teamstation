@@ -28,7 +28,7 @@ import { Budget, createMessage, haikuJudge, judgeHasAuthority } from './judge'
 import { attachDevice, connectDaemon, type MaestroDevice } from './maestro'
 import { gogRunner, readMail, testAddressFor, waitForMail } from './mail'
 import { findScenario, ROOT } from './manifest'
-import { iosBuiltApp, iosIsSimulator } from './prepare'
+import { installedPackage, iosIsSimulator } from './prepare'
 import {
   BlockedError,
   exitCodeFor,
@@ -436,14 +436,16 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
           await held.device?.detach().catch(() => undefined)
           await daemon.shutdown()
         })
+        // A phone keeps the build `prepare` installed and `setServer` pointed:
+        // attaching never installs one, and names that build for clearState.
         const physicalIos =
-          attachOptions.platform === 'ios' &&
-          attachOptions.appFile == null &&
-          !iosIsSimulator(id)
+          attachOptions.platform === 'ios' && !iosIsSimulator(id)
+        const installed = physicalIos ? installedPackage(id) : undefined
         const device = await attachDevice(daemon, runDir, {
           device: id,
           ...attachOptions,
-          ...(physicalIos ? { appFile: iosBuiltApp() } : {})
+          ...(physicalIos ? { noAppInstall: true } : {}),
+          ...(installed == null ? {} : { appFile: installed })
         })
         held.device = device
         const info = await device.platformInfo()
