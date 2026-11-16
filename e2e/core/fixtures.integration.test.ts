@@ -1,10 +1,10 @@
 import { mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 
 import { expect } from 'chai'
 
-import { seedOnStack } from './dropletStack'
+import { runOnStack, seedOnStack } from './dropletStack'
 import {
   baselineManifestPath,
   findAccount,
@@ -24,6 +24,7 @@ import {
   testAddressFor,
   waitForMail
 } from './mail'
+import { ROOT } from './manifest'
 import { BlockedError, HarnessError } from './result'
 
 const WORLD: FixtureManifest = {
@@ -426,5 +427,33 @@ describe('seeding a stack through its handle', function () {
       await dropScratchDatabase(admin, name)
       await admin.end()
     }
+  })
+})
+
+describe('seeds at once in one process', function () {
+  this.timeout(60000)
+
+  it('each read their own stack’s database, as run-many runs them', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-seed-twice-'))
+    const script = join(dir, 'printConfig.js')
+    // Reads its server config only after the other seed has written its own.
+    writeFileSync(
+      script,
+      "setTimeout(() => { process.stdout.write(JSON.stringify(require(process.cwd() + '/serverConfig.json').databaseUrl)) }, 300)\n"
+    )
+    const seed = async (databaseUrl: string): Promise<unknown> =>
+      await runOnStack({
+        cwd: ROOT,
+        handle: { databaseUrl },
+        script: relative(ROOT, script),
+        args: [],
+        scratch: join(dir, 'scratch')
+      })
+    const [a, b] = await Promise.all([
+      seed('postgres://u:p@e2e-02.example.test/teamstation'),
+      seed('postgres://u:p@e2e-03.example.test/teamstation')
+    ])
+    expect(a).equals('postgres://u:p@e2e-02.example.test/teamstation')
+    expect(b).equals('postgres://u:p@e2e-03.example.test/teamstation')
   })
 })
