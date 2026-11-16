@@ -13,7 +13,7 @@ export default defineTargeted({
   title:
     "A paused seek into a camera's missing footage shows its notice and holds the others at that moment; play resumes every angle; a skip before the take stays inside it",
   minutes: 15,
-  covers: ['src/app/player/**', 'src/common/**'],
+  covers: ['e2e/rigs/streaming/**', 'src/app/player/**', 'src/common/**'],
   steps: gapSeek,
   judge: ({ failed, steps }) => {
     expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])

@@ -5,6 +5,7 @@
       "title": "Four synthetic cameras stream live to an iPhone, an Android phone, Chrome, TeamStation TV and iPhone Safari for 30 minutes of scrubbing, every angle moving, recovering and aligned, with no memory growth",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**",
         "src/server/live/**",
         "src/server/ingest/**"
@@ -69,6 +70,7 @@
       "title": "A two-hour game streams to six watching surfaces through scrubs, cuts, outages and relaunches without a stall or memory growth",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**",
         "src/app/stream/**",
         "src/server/live/**",
@@ -151,6 +153,7 @@
       "title": "A camera that ends says so and never \"catching up\"; the finished game seeks to its middle and plays on with no Retry",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**",
         "src/server/live/**"
       ],
@@ -207,6 +210,7 @@
       "title": "A cold start opens the live grid with every angle moving within 20 s, without a seek, five times on each watcher",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**"
       ],
       "stack": "isolated",
@@ -262,6 +266,7 @@
       "title": "For 30 minutes every watcher shows the angles within 500 ms of each other, by their burned-in clocks",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**"
       ],
       "stack": "isolated",
@@ -317,6 +322,7 @@
       "title": "A paused seek into a camera's missing footage shows its notice and holds the others at that moment; play resumes every angle; a skip before the take stays inside it",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**",
         "src/common/**"
       ],
@@ -373,6 +379,7 @@
       "title": "The owner's camera panel shows a camera ended after one of its reads went unanswered for 90 s, without a reload",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/stream/**"
       ],
       "stack": "isolated",
@@ -406,6 +413,7 @@
       "title": "A camera out for 45 s says so, then rejoins within 30 s, live and while the viewer is rewound",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**",
         "src/server/live/**",
         "src/server/ingest/**"
@@ -463,6 +471,7 @@
       "title": "A watcher whose own network is out for three minutes plays again within 30 s, and keeps a pause and a rewind across the outage",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/player/**"
       ],
       "stack": "isolated",
@@ -518,6 +527,7 @@
       "title": "TeamStation TV starts cold to its code or home, offers four cameras, skips inside the take, recovers a camera after its outage and shows one ended",
       "kind": "e2e",
       "covers": [
+        "e2e/rigs/streaming/**",
         "src/app/tv/**",
         "appletv/**"
       ],

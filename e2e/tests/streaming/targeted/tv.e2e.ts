@@ -13,7 +13,7 @@ export default defineTargeted({
   title:
     'TeamStation TV starts cold to its code or home, offers four cameras, skips inside the take, recovers a camera after its outage and shows one ended',
   minutes: 12,
-  covers: ['src/app/tv/**', 'appletv/**'],
+  covers: ['e2e/rigs/streaming/**', 'src/app/tv/**', 'appletv/**'],
   steps: tvCameras,
   judge: ({ failed, steps }) => {
     expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])

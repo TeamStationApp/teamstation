@@ -13,7 +13,7 @@ export default defineTargeted({
   title:
     "The owner's camera panel shows a camera ended after one of its reads went unanswered for 90 s, without a reload",
   minutes: 6,
-  covers: ['src/app/stream/**'],
+  covers: ['e2e/rigs/streaming/**', 'src/app/stream/**'],
   steps: ownerPanel,
   judge: ({ failed, steps }) => {
     expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])

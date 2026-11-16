@@ -22,7 +22,12 @@ export default defineTargeted({
   title:
     'Four synthetic cameras stream live to an iPhone, an Android phone, Chrome, TeamStation TV and iPhone Safari for 30 minutes of scrubbing, every angle moving, recovering and aligned, with no memory growth',
   minutes: 35,
-  covers: ['src/app/player/**', 'src/server/live/**', 'src/server/ingest/**'],
+  covers: [
+    'e2e/rigs/streaming/**',
+    'src/app/player/**',
+    'src/server/live/**',
+    'src/server/ingest/**'
+  ],
   steps: basicScrub({
     minutes: minutesFromEnv(process.env) ?? 30,
     watchers: watchersFromEnv(process.env)

@@ -27,6 +27,7 @@ export default defineE2e({
     'A two-hour game streams to six watching surfaces through scrubs, cuts, outages and relaunches without a stall or memory growth',
   kind: 'e2e',
   covers: [
+    'e2e/rigs/streaming/**',
     'src/app/player/**',
     'src/app/stream/**',
     'src/server/live/**',

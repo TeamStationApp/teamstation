@@ -13,7 +13,7 @@ export default defineTargeted({
   title:
     'For 30 minutes every watcher shows the angles within 500 ms of each other, by their burned-in clocks',
   minutes: 36,
-  covers: ['src/app/player/**'],
+  covers: ['e2e/rigs/streaming/**', 'src/app/player/**'],
   steps: drift,
   judge: ({ failed, steps }) => {
     expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])

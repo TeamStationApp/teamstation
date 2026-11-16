@@ -13,7 +13,7 @@ export default defineTargeted({
   title:
     'A watcher whose own network is out for three minutes plays again within 30 s, and keeps a pause and a rewind across the outage',
   minutes: 25,
-  covers: ['src/app/player/**'],
+  covers: ['e2e/rigs/streaming/**', 'src/app/player/**'],
   steps: receiverOutage(),
   judge: ({ failed, steps }) => {
     expect(failed, `watchers that failed a step: see ${steps}`).deep.equals([])
