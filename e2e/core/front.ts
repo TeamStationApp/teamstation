@@ -51,14 +51,20 @@ export async function startFront(options: {
   server: Server
   url: string
   errors: ServerError[]
-  /** Sends the API's paths somewhere else from now on, for an adopted server. */
+  /**
+   * Sends the API's paths somewhere else from now on, for an adopted server.
+   * That is a proxy which records its own errors, so the front stops
+   * recording the ones it forwards.
+   */
   retarget: (port: number, host: string) => void
 }> {
   const { webDir, host, port } = options
   let { apiPort } = options
   let apiHost = '127.0.0.1'
   const errors: ServerError[] = []
+  let recording = true
   const record = (req: IncomingMessage, status: number): void => {
+    if (!recording) return
     errors.push({
       at: Date.now(),
       method: req.method ?? 'GET',
@@ -143,6 +149,7 @@ export async function startFront(options: {
     retarget: (nextPort, nextHost) => {
       apiPort = nextPort
       apiHost = nextHost
+      recording = false
     }
   }
 }

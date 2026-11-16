@@ -1,4 +1,6 @@
 import { existsSync } from 'node:fs'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -21,6 +23,31 @@ describe('a stack with a fault proxy in front of its API', function () {
       ])
     } finally {
       await stack.stop()
+    }
+  })
+})
+
+describe('a stack that adopts a server, with no API of its own', function () {
+  this.timeout(120000)
+
+  it('counts each of its errors once, though the front server forwards to it', async function () {
+    const broken = createServer((_req, res) => {
+      res.writeHead(500)
+      res.end()
+    })
+    await new Promise<void>(resolve => broken.listen(0, '127.0.0.1', resolve))
+    const { port } = broken.address() as AddressInfo
+    const stack = await startStack({ services: [] })
+    const front = stack.origin
+    try {
+      await stack.adopt(`http://127.0.0.1:${port}`)
+      const reply = await fetch(`${front}/api/v1/anything`)
+      expect(reply.status).equals(500)
+      const errors = (await stack.serverErrors(0)) ?? []
+      expect(errors.map(row => row.status)).deep.equals([500])
+    } finally {
+      await stack.stop()
+      broken.close()
     }
   })
 })
