@@ -56,7 +56,7 @@ import { readLegacy } from './legacy'
 import { buildManifest, readManifest, ROOT, writeManifest } from './manifest'
 import { type PlanResource, planScenarios } from './plan'
 import { prepareApp } from './prepare'
-import { BlockedError } from './result'
+import { BlockedError, HarnessError } from './result'
 import { runScenario } from './run'
 import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
@@ -286,6 +286,9 @@ export async function main(argv: string[]): Promise<number> {
             throw new Error(`The stack exited (${exited}): ${why()}`)
           }
           if (Date.now() > end) {
+            // Left running, it would go on to make a database, an API and a
+            // Metro that nothing will stop.
+            if (child.pid != null) process.kill(child.pid, 'SIGTERM')
             throw new Error(`The stack did not start in 5 minutes: ${why()}`)
           }
           await new Promise(resolve => setTimeout(resolve, 250))
@@ -298,6 +301,19 @@ export async function main(argv: string[]): Promise<number> {
           values.id ?? Math.random().toString(36).slice(2, 10)
         )
         const errorLog = join(STACKS, `${id}.errors.jsonl`)
+        // Ctrl-C, a closed terminal and a crash take the stack down too, so
+        // its database, directory and Metro do not outlive it. Heard from the
+        // start: one that arrives while the stack is starting (`stack up`
+        // giving up on it) stops it as soon as it has started.
+        const ended = new Promise<unknown>(resolve => {
+          for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
+            process.once(signal, () => {
+              resolve(undefined)
+            })
+          }
+          process.once('uncaughtException', resolve)
+          process.once('unhandledRejection', resolve)
+        })
         const stack = await startStack({
           id,
           lan: values.lan,
@@ -321,17 +337,7 @@ export async function main(argv: string[]): Promise<number> {
           join(STACKS, `${stack.id}.json`),
           JSON.stringify(entry)
         )
-        // Ctrl-C, a closed terminal and a crash take the stack down too, so
-        // its database, directory and Metro do not outlive it.
-        const failure = await new Promise<unknown>(resolve => {
-          for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP'] as const) {
-            process.once(signal, () => {
-              resolve(undefined)
-            })
-          }
-          process.once('uncaughtException', resolve)
-          process.once('unhandledRejection', resolve)
-        })
+        const failure = await ended
         await stack.stop()
         rmSync(join(STACKS, `${stack.id}.json`), { force: true })
         if (failure != null) {
@@ -426,8 +432,13 @@ export async function main(argv: string[]): Promise<number> {
           'detect wants <scenario-id> --fault <fault> --surface <s>'
         )
       }
-      if (values.stack != null)
+      // A fault runs on a stack of its own, never one named here.
+      if (values.stack != null) {
         refuseAttachedForFaults(stackState(values.stack))
+        throw new HarnessError(
+          'detect runs on its own isolated stack; leave out --stack'
+        )
+      }
       const outcome = await detectFault(
         {
           id,
