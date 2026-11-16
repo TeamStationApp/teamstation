@@ -31,6 +31,7 @@ import {
   RELEASE_KEYSTORE_SECRET,
   RELEASE_PASSWORD_SECRET,
   releaseIos,
+  SEAT_PARAM,
   seatEnvironment,
   setup,
   signAabScript,
@@ -400,13 +401,21 @@ describe('TeamStation pipeline Masonfile', () => {
     ])
     assert.deepEqual(workflows.build?.options, {
       params: {
-        seat: {
-          type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
-          default: 'production'
-        }
+        seat: SEAT_PARAM
       }
     })
+    // A seat, production, or a host name: an end-to-end stack's.
+    const pattern = new RegExp(SEAT_PARAM.pattern)
+    for (const seat of ['production', '1', '8', 'e2e-03.teamstation.app']) {
+      assert.match(seat, pattern)
+    }
+    for (const seat of [
+      '9',
+      'evil.example.com',
+      'e2e-03.teamstation.app.evil.test'
+    ]) {
+      assert.doesNotMatch(seat, pattern)
+    }
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
@@ -636,7 +645,9 @@ describe('TeamStation pipeline Masonfile', () => {
       'ios/TeamStation.xcodeproj/project.pbxproj':
         'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
       'ios/TeamStation/Info.plist':
-        '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n',
+        '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n\t\t\t<array>\n\t\t\t\t<string>teamstation</string>\n\t\t\t</array>\n',
+      'android/app/src/main/AndroidManifest.xml':
+        '            <data android:scheme="teamstation" />\n',
       'package.json': JSON.stringify({ version: '1.2.3' })
     }
     for (const [file, text] of Object.entries(files)) {
@@ -1084,6 +1095,22 @@ describe('TeamStation pipeline Masonfile', () => {
         TS_APP_ORIGIN: 'https://develop.teamstation.app'
       }
     )
+    assert.deepEqual(
+      seatEnvironment({
+        run: {
+          branch: 'paul/example',
+          params: { seat: 'e2e-03.teamstation.app' }
+        }
+      }),
+      {
+        TS_API_BASE_URL: 'https://e2e-03.teamstation.app/api/v1',
+        TS_APP_ORIGIN: 'https://develop.teamstation.app'
+      }
+    )
+    assert.throws(
+      () => seated({ seat: 'evil.example.com' }),
+      /Unknown seat evil\.example\.com/
+    )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
     assert.throws(() => seated({ seat: 3 }), /Unknown seat 3/)
   })
@@ -1181,7 +1208,9 @@ describe('TeamStation pipeline Masonfile', () => {
         'ios/TeamStation.xcodeproj/project.pbxproj':
           'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app.tests;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
         'ios/TeamStation/Info.plist':
-          '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n'
+          '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n\t\t\t<array>\n\t\t\t\t<string>teamstation</string>\n\t\t\t</array>\n',
+        'android/app/src/main/AndroidManifest.xml':
+          '            <data android:scheme="teamstation" />\n        </intent-filter>\n'
       }
       for (const [file, text] of Object.entries(files)) {
         const full = path.join(root, file)
@@ -1190,6 +1219,24 @@ describe('TeamStation pipeline Masonfile', () => {
       }
       applyDevelopIdentity(root)
       applyDevelopIdentity(root)
+      // The develop app claims its test-control scheme beside its own, once.
+      const plistText = readFileSync(
+        path.join(root, 'ios/TeamStation/Info.plist'),
+        'utf8'
+      )
+      assert.equal(
+        plistText.match(/<string>teamstation-develop<\/string>/g)?.length,
+        1
+      )
+      assert.match(plistText, /<string>teamstation<\/string>/)
+      const manifest = readFileSync(
+        path.join(root, 'android/app/src/main/AndroidManifest.xml'),
+        'utf8'
+      )
+      assert.equal(
+        manifest.match(/android:scheme="teamstation-develop"/g)?.length,
+        1
+      )
       const gradle = readFileSync(
         path.join(root, 'android/app/build.gradle'),
         'utf8'
@@ -1513,13 +1560,26 @@ describe('request-only Apple TV workflow', () => {
     ['master', 'production', 'app'],
     ['develop', 'production', 'develop'],
     ['feature', '5', 'develop5'],
-    ['master', '2', 'develop2']
+    ['master', '2', 'develop2'],
+    ['feature', 'e2e-03.teamstation.app', 'e2e-03']
   ]) {
     it(`archives a standalone TV app for ${branch}/${seat}`, async () => {
       const commands: Array<[string, string | undefined]> = []
       const saved: string[] = []
       let published = false
+      const workspace = mkdtempSync(path.join(tmpdir(), 'tv-app-'))
+      const plist = path.join(workspace, 'appletv/ios/TeamStationTV/Info.plist')
+      mkdirSync(path.dirname(plist), { recursive: true })
+      writeFileSync(
+        plist,
+        '<dict>\n\t<key>TVAppOrigin</key>\n\t<string>$(TV_APP_ORIGIN)</string>\n</dict>\n'
+      )
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        readFileSync('package.json', 'utf8')
+      )
       await buildTv({
+        workspace,
         run: { branch, commit: '0'.repeat(40), params: { seat } },
         async sh(command, options) {
           commands.push([command, options?.cwd])
@@ -1594,6 +1654,11 @@ describe('request-only Apple TV workflow', () => {
       assert.deepEqual(commands.at(-1), ['pod install', 'appletv/ios'])
       assert.deepEqual(saved, ['tvos-ipa', 'tvos-dsym'])
       assert.ok(published)
+      // A develop TV build alone claims the scheme its server link uses.
+      const claimed = readFileSync(plist, 'utf8').includes(
+        '<string>teamstationtv-develop</string>'
+      )
+      assert.equal(claimed, host !== 'app')
     })
   }
 

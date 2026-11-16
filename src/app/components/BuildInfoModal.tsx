@@ -1,15 +1,30 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Pressable, Text, View } from 'react-native'
+import { Modal, Platform, Pressable, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { type BuildInfo, buildInfo } from '../../common/distribution'
-import { lstrings } from '../locales/strings'
+import { lstrings, sprintf } from '../locales/strings'
+import { appOrigin } from '../native/config'
+import { isDevelopBuild, saveServerOverride } from '../native/serverOverride'
 import { browserOrigin } from '../platform/browserOrigin'
+import { deviceStorage } from '../platform/deviceStorage'
 import { openExternal } from '../platform/externalBrowser'
 import { RenderErrorProbe } from '../sentry'
 import { nativeCrash } from '../sentrySdk'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
+
+/** Keeps another server for the next launch (null for this build's own), answering the host kept. */
+export type ServerControl = (origin: string | null) => Promise<string | null>
+
+/** A develop phone build's own control; none on the web or in a stable build. */
+export function developServerControl(
+  os: string = Platform.OS,
+  origin: string | undefined = appOrigin
+): ServerControl | undefined {
+  if (os === 'web' || !isDevelopBuild(origin)) return undefined
+  return async server => await saveServerOverride(deviceStorage, origin, server)
+}
 
 export function BuildInfoModal({
   client,
@@ -17,7 +32,8 @@ export function BuildInfoModal({
   onClose,
   info = buildInfo,
   isAdmin = false,
-  crash = nativeCrash
+  crash = nativeCrash,
+  serverControl = developServerControl()
 }: {
   client?: TeamStationClient
   apiBaseUrl?: string
@@ -27,12 +43,18 @@ export function BuildInfoModal({
   isAdmin?: boolean
   /** Crashes the native app; absent on the web, which has none. */
   crash?: () => void
+  /** Lets the server row be changed, for the next launch: a develop phone build's alone. */
+  serverControl?: ServerControl
 }): React.ReactElement {
   const styles = getStyles(useTheme())
   const [betaUrl, setBetaUrl] = useState<string>()
   const [storeUrl, setStoreUrl] = useState<string>()
   const [failed, setFailed] = useState(false)
   const [renderError, setRenderError] = useState(false)
+  const server = serverOrigin(apiBaseUrl)
+  const [editing, setEditing] = useState(false)
+  const [host, setHost] = useState('')
+  const [serverNote, setServerNote] = useState<string>()
   useEffect(() => {
     let active = true
     setBetaUrl(undefined)
@@ -62,9 +84,24 @@ export function BuildInfoModal({
     [lstrings.about_number, info.buildNumber],
     [lstrings.about_branch, info.branch],
     [lstrings.about_commit, info.commit.slice(0, 6)],
-    [lstrings.about_time, localBuildTime(info.builtAt)],
-    [lstrings.about_server, serverOrigin(apiBaseUrl)]
+    [lstrings.about_time, localBuildTime(info.builtAt)]
   ]
+  const saveServer = (): void => {
+    const next = host.trim() === '' ? null : host.trim()
+    serverControl?.(next).then(
+      kept => {
+        setEditing(false)
+        setServerNote(
+          kept == null
+            ? lstrings.about_server_cleared
+            : sprintf(lstrings.about_server_set, kept)
+        )
+      },
+      (error: unknown) => {
+        setServerNote(error instanceof Error ? error.message : String(error))
+      }
+    )
+  }
   return (
     <Modal transparent animationType="fade" visible onRequestClose={onClose}>
       <View style={styles.scrim}>
@@ -86,6 +123,54 @@ export function BuildInfoModal({
               </Text>
             </View>
           ))}
+          <View style={styles.row}>
+            <Text style={styles.label}>{lstrings.about_server}</Text>
+            {serverControl == null ? (
+              <Text selectable style={styles.value}>
+                {server}
+              </Text>
+            ) : (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="server-origin"
+                accessibilityHint={lstrings.about_server_change}
+                testID="server-origin"
+                onPress={() => {
+                  setHost(server.replace(/^https:\/\//, ''))
+                  setEditing(true)
+                  setServerNote(undefined)
+                }}
+              >
+                <Text style={styles.link}>{server}</Text>
+              </Pressable>
+            )}
+            {editing && (
+              <>
+                <TextInput
+                  accessibilityLabel="server-origin-field"
+                  testID="server-origin-field"
+                  placeholder={lstrings.about_server_field}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  keyboardType="url"
+                  value={host}
+                  onChangeText={setHost}
+                  onSubmitEditing={saveServer}
+                  style={styles.field}
+                />
+                <Button
+                  label={lstrings.about_server_save}
+                  accessibilityLabel="server-origin-save"
+                  onPress={saveServer}
+                />
+              </>
+            )}
+            {serverNote != null && (
+              <Text accessibilityRole="alert" style={styles.value}>
+                {serverNote}
+              </Text>
+            )}
+          </View>
           {betaUrl != null && betaUrl !== '' && (
             <Button
               label={lstrings.about_builds}
@@ -220,5 +305,20 @@ const getStyles = cacheStyles((theme: Theme) => ({
     color: theme.primaryTextColor,
     fontFamily: theme.regularTextFont,
     fontSize: theme.rem(1)
+  },
+  link: {
+    color: theme.linkTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(1)
+  },
+  field: {
+    color: theme.primaryTextColor,
+    fontFamily: theme.regularTextFont,
+    fontSize: theme.rem(1),
+    borderColor: theme.secondaryTextColor,
+    borderWidth: 1,
+    borderRadius: theme.rem(0.25),
+    paddingHorizontal: theme.rem(0.5),
+    paddingVertical: theme.rem(0.375)
   }
 }))

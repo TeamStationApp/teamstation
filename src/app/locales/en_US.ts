@@ -26,6 +26,12 @@ export const enUs = {
   about_commit: 'Commit',
   about_time: 'Built',
   about_server: 'App server URL',
+  about_server_set: 'Server set to %s. Restart TeamStation to use it.',
+  about_server_cleared:
+    'Server reset to this build’s own. Restart TeamStation to use it.',
+  about_server_change: 'Change the app server',
+  about_server_field: 'Server host name',
+  about_server_save: 'Save server',
   about_builds: 'Android/iOS Beta Builds',
   about_app_store: 'iOS TestFlight',
   about_close: 'Close',
