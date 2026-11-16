@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
@@ -128,5 +128,37 @@ describe('run, with a golden checkpoint', function () {
     expect(result.status).equals('passed')
     expect(result.attempts).equals(2)
     expect(result.costUsd).equals(0.5)
+  })
+
+  it('makes one attempt at a blocked scenario, and calls it no crash', async function () {
+    const root = goldenRoot([])
+    const spec = join(root, 'e2e', 'tests', 'area', 'feature', 'thing.e2e.ts')
+    writeFileSync(
+      spec,
+      readFileSync(spec, 'utf8').replace(
+        "await ctx.checkpoint('screen',",
+        'throw new (require(' +
+          JSON.stringify(join(CORE, 'result')) +
+          ").BlockedError)('no phone'); await ctx.checkpoint('screen',"
+      )
+    )
+    const { result } = await runScenario({
+      id: 'area/feature/thing#main',
+      surface: 'web-chromium',
+      settings: {},
+      root,
+      runDir: join(root, 'run'),
+      retries: 2
+    })
+    expect(result.status).equals('blocked')
+    expect(result.reason).equals('no phone')
+    expect(result.attempts).equals(undefined)
+    expect(result.failureKind).equals(undefined)
+    expect(
+      readFileSync(
+        join(root, 'e2e', 'tests', 'area', 'feature', 'tries'),
+        'utf8'
+      )
+    ).equals('1')
   })
 })

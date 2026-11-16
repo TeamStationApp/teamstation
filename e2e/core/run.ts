@@ -536,6 +536,11 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         }
         break
       } catch (error) {
+        // Blocked or broken is no attempt's failure: another would be the
+        // same, and it keeps no evidence and is no crash.
+        if (error instanceof BlockedError || error instanceof HarnessError) {
+          throw error
+        }
         failure = error instanceof Error ? error : new Error(error as string)
       }
     }
