@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process'
+import { execFileSync, spawn, spawnSync } from 'node:child_process'
 import {
   closeSync,
   existsSync,
@@ -72,6 +72,26 @@ function retryCount(value: string): number {
     throw new Error(`--retries wants a whole number, 0 or more, not ${value}`)
   }
   return Number(value)
+}
+
+/**
+ * Stops the `stack serve` for `id`, if that is still what `pid` is: after a
+ * crash or a reboot the number can be gone, or another process's.
+ */
+function stopServe(pid: number, id: string): boolean {
+  const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+    encoding: 'utf8'
+  }).stdout
+  if (!/\bstack serve\b/.test(command) || !command.includes(`--id ${id}`)) {
+    return false
+  }
+  try {
+    process.kill(pid, 'SIGTERM')
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
 }
 
 function stackState(id: string): StackEntry {
@@ -363,11 +383,9 @@ export async function main(argv: string[]): Promise<number> {
         return 0
       }
       if (subcommand === 'down') {
-        print(
-          removeStack(STACKS, positionals[2], pid => {
-            process.kill(pid, 'SIGTERM')
-          })
-        )
+        const id = positionals[2]
+        if (id == null) throw new Error('stack down wants <id>')
+        print(removeStack(STACKS, id, pid => stopServe(pid, id)))
         return 0
       }
       if (subcommand === 'attach') {

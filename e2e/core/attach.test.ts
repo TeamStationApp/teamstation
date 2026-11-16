@@ -153,7 +153,11 @@ describe('attached stacks', function () {
     const { dir, handle } = scratch()
     attachStack(dir, handle(HANDLE))
     const killed: number[] = []
-    expect(removeStack(dir, HANDLE.id, pid => killed.push(pid))).deep.equals({
+    const kill = (pid: number): boolean => {
+      killed.push(pid)
+      return true
+    }
+    expect(removeStack(dir, HANDLE.id, kill)).deep.equals({
       id: HANDLE.id,
       stopped: false
     })
@@ -161,8 +165,17 @@ describe('attached stacks', function () {
       join(dir, 'up.json'),
       JSON.stringify({ id: 'up', origin: 'http://x.test', pid: 4242 })
     )
-    expect(removeStack(dir, 'up', pid => killed.push(pid)).stopped).equals(true)
+    expect(removeStack(dir, 'up', kill).stopped).equals(true)
     expect(killed).deep.equals([4242])
+    // One whose stack serve is already gone is forgotten all the same.
+    writeFileSync(
+      join(dir, 'gone.json'),
+      JSON.stringify({ id: 'gone', origin: 'http://x.test', pid: 4243 })
+    )
+    expect(removeStack(dir, 'gone', () => false)).deep.equals({
+      id: 'gone',
+      stopped: false
+    })
     expect(listStacks(dir)).deep.equals([])
   })
 

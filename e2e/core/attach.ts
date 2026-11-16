@@ -137,15 +137,21 @@ export function listStacks(dir: string): StackEntry[] {
 }
 
 /** Forgets a stack; a `stack up` one is stopped first, an attached one is left running. */
+/**
+ * Forgets a stack, stopping it first when this machine started it. `kill`
+ * says whether it stopped anything: a `stack serve` that died without
+ * cleaning up leaves an entry whose process is gone, and the entry still
+ * goes.
+ */
 export function removeStack(
   dir: string,
   id: string,
-  kill: (pid: number) => void
+  kill: (pid: number) => boolean
 ): { id: string; stopped: boolean } {
   const entry = readStack(dir, id)
-  if (entry.handle == null && entry.pid != null) kill(entry.pid)
-  rmSync(join(dir, `${id}.json`))
-  return { id, stopped: entry.handle == null }
+  const stopped = entry.handle == null && entry.pid != null && kill(entry.pid)
+  rmSync(join(dir, `${id}.json`), { force: true })
+  return { id, stopped }
 }
 
 /** The 5xx a `stack up` stack has logged since `since`. */
