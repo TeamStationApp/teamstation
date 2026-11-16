@@ -8,8 +8,6 @@ import {
 } from 'node:fs'
 import { dirname, join } from 'node:path'
 
-import { Client } from 'pg'
-
 import type { AttachedHandle } from './attach'
 import type { LegacyStack } from './legacyStack'
 import { BlockedError, HarnessError } from './result'
@@ -52,34 +50,6 @@ export function nodeDatabaseUrl(url: string): string {
   if (!/[?&]sslmode=require\b/.test(url) || /[?&]uselibpqcompat=/.test(url))
     return url
   return `${url}&uselibpqcompat=true`
-}
-
-/**
- * Readies a throwaway stack for the next script: clears the sign-in code
- * limits (five codes an address may ask for in fifteen minutes, and the
- * scripts ask for the same fixture accounts), and ends every session but the
- * TV's, so an app or page a script finds signed in as an earlier one's
- * account signs in again as its own. TeamStation TV hangs on a revoked session.
- */
-export async function clearCodeLimits(
-  handle: StreamingHandle,
-  connect: (url: string) => {
-    connect: () => Promise<unknown>
-    query: (sql: string) => Promise<unknown>
-    end: () => Promise<unknown>
-  } = url =>
-    new Client({ connectionString: url, connectionTimeoutMillis: 15_000 })
-): Promise<void> {
-  const client = connect(nodeDatabaseUrl(handle.databaseUrl))
-  await client.connect()
-  try {
-    await client.query("delete from rate_events where scope like 'emailCode.%'")
-    await client.query(
-      "update auth_sessions set revoked_at = now() where revoked_at is null and device_name is distinct from 'Apple TV'"
-    )
-  } finally {
-    await client.end()
-  }
 }
 
 /** Where the droplet's files are mirrored on this Mac. */
@@ -186,6 +156,8 @@ export function attachedLegacyStack(
   const follow = (): void => {
     tail = run(...commands.tail)
     tail.stdout?.pipe(log, { end: false })
+    // Read and dropped: a pipe nobody reads fills, and its writer stops.
+    tail.stderr?.resume()
     tail.on('exit', () => {
       if (tail != null && !stopped) setTimeout(follow, 2000)
     })
@@ -199,6 +171,10 @@ export function attachedLegacyStack(
     }
     copying = new Promise<void>(resolve => {
       const child = run(...commands.rsync)
+      // A live tree loses segments mid-copy, and rsync says so for each one:
+      // unread, that fills its pipe and the copy never ends.
+      child.stdout?.resume()
+      child.stderr?.resume()
       child.on('exit', () => {
         resolve()
       })

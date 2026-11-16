@@ -9,7 +9,6 @@ import { expect } from 'chai'
 import { BlockedError, HarnessError } from './result'
 import {
   attachedLegacyStack,
-  clearCodeLimits,
   mirrorCommands,
   mirrorsIn,
   nodeDatabaseUrl,
@@ -159,38 +158,6 @@ describe('the streaming scripts against an attached stack', function () {
     await stack.stop()
     expect(tails).equals(2)
   }).timeout(5000)
-})
-
-describe('the code limits on an attached stack', function () {
-  it('clears them over a connection of its own, and always lets go', async function () {
-    const seen: string[] = []
-    const fake = (fails: boolean) => (url: string) => ({
-      connect: async () => {
-        seen.push(url)
-      },
-      query: async (sql: string) => {
-        seen.push(sql)
-        if (fails) throw new Error('down')
-      },
-      end: async () => {
-        seen.push('end')
-      }
-    })
-    await clearCodeLimits(HANDLE, fake(false))
-    expect(seen).deep.equals([
-      `${HANDLE.databaseUrl}&uselibpqcompat=true`,
-      "delete from rate_events where scope like 'emailCode.%'",
-      "update auth_sessions set revoked_at = now() where revoked_at is null and device_name is distinct from 'Apple TV'",
-      'end'
-    ])
-    seen.length = 0
-    expect(
-      await clearCodeLimits(HANDLE, fake(true)).catch(
-        (e: unknown) => (e as Error).message
-      )
-    ).equals('down')
-    expect(seen.at(-1)).equals('end')
-  })
 })
 
 describe("node's view of the stack database", function () {
