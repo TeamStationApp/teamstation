@@ -6,9 +6,12 @@ import { expect } from 'chai'
 
 import {
   attachStack,
+  checkLocalStackId,
   checkStackId,
   listStacks,
+  newStackId,
   parseHandle,
+  projectKey,
   readStack,
   refuseAttachedForFaults,
   removeStack,
@@ -125,6 +128,26 @@ describe('attached stacks', function () {
         errorLog: join(dir, 'none')
       }).serverErrors(0)
     ).deep.equals([])
+  })
+
+  it('names a stack for its project and six random hex digits', function () {
+    const id = newStackId('streamingFixes')
+    expect(id).matches(/^streamingFixes_[0-9a-f]{6}$/)
+    expect(newStackId('streamingFixes')).not.equals(id)
+    expect(checkLocalStackId(id)).equals(id)
+    expect(projectKey('paul-stream.fixes')).equals('paulstreamfixes')
+    expect(projectKey('2026plan')).equals('stack2026plan')
+    for (const bad of [
+      'streamingFixes',
+      'streamingFixes_1EF39D',
+      'stream-1a',
+      'a_1ef39'
+    ]) {
+      expect(
+        thrown(() => checkLocalStackId(bad)),
+        bad
+      ).instanceOf(HarnessError)
+    }
   })
 
   it('refuses a stack id that could leave the registry or change case in Postgres', function () {

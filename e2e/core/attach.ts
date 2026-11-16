@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import {
   chmodSync,
   existsSync,
@@ -114,10 +115,47 @@ export function writeStackEntry(dir: string, file: string, text: string): void {
   chmodSync(file, 0o600)
 }
 
-/** Refuses a stack id other than a-z, 0-9 and -: the id names files and a database. */
+/**
+ * A stack this machine starts is named for its project and six random hex
+ * digits, `streamingFixes_1ef39d`, and never by whoever starts it: two stacks
+ * cannot share an id, so none can take another's database or directory.
+ */
+const LOCAL_ID = /^[A-Za-z][A-Za-z0-9]{0,40}_[0-9a-f]{6}$/
+
+/** A project's name as an id's first part: letters and digits, starting with a letter. */
+export function projectKey(name: string): string {
+  const key = name.replace(/[^A-Za-z0-9]/g, '')
+  return (/^[A-Za-z]/.test(key) ? key : `stack${key}`).slice(0, 40)
+}
+
+export function newStackId(project: string): string {
+  return `${projectKey(project)}_${randomBytes(3).toString('hex')}`
+}
+
+/** Refuses an id this machine's stacks are not named by. */
+export function checkLocalStackId(id: string): string {
+  if (!LOCAL_ID.test(id)) {
+    throw new HarnessError(
+      `Stack id "${id}" is not <project>_<six hex digits>, as stack up names them`
+    )
+  }
+  return id
+}
+
+/** Whether an id is a stack this machine started, not an attached one. */
+export function isLocalStackId(id: string): boolean {
+  return LOCAL_ID.test(id)
+}
+
+/**
+ * Refuses an id that is neither a stack this machine starts nor an attached
+ * stack's (a-z, 0-9 and -): the id names files and a database.
+ */
 export function checkStackId(id: string): string {
-  if (!ID.test(id)) {
-    throw new HarnessError(`Stack id "${id}" is not a-z, 0-9 and -`)
+  if (!ID.test(id) && !LOCAL_ID.test(id)) {
+    throw new HarnessError(
+      `Stack id "${id}" is not <project>_<six hex digits>, nor an attached stack's a-z, 0-9 and -`
+    )
   }
   return id
 }

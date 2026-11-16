@@ -1,20 +1,27 @@
 import { type ChildProcess, spawn, spawnSync } from 'node:child_process'
-import { randomUUID } from 'node:crypto'
 import {
   appendFileSync,
   existsSync,
   mkdirSync,
+  readdirSync,
+  readFileSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
 import { createServer as createNetServer } from 'node:net'
-import { networkInterfaces, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { networkInterfaces } from 'node:os'
+import { basename, join } from 'node:path'
 
 import { Pool } from 'pg'
 
 import { type FaultProxy, startFaultProxy } from '../faults/proxy'
-import { checkStackId } from './attach'
+import {
+  checkLocalStackId,
+  isLocalStackId,
+  newStackId,
+  readStack,
+  STACKS
+} from './attach'
 import {
   baselineManifestPath,
   runLocalFixture,
@@ -252,6 +259,99 @@ export async function runStops(
   }
 }
 
+/** The file in a stack's directory, and the database comment, that name its owner's pid. */
+const OWNER = 'owner.pid'
+const OWNER_COMMENT = 'e2e stack of pid '
+
+/**
+ * The project a stack started from this checkout is named for: its branch's
+ * last part (`paul/streamingFixes` is `streamingFixes`), or the checkout's
+ * directory when it is on no branch.
+ */
+export function projectOf(root: string): string {
+  const branch = spawnSync('git', ['-C', root, 'branch', '--show-current'], {
+    encoding: 'utf8'
+  }).stdout?.trim()
+  return branch == null || branch === ''
+    ? basename(root)
+    : (branch.split('/').at(-1) ?? branch)
+}
+
+/** Whether a process is still running. One this user may not signal is. */
+export function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH'
+  }
+}
+
+/**
+ * Removes what stacks whose process has gone left behind: a killed or
+ * crashed one never stops, and since no later stack takes its id, nothing
+ * else would. Only this machine's stacks (`<project>_<hex>`) are looked at,
+ * and only by their owner's pid: an entry, a directory and a database each.
+ */
+export async function pruneStacks(
+  options: {
+    alive?: (pid: number) => boolean
+    databaseUrl?: string
+  } = {}
+): Promise<{ entries: string[]; directories: string[]; databases: string[] }> {
+  const alive = options.alive ?? isAlive
+  const pruned = {
+    entries: [] as string[],
+    directories: [] as string[],
+    databases: [] as string[]
+  }
+  const names = existsSync(STACKS) ? readdirSync(STACKS) : []
+  for (const name of names) {
+    const id = name.replace(/\.json$/, '')
+    if (!name.endsWith('.json') || !isLocalStackId(id)) continue
+    const entry = readStack(STACKS, id)
+    if (entry.handle != null || (entry.pid != null && alive(entry.pid))) {
+      continue
+    }
+    for (const file of [`${id}.json`, `${id}.log`, `${id}.errors.jsonl`]) {
+      rmSync(join(STACKS, file), { force: true })
+    }
+    pruned.entries.push(id)
+  }
+  for (const name of names) {
+    const owner = join(STACKS, name, OWNER)
+    if (!isLocalStackId(name) || !existsSync(owner)) continue
+    if (alive(Number(readFileSync(owner, 'utf8')))) continue
+    rmSync(join(STACKS, name), { recursive: true, force: true })
+    pruned.directories.push(name)
+  }
+  const databaseUrl =
+    options.databaseUrl ??
+    (await import('../../src/migrate/testDatabase')).testDatabaseUrl
+  const admin = new Pool({ connectionString: databaseUrl })
+  try {
+    const { rows } = await admin.query<{ name: string; owner: string | null }>(
+      `select datname as name, shobj_description(oid, 'pg_database') as owner
+       from pg_database where datname like 'e2e\\_%'`
+    )
+    for (const row of rows) {
+      const id = row.name.slice('e2e_'.length)
+      if (
+        !isLocalStackId(id) ||
+        row.owner?.startsWith(OWNER_COMMENT) !== true
+      ) {
+        continue
+      }
+      if (alive(Number(row.owner.slice(OWNER_COMMENT.length)))) continue
+      await admin.query(`drop database if exists "${row.name}" with (force)`)
+      pruned.databases.push(row.name)
+    }
+  } finally {
+    await admin.end()
+  }
+  return pruned
+}
+
 /**
  * A scratch server on this machine: its own database, object store, Places stub, API
  * and web build on one origin. Nothing here touches a seat.
@@ -264,9 +364,14 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
   const { publishPictureCatalog } =
     await import('../../src/server/media/pictureCatalog')
   const root = options.root ?? ROOT
-  const id = checkStackId(options.id ?? randomUUID().slice(0, 8))
-  const dir = join(tmpdir(), 'teamstation-e2e-stacks', id)
+  const id =
+    options.id == null
+      ? newStackId(projectOf(root))
+      : checkLocalStackId(options.id)
+  const dir = join(STACKS, id)
   mkdirSync(dir, { recursive: true })
+  // Whose it is, for `stack prune` once that process is gone.
+  writeFileSync(join(dir, OWNER), String(process.pid))
   const host = options.lan === true ? lanAddress() : '127.0.0.1'
   const stops: Array<() => Promise<void> | void> = []
   const stop = async (): Promise<void> => {
@@ -365,15 +470,16 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
         places.server.close()
         places.server.closeAllConnections()
       })
-      const databaseName = `e2e_${id.replace(/-/g, '_')}`
+      // Quoted, so it keeps the id's case. Nothing else has this id, so
+      // nothing else has this database.
+      const databaseName = `e2e_${id}`
+      const quoted = `"${databaseName}"`
       const admin = new Pool({ connectionString: testDatabaseUrl })
       try {
-        // One left by a serve that died before it could drop it: the id is
-        // this stack's now, and no running serve holds it.
+        await admin.query(`create database ${quoted}`)
         await admin.query(
-          `drop database if exists ${databaseName} with (force)`
+          `comment on database ${quoted} is '${OWNER_COMMENT}${process.pid}'`
         )
-        await admin.query(`create database ${databaseName}`)
       } catch (error) {
         await admin.end()
         throw error
@@ -382,9 +488,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       databaseUrl.pathname = `/${databaseName}`
       stops.push(async () => {
         try {
-          await admin.query(
-            `drop database if exists ${databaseName} with (force)`
-          )
+          await admin.query(`drop database if exists ${quoted} with (force)`)
         } finally {
           await admin.end()
         }

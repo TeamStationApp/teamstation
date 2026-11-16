@@ -1,13 +1,14 @@
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
+import { Pool } from 'pg'
 
-import { failedStart, startStack } from './stack'
+import { newStackId, projectKey, STACKS, writeStackEntry } from './attach'
+import { failedStart, projectOf, pruneStacks, startStack } from './stack'
 
 describe('a stack with a fault proxy in front of its API', function () {
   this.timeout(120000)
@@ -65,16 +66,14 @@ describe('a stack abandoned while it starts', function () {
   }
 
   it('does not start once abandoned, and stops what it started when abandoned mid-way', async function () {
-    const early = `abandon-early-${process.pid}`
+    const early = newStackId('abandonEarly')
     const error = await failed(
       startStack({ id: early, services: [], signal: AbortSignal.abort() })
     )
     expect((error as Error).name).equals('AbortError')
-    expect(existsSync(join(tmpdir(), 'teamstation-e2e-stacks', early))).equals(
-      false
-    )
+    expect(existsSync(join(STACKS, early))).equals(false)
     // Abandoned while the API comes up: its database, process and directory go.
-    const late = `abandon-late-${process.pid}`
+    const late = newStackId('abandonLate')
     const started = Date.now()
     const midway = await failed(
       startStack({
@@ -85,9 +84,7 @@ describe('a stack abandoned while it starts', function () {
     )
     expect((midway as Error).name).matches(/AbortError|TimeoutError/)
     expect(Date.now() - started).lessThan(30000)
-    expect(existsSync(join(tmpdir(), 'teamstation-e2e-stacks', late))).equals(
-      false
-    )
+    expect(existsSync(join(STACKS, late))).equals(false)
   })
 })
 
@@ -110,5 +107,84 @@ describe('a start that fails', function () {
     }).catch((error: unknown) => error)
     expect(String(clean)).includes('API unhealthy')
     expect(stopped).equals(true)
+  })
+})
+
+describe('a stack’s name, and what a dead one leaves', function () {
+  this.timeout(120000)
+
+  const testPool = async (): Promise<Pool> =>
+    new Pool({
+      connectionString: (await import('../../src/migrate/testDatabase'))
+        .testDatabaseUrl
+    })
+  const databases = async (pattern: string): Promise<string[]> => {
+    const pool = await testPool()
+    try {
+      const { rows } = await pool.query<{ datname: string }>(
+        'select datname from pg_database where datname like $1',
+        [pattern]
+      )
+      return rows.map(row => row.datname)
+    } finally {
+      await pool.end()
+    }
+  }
+
+  it('names a stack for its project, with a database of exactly that name', async function () {
+    const stack = await startStack({ services: ['api'] })
+    try {
+      const project = projectKey(projectOf(process.cwd()))
+      expect(stack.id).matches(new RegExp(`^${project}_[0-9a-f]{6}$`))
+      expect(await databases(`e2e_${stack.id}`)).deep.equals([
+        `e2e_${stack.id}`
+      ])
+    } finally {
+      await stack.stop()
+    }
+    expect(await databases(`e2e_${stack.id}`)).deep.equals([])
+  })
+
+  it('prunes the entry, directory and database of a stack whose process is gone, and only those', async function () {
+    const dead = newStackId('pruneDead')
+    const live = newStackId('pruneLive')
+    const pool = await testPool()
+    try {
+      for (const [id, pid] of [
+        [dead, 999999],
+        [live, process.pid]
+      ] as const) {
+        writeStackEntry(
+          STACKS,
+          join(STACKS, `${id}.json`),
+          JSON.stringify({ id, origin: 'http://127.0.0.1:1', pid })
+        )
+        mkdirSync(join(STACKS, id), { recursive: true })
+        writeFileSync(join(STACKS, id, 'owner.pid'), String(pid))
+        await pool.query(`create database "e2e_${id}"`)
+        await pool.query(
+          `comment on database "e2e_${id}" is 'e2e stack of pid ${pid}'`
+        )
+      }
+      const alive = (pid: number): boolean => pid === process.pid
+      const pruned = await pruneStacks({ alive })
+      expect(pruned.entries).includes(dead).and.not.includes(live)
+      expect(pruned.directories).includes(dead).and.not.includes(live)
+      expect(pruned.databases).includes(`e2e_${dead}`)
+      expect(pruned.databases).not.includes(`e2e_${live}`)
+      expect(existsSync(join(STACKS, `${dead}.json`))).equals(false)
+      expect(existsSync(join(STACKS, dead))).equals(false)
+      expect(await databases(`e2e_${dead}`)).deep.equals([])
+      expect(existsSync(join(STACKS, `${live}.json`))).equals(true)
+      expect(await databases(`e2e_${live}`)).deep.equals([`e2e_${live}`])
+    } finally {
+      await pool.query(`drop database if exists "e2e_${live}" with (force)`)
+      await pool.query(`drop database if exists "e2e_${dead}" with (force)`)
+      await pool.end()
+      for (const id of [dead, live]) {
+        rmSync(join(STACKS, `${id}.json`), { force: true })
+        rmSync(join(STACKS, id), { recursive: true, force: true })
+      }
+    }
   })
 })

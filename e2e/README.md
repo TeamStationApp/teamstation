@@ -11,8 +11,11 @@ npm run -s e2e -- run <category/feature/behaviour#scenario> --surface <s> \\
   [--device role=id]… [--seat <name> | --stack <id>] [--budget-usd n]
 npm run -s e2e -- stack up [--lan] [--native]
 npm run -s e2e -- stack down <id>
+npm run -s e2e -- stack prune
 npm run -s e2e -- prepare --app <app> --device <id> (--stack <id> | --seat <name> | --package <path>)
 ```
+
+A stack started on this machine is named for its project, the branch's last part, and six random hex digits: `streamingFixes_1ef39d`, with its database `e2e_streamingFixes_1ef39d`. `stack up` prints the id; nobody chooses one, so two stacks never share a database or a directory, whichever worktree or agent starts them. A stack whose process was killed never stops, and no later stack reuses its id: `stack prune` removes the registry entries, directories and databases of stacks whose process has gone.
 
 `run` exits 0 for passed or passed-degraded, 1 for failed or quarantined, 2 for blocked, 3
 when the harness itself failed, and 4 for inconclusive: needs-review or unbaselined. Read

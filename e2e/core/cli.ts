@@ -15,8 +15,9 @@ import { PNG } from 'pngjs'
 
 import {
   attachStack,
-  checkStackId,
+  checkLocalStackId,
   listStacks,
+  newStackId,
   readStack,
   refuseAttachedForFaults,
   removeStack,
@@ -62,7 +63,7 @@ import { buildScorecard } from './scorecard'
 import { selectScenarios } from './select'
 import { loadSettings, type LocalSettings, readSecret } from './settings'
 import type { StackHandle } from './spec'
-import { type RunningStack, startStack } from './stack'
+import { projectOf, pruneStacks, type RunningStack, startStack } from './stack'
 import { trackedFiles, validate } from './validate'
 import { openWebSession } from './web'
 
@@ -76,7 +77,7 @@ function retryCount(value: string): number {
 
 /** Whether a process's command line is `stack serve` for exactly `id`. */
 export function servesStack(command: string, id: string): boolean {
-  // An id is a-z, 0-9 and - (`checkStackId`), so it needs no escaping.
+  // An id is letters, digits, - and _ (`checkStackId`): nothing to escape.
   return new RegExp(`\\bstack serve\\b.*--id ${id}(\\s|$)`).test(command.trim())
 }
 
@@ -275,24 +276,13 @@ export async function main(argv: string[]): Promise<number> {
     case 'stack': {
       if (subcommand === 'up') {
         mkdirSync(STACKS, { recursive: true, mode: 0o700 })
-        const id = checkStackId(
-          values.id ?? Math.random().toString(36).slice(2, 10)
-        )
-        const file = join(STACKS, `${id}.json`)
-        // An entry is a stack only while its serve runs: one whose serve was
-        // killed, or lost to a reboot, is forgotten, not taken for this one.
-        if (existsSync(file)) {
-          const old = readStack(STACKS, id)
-          if (old.handle != null) {
-            throw new HarnessError(
-              `Stack "${id}" is attached; stack down it first`
-            )
-          }
-          if (old.pid != null && isServing(old.pid, id)) {
-            throw new HarnessError(`Stack "${id}" is already up`)
-          }
-          rmSync(file, { force: true })
+        if (values.id != null) {
+          throw new HarnessError(
+            'stack up names its own stack, <project>_<six hex digits>: leave out --id'
+          )
         }
+        const id = newStackId(projectOf(ROOT))
+        const file = join(STACKS, `${id}.json`)
         const args = [
           '-r',
           require.resolve('sucrase/register'),
@@ -343,9 +333,9 @@ export async function main(argv: string[]): Promise<number> {
         return 0
       }
       if (subcommand === 'serve') {
-        const id = checkStackId(
-          values.id ?? Math.random().toString(36).slice(2, 10)
-        )
+        // Named by the `stack up` that started it.
+        if (values.id == null) throw new Error('stack serve wants --id')
+        const id = checkLocalStackId(values.id)
         const errorLog = join(STACKS, `${id}.errors.jsonl`)
         // Ctrl-C, a closed terminal and a crash take the stack down too, so
         // its database, directory and Metro do not outlive it. One that
@@ -412,6 +402,10 @@ export async function main(argv: string[]): Promise<number> {
         const id = positionals[2]
         if (id == null) throw new Error('stack down wants <id>')
         print(removeStack(STACKS, id, pid => stopServe(pid, id)))
+        return 0
+      }
+      if (subcommand === 'prune') {
+        print(await pruneStacks())
         return 0
       }
       if (subcommand === 'attach') {
