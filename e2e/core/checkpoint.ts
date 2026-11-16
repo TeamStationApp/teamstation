@@ -84,6 +84,7 @@ export interface CheckpointTarget {
   device: any
   deviceClass: string
   appId?: string
+  udid?: string
   consoleSeen: number
 }
 

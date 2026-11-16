@@ -91,6 +91,8 @@ export interface ReceivedMail {
 export interface WatchedDevice {
   deviceClass: string
   appId?: string
+  /** The simulator, emulator or phone, for a fault that acts on it. */
+  udid?: string
 }
 
 /** Where a scenario's server is, whichever kind that is. */

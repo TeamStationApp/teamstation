@@ -129,8 +129,7 @@ function isAssertion(error: Error): boolean {
 async function applyFault(
   fault: string | undefined,
   target: CheckpointTarget,
-  surface: Surface,
-  devices: Record<string, string>
+  surface: Surface
 ): Promise<void> {
   if (fault == null) return
   const script = styleScript(fault)
@@ -138,9 +137,9 @@ async function applyFault(
     await target.device.evalBrowserScript({ script })
     return
   }
-  if (fault === 'app-crash' && target.appId != null) {
-    const [udid] = Object.values(devices)
-    killApp(surface, udid, target.appId)
+  // The device the checkpoint looks at, not the first one the run was given.
+  if (fault === 'app-crash' && target.appId != null && target.udid != null) {
+    killApp(surface, target.udid, target.appId)
   }
 }
 
@@ -465,6 +464,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         }
         watch(device, {
           deviceClass: deviceClassOf(info),
+          udid: id,
           ...(typeof attachOptions.appId === 'string'
             ? { appId: attachOptions.appId }
             : {})
@@ -482,7 +482,7 @@ export async function runScenario(options: RunOptions): Promise<RunOutcome> {
         if (target == null) {
           throw new HarnessError(`Checkpoint "${id}" has no device to look at`)
         }
-        await applyFault(options.fault, target, surface, devices)
+        await applyFault(options.fault, target, surface)
         await running.check(id, checkpoint, target)
       }
     }
