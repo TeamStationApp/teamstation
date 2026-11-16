@@ -47,7 +47,9 @@ import { attach, type AttachedDevice, flatten } from './maestroD'
  *
  * `scripts/push-coverage.mjs run android` starts the API, Metro (with the
  * app's `TS_API_BASE_URL` on the emulator's address for this Mac) and this
- * script, and measures it. `TS_NOTIFY_CONFIG`'s database is where the checks
+ * script, and measures it (`run ios` is N6's), and the suite runs those as
+ * `npm run -s e2e -- run platform/push/phone#dms-mentions-reminders
+ * --surface android-app|ios-app --device phone=<serial or udid>`. `TS_NOTIFY_CONFIG`'s database is where the checks
  * read and the reminder sweep runs, its `redis` the push queue the sweep's
  * requests go on, and its `push.logFile` holds every push the API's push
  * sender sends. `TS_NOTIFY_METRO_PORT` is Metro's port on this Mac, the

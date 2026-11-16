@@ -44,7 +44,8 @@ import {
  *     npx mocha -r sucrase/register --timeout 600000 src/app/notifications.e2e.ts
  *
  * `scripts/push-coverage.mjs run web` starts all of it on ports of its own
- * and measures it. `TS_NOTIFY_CONFIG` is the API's `serverConfig.json`: its
+ * and measures it, and the suite runs that as
+ * `npm run -s e2e -- run platform/push/browser#dms-mentions-reminders --surface web-chromium`. `TS_NOTIFY_CONFIG` is the API's `serverConfig.json`: its
  * database is where these checks read and what the reminder sweep runs on,
  * its `push.logFile` is where every push its push sender sends is written,
  * and its `redis` is the push queue the reminder sweep's requests go on. `TS_NOTIFY_WEB` and `TS_NOTIFY_API` are the two
