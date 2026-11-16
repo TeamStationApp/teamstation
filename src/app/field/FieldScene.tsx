@@ -30,7 +30,7 @@ import { applyFieldCamera } from './cameraModel'
 import { catcherBounds, movedRect, type ScreenRect } from './catcherBounds'
 import { fieldKey } from './fieldKeyboard'
 import type { FieldPlayer } from './fieldModel'
-import { BASES, clampToField } from './fieldModel'
+import { BASES, catcherSpot, clampToField } from './fieldModel'
 import { fieldPalette as p } from './fieldPalette'
 import type { FieldCanvasProps } from './fieldTypes'
 import { frameThrottle } from './frameThrottle'
@@ -50,6 +50,7 @@ import {
 import { BallWarmup, PlayAnimation } from './PlayAnimation'
 import { Player } from './Player'
 import {
+  figureKeys,
   hasPlayerLabel,
   nameplateContains,
   projectPlayerLabel
@@ -113,20 +114,15 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
       }
     }
     if (callbacks.current.onCatcherBounds != null) {
-      const catcher = callbacks.current.players.find(
-        player => player.team === 'defense' && player.label === 'C'
+      const rect = catcherBounds(
+        camera,
+        size.width,
+        size.height,
+        catcherSpot(callbacks.current.players)
       )
-      if (catcher != null) {
-        const rect = catcherBounds(
-          camera,
-          size.width,
-          size.height,
-          catcher.position
-        )
-        if (movedRect(catcherRect.current, rect)) {
-          catcherRect.current = rect
-          callbacks.current.onCatcherBounds(rect)
-        }
+      if (movedRect(catcherRect.current, rect)) {
+        catcherRect.current = rect
+        callbacks.current.onCatcherBounds(rect)
       }
     }
     if (callbacks.current.onScoreboardBounds != null) {
@@ -405,6 +401,11 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
   useFrame(() => {
     if (drag.current != null) invalidate()
   })
+  const figures = useMemo(() => {
+    const drawn = players.filter(player => player.emptyPosition !== true)
+    const keys = figureKeys(drawn)
+    return drawn.map((player, index) => ({ player, key: keys[index] }))
+  }, [players])
   const eligible = players.filter(player =>
     props.interaction != null
       ? props.interaction.gestures.includes('place') &&
@@ -1014,21 +1015,19 @@ export function FieldScene(props: FieldCanvasProps): React.ReactElement {
         <planeGeometry />
         <meshBasicMaterial visible={false} />
       </mesh>
-      {players
-        .filter(player => player.emptyPosition !== true)
-        .map(player => (
-          <Player
-            key={player.id}
-            player={player}
-            fabric={textures.cloth}
-            onMovementComplete={props.onMovementComplete}
-            paused={props.presentationPaused}
-            selected={
-              (preview?.id === player.id || player.keyboardOrigin != null) &&
-              eligible.some(item => item.id === player.id)
-            }
-          />
-        ))}
+      {figures.map(({ player, key }) => (
+        <Player
+          key={key}
+          player={player}
+          fabric={textures.cloth}
+          onMovementComplete={props.onMovementComplete}
+          paused={props.presentationPaused}
+          selected={
+            (preview?.id === player.id || player.keyboardOrigin != null) &&
+            eligible.some(item => item.id === player.id)
+          }
+        />
+      ))}
     </>
   )
 }

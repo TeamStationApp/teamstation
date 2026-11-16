@@ -17,7 +17,8 @@ import { assertStoredScoringRoles } from '../scoring/mergeConflicts'
 import { notifyPlaysChanged } from '../socket/gameChanges'
 import { noteScopeChange } from '../socket/syncRevision'
 import { gameNames } from '../users/nameBook'
-import { type PlaySource, withoutDescriptions } from './eventWrite'
+import { withoutDescriptions } from './eventWrite'
+import { type ImportedCounts, writeImportedRecords } from './importedWrite'
 
 /**
  * The body of `PATCH /games/:gameId/events`: for plays a game already has,
@@ -37,6 +38,8 @@ export type PlayEventsBody = ReturnType<typeof asPlayEventsBody>
 export interface AddedPlayEvents {
   plays: number
   events: number
+  /** The game's plays and the records they hold once the events are in. */
+  imported: ImportedCounts
 }
 
 /** An instant as the API writes one: an ISO 8601 date-time with its zone. */
@@ -74,11 +77,6 @@ function peopleIn(event: unknown): unknown[] {
     const id = (person as { id?: unknown } | null)?.id
     return id == null ? [] : [id]
   })
-}
-
-/** Who wrote a stored play, as `storedGumbo` stores it. */
-function sourceOf(source: string | null): PlaySource {
-  return source === 'teamstation' || source === 'manual' ? source : 'external'
 }
 
 /** A user's id as the statistics rebuild takes one (`gumboStats`). */
@@ -128,7 +126,8 @@ export async function addPlayEvents(
         'scoringOwner',
         'home_team_id',
         'away_team_id',
-        'currentPlay'
+        'currentPlay',
+        'status'
       ])
       .where('id', '=', gameId)
       .forUpdate()
@@ -140,7 +139,7 @@ export async function addPlayEvents(
       (
         await trx
           .selectFrom('events')
-          .select(['id', 'atBatIndex', 'gumbo', 'source'])
+          .select(['id', 'atBatIndex', 'gumbo'])
           .where('gameId', '=', gameId)
           .execute()
       ).map(row => [row.atBatIndex, row])
@@ -159,8 +158,14 @@ export async function addPlayEvents(
           `Play ${play.atBatIndex}: event ${untimed} has no startTime (an ISO 8601 date-time)`
         )
       // As for any outside scorer's play (`storedGumbo`).
+      // The play as an outside scorer stores it: its record, built from its
+      // events, is built again once they are in (`writeImportedRecords`).
+      const { teamStation: _record, ...document } = row.gumbo as Record<
+        string,
+        unknown
+      >
       const gumbo = {
-        ...(row.gumbo as Record<string, unknown>),
+        ...document,
         playEvents: withoutDescriptions(play.playEvents)
       }
       const wrong = gumboViolations(withNames(gumbo, nameOf)).find(violation =>
@@ -173,7 +178,10 @@ export async function addPlayEvents(
       // Stored as every play is, naming nobody (`storedGumbo`).
       writes.push({
         id: row.id,
-        gumbo: withoutNames(gumbo, { source: sourceOf(row.source) })
+        // The events an outside scorer sent are its words, and their
+        // descriptions are dropped as they are from any it posts. The rest
+        // of the play stays as stored; its record is built below.
+        gumbo: withoutNames(gumbo, { source: 'external' })
       })
     }
     const named = new Map<number, string>()
@@ -220,6 +228,8 @@ export async function addPlayEvents(
         .where('id', '=', write.id)
         .execute()
     }
+    // A play's record is built from its events: the game's are built again.
+    const imported = await writeImportedRecords(trx, game)
     // The board's timeline is cached under the game's updated_at.
     await trx
       .updateTable('games')
@@ -230,7 +240,8 @@ export async function addPlayEvents(
     noteScopeChange(trx, { gameId })
     return {
       plays: writes.length,
-      events: body.plays.reduce((sum, play) => sum + play.playEvents.length, 0)
+      events: body.plays.reduce((sum, play) => sum + play.playEvents.length, 0),
+      imported: imported.counts
     }
   })
 }

@@ -8,12 +8,19 @@
  * keep the margin the capsule was designed with.
  */
 
-/** Pixels from the window's bottom edge to the capsule's bottom edge. */
+/**
+ * Pixels from the window's bottom edge to the capsule's bottom edge.
+ *
+ * While the offline banner shows it is the bottom strip, on the inset, and
+ * the capsule sits on top of it: the banner is the gap, on every platform.
+ */
 export function floatingNavBottom(
   platform: string,
   marginPx: number,
-  insetBottom: number
+  insetBottom: number,
+  bannerPx = 0
 ): number {
+  if (bannerPx > 0) return insetBottom + bannerPx
   return platform === 'ios' ? insetBottom : marginPx + insetBottom
 }
 

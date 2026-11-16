@@ -1,8 +1,8 @@
 import { isDeepStrictEqual } from 'node:util'
 
-import { asString } from 'cleaners'
+import { asArray, asObject, asOptional, asString } from 'cleaners'
 import { Router } from 'express'
-import type { Kysely } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 
 import {
   asSaveLineupsBody,
@@ -23,6 +23,7 @@ import {
   notFound,
   unauthorized
 } from '../../common/errors'
+import { asExternalIdAt } from '../../common/externalIds'
 import {
   asPostEventsBody,
   type CurrentPlay,
@@ -90,17 +91,20 @@ import {
   storedLineupsDigest,
   type TeamSideLineups
 } from '../events/teamLineups'
+import { ensureExternalGuests } from '../games/externalGuests'
 import { fenceDistanceFor, gameHasPlays } from '../games/fenceDistance'
 import {
   addExistingGuest,
   createGuestPlayer,
+  type ExistingGuest,
+  type GuestRenamed,
   renameGuestPlayer
 } from '../games/guestPlayers'
 import {
   type GameAvailability,
   gameAvailability
 } from '../games/rosterAvailability'
-import { setRostered } from '../games/unroster'
+import { setRostered, unrosteredNow } from '../games/unroster'
 import { publicNames } from '../groups/playerNamePrivacy'
 import { cleanBody } from '../jsonBody'
 import { setAudit, skipAudit } from '../middleware/withAudit'
@@ -202,8 +206,34 @@ export function lineupRoutes(
       if (actor == null) throw unauthorized()
       const gameId = pathParam(req.params.gameId)
       const body = cleanBody(asUnrosterBody, req.body)
-      res.json(await setRostered(db, actor, gameId, body, options.cache))
-      tellGameWritten(options.onGameWritten, gameId)
+      // Once for each request key, claimed in the write's transaction: a
+      // late copy of a send the phone gave up on writes nothing, and is
+      // answered the lists as they stand now, which the phone keeps as the
+      // server's, not as they stood when the first was answered.
+      let wrote = false
+      const answer = await answerOnce(db, idempotentCallOf(req, actor.userId), {
+        write: async claim => {
+          const result = await setRostered(
+            db,
+            actor,
+            gameId,
+            body,
+            options.cache,
+            async trx => {
+              await claim?.(trx, { status: 200 })
+            }
+          )
+          wrote = true
+          return { status: 200, body: result }
+        },
+        rebuild: async () => ({
+          status: 200,
+          body: await unrosteredNow(db, gameId)
+        }),
+        keepsAnswer: false
+      })
+      res.status(answer.status).json(answer.body)
+      if (wrote) tellGameWritten(options.onGameWritten, gameId)
     })
   )
 
@@ -223,34 +253,89 @@ export function lineupRoutes(
         req.body?.teamId == null
           ? undefined
           : cleanBody(asString, req.body.teamId)
-      if ('existing' in asked) {
-        // An existing player for this game only: at once with a notice to
-        // their side, or, after one was rejected, as a request they accept.
-        const added = await addExistingGuest(
-          db,
-          actor,
-          gameId,
-          side,
-          asked.existing,
-          teamId
-        )
-        if (added.kind === 'pending') {
-          res.status(202).json({ pending: { requestId: added.requestId } })
-          return
+      // Once for each request key: a phone's queue that gave up on a send
+      // on a stalled link sends it again under the same key, and the first
+      // may still land. The key is claimed in the write's own transaction,
+      // so the second waits for it and is answered what it made.
+      const answerOf = (added: ExistingGuest): Answer =>
+        added.kind === 'pending'
+          ? { status: 202, body: { pending: { requestId: added.requestId } } }
+          : {
+              status: 201,
+              body: {
+                ...added.entry,
+                ...(added.requestId == null
+                  ? {}
+                  : {
+                      notice: { requestId: added.requestId, told: added.told }
+                    })
+              }
+            }
+      const answer = await answerOnce(db, idempotentCallOf(req, actor.userId), {
+        write: async claim => {
+          const claimed = async (
+            trx: Transaction<Database>,
+            answer: Answer
+          ): Promise<void> => {
+            await claim?.(trx, { answer })
+          }
+          if ('existing' in asked) {
+            // An existing player for this game only: at once with a notice
+            // to their side, or, after one was rejected, as a request they
+            // accept.
+            let answer: Answer | undefined
+            await addExistingGuest(
+              db,
+              actor,
+              gameId,
+              side,
+              asked.existing,
+              teamId,
+              undefined,
+              async (trx, added) => {
+                answer = answerOf(added)
+                await claimed(trx, answer)
+              }
+            )
+            return answer!
+          }
+          let answer: Answer | undefined
+          await createGuestPlayer(
+            db,
+            actor,
+            gameId,
+            side,
+            asked.player,
+            teamId,
+            async (trx, entry) => {
+              answer = { status: 201, body: entry }
+              await claimed(trx, answer)
+            }
+          )
+          return answer!
+        },
+        // Each write stores its answer as it claims its key.
+        rebuild: async () => {
+          throw conflict('The player was added; open the game again')
         }
-        res.status(201).json({
-          ...added.entry,
-          ...(added.requestId == null
-            ? {}
-            : { notice: { requestId: added.requestId, told: added.told } })
-        })
-        return
-      }
-      res
-        .status(201)
-        .json(
-          await createGuestPlayer(db, actor, gameId, side, asked.player, teamId)
-        )
+      })
+      res.status(answer.status).json(answer.body)
+    })
+  )
+
+  // An outside scorer's players with no account: one guest each, made once
+  // under the scorer's id for them and reused for every game they play.
+  router.post(
+    '/games/:gameId/guests/external',
+    requireActor,
+    withAsync(async (req, res) => {
+      const actor = req.actor
+      if (actor == null) throw unauthorized()
+      const gameId = pathParam(req.params.gameId)
+      const body = cleanBody(asExternalGuestsBody, req.body)
+      res.json({
+        guests: await ensureExternalGuests(db, actor, gameId, body.guests)
+      })
     })
   )
 
@@ -263,24 +348,46 @@ export function lineupRoutes(
       const gameId = pathParam(req.params.gameId)
       const userId = userIdParam(req.params.userId)
       const name = cleanBody(asPlayerSettingsName, req.body)
-      const renamed = await renameGuestPlayer(db, actor, gameId, userId, name)
-      // A name the account already has changed nothing to audit or tell.
-      if (!renamed.changed) {
+      // Once for each request key, claimed in the write's transaction: a
+      // late copy of a send the phone gave up on writes nothing.
+      let renamed: GuestRenamed | undefined
+      const answer = await answerOnce(db, idempotentCallOf(req, actor.userId), {
+        write: async claim => {
+          renamed = await renameGuestPlayer(
+            db,
+            actor,
+            gameId,
+            userId,
+            name,
+            async (trx, done) => {
+              await claim?.(trx, { answer: { status: 200, body: done.entry } })
+            }
+          )
+          return { status: 200, body: renamed.entry }
+        },
+        rebuild: async () => {
+          throw conflict('The player was renamed; open the game again')
+        }
+      })
+      // A name the account already has, or a key already answered, changed
+      // nothing to audit or tell.
+      const done = renamed
+      if (done?.changed !== true) {
         skipAudit(res.locals)
-        res.json(renamed.entry)
+        res.status(answer.status).json(answer.body)
         return
       }
       setAudit(res.locals, {
         entityType: 'user',
         entityId: userId,
-        before: renamed.before,
+        before: done.before,
         after: {
           firstName: name.firstName,
           lastName: name.lastName,
-          displayName: renamed.entry.shortName
+          displayName: done.entry.shortName
         }
       })
-      res.json(renamed.entry)
+      res.json(done.entry)
       tellGameWritten(options.onGameWritten, gameId)
     })
   )
@@ -1154,3 +1261,16 @@ function userIdParam(value: string | string[] | undefined): string {
     throw badRequest('Expected a canonical user id')
   }
 }
+
+/** `POST /games/:gameId/guests/external`: who to seat, side by side. */
+const asExternalGuestsBody = asObject({
+  guests: asArray(
+    asObject({
+      side: asLiteral('away', 'home'),
+      externalId: (raw: unknown) => asExternalIdAt(raw, 'externalId'),
+      firstName: asOptional(asString, ''),
+      lastName: asOptional(asString, ''),
+      jersey: asOptional(asString, '')
+    })
+  )
+})

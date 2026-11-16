@@ -156,11 +156,12 @@ export interface GameChangeData {
   /** One player's song on one team, or null once it is removed. */
   walkUpSong: { teamId: string; userId: string; song: WalkUpSong | null }
   /**
-   * A team's game plan was saved. Only the team is named, as every viewer of
-   * the game hears it: whoever may plan that side reads `GET
-   * /games/:gameId/plans` again.
+   * A team's game plan was saved with a change to the inning in play. Only
+   * the team and the inning are named, as every viewer of the game hears it:
+   * the scoring screen reads that inning's column again, and the team's
+   * coaches read `GET /games/:gameId/plans` again.
    */
-  plans: { teamId: string }
+  plans: { teamId: string; inning: number }
   game: {
     status: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
     awayScore: number | null

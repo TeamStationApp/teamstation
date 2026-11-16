@@ -56,16 +56,24 @@ export function TagPill({
   )
 }
 
+/**
+ * Puts a tag on a play or one of its events, or takes it off. Saving closes
+ * the editor at once: the tag is written behind it (on a phone, queued on
+ * the game), and a save that fails says so through `onFailed`.
+ */
 export function EventTagEditor({
   target,
   loadChoices,
   saveTag,
-  onClose
+  onClose,
+  onFailed
 }: {
   target: TagTarget
   loadChoices: () => Promise<TagChoices>
   saveTag: (tag: string | null) => Promise<void>
   onClose: () => void
+  /** A save the editor no longer shows, which failed. */
+  onFailed?: (message: string) => void
 }): React.ReactElement {
   const theme = useScoringSheetTheme()
   const [input, setInput] = useState(target.tag ?? '')
@@ -77,10 +85,9 @@ export function EventTagEditor({
     recent: [],
     popular: []
   })
-  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const active = useRef(true)
-  const saving = useRef(false)
+  const saved = useRef(false)
   useEffect(() => {
     active.current = true
     loadChoices()
@@ -100,7 +107,7 @@ export function EventTagEditor({
     }
   }, [loadChoices])
   const save = async (value: string | null): Promise<void> => {
-    if (saving.current) return
+    if (saved.current) return
     let tag: string | null = null
     try {
       tag = value == null ? null : normalizeTag(value)
@@ -108,22 +115,18 @@ export function EventTagEditor({
       setError(reason instanceof Error ? reason.message : 'Enter a tag')
       return
     }
-    saving.current = true
-    setBusy(true)
+    // Once: the editor closes now, and the save goes on behind it.
+    saved.current = true
     setError(null)
+    onClose()
     try {
       await saveTag(tag)
-      if (active.current) onClose()
     } catch (reason) {
-      if (active.current)
-        setError(
-          reason instanceof Error
-            ? reason.message
-            : 'Tag could not be saved. Try again.'
-        )
-    } finally {
-      saving.current = false
-      if (active.current) setBusy(false)
+      onFailed?.(
+        reason instanceof Error
+          ? reason.message
+          : 'Tag could not be saved. Try again.'
+      )
     }
   }
   const pills = (labels: string[]): React.ReactElement => (
@@ -170,7 +173,6 @@ export function EventTagEditor({
             setInput(value)
           }}
           multiline={false}
-          editable={!busy}
           autoCapitalize="none"
           autoCorrect={false}
           returnKeyType="done"
@@ -187,8 +189,7 @@ export function EventTagEditor({
           </Text>
         )}
         <ScoringButton
-          label={busy ? 'Saving tag…' : 'Save tag'}
-          disabled={busy}
+          label="Save tag"
           onPress={() => {
             save(input).catch(() => undefined)
           }}
@@ -196,7 +197,6 @@ export function EventTagEditor({
         {target.tag != null && (
           <ScoringButton
             label="Remove tag"
-            disabled={busy}
             onPress={() => {
               save(null).catch(() => undefined)
             }}

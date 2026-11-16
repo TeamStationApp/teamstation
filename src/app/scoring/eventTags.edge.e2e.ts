@@ -178,29 +178,15 @@ async function main(): Promise<void> {
       await m.inputText({ text: value })
       await m.hideKeyboard()
     }
-    const inputValue = async (): Promise<string | undefined> => {
-      const lines = (
-        await readFile(join(daemon.info.runDir, 'daemon.log'), 'utf8')
-      ).split('\n')
-      const line = lines
-        .filter(value =>
-          value.includes(`Starting WDA on device ${deviceId} (port:`)
-        )
-        .at(-1)
-      const port = line == null ? undefined : /\(port: (\d+)\)/.exec(line)?.[1]
-      assert(port != null, 'Owned driver endpoint must exist')
-      const result = (await m.eval(
-        `http.get(${JSON.stringify(`http://127.0.0.1:${port}/source`)})`
-      )) as { body: string }
-      const xml = (JSON.parse(result.body) as { value: string }).value
-      const element = [...xml.matchAll(/<XCUIElementTypeTextField\b[^>]*>/g)]
-        .map(match => match[0])
-        .find(
-          value =>
-            value.includes('label="New tag"') ||
-            value.includes('name="New tag"')
-        )
-      return element == null ? undefined : /value="([^"]*)"/.exec(element)?.[1]
+    /** Whether the server holds `tag` on any event of the game. */
+    const serverHas = async (tag: string): Promise<boolean> => {
+      const stored = await client.gameEvents(cfg.gameId)
+      return [
+        ...stored.plays,
+        ...(stored.currentPlay == null ? [] : [stored.currentPlay])
+      ]
+        .flatMap(tagTargets)
+        .some(value => value.tag === tag)
     }
     const exit = async (): Promise<void> => {
       if (await has('Cancel')) await tap('Cancel')
@@ -299,22 +285,35 @@ async function main(): Promise<void> {
       })
       const accountHistory = (await otherClient.tagChoices()).recent
       log(`${name}: begin real failure/retry and stale-completion cases`)
+      // No tag left from an earlier run stands in for this one's.
+      await clearTags()
       await openScore()
       await editor()
       await control('drop')
       await type('great catch')
       if (await has('Save tag')) await tap('Save tag')
-      await visible('This scoring event no longer exists')
-      assert.equal(
-        await inputValue(),
-        'great catch',
-        'Failed save retains the exact input'
-      )
-      await control('restore')
-      await tap('Save tag')
+      // Saving closes the editor at once; the refusal is said behind it: in
+      // the browser by the scoring toast (the editor's onFailed), on the
+      // phone by the held-game notice ("Not sent: …") over the queued tag.
       await absent('New tag')
+      await visible('.*This scoring event no longer exists.*')
+      await control('restore')
+      if (name === 'native') {
+        // The refused tag is held on the game's queue, as entered: Try Again
+        // sends it again, under the same key.
+        await tap('Try Again')
+      } else {
+        await editor()
+        await type('great catch')
+        if (await has('Save tag')) await tap('Save tag')
+        await absent('New tag')
+      }
+      await until(
+        async () => await serverHas('great catch'),
+        'The restored target did not take the tag'
+      )
       log(
-        `${name}: real target404 retains input; restored target retries successfully PASS`
+        `${name}: real target404 closes the editor and says so; restored target retries successfully PASS`
       )
 
       await editor()
@@ -326,8 +325,8 @@ async function main(): Promise<void> {
       await control('lock')
       await type('quick release')
       if (await has('Save tag')) await tap('Save tag')
-      await visible('Saving tag…')
-      await tap('Cancel')
+      // The editor closes at once, the save still held by the server.
+      await absent('New tag')
       await hold()
       await tap('Tag event: Called Strike')
       await visible('New tag')
@@ -351,8 +350,7 @@ async function main(): Promise<void> {
       await control('lock')
       await type('sharp defense')
       if (await has('Save tag')) await tap('Save tag')
-      await visible('Saving tag…')
-      await tap('Cancel')
+      await absent('New tag')
       await switchUser(cfg.admin)
       await openScore(cfg.primaryGameId)
       await editor()

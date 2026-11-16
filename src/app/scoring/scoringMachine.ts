@@ -1,3 +1,4 @@
+import { columnPlan, inningDefense } from '../../common/gamePlan'
 import {
   namesFieldersById,
   type Problem,
@@ -158,21 +159,20 @@ export function actsOnOpening(session: ScoringSessionState): boolean {
 
 export function snapshotOf(state: ScoringState): ScoringSnapshot {
   // The log is shared: nothing changes an action once it is logged, and a
-  // step that logs one makes a new log (`act`). So are the game plans, which
-  // only a `PLANS` event replaces, whole.
+  // step that logs one makes a new log (`act`).
   const {
     past: _past,
     checkpoints: _checkpoints,
     session,
     log,
-    plans,
+    inningStart,
     ...rest
   } = state
   return {
     ...copyState(rest),
     log,
     session: copyGame(session),
-    ...(plans == null ? {} : { plans })
+    ...(inningStart == null ? {} : { inningStart })
   }
 }
 
@@ -197,22 +197,105 @@ export function overrideProblem(
   }
 }
 
-/** A copy of the screen without the game, its history or the game plans. */
+/** A copy of the screen without the game, its history or the inning entered. */
 export function screenOf(state: ScoringState): ScoringScreenState {
   const {
     past: _past,
     checkpoints: _checkpoints,
     session: _session,
     log: _log,
-    plans: _plans,
+    inningStart: _inningStart,
     ...screen
   } = state
   return copyState(screen)
 }
 
-/** `state`'s game plans, for a state rebuilt without them. */
-function plansOf(state: ScoringState): Pick<ScoringState, 'plans'> {
-  return state.plans == null ? {} : { plans: state.plans }
+/** `state`'s inning last entered, for a state rebuilt without it. */
+function inningStartOf(state: ScoringState): Pick<ScoringState, 'inningStart'> {
+  return state.inningStart == null ? {} : { inningStart: state.inningStart }
+}
+
+/**
+ * `next` with a new `inningStart` when `event` left the game in another
+ * inning than `before` was, on this screen: an inning's end, whether the
+ * scorer's tap or the play closing after it ends it, an Undo or a saved
+ * Undo back across one, or the Override editor. Not a replay, not on a
+ * watching screen, and never once the game is over. A column applied
+ * (`PLAN_INNING`) never moves the inning, and another device's game, read
+ * in (`RESET`), is that device's to ask for.
+ */
+function enteredInning(
+  before: ScoringState,
+  event: ScoringEvent | SavedUndone,
+  next: ScoringState
+): ScoringState {
+  if (next === before) return next
+  if (
+    event.type === 'REPLAYED' ||
+    event.type === 'PLAN_INNING' ||
+    event.type === 'RESET'
+  )
+    return next
+  if (next.watching === true || next.session.final) return next
+  const inning = next.session.liveData.linescore.currentInning
+  if (inning === before.session.liveData.linescore.currentInning) return next
+  return {
+    ...next,
+    inningStart: { inning, id: (before.inningStart?.id ?? 0) + 1 }
+  }
+}
+
+/**
+ * Whether a downloaded column must wait for the screen to come to rest: a
+ * play or a More draft under way, a dictated sentence still playing or
+ * asking, or a celebration showing. The scoring screen holds it until then.
+ */
+export function planInningWaits(state: ScoringState): boolean {
+  return (
+    state.moreDraft != null ||
+    (state.phase !== 'ready' && state.phase !== 'awaitingBatter') ||
+    state.dictationQuestion != null ||
+    state.reel != null ||
+    (state.queuedDictation?.length ?? 0) > 0 ||
+    state.celebration != null
+  )
+}
+
+/**
+ * Puts one side into the defence its downloaded column gives for the inning
+ * in play, as a roster save that keeps each side's batting slot, the
+ * scorer's own Undo step. Nothing changes when the game has left that inning
+ * or is over, the screen is watching or not at rest (`planInningWaits`), the
+ * column is empty, leaves nobody pitching or is already the defence
+ * (`inningDefense` answers null), or the game refuses it.
+ */
+function planInning(
+  state: ScoringState,
+  event: Extract<ScoringEvent, { type: 'PLAN_INNING' }>
+): ScoringState {
+  const { session } = state
+  if (
+    state.watching === true ||
+    session.final ||
+    session.liveData.linescore.currentInning !== event.inning ||
+    planInningWaits(state)
+  )
+    return state
+  const defense = inningDefense(
+    columnPlan(event.column),
+    1,
+    session.liveData.boxscore.teams[event.side],
+    session.gameData.players
+  )
+  // The game takes a roster with nobody pitching, to be finished before the
+  // next pitch; a column that leaves the mound empty is not applied.
+  if (defense?.P == null) return state
+  return accepted(state, 'Inning plan', next => {
+    const setup = setupOf(next.session)
+    setup.sides[event.side].defense = defense
+    act(next, { type: 'lineup', kind: 'roster', setup, keepSlot: true })
+    next.generation++
+  })
 }
 
 /**
@@ -426,7 +509,7 @@ function restoreTo(
   const { session, checkpoints } = gameAt(state, where.logLength)
   return {
     ...copyState(where.screen),
-    ...plansOf(state),
+    ...inningStartOf(state),
     session,
     log: state.log.slice(0, where.logLength),
     past: state.past.slice(0, historyLength),
@@ -547,7 +630,7 @@ export function scoringReducer(
   state: ScoringState,
   event: ScoringEvent
 ): ScoringState {
-  return drainDictation(reduce(state, event))
+  return enteredInning(state, event, drainDictation(reduce(state, event)))
 }
 function drainDictation(next: ScoringState): ScoringState {
   // A sentence that came back while the last one was shown applies once the
@@ -571,7 +654,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
     return state.presentationEnabled === event.enabled
       ? state
       : { ...state, presentationEnabled: event.enabled }
-  if (event.type === 'PLANS') return { ...state, plans: event.plans }
+  if (event.type === 'PLAN_INNING') return planInning(state, event)
   if (event.type === 'RESET')
     return {
       ...resumedScoringState(
@@ -580,7 +663,7 @@ function reduce(state: ScoringState, event: ScoringEvent): ScoringState {
         state.presentationEnabled,
         { following: event.following }
       ),
-      ...plansOf(state),
+      ...inningStartOf(state),
       generation: state.generation + 1,
       ...(event.readOnly === true ? { readOnly: true } : {})
     }
@@ -1023,7 +1106,11 @@ export function scoringScreenReducer(
       scoring:
         event.undone == null
           ? scoring
-          : scoringReducer(scoring, { type: 'RESET', ...event.undone }),
+          : enteredInning(
+              scoring,
+              event,
+              scoringReducer(scoring, { type: 'RESET', ...event.undone })
+            ),
       savedUndos: Math.max(0, model.savedUndos - 1),
       savedUndone: model.savedUndone + 1
     }
@@ -1037,7 +1124,7 @@ export function scoringScreenReducer(
   )
     return { ...model, savedUndos: model.savedUndos + 1 }
   const reduced = reduce(scoring, event)
-  const next = drainDictation(reduced)
+  const next = enteredInning(scoring, event, drainDictation(reduced))
   return next === scoring && event.type !== 'OVERRIDE'
     ? model
     : {

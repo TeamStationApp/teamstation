@@ -38,8 +38,14 @@ const context = (others: Holding[]): RuleContext => ({
     ]
   ]),
   seasons: new Map([
-    ['sea_a', { bufferMinutes: 30, doubleheaders: 'allowed' }],
-    ['sea_b', { bufferMinutes: 0, doubleheaders: 'allowed' }]
+    [
+      'sea_a',
+      { fieldIds: ['fld_one'], bufferMinutes: 30, doubleheaders: 'allowed' }
+    ],
+    [
+      'sea_b',
+      { fieldIds: ['fld_one'], bufferMinutes: 0, doubleheaders: 'allowed' }
+    ]
   ]),
   others
 })
@@ -70,6 +76,43 @@ const tooClose = (
 }
 
 describe('the scheduler’s hard rules', () => {
+  it('uses the selected season field zone for unlocated fixed games and weekly caps', () => {
+    const checked = game('candidate', 'sea_a', '18:00', '19:00', [
+      'home',
+      'away'
+    ])
+    checked.fieldId = 'west'
+    const held = {
+      ...game('fixed', 'sea_a', '05:30', '06:30', ['home', 'other']),
+      fieldId: null
+    }
+    const ctx = context([held])
+    const original = ctx.fields.get('fld_one')!
+    ctx.fields.set('fld_one', {
+      ...original,
+      availability: { ...original.availability, timezone: 'America/New_York' }
+    })
+    ctx.fields.set('west', {
+      ...original,
+      availability: {
+        ...original.availability,
+        timezone: 'America/Los_Angeles'
+      }
+    })
+    ctx.seasons.set('sea_a', {
+      fieldIds: ['west'],
+      bufferMinutes: 0,
+      doubleheaders: 'never',
+      maxGamesOnWeekend: 1
+    })
+    expect(ruleProblem(checked, ctx)).equals(null)
+    // On the selected field's Saturday it must count for both daily and weekly rules.
+    held.start = at('08:30')
+    held.end = at('09:30')
+    expect(ruleProblem(checked, ctx)).includes('doubleheaders')
+    ctx.seasons.get('sea_a')!.doubleheaders = 'allowed'
+    expect(ruleProblem(checked, ctx)).includes('maximum of 1 games on weekend')
+  })
   it('enforces one shared weekly portion cap per team with live holdings and self exclusion', () => {
     const checked = game('candidate', 'sea_a', '14:00', '15:00', [
       'home',
@@ -93,12 +136,14 @@ describe('the scheduler’s hard rules', () => {
     ).equals(null)
     const rules = context([])
     rules.seasons.set('sea_a', {
+      fieldIds: ['fld_one'],
       bufferMinutes: 0,
       doubleheaders: 'allowed',
       maxGamesOnWeekend: 0
     })
     expect(ruleProblem(checked, rules)).includes('maximum of 0')
     rules.seasons.set('sea_a', {
+      fieldIds: ['fld_one'],
       bufferMinutes: 0,
       doubleheaders: 'allowed',
       maxGamesOnWeekend: 2
@@ -191,7 +236,10 @@ describe('the scheduler’s hard rules', () => {
           ]
         ]),
         seasons: new Map([
-          ['sea_a', { bufferMinutes: 0, doubleheaders: 'never' }]
+          [
+            'sea_a',
+            { fieldIds: ['fld_one'], bufferMinutes: 0, doubleheaders: 'never' }
+          ]
         ])
       }
     }
@@ -252,7 +300,9 @@ describe('the scheduler’s hard rules', () => {
     // The engine counts them on different days, so the New York slot fits.
     const engine = buildContext(
       input({
-        seasons: [engineSeason(settings)],
+        seasons: [
+          engineSeason({ ...settings, fieldIds: fields.map(field => field.id) })
+        ],
         fields,
         fixed: [lateInLa]
       })
@@ -282,7 +332,14 @@ describe('the scheduler’s hard rules', () => {
         ])
       ),
       seasons: new Map([
-        [first.season.id, { bufferMinutes: 0, doubleheaders: 'never' }]
+        [
+          first.season.id,
+          {
+            fieldIds: fields.map(field => field.id),
+            bufferMinutes: 0,
+            doubleheaders: 'never'
+          }
+        ]
       ]),
       others: [
         {

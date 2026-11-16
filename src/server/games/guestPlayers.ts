@@ -81,7 +81,9 @@ export async function createGuestPlayer(
   side: Side,
   player: NewRosterPlayer,
   /** The team the caller means: refused when the side holds another now. */
-  expectedTeamId?: string
+  expectedTeamId?: string,
+  /** Told the guest made, in its transaction: a request key claims there. */
+  onWritten?: (trx: Transaction<Database>, entry: RosterEntry) => Promise<void>
 ): Promise<RosterEntry> {
   return await atomic(db, async trx => {
     await lockPlayerEdits(trx)
@@ -119,7 +121,7 @@ export async function createGuestPlayer(
       .where('id', '=', gameId)
       .execute()
     noteScopeChange(trx, { gameId })
-    return {
+    const entry: RosterEntry = {
       userId,
       gumboId,
       shortName: fullName,
@@ -142,6 +144,8 @@ export async function createGuestPlayer(
       walkUpSong: null,
       affiliations: ''
     }
+    await onWritten?.(trx, entry)
+    return entry
   })
 }
 
@@ -174,9 +178,14 @@ export async function renameGuestPlayer(
   actor: Actor,
   gameId: string,
   userId: string,
-  name: { firstName: string; lastName: string }
+  name: { firstName: string; lastName: string },
+  /** Told the rename, in its transaction: a request key claims there. */
+  onWritten?: (
+    trx: Transaction<Database>,
+    renamed: GuestRenamed
+  ) => Promise<void>
 ): Promise<GuestRenamed> {
-  return await atomic(db, async trx => {
+  const write = async (trx: Transaction<Database>): Promise<GuestRenamed> => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
     const game = await trx
@@ -280,6 +289,11 @@ export async function renameGuestPlayer(
         affiliations: ''
       }
     }
+  }
+  return await atomic(db, async trx => {
+    const result = await write(trx)
+    await onWritten?.(trx, result)
+    return result
   })
 }
 
@@ -306,9 +320,14 @@ export async function addExistingGuest(
   side: Side,
   body: ExistingRosterPlayer,
   expectedTeamId?: string,
-  clock: Clock = realClock
+  clock: Clock = realClock,
+  /** Told what was done, in its transaction: a request key claims there. */
+  onWritten?: (
+    trx: Transaction<Database>,
+    result: ExistingGuest
+  ) => Promise<void>
 ): Promise<ExistingGuest> {
-  return await atomic(db, async trx => {
+  const write = async (trx: Transaction<Database>): Promise<ExistingGuest> => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
     const { game, teamId } = await guestGate(
@@ -386,5 +405,10 @@ export async function addExistingGuest(
         affiliations: ''
       }
     }
+  }
+  return await atomic(db, async trx => {
+    const result = await write(trx)
+    await onWritten?.(trx, result)
+    return result
   })
 }

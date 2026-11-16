@@ -9,8 +9,8 @@ import React, {
 import { Text, View } from 'react-native'
 
 import {
-  asPage,
   asSeasonGame,
+  type GamesPageQuery,
   type ListCounts,
   type SeasonGame,
   type TeamStationClient
@@ -44,7 +44,7 @@ import { useScreenScope } from '../hooks/useScreenScope'
 import { useStableCallback } from '../hooks/useStableCallback'
 import { columnsForWidth } from '../layout/grid'
 import { gameCountLabel, videoCountLabel } from '../locales/strings'
-import { gamesKey } from '../sync/documentKeys'
+import { ME_SCOPE, storedSchedule } from '../sync/scheduleReads'
 import { OFFLINE_UNPLAYABLE, usePhoneOffline } from '../sync/useOffline'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
@@ -90,6 +90,14 @@ const gameId = (game: SeasonGame): string => game.id
 /** When each list last had its first page from the server. */
 type AnsweredAt = Partial<Record<When, number>>
 
+/** The query of one list of the feed's first page. */
+function queryOf(
+  mode: GamesFeedScreenProps['mode'],
+  when: When
+): GamesPageQuery {
+  return mode === 'videos' ? { hasVideo: true } : when === 'all' ? {} : { when }
+}
+
 /** One list of the feed, read when the screen says so. */
 function useGamesList(
   client: TeamStationClient,
@@ -103,11 +111,7 @@ function useGamesList(
     keyOf: gameId,
     read: async cursor => {
       const page = await client.gamesPage({
-        ...(mode === 'videos'
-          ? { hasVideo: true }
-          : when === 'all'
-            ? {}
-            : { when }),
+        ...queryOf(mode, when),
         ...(cursor == null ? {} : { cursor })
       })
       if (cursor == null) answered.current[when] = Date.now()
@@ -218,11 +222,13 @@ export function GamesFeedScreen(
   const loadGames = useCallback(async (): Promise<void> => {
     await readGames()
   }, [readGames])
-  /** The list as the phone last stored it, until the read returns. */
+  /** The list's games as the phone last stored them, until the read returns. */
   const paintGames = useCallback(async (): Promise<void> => {
-    const stored = await client.cached(
-      gamesKey(mode === 'videos' ? 'videos' : list),
-      asPage(asSeasonGame)
+    const stored = await storedSchedule(
+      client,
+      ME_SCOPE,
+      queryOf(mode, list),
+      asSeasonGame
     )
     if (stored != null) paint(stored)
   }, [client, list, mode, paint])

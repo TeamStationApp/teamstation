@@ -1,4 +1,4 @@
-import type { Kysely } from 'kysely'
+import type { Kysely, Transaction } from 'kysely'
 
 import type { UnrosterBody } from '../../common/api'
 import {
@@ -47,6 +47,24 @@ import { noteScopeChange } from '../socket/syncRevision'
 import { type GameAvailability, gameAvailability } from './rosterAvailability'
 import { hasScoringEventsSql } from './scoringActivity'
 
+/**
+ * The game's unrostered lists as they stand: the answer to a request sent
+ * again under its key, which another device's change may have moved on
+ * since the first was answered.
+ */
+export async function unrosteredNow(
+  db: Kysely<Database>,
+  gameId: string
+): Promise<Unrostered> {
+  const game = await db
+    .selectFrom('games')
+    .selectAll()
+    .where('id', '=', gameId)
+    .executeTakeFirst()
+  if (game == null) throw notFound()
+  return (await gameAvailability(db, game, { roster: false })).unrostered
+}
+
 /** A switch and its lineup change commit together, serialized with scoring writes. */
 export async function setRostered(
   db: Kysely<Database>,
@@ -54,9 +72,11 @@ export async function setRostered(
   gameId: string,
   body: UnrosterBody,
   /** Where the replay's live post leaves the game socket's frame. */
-  cache?: ValkeyCache
+  cache?: ValkeyCache,
+  /** Told the result, in its transaction: a request key claims there. */
+  onWritten?: (trx: Transaction<Database>, result: Unrostered) => Promise<void>
 ): Promise<Unrostered> {
-  return await atomic(db, async trx => {
+  const write = async (trx: Transaction<Database>): Promise<Unrostered> => {
     await lockPlayerEdits(trx)
     await lockGameTeams(trx, gameId)
     const game = await trx
@@ -154,6 +174,11 @@ export async function setRostered(
     await notifyGameChange(trx, { game: gameId, kind: 'game' })
     noteScopeChange(trx, { gameId })
     return unrostered
+  }
+  return await atomic(db, async trx => {
+    const result = await write(trx)
+    await onWritten?.(trx, result)
+    return result
   })
 }
 

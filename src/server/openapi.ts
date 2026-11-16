@@ -946,9 +946,31 @@ const scoringAuthorshipSchema = {
 }
 
 /** What every answer of a post says of the game it leaves. */
+/** A game's plays and the records they hold, once a write of them is done. */
+const importedCountsSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['plays', 'pitches', 'records', 'corrections'],
+  properties: {
+    plays: { type: 'integer' },
+    pitches: { type: 'integer' },
+    records: { type: 'integer' },
+    corrections: { type: 'integer' },
+    unconvertible: {
+      type: 'string',
+      enum: ['unnamedPlayers', 'noPlayByPlay', 'unreadable']
+    }
+  }
+} as const
+
 const postedDigests = {
   scoringMutation: scoringMutationSchema,
   scoringAuthorship: scoringAuthorshipSchema,
+  imported: {
+    ...importedCountsSchema,
+    description:
+      "An outside or typed-in post's plays and the TeamStation records they now hold. A TeamStation post answers none."
+  },
   superseded: {
     type: 'boolean',
     description:
@@ -5486,10 +5508,11 @@ export function openApiDocument(version: string): OpenApiDocument {
                   schema: {
                     type: 'object',
                     additionalProperties: false,
-                    required: ['plays', 'events'],
+                    required: ['plays', 'events', 'imported'],
                     properties: {
                       plays: { type: 'integer' },
-                      events: { type: 'integer' }
+                      events: { type: 'integer' },
+                      imported: importedCountsSchema
                     }
                   }
                 }
@@ -5943,6 +5966,89 @@ export function openApiDocument(version: string): OpenApiDocument {
             403: errorResponse,
             404: errorResponse,
             409: errorResponse
+          }
+        }
+      },
+      '/games/{gameId}/guests/external': {
+        post: {
+          summary: "Seat an outside scorer's players who have no account",
+          description:
+            'Each entry names a player an outside scorer names by its own id. ' +
+            'The account that holds that external id is used, else one that cannot sign in is made ' +
+            'under it, once, and reused for every game the player plays. Unless already on that ' +
+            "side's roster, the player becomes a guest of that side. A final game takes them: no play " +
+            'changes. A node administrator, a roster manager of the side or a scorekeeper of either ' +
+            'team may call it; anybody else is 403. An entry for somebody who plays for the other side ' +
+            'is answered with `refused` and not seated.',
+          security: [{ bearer: [] }],
+          parameters: [gameIdParam],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['guests'],
+                  properties: {
+                    guests: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        required: ['side', 'externalId'],
+                        properties: {
+                          side: { type: 'string', enum: ['away', 'home'] },
+                          externalId: {
+                            type: 'object',
+                            required: ['system', 'kind', 'id'],
+                            properties: {
+                              system: { type: 'string' },
+                              kind: { type: 'string' },
+                              id: { type: 'string' }
+                            }
+                          },
+                          firstName: { type: 'string' },
+                          lastName: { type: 'string' },
+                          jersey: { type: 'string' }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          responses: {
+            '200': {
+              description: 'Each entry as seated, in order',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    required: ['guests'],
+                    properties: {
+                      guests: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          required: ['externalId', 'created'],
+                          properties: {
+                            externalId: { type: 'object' },
+                            userId: { type: 'string' },
+                            gumboId: { type: 'integer' },
+                            created: { type: 'boolean' },
+                            refused: { type: 'string' }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            '403': {
+              description: 'The caller may not add players to that side'
+            },
+            '404': { description: 'No such game' }
           }
         }
       },
@@ -6594,9 +6700,11 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: {
             200: {
               description:
-                'The game’s teams after the swap, its play generation, and ' +
+                'The game’s teams after the swap, its play generation, ' +
                 'the at-bats and innings a reset deleted (none for a swap ' +
-                'before the first pitch, or one already made)',
+                'before the first pitch, or one already made), and the ' +
+                '`lineupsDigest` the new sides have as the swap commits: the ' +
+                '`lineupsBase` of the first post built on the swapped lineups',
               content: {
                 'application/json': {
                   schema: {
@@ -6605,12 +6713,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                       'homeTeamId',
                       'awayTeamId',
                       'generation',
-                      'reset'
+                      'reset',
+                      'lineupsDigest'
                     ],
                     properties: {
                       homeTeamId: { type: 'string' },
                       awayTeamId: { type: 'string' },
                       generation: { type: 'integer' },
+                      lineupsDigest: { type: 'string' },
                       reset: {
                         type: 'object',
                         required: ['atBats', 'innings'],

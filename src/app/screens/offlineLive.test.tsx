@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { expect } from 'chai'
 import { afterEach, describe, it } from 'mocha'
 import React, { act } from 'react'
@@ -5,7 +9,9 @@ import { createRoot, type Root } from 'react-dom/client'
 import { GestureHandlerRootView } from 'react-native-gesture-handler'
 
 import { asLiveNow, asSeasonGame, asTeamSummary } from '../../common/api'
+import { nodeSqliteExecutor } from '../../test/nodeSqliteExecutor'
 import { pageOf } from '../../test/pageOf'
+import { cacheFileName, openCacheStore } from '../sync/cacheStore'
 import { CachingClient } from '../sync/cachingClient'
 import { OFFLINE_UNPLAYABLE } from '../sync/useOffline'
 import { ThemeProvider } from '../theme/ThemeContext'
@@ -73,6 +79,45 @@ async function draw(element: React.ReactElement): Promise<void> {
 }
 
 const text = (): string => host?.textContent ?? ''
+
+/**
+ * A phone whose file holds the `/me/home` answer it read with signal, the
+ * signal now gone: every request fails to leave the device.
+ */
+async function storedHomePhone(
+  home: unknown
+): Promise<{ client: CachingClient; done: () => Promise<void> }> {
+  const dir = mkdtempSync(join(tmpdir(), 'teamstation-home-'))
+  const executors: Array<ReturnType<typeof nodeSqliteExecutor>> = []
+  const net = { offline: false }
+  const client = new CachingClient({
+    baseUrl: 'http://x/api/v1',
+    fetch: async (url: unknown) => {
+      if (net.offline) throw new TypeError('Load failed')
+      const path = String(url).replace('http://x/api/v1', '')
+      return path === '/me/home'
+        ? new Response(JSON.stringify(home), { status: 200 })
+        : new Response(JSON.stringify({ code: 'notFound', message: 'No' }), {
+            status: 404
+          })
+    },
+    openCache: async userId => {
+      const executor = nodeSqliteExecutor(join(dir, cacheFileName(userId)))
+      executors.push(executor)
+      return await openCacheStore(executor)
+    }
+  })
+  client.openFor('usr_1')
+  await client.home()
+  net.offline = true
+  return {
+    client,
+    done: async () => {
+      for (const executor of executors) await executor.close()
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+}
 
 describe('a live game the phone read before it lost signal', function () {
   for (const offline of [true, false])
@@ -160,5 +205,38 @@ describe('a live game the phone read before it lost signal', function () {
     expect(text()).includes(OFFLINE_UNPLAYABLE)
     expect(text().toLowerCase()).not.includes('live now')
     expect(text()).not.includes('Watch')
+  })
+
+  it('shows the teams the phone stored on Home offline, and no Live now', async function () {
+    const sox = asTeamSummary({
+      id: 'tem_sox',
+      name: 'Sox',
+      shortName: null,
+      logoPath: null,
+      logoUrl: null
+    })
+    const phone = await storedHomePhone({
+      teams: [{ ...sox, direct: true, source: 'member' }],
+      seasons: [],
+      leagues: []
+    })
+    try {
+      await draw(
+        <HomeScreen
+          client={phone.client}
+          now={() => Date.parse('2026-10-04T20:30:00Z')}
+          onOpenTeam={() => undefined}
+          onOpenSeason={() => undefined}
+          onOpenGame={() => undefined}
+        />
+      )
+      expect(phone.client.offline).equals(true)
+      expect(text()).includes('Sox')
+      expect(text().toLowerCase()).not.includes('live now')
+      // Live stays a network read: nothing was stored to offer.
+      expect(await phone.client.cached('/live', raw => raw)).equals(undefined)
+    } finally {
+      await phone.done()
+    }
   })
 })

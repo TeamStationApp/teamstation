@@ -9,7 +9,7 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import { build } from 'esbuild'
 import { after, before, describe, it } from 'mocha'
-import type { Page } from 'puppeteer'
+import type { HTTPRequest, HTTPResponse, Page } from 'puppeteer'
 
 import type { Lineup, LineupPerson, SaveLineupsBody } from '../../common/api'
 import type { GamePlan, PlanCell } from '../../common/gamePlan'
@@ -435,6 +435,84 @@ async function storedInning(
   }
 }
 
+/**
+ * Waits for the game as stored to hold `expected` as the home defence: an
+ * inning's column is downloaded and saved behind the screen.
+ */
+async function defenseBecomes(
+  fixture: LineupFixture,
+  expected: Record<string, number | null>
+): Promise<Record<string, number | null>> {
+  const deadline = Date.now() + 20000
+  let held = await homeDefense(fixture)
+  while (
+    JSON.stringify(held) !== JSON.stringify(expected) &&
+    Date.now() < deadline
+  ) {
+    await new Promise(resolve => setTimeout(resolve, 500))
+    held = await homeDefense(fixture)
+  }
+  return held
+}
+
+/** Swaps two home fielders through the API, as a scorekeeper's hand edit. */
+async function handSwap(
+  fixture: LineupFixture,
+  a: string,
+  b: string
+): Promise<void> {
+  const auth = {
+    authorization: `Bearer ${await tokenOf(fixture, 'scorekeeper')}`
+  }
+  const read = (await (
+    await fetch(`${API}/games/${fixture.gameId}/lineups`, { headers: auth })
+  ).json()) as { digest: string; home: { current: Lineup | null } }
+  const held = read.home.current!
+  const players = fixture.players.home.map(player => ({
+    gumboId: player.gumboId,
+    fullName: player.name,
+    jersey: player.jersey
+  }))
+  const at = (person: LineupPerson): number =>
+    players.findIndex(player => player.gumboId === person.gumboId)
+  const defense: Record<string, number> = Object.fromEntries(
+    Object.entries(held.defense).flatMap(([position, person]) =>
+      person == null ? [] : [[position, at(person)]]
+    )
+  )
+  ;[defense[a], defense[b]] = [defense[b], defense[a]]
+  const body: SaveLineupsBody = {
+    side: 'home',
+    base: read.digest,
+    players,
+    battingOrder: held.batters.map(at),
+    defense
+  }
+  const posted = await fetch(`${API}/games/${fixture.gameId}/lineups`, {
+    method: 'POST',
+    headers: { ...auth, 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  })
+  expect(posted.status, await posted.text()).equals(200)
+}
+
+/** Moves the fixture game's start time an hour either side of now. */
+async function startGame(
+  fixture: LineupFixture,
+  started: boolean
+): Promise<void> {
+  const db = makeDatabase(serverConfig.databaseUrl)
+  try {
+    await db
+      .updateTable('games')
+      .set({ start_at: new Date(Date.now() + (started ? -1 : 1) * 3600_000) })
+      .where('id', '=', fixture.gameId)
+      .execute()
+  } finally {
+    await db.destroy()
+  }
+}
+
 /** One browser, and what the scenarios do in it. */
 class Browser {
   readonly errors: string[] = []
@@ -521,10 +599,15 @@ class Browser {
     await new Promise(resolve => setTimeout(resolve, 500))
   }
 
-  /** What the scoring screen says the last inning shift did, if anything. */
-  async planNotice(): Promise<string | null> {
+  /** Whether the scoring screen draws the plan notice it no longer has. */
+  async planNotice(): Promise<boolean> {
+    return (await this.page.$('[data-testid="scoringPlanNotice"]')) != null
+  }
+
+  /** The card the scoring screen drops when an inning's column fails. */
+  async syncNotice(): Promise<string | null> {
     return await this.page.evaluate(() => {
-      const node = document.querySelector('[data-testid="scoringPlanNotice"]')
+      const node = document.querySelector('[data-testid="planSyncNotice"]')
       return node == null ? null : String(node.textContent)
     })
   }
@@ -1747,65 +1830,115 @@ describe('Coach Plan', function () {
     expect(cleared).has.length(9)
   })
 
-  it('P10 moves the scorekeeper’s defence to the plan’s next column at each inning’s end, and not with a plan of no positions', async function () {
+  /**
+   * P10: the scorekeeper's screen downloads the home team's column for each
+   * inning it enters and applies it, with no notice; a plan of no positions
+   * moves nobody. In inning 3 the scorekeeper changes a fielder by hand,
+   * and the head coach then changes inning 3 itself: the change is heard on
+   * the game socket, the column downloaded again, and the hand edit
+   * replaced. A save that changes only inning 5 sends nothing. Each save's
+   * `$ PUT` line and the plans changes the page heard after it are printed,
+   * tee'd as `coach-edit-socket.log`.
+   */
+  it('P10 moves the scorekeeper’s defence to each inning’s downloaded column, replaces a hand edit when the coach changes the inning in play, and sends nothing for a later inning', async function () {
     if (CAPTURING) this.skip()
-    for (const enabled of [true, false]) {
-      const toggle = enabled ? 'on' : 'off'
-      const fixture = await lineupFixture()
-      await savePlan(fixture, enabled ? SHIFT_PLAN : NO_POSITIONS)
-      await coach.as(fixture, 'scorekeeper')
-      await coach.scoreGame(fixture.gameId)
-      await coach.ball()
-      await storedInning(fixture, 1)
-      const opening = await homeDefense(fixture)
-      // The defaults: the nine at P to RF in batting order.
-      expect(opening).deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
-      console.log(`    toggle ${toggle}, inning 1: ${named(fixture, opening)}`)
-      await coach.endHalf()
-      expect(await coach.planNotice()).equals(null)
-      await coach.ball()
-      await coach.endHalf()
-      const second = await coach.planNotice()
-      await coach.ball()
-      await storedInning(fixture, 2)
-      const afterFirst = await homeDefense(fixture)
+    // The page's socket frames, kept so each save's notice can be read.
+    const cdp = await coach.page.createCDPSession()
+    await cdp.send('Network.enable')
+    const frames: string[] = []
+    cdp.on('Network.webSocketFrameReceived', event => {
+      const data = String(event.response.payloadData)
+      if (data.includes('"plans"')) frames.push(data)
+    })
+    const save = async (
+      fixture: LineupFixture,
+      cells: PlanCell[][],
+      label: string
+    ): Promise<void> => {
+      frames.length = 0
       console.log(
-        `    toggle ${toggle}, after the 1st (notice ${JSON.stringify(second)}): ${named(fixture, afterFirst)}`
+        `$ PUT /games/${fixture.gameId}/plans/${fixture.teams.home} (${label})`
       )
-      if (enabled) {
-        expect(second).equals('Inning 2 plan applied')
-        expect(afterFirst).deep.equals(columnDefense(fixture, SHIFT_PLAN, 2))
-      } else {
-        expect(second).equals(null)
-        expect(afterFirst).deep.equals(opening)
-      }
-      // The coach sits Senga a third time in inning 3, against his team's
-      // Max Sits of one (sitting limits on, with only that rule of them),
-      // while the scoring screen stays open: it hears the save.
-      await teamRules(fixture, {
-        enforceSittingLimits: true,
-        noConsecutiveSits: false,
-        equalSittingOrder: 'off'
-      })
-      await savePlan(fixture, enabled ? SHIFT_EDITED : NO_POSITIONS)
+      await savePlan(fixture, cells)
       await new Promise(resolve => setTimeout(resolve, 3000))
-      await coach.endHalf()
-      await coach.ball()
-      await coach.endHalf()
-      const third = await coach.planNotice()
-      await coach.ball()
-      await storedInning(fixture, 3)
-      const afterSecond = await homeDefense(fixture)
       console.log(
-        `    toggle ${toggle}, after the 2nd (notice ${JSON.stringify(third)}): ${named(fixture, afterSecond)}`
+        frames.length === 0
+          ? '  heard: nothing'
+          : frames.map(frame => `  heard: ${frame}`).join('\n')
       )
-      if (enabled) {
-        expect(third).equals('Inning 3 plan applied — 1 playing-time warning')
-        expect(afterSecond).deep.equals(columnDefense(fixture, SHIFT_EDITED, 3))
-      } else {
-        expect(third).equals(null)
-        expect(afterSecond).deep.equals(opening)
+    }
+    try {
+      for (const enabled of [true, false]) {
+        const toggle = enabled ? 'on' : 'off'
+        const fixture = await lineupFixture()
+        await savePlan(fixture, enabled ? SHIFT_PLAN : NO_POSITIONS)
+        await coach.as(fixture, 'scorekeeper')
+        await coach.scoreGame(fixture.gameId)
+        await coach.ball()
+        await storedInning(fixture, 1)
+        const opening = await homeDefense(fixture)
+        // The defaults: the nine at P to RF in batting order.
+        expect(opening).deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
+        console.log(
+          `    toggle ${toggle}, inning 1: ${named(fixture, opening)}`
+        )
+        await coach.endHalf()
+        await coach.ball()
+        await coach.endHalf()
+        await storedInning(fixture, 2)
+        const second = enabled
+          ? await defenseBecomes(fixture, columnDefense(fixture, SHIFT_PLAN, 2))
+          : await homeDefense(fixture)
+        console.log(`    toggle ${toggle}, inning 2: ${named(fixture, second)}`)
+        expect(await coach.planNotice()).equals(false)
+        expect(await coach.syncNotice()).equals(null)
+        if (enabled) {
+          expect(second).deep.equals(columnDefense(fixture, SHIFT_PLAN, 2))
+          await coach.shot('scoring-plan-notice-after.png')
+        } else expect(second).deep.equals(opening)
+        await coach.ball()
+        await coach.endHalf()
+        await coach.ball()
+        await coach.endHalf()
+        await coach.ball()
+        await storedInning(fixture, 3)
+        const third = enabled
+          ? await defenseBecomes(fixture, columnDefense(fixture, SHIFT_PLAN, 3))
+          : await homeDefense(fixture)
+        console.log(`    toggle ${toggle}, inning 3: ${named(fixture, third)}`)
+        if (!enabled) {
+          expect(third).deep.equals(opening)
+          continue
+        }
+        expect(third).deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
+        // The scorekeeper's hand edit, then the coach's change to inning 3.
+        await handSwap(fixture, '1B', '3B')
+        await new Promise(resolve => setTimeout(resolve, 3000))
+        // The screen reads that edit in as another device's change, and
+        // stays the scoring device: it has scored here.
+        console.log(
+          `    after the hand edit: ${named(fixture, await homeDefense(fixture))}`
+        )
+        await save(fixture, SHIFT_EDITED, 'inning 3, in play, changed')
+        const replaced = await defenseBecomes(
+          fixture,
+          columnDefense(fixture, SHIFT_EDITED, 3)
+        )
+        console.log(`    after the coach's save: ${named(fixture, replaced)}`)
+        expect(replaced).deep.equals(columnDefense(fixture, SHIFT_EDITED, 3))
+        expect(frames.map(frame => JSON.parse(frame).data)).deep.equals([
+          { teamId: fixture.teams.home, inning: 3 }
+        ])
+        await coach.shot('coach-edit-current-inning-after.png')
+        // A change to inning 5 alone is heard by nobody.
+        const later: PlanCell[][] = SHIFT_EDITED.map((row, at) =>
+          at === 0 ? [...row.slice(0, 4), 'C', row[5]] : row
+        )
+        await save(fixture, later, 'inning 5 only changed')
+        expect(frames).deep.equals([])
       }
+    } finally {
+      await cdp.detach()
     }
   })
 
@@ -1814,11 +1947,11 @@ describe('Coach Plan', function () {
    * SHIFT_PLAN's second inning, where Senga sits), with the home team's
    * sitting limits on, and then a plan with no positions. The coach's sheet
    * warns of no sits in innings 3 to 6. The scorekeeper ends innings 1 and
-   * 2: inning 2's column applies, and inning 3, not planned, changes
-   * nothing; the plan with no positions never shifts. Clear then turns the
+   * 2: inning 2's downloaded column applies, and inning 3's, empty, changes
+   * nothing; the plan with no positions never moves anybody. Clear then turns the
    * first plan off. Its output, tee'd, is `plan-blank-columns.log`.
    */
-  it('P18 applies a partly filled plan’s planned columns only, warns of no sits in the rest, never shifts a plan of no positions, and Clear turns a plan off', async function () {
+  it('P18 applies a partly filled plan’s planned columns only, warns of no sits in the rest, never moves anybody with a plan of no positions, and Clear turns a plan off', async function () {
     if (CAPTURING) this.skip()
     const twoInnings: PlanCell[][] = SHIFT_PLAN.map(row => [
       row[2],
@@ -1854,29 +1987,27 @@ describe('Coach Plan', function () {
       await coach.endHalf()
       await coach.ball()
       await coach.endHalf()
-      const second = await coach.planNotice()
       await coach.ball()
       await storedInning(fixture, 2)
-      const afterFirst = await homeDefense(fixture)
-      console.log(
-        `    ${label}, after the 1st (notice ${JSON.stringify(second)}): ${named(fixture, afterFirst)}`
-      )
-      expect(second).equals(planned ? 'Inning 2 plan applied' : null)
+      const afterFirst = planned
+        ? await defenseBecomes(fixture, columnDefense(fixture, twoInnings, 2))
+        : await homeDefense(fixture)
+      console.log(`    ${label}, after the 1st: ${named(fixture, afterFirst)}`)
+      expect(await coach.planNotice()).equals(false)
       expect(afterFirst).deep.equals(
         planned ? columnDefense(fixture, twoInnings, 2) : opening
       )
       await coach.endHalf()
       await coach.ball()
       await coach.endHalf()
-      const third = await coach.planNotice()
       await coach.ball()
       await storedInning(fixture, 3)
+      // The column, empty, is downloaded and applied before this reads.
+      await new Promise(resolve => setTimeout(resolve, 3000))
       const afterSecond = await homeDefense(fixture)
-      console.log(
-        `    ${label}, after the 2nd (notice ${JSON.stringify(third)}): ${named(fixture, afterSecond)}`
-      )
+      console.log(`    ${label}, after the 2nd: ${named(fixture, afterSecond)}`)
       // Inning 3 is not planned: the defence stays as inning 2 left it.
-      expect(third).equals(null)
+      expect(await coach.syncNotice()).equals(null)
       expect(afterSecond).deep.equals(afterFirst)
       if (!planned) continue
       // Clear empties the plan, and the saved plan is off.
@@ -1908,6 +2039,309 @@ describe('Coach Plan', function () {
         stored.home.plan.rows.every(row => row.cells.every(cell => cell === ''))
       ).equals(true)
     }
+  })
+
+  /**
+   * P21: the home team's inning download held unanswered drops the sync
+   * card 10 seconds after it went out, and the defence stays; Accept keeps
+   * it. At the next inning the download fails; Try again, once it is let
+   * through, applies the column. Reloading the screen asks for nothing.
+   */
+  it('P21 drops the sync card when an inning’s download runs out of time or fails, keeps the lineup on Accept, and applies the column on Try again', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    let mode: 'hold' | 'fail' | 'pass' = 'hold'
+    const home = `/plans/${fixture.teams.home}/innings/`
+    const asked: string[] = []
+    const intercept = (request: HTTPRequest): void => {
+      const url = request.url()
+      if (url.includes('/innings/'))
+        asked.push(url.slice(url.indexOf('/plans/')))
+      if (!url.includes(home) || mode === 'pass') {
+        request.continue().catch(() => undefined)
+        return
+      }
+      if (mode === 'fail')
+        request
+          .respond({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ code: 'internal', message: 'Down' })
+          })
+          .catch(() => undefined)
+      // Held: answered never, so the screen's own 10 seconds run out.
+    }
+    await coach.page.setRequestInterception(true)
+    coach.page.on('request', intercept)
+    try {
+      await coach.as(fixture, 'scorekeeper')
+      await coach.scoreGame(fixture.gameId)
+      await coach.ball()
+      await storedInning(fixture, 1)
+      const opening = await homeDefense(fixture)
+      await coach.endHalf()
+      await coach.ball()
+      await coach.endHalf()
+      const sent = Date.now()
+      await coach.page.waitForSelector('[data-testid="planSyncNotice"]', {
+        timeout: 20000
+      })
+      const waited = Date.now() - sent
+      console.log(
+        `    the card dropped after ${waited} ms: ${await coach.syncNotice()}`
+      )
+      expect(waited).greaterThan(9000)
+      expect(await coach.syncNotice()).equals(
+        'Unable to sync new inning defensive lineup for HostsAcceptTry again'
+      )
+      await coach.shot('plan-sync-notice.png')
+      expect(await homeDefense(fixture)).deep.equals(opening)
+      await coach.tap('Accept')
+      expect(await coach.syncNotice()).equals(null)
+      await coach.ball()
+      expect(await homeDefense(fixture)).deep.equals(opening)
+      // Inning 3: the download fails, then Try again is let through.
+      mode = 'fail'
+      await coach.endHalf()
+      await coach.ball()
+      await coach.endHalf()
+      await coach.page.waitForSelector('[data-testid="planSyncNotice"]', {
+        timeout: 20000
+      })
+      mode = 'pass'
+      await coach.tap('Try again')
+      const applied = await defenseBecomes(
+        fixture,
+        columnDefense(fixture, SHIFT_PLAN, 3)
+      )
+      console.log(`    after Try again: ${named(fixture, applied)}`)
+      expect(applied).deep.equals(columnDefense(fixture, SHIFT_PLAN, 3))
+      expect(await coach.syncNotice()).equals(null)
+      // Reopened, the screen asks for no inning.
+      const before = asked.length
+      await coach.scoreGame(fixture.gameId)
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      expect(asked.slice(before)).deep.equals([])
+      console.log(`    inning downloads: ${JSON.stringify(asked)}`)
+    } finally {
+      coach.page.off('request', intercept)
+      await coach.page.setRequestInterception(false)
+    }
+  })
+
+  /**
+   * P22: before the game's start time, an inning's end downloads nothing
+   * the screen shows: the server refuses (planNotStarted), no card drops
+   * and the defence stays.
+   */
+  it('P22 shows nothing and moves nobody before the game’s start time', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    await startGame(fixture, false)
+    const refused: string[] = []
+    const heard = (response: HTTPResponse): void => {
+      if (
+        response.url().includes('/innings/') &&
+        response.request().method() === 'GET'
+      )
+        refused.push(
+          `${response.status()} ${response.url().slice(response.url().indexOf('/plans/'))}`
+        )
+    }
+    coach.page.on('response', heard)
+    try {
+      await coach.as(fixture, 'scorekeeper')
+      await coach.scoreGame(fixture.gameId)
+      await coach.ball()
+      await storedInning(fixture, 1)
+      const opening = await homeDefense(fixture)
+      await coach.endHalf()
+      await coach.ball()
+      await coach.endHalf()
+      await coach.ball()
+      await storedInning(fixture, 2)
+      await new Promise(resolve => setTimeout(resolve, 3000))
+      console.log(`    answers: ${JSON.stringify(refused)}`)
+      expect(refused).has.length(2)
+      expect(refused.every(line => line.startsWith('403 '))).equals(true)
+      expect(await coach.syncNotice()).equals(null)
+      expect(await homeDefense(fixture)).deep.equals(opening)
+    } finally {
+      coach.page.off('response', heard)
+    }
+  })
+
+  /**
+   * P23: the home team's admin, who is not its coach, opens the coach
+   * screen by its address (an admin has no Coach pill) and finds the Plan
+   * tab saying the plan is the coaches'.
+   */
+  it('P23 tells a team admin who is not its coach that the plan is the coaches’', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    await coach.as(fixture, 'teamAdmin')
+    await coach.page.goto(
+      `${APP}/games/${fixture.gameId}/coach/${fixture.teams.home}`,
+      { waitUntil: 'domcontentloaded' }
+    )
+    await coach.page.waitForSelector('[aria-label="Save Rosters"]', {
+      timeout: 60000
+    })
+    await coach.tap('Plan', 'tab')
+    await coach.page.waitForFunction(
+      () =>
+        String(document.body.textContent).includes(
+          "Only the team's coaches can see its game plan."
+        ),
+      { timeout: 15000 }
+    )
+    expect(await coach.page.$('[data-testid="Plan cell 1-1"]')).equals(null)
+    await coach.shot('coach-plan-team-admin-after.png')
+  })
+
+  /**
+   * P24: who reads and saves the home team's plan, and what the inning
+   * route answers a scorekeeper, through the API, each request on a `$`
+   * line with its status and body after it. Tee'd as `plan-access.log`.
+   */
+  it('P24 answers the full plan to the team’s coach alone, and a scorer only the inning in play, after the start time and before the game is over', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    const call = async (
+      who: Person,
+      method: 'GET' | 'PUT',
+      path: string,
+      body?: unknown
+    ): Promise<{ status: number; body: unknown }> => {
+      console.log(`$ ${method} ${path} as ${who}`)
+      const answer = await fetch(`${API}${path}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${await tokenOf(fixture, who)}`,
+          ...(body == null ? {} : { 'content-type': 'application/json' })
+        },
+        ...(body == null ? {} : { body: JSON.stringify(body) })
+      })
+      const read: unknown = await answer.json()
+      console.log(`${answer.status} ${JSON.stringify(read)}`)
+      return { status: answer.status, body: read }
+    }
+    const plansPath = `/games/${fixture.gameId}/plans`
+    const homePath = `${plansPath}/${fixture.teams.home}`
+    const stored = (
+      (await call('headCoach', 'GET', plansPath)).body as {
+        home: { plan: GamePlan } | null
+      }
+    ).home
+    expect(stored).not.equals(null)
+    for (const who of ['scorekeeper', 'assistant', 'teamAdmin'] as const) {
+      expect((await call(who, 'GET', plansPath)).body).deep.equals({
+        away: null,
+        home: null
+      })
+      expect((await call(who, 'PUT', homePath, stored!.plan)).status).equals(
+        403
+      )
+    }
+    expect(
+      (await call('headCoach', 'PUT', homePath, stored!.plan)).status
+    ).equals(200)
+    // The inning route, as the scorekeeper.
+    const reasonOf = (body: unknown): unknown =>
+      (body as { details?: { reason?: unknown } }).details?.reason
+    const place = async (changes: {
+      started: boolean
+      inning: number | null
+      status: 'scheduled' | 'inProgress' | 'final'
+    }): Promise<void> => {
+      const db = makeDatabase(serverConfig.databaseUrl)
+      try {
+        await db
+          .updateTable('games')
+          .set({
+            start_at: new Date(
+              Date.now() + (changes.started ? -1 : 1) * 3600_000
+            ),
+            status: changes.status,
+            currentPlay:
+              changes.inning == null
+                ? null
+                : JSON.stringify({
+                    about: {
+                      atBatIndex: 6,
+                      inning: changes.inning,
+                      halfInning: 'top',
+                      isTopInning: true,
+                      isComplete: false,
+                      hasOut: false,
+                      hasReview: false
+                    }
+                  })
+          })
+          .where('id', '=', fixture.gameId)
+          .execute()
+      } finally {
+        await db.destroy()
+      }
+    }
+    console.log(
+      '# the game set to start in an hour, its innings moved on to the 2nd'
+    )
+    await place({ started: false, inning: 2, status: 'inProgress' })
+    const early = await call('scorekeeper', 'GET', `${homePath}/innings/2`)
+    expect(early.status).equals(403)
+    expect(reasonOf(early.body)).equals('planNotStarted')
+    console.log('# the game started an hour ago, in the 2nd')
+    await place({ started: true, inning: 2, status: 'inProgress' })
+    const now = await call('scorekeeper', 'GET', `${homePath}/innings/2`)
+    expect(now.status).equals(200)
+    expect((now.body as { column: unknown[] }).column).has.length(9)
+    const next = await call('scorekeeper', 'GET', `${homePath}/innings/3`)
+    expect(next.status).equals(409)
+    expect(reasonOf(next.body)).equals('planInningNotCurrent')
+    console.log('# the game final after two innings')
+    await place({ started: true, inning: null, status: 'final' })
+    const over = await call('scorekeeper', 'GET', `${homePath}/innings/3`)
+    expect(over.status).equals(403)
+    expect(reasonOf(over.body)).equals('planGameOver')
+  })
+
+  /**
+   * P25: a scoring screen reopened in the 3rd, which has scored nothing
+   * since, reads in a lineup edit made elsewhere and then the head coach's
+   * change to inning 3, and puts the coach's column on the field.
+   */
+  it('P25 applies a coach’s change to the inning in play on a screen reopened mid-game, after it read in a lineup edit', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, SHIFT_PLAN)
+    await coach.as(fixture, 'scorekeeper')
+    await coach.scoreGame(fixture.gameId)
+    for (let half = 0; half < 4; half++) {
+      await coach.ball()
+      await coach.endHalf()
+    }
+    await coach.ball()
+    await storedInning(fixture, 3)
+    await defenseBecomes(fixture, columnDefense(fixture, SHIFT_PLAN, 3))
+    // Reopened, it scores nothing.
+    await coach.scoreGame(fixture.gameId)
+    await handSwap(fixture, '1B', '3B')
+    await new Promise(resolve => setTimeout(resolve, 3000))
+    console.log(
+      `    after the lineup edit: ${named(fixture, await homeDefense(fixture))}`
+    )
+    await savePlan(fixture, SHIFT_EDITED)
+    const applied = await defenseBecomes(
+      fixture,
+      columnDefense(fixture, SHIFT_EDITED, 3)
+    )
+    console.log(`    after the coach's save: ${named(fixture, applied)}`)
+    expect(applied).deep.equals(columnDefense(fixture, SHIFT_EDITED, 3))
   })
 
   it('P11 puts the scorekeeper’s Cancel beside the microphone and Save Rosters, over a field with no row of three', async function () {

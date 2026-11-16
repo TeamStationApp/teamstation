@@ -1,5 +1,26 @@
 import { asCalendarDate } from './groupCreation'
 
+// A formatter costs far more to make than to use, and the scheduler asks
+// for the same few zones on every day of a season.
+const wallFormatters = new Map<string, Intl.DateTimeFormat>()
+
+function wallFormatter(timezone: string): Intl.DateTimeFormat {
+  let formatter = wallFormatters.get(timezone)
+  if (formatter == null) {
+    formatter = new Intl.DateTimeFormat('en', {
+      timeZone: timezone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hourCycle: 'h23'
+    })
+    wallFormatters.set(timezone, formatter)
+  }
+  return formatter
+}
+
 /** Interpret a calendar date and wall time in an explicit IANA zone, never server-local time. */
 export function gameTime(date: string, time: string, timezone: string): string {
   asCalendarDate(date)
@@ -12,15 +33,7 @@ export function gameTime(date: string, time: string, timezone: string): string {
   const [year, month, day] = date.split('-').map(Number)
   const [hour, minute] = time.split(':').map(Number)
   const wanted = Date.UTC(year, month - 1, day, hour, minute)
-  const formatter = new Intl.DateTimeFormat('en', {
-    timeZone: timezone,
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23'
-  })
+  const formatter = wallFormatter(timezone)
   const parts = (instant: number): number => {
     const values = Object.fromEntries(
       formatter

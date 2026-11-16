@@ -676,6 +676,7 @@ Other game rules:
 - **Swapping home and away.** A scorekeeper of either team, which every admin of it is, may swap home and away with no approval, from the scoring menu or from Game Settings, where it is the only setting a scorekeeper who administers neither team can change. Before the first pitch only the sides change. Once the game has plays, the swap resets them: the scorer is told how many at-bats and innings will be lost and confirms with **Reset and Swap**, and the game goes back to its lineups at the first pitch. A withdrawn game cannot be swapped.
 - **Withdrawing.** Any admin of either team can withdraw their team without approval. The game stays on the schedule as cancelled, with the reason.
 - **Changing an opponent you don't administer.** The original game is cancelled, still visible to that opponent, and a new game is proposed.
+- **A coaching plan stays with the team's coaches.** Only a coach of the team, given the coach flag on the team, a season it belongs to or its league, head coach or not, reads or saves its per-inning game plan. Admins of every level do not, including a site admin, and neither do assistants or scorekeepers of either team. An admin who wants the plan is given the coach flag, which the team's people list shows. A scorer reads only the defensive positions of the inning in play, from the time the game was set to start until it is over, and only while online: the scoring screen downloads them each time the inning changes on it.
 
 ---
 

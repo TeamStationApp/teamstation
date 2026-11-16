@@ -1,6 +1,8 @@
 import { addDays } from './calendarDates'
 import { gameCalendarDay, gameTime } from './gameTime'
 import { wallMinutes, wallTimeOf, type WeekdayHours } from './venues'
+import { weeklyWindow, type WindowPeriod } from './windowPeriods'
+export type { WindowPeriod } from './windowPeriods'
 
 // Re-exported for the modules that import it from here.
 export { addDays }
@@ -11,6 +13,7 @@ export interface Availability {
   startsOn: string | null
   endsOn: string | null
   hours: WeekdayHours[]
+  windows?: WindowPeriod[]
   blackouts: string[]
   timezone: string
 }
@@ -28,6 +31,7 @@ export interface Interval {
  */
 export function effectiveAvailability(
   venue: {
+    defaultWindows?: WindowPeriod[]
     defaultHours: WeekdayHours[]
     defaultBlackouts: string[]
     timezone: string
@@ -35,6 +39,7 @@ export function effectiveAvailability(
   field: {
     startsOn: string | null
     endsOn: string | null
+    windows?: WindowPeriod[] | null
     hours: WeekdayHours[] | null
     blackouts: string[]
   }
@@ -43,6 +48,14 @@ export function effectiveAvailability(
     startsOn: field.startsOn,
     endsOn: field.endsOn,
     hours: field.hours ?? venue.defaultHours,
+    windows:
+      field.windows !== undefined
+        ? (field.windows ??
+          venue.defaultWindows ??
+          weeklyWindow(venue.defaultHours))
+        : field.hours == null
+          ? (venue.defaultWindows ?? weeklyWindow(venue.defaultHours))
+          : weeklyWindow(field.hours),
     blackouts: [
       ...new Set([...venue.defaultBlackouts, ...field.blackouts])
     ].sort(),
@@ -104,18 +117,13 @@ export function fieldWindows(
   )
     return []
   if (availability.blackouts.includes(date)) return []
-  return hoursOn(availability.hours, date, availability.timezone)
-}
-
-/**
- * One period of a season's game windows, in force from `from` through
- * `until`, or, with no `until`, until the next period or the season's end.
- */
-export interface WindowPeriod {
-  from: string
-  /** The period's last day, inclusive. */
-  until?: string
-  hours: WeekdayHours[]
+  return hoursOn(
+    availability.windows === undefined
+      ? availability.hours
+      : (periodOn(availability.windows, date)?.hours ?? []),
+    date,
+    availability.timezone
+  )
 }
 
 /**

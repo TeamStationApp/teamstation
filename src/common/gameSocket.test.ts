@@ -331,7 +331,7 @@ describe('GameSocket (U16)', function () {
       socket.close()
     })
 
-    it('keeps a game plan’s change, which names only the team', function () {
+    it('keeps a game plan’s change, which names only the team and the inning', function () {
       const { socket } = makeSocket()
       const heard: GameSocketEvent[] = []
       socket.subscribe('g1', event => heard.push(event))
@@ -341,7 +341,7 @@ describe('GameSocket (U16)', function () {
         gameId: 'g1',
         kind: 'plans',
         at: '2027-04-10T17:00:00.000Z',
-        data: { teamId: 'tem_hawks' }
+        data: { teamId: 'tem_hawks', inning: 3 }
       }
       last().receive(change)
       expect(heard).deep.equals([change])

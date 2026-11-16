@@ -102,4 +102,37 @@ describe('the scoring entry on the Game page', function () {
     ).equals(null)
     expect(scoringEntry({ ...gameFixture, awayScore: 2 })).equals(null)
   })
+
+  it('takes up an imported game whose plays hold their records, like a scored one', function () {
+    for (const status of ['inProgress', 'final'] as const)
+      expect(
+        scoringEntry({
+          ...gameFixture,
+          scoringOwner: 'external',
+          replayable: true,
+          status,
+          awayScore: 3,
+          homeScore: 1
+        })
+      ).equals('continue')
+    expect(
+      scoringEntry({
+        ...gameFixture,
+        scoringOwner: null,
+        replayable: true,
+        status: 'cancelled'
+      })
+    ).equals(null)
+    // A final score alone has nothing to take up.
+    expect(
+      scoringEntry({
+        ...gameFixture,
+        scoringOwner: 'external',
+        replayable: false,
+        status: 'final',
+        awayScore: 3,
+        homeScore: 1
+      })
+    ).equals(null)
+  })
 })

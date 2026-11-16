@@ -169,6 +169,20 @@ tasks.register('observabilityHostCoverage', JacocoReport) {
     reports { xml.required = true }
 }
 
+// StalledConnections' lines from its JVM tests and, when TS_STALLED_EXEC names
+// one, the instrumented run on a device, merged.
+tasks.register('stalledConnectionsCoverage', JacocoReport) {
+    dependsOn 'testDebugUnitTest'
+    executionData.from(layout.buildDirectory.file('jacoco/testDebugUnitTest.exec'))
+    def deviceExec = providers.environmentVariable('TS_STALLED_EXEC').getOrNull()
+    if (deviceExec) executionData.from(file(deviceExec))
+    sourceDirectories.from(file('src/main/java'))
+    classDirectories.from(fileTree(layout.buildDirectory.dir('tmp/kotlin-classes/debug')) {
+        include 'app/teamstation/app/network/StalledConnections*.class'
+    })
+    reports { xml.required = true; csv.required = true }
+}
+
 // The sign-in link filter for the app's link host, added to every variant's
 // manifests only when the build has one, so a build without config claims no
 // https address at all.
@@ -203,6 +217,9 @@ dependencies {
     // LocalFileIdTest reads the fixtures it shares with localFileId.test.ts.
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    // StalledConnectionsTest, at the OkHttp the app resolves (4.12.0, which
+    // streamcore asks for over React Native's 4.9.2).
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     androidTestImplementation("androidx.test:runner:1.5.0")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
 

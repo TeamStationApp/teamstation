@@ -189,7 +189,10 @@ describe('seasonSlots', () => {
       name: 'West Field',
       availability: { ...east.availability, timezone: 'America/Los_Angeles' }
     }
-    const slots = slotsOf({ fields: [east, west] })
+    const slots = slotsOf({
+      fields: [east, west],
+      seasons: [season({ fieldIds: ['fld_one', 'fld_west'] })]
+    })
     const monday = on(slots, '2027-03-01')
     const first = (fieldId: string): Slot =>
       present(monday.find(slot => slot.fieldId === fieldId))
@@ -305,6 +308,7 @@ describe('seasonSlots', () => {
 
   it('orders slots on several fields by start, then by field', () => {
     const slots = slotsOf({
+      seasons: [season({ fieldIds: ['fld_one', 'fld_two'] })],
       fields: [field(), field({ id: 'fld_two', name: 'Field 2' })]
     })
     const monday = on(slots, '2027-03-01')

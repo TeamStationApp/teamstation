@@ -6,7 +6,12 @@ import { defaultRadarSettings as settings } from '../nodeSettings'
 import type { ScoringAction } from './actions'
 import { comparablePlay } from './comparable'
 import { currentDocumentOf } from './document'
-import { radarPacket, radarTargets, withRadarSpeeds } from './radarSpeeds'
+import {
+  radarPacket,
+  radarTargets,
+  withRadarSpeeds,
+  withRadarSpeedsKeepingOwn
+} from './radarSpeeds'
 import { setupOf } from './state'
 
 const at = Date.parse('2026-01-01T12:00:00Z')
@@ -194,6 +199,27 @@ describe('radar speed matching', () => {
     expect(
       withRadarSpeeds(late, [], settings).playEvents[0].pitchData?.startSpeed
     ).equals(85)
+  })
+  it('keeps an outside scorer’s own speeds where the radar has no reading', () => {
+    // A ball in play an outside scorer recorded, with its own speeds.
+    const own = pitch('hit')
+    own.playEvents[0].pitchData.startSpeed = 71
+    own.playEvents[0].hitData.launchSpeed = 88
+    const kept = withRadarSpeedsKeepingOwn(own, [], settings).playEvents[0]
+    expect(kept.pitchData.startSpeed).equals(71)
+    expect(kept.hitData.launchSpeed).equals(88)
+    // The plain pass, for a play scored here, drops what no reading gives.
+    expect(
+      withRadarSpeeds(own, [], settings).playEvents[0].hitData.launchSpeed
+    ).equals(undefined)
+    // A reading for the pitch replaces both.
+    const measured = withRadarSpeedsKeepingOwn(
+      own,
+      [reading(-1000, 74, 91)],
+      settings
+    ).playEvents[0]
+    expect(measured.pitchData.startSpeed).equals(74)
+    expect(measured.hitData.launchSpeed).equals(91)
   })
   it('keeps scorer speed validation separate from positive radar readings', () => {
     for (const speed of [0, 19, 111, 150, Infinity, NaN]) {

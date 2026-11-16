@@ -219,9 +219,12 @@ function nextEvent(state: ScoringState, roll: () => number): ScoringEvent {
 
 /** The state without its history, as plain data to compare. */
 function plain(state: object): unknown {
+  // The inning last entered is not the screen's: an Undo keeps it, so its
+  // count never repeats, where a full copy would put an older one back.
   const {
     past: _past,
     checkpoints: _checkpoints,
+    inningStart: _inningStart,
     ...rest
   } = state as ScoringState
   return copyState(rest)

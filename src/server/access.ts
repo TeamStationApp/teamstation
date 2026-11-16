@@ -779,6 +779,39 @@ export function lineupTeams(
   return teams.filter(teamId => isHeadCoach(scopes, teamId))
 }
 
+/**
+ * The teams of a game whose coaching plans this person may read and save:
+ * each one they were given the coach flag on, on the team, a season it
+ * belongs to or its league, head coach or not.
+ *
+ * Unlike `roleScopes`, nothing an administrator holds counts: not the flags
+ * `admin` implies, not a team's owner or manager, and not a site
+ * administrator. An administrator who wants the plan is given the coach
+ * flag, which the team's people show. A disabled or merged account holds
+ * nothing.
+ */
+export async function planTeams(
+  db: Kysely<Database>,
+  userId: string,
+  game: { home_team_id: string; away_team_id: string }
+): Promise<string[]> {
+  const open = await db
+    .selectFrom('users')
+    .select('id')
+    .where('id', '=', userId)
+    .where('disabled_at', 'is', null)
+    .where('merged_into', 'is', null)
+    .executeTakeFirst()
+  if (open == null) return []
+  // The coach flag as given: not the flags an administrator implies, and not
+  // the administrator a team's owner or manager is.
+  const { coach } = (await directRolesOfEach(db, [userId])).get(userId)!
+  await inheritSets(db, [coach])
+  return [game.away_team_id, game.home_team_id].filter(teamId =>
+    coach.teamIds.has(teamId)
+  )
+}
+
 /** Scorekeepers can edit player settings and view full names because they
  * may be the only person responsible for maintaining the team roster.
  * This intentional roster-management exception must survive broader

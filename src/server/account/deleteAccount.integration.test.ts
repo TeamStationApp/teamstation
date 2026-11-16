@@ -295,6 +295,38 @@ describe('deleting an account', function () {
     }
     expect((again as { status?: number })?.status).equals(401)
   })
+  it('reads the pictures to remove with the rows locked, so a picture saved meanwhile waits for the delete (5.harness-review.4)', async () => {
+    const gone = await person(
+      'Pic Ture',
+      'picture@example.test',
+      'b8'.repeat(32)
+    )
+    await h.db
+      .updateTable('users')
+      .set({ avatar_path: 'images/user/old-random' })
+      .where('id', '=', gone.id)
+      .execute()
+    let found: string[] = []
+    let saved: Promise<unknown> | undefined
+    const order: string[] = []
+    await deleteAccount(h.db, gone.id, undefined, prefixes => {
+      found = prefixes
+      // Another device saves a new picture as the delete reads them.
+      saved = h.db
+        .updateTable('users')
+        .set({ avatar_path: 'images/user/new-random' })
+        .where('id', '=', gone.id)
+        .execute()
+        .then(() => order.push('saved'))
+    })
+    order.push('deleted')
+    await saved
+    expect(found).deep.equals(['images/user/old-random'])
+    // The save waited for the delete: it could not land unseen between the
+    // read and the delete.
+    expect(order).deep.equals(['deleted', 'saved'])
+  })
+
   it('removes personal details, family links and roles, and cannot be brought back', async () => {
     const proof = 'a7'.repeat(32)
     const player = await person(
@@ -728,11 +760,20 @@ describe('deleting an account', function () {
         )
       ).status
     ).equals(200)
+    const { avatar_path: avatar } = await h.db
+      .selectFrom('users')
+      .select('avatar_path')
+      .where('id', '=', gone.id)
+      .executeTakeFirstOrThrow()
+    expect(avatar).matches(/^images\/user\/[0-9a-f]{32}$/)
+    // And one stored before names were random, under the account's id.
+    const legacy = `/${h.space.bucket}/images/user/${gone.id}/abcd1234-96.png`
+    h.objects.set(legacy, Buffer.from('old'))
     const pictures = (): string[] =>
-      [...h.objects.keys()].filter(key =>
-        key.includes(`/images/user/${gone.id}/`)
+      [...h.objects.keys()].filter(
+        key => key.includes(`/${avatar}-`) || key === legacy
       )
-    expect(pictures().length).greaterThan(0)
+    expect(pictures().length).equals(3)
     const sent = makeId('audit')
     await h.db
       .insertInto('notification_events')

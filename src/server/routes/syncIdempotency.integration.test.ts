@@ -8,12 +8,19 @@ import {
   asRosterEntry,
   type SaveLineupsBody
 } from '../../common/api'
+import { conflict } from '../../common/errors'
+import { type TagDocument, tagTargets } from '../../common/eventTags'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from '../../common/gameSocket'
 import { makeId } from '../../common/ids'
 import { userIdOfGumbo } from '../../common/userId'
 import { type GroupFixture, groupFixture } from '../../test/groupFixtures'
 import { seedSettingsCleanup3 } from '../../test/settingsCleanup3Fixture'
-import { KEY_RETENTION_DAYS, purgeExpiredKeys } from '../db/syncIdempotency'
+import {
+  answerOnce,
+  type IdempotentCall,
+  KEY_RETENTION_DAYS,
+  purgeExpiredKeys
+} from '../db/syncIdempotency'
 import { startingContext } from './lineups'
 
 /** A play the game takes from anybody who may score it. */
@@ -60,17 +67,18 @@ async function send(
   path: string,
   body: unknown,
   key?: string,
-  user = 101
+  user = 101,
+  method = 'POST'
 ): Promise<Sent> {
   const response = await fetch(`${f.h.origin}/api/v1${path}`, {
-    method: 'POST',
+    method,
     headers: {
       authorization: `Bearer ${f.h.tokens.get(user)!}`,
       'content-type': 'application/json',
       [PROTOCOL_HEADER]: String(GAME_SOCKET_PROTOCOL),
       ...(key == null ? {} : { 'idempotency-key': key })
     },
-    body: JSON.stringify(body)
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
   })
   return { status: response.status, body: await response.json() }
 }
@@ -290,6 +298,158 @@ describe('Idempotency-Key on the writes a phone queues', function () {
     expect(stored).deep.equals({ status: 201, body: first.body })
   })
 
+  it('makes one game-only player for a repeated create, sent again or at once (Guest once)', async function () {
+    const gameId = await insertGame(f)
+    const path = `/games/${gameId}/guest-players`
+    const guests = async (firstName: string): Promise<string[]> =>
+      (
+        await f.h.db
+          .selectFrom('game_guest_details')
+          .innerJoin('users', 'users.id', 'game_guest_details.user_id')
+          .select('users.id')
+          .where('game_guest_details.game_id', '=', gameId)
+          .where('users.first_name', '=', firstName)
+          .execute()
+      ).map(row => row.id)
+    const body = { side: 'home', ...newPlayer, firstName: 'Gus' }
+    const first = await send(f, path, body, 'k-guest')
+    expect(first.status).equals(201)
+    // A phone that gave up on the first send at its deadline sends it again.
+    const again = await send(f, path, body, 'k-guest')
+    expect(again).deep.equals(first)
+    expect(await guests('Gus')).deep.equals([
+      (first.body as { userId: string }).userId
+    ])
+    // Both copies on the wire at once: the second waits for the first.
+    const both = { side: 'home', ...newPlayer, firstName: 'Hal' }
+    const [one, two] = await Promise.all([
+      send(f, path, both, 'k-guest-2'),
+      send(f, path, both, 'k-guest-2')
+    ])
+    expect(one).deep.equals(two)
+    expect(await guests('Hal')).length(1)
+    // A rename sent again late, after a newer one, writes nothing over it.
+    const userId = (first.body as { userId: string }).userId
+    const renamePath = `/games/${gameId}/guest-players/${userId}`
+    const renamed = await send(
+      f,
+      renamePath,
+      { firstName: 'Gil', lastName: 'Betts' },
+      'k-rename-1',
+      101,
+      'PUT'
+    )
+    expect(renamed.status).equals(200)
+    await send(
+      f,
+      renamePath,
+      { firstName: 'Ike', lastName: 'Betts' },
+      'k-rename-2',
+      101,
+      'PUT'
+    )
+    const late = await send(
+      f,
+      renamePath,
+      { firstName: 'Gil', lastName: 'Betts' },
+      'k-rename-1',
+      101,
+      'PUT'
+    )
+    expect(late).deep.equals(renamed)
+    const name = await f.h.db
+      .selectFrom('users')
+      .select('first_name')
+      .where('id', '=', userId)
+      .executeTakeFirstOrThrow()
+    expect(name.first_name).equals('Ike')
+  })
+
+  it('answers a late copy of an unroster with the lists as they stand, and writes nothing (10.harness-review.2)', async function () {
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: userIdOfGumbo(101),
+        scope_type: 'team',
+        scope_id: f.teamA,
+        role: 'coach'
+      })
+      .execute()
+    const made = await send(
+      f,
+      `/teams/${f.teamA}/roster-players`,
+      { ...newPlayer, firstName: 'Una' },
+      'k-una'
+    )
+    expect(made.status).equals(201)
+    const userId = asRosterEntry(made.body).userId
+    const gameId = await insertGame(f)
+    const path = `/games/${gameId}/unroster`
+    const out = await send(
+      f,
+      path,
+      { side: 'home', userId, rostered: false },
+      'k-out',
+      101,
+      'PUT'
+    )
+    expect(out.status, JSON.stringify(out.body)).equals(200)
+    const back = await send(
+      f,
+      path,
+      { side: 'home', userId, rostered: true },
+      'k-back',
+      101,
+      'PUT'
+    )
+    expect(back.status).equals(200)
+    // The first send, stalled and resent, arrives after the newer change.
+    const late = await send(
+      f,
+      path,
+      { side: 'home', userId, rostered: false },
+      'k-out',
+      101,
+      'PUT'
+    )
+    expect(late).deep.equals(back)
+    expect(out.body).not.deep.equals(back.body)
+  })
+
+  it('writes nothing for a late copy of a tag change, after a newer one (Tag once)', async function () {
+    const gameId = await insertGame(f)
+    const posted = await send(f, `/games/${gameId}/events`, livePost(0))
+    expect(posted.status, JSON.stringify(posted.body)).equals(200)
+    const target = tagTargets(
+      (posted.body as { plays: Array<{ gumbo: TagDocument }> }).plays[0].gumbo
+    )[0]
+    const path = `/games/${gameId}/tags/${target.id}`
+    const tagged = async (): Promise<string | undefined> =>
+      (
+        await f.h.db
+          .selectFrom('event_tags')
+          .select('tag')
+          .where('game_id', '=', gameId)
+          .where('target_id', '=', target.id)
+          .executeTakeFirst()
+      )?.tag
+    const a = await send(f, path, { tag: 'first' }, 'k-tag-a', 101, 'PUT')
+    expect(a.status, JSON.stringify(a.body)).equals(200)
+    await send(f, path, { tag: 'second' }, 'k-tag-b', 101, 'PUT')
+    // The first send, stalled and resent, arrives last.
+    expect(
+      await send(f, path, { tag: 'first' }, 'k-tag-a', 101, 'PUT')
+    ).deep.equals(a)
+    expect(await tagged()).equals('second')
+    // And a removal sent again after a newer tag removes nothing.
+    const removed = await send(f, path, undefined, 'k-tag-c', 101, 'DELETE')
+    expect(removed.status, JSON.stringify(removed.body)).equals(200)
+    await send(f, path, { tag: 'third' }, 'k-tag-d', 101, 'PUT')
+    await send(f, path, undefined, 'k-tag-c', 101, 'DELETE')
+    expect(await tagged()).equals('third')
+  })
+
   it('saves a lineup once for a repeated save, and rebuilds its answer from the digest it kept', async function () {
     const gameId = 'gam_settings3_scheduled'
     const body = await homeLineup(f, gameId)
@@ -359,6 +519,7 @@ describe('Idempotency-Key on the writes a phone queues', function () {
       priorPlaysDigest: string | null
       lineupsDigest: string | null
       playsDigest: string
+      imported?: unknown
     }
     const row = async (): Promise<Record<string, unknown>> =>
       await f.h.db
@@ -366,13 +527,15 @@ describe('Idempotency-Key on the writes a phone queues', function () {
         .select(['status', 'body', 'result_id'])
         .where('key', '=', 'k-live')
         .executeTakeFirstOrThrow()
-    // Not every play of the game: the status and the post's two digests.
+    // Not every play of the game: the status, the post's two digests, and
+    // what an outside post's plays hold.
     expect(await row()).deep.equals({
       status: 200,
       body: null,
       result_id: JSON.stringify({
         priorPlaysDigest: answered.priorPlaysDigest,
-        lineupsDigest: answered.lineupsDigest
+        lineupsDigest: answered.lineupsDigest,
+        ...(answered.imported == null ? {} : { imported: answered.imported })
       })
     })
     // Sent again at once, the answer is the first one.
@@ -468,6 +631,70 @@ describe('Idempotency-Key on the writes a phone queues', function () {
     expect(
       await f.h.db.selectFrom('sync_idempotency').select('key').execute()
     ).deep.equals([])
+  })
+
+  it('answers a retry that overlapped its first send as the first, even when its own write is refused once the first committed', async function () {
+    const call = (key: string, hash = 'h-1'): IdempotentCall => ({
+      userId: userIdOfGumbo(101),
+      key,
+      method: 'POST',
+      path: '/api/v1/games/g/lineups',
+      hash
+    })
+    const rebuild = async (): Promise<never> => {
+      throw new Error('not rebuilt')
+    }
+    for (const [key, retryHash] of [
+      ['k-overlap', 'h-1'],
+      ['k-overlap-other', 'h-2']
+    ] as const) {
+      let open!: () => void
+      const gate = new Promise<void>(resolve => {
+        open = resolve
+      })
+      // The first send: still committing when the phone gives up on it.
+      const first = answerOnce(f.h.db, call(key), {
+        write: async claim => {
+          await gate
+          await f.h.db.transaction().execute(async trx => {
+            await claim!(trx, {
+              answer: { status: 200, body: { digest: 'D1' } }
+            })
+          })
+          return { status: 200, body: { digest: 'D1' } }
+        },
+        rebuild
+      })
+      // The retry, sent with the same key: it finds no key yet, and its
+      // write is refused because the first moved the lineups on meanwhile.
+      const retry = answerOnce(f.h.db, call(key, retryHash), {
+        write: async () => {
+          open()
+          await first
+          throw conflict('Somebody else changed the lineups', { stale: true })
+        },
+        rebuild
+      })
+      if (retryHash === 'h-1') {
+        expect(await retry).deep.equals({ status: 200, body: { digest: 'D1' } })
+      } else {
+        // Sent with another body: the key's own 409, never the stale one.
+        const refused = await retry.catch((error: unknown) => error)
+        expect(refused).property('code').equals('conflict')
+        expect(String((refused as Error).message)).contains('Idempotency-Key')
+      }
+      expect(await first).deep.equals({ status: 200, body: { digest: 'D1' } })
+    }
+    // A refused write whose key nobody holds is refused as it was.
+    const alone = await answerOnce(f.h.db, call('k-alone'), {
+      write: async () => {
+        throw conflict('Somebody else changed the lineups', { stale: true })
+      },
+      rebuild
+    }).catch((error: unknown) => error)
+    expect(String((alone as Error).message)).equals(
+      'Somebody else changed the lineups'
+    )
   })
 
   it('answers two posts sent at once with one key as one, and stores one play', async function () {

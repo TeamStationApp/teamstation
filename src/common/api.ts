@@ -50,7 +50,12 @@ import {
   type GameProposal,
   type GameScheduleProposal
 } from './gameApprovals'
-import { asGamePlan, type GamePlan } from './gamePlan'
+import {
+  asGamePlan,
+  asPlanColumnCell,
+  type GamePlan,
+  type PlanColumnCell
+} from './gamePlan'
 import { GAME_SOCKET_PROTOCOL, PROTOCOL_HEADER } from './gameSocket'
 import type { GameStatistics, StatisticsQuery } from './gameStatistics'
 import {
@@ -125,6 +130,7 @@ import {
 } from './publicGroups'
 import { asReplayBoxScore } from './replay/replayBoxSchema'
 import { asRole, asRoleFlag, type Role, type RoleFlag } from './roles'
+import { asPreparedPreview } from './schedulePreviews'
 import {
   type AddedGame,
   asGameToReschedule,
@@ -165,6 +171,7 @@ import {
 import type {
   LineupRecovery,
   SaveChange,
+  SaveHandoff,
   SessionLog,
   StoredGame
 } from './scoring/session'
@@ -1654,6 +1661,14 @@ function storedGameOf(stored: ReturnType<typeof asStoredGame>): StoredGame {
 }
 
 /**
+ * A game's plays as a session reads them, from an events document as the
+ * server answers `GET /games/:id/events` (or the phone keeps it).
+ */
+export function storedGameOfEvents(raw: unknown): StoredGame {
+  return storedGameOf(asStoredGame(raw))
+}
+
+/**
  * What a session reads of a save's answer: the digests and the generation
  * the game was left with, each only when the answer has it.
  */
@@ -1752,12 +1767,20 @@ const asSwapSidesAnswer = asObject({
   homeTeamId: asString,
   awayTeamId: asString,
   generation: asOptional(asNumber, 0),
+  /**
+   * The new sides' lineups digest as the swap committed, which the first
+   * save on the swapped lineups is built on. An older server sends none.
+   */
+  lineupsDigest: asOptional(asString),
   reset: asOptional(asObject({ atBats: asNumber, innings: asNumber }), () => ({
     atBats: 0,
     innings: 0
   }))
 })
-export type SwapSidesAnswer = ReturnType<typeof asSwapSidesAnswer>
+export type SwapSidesAnswer = Omit<
+  ReturnType<typeof asSwapSidesAnswer>,
+  'lineupsDigest'
+> & { lineupsDigest?: string }
 
 /**
  * A replay step as the announcer reads it: its key, and how many of its
@@ -2178,6 +2201,22 @@ export interface GamesPageQuery {
    */
   cursor?: string
   limit?: number
+}
+
+/** The read of a league's, season's or team's page. */
+export function groupPath(ref: GroupRef): string {
+  const collection =
+    ref.kind === 'league'
+      ? 'leagues'
+      : ref.kind === 'season'
+        ? 'seasons'
+        : 'teams'
+  return `/${collection}/${encodeURIComponent(ref.id)}`
+}
+
+/** The read of an event's Info section, for one team's attendance or none. */
+export function eventInfoPath(eventId: string, teamId?: string): string {
+  return `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`
 }
 
 function gamesPageParams(query: GamesPageQuery): string {
@@ -3455,6 +3494,140 @@ export interface RequestOptions {
   background?: boolean
   /** Cancels the call; a cancelled call is not the network going away. */
   signal?: AbortSignal
+  /**
+   * Gives up as `offline` once `REQUEST_DEADLINE_MS` pass with no answer
+   * begun, as if the request never left the device. On by default for a
+   * `GET`; the phone's queue asks it for every write it sends. An upload
+   * (a `Uint8Array`, or JSON over `UPLOAD_BODY_CHARS`) never has one.
+   */
+  deadline?: boolean
+  /**
+   * The phone answers what it stored for the read at once, when it stored
+   * anything, and asks the server behind it: for the scoring screen's own
+   * reads as it opens. The web keeps nothing, and reads the server.
+   */
+  storedFirst?: boolean
+  /**
+   * While the phone already knows it has no signal, it answers what it
+   * stored for the read at once, when it stored anything, and asks the
+   * server behind it; with signal, the server answers first, as for any
+   * read. For the screens that open on a game with no signal, which would
+   * otherwise wait out a deadline for each read. With nothing stored it
+   * asks the server, except for a placeholder opponent's roster or default
+   * lineup, which the phone never has: that fails as offline at once. The
+   * web keeps nothing.
+   */
+  offlineFirst?: boolean
+  /**
+   * The server's answer, or the failure: never the phone's stored copy in
+   * place of an answer that did not come. For the phone's read behind a
+   * stored answer, which must know whether the server was reached.
+   */
+  fromServer?: boolean
+  /**
+   * `swap`: the phone queues a swap of home and away and answers it from
+   * its own copy of the game (`CachingClient.queueSwap`). Without it the
+   * swap goes to the server.
+   */
+  queue?: 'swap'
+  /**
+   * The phone's queue tells a scoring session once it holds the write on
+   * the phone, and stops waiting on the server when the session lets it go
+   * (`SaveHandoff`). The plain client keeps nothing, and ignores it.
+   */
+  handoff?: SaveHandoff
+}
+
+/**
+ * How long a `GET`, or a write the phone's queue sends, waits for the
+ * server's answer to begin before it is `offline`: a link that takes the
+ * request and then stalls is no signal.
+ */
+export const REQUEST_DEADLINE_MS = 10_000
+
+/**
+ * The slowest a body that is still coming is taken to arrive, in bytes a
+ * second, where the platform cannot say how much of it has come (React
+ * Native's `fetch` has no body stream): its deadline grows with its length.
+ */
+export const SLOWEST_BODY_BYTES_PER_SECOND = 8 * 1024
+
+/** A request, or its body, that nothing came back for within its deadline. */
+export class DeadlinePassed extends Error {}
+
+/**
+ * Reads `response`'s body as text, giving up once nothing of it has arrived
+ * for `idleMs`. Where the body streams, each chunk starts the wait again, so
+ * a long answer on a slow link is read to its end; where it does not, the
+ * wait is `idleMs` plus the time its `content-length` takes at
+ * `SLOWEST_BODY_BYTES_PER_SECOND`.
+ */
+export async function bodyOf(
+  response: Response,
+  idleMs: number
+): Promise<string> {
+  const reader = response.body?.getReader?.()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const idle = async (ms: number): Promise<never> =>
+    await new Promise<never>((_resolve, reject) => {
+      if (timer != null) clearTimeout(timer)
+      timer = setTimeout(() => {
+        reject(new DeadlinePassed('No body before the deadline'))
+      }, ms)
+      ;(timer as { unref?: () => void }).unref?.()
+    })
+  try {
+    if (reader == null) {
+      const length = Number(response.headers.get('content-length') ?? 0)
+      const read = response.text()
+      read.catch(() => undefined)
+      return await Promise.race([
+        read,
+        idle(
+          idleMs +
+            (Number.isFinite(length) && length > 0
+              ? (length / SLOWEST_BODY_BYTES_PER_SECOND) * 1000
+              : 0)
+        )
+      ])
+    }
+    const decoder = new TextDecoder()
+    let text = ''
+    for (;;) {
+      const next = reader.read()
+      next.catch(() => undefined)
+      const { done, value } = await Promise.race([next, idle(idleMs)])
+      if (done) return text + decoder.decode()
+      text += decoder.decode(value, { stream: true })
+    }
+  } catch (error) {
+    reader?.cancel().catch(() => undefined)
+    throw error
+  } finally {
+    if (timer != null) clearTimeout(timer)
+  }
+}
+
+/** A JSON body longer than this is an upload, which keeps no deadline. */
+export const UPLOAD_BODY_CHARS = 64 * 1024
+
+/**
+ * What a stored-first read that came back different was: one of the game's
+ * own documents, or the person's roles, a roster or a default lineup.
+ */
+export type StoredChange = 'game' | 'details'
+
+/** How a read takes `storedFirst` or `offlineFirst`, for the screens that ask for one. */
+export interface ReadOptions {
+  storedFirst?: boolean
+  offlineFirst?: boolean
+}
+
+function readOptions(options: ReadOptions | undefined): RequestOptions {
+  return {
+    ...(options?.storedFirst === true ? { storedFirst: true } : {}),
+    ...(options?.offlineFirst === true ? { offlineFirst: true } : {})
+  }
 }
 
 /**
@@ -3499,11 +3672,54 @@ export interface StreamingRequest {
   onabort: (() => void) | null
 }
 
+/**
+ * The part of `XMLHttpRequest` a timed request uses (`timedRequest`): its
+ * `readyState` tells when the answer has begun, and `onprogress` sees the
+ * body's text grow, where React Native's `fetch` settles only once the
+ * whole body has come.
+ */
+export interface TimedRequest {
+  open: (method: string, url: string) => void
+  setRequestHeader: (name: string, value: string) => void
+  send: (body?: string) => void
+  abort: () => void
+  withCredentials: boolean
+  readonly readyState: number
+  readonly status: number
+  readonly responseText: string
+  /** The request body's upload: its progress counts as the link working. */
+  readonly upload?: { onprogress: (() => void) | null } | null
+  onreadystatechange: (() => void) | null
+  onprogress: (() => void) | null
+  onload: (() => void) | null
+  onerror: (() => void) | null
+  ontimeout: (() => void) | null
+  onabort: (() => void) | null
+}
+
+/** A timed request whose deadline passed, and the status, if one came. */
+class TimedOut extends DeadlinePassed {
+  constructor(
+    message: string,
+    readonly status: number | undefined
+  ) {
+    super(message)
+  }
+}
+
 export interface ClientOptions {
   baseUrl: string
   token?: string
   /** Swapped out in tests. Defaults to the platform's own. */
   fetch?: typeof fetch
+  /**
+   * Makes the request a timed request with a text body, or none, goes as,
+   * where the platform's `fetch` gives no answer until it has all of it
+   * (React Native). The deadline then covers only the wait for the answer
+   * to begin, and a body that keeps arriving is read to its end. None by
+   * default: such a request goes through `fetch`, as every other does.
+   */
+  timedRequest?: () => TimedRequest
   /** Makes the request a streamed call sends; the platform's `XMLHttpRequest` by default. */
   streamingRequest?: () => StreamingRequest
   passwordKdf?: PasswordKdf
@@ -3515,6 +3731,14 @@ export interface ClientOptions {
    * apart. A browser sends none; the server reads its user agent.
    */
   deviceModel?: string
+  /** `REQUEST_DEADLINE_MS` unless a test shortens it. */
+  requestDeadlineMs?: number
+  /**
+   * Told each time a request, or its body, gets nothing back within its
+   * deadline: the connection it went on may have stopped answering, and the
+   * phone can send the next one on a new connection.
+   */
+  onDeadlineMissed?: () => void
 }
 
 /**
@@ -3681,6 +3905,49 @@ export interface SidePlan {
   plan: GamePlan | null
   rules: PlayingTimeRules | null
   sameDay: PlanSameDay
+}
+
+/**
+ * One team's column for the inning in play, as `GET
+ * /games/:gameId/plans/:teamId/innings/:inning` answers a scorer: every row
+ * of the plan with that inning's cell, by jersey, and nothing else. Empty
+ * when the team has no plan with a position, or none for that inning.
+ */
+export interface PlanInning {
+  teamId: string
+  inning: number
+  column: PlanColumnCell[]
+}
+
+export const asPlanInning: Cleaner<PlanInning> = asObject({
+  teamId: asString,
+  inning: asNumber,
+  column: asArray(asPlanColumnCell)
+})
+
+/** Why the inning route refused, from the refusal's `details`. */
+export type PlanRefusal =
+  'planNotStarted' | 'planGameOver' | 'planInningNotCurrent'
+
+const PLAN_REFUSALS: readonly string[] = [
+  'planNotStarted',
+  'planGameOver',
+  'planInningNotCurrent'
+]
+
+/**
+ * The reason the inning route gave for refusing, or null for any other
+ * error: the route sends it in `details`, as `forbidden` and `conflict`
+ * carry it.
+ */
+export function planRefusal(error: unknown): PlanRefusal | null {
+  if (!(error instanceof HttpError)) return null
+  const details: unknown = error.details
+  if (typeof details !== 'object' || details == null) return null
+  const reason = (details as { reason?: unknown }).reason
+  return typeof reason === 'string' && PLAN_REFUSALS.includes(reason)
+    ? (reason as PlanRefusal)
+    : null
 }
 
 /** Both sides' plans in a game; a side the caller may not plan is null. */
@@ -4309,9 +4576,12 @@ export class TeamStationClient {
   private readonly doFetch: typeof fetch
   private readonly newStreamingRequest?: () => StreamingRequest
   private readonly deviceModel?: string
+  private readonly newTimedRequest?: () => TimedRequest
   private readonly passwordKdf?: PasswordKdf
   private readonly passwordCosts?: ClientPasswordCosts
   private readonly passwordTargetMs?: number
+  private readonly requestDeadlineMs: number
+  private readonly onDeadlineMissed?: () => void
   private passwordPreparation?: Promise<ClientPasswordCosts>
   /**
    * The sign-in request this client asked for last. An installed app that
@@ -4320,6 +4590,12 @@ export class TeamStationClient {
    * nothing: the request it finishes may be waiting in another tab.
    */
   private askedSignIn?: string
+  /**
+   * The token this client held when it asked for that sign-in. A claim takes
+   * its session only while the client still holds it: once the code, a
+   * password, a link or an earlier claim has signed in, the wait is over.
+   */
+  private askedSignInAs?: { requestId: string; token: string | undefined }
   token: string | undefined
   /** Captures the current analytics identity before a request starts. */
   captureAnalytics?: () => AnalyticsSink
@@ -4369,6 +4645,18 @@ export class TeamStationClient {
     this.doFetch = options.fetch ?? globalThis.fetch.bind(globalThis)
     this.newStreamingRequest = options.streamingRequest
     this.deviceModel = options.deviceModel
+    this.newTimedRequest = options.timedRequest
+    this.requestDeadlineMs = options.requestDeadlineMs ?? REQUEST_DEADLINE_MS
+    this.onDeadlineMissed = options.onDeadlineMissed
+  }
+
+  /** Tells `onDeadlineMissed`; a listener that throws is not the request's failure. */
+  protected deadlineMissed(): void {
+    try {
+      this.onDeadlineMissed?.()
+    } catch {
+      // The request is answered as offline whatever the listener does.
+    }
   }
 
   async accountSettings(): Promise<AccountSettings> {
@@ -4630,6 +4918,7 @@ export class TeamStationClient {
       appOrigin: options.appOrigin
     })
     this.askedSignIn = wait.requestId
+    this.askedSignInAs = { requestId: wait.requestId, token: this.token }
     return wait
   }
 
@@ -4701,6 +4990,14 @@ export class TeamStationClient {
    * `undefined` means not yet, which is the ordinary answer and not an error.
    */
   async claimSignIn(wait: SignInWait): Promise<Session | undefined> {
+    // Signed in since the wait was asked for, by any door: the claim would
+    // mint a second session and put it under the one the app already took,
+    // whose token the phone kept and its offline file was opened for.
+    const asked =
+      this.askedSignInAs?.requestId === wait.requestId
+        ? this.askedSignInAs.token
+        : this.token
+    if (this.token !== asked) return undefined
     const answer = await this.request(
       'POST',
       '/auth/request/claim',
@@ -4712,6 +5009,8 @@ export class TeamStationClient {
       }
     )
     if (!('token' in answer)) return undefined
+    // A sign-in that landed while the claim was out is the one in use.
+    if (this.token !== asked) return undefined
     this.token = answer.token
     return answer
   }
@@ -4988,17 +5287,7 @@ export class TeamStationClient {
   }
 
   async group(ref: GroupRef): Promise<GroupDetail> {
-    const collection =
-      ref.kind === 'league'
-        ? 'leagues'
-        : ref.kind === 'season'
-          ? 'seasons'
-          : 'teams'
-    return await this.request(
-      'GET',
-      `/${collection}/${encodeURIComponent(ref.id)}`,
-      asGroupDetail
-    )
+    return await this.request('GET', groupPath(ref), asGroupDetail)
   }
 
   async createGroup(body: CreateGroup): Promise<{
@@ -5403,14 +5692,45 @@ export class TeamStationClient {
   /** Builds a preview of the league's schedule. See `PreviewRequest`. */
   async buildSchedulePreview(
     leagueId: string,
-    request: PreviewRequest
+    request: PreviewRequest,
+    /**
+     * The waits before each retry while the device is offline or the server
+     * fails, about a minute and a half in all.
+     */
+    retryDelaysMs: readonly number[] = [2000, 4000, 8000, 16000, 30000, 30000]
   ): Promise<SchedulePreview> {
-    return await this.request(
+    const prepared = await this.request(
       'POST',
-      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews`,
-      asSchedulePreview,
+      `/leagues/${encodeURIComponent(leagueId)}/schedule-previews/preparations`,
+      asPreparedPreview,
       request
     )
+    const { buildOptionsAsync } = await import('./autoScheduler')
+    // The options are stored as built, summaries and all.
+    const result = await buildOptionsAsync(prepared.input)
+    // A search can take minutes, so while the device is offline or the
+    // server fails (a deploy, a proxy, a fault) the same result is sent
+    // again, which the server accepts once. A refusal of the result itself
+    // is final.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        return await this.request(
+          'PUT',
+          `/schedule-previews/${encodeURIComponent(prepared.id)}/result`,
+          asSchedulePreview,
+          result
+        )
+      } catch (error) {
+        const wait = retryDelaysMs[attempt]
+        if (
+          wait == null ||
+          !(error instanceof HttpError) ||
+          !['offline', 'unavailable', 'internal'].includes(error.code)
+        )
+          throw error
+        await new Promise(resolve => setTimeout(resolve, wait))
+      }
+    }
   }
 
   async schedulePreview(previewId: string): Promise<SchedulePreview> {
@@ -5463,8 +5783,10 @@ export class TeamStationClient {
 
   /** Chooses the seasons and fields of the league's next schedule. */
   /**
-   * Chooses a run's seasons and fields. With `addedFieldIds`, it replaces
-   * the fields added from other venues, which stay listed, chosen or not.
+   * Chooses a run's seasons and fields. The fields added from other venues
+   * stay listed, chosen or not: with `removedFieldIds`, `addedFieldIds`
+   * adds to that list and `removedFieldIds` takes off it; without, the
+   * list is replaced by `addedFieldIds`.
    */
   async saveScheduleSetup(
     leagueId: string,
@@ -5801,7 +6123,7 @@ export class TeamStationClient {
   async eventInfo(eventId: string, teamId?: string): Promise<EventInfo> {
     return await this.request(
       'GET',
-      `/events/${encodeURIComponent(eventId)}/info${teamId == null ? '' : `?teamId=${encodeURIComponent(teamId)}`}`,
+      eventInfoPath(eventId, teamId),
       asEventInfo
     )
   }
@@ -5850,11 +6172,13 @@ export class TeamStationClient {
     )
   }
 
-  async game(gameId: string): Promise<GameDetail> {
+  async game(gameId: string, options?: ReadOptions): Promise<GameDetail> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}`,
-      asGameDetail
+      asGameDetail,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6106,11 +6430,13 @@ export class TeamStationClient {
     )
   }
 
-  async boxScore(gameId: string): Promise<BoxScore> {
+  async boxScore(gameId: string, options?: ReadOptions): Promise<BoxScore> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/box-score`,
-      asBoxScore
+      asBoxScore,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6119,20 +6445,30 @@ export class TeamStationClient {
    * here that began with a different one. All three fields are null for a
    * team with none.
    */
-  async defaultLineup(teamId: string): Promise<DefaultLineup> {
+  async defaultLineup(
+    teamId: string,
+    options?: ReadOptions
+  ): Promise<DefaultLineup> {
     return await this.request(
       'GET',
       `/teams/${encodeURIComponent(teamId)}/default-lineup`,
-      asDefaultLineup
+      asDefaultLineup,
+      undefined,
+      readOptions(options)
     )
   }
 
   /** Each side's lineups in a game: start, changes and current. */
-  async gameLineups(gameId: string): Promise<GameLineupsResponse> {
+  async gameLineups(
+    gameId: string,
+    options?: ReadOptions
+  ): Promise<GameLineupsResponse> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/lineups`,
-      asGameLineupsResponse
+      asGameLineupsResponse,
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6159,11 +6495,36 @@ export class TeamStationClient {
    * same-day load its warnings are judged by; a side the caller may not save
    * the lineup of is null.
    */
-  async gamePlans(gameId: string): Promise<GamePlansResponse> {
+  async gamePlans(
+    gameId: string,
+    options?: ReadOptions
+  ): Promise<GamePlansResponse> {
     return await this.request(
       'GET',
       `/games/${encodeURIComponent(gameId)}/plans`,
-      asGamePlansResponse
+      asGamePlansResponse,
+      undefined,
+      readOptions(options)
+    )
+  }
+
+  /**
+   * One team's column for the inning in play (`PlanInning`). Refused before
+   * the game's start time, once it is over, and for any inning but the one
+   * in play; `planRefusal` reads why. `options.signal` aborts it.
+   */
+  async planInning(
+    gameId: string,
+    teamId: string,
+    inning: number,
+    options: { signal?: AbortSignal } = {}
+  ): Promise<PlanInning> {
+    return await this.request(
+      'GET',
+      `/games/${encodeURIComponent(gameId)}/plans/${encodeURIComponent(teamId)}/innings/${inning}`,
+      asPlanInning,
+      undefined,
+      options
     )
   }
 
@@ -6191,7 +6552,9 @@ export class TeamStationClient {
   }
 
   /** The caller's recent tags and globally popular active assignments. */
-  async tagChoices(options: { includeUnused?: boolean } = {}): Promise<{
+  async tagChoices(
+    options: { includeUnused?: boolean } & ReadOptions = {}
+  ): Promise<{
     recent: string[]
     popular: Array<{ tag: string; count: number }>
   }> {
@@ -6201,7 +6564,9 @@ export class TeamStationClient {
       asObject({
         recent: asArray(asString),
         popular: asArray(asObject({ tag: asString, count: asNumber }))
-      })
+      }),
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -6309,12 +6674,14 @@ export class TeamStationClient {
    * A game's stored plays and the at-bat in progress, with the digest of its
    * lineups.
    */
-  async gameEvents(gameId: string): Promise<StoredGame> {
+  async gameEvents(gameId: string, options?: ReadOptions): Promise<StoredGame> {
     return storedGameOf(
       await this.request(
         'GET',
         `/games/${encodeURIComponent(gameId)}/events`,
-        asStoredGame
+        asStoredGame,
+        undefined,
+        readOptions(options)
       )
     )
   }
@@ -6331,7 +6698,8 @@ export class TeamStationClient {
    */
   async saveGameEvents(
     gameId: string,
-    change: SaveChange
+    change: SaveChange,
+    handoff?: SaveHandoff
   ): Promise<PostedEdits> {
     return await this.request(
       'POST',
@@ -6341,7 +6709,8 @@ export class TeamStationClient {
       {
         deviceNames: change.names,
         deviceLineupRecovery: change.deviceLineupRecovery,
-        deviceLog: change.log
+        deviceLog: change.log,
+        ...(handoff == null ? {} : { handoff })
       }
     )
   }
@@ -6407,12 +6776,14 @@ export class TeamStationClient {
 
   async roster(
     teamId: string,
-    options: { includeFullNames?: boolean } = {}
+    options: { includeFullNames?: boolean } & ReadOptions = {}
   ): Promise<RosterEntry[]> {
     return await this.request(
       'GET',
       `/teams/${encodeURIComponent(teamId)}/roster${options.includeFullNames === true ? '?includeFullNames=true' : ''}`,
-      asArray(asRosterEntry)
+      asArray(asRosterEntry),
+      undefined,
+      readOptions(options)
     )
   }
 
@@ -7388,6 +7759,7 @@ export class TeamStationClient {
       { ...options, origin: options.origin ?? 'web' }
     )
     this.askedSignIn = wait.requestId
+    this.askedSignInAs = { requestId: wait.requestId, token: this.token }
     return wait
   }
 
@@ -7617,8 +7989,28 @@ export class TeamStationClient {
   }
 
   /** The roles the signed-in person holds, team by team. */
-  async myRoles(): Promise<MyRoles> {
-    return await this.request('GET', '/me/roles', asMyRoles)
+  async myRoles(options?: ReadOptions): Promise<MyRoles> {
+    return await this.request(
+      'GET',
+      '/me/roles',
+      asMyRoles,
+      undefined,
+      readOptions(options)
+    )
+  }
+
+  /**
+   * Tells `listener` when a read the scoring screen took stored-first for
+   * `gameId` came back from the server different, until unsubscribed, and
+   * which: the game's own (`game`: the game, its plays, its lineups) or the
+   * person's roles, a team's roster or default lineup (`details`). The web
+   * stores nothing, and never tells.
+   */
+  onStoredChanged(
+    _gameId: string,
+    _listener: (change: StoredChange) => void
+  ): () => void {
+    return () => undefined
   }
 
   /**
@@ -7627,6 +8019,26 @@ export class TeamStationClient {
    */
   async cached<T>(_key: string, _cleaner: Cleaner<T>): Promise<T | undefined> {
     return undefined
+  }
+
+  /**
+   * The games this client keeps on the device for one schedule's window
+   * (`scope` such as `me` or `team:<id>`), as the page its screen paints
+   * before its read returns. The web keeps none: an empty page, which a
+   * screen does not paint.
+   */
+  async scheduleGames<T>(
+    _scope: string,
+    _window: string,
+    _cleaner: Cleaner<T>
+  ): Promise<Page<T>> {
+    return {
+      items: [],
+      nextCursor: null,
+      prevCursor: null,
+      anchorId: null,
+      counts: null
+    }
   }
 
   /**
@@ -7858,6 +8270,81 @@ export class TeamStationClient {
       headers['x-teamstation-app'] = this.analyticsApp
     headers[PROTOCOL_HEADER] = String(GAME_SOCKET_PROTOCOL)
     if (this.token != null) headers.authorization = `Bearer ${this.token}`
+    const json =
+      bytes == null && body !== undefined ? JSON.stringify(body) : undefined
+    // A link that takes the request and then stalls answers nothing: past
+    // the deadline it is no signal, as a fetch that throws is. An upload
+    // may take longer than that to send, and keeps none.
+    const timed =
+      (options.deadline ?? method === 'GET') &&
+      bytes == null &&
+      (json == null || json.length <= UPLOAD_BODY_CHARS)
+    if (timed && this.newTimedRequest != null) {
+      let answer: { status: number; text: string }
+      try {
+        answer = await this.sendTimed(
+          this.newTimedRequest(),
+          method,
+          path,
+          headers,
+          json,
+          options.signal
+        )
+      } catch (caught: unknown) {
+        // The caller's own cancel is its own, never no signal.
+        if (caught instanceof Error && caught.name === 'AbortError')
+          throw caught
+        if (caught instanceof TimedOut) {
+          this.deadlineMissed()
+          // A refusal whose body stalled is still the server's answer.
+          if (
+            caught.status != null &&
+            (caught.status < 200 || caught.status > 299)
+          )
+            throw this.refusal(errorFrom(caught.status, ''))
+        }
+        this.offline = true
+        throw new HttpError(
+          'offline',
+          'Cannot reach TeamStation. Check your connection and try again.'
+        )
+      }
+      this.offline = false
+      if (
+        answer.status === 401 &&
+        !(method === 'POST' && path.startsWith('/auth/'))
+      )
+        this.onSessionRefused?.()
+      return this.answered(
+        answer.status >= 200 && answer.status <= 299,
+        answer.status,
+        answer.text,
+        cleaner
+      )
+    }
+    let expired = false
+    // The caller cancelled before the deadline passed: its own error.
+    let cancelled = options.signal?.aborted === true
+    const callerAborted = (): void => {
+      if (!expired) cancelled = true
+    }
+    if (timed && options.signal != null && !options.signal.aborted)
+      options.signal.addEventListener('abort', callerAborted)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const deadline = !timed
+      ? undefined
+      : new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => {
+            expired = true
+            this.deadlineMissed()
+            reject(new DeadlinePassed('No answer before the deadline'))
+          }, this.requestDeadlineMs)
+          // A deadline alone never keeps a process up.
+          ;(timer as { unref?: () => void }).unref?.()
+        })
+    // The fetch gets the caller's own signal, or none: the deadline gives up
+    // on the answer without putting a signal of its own on the request.
+    const signal = options.signal
 
     // `fetch` rejects with a bare TypeError when the request never leaves the
     // device — no data, aeroplane mode, a captive portal at the field. Safari
@@ -7867,7 +8354,7 @@ export class TeamStationClient {
     // of a ball field, where no signal is the ordinary case, not the exception.
     let response: Response
     try {
-      response = await this.doFetch(`${this.baseUrl}${path}`, {
+      const sent = this.doFetch(`${this.baseUrl}${path}`, {
         method,
         headers,
         // The session lives in an `HttpOnly` cookie, which this code cannot
@@ -7875,21 +8362,27 @@ export class TeamStationClient {
         // it when the app and the API are different origins, as they are in
         // development.
         credentials: 'include',
-        body:
-          bytes != null
-            ? new Uint8Array(bytes)
-            : body === undefined
-              ? undefined
-              : JSON.stringify(body),
-        ...(options.signal == null ? {} : { signal: options.signal })
+        body: bytes != null ? new Uint8Array(bytes) : json,
+        ...(signal == null ? {} : { signal })
       })
+      if (deadline == null) response = await sent
+      else {
+        // The fetch the deadline gave up on settles unheard.
+        sent.catch(() => undefined)
+        response = await Promise.race([sent, deadline])
+      }
     } catch (caught: unknown) {
-      if (options.signal?.aborted === true) throw caught
+      // The caller's own cancel is its own, never no signal.
+      if (cancelled || (options.signal?.aborted === true && !expired))
+        throw caught
       this.offline = true
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
+    } finally {
+      if (timer != null) clearTimeout(timer)
+      options.signal?.removeEventListener('abort', callerAborted)
     }
     this.offline = false
     if (
@@ -7899,22 +8392,43 @@ export class TeamStationClient {
       this.onSessionRefused?.()
 
     // The connection can drop after the answer starts, while its body is
-    // read. The status has arrived by then: a refusal is still the server's
-    // answer, and only a success cut short is as offline as a fetch that
-    // never reached the server.
+    // read, or stall there: a timed request's body is no signal once
+    // nothing of it has arrived for the deadline (`bodyOf`). A slow body that
+    // keeps arriving is read to its end. The status has arrived by then: a
+    // refusal is still the server's answer, and only a success cut short is
+    // as offline as a fetch that never reached the server.
     let text: string
     try {
-      text = await response.text()
-    } catch {
+      text = timed
+        ? await bodyOf(response, this.requestDeadlineMs)
+        : await response.text()
+    } catch (caught: unknown) {
+      // The caller's own cancel, as the body arrives, is its own too.
+      if (
+        !(caught instanceof DeadlinePassed) &&
+        (cancelled || options.signal?.aborted === true)
+      )
+        throw caught
+      if (caught instanceof DeadlinePassed) this.deadlineMissed()
       if (!response.ok) throw this.refusal(errorFrom(response.status, ''))
+      this.offline = true
       throw new HttpError(
         'offline',
         'Cannot reach TeamStation. Check your connection and try again.'
       )
     }
-    if (!response.ok) throw this.refusal(errorFrom(response.status, text))
-    if (text === '') return cleaner(undefined)
+    return this.answered(response.ok, response.status, text, cleaner)
+  }
 
+  /** An answer's body, read: the refusal it says, or its JSON, cleaned. */
+  private answered<T>(
+    ok: boolean,
+    status: number,
+    text: string,
+    cleaner: Cleaner<T>
+  ): T {
+    if (!ok) throw this.refusal(errorFrom(status, text))
+    if (text === '') return cleaner(undefined)
     let parsed: unknown
     try {
       parsed = JSON.parse(text)
@@ -7922,6 +8436,115 @@ export class TeamStationClient {
       throw new HttpError('internal', 'The server sent something unreadable')
     }
     return cleaner(parsed)
+  }
+
+  /**
+   * Sends a timed request over `xhr`: given up (`TimedOut`) once its answer
+   * has not begun within the deadline, or its body has stopped arriving for
+   * the deadline, and the request aborted, so nothing more of it is fetched.
+   * The caller's `signal` aborts it as its own (`AbortError`); a request
+   * that never left the device is a `TypeError`, as `fetch`'s is.
+   */
+  private async sendTimed(
+    xhr: TimedRequest,
+    method: string,
+    path: string,
+    headers: Record<string, string>,
+    json: string | undefined,
+    signal: AbortSignal | undefined
+  ): Promise<{ status: number; text: string }> {
+    return await new Promise((resolve, reject) => {
+      let settled = false
+      let begun = false
+      let seen = 0
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const settle = (
+        outcome: () => { status: number; text: string }
+      ): void => {
+        if (settled) return
+        settled = true
+        if (timer != null) clearTimeout(timer)
+        signal?.removeEventListener('abort', cancel)
+        try {
+          resolve(outcome())
+        } catch (error) {
+          reject(error)
+        }
+      }
+      const fail = (error: Error): void => {
+        settle(() => {
+          throw error
+        })
+      }
+      // From the send, and again from each piece of the body that arrives.
+      const wait = (): void => {
+        if (timer != null) clearTimeout(timer)
+        timer = setTimeout(() => {
+          fail(
+            new TimedOut(
+              begun
+                ? 'No body before the deadline'
+                : 'No answer before the deadline',
+              begun ? xhr.status : undefined
+            )
+          )
+          xhr.abort()
+        }, this.requestDeadlineMs)
+        ;(timer as { unref?: () => void }).unref?.()
+      }
+      const cancel = (): void => {
+        const error = new Error('The request was cancelled')
+        error.name = 'AbortError'
+        fail(error)
+        xhr.abort()
+      }
+      const begin = (): void => {
+        if (begun || xhr.status === 0) return
+        begun = true
+        wait()
+      }
+      xhr.onreadystatechange = () => {
+        if (xhr.readyState >= 2) begin()
+      }
+      // A body still going up is the link working: its wait starts again,
+      // and the answer's starts once it has all gone.
+      if (xhr.upload != null)
+        xhr.upload.onprogress = () => {
+          if (!begun) wait()
+        }
+      xhr.onprogress = () => {
+        begin()
+        const length = xhr.responseText?.length ?? 0
+        if (length > seen) {
+          seen = length
+          wait()
+        }
+      }
+      xhr.onload = () => {
+        if (xhr.status === 0) fail(new TypeError('Network request failed'))
+        else
+          settle(() => ({ status: xhr.status, text: xhr.responseText ?? '' }))
+      }
+      xhr.onerror = () => {
+        fail(new TypeError('Network request failed'))
+      }
+      xhr.ontimeout = xhr.onerror
+      xhr.onabort = () => {
+        fail(new TypeError('Network request aborted'))
+      }
+      if (signal?.aborted === true) {
+        cancel()
+        return
+      }
+      signal?.addEventListener('abort', cancel)
+      xhr.open(method, `${this.baseUrl}${path}`)
+      // The session's cookie on the web, as `fetch`'s `include` sends it.
+      xhr.withCredentials = true
+      for (const [name, value] of Object.entries(headers))
+        xhr.setRequestHeader(name, value)
+      wait()
+      xhr.send(json)
+    })
   }
 
   /** A refusal, after telling `onUpdateRequired` of one this build is too old for. */

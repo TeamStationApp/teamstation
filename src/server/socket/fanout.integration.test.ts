@@ -1549,7 +1549,7 @@ describe('the game socket fan-out (U15)', function () {
     await one.close()
   })
 
-  it('sends a game plan’s save to the game’s viewers naming only the team, reading no song', async function () {
+  it('sends a game plan’s save to the game’s viewers naming only the team and the inning, reading no song', async function () {
     const songsRead: string[] = []
     const one = fanout({
       readSong: async (_db, teamId, userId) => {
@@ -1564,14 +1564,14 @@ describe('the game socket fan-out (U15)', function () {
     one.watch(today, scopeOf(team, rival), heard)
     one.watch(today, scopeOf(team, rival), blind)
     one.watch(later, scopeOf(rival, team), away)
-    await notify({ game: today, kind: 'plans', teamId: team })
+    await notify({ game: today, kind: 'plans', teamId: team, inning: 3 })
     await until(() => heard.sent.length === 1, 'the plans change')
     await wait(150)
     expect(heard.sent[0]).to.deep.include({
       type: 'change',
       gameId: today,
       kind: 'plans',
-      data: { teamId: team }
+      data: { teamId: team, inning: 3 }
     })
     expect(blind.sent).lengthOf(0)
     // Only the game named hears it, though the team plays in another.

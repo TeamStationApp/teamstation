@@ -1,3 +1,4 @@
+import { seasonFields } from './autoScheduler/seasonZones'
 import { monthDay as shortDate } from './calendarDates'
 import { addDays, type WindowPeriod } from './fieldAvailability'
 import type { ScheduleSettings } from './seasonScheduling'
@@ -6,6 +7,7 @@ import { type FieldSize, fieldSizeLabel, wallMinutes } from './venues'
 export type SchedulingCheckKind =
   | 'noSeasons'
   | 'noGames'
+  | 'noGameDays'
   | 'oddTotal'
   | 'unevenExhibition'
   | 'noExhibitionTeams'
@@ -32,6 +34,7 @@ export interface CheckedSeason {
   exhibitionTeams: number
   settings: Pick<
     ScheduleSettings,
+    | 'fieldIds'
     | 'fieldSize'
     | 'gameMinutes'
     | 'regularGames'
@@ -39,7 +42,8 @@ export interface CheckedSeason {
     | 'startsOn'
     | 'endsOn'
     | 'windows'
-  >
+  > &
+    Partial<Pick<ScheduleSettings, 'maxGamesOnWeekdays' | 'maxGamesOnWeekend'>>
 }
 
 export interface CheckedField {
@@ -126,6 +130,14 @@ export function schedulingChecks(
     const name = season.name
     if (s.regularGames === 0 && s.exhibitionGames === 0)
       add('noGames', season.id, `${name} has no games to schedule.`, true)
+    // Both weekly maxima at 0 leave a team no day to play on.
+    if ((s.maxGamesOnWeekdays ?? 1) === 0 && (s.maxGamesOnWeekend ?? 1) === 0)
+      add(
+        'noGameDays',
+        season.id,
+        `${name}: Max weekday games and Max weekend games are both 0, so no game can be scheduled. Raise one of them.`,
+        true
+      )
     const total = season.participants * s.regularGames
     if (total % 2 === 1)
       add(
@@ -152,7 +164,7 @@ export function schedulingChecks(
         )
       }
     }
-    const sized = usable.filter(field => field.sizes.includes(s.fieldSize))
+    const sized = seasonFields(usable, s)
     if (sized.length === 0)
       add(
         'noField',

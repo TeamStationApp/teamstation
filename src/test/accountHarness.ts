@@ -130,7 +130,10 @@ export async function accountHarness(
       (await createSession(db, accountId(id), 'account-test')).token
     )
   await pool.end()
-  const controls = { failMail: false, failPut: false }
+  const controls: AccountHarness['controls'] = {
+    failMail: false,
+    failPut: false
+  }
   const objects = new Map<string, Buffer>()
   const objectServer = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
@@ -166,6 +169,36 @@ export async function accountHarness(
         if (controls.failPut) {
           res.writeHead(503)
           res.end('Unavailable')
+          return
+        }
+        const before = controls.beforePut
+        if (before != null) {
+          controls.beforePut = undefined
+          before().then(
+            () => {
+              objects.set(key, Buffer.concat(chunks))
+              res.writeHead(200)
+              res.end()
+            },
+            (error: unknown) => {
+              res.writeHead(500)
+              res.end(String(error))
+            }
+          )
+          return
+        }
+        // A CopyObject: the source's bytes, which never leave the Space.
+        const copied = req.headers['x-amz-copy-source']
+        if (typeof copied === 'string') {
+          const bytes = objects.get(decodeURIComponent(copied))
+          if (bytes == null) {
+            res.writeHead(404)
+            res.end('<Error><Code>NoSuchKey</Code></Error>')
+            return
+          }
+          objects.set(key, bytes)
+          res.writeHead(200)
+          res.end('<CopyObjectResult/>')
           return
         }
         objects.set(key, Buffer.concat(chunks))
@@ -307,7 +340,15 @@ export interface AccountHarness {
   invitations: Map<string, object>
   space: SpaceSettings
   objects: Map<string, Buffer>
-  controls: { failMail: boolean; failPut: boolean }
+  controls: {
+    failMail: boolean
+    failPut: boolean
+    /**
+     * Runs once, before the next PUT is kept: a test changes the database
+     * while a picture is being uploaded.
+     */
+    beforePut?: () => Promise<void>
+  }
   origin: string
   /** The API's HTTP server, for a fixture that adds a socket to it. */
   server: Server

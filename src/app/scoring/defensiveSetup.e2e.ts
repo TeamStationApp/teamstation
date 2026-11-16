@@ -401,10 +401,13 @@ async function open(fixture: Fixture = {}): Promise<{
           dictationModels: []
         }
       else if (u.pathname === '/api/v1/games/g1') body = game
-      // Nobody has planned the game, so no inning's end moves the defence.
-      else if (u.pathname === '/api/v1/games/g1/plans')
-        body = { away: null, home: null }
-      else if (u.pathname.endsWith('/events')) {
+      // Nobody has planned the game, so no inning's column moves the defence.
+      else if (
+        /^\/api\/v1\/games\/g1\/plans\/[^/]+\/innings\/\d+$/.test(u.pathname)
+      ) {
+        const [, , , , , , teamId, , inning] = u.pathname.split('/')
+        body = { teamId, inning: Number(inning), column: [] }
+      } else if (u.pathname.endsWith('/events')) {
         if (request.method === 'POST') {
           let bytes = ''
           for await (const chunk of request) bytes += String(chunk)

@@ -5,10 +5,11 @@ import { createRoot, type Root } from 'react-dom/client'
 
 import {
   type GameLineupsResponse,
-  type GamePlansResponse,
+  REQUEST_DEADLINE_MS,
   TeamStationClient
 } from '../../common/api'
 import { HttpError } from '../../common/errors'
+import type { PlanCell } from '../../common/gamePlan'
 import type { GameChangeData, GameSocketEvent } from '../../common/gameSocket'
 import { cleanAction, type ScoringAction } from '../../common/scoring/actions'
 import {} from '../../common/scoring/gumbo'
@@ -26,11 +27,7 @@ import {
   withoutNames
 } from '../../common/scoring/storedNames'
 import { dictatingHealth, FakeDictationSocket } from '../../test/dictationFakes'
-import {
-  PLAN_SWAPPED,
-  scoringPlans,
-  scoringSidePlan
-} from '../../test/scoringPlans'
+import { PLAN_SWAPPED } from '../../test/scoringPlans'
 import { scoringRoster } from '../../test/scoringSession'
 import type { BaseballScreen } from '../field/BaseballScreen'
 import { lstrings } from '../locales/strings'
@@ -197,13 +194,13 @@ async function scoring(
     digests?: boolean
     /** What every read says a swap does. */
     swap?: { value: StoredGame['swap'] }
-    /** What every read of the game plans answers. */
-    plans?: { value: GamePlansResponse }
+    /** The home side's column every inning download answers, if any. */
+    homeColumn?: { value: readonly PlanCell[] | null }
     dictation?: boolean
   } = {}
 ): Promise<{
-  /** How many times the screen read the game plans. */
-  planReads: () => number
+  /** Each inning column the screen downloaded, as `team inning`. */
+  inningReads: string[]
   changes: FakeChanges
   store: ReturnType<typeof memoryStore>
   other: () => Promise<GameSession>
@@ -277,10 +274,25 @@ async function scoring(
     scoringRoster(teamId === gameFixture.awayTeamId ? 1 : 10)
   client.gameLineups = async () =>
     ({ digest: digest.value }) as unknown as GameLineupsResponse
-  let planReads = 0
+  const inningReads: string[] = []
   client.gamePlans = async () => {
-    planReads++
-    return options.plans?.value ?? { away: null, home: null }
+    throw new Error('The scoring screen reads no whole plan')
+  }
+  client.planInning = async (_gameId, teamId, inning) => {
+    inningReads.push(`${teamId} ${inning}`)
+    const cells = teamId === 'home' ? options.homeColumn?.value : null
+    return {
+      teamId,
+      inning,
+      column: (cells ?? []).map((cell, at) => ({
+        player: {
+          gumboId: 10 + at,
+          fullName: `Player ${at + 1}`,
+          jersey: String(at + 1)
+        },
+        cell
+      }))
+    }
   }
   const changes = new FakeChanges()
   HTMLCanvasElement.prototype.getContext = (() => null) as typeof getContext
@@ -304,7 +316,7 @@ async function scoring(
   await settle()
   if (shown('OK')) await click('OK')
   return {
-    planReads: () => planReads,
+    inningReads,
     changes,
     store,
     other: open,
@@ -897,10 +909,9 @@ describe('the scoring screen on the game socket', function () {
   })
 
   for (const notice of ['plans', 'resync'] as const)
-    it(`keeps following an unfinished single after a ${notice} plan refresh`, async () => {
-      const plans = { value: scoringPlans({}) }
-      const { changes, other, session, store, planReads } = await scoring({
-        plans
+    it(`keeps following an unfinished single through a ${notice} notice, holding a coach’s column until the play is closed`, async () => {
+      const { changes, other, session, store, inningReads } = await scoring({
+        homeColumn: { value: PLAN_SWAPPED }
       })
       const peer = await other()
       peer.apply({ type: 'ballInPlay', contact: 'swing' })
@@ -909,9 +920,6 @@ describe('the scoring screen on the game socket', function () {
       await changes.plays()
       expect(shown('Finish at-bat')).equals(true)
       const saved = JSON.stringify(await store.load('g1'))
-      plans.value = scoringPlans({
-        home: scoringSidePlan(10, { 2: PLAN_SWAPPED })
-      })
       await changes.emit(
         notice === 'resync'
           ? { type: 'resync', gameId: 'g1' }
@@ -920,20 +928,32 @@ describe('the scoring screen on the game socket', function () {
               gameId: 'g1',
               kind: 'plans',
               at: '2026-10-12T12:00:00Z',
-              data: { teamId: 'home' }
+              data: { teamId: 'home', inning: 1 }
             }
       )
-      expect(planReads()).equals(2)
+      // A coach's change is downloaded, and changes nothing mid-play.
+      expect(inningReads).deep.equals(notice === 'plans' ? ['home 1'] : [])
       expect(JSON.stringify(await store.load('g1'))).equals(saved)
       peer.apply({ type: 'gameFlow', kind: 'closePlay' })
       await peer.flush()
       await changes.plays()
-      expect(session().actions).deep.equals(peer.actions)
-      peer.apply({ type: 'pitch', call: 'B' })
-      await peer.flush()
+      let scorer = peer
+      if (notice === 'plans') {
+        // At rest, the coach's column held through the play is applied.
+        await session().flush()
+        const after = session().actions.slice(peer.actions.length)
+        expect(session().actions.slice(0, peer.actions.length)).deep.equals(
+          peer.actions
+        )
+        expect(after).has.length(1)
+        expect(after[0]).to.include({ type: 'lineup', kind: 'roster' })
+        scorer = await other()
+      } else expect(session().actions).deep.equals(peer.actions)
+      scorer.apply({ type: 'pitch', call: 'B' })
+      await scorer.flush()
       await changes.plays()
       expect(document.body.textContent).includes('1 balls 0 strikes 0 outs')
-      expect(session().actions).deep.equals(peer.actions)
+      expect(session().actions).deep.equals(scorer.actions)
     })
 
   it('adopts a peer Undo that restores one of its earlier saved digests', async () => {
@@ -1462,22 +1482,47 @@ describe('the scoring screen on the game socket', function () {
     expect(reloads).deep.equals([false])
   })
 
-  it('reads the game plans again on a plans change and a resync, not on a song', async function () {
-    const plans = { value: scoringPlans({}) }
-    const { changes, planReads } = await scoring({ plans })
-    expect(planReads()).equals(1)
-    // A coach turns his plan on: the next inning's end follows it.
-    plans.value = scoringPlans({
-      home: scoringSidePlan(10, { 2: PLAN_SWAPPED })
-    })
-    await changes.emit({
+  it('downloads a coach’s change on a screen that read in another device’s change and has scored nothing, and applies it', async function () {
+    const scorer = await scoring({ homeColumn: { value: PLAN_SWAPPED } })
+    const peer = await scorer.other()
+    peer.apply({ type: 'pitch', call: 'B' })
+    await peer.flush()
+    await scorer.changes.plays()
+    expect(document.body.textContent).includes('1 balls')
+    await scorer.changes.emit({
       type: 'change',
       gameId: 'g1',
       kind: 'plans',
       at: '2026-10-12T12:00:00Z',
-      data: { teamId: 'home' }
+      data: { teamId: 'home', inning: 1 }
     })
-    expect(planReads()).equals(2)
+    expect(scorer.inningReads).deep.equals(['home 1'])
+    await scorer.session().flush()
+    const rosters = scorer
+      .session()
+      .actions.filter(
+        action => action.type === 'lineup' && action.kind === 'roster'
+      )
+    expect(rosters).has.length(1)
+  })
+
+  it('downloads the inning in play on a plans change naming it, nothing on a song, a resync or another inning, and each inning entered', async function () {
+    const { changes, inningReads } = await scoring({
+      homeColumn: { value: PLAN_SWAPPED }
+    })
+    expect(inningReads).deep.equals([])
+    const coach = async (inning: number): Promise<void> => {
+      await changes.emit({
+        type: 'change',
+        gameId: 'g1',
+        kind: 'plans',
+        at: '2026-10-12T12:00:00Z',
+        data: { teamId: 'home', inning }
+      })
+    }
+    await coach(1)
+    expect(inningReads).deep.equals(['home 1'])
+    await coach(2)
     await changes.emit({
       type: 'change',
       gameId: 'g1',
@@ -1485,16 +1530,16 @@ describe('the scoring screen on the game socket', function () {
       at: '2026-10-12T12:00:00Z',
       data: { teamId: 'home', userId: 'u1', song: null }
     })
-    expect(planReads()).equals(2)
     await changes.emit({ type: 'resync', gameId: 'g1' })
-    expect(planReads()).equals(3)
+    expect(inningReads).deep.equals(['home 1'])
     for (let half = 0; half < 2; half++) {
       await click('Open scoring menu')
       await click('End Half Inning')
       await click('Confirm End Half Inning')
       await settle()
     }
-    expect(document.body.textContent).includes('Inning 2 plan applied')
+    expect(inningReads).deep.equals(['home 1', 'away 2', 'home 2'])
+    expect(document.body.textContent).not.includes('plan applied')
   })
 
   it('reads in again after the socket reconnects, and stops hearing on unmount', async function () {
@@ -1727,11 +1772,18 @@ describe('a game swapped under the scoring screen on the socket', function () {
       swapNoticeMs?: number
       /** Each read of the game after the first takes this long. */
       slowReadsMs?: number
+      /**
+       * Once the held save is released, a read of the game's plays before
+       * the game opens again never settles: a rebase's, on a stalled link.
+       */
+      rebaseReadsHang?: boolean
     } = {}
   ): Promise<{
     changes: FakeChanges
     opens: () => number
     reloads: () => number
+    /** The reads `rebaseReadsHang` held, which never settle. */
+    rebaseReads: () => number
     session: () => GameSession
     release: () => void
     /** The games whose queued writes were given up. */
@@ -1771,15 +1823,23 @@ describe('a game swapped under the scoring screen on the socket', function () {
     const pregame = store.games.get('g1')!
     let opens = 0
     let reloads = 0
+    let rebaseReads = 0
     let listening = 0
     let opened: GameSession | undefined
     // As the server source does: every read gives the context for the
     // game's teams as they stand.
+    let released = false
     const reads: EventStore = {
-      load: async gameId => ({
-        ...(await store.load(gameId)),
-        context: context(game)
-      }),
+      load: async gameId => {
+        if (options.rebaseReadsHang === true && released && opens < 2) {
+          rebaseReads++
+          return await new Promise<never>(() => undefined)
+        }
+        return {
+          ...(await store.load(gameId)),
+          context: context(game)
+        }
+      },
       save: async (gameId, change) => await store.save(gameId, change)
     }
     const source: ScoringSource = {
@@ -1832,7 +1892,10 @@ describe('a game swapped under the scoring screen on the socket', function () {
     let release = (): void => undefined
     if (options.holdSaves === true) {
       const held = new Promise<void>(resolve => {
-        release = resolve
+        release = () => {
+          released = true
+          resolve()
+        }
       })
       const save = store.save.bind(store)
       let refused = options.staleOnRelease !== true
@@ -1884,6 +1947,11 @@ describe('a game swapped under the scoring screen on the socket', function () {
               discardGame: async (gameId: string) => {
                 discarded.push(gameId)
                 return true
+              },
+              giveUpGame: async (gameId: string) => {
+                const count = queued[`game:${gameId}`] ?? 0
+                if (count > 0) discarded.push(gameId)
+                return { lost: count, unsure: 0 }
               }
             }
           )
@@ -1924,6 +1992,7 @@ describe('a game swapped under the scoring screen on the socket', function () {
       changes,
       opens: () => opens,
       reloads: () => reloads,
+      rebaseReads: () => rebaseReads,
       session: () => opened!,
       release,
       discarded,
@@ -2030,6 +2099,108 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(screen.session().state.gameData.teams.home.id).equals('away')
   })
 
+  /**
+   * The screen's `REQUEST_DEADLINE_MS` timers, held for the test to run;
+   * every other timer runs as it would.
+   */
+  function deadlineTimers(): {
+    pending: () => number
+    run: () => void
+    restore: () => void
+  } {
+    const real = globalThis.setTimeout
+    const realClear = globalThis.clearTimeout
+    const held = new Map<number, () => void>()
+    let next = 0
+    globalThis.setTimeout = ((run: () => void, ms?: number) => {
+      if (ms !== REQUEST_DEADLINE_MS) return real(run, ms)
+      const id = --next
+      held.set(id, run)
+      return id
+    }) as typeof setTimeout
+    globalThis.clearTimeout = ((
+      id: Parameters<typeof clearTimeout>[0] | number
+    ) => {
+      if (typeof id === 'number' && held.delete(id)) return
+      realClear(id)
+    }) as typeof clearTimeout
+    return {
+      pending: () => held.size,
+      run: () => {
+        const runs = [...held.values()]
+        held.clear()
+        for (const run of runs) run()
+      },
+      restore: () => {
+        globalThis.setTimeout = real
+        globalThis.clearTimeout = realClear
+      }
+    }
+  }
+
+  it('reopens with the notice when a save on its way is refused as stale, reading nothing for the closed session (9.harness-review.1)', async function () {
+    const timers = deadlineTimers()
+    try {
+      const screen = await swappable({
+        holdSaves: true,
+        staleOnRelease: true,
+        rebaseReadsHang: true
+      })
+      await click('Called Strike')
+      await settle()
+      expect(screen.session().saving).equals(true)
+      screen.swap()
+      await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+      await settle()
+      expect(screen.opens()).equals(1)
+      screen.release()
+      await settle()
+      await settle()
+      // No rebase read is begun for the closed session, and the screen does
+      // not wait for one: it reopens at once, the pitch counted as lost.
+      expect(screen.rebaseReads()).equals(0)
+      expect(screen.opens()).equals(2)
+      expect(document.body.textContent).includes(
+        'Home and away were swapped, so changes not yet saved before the swap were not kept.'
+      )
+      expect(screen.session().state.gameData.teams.home.id).equals('away')
+      // Its wait was stopped with it.
+      expect(timers.pending()).equals(0)
+    } finally {
+      timers.restore()
+    }
+  })
+
+  it('waits for a save on its way no longer than a request, then reopens and says its changes may not have been kept (9.harness-review.1)', async function () {
+    const timers = deadlineTimers()
+    try {
+      const screen = await swappable({ holdSaves: true })
+      await click('Called Strike')
+      await settle()
+      screen.swap()
+      await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+      await settle()
+      expect(screen.opens()).equals(1)
+      expect(timers.pending()).equals(1)
+      // The save is never answered: the request deadline passes.
+      await act(async () => {
+        timers.run()
+      })
+      await settle()
+      expect(screen.opens()).equals(2)
+      expect(document.body.textContent).includes(
+        'Home and away were swapped, so changes not yet saved before the swap may not have been kept.'
+      )
+      expect(screen.session().state.gameData.teams.home.id).equals('away')
+      // Its late answer opens nothing more.
+      screen.release()
+      await settle()
+      expect(screen.opens()).equals(2)
+    } finally {
+      timers.restore()
+    }
+  })
+
   it('on a phone, gives up the writes queued for the game before the swap', async function () {
     const screen = await swappable({ phone: { 'game:g1': 1 } })
     const before = screen.session()
@@ -2043,6 +2214,17 @@ describe('a game swapped under the scoring screen on the socket', function () {
     expect(document.body.textContent).includes(
       'changes not yet saved before the swap were not kept'
     )
+  })
+
+  it('on a phone with nothing queued, gives up nothing on another device’s swap', async function () {
+    const screen = await swappable({ phone: {} })
+    screen.swap()
+    await screen.notice({ homeTeamId: 'away', awayTeamId: 'home' })
+    await settle()
+    expect(screen.discarded).deep.equals([])
+    expect(screen.opens()).equals(2)
+    expect(document.body.textContent).includes('Home and away were swapped.')
+    expect(document.body.textContent).not.includes('were not kept')
   })
 
   it('stops waiting for a save on its way when the screen goes', async function () {

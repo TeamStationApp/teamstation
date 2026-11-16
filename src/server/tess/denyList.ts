@@ -93,6 +93,8 @@ const WRITES: readonly RegExp[] = [
   /^\/games\/[^/]+\/lineups(\/|$)/,
   /^\/games\/[^/]+\/unroster(\/|$)/,
   /^\/games\/[^/]+\/guest-players(\/|$)/,
+  // An outside scorer's players become accounts: the importer's, not Tess's.
+  /^\/games\/[^/]+\/guests\/external$/,
   // The scoring screen's home/away exchange, which rewrites the open
   // at-bat's lineups.
   /^\/games\/[^/]+\/swap-sides(\/|$)/,

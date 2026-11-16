@@ -524,6 +524,91 @@ describe('persisted radar speeds', function () {
       await radarReadings(db, f.id, [null], defaultRadarSettings)
     ).deep.equals([])
   })
+  it('enriches an imported game, whose plays hold the records an import is given', async () => {
+    const f = await fixture()
+    const started = new Date(Date.parse('2026-01-01T12:00:00Z')).toISOString()
+    const setup = f.session.state.liveData.boxscore.teams
+    const batter = setup.away.battingOrder[0]
+    const pitcher = setup.home.defense.P
+    const pitch = (code: string): Record<string, unknown> => ({
+      isPitch: true,
+      type: 'pitch',
+      startTime: started,
+      details: { code, call: { code }, isStrike: true, isBall: false }
+    })
+    await postGamePlays(
+      db,
+      f.id,
+      asPostEventsBody({
+        plays: [
+          {
+            about: {
+              atBatIndex: 0,
+              inning: 1,
+              halfInning: 'top',
+              startTime: started
+            },
+            result: { eventType: 'strikeout', awayScore: 0, homeScore: 0 },
+            count: { balls: 0, strikes: 3, outs: 1 },
+            matchup: { batter: { id: batter }, pitcher: { id: pitcher } },
+            runners: [],
+            playEvents: [pitch('C'), pitch('C'), pitch('C')]
+          }
+        ],
+        source: { system: 'outsideScorer' }
+      })
+    )
+    expect((await f.load()).plays[0].teamStation).not.equals(undefined)
+    await f.packet({ pitchSpeed: 85 })
+    await refreshRadarSpeeds(db, f.id)
+    expect(
+      pitches((await f.load()).plays[0]).some(
+        p => p.pitchData?.startSpeed === 85
+      )
+    ).equals(true)
+  })
+  it('gives an import the readings logged before it, straight from the post', async () => {
+    const f = await fixture()
+    const started = new Date(Date.parse('2026-01-01T12:00:00Z')).toISOString()
+    const setup = f.session.state.liveData.boxscore.teams
+    // The radar read the pitch before the outside scorer posted it.
+    await f.packet({ pitchSpeed: 87 })
+    await postGamePlays(
+      db,
+      f.id,
+      asPostEventsBody({
+        plays: [
+          {
+            about: {
+              atBatIndex: 0,
+              inning: 1,
+              halfInning: 'top',
+              startTime: started
+            },
+            result: { eventType: 'strikeout', awayScore: 0, homeScore: 0 },
+            count: { balls: 0, strikes: 3, outs: 1 },
+            matchup: {
+              batter: { id: setup.away.battingOrder[0] },
+              pitcher: { id: setup.home.defense.P }
+            },
+            runners: [],
+            playEvents: ['C', 'C', 'C'].map(code => ({
+              isPitch: true,
+              type: 'pitch',
+              startTime: started,
+              details: { code, call: { code }, isStrike: true, isBall: false }
+            }))
+          }
+        ],
+        source: { system: 'outsideScorer' }
+      })
+    )
+    expect(
+      pitches((await f.load()).plays[0]).some(
+        p => p.pitchData?.startSpeed === 87
+      )
+    ).equals(true)
+  })
   it('keeps plain corrections on their reading but rematches changed pitch categories', async () => {
     const f = await fixture()
     await f.packet({ pitchSpeed: 80 })

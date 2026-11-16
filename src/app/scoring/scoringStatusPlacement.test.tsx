@@ -9,6 +9,7 @@ import {
   bandedField,
   BaseballScreen,
   fieldHolderStyle,
+  FieldKeeper,
   useBandedReports
 } from '../field/BaseballScreen'
 import { bandedSafe, FIELD_EDGE_GAP, topLift } from '../field/fieldSafeArea'
@@ -435,5 +436,136 @@ describe('the offline line’s band at the top', function () {
       root!.render(screen(0))
     })
     expect(margins()).deep.equals([])
+  })
+})
+
+describe('a field kept under the screens that take it', function () {
+  let root: Root | undefined
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount()
+    })
+    root = undefined
+  })
+  interface Fiber {
+    type?: { name?: string } | string | null
+    memoizedProps?: unknown
+    child?: Fiber | null
+    sibling?: Fiber | null
+  }
+  /** Every `FieldCanvas` the page draws, by the props it was given. */
+  const canvases = (host: HTMLElement): FieldCanvasProps[] => {
+    const key = Object.keys(host).find(name =>
+      name.startsWith('__reactContainer$')
+    )!
+    const found: FieldCanvasProps[] = []
+    const walk = (fiber: Fiber | null | undefined): void => {
+      for (let node = fiber; node != null; node = node.sibling) {
+        if (typeof node.type === 'function' || typeof node.type === 'object')
+          if (node.type?.name === 'FieldCanvas')
+            found.push(node.memoizedProps as FieldCanvasProps)
+        walk(node.child)
+      }
+    }
+    walk((host as unknown as Record<string, Fiber>)[key])
+    return found
+  }
+  const screen = (
+    name: string,
+    bases: BaseProjection[],
+    catchers: unknown[]
+  ): React.ReactElement => (
+    <BaseballScreen
+      key={name}
+      field={{
+        players: [],
+        selected: '',
+        onSelect: () => undefined,
+        view: 'home',
+        zoom: 1,
+        onBaseProjection: value => bases.push(value),
+        onCatcherBounds: value => catchers.push(value)
+      }}
+      onMenu={() => undefined}
+      onUndo={() => undefined}
+      onPitch={() => undefined}
+      canPitch
+      summary={name}
+    />
+  )
+  it('tells a screen that takes the field where the bases, the board and the catcher are, on the one field', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    const first = { bases: [] as BaseProjection[], catchers: [] as unknown[] }
+    const second = { bases: [] as BaseProjection[], catchers: [] as unknown[] }
+    const draw = async (element: React.ReactElement): Promise<void> => {
+      await act(async () => {
+        root!.render(
+          <ThemeProvider>
+            <FieldKeeper>{element}</FieldKeeper>
+          </ThemeProvider>
+        )
+      })
+    }
+    await draw(screen('first', first.bases, first.catchers))
+    expect(canvases(host)).length(1)
+    const bases: BaseProjection = {
+      bases: [{ x: 1, y: 2 }],
+      width: 390,
+      height: 844
+    }
+    const catcher = { x: 3, y: 4, width: 5, height: 6 }
+    const board = { x: 0, y: 0, width: 100, height: 40 }
+    await act(async () => {
+      const field = canvases(host)[0]
+      field.onBaseProjection?.(bases)
+      field.onCatcherBounds?.(catcher)
+      field.onScoreboardBounds?.(board)
+    })
+    expect(first.bases).deep.equals([bases])
+    expect(first.catchers).deep.equals([catcher])
+    // Another screen takes the field: the same one, which says nothing new.
+    await draw(screen('second', second.bases, second.catchers))
+    expect(canvases(host)).length(1)
+    expect(second.bases).deep.equals([bases])
+    expect(second.catchers).deep.equals([catcher])
+    expect(first.bases).length(1)
+    // What the field says next goes to the screen on it now.
+    await act(async () => {
+      canvases(host)[0].onCatcherBounds?.({ ...catcher, x: 9 })
+    })
+    expect(second.catchers).deep.equals([catcher, { ...catcher, x: 9 }])
+    expect(first.catchers).length(1)
+  })
+
+  it('draws no field while the screen on it is suspended', async function () {
+    const host = document.createElement('div')
+    document.body.appendChild(host)
+    root = createRoot(host)
+    await act(async () => {
+      root!.render(
+        <ThemeProvider>
+          <FieldKeeper>
+            <BaseballScreen
+              suspended
+              field={{
+                players: [],
+                selected: '',
+                onSelect: () => undefined,
+                view: 'home',
+                zoom: 1
+              }}
+              onMenu={() => undefined}
+              onUndo={() => undefined}
+              onPitch={() => undefined}
+              canPitch
+              summary="Game"
+            />
+          </FieldKeeper>
+        </ThemeProvider>
+      )
+    })
+    expect(canvases(host)).length(0)
   })
 })

@@ -5,6 +5,7 @@ import {
   autoSchedulerFixture,
   seedThrough
 } from './autoSchedulerFixture'
+import { deviceSchedulerResponse } from './deviceSchedulerClient'
 import { googlePlacesStub } from './googlePlacesStub'
 
 /**
@@ -51,7 +52,13 @@ export async function schedulerWorld(): Promise<SchedulerWorld> {
         path: string,
         body?: unknown
       ) => {
-        const response = await fx.f.h.request(method, path, body, user)
+        const response = await deviceSchedulerResponse(
+          async (method, path, body) =>
+            await fx.f.h.request(method, path, body, user),
+          method,
+          path,
+          body
+        )
         const text = await response.text()
         return {
           status: response.status,

@@ -88,20 +88,70 @@ const asPlanCell: Cleaner<PlanCell> = raw => {
   )
 }
 
+const asPlanPlayer = asObject({
+  gumboId: asEither(asNull, asGumboId),
+  fullName: asString,
+  jersey: asString
+})
+
 const asPlanShape = asObject({
   enabled: asBoolean,
   innings: asNumber,
   rows: asArray(
     asObject({
-      player: asObject({
-        gumboId: asEither(asNull, asGumboId),
-        fullName: asString,
-        jersey: asString
-      }),
+      player: asPlanPlayer,
       cells: asArray(asPlanCell)
     })
   )
 })
+
+/**
+ * One row of an inning's column, as `GET /games/:gameId/plans/:teamId/
+ * innings/:inning` answers a scorer: the player and that inning's cell, a
+ * blank being the bench.
+ */
+export interface PlanColumnCell {
+  player: LineupPlayer
+  cell: PlanCell
+}
+
+export const asPlanColumnCell: Cleaner<PlanColumnCell> = asObject({
+  player: asPlanPlayer,
+  cell: asPlanCell
+})
+
+/**
+ * A plan's column for `inning`: every row, with that inning's cell, sorted
+ * by jersey and then name so the batting order is not told. Empty when the
+ * plan holds no position anywhere or has no such inning.
+ */
+export function planColumn(
+  plan: Pick<GamePlan, 'innings' | 'rows'>,
+  inning: number
+): PlanColumnCell[] {
+  if (inning < 1 || inning > plan.innings || !planHasPositions(plan)) return []
+  return plan.rows
+    .map(row => ({ player: row.player, cell: row.cells[inning - 1] }))
+    .sort((a, b) => {
+      const byJersey = a.player.jersey.localeCompare(
+        b.player.jersey,
+        undefined,
+        { numeric: true }
+      )
+      return byJersey !== 0
+        ? byJersey
+        : a.player.fullName.localeCompare(b.player.fullName)
+    })
+}
+
+/**
+ * An inning's column as a plan of that one inning, which `inningDefense`
+ * reads at inning 1.
+ */
+export function columnPlan(column: readonly PlanColumnCell[]): GamePlan {
+  const rows = column.map(({ player, cell }) => ({ player, cells: [cell] }))
+  return { enabled: planHasPositions({ rows }), innings: 1, rows }
+}
 
 /** Whether any cell of the plan holds a field position: whether it is on. */
 export function planHasPositions(plan: Pick<GamePlan, 'rows'>): boolean {

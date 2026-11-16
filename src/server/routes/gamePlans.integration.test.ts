@@ -20,8 +20,10 @@ import {
   DEFAULT_PLAYING_TIME_RULES,
   type PlayingTimeRules
 } from '../../common/playingTimeRules'
+import { userIdOfGumbo } from '../../common/userId'
 import { testDatabaseUrlOf } from '../../migrate/testDatabase'
 import { type ApiFixture, apiFixture } from '../../test/apiFixture'
+import { planTeams } from '../access'
 import {
   asGameChangePayload,
   GAME_CHANGES_CHANNEL
@@ -31,6 +33,9 @@ const rules = (changes: Partial<PlayingTimeRules>): PlayingTimeRules => ({
   ...DEFAULT_PLAYING_TIME_RULES,
   ...changes
 })
+
+/** Ichiro, the coach of Demo Hawks (`guardianFixture`), who reads and saves its plan. */
+const TEAM_COACH = 104
 
 /** Demo Hawks' players, and one made up at the field. */
 const SORIANO = { gumboId: 201, fullName: 'Alfonso Soriano', jersey: '7' }
@@ -78,7 +83,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
   }
   const plans = async (
     gameId: string,
-    userId = 101
+    userId = TEAM_COACH
   ): Promise<GamePlansResponse> => {
     const answer = await get(gameId, userId)
     expect(answer.status).equals(200)
@@ -88,7 +93,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     gameId: string,
     teamId: string,
     body: unknown,
-    userId = 101
+    userId = TEAM_COACH
   ): Promise<{ status: number; body: unknown }> => {
     const answer = await f.h.request(
       'PUT',
@@ -101,7 +106,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
   const saved = async (
     gameId: string,
     plan: GamePlan,
-    userId = 101
+    userId = TEAM_COACH
   ): Promise<SidePlan> => {
     const answer = await put(gameId, f.teamA, plan, userId)
     expect(answer.status, JSON.stringify(answer.body)).equals(200)
@@ -225,20 +230,60 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     })
   })
 
-  it('answers a scorekeeper both sides', async function () {
-    await saved(game, planOf([[SORIANO, 'SS']]))
-    const read = await plans(game, f.people.scorekeeper)
-    expect(read.home?.plan).deep.equals(planOf([[SORIANO, 'SS']]))
-    expect(read.away).to.include({ teamId: f.standaloneTeam, plan: null })
-    // And he may save either.
-    const visitors = await put(
-      game,
-      f.standaloneTeam,
-      planOf([[DECKER, 'C']]),
-      f.people.scorekeeper
-    )
-    expect(visitors.status).equals(200)
-    expect(asSidePlan(visitors.body).teamId).equals(f.standaloneTeam)
+  it('answers the plan to the team’s coaches alone: no scorekeeper, assistant or admin of any level, until an admin is given the coach flag', async function () {
+    const plan = planOf([[SORIANO, 'SS']])
+    await saved(game, plan)
+    // The team's coach, and a coach given the flag on its season.
+    for (const id of [f.people.teamCoach, f.people.seasonCoach]) {
+      const read = await plans(game, id)
+      expect(read.home?.plan, String(id)).deep.equals(plan)
+      expect(read.away, String(id)).equals(null)
+    }
+    expect(
+      (await put(game, f.teamA, plan, f.people.seasonCoach)).status
+    ).equals(200)
+    // Nobody else, whatever else they may do with the team.
+    for (const id of [
+      f.people.scorekeeper,
+      f.people.assistant,
+      f.people.admin,
+      f.people.siteAdmin
+    ]) {
+      expect(await plans(game, id), String(id)).deep.equals({
+        away: null,
+        home: null
+      })
+      const refused = await put(game, f.teamA, plan, id)
+      expect(refused.status, String(id)).equals(403)
+      expect((refused.body as { message?: string }).message).equals(
+        'Only a coach of the team may save its game plan'
+      )
+      expect(
+        (await put(game, f.standaloneTeam, plan, id)).status,
+        String(id)
+      ).equals(403)
+    }
+    // The league, season and team admin, given the coach flag on the team,
+    // reads and saves it.
+    const role = makeId('scopeRole')
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: role,
+        user_id: userIdOfGumbo(f.people.admin),
+        scope_type: 'team',
+        scope_id: f.teamA,
+        role: 'coach'
+      })
+      .execute()
+    try {
+      expect((await plans(game, f.people.admin)).home?.plan).deep.equals(plan)
+      expect((await put(game, f.teamA, plan, f.people.admin)).status).equals(
+        200
+      )
+    } finally {
+      await f.h.db.deleteFrom('scope_roles').where('id', '=', role).execute()
+    }
   })
 
   it('refuses a member who may not save the lineup, and answers him no side', async function () {
@@ -350,7 +395,7 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
         [BERRA, 'C _ _ RF']
       ])
     )
-    const answer = await get(game, 101)
+    const answer = await get(game, TEAM_COACH)
     expect(answer.status).equals(200)
     const { home } = answer.body as { home: Record<string, unknown> }
     expect(Object.keys(home)).deep.equals([
@@ -490,43 +535,311 @@ describe('game plans (GET and PUT /games/:gameId/plans)', function () {
     await setRules('teams', f.teamA, own)
     expect(await rulesOf(game)).deep.equals(own)
     expect(await rulesOf(fallGame)).deep.equals(own)
-    // The visitors have none of their own, so the game's season's hold.
-    expect((await plans(game, f.people.scorekeeper)).away?.rules).deep.equals(
-      spring
-    )
+    // The visitors have none of their own, so the game's season's hold, as
+    // a coach of theirs reads them.
+    const visitorsCoach = makeId('scopeRole')
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: visitorsCoach,
+        user_id: userIdOfGumbo(TEAM_COACH),
+        scope_type: 'team',
+        scope_id: f.standaloneTeam,
+        role: 'coach'
+      })
+      .execute()
+    try {
+      expect((await plans(game)).away?.rules).deep.equals(spring)
+    } finally {
+      await f.h.db
+        .deleteFrom('scope_roles')
+        .where('id', '=', visitorsCoach)
+        .execute()
+    }
   })
 
-  it('announces a save once it commits, naming only the team, and a refused save not at all', async function () {
-    await forgetHeard()
-    await saved(game, planOf([[SORIANO, 'SS']]))
-    expect((await put(game, f.teamA, { innings: 99 })).status).equals(400)
-    expect(
-      (await put(game, f.teamA, planOf([[SORIANO, 'SS']]), f.people.assistant))
-        .status
-    ).equals(403)
+  /** The notices heard since `forgetHeard`, up to a mark sent now. */
+  const heardNow = async (): Promise<Array<Record<string, unknown>>> => {
     const mark = makeId('game')
     await sql`select pg_notify(${GAME_CHANGES_CHANNEL}, ${JSON.stringify({ mark })})`.execute(
       f.h.db
     )
     while (!heard.some(payload => payload.mark === mark))
       await new Promise(resolve => setTimeout(resolve, 5))
-    expect(heard.filter(payload => payload.mark == null)).deep.equals([
-      { game, kind: 'plans', teamId: f.teamA }
+    return heard.filter(payload => payload.mark == null)
+  }
+  /**
+   * Puts a game where its scorer has it: started an hour ago (or starting in
+   * an hour), its at-bat in `inning` (none when null), and its status.
+   */
+  const placeGame = async (
+    gameId: string,
+    changes: {
+      inning: number | null
+      started?: boolean
+      status?: 'scheduled' | 'inProgress' | 'final' | 'cancelled'
+    }
+  ): Promise<void> => {
+    await f.h.db
+      .updateTable('games')
+      .set({
+        start_at: new Date(
+          Date.now() + (changes.started === false ? 1 : -1) * 3600_000
+        ),
+        status: changes.status ?? 'inProgress',
+        // As the scoring document posts it, a batter up or not.
+        currentPlay:
+          changes.inning == null
+            ? null
+            : JSON.stringify({
+                about: {
+                  atBatIndex: 4,
+                  inning: changes.inning,
+                  halfInning: 'top',
+                  isTopInning: true,
+                  isComplete: false,
+                  hasOut: false,
+                  hasReview: false
+                }
+              })
+      })
+      .where('id', '=', gameId)
+      .execute()
+  }
+  const inningOf = async (
+    gameId: string,
+    teamId: string,
+    inning: number | string,
+    userId: number = f.people.scorekeeper
+  ): Promise<{ status: number; body: Record<string, unknown> }> => {
+    const answer = await f.h.request(
+      'GET',
+      `/games/${gameId}/plans/${teamId}/innings/${inning}`,
+      undefined,
+      userId
+    )
+    return {
+      status: answer.status,
+      body: (await answer.json()) as Record<string, unknown>
+    }
+  }
+  const reasonOf = (body: Record<string, unknown>): unknown =>
+    (body.details as { reason?: unknown } | undefined)?.reason
+
+  it('names as a plan’s coaches only those given the coach flag on the team, its season or its league', async function () {
+    const g = await f.h.db
+      .selectFrom('games')
+      .select(['home_team_id', 'away_team_id'])
+      .where('id', '=', game)
+      .executeTakeFirstOrThrow()
+    const teams = async (id: number): Promise<string[]> =>
+      await planTeams(f.h.db, userIdOfGumbo(id), g)
+    expect(await teams(f.people.teamCoach)).deep.equals([f.teamA])
+    expect(await teams(f.people.seasonCoach)).deep.equals([f.teamA])
+    for (const id of [
+      f.people.admin,
+      f.people.siteAdmin,
+      f.people.assistant,
+      f.people.scorekeeper,
+      f.people.follower
     ])
-    expect(asGameChangePayload(heard[0])).deep.equals({
-      game,
-      kind: 'plans',
-      teamId: f.teamA
+      expect(await teams(id), String(id)).deep.equals([])
+    // The administrator, given the flag, coaches it.
+    const role = makeId('scopeRole')
+    await f.h.db
+      .insertInto('scope_roles')
+      .values({
+        id: role,
+        user_id: userIdOfGumbo(f.people.admin),
+        scope_type: 'team',
+        scope_id: f.teamA,
+        role: 'coach'
+      })
+      .execute()
+    try {
+      expect(await teams(f.people.admin)).deep.equals([f.teamA])
+    } finally {
+      await f.h.db.deleteFrom('scope_roles').where('id', '=', role).execute()
+    }
+  })
+
+  it('answers a scorer the inning in play, every row by jersey and nothing else, once the game has started', async function () {
+    const at = await newGame('2027-04-11T17:00:00Z')
+    await saved(
+      at,
+      planOf([
+        [DECKER, 'SS P 1B'],
+        [SORIANO, 'C _ C'],
+        [BERRA, '1B 1B _'],
+        [CHAPMAN, '_ C P']
+      ])
+    )
+    await placeGame(at, { inning: 2 })
+    const read = await inningOf(at, f.teamA, 2)
+    expect(read.status, JSON.stringify(read.body)).equals(200)
+    expect(read.body).deep.equals({
+      teamId: f.teamA,
+      inning: 2,
+      column: [
+        { player: SORIANO, cell: '' },
+        { player: BERRA, cell: '1B' },
+        { player: CHAPMAN, cell: 'C' },
+        { player: DECKER, cell: 'P' }
+      ]
+    })
+    // A coach of the team reads it too; the other side's plan is empty.
+    expect((await inningOf(at, f.teamA, 2, f.people.teamCoach)).status).equals(
+      200
+    )
+    expect((await inningOf(at, f.standaloneTeam, 2)).body.column).deep.equals(
+      []
+    )
+    // An inning past the plan's last is empty.
+    await placeGame(at, { inning: 4 })
+    expect((await inningOf(at, f.teamA, 4)).body.column).deep.equals([])
+  })
+
+  it('refuses the inning before the start time, once the game is over, and for any inning but the one in play', async function () {
+    const at = await newGame('2027-04-12T17:00:00Z')
+    await saved(at, planOf([[SORIANO, 'SS 2B 1B']]))
+    // The innings moved on before the start time expose nothing.
+    await placeGame(at, { inning: 3, started: false })
+    const early = await inningOf(at, f.teamA, 3)
+    expect(early.status).equals(403)
+    expect(reasonOf(early.body)).equals('planNotStarted')
+    await placeGame(at, { inning: 2 })
+    const next = await inningOf(at, f.teamA, 3)
+    expect(next.status).equals(409)
+    expect(next.body.details).deep.equals({
+      reason: 'planInningNotCurrent',
+      inning: 2
+    })
+    expect(reasonOf((await inningOf(at, f.teamA, 1)).body)).equals(
+      'planInningNotCurrent'
+    )
+    // A game finalized after two never exposes the third.
+    await placeGame(at, { inning: null, status: 'final' })
+    const over = await inningOf(at, f.teamA, 3)
+    expect(over.status).equals(403)
+    expect(reasonOf(over.body)).equals('planGameOver')
+    await placeGame(at, { inning: 2, status: 'cancelled' })
+    expect(reasonOf((await inningOf(at, f.teamA, 2)).body)).equals(
+      'planGameOver'
+    )
+    // A live game with no at-bat stored has no inning in play.
+    await placeGame(at, { inning: null })
+    expect((await inningOf(at, f.teamA, 2)).body.details).deep.equals({
+      reason: 'planInningNotCurrent',
+      inning: null
     })
   })
 
-  it('reads a plans notice, and refuses one that names no team', function () {
+  it('takes the pregame as the 1st, and refuses whoever neither scores nor coaches, a team not in the game and an inning out of range', async function () {
+    const at = await newGame('2027-04-13T17:00:00Z')
+    await saved(at, planOf([[SORIANO, 'SS 2B']]))
+    await placeGame(at, { inning: null })
+    await f.h.db
+      .updateTable('games')
+      .set({ pregame: JSON.stringify({}) })
+      .where('id', '=', at)
+      .execute()
+    expect((await inningOf(at, f.teamA, 1)).body.column).deep.equals([
+      { player: SORIANO, cell: 'SS' }
+    ])
+    expect((await inningOf(at, f.teamA, 1, f.people.assistant)).status).equals(
+      403
+    )
+    // A follower does not see the game at all.
+    expect((await inningOf(at, f.teamA, 1, f.people.follower)).status).equals(
+      404
+    )
+    expect((await inningOf(at, f.rookies, 1)).status).equals(404)
+    for (const inning of ['0', '13', '1.5', 'x'])
+      expect((await inningOf(at, f.teamA, inning)).status, inning).equals(404)
+    expect((await inningOf('gam_nothere', f.teamA, 1)).status).equals(404)
+  })
+
+  it('announces a save only when it changes the inning in play of a started game, naming the team and the inning', async function () {
+    const at = await newGame('2027-04-14T17:00:00Z')
+    await placeGame(at, { inning: 2 })
+    await forgetHeard()
+    // A first save plans the inning in play.
+    await saved(at, planOf([[SORIANO, 'SS 2B 1B 1B']]))
+    // Only later innings change.
+    await saved(at, planOf([[SORIANO, 'SS 2B LF LF']]))
+    // Refused saves announce nothing.
+    expect((await put(at, f.teamA, { innings: 99 })).status).equals(400)
     expect(
-      asGameChangePayload({ game: 'gam_1', kind: 'plans', teamId: 'tem_1' })
-    ).deep.equals({ game: 'gam_1', kind: 'plans', teamId: 'tem_1' })
-    expect(() => asGameChangePayload({ game: 'gam_1', kind: 'plans' })).throws()
+      (await put(at, f.teamA, planOf([[SORIANO, 'SS']]), f.people.assistant))
+        .status
+    ).equals(403)
+    // The inning in play changes.
+    await saved(at, planOf([[SORIANO, 'SS CF LF LF']]))
+    const notices = await heardNow()
+    expect(notices).deep.equals([
+      { game: at, kind: 'plans', teamId: f.teamA, inning: 2 },
+      { game: at, kind: 'plans', teamId: f.teamA, inning: 2 }
+    ])
+    expect(asGameChangePayload(notices[0])).deep.equals(notices[0])
+    // Before the start time, and once the game is over, nothing is heard.
+    await forgetHeard()
+    await placeGame(at, { inning: 2, started: false })
+    await saved(at, planOf([[SORIANO, 'SS P LF LF']]))
+    await placeGame(at, { inning: null, status: 'final' })
+    await saved(at, planOf([[SORIANO, 'SS C LF LF']]))
+    expect(await heardNow()).deep.equals([])
+  })
+
+  it('announces every save that changes the inning in play, however two saves overlap', async function () {
+    const at = await newGame('2027-04-15T17:00:00Z')
+    await placeGame(at, { inning: 2 })
+    const before = planOf([[SORIANO, 'SS 2B 1B']])
+    const changed = planOf([[SORIANO, 'SS CF 1B']])
+    for (let attempt = 0; attempt < 5; attempt++) {
+      await saved(at, before)
+      await forgetHeard()
+      // One changes the inning in play, the other puts it back.
+      const answers = await Promise.all([
+        put(at, f.teamA, changed),
+        put(at, f.teamA, before)
+      ])
+      expect(answers.map(answer => answer.status)).deep.equals([200, 200])
+      const stored = await f.h.db
+        .selectFrom('game_plans')
+        .select('rows')
+        .where('game_id', '=', at)
+        .executeTakeFirstOrThrow()
+      const notices = (await heardNow()).filter(notice => notice.game === at)
+      // Ending where it began, both changed it in turn: two notices, so the
+      // scorer reads the column back. Ending changed, at least one.
+      if (JSON.stringify(stored.rows) === JSON.stringify(before.rows))
+        expect(notices, `attempt ${attempt}`).has.length(2)
+      else expect(notices.length, `attempt ${attempt}`).greaterThan(0)
+    }
+  })
+
+  it('reads a plans notice, and refuses one that names no team or no inning', function () {
+    expect(
+      asGameChangePayload({
+        game: 'gam_1',
+        kind: 'plans',
+        teamId: 'tem_1',
+        inning: 3
+      })
+    ).deep.equals({ game: 'gam_1', kind: 'plans', teamId: 'tem_1', inning: 3 })
     expect(() =>
-      asGameChangePayload({ game: 'gam_1', kind: 'plans', team: 'tem_1' })
+      asGameChangePayload({ game: 'gam_1', kind: 'plans', inning: 3 })
+    ).throws()
+    expect(() =>
+      asGameChangePayload({ game: 'gam_1', kind: 'plans', teamId: 'tem_1' })
+    ).throws()
+    expect(() =>
+      asGameChangePayload({
+        game: 'gam_1',
+        kind: 'plans',
+        team: 'tem_1',
+        inning: 3
+      })
     ).throws()
   })
 })

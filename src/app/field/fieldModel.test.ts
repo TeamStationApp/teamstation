@@ -4,6 +4,8 @@ import { describe, it } from 'mocha'
 import {
   advancePlayer,
   BASES,
+  CATCHER_SPOT,
+  catcherSpot,
   clampToField,
   createPlayers,
   locomotionSpeed,
@@ -109,5 +111,18 @@ describe('field locomotion', function () {
       expect(runner.target).deep.equals(BASES[index])
       for (let frame = 0; frame < 1200; frame++) advancePlayer(runner, 1 / 60)
     }
+  })
+})
+
+describe('where the catcher is', function () {
+  it('is the catcher’s own spot, or behind the plate when nobody is there', function () {
+    const players = createPlayers()
+    const catcher = players.find(player => player.label === 'C')
+    if (catcher == null) throw new Error('No catcher')
+    catcher.position = { x: 1, z: 5 }
+    expect(catcherSpot(players)).deep.equals({ x: 1, z: 5 })
+    expect(
+      catcherSpot(players.filter(player => player.label !== 'C'))
+    ).deep.equals(CATCHER_SPOT)
   })
 })

@@ -22,14 +22,21 @@ import { useWideTableHold, type WideTableSpan } from './WideTable'
 
 /** A season setting the grid edits in place, as a bare number. */
 export type NumberColumn =
-  'gameMinutes' | 'bufferMinutes' | 'regularGames' | 'exhibitionGames'
+  | 'gameMinutes'
+  | 'bufferMinutes'
+  | 'regularGames'
+  | 'exhibitionGames'
+  | 'maxGamesOnWeekdays'
+  | 'maxGamesOnWeekend'
 
 /** The number columns in the grid's order, which Tab follows. */
 export const NUMBER_COLUMNS: NumberColumn[] = [
   'gameMinutes',
   'bufferMinutes',
   'regularGames',
-  'exhibitionGames'
+  'exhibitionGames',
+  'maxGamesOnWeekdays',
+  'maxGamesOnWeekend'
 ]
 
 /** What each number column accepts. */
@@ -40,7 +47,9 @@ export const GRID_NUMBERS: Record<
   gameMinutes: { ...GAME_MINUTES, step: 5 },
   bufferMinutes: { ...BUFFER_MINUTES, step: 5 },
   regularGames: { min: 0, max: MAX_GAMES, step: 1 },
-  exhibitionGames: { min: 0, max: MAX_GAMES, step: 1 }
+  exhibitionGames: { min: 0, max: MAX_GAMES, step: 1 },
+  maxGamesOnWeekdays: { min: 0, max: MAX_GAMES, step: 1 },
+  maxGamesOnWeekend: { min: 0, max: MAX_GAMES, step: 1 }
 }
 
 /**
@@ -51,7 +60,9 @@ export const NUMBER_LABELS: Record<NumberColumn, string> = {
   gameMinutes: 'Game length in minutes',
   bufferMinutes: 'Time between games in minutes',
   regularGames: 'Regular-season games',
-  exhibitionGames: 'Exhibition games'
+  exhibitionGames: 'Exhibition games',
+  maxGamesOnWeekdays: 'Most games a team plays on weekdays in a week',
+  maxGamesOnWeekend: 'Most games a team plays on the weekend in a week'
 }
 
 export function isNumberColumn(column: string): column is NumberColumn {
@@ -129,7 +140,22 @@ export function revealAboveKeyboard(
 }
 
 /** Selects the whole text of a focused input: the DOM's or the native one. */
-function selectAll(input: Input | null, length: number): void {
+/**
+ * Selects the whole number a tick after focus lands. iOS ignores
+ * selectTextOnFocus for a field focused as it mounts and puts the caret
+ * after the number, replacing a selection made as focus lands.
+ */
+export function selectAllAfterFocus(
+  input: Input | null,
+  length: () => number | undefined
+): void {
+  setTimeout(() => {
+    const chars = length()
+    if (chars != null) selectAll(input, chars)
+  }, 0)
+}
+
+export function selectAll(input: Input | null, length: number): void {
   const node = input as unknown as {
     select?: () => void
     setSelection?: (start: number, end: number) => void
@@ -426,16 +452,13 @@ export function useGridNumberEditor({
                       setError('')
                     }
                   },
-                  // iOS ignores selectTextOnFocus for a field that is focused
-                  // as it mounts, and puts the caret after the number; a
-                  // selection made as the focus lands is replaced by that
-                  // caret too. Select the whole number a tick later, so
-                  // typing replaces it on every platform.
+                  // Selected a tick later too, so typing replaces the number
+                  // on every platform.
                   onFocus: () => {
-                    setTimeout(() => {
-                      if (active.current != null)
-                        selectAll(input.current, active.current.value.length)
-                    }, 0)
+                    selectAllAfterFocus(
+                      input.current,
+                      () => active.current?.value.length
+                    )
                   },
                   onBlur: () => {
                     if (error === '') save()

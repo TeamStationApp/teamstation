@@ -89,9 +89,11 @@ export function useChatViewport(
     navigationBottom: floatingNavBottom(
       Platform.OS,
       theme.rem(FLOATING_BOTTOM_REM),
-      insets.bottom
+      insets.bottom,
+      slot.bannerHeight
     ),
-    safeBottom: insets.bottom,
+    // On a wide window the offline banner, with no capsule, sits on the inset.
+    safeBottom: insets.bottom + (slot.bannerHeight ?? 0),
     keyboardOpen: keyboardTop != null,
     keyboardOverlap: keyboardOverlap(frameBottom, keyboardTop),
     gap: theme.rem(1)

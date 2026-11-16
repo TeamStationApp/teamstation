@@ -23,9 +23,11 @@ import {
   asSeasonSummary,
   asSession,
   asStandingsRow,
+  planRefusal,
   type RequestOptions,
   type SaveLineupsBody,
-  TeamStationClient
+  TeamStationClient,
+  type TimedRequest
 } from './api'
 import { asChatAge, asChatAgeBody } from './chatAge'
 import { HttpError, isUpdateRequired } from './errors'
@@ -941,6 +943,116 @@ describe('api client', function () {
       }
       expect(refused, JSON.stringify(bad)).equals(true)
     }
+  })
+
+  it('reads one team’s column for the inning in play, aborts it on its signal, and tells why the route refused', async function () {
+    const column = [
+      {
+        player: { gumboId: null, fullName: 'Yogi Berra', jersey: '8' },
+        cell: ''
+      },
+      {
+        player: { gumboId: 7, fullName: 'Lou Gehrig', jersey: '4' },
+        cell: '1B'
+      }
+    ]
+    const read = stubFetch(200, { teamId: 'tem 1', inning: 3, column })
+    const answer = await new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: read.fetch
+    }).planInning('gam 1', 'tem 1', 3)
+    expect(read.calls[0]).deep.include({
+      url: 'http://x/api/v1/games/gam%201/plans/tem%201/innings/3',
+      method: 'GET'
+    })
+    expect(answer).deep.equals({ teamId: 'tem 1', inning: 3, column })
+    for (const bad of [
+      { teamId: 'tem 1', inning: 3 },
+      { teamId: 'tem 1', inning: 3, column: [{ ...column[0], cell: 'XX' }] }
+    ]) {
+      let refused = false
+      try {
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stubFetch(200, bad).fetch
+        }).planInning('g', 't', 1)
+      } catch {
+        refused = true
+      }
+      expect(refused, JSON.stringify(bad)).equals(true)
+    }
+
+    // The signal reaches fetch, which aborts.
+    let signal: AbortSignal | undefined
+    const aborting = (async (
+      _url: unknown,
+      init?: { signal?: AbortSignal }
+    ) => {
+      signal = init?.signal
+      return await new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+      })
+    }) as unknown as typeof fetch
+    const controller = new AbortController()
+    const pending = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch: aborting
+    }).planInning('g', 't', 1, { signal: controller.signal })
+    controller.abort()
+    let aborted = false
+    try {
+      await pending
+    } catch {
+      aborted = true
+    }
+    expect(aborted).equals(true)
+    expect(signal?.aborted).equals(true)
+
+    const refusal = async (status: number, body: unknown): Promise<unknown> => {
+      try {
+        await new TeamStationClient({
+          baseUrl: 'http://x/api/v1',
+          fetch: stubFetch(status, body).fetch
+        }).planInning('g', 't', 1)
+      } catch (error) {
+        return planRefusal(error)
+      }
+      throw new Error('Expected a refusal')
+    }
+    expect(
+      await refusal(403, {
+        code: 'forbidden',
+        message: 'Not yet',
+        details: { reason: 'planNotStarted' }
+      })
+    ).equals('planNotStarted')
+    expect(
+      await refusal(403, {
+        code: 'forbidden',
+        message: 'Over',
+        details: { reason: 'planGameOver' }
+      })
+    ).equals('planGameOver')
+    expect(
+      await refusal(409, {
+        code: 'conflict',
+        message: 'Not in play',
+        details: { reason: 'planInningNotCurrent', inning: 2 }
+      })
+    ).equals('planInningNotCurrent')
+    expect(await refusal(403, { code: 'forbidden', message: 'No' })).equals(
+      null
+    )
+    expect(
+      await refusal(403, {
+        code: 'forbidden',
+        message: 'No',
+        details: { reason: 'somethingElse' }
+      })
+    ).equals(null)
+    expect(planRefusal(new Error('offline'))).equals(null)
   })
 
   it('cleans a lineup save, refusing an index past its players', function () {
@@ -3245,6 +3357,99 @@ describe('api client', function () {
     ])
   })
 
+  it('keeps the token a code sign-in took when a claim it raced comes back after it', async function () {
+    const session = {
+      token: 'tok_code',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
+    }
+    const calls: string[] = []
+    let answerClaim: (() => void) | undefined
+    const fetch = async (url: unknown): Promise<Response> => {
+      const path = String(url).slice('http://x/api/v1'.length)
+      calls.push(path)
+      if (path === '/auth/email-code')
+        return new Response(
+          JSON.stringify({ sent: true, requestId: 'req_1', clientSecret: 's' }),
+          { status: 202 }
+        )
+      if (path === '/auth/request/claim') {
+        // The code approved the request, so the claim mints a session too;
+        // its answer arrives after the code's.
+        await new Promise<void>(resolve => {
+          answerClaim = resolve
+        })
+        return new Response(JSON.stringify({ ...session, token: 'tok_claim' }))
+      }
+      return new Response(JSON.stringify(session))
+    }
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch
+    })
+    const wait = await client.requestEmailCode('a@b.c')
+    const claimed = client.claimSignIn(wait)
+    await new Promise(resolve => setTimeout(resolve, 0))
+    expect(answerClaim).not.equals(undefined)
+    await client.signInWithCode('a@b.c', '123456')
+    expect(client.token).equals('tok_code')
+    answerClaim?.()
+    expect(await claimed).equals(undefined)
+    // The phone's file was opened for this token, and it was kept.
+    expect(client.token).equals('tok_code')
+    // A poll after the sign-in asks nothing.
+    expect(await client.claimSignIn(wait)).equals(undefined)
+    expect(calls).deep.equals([
+      '/auth/email-code',
+      '/auth/request/claim',
+      '/auth/email-code/verify'
+    ])
+  })
+
+  it('claims a sign-in asked for while a token the server refused is still held', async function () {
+    const session = {
+      token: 'tok_claim',
+      expiresAt: '2026-10-01T00:00:00.000Z',
+      user: {
+        id: userIdOfGumbo(1),
+        gumboId: null,
+        displayName: 'Robin Yount',
+        isAdmin: false
+      }
+    }
+    const fetch = async (url: unknown): Promise<Response> =>
+      String(url).endsWith('/auth/email-code')
+        ? new Response(
+            JSON.stringify({
+              sent: true,
+              requestId: 'req_2',
+              clientSecret: 's'
+            }),
+            { status: 202 }
+          )
+        : new Response(JSON.stringify(session))
+    const client = new TeamStationClient({
+      baseUrl: 'http://x/api/v1',
+      fetch,
+      token: 'tok_stale'
+    })
+    const wait = await client.requestEmailCode('a@b.c')
+    expect((await client.claimSignIn(wait))?.token).equals('tok_claim')
+    expect(client.token).equals('tok_claim')
+    // Signed in by that claim: the next poll asks nothing.
+    expect(await client.claimSignIn(wait)).equals(undefined)
+    // A wait this client never asked for is claimed on the token it holds.
+    expect(
+      (await client.claimSignIn({ requestId: 'req_other', clientSecret: 's' }))
+        ?.token
+    ).equals('tok_claim')
+  })
+
   it("reads a game's scoring and scoreboard flags, and their defaults from a server from before them", async function () {
     const game = {
       id: 'g/1',
@@ -3652,6 +3857,229 @@ describe('the ids and pictures a group’s tile is drawn from', function () {
       asPublicGroup({ ...group, leaguePictureUrl: league }).leaguePictureUrl
     ).equals(league)
     expect(asPublicGroup(group).leaguePictureUrl).equals(null)
+  })
+})
+
+describe('a timed request over XMLHttpRequest, as the phone sends one (1.harness-review.1)', function () {
+  /**
+   * The phone's request: after `at` ms the headers, then each piece of the
+   * body `at` ms after the last; with `stallAfter`, nothing more after
+   * that many, and with `never`, no answer at all.
+   */
+  function request(
+    status: number,
+    pieces: string[],
+    at: number,
+    options: {
+      stallAfter?: number
+      never?: boolean
+      error?: boolean
+      /** Pieces of the request body going up, `at` ms apart, first. */
+      uploads?: number
+    } = {}
+  ): { make: () => TimedRequest; aborted: () => boolean; sent: string[] } {
+    let aborted = false
+    const sent: string[] = []
+    const make = (): TimedRequest => {
+      const xhr: TimedRequest = {
+        readyState: 0,
+        status: 0,
+        responseText: '',
+        withCredentials: false,
+        onreadystatechange: null,
+        onprogress: null,
+        onload: null,
+        onerror: null,
+        ontimeout: null,
+        onabort: null,
+        upload: { onprogress: null },
+        open: () => undefined,
+        setRequestHeader: () => undefined,
+        abort: () => {
+          aborted = true
+          xhr.onabort?.()
+        },
+        send: body => {
+          sent.push(body ?? '')
+          if (options.never === true) return
+          const uploads = options.uploads ?? 0
+          for (let piece = 1; piece <= uploads; piece++)
+            setTimeout(() => {
+              if (!aborted) xhr.upload?.onprogress?.()
+            }, at * piece)
+          const set = (patch: Partial<TimedRequest>): void => {
+            Object.assign(xhr, patch)
+          }
+          setTimeout(
+            () => {
+              if (aborted) return
+              if (options.error === true) {
+                xhr.onerror?.()
+                return
+              }
+              set({ readyState: 2, status })
+              xhr.onreadystatechange?.()
+              let text = ''
+              pieces.forEach((piece, index) => {
+                if (index >= (options.stallAfter ?? Infinity)) return
+                setTimeout(
+                  () => {
+                    if (aborted) return
+                    text += piece
+                    set({ readyState: 3, responseText: text })
+                    xhr.onprogress?.()
+                    if (index === pieces.length - 1) {
+                      set({ readyState: 4 })
+                      xhr.onload?.()
+                    }
+                  },
+                  at * (index + 1)
+                )
+              })
+            },
+            at * (uploads + 1)
+          )
+        }
+      }
+      return xhr
+    }
+    return { make, aborted: () => aborted, sent }
+  }
+  class Sender extends TeamStationClient {
+    async send(
+      method: string,
+      path: string,
+      body?: unknown,
+      options?: RequestOptions
+    ): Promise<unknown> {
+      return await this.request(method, path, raw => raw, body, options)
+    }
+  }
+  const unused = (async () => {
+    throw new Error('fetch was used')
+  }) as unknown as typeof fetch
+  const sender = (
+    make: () => TimedRequest,
+    told: { missed: number; refused: number } = { missed: 0, refused: 0 }
+  ): Sender => {
+    const client = new Sender({
+      baseUrl: 'http://x/api/v1',
+      fetch: unused,
+      timedRequest: make,
+      requestDeadlineMs: 60,
+      onDeadlineMissed: () => {
+        told.missed++
+      }
+    })
+    client.onSessionRefused = () => {
+      told.refused++
+    }
+    return client
+  }
+  const failureOf = async (work: Promise<unknown>): Promise<unknown> =>
+    await work.then(
+      () => undefined,
+      (error: unknown) => error
+    )
+
+  it('reads a long answer on a slow link to its end, though it takes far longer than the deadline', async function () {
+    const json = JSON.stringify(Array.from({ length: 8 }, (_, i) => i))
+    const slow = request(200, json.match(/.{1,3}/g)!, 30)
+    const client = sender(slow.make)
+    const started = Date.now()
+    expect(await client.send('GET', '/games')).deep.equals(JSON.parse(json))
+    expect(Date.now() - started).greaterThan(120)
+    expect(client.offline).equals(false)
+  })
+
+  it('takes no answer by the deadline, or a body that stops arriving, as no signal, and lets go of the request', async function () {
+    for (const slow of [
+      request(200, ['[1]'], 10, { never: true }),
+      request(200, ['[1,', '2]'], 20, { stallAfter: 1 })
+    ]) {
+      const told = { missed: 0, refused: 0 }
+      const client = sender(slow.make, told)
+      const failure = await failureOf(client.send('GET', '/games'))
+      expect(failure).property('code', 'offline')
+      expect(client.offline).equals(true)
+      expect(told.missed).equals(1)
+      expect(slow.aborted(), 'nothing more of it is fetched').equals(true)
+    }
+  })
+
+  it('keeps a refusal whose body stalls the server’s, and tells a refused session', async function () {
+    const refused = request(409, ['{"code":'], 10, { stallAfter: 1 })
+    const failure = await failureOf(sender(refused.make).send('GET', '/games'))
+    expect(failure).instanceOf(HttpError)
+    expect(failure).not.property('code', 'offline')
+    const told = { missed: 0, refused: 0 }
+    const out = request(
+      401,
+      [JSON.stringify({ code: 'unauthorized', message: 'No' })],
+      5
+    )
+    await failureOf(sender(out.make, told).send('GET', '/me/roles'))
+    expect(told.refused).equals(1)
+  })
+
+  it('throws the caller’s own cancel as its own, and a request that never left as no signal', async function () {
+    const held = request(200, ['[1]'], 50)
+    const client = sender(held.make)
+    const controller = new AbortController()
+    const sent = client.send(
+      'POST',
+      '/games/g1/events',
+      { a: 1 },
+      {
+        signal: controller.signal,
+        deadline: true
+      }
+    )
+    controller.abort()
+    const failure = await failureOf(sent)
+    expect((failure as Error).name).equals('AbortError')
+    expect(client.offline).equals(false)
+    expect(held.sent).deep.equals(['{"a":1}'])
+    const lost = request(200, [], 5, { error: true })
+    const offline = sender(lost.make)
+    expect(await failureOf(offline.send('GET', '/games'))).property(
+      'code',
+      'offline'
+    )
+    expect(offline.offline).equals(true)
+  })
+
+  it('takes a write whose body is still going up as the link working, though the upload takes longer than the deadline (5.harness-review.1)', async function () {
+    // Five pieces of the body going up, 30 ms apart, then the answer.
+    const slow = request(200, ['{"ok":true}'], 30, { uploads: 5 })
+    const client = sender(slow.make)
+    const started = Date.now()
+    expect(
+      await client.send(
+        'POST',
+        '/games/g1/events',
+        { plays: [] },
+        { deadline: true }
+      )
+    ).deep.equals({ ok: true })
+    expect(Date.now() - started).greaterThan(150)
+    expect(client.offline).equals(false)
+  })
+
+  it('leaves a request with a body of bytes to fetch', async function () {
+    let fetched = false
+    const client = new Sender({
+      baseUrl: 'http://x/api/v1',
+      fetch: async () => {
+        fetched = true
+        return new Response('{}', { status: 200 })
+      },
+      timedRequest: () => {
+        throw new Error('the timed request was used')
+      }
+    })
+    await client.send('PUT', '/upload', new Uint8Array([1, 2]))
+    expect(fetched).equals(true)
   })
 })
 
@@ -4357,5 +4785,323 @@ describe('a person’s tile, coloured by their id alone', function () {
       .staff[0]
     expect(sent).deep.include({ userId: ripken })
     expect(sent).not.have.property('publicName')
+  })
+})
+
+describe('the request deadline', function () {
+  /** A client that sends any request, for the deadline's rules. */
+  class Sender extends TeamStationClient {
+    async send(
+      method: string,
+      path: string,
+      body?: unknown,
+      options?: RequestOptions
+    ): Promise<unknown> {
+      return await this.request(method, path, raw => raw, body, options)
+    }
+  }
+  /**
+   * A server that answers after `answerMs`, or never, and lets go of a
+   * request the client aborts as `fetch` does.
+   */
+  const slow = (
+    answerMs: number | null,
+    seen: Array<{ method: string; signal: boolean }> = []
+  ): typeof fetch =>
+    (async (_url: unknown, init: RequestInit) => {
+      seen.push({ method: String(init.method), signal: init.signal != null })
+      if (init.signal?.aborted === true)
+        throw new DOMException('Aborted', 'AbortError')
+      return await new Promise<Response>((resolve, reject) => {
+        init.signal?.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'))
+        })
+        if (answerMs != null)
+          setTimeout(() => {
+            resolve(new Response(JSON.stringify({ ok: true })))
+          }, answerMs)
+      })
+    }) as unknown as typeof fetch
+  const client = (fetch: typeof globalThis.fetch, deadline = 20): Sender =>
+    new Sender({
+      baseUrl: 'http://x/api/v1',
+      fetch,
+      requestDeadlineMs: deadline
+    })
+
+  it('is ten seconds', async function () {
+    const { REQUEST_DEADLINE_MS, UPLOAD_BODY_CHARS } = await import('./api')
+    expect(REQUEST_DEADLINE_MS).equals(10_000)
+    expect(UPLOAD_BODY_CHARS).equals(64 * 1024)
+  })
+
+  it('throws offline and sets offline when no answer begins by the deadline, and a later answer clears it', async function () {
+    let answer: number | null = null
+    const sender = client((async (url: unknown, init: RequestInit) => {
+      const fetch = slow(answer)
+      return await fetch(url as string, init)
+    }) as unknown as typeof globalThis.fetch)
+    const told: boolean[] = []
+    sender.subscribeOffline(offline => told.push(offline))
+    let failure: unknown
+    try {
+      await sender.myRoles()
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).instanceOf(HttpError)
+    expect(failure).property('code', 'offline')
+    expect(sender.offline).equals(true)
+    // An answer before the deadline is the server reached.
+    answer = 5
+    expect(await sender.send('GET', '/me/roles')).deep.equals({ ok: true })
+    expect(sender.offline).equals(false)
+    expect(told).deep.equals([true, false])
+  })
+
+  it('throws offline and sets offline when an answer begins and its body stalls past the deadline (3.harness-review.2)', async function () {
+    const stalled =
+      (status: number): typeof fetch =>
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              // The status and a first chunk, then nothing more.
+              controller.enqueue(new TextEncoder().encode('{"ok":'))
+            }
+          }),
+          { status }
+        )
+    const sender = client(stalled(200))
+    let failure: unknown
+    try {
+      await sender.send('GET', '/games/g1/events')
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'offline')
+    expect(sender.offline).equals(true)
+    // A refusal whose body stalls is still the server's.
+    const refused = client(stalled(409))
+    failure = undefined
+    try {
+      await refused.send('GET', '/games/g1/events')
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).instanceOf(HttpError)
+    expect(failure).not.property('code', 'offline')
+    expect(refused.offline).equals(false)
+  })
+
+  it('throws the caller’s own cancel during the body as its own, never as no signal (1.harness-review.2)', async function () {
+    const streaming = (async (_url: unknown, init: RequestInit) =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"ok":'))
+            // The caller's cancel ends the body it is reading.
+            init.signal?.addEventListener('abort', () => {
+              controller.error(new DOMException('Aborted', 'AbortError'))
+            })
+          }
+        }),
+        { status: 200 }
+      )) as unknown as typeof fetch
+    const sender = client(streaming, 1000)
+    const controller = new AbortController()
+    const sent = sender.send('GET', '/games/g1/events', undefined, {
+      signal: controller.signal
+    })
+    setTimeout(() => {
+      controller.abort()
+    }, 10)
+    const failure = await sent.then(
+      () => undefined,
+      (error: unknown) => error
+    )
+    expect(failure).not.instanceOf(HttpError)
+    expect((failure as Error).name).equals('AbortError')
+    expect(sender.offline).equals(false)
+  })
+
+  it('tells onDeadlineMissed when no answer begins by the deadline, or a body stalls, and never for an answer in time', async function () {
+    let missed = 0
+    let answer: number | null = null
+    const told = (fetch: typeof globalThis.fetch): Sender =>
+      new Sender({
+        baseUrl: 'http://x/api/v1',
+        fetch,
+        // Far longer than the 5 ms answer below, so a loaded runner keeps it.
+        requestDeadlineMs: 200,
+        onDeadlineMissed: () => {
+          missed++
+        }
+      })
+    const headers = told((async (url: unknown, init: RequestInit) => {
+      const fetch = slow(answer)
+      return await fetch(url as string, init)
+    }) as unknown as typeof globalThis.fetch)
+    await headers.send('GET', '/me/roles').catch(() => undefined)
+    expect(missed).equals(1)
+    answer = 5
+    expect(await headers.send('GET', '/me/roles')).deep.equals({ ok: true })
+    expect(missed).equals(1)
+    const body = told(
+      async () =>
+        new Response(
+          new ReadableStream({
+            start(controller) {
+              controller.enqueue(new TextEncoder().encode('{"ok":'))
+            }
+          })
+        )
+    )
+    await body.send('GET', '/games/g1/events').catch(() => undefined)
+    expect(missed).equals(2)
+  })
+
+  it('answers offline when the onDeadlineMissed listener throws', async function () {
+    const sender = new Sender({
+      baseUrl: 'http://x/api/v1',
+      fetch: slow(null),
+      requestDeadlineMs: 20,
+      onDeadlineMissed: () => {
+        throw new Error('the native module is gone')
+      }
+    })
+    let failure: unknown
+    try {
+      await sender.send('GET', '/me/roles')
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'offline')
+  })
+
+  it('reads a body that keeps arriving past the deadline to its end, and is not offline (4.harness-review.1)', async function () {
+    const chunks = ['{"rows":[', '1,', '2,', '3', ']}']
+    const trickle = (async () =>
+      new Response(
+        new ReadableStream({
+          async start(controller) {
+            // Each chunk well inside the deadline, all of them well past it.
+            for (const chunk of chunks) {
+              await new Promise(resolve => setTimeout(resolve, 12))
+              controller.enqueue(new TextEncoder().encode(chunk))
+            }
+            controller.close()
+          }
+        })
+      )) as unknown as typeof fetch
+    const sender = client(trickle)
+    expect(await sender.send('GET', '/games/g1/events')).deep.equals({
+      rows: [1, 2, 3]
+    })
+    expect(sender.offline).equals(false)
+  })
+
+  it('gives a body the platform cannot stream a deadline that grows with its length (4.harness-review.1)', async function () {
+    const { bodyOf, SLOWEST_BODY_BYTES_PER_SECOND } = await import('./api')
+    const late = (length: number | null, ms: number): Response =>
+      ({
+        body: null,
+        headers: new Headers(
+          length == null ? {} : { 'content-length': String(length) }
+        ),
+        text: async () =>
+          await new Promise<string>(resolve =>
+            setTimeout(() => {
+              resolve('{}')
+            }, ms)
+          )
+      }) as unknown as Response
+    // Short: the deadline alone.
+    expect(
+      await bodyOf(late(null, 40), 10).then(
+        () => 'read',
+        () => 'offline'
+      )
+    ).equals('offline')
+    // Long: the deadline and the time its length takes at the slowest rate.
+    const bytes = SLOWEST_BODY_BYTES_PER_SECOND / 10
+    expect(await bodyOf(late(bytes, 40), 10)).equals('{}')
+    expect(await bodyOf(late(null, 1), 10)).equals('{}')
+  })
+
+  it('keeps a caller’s own cancel its own, never offline', async function () {
+    const sender = client(slow(null))
+    const controller = new AbortController()
+    const asked = sender.send('GET', '/users?forTeam=t1', undefined, {
+      signal: controller.signal
+    })
+    controller.abort()
+    let failure: unknown
+    try {
+      await asked
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).not.instanceOf(HttpError)
+    expect(sender.offline).equals(false)
+    // A signal already cancelled is cancelled at once, also its own.
+    const done = new AbortController()
+    done.abort()
+    let again: unknown
+    try {
+      await sender.send('GET', '/me/roles', undefined, { signal: done.signal })
+    } catch (error) {
+      again = error
+    }
+    expect(again).not.instanceOf(HttpError)
+    expect(sender.offline).equals(false)
+  })
+
+  it('gives an upload none: bytes, and JSON over 64 KiB', async function () {
+    const seen: Array<{ method: string; signal: boolean }> = []
+    const sender = client(slow(60, seen))
+    expect(
+      await sender.send(
+        'PUT',
+        '/chat/attachments/a/parts/0',
+        new Uint8Array(4),
+        {
+          deadline: true
+        }
+      )
+    ).deep.equals({ ok: true })
+    const picture = { image: 'x'.repeat(64 * 1024 + 1) }
+    expect(
+      await sender.send('POST', '/me/picture', picture, { deadline: true })
+    ).deep.equals({ ok: true })
+    expect(sender.offline).equals(false)
+    expect(seen.map(each => each.signal)).deep.equals([false, false])
+  })
+
+  it('gives a small write the queue sends the deadline', async function () {
+    const sender = client(slow(null))
+    let failure: unknown
+    try {
+      await sender.send(
+        'POST',
+        '/games/g1/events',
+        { mode: 'live' },
+        {
+          deadline: true
+        }
+      )
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).property('code', 'offline')
+    expect(sender.offline).equals(true)
+  })
+
+  it('gives a write outside the queue none: a schedule preview answers after it, and is not offline', async function () {
+    const sender = client(slow(60))
+    expect(
+      await sender.send('POST', '/leagues/l1/schedule-previews', { weeks: 1 })
+    ).deep.equals({ ok: true })
+    expect(sender.offline).equals(false)
   })
 })

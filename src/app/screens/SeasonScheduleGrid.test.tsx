@@ -40,6 +40,7 @@ describe('the season schedule grid', () => {
   it('shows a row per season and sends each tap to its editor', async () => {
     const edits: Array<[string, GridColumn]> = []
     const opened: string[] = []
+    const pages: string[] = []
     const saved: unknown[] = []
     await mount(
       <SeasonScheduleGrid
@@ -69,6 +70,10 @@ describe('the season schedule grid', () => {
         onOpenSeason={seasonId => {
           opened.push(seasonId)
         }}
+        onOpenSeasonPage={seasonId => {
+          pages.push(seasonId)
+        }}
+        onChooseDays={() => undefined}
       />
     )
     const headers = [
@@ -78,15 +83,28 @@ describe('the season schedule grid', () => {
     ]
       .map(node => node.textContent)
       .filter(text =>
-        ['Game MINS', 'Between MINS', '# Regular', '# Exhibition'].includes(
-          text ?? ''
-        )
+        [
+          'Game MINS',
+          'Between MINS',
+          '# Regular',
+          '# Exhibition',
+          'Doubleheaders',
+          'Max weekday games',
+          'Max weekend games',
+          'Preferred days',
+          'Other Constraints'
+        ].includes(text ?? '')
       )
     expect([...new Set(headers)]).deep.equals([
       'Game MINS',
       'Between MINS',
       '# Regular',
-      '# Exhibition'
+      '# Exhibition',
+      'Doubleheaders',
+      'Max weekday games',
+      'Max weekend games',
+      'Preferred days',
+      'Other Constraints'
     ])
     // Bare numbers, with no unit.
     expect(hasLabel('Demo Regular Game length in minutes: 120')).equals(true)
@@ -110,16 +128,34 @@ describe('the season schedule grid', () => {
     expect(hasLabel('Demo Regular Size: T-ball')).equals(true)
     expect(hasLabel('Demo Fall Size: 46/60')).equals(true)
     // No exhibition teams: the exhibition games aren't counted.
-    expect(hasLabel('Demo Regular Total games: 15')).equals(true)
+    expect(hasLabel('Demo Regular Total games: 15')).equals(false)
     expect(hasLabel('Demo Regular Doubleheaders: Allowed')).equals(true)
-    expect(hasLabel('Demo Regular Blackouts: 3 days')).equals(true)
-    expect(hasLabel('Demo Regular Windows: 2 periods')).equals(true)
-    expect(hasLabel('Demo Fall Blackouts: 1 day')).equals(true)
-    expect(hasLabel('Demo Fall Windows: None')).equals(true)
+    // A season saved before the weekly maxima has 1 of each.
+    expect(
+      hasLabel('Demo Regular Most games a team plays on weekdays in a week: 1')
+    ).equals(true)
+    expect(
+      hasLabel(
+        'Demo Regular Most games a team plays on the weekend in a week: 1'
+      )
+    ).equals(true)
+    expect(hasLabel('Demo Regular Preferred days: Weekend')).equals(true)
     await tapLabel('Demo Fall Size: 46/60')
-    await tapLabel('Demo Regular Total games: 15')
+    // The team count is plain text: the season's own page changes it.
     await tapLabel('Demo Fall Teams: 7 teams and 2 exhibition teams')
+    expect(
+      document.querySelector('[data-testid="grid-cell-sea_b-teams"]')
+    ).equals(null)
+    await tapLabel('Demo Fall: Change other constraints')
+    // The checkbox and name stay put beside the cells, which scroll.
+    const names = document.querySelector(
+      '[data-testid="season-schedule-names"]'
+    )!
+    for (const label of ['Open Demo Fall', 'Auto-schedule Demo Fall'])
+      expect(names.querySelector(`[aria-label="${label}"]`)).not.equals(null)
+    expect(names.textContent).not.includes('46/60')
     await tapLabel('Open Demo Fall')
+    expect(hasLabel('Auto-schedule Demo Fall')).equals(true)
     // The number columns open in place, never through onEdit.
     for (const label of [
       'Demo Fall Time between games in minutes: 15',
@@ -130,11 +166,9 @@ describe('the season schedule grid', () => {
       await tapLabel(label)
       expect(hasLabel(`Edit ${label.replace(/: \d+$/, '')}`)).equals(true)
     }
-    expect(edits).deep.equals([
-      ['sea_b', 'fieldSize'],
-      ['sea_b', 'teams']
-    ])
+    expect(edits).deep.equals([['sea_b', 'fieldSize']])
     expect(opened).deep.equals(['sea_b'])
+    expect(pages).deep.equals(['sea_b'])
     expect(saved).deep.equals([])
   })
 
@@ -145,6 +179,8 @@ describe('the season schedule grid', () => {
         onEdit={() => undefined}
         onSaveNumber={async () => 'Choose a season of this league'}
         onOpenSeason={() => undefined}
+        onOpenSeasonPage={() => undefined}
+        onChooseDays={() => undefined}
       />
     )
     await tapLabel('Demo Regular Game length in minutes: 120')
@@ -167,6 +203,8 @@ describe('the season schedule grid', () => {
         onEdit={() => undefined}
         onSaveNumber={async () => null}
         onOpenSeason={() => undefined}
+        onOpenSeasonPage={() => undefined}
+        onChooseDays={() => undefined}
       />
     )
     await tapLabel('Demo Regular Game length in minutes: 120')
@@ -184,6 +222,55 @@ describe('the season schedule grid', () => {
     expect(scrolls[0].horizontal).equals(true)
     for (const props of scrolls)
       expect(props.keyboardShouldPersistTaps).equals('handled')
+  })
+})
+
+describe('the season schedule grid’s preferred days', () => {
+  afterEach(unmount)
+
+  const grid = async (
+    settings: Partial<SetupSeason['settings']>,
+    chosen: unknown[]
+  ): Promise<void> => {
+    await mount(
+      <SeasonScheduleGrid
+        seasons={[{ ...SEASON, settings: { ...SEASON.settings, ...settings } }]}
+        onEdit={() => undefined}
+        onSaveNumber={async () => null}
+        onOpenSeason={() => undefined}
+        onOpenSeasonPage={() => undefined}
+        onChooseDays={(...args) => {
+          chosen.push(args)
+        }}
+      />
+    )
+  }
+
+  it('sends the other end when the toggle is tapped', async () => {
+    const chosen: unknown[] = []
+    await grid({ preferGameOn: 'weekend' }, chosen)
+    await tapLabel('Demo Regular Preferred days: Weekend')
+    expect(chosen).deep.equals([['sea_a', 'weekdays']])
+  })
+
+  it('holds the toggle on the only end with games', async () => {
+    const chosen: unknown[] = []
+    await grid(
+      { preferGameOn: 'weekend', maxGamesOnWeekdays: 2, maxGamesOnWeekend: 0 },
+      chosen
+    )
+    expect(hasLabel('Demo Regular Preferred days: Weekday')).equals(true)
+    await tapLabel('Demo Regular Preferred days: Weekday')
+    expect(chosen).deep.equals([])
+  })
+
+  it('greys the toggle out when neither end has games', async () => {
+    const chosen: unknown[] = []
+    await grid({ maxGamesOnWeekdays: 0, maxGamesOnWeekend: 0 }, chosen)
+    const toggle = document.querySelector<HTMLElement>(
+      '[aria-label="Demo Regular Preferred days: Weekend"]'
+    )
+    expect(toggle?.getAttribute('aria-disabled')).equals('true')
   })
 })
 

@@ -1293,6 +1293,19 @@ export function structuredCreditsOf<T>(play: T): {
   return { play: { ...play, credits }, unreproduced }
 }
 
+/** How `storedForm` reads a document. */
+export interface StoredFormOptions {
+  /** Who wrote it; without one, a play holding a record is TeamStation's. */
+  source?: PlaySource
+  /**
+   * Keep a description no sentence reproduces, marking its event `said:
+   * null`, rather than wording it from the event itself. A play converted
+   * from another scorer's document is stored so: its words are that
+   * scorer's or a person's, and no later read rewords them.
+   */
+  keepWords?: boolean
+}
+
 /** The stored form of a document, and what making it found. */
 export interface StoredForm<T = unknown> {
   document: T
@@ -1312,7 +1325,7 @@ export interface StoredForm<T = unknown> {
  */
 export function storedForm<T>(
   document: T,
-  options: { source?: PlaySource } = {}
+  options: StoredFormOptions = {}
 ): StoredForm<T> {
   if (!object(document)) return { document, unreproduced: 0, refused: 0 }
   if (isRecord(document)) {
@@ -1348,6 +1361,10 @@ export function storedForm<T>(
         if (!describedEvent(event) || 'said' in event) return event
         const found = saidFromDescription(read, event)
         if (found == null) return event
+        // Words no sentence reproduces stay the play's own words: `said:
+        // null` keeps every later store and read from wording them anew.
+        if (!found.reproduced && options.keepWords === true)
+          return { ...event, said: null }
         if (!found.reproduced) unreproduced++
         return { ...event, said: found.said }
       })

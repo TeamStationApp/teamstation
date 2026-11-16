@@ -50,7 +50,7 @@ describe('rescheduling published games', function () {
     const built = await w.call<SchedulePreview>(
       101,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       { mode: 'full', existing: 'workAround' }
     )
     expect(built.status).equals(201)
@@ -382,7 +382,7 @@ describe('rescheduling published games', function () {
     const partial = await w.call<SchedulePreview>(
       101,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       { mode: 'partial', existing: 'replace', teamIds }
     )
     expect(partial.status).equals(201)
@@ -475,7 +475,7 @@ describe('rescheduling published games', function () {
     const partial = await w.call<SchedulePreview>(
       101,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       {
         mode: 'partial',
         existing: 'replace',
@@ -511,7 +511,7 @@ describe('rescheduling published games', function () {
     const built = await w.call<SchedulePreview>(
       101,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       { mode: 'full', existing: 'replace' }
     )
     expect(built.status).equals(201)
@@ -547,7 +547,7 @@ describe('rescheduling published games', function () {
     const partial = await w.call<SchedulePreview>(
       101,
       'POST',
-      `/leagues/${w.fx.f.leagueA}/schedule-previews`,
+      `/leagues/${w.fx.f.leagueA}/schedule-previews/preparations`,
       { mode: 'partial', existing: 'replace', teamIds: [bears, owls] }
     )
     const option = partial.body.options[0]

@@ -19,49 +19,40 @@ import { buildable, schedulingChecks } from '../../common/schedulingChecks'
 import {
   DOUBLEHEADERS,
   doubleheadersLabel,
+  liveFieldIds,
   type ScheduleSettings,
   type ScheduleSetup,
   type ScheduleSetupChoice,
-  type SetupField,
+  selectedFields,
   type SetupSeason
 } from '../../common/seasonScheduling'
 import { FIELD_SIZES, fieldSizeLabel } from '../../common/venues'
-import { Button, ListCard, ListRow, Screen, SectionHeader } from '../components'
-import { CheckRow } from '../components/CheckRow'
+import {
+  Button,
+  ListCard,
+  ListRow,
+  Screen,
+  SectionHeader,
+  useBreakpoint,
+  usePaneWidth
+} from '../components'
 import { ChoiceSheet } from '../components/ChoiceSheet'
-import { DangerText } from '../components/DangerText'
-import { DateRangePicker } from '../components/DateRangePicker'
-import { PickerDialog } from '../components/PickerDialog'
+import type { NumberColumn } from '../components/GridNumberCell'
 import { useSceneReveals } from '../components/sceneShown'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { edgeMarginRem } from '../layout/margins'
+import { useInsets } from '../platform/safeArea'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
-import { FieldPickerScene } from './FieldPickerScene'
 import { gameTimeLabel } from './SchedulePreviewScreen'
 import {
   type GridColumn,
   SeasonScheduleGrid,
   type SeasonScheduleGridHandle
 } from './SeasonScheduleGrid'
-import { sizesLabel } from './VenueScreen'
 
 /** The run's chosen seasons, in the league's order. */
 export function chosenSeasons(setup: ScheduleSetup): SetupSeason[] {
   return setup.seasons.filter(season => setup.seasonIds.includes(season.id))
-}
-
-/**
- * A run field's detail: its sizes, and, for a field of a venue the league
- * doesn't own, the venue and who owns it.
- */
-export function setupFieldDetail(field: SetupField): string {
-  if (field.deleted) return 'Deleted. Uncheck it to leave it out.'
-  const sizes = sizesLabel(field.sizes)
-  if (field.ours) return sizes
-  const owners =
-    field.ownerNames.length === 0
-      ? 'unclaimed'
-      : `claimed by ${field.ownerNames.join(', ')}`
-  return `${sizes} · ${field.venueName} · ${owners}`
 }
 
 /**
@@ -76,17 +67,25 @@ export function AutoSchedulerScreen({
   leagueName,
   onFieldManager,
   onOpenSeason,
+  onOpenSeasonPage,
   onOpenPreview
 }: {
   client: TeamStationClient
   leagueId: string
   leagueName?: string
   onFieldManager: () => void
+  /** Opens a season's other scheduling constraints. */
   onOpenSeason: (seasonId: string) => void
+  /** Opens a season's own page. */
+  onOpenSeasonPage: (seasonId: string) => void
   onOpenPreview: (previewId: string) => void
 }): React.ReactElement {
   const theme = useTheme()
   const styles = getStyles(theme)
+  const breakpoint = useBreakpoint()
+  const insets = useInsets()
+  // The window's width less any sidebar.
+  const paneWidth = usePaneWidth()
   const [setup, setSetup] = useState<ScheduleSetup>()
   const [error, setError] = useState('')
   const [revision, setRevision] = useState(0)
@@ -100,7 +99,6 @@ export function AutoSchedulerScreen({
   const [toReschedule, setToReschedule] = useState<GameToReschedule[]>([])
   const [asking, setAsking] = useState<{ existing: number }>()
   const [building, setBuilding] = useState(false)
-  const [picking, setPicking] = useState(false)
   // Each season's save in flight, which its next save waits for, and the
   // settings its last save stored, which that next save builds on,
   // so a sheet's save can't send back a number a cell's save just changed.
@@ -183,9 +181,7 @@ export function AutoSchedulerScreen({
           ...item,
           ...stored.current.get(item.id)
         }))
-        const fields = setup.fields.filter(field =>
-          setup.fieldIds.includes(field.id)
-        )
+        const fields = selectedFields(setup.fields, seasons)
         if (!buildable(schedulingChecks(seasons, fields))) return
       }
       const preview = await client.buildSchedulePreview(leagueId, request)
@@ -351,13 +347,8 @@ export function AutoSchedulerScreen({
       </Screen>
     )
   const seasons = chosenSeasons(setup)
-  const fields = setup.fields.filter(field => setup.fieldIds.includes(field.id))
+  const fields = selectedFields(setup.fields, seasons)
   const checks = schedulingChecks(seasons, fields)
-  // A field deleted since it was chosen can't be chosen again, so any change
-  // leaves it out.
-  const liveFieldIds = fields
-    .filter(field => !field.deleted)
-    .map(field => field.id)
   const editedSeason =
     editing == null
       ? undefined
@@ -383,94 +374,144 @@ export function AutoSchedulerScreen({
   const openFieldManager = (): void => {
     leave(onFieldManager)
   }
+  const openSeasonPage = (seasonId: string): void => {
+    leave(() => {
+      onOpenSeasonPage(seasonId)
+    })
+  }
   const edit = (seasonId: string, column: GridColumn): void => {
-    if (column === 'teams' || column === 'blackouts' || column === 'windows') {
-      openSeason(seasonId)
-      return
-    }
     setEditing({ seasonId, column })
+  }
+  /**
+   * A weekly maximum, and with a maximum of 0 the preference moved off the
+   * days it leaves no games for, in the same save.
+   */
+  const saveNumber = async (
+    season: SetupSeason,
+    column: NumberColumn,
+    value: number
+  ): Promise<string | null> => {
+    const changes: Partial<ScheduleSettings> = { [column]: value }
+    const preferred = season.settings.preferGameOn ?? 'weekend'
+    if (
+      value === 0 &&
+      column === 'maxGamesOnWeekdays' &&
+      preferred === 'weekdays'
+    )
+      changes.preferGameOn = 'weekend'
+    if (
+      value === 0 &&
+      column === 'maxGamesOnWeekend' &&
+      preferred === 'weekend'
+    )
+      changes.preferGameOn = 'weekdays'
+    return await storeSettings(season, changes)
   }
   const close = (): void => {
     setEditing(undefined)
   }
+  // The screen is wide for the season table; the rest keeps the column's
+  // width and margins, as on every other screen. Until the column reaches its
+  // most width, the table keeps the column's margins and lines up with it;
+  // past that, its margins narrow to a phone's as the pane grows.
+  const phoneMargin = theme.rem(edgeMarginRem(theme, 'phone'))
+  const columnMargin = theme.rem(edgeMarginRem(theme, breakpoint))
+  const columnWidth = theme.rem(theme.maxContentWidthRem)
+  const tableMargin = Math.max(
+    phoneMargin,
+    columnMargin - Math.max(0, paneWidth - columnWidth) / 2
+  )
+  const tableSide = {
+    paddingLeft: Math.max(tableMargin, insets.left),
+    paddingRight: Math.max(tableMargin, insets.right)
+  }
+  const narrow = [
+    styles.section,
+    styles.narrow,
+    { maxWidth: columnWidth - 2 * columnMargin }
+  ]
   return (
-    <Screen scrollRef={page}>
+    <Screen scrollRef={page} wide contentStyle={tableSide}>
       <View style={styles.page}>
-        <Text accessibilityRole="header" style={styles.title}>
-          Auto-Scheduler
-        </Text>
-        {leagueName != null && <Text style={styles.meta}>{leagueName}</Text>}
-        <ListCard>
-          <ListRow
-            title="Field Manager"
-            subtitle="Find, claim and set up the venues and fields your league plays on"
-            emblemIcon="stadium"
-            onPress={openFieldManager}
-          />
-        </ListCard>
-        {error !== '' && (
-          <Text accessibilityRole="alert" style={styles.error}>
-            {error}
+        <View style={narrow}>
+          <Text accessibilityRole="header" style={styles.title}>
+            Auto-Scheduler
           </Text>
-        )}
-        {stale && (
-          <Button
-            label="Retry"
-            onPress={() => {
-              setRevision(value => value + 1)
-            }}
-          />
-        )}
-        <SectionHeader title="Seasons" note={String(seasons.length)} />
-        {setup.seasons.length === 0 ? (
-          <Text style={styles.meta}>
-            This league has no seasons yet. A schedule is built for a season of
-            the league.
-          </Text>
-        ) : (
+          {leagueName != null && <Text style={styles.meta}>{leagueName}</Text>}
           <ListCard>
-            {setup.seasons.map(season => (
-              <CheckRow
-                key={season.id}
-                label={season.name}
-                detail={`${season.year} · ${season.participants} teams${season.exhibitionTeams === 0 ? '' : `, ${season.exhibitionTeams} exhibition`}`}
-                checked={setup.seasonIds.includes(season.id)}
-                disabled={busy}
-                onToggle={() => {
-                  const on = setup.seasonIds.includes(season.id)
-                  choose({
-                    seasonIds: setup.seasons
-                      .map(item => item.id)
-                      .filter(id =>
-                        id === season.id ? !on : setup.seasonIds.includes(id)
-                      ),
-                    fieldIds: liveFieldIds,
-                    addedFieldIds: setup.addedFieldIds
-                  }).catch(() => undefined)
-                }}
-              />
-            ))}
+            <ListRow
+              title="Field Manager"
+              subtitle="Find, claim and set up the venues and fields your league plays on"
+              emblemIcon="stadium"
+              onPress={openFieldManager}
+            />
           </ListCard>
-        )}
-        {seasons.length > 0 && (
-          <>
-            <SectionHeader title="Schedule settings" />
-            <Text style={styles.meta}>
-              Tap a setting to change it, or a season for its windows, blackout
-              days and exhibition teams.
+          {error !== '' && (
+            <Text accessibilityRole="alert" style={styles.error}>
+              {error}
             </Text>
+          )}
+          {stale && (
+            <Button
+              label="Retry"
+              onPress={() => {
+                setRevision(value => value + 1)
+              }}
+            />
+          )}
+        </View>
+        {/* The season table alone grows past the column, to the margins a
+            phone has, so its columns fit on a wide screen; narrower than
+            that, it and its heading sit in the middle. */}
+        <View
+          style={
+            setup.seasons.length === 0
+              ? narrow
+              : [styles.section, styles.tableSection]
+          }
+        >
+          <SectionHeader title="Select seasons to auto schedule." />
+          {setup.seasons.length === 0 ? (
+            <Text style={styles.meta}>This league has no seasons yet.</Text>
+          ) : (
             <SeasonScheduleGrid
               ref={grid}
-              seasons={seasons}
+              seasons={setup.seasons}
+              selectedIds={setup.seasonIds}
+              disabled={busy}
+              onToggle={seasonId => {
+                choose({
+                  fieldIds: liveFieldIds(setup),
+                  // Adds and removes nothing, whatever this screen last read.
+                  addedFieldIds: [],
+                  removedFieldIds: [],
+                  seasonIds: setup.seasonIds.includes(seasonId)
+                    ? setup.seasonIds.filter(id => id !== seasonId)
+                    : [...setup.seasonIds, seasonId]
+                }).catch(() => undefined)
+              }}
               onEdit={edit}
               onSaveNumber={async (seasonId, column, value) =>
-                await storeSettings(
+                await saveNumber(
                   // The grid shows only the setup's own seasons.
                   setup.seasons.find(item => item.id === seasonId)!,
-                  { [column]: value }
+                  column,
+                  value
                 )
               }
+              onChooseDays={(seasonId, preferGameOn) => {
+                storeSettings(
+                  setup.seasons.find(item => item.id === seasonId)!,
+                  { preferGameOn }
+                ).then(
+                  message => {
+                    if (message != null) setError(message)
+                  },
+                  () => undefined
+                )
+              }}
               onOpenSeason={openSeason}
+              onOpenSeasonPage={openSeasonPage}
               scrollToKeyboard={(input, gap) => {
                 // React Native's sum takes the scroll view to start at the
                 // window's top; the measured top keeps it right if not.
@@ -484,199 +525,100 @@ export function AutoSchedulerScreen({
                 })
               }}
             />
-          </>
-        )}
-        <SectionHeader
-          title="Fields for this run"
-          note={String(fields.length)}
-          // Beside two actions, a phone wraps the title rather than cut it.
-          titleLines={2}
-          actions={[
-            {
-              label: 'Add field',
-              accessibilityLabel: 'Add a field to this run',
-              onPress: () => {
-                setPicking(true)
-              }
-            },
-            {
-              label: 'Field Manager',
-              accessibilityLabel: 'Open the Field Manager',
-              onPress: openFieldManager
-            }
-          ]}
-        />
-        {setup.fields.length === 0 ? (
-          <Text style={styles.meta}>
-            Add any field in the registry, or claim a venue and add its fields
-            in the Field Manager.
-          </Text>
-        ) : (
+          )}
+        </View>
+        <View style={narrow}>
+          <SectionHeader title="Other Constraints" />
           <ListCard>
-            {setup.fields.map(field => {
-              const label = `${field.name}, ${field.venueName}`
-              const row = (
-                <CheckRow
-                  key={field.id}
-                  label={label}
-                  detail={setupFieldDetail(field)}
-                  checked={setup.fieldIds.includes(field.id)}
+            <ListRow
+              title="Avoid manager/head coach double bookings"
+              titleNumberOfLines={0}
+              end={
+                <Switch
+                  accessibilityLabel="Avoid manager/head coach double bookings"
+                  value={setup.avoidHeadCoachConflicts ?? true}
                   disabled={busy}
-                  onToggle={() => {
-                    const on = setup.fieldIds.includes(field.id)
-                    choose({
-                      seasonIds: setup.seasonIds,
-                      fieldIds: setup.fields
-                        .map(item => item.id)
-                        .filter(id =>
-                          id === field.id ? !on : liveFieldIds.includes(id)
-                        ),
-                      addedFieldIds: setup.addedFieldIds
-                    }).catch(() => undefined)
+                  onValueChange={value => {
+                    choose(
+                      { avoidHeadCoachConflicts: value },
+                      setup.avoidHeadCoachConflicts ?? true
+                    ).catch(() => undefined)
                   }}
                 />
-              )
-              // A field added from another venue stays listed, checked or
-              // not, until it is removed, which also takes it off the run.
-              if (field.ours || !setup.addedFieldIds.includes(field.id))
-                return row
-              return (
-                <View key={field.id} style={styles.fieldRow}>
-                  <View style={styles.fieldCheck}>{row}</View>
-                  <View style={styles.removeCell}>
-                    <DangerText
-                      label="Remove"
-                      accessibilityLabel={`Remove ${label} from the list`}
-                      disabled={busy}
-                      onPress={() => {
-                        choose({
-                          seasonIds: setup.seasonIds,
-                          fieldIds: liveFieldIds.filter(id => id !== field.id),
-                          addedFieldIds: setup.addedFieldIds.filter(
-                            id => id !== field.id
-                          )
-                        }).catch(() => undefined)
-                      }}
-                    />
-                  </View>
-                </View>
-              )
-            })}
+              }
+            />
           </ListCard>
-        )}
-        <SectionHeader title="Other Constraints" />
-        <ListCard>
-          <ListRow
-            title="Avoid manager/head coach double bookings"
-            titleNumberOfLines={0}
-            end={
-              <Switch
-                accessibilityLabel="Avoid manager/head coach double bookings"
-                value={setup.avoidHeadCoachConflicts ?? true}
-                disabled={busy}
-                onValueChange={value => {
-                  choose(
-                    { avoidHeadCoachConflicts: value },
-                    setup.avoidHeadCoachConflicts ?? true
-                  ).catch(() => undefined)
+          <SectionHeader title="Early warnings" note={String(checks.length)} />
+          {checks.length === 0 ? (
+            <Text style={styles.meta}>No early warnings.</Text>
+          ) : (
+            <View style={styles.warnings} testID="early-warnings">
+              {checks.map(check => (
+                <Text
+                  key={`${check.kind}:${check.message}`}
+                  style={styles.warning}
+                >
+                  {check.blocking ? 'Must fix: ' : ''}
+                  {check.message}
+                </Text>
+              ))}
+            </View>
+          )}
+          <Button
+            label={building ? 'Building schedule…' : 'Build schedule'}
+            disabled={busy || building || !buildable(checks)}
+            onPress={() => {
+              build({ mode: 'full' }).catch(() => undefined)
+            }}
+          />
+          {toReschedule.length > 0 && (
+            <>
+              <SectionHeader
+                title="Needs rescheduling"
+                note={String(toReschedule.length)}
+              />
+              <View testID="needs-rescheduling">
+                <ListCard>
+                  {toReschedule.map(game => (
+                    <ListRow
+                      key={`${game.previewId}:${game.gameKey}`}
+                      title={`${game.awayTeamName} at ${game.homeTeamName}`}
+                      subtitle={`${rescheduleReasonLabel(game.reason)}\n${gameTimeLabel(game, game.timezone)}`}
+                      subtitleNumberOfLines={3}
+                    />
+                  ))}
+                </ListCard>
+              </View>
+              <Button
+                label="Recalculate just these teams"
+                disabled={busy || building}
+                onPress={() => {
+                  build({
+                    mode: 'partial',
+                    existing: 'replace',
+                    teamIds: [
+                      ...new Set(
+                        toReschedule.flatMap(game => [
+                          game.homeTeamId,
+                          game.awayTeamId
+                        ])
+                      )
+                    ]
+                  }).catch(() => undefined)
                 }}
               />
-            }
-          />
-        </ListCard>
-        <SectionHeader title="Early warnings" note={String(checks.length)} />
-        {checks.length === 0 ? (
-          <Text style={styles.meta}>No early warnings.</Text>
-        ) : (
-          <View style={styles.warnings} testID="early-warnings">
-            {checks.map(check => (
-              <Text
-                key={`${check.kind}:${check.message}`}
-                style={styles.warning}
-              >
-                {check.blocking ? 'Must fix: ' : ''}
-                {check.message}
-              </Text>
-            ))}
-          </View>
-        )}
-        <Button
-          label={building ? 'Building schedule…' : 'Build schedule'}
-          disabled={busy || building || !buildable(checks)}
-          onPress={() => {
-            build({ mode: 'full' }).catch(() => undefined)
-          }}
-        />
-        {toReschedule.length > 0 && (
-          <>
-            <SectionHeader
-              title="Needs rescheduling"
-              note={String(toReschedule.length)}
-            />
-            <View testID="needs-rescheduling">
-              <ListCard>
-                {toReschedule.map(game => (
-                  <ListRow
-                    key={`${game.previewId}:${game.gameKey}`}
-                    title={`${game.awayTeamName} at ${game.homeTeamName}`}
-                    subtitle={`${rescheduleReasonLabel(game.reason)}\n${gameTimeLabel(game, game.timezone)}`}
-                    subtitleNumberOfLines={3}
-                  />
-                ))}
-              </ListCard>
-            </View>
-            <Button
-              label="Recalculate just these teams"
-              disabled={busy || building}
-              onPress={() => {
-                build({
-                  mode: 'partial',
-                  existing: 'replace',
-                  teamIds: [
-                    ...new Set(
-                      toReschedule.flatMap(game => [
-                        game.homeTeamId,
-                        game.awayTeamId
-                      ])
-                    )
-                  ]
-                }).catch(() => undefined)
-              }}
-            />
-            <Button
-              label="Recalculate everything"
-              kind="secondary"
-              disabled={busy || building || !buildable(checks)}
-              onPress={() => {
-                build({ mode: 'full' }).catch(() => undefined)
-              }}
-            />
-          </>
-        )}
+              <Button
+                label="Recalculate everything"
+                kind="secondary"
+                disabled={busy || building || !buildable(checks)}
+                onPress={() => {
+                  build({ mode: 'full' }).catch(() => undefined)
+                }}
+              />
+            </>
+          )}
+        </View>
       </View>
-      {picking && (
-        <FieldPickerScene
-          client={client}
-          onChooseField={chosen => {
-            setPicking(false)
-            choose({
-              seasonIds: setup.seasonIds,
-              fieldIds: [
-                ...liveFieldIds.filter(id => id !== chosen.id),
-                chosen.id
-              ],
-              // It stays listed once unchecked, until it is removed.
-              addedFieldIds: [
-                ...setup.addedFieldIds.filter(id => id !== chosen.id),
-                chosen.id
-              ]
-            }).catch(() => undefined)
-          }}
-          onClose={() => {
-            setPicking(false)
-          }}
-        />
-      )}
       {asking != null && (
         <ChoiceSheet
           title={`These seasons already have ${asking.existing === 1 ? 'an upcoming game' : `${asking.existing} upcoming games`}`}
@@ -742,27 +684,15 @@ export function AutoSchedulerScreen({
           onClose={close}
         />
       )}
-      {editedSeason != null && editing?.column === 'dates' && (
-        <PickerDialog onClose={close}>
-          <DateRangePicker
-            initial={{
-              startsOn: editedSeason.settings.startsOn,
-              endsOn: editedSeason.settings.endsOn
-            }}
-            onChoose={range => {
-              close()
-              saveSettings(editedSeason, range).catch(() => undefined)
-            }}
-            onCancel={close}
-          />
-        </PickerDialog>
-      )}
     </Screen>
   )
 }
 
 export const getStyles = cacheStyles((theme: Theme) => ({
   page: { gap: theme.rem(1), paddingBottom: theme.rem(6) },
+  section: { gap: theme.rem(1) },
+  narrow: { width: '100%' as const, alignSelf: 'center' as const },
+  tableSection: { alignSelf: 'center' as const, maxWidth: '100%' as const },
   title: {
     fontFamily: theme.primaryTextFont,
     fontSize: theme.rem(1.75),
@@ -789,17 +719,5 @@ export const getStyles = cacheStyles((theme: Theme) => ({
     fontFamily: theme.semiBoldTextFont,
     fontSize: theme.rem(0.9375),
     color: '#211B00'
-  },
-  fieldRow: {
-    flexDirection: 'row' as const,
-    alignItems: 'center' as const
-  },
-  fieldCheck: { flex: 1 },
-  removeCell: {
-    alignSelf: 'stretch' as const,
-    justifyContent: 'center' as const,
-    paddingHorizontal: theme.rem(1),
-    borderLeftWidth: 1,
-    borderLeftColor: theme.defaultBorderColor
   }
 }))

@@ -6,7 +6,9 @@ import {
   addInning,
   alignPlan,
   asGamePlan,
+  asPlanColumnCell,
   clearPlan,
+  columnPlan,
   completeCell,
   DEFAULT_PLAN_INNINGS,
   type GamePlan,
@@ -16,6 +18,7 @@ import {
   type PlanCell,
   planCellEntry,
   planCellOf,
+  planColumn,
   planHasPositions,
   plannedInnings,
   planPlayerKey,
@@ -312,6 +315,73 @@ describe('game plan model', function () {
         ])
       )
     ).deep.equals([true, false, false, true, false])
+  })
+
+  describe('planColumn and columnPlan', function () {
+    const twelve: LineupPlayer = {
+      gumboId: 12,
+      fullName: 'Ames A',
+      jersey: '12'
+    }
+    const alsoFour: LineupPlayer = {
+      gumboId: 9,
+      fullName: 'Abbot A',
+      jersey: '4'
+    }
+    const sheet = plan([
+      [twelve, ['P', 'C', '']],
+      [ruth, ['C', '', 'P']],
+      [gehrig, ['1B', '1B', 'C']],
+      [alsoFour, ['', 'P', '1B']]
+    ])
+
+    it('answers every row with the inning’s cell, by jersey numerically and then name', function () {
+      expect(planColumn(sheet, 2)).deep.equals([
+        { player: ruth, cell: '' },
+        { player: alsoFour, cell: 'P' },
+        { player: gehrig, cell: '1B' },
+        { player: twelve, cell: 'C' }
+      ])
+    })
+
+    it('is empty for an inning the plan has not, and for a plan with no position', function () {
+      expect(planColumn(sheet, 0)).deep.equals([])
+      expect(planColumn(sheet, 4)).deep.equals([])
+      expect(
+        planColumn(
+          plan([
+            [ruth, ['', '']],
+            [gehrig, ['DH', '']]
+          ]),
+          1
+        )
+      ).deep.equals([])
+    })
+
+    it('makes a column a plan of one inning that inningDefense reads at the 1st', function () {
+      const one = columnPlan(planColumn(sheet, 3))
+      expect(one).deep.equals({
+        enabled: true,
+        innings: 1,
+        rows: [
+          { player: ruth, cells: ['P'] },
+          { player: alsoFour, cells: ['1B'] },
+          { player: gehrig, cells: ['C'] },
+          { player: twelve, cells: [''] }
+        ]
+      })
+      expect(columnPlan([]).enabled).equals(false)
+    })
+
+    it('cleans a column’s cell, reading a dash as the bench and refusing anything else', function () {
+      expect(asPlanColumnCell({ player: ruth, cell: '-' })).deep.equals({
+        player: ruth,
+        cell: ''
+      })
+      expect(() => asPlanColumnCell({ player: ruth, cell: 'XX' })).throws(
+        TypeError
+      )
+    })
   })
 
   describe('inningDefense', function () {

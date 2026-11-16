@@ -565,6 +565,25 @@ export function asImported(play: GumboPlay): GumboPlay {
 }
 
 /**
+ * A play as an outside scorer that times its pitches posts it: its document
+ * with every timed pitch and action event, and no record.
+ */
+export function asImportedWithPitches(play: GumboPlay): GumboPlay {
+  const { teamStation: _record, ...document } = asImported(
+    play
+  ) as GumboPlay & {
+    teamStation?: unknown
+  }
+  return JSON.parse(
+    JSON.stringify({
+      ...document,
+      count: play.count,
+      playEvents: play.playEvents
+    })
+  ) as GumboPlay
+}
+
+/**
  * The first two innings imported from elsewhere, as plays without records,
  * and the third scored in TeamStation from there.
  */

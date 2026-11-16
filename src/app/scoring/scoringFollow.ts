@@ -7,7 +7,6 @@ export function authoredScoringEvent(
 ): boolean {
   switch (event.type) {
     case 'RESET':
-    case 'PLANS':
     case 'SAVED_UNDONE':
     case 'PRESENTATION':
     case 'PRESENTATION_CONTACT':
