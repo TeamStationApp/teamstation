@@ -204,7 +204,10 @@ describe('E1: the time each scoring action was taken', function () {
       appId: url,
       stepDelay: 200,
       artifacts: 'on-failure',
-      extra: { browser: 'chrome', windowSize: '1280x720' }
+      extra: {
+        browser: process.env.TS_CHROME_PATH ?? 'chrome',
+        windowSize: '1280x720'
+      }
     })
     await browser.blockNetwork({
       patterns: ['*fonts.googleapis.com*', '*fonts.gstatic.com*']
@@ -300,7 +303,7 @@ describe('E1: the time each scoring action was taken', function () {
     await pause(90_000)
     for (let undos = 0; !(await atStart()); undos++) {
       expect(undos).lessThan(30)
-      await undo()
+      console.log(`  back: ${(await undo()).label}`)
     }
     const rest = [...first, ...second, ...third].slice(1)
     rest[rest.length - 1] = 'Ball'

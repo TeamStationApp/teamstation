@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import { createRequire } from 'node:module'
@@ -7,10 +8,22 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { PerspectiveCamera, Vector3 } from 'three'
 
+import {
+  maestroDriver,
+  setTrajectory,
+  tapFielder
+} from '../../../e2e/rigs/fieldPointer'
 import { asGameDetail, asRosterEntry } from '../../common/api'
+import { HttpError } from '../../common/errors'
 import { shortName } from '../../common/names'
 import type { ScoringAction } from '../../common/scoring/actions'
-import { ScoringSession, type StoredGame } from '../../common/scoring/session'
+import { sameScoringMutation } from '../../common/scoring/scoringMutation'
+import {
+  type SaveChange,
+  ScoringSession,
+  type StoredGame
+} from '../../common/scoring/session'
+import { withNames } from '../../common/scoring/storedNames'
 import { userIdOfGumbo } from '../../common/userId'
 import { rosterEntryFromBody } from '../../test/mintedRosterEntry'
 import { applyFieldCamera } from '../field/cameraModel'
@@ -242,18 +255,6 @@ class Page {
     }
   }
 
-  async focus(selector: string): Promise<void> {
-    await this.driver.evalBrowserScript({
-      script: `document.querySelector(${JSON.stringify(selector)}).focus();return true`
-    })
-  }
-
-  readonly keyboard = {
-    press: async (key: string): Promise<void> => {
-      await this.driver.pressKey({ key: key.toUpperCase() })
-    }
-  }
-
   readonly mouse = {
     click: async (x: number, y: number): Promise<void> => {
       await this.driver.tapOnPoint({ x, y })
@@ -302,10 +303,48 @@ async function open(fixture: Fixture = {}): Promise<{
   page: Page
   unexpected: string[]
   peer: (actions: ScoringAction[]) => Promise<ScoringSession['state']>
+  created: (
+    side: 'away' | 'home',
+    body: { firstName: string; lastName: string; jersey: string }
+  ) => ReturnType<typeof rosterEntryFromBody>
   savedPlays: () => number
+  saves: string[]
 }> {
   const unexpected: string[] = []
+  // Each lineup or scoring save, who made it and what became of it, for a
+  // failing check to print.
+  const saves: string[] = []
   const held: StoredGame = { plays: [], currentPlay: null }
+  // The players this page created, on its side's roster from then on, as
+  // the API keeps them.
+  const created: Record<
+    'away' | 'home',
+    Array<ReturnType<typeof rosterEntryFromBody>>
+  > = {
+    away: [],
+    home: []
+  }
+  const sideRoster = (
+    side: 'away' | 'home'
+  ): Array<{ gumboId: number | null; shortName: string }> => [
+    ...roster(
+      side,
+      side === 'home' ? (fixture.homeRoster ?? 10) : (fixture.awayRoster ?? 10),
+      fixture.collisionNames
+    ),
+    ...created[side]
+  ]
+  /** The game as the API reads it back: every player named from his account. */
+  const named = (): StoredGame => {
+    const names = new Map<number, string>()
+    for (const entry of [...sideRoster('away'), ...sideRoster('home')])
+      if (entry.gumboId != null) names.set(entry.gumboId, entry.shortName)
+    return {
+      ...held,
+      plays: held.plays.map(play => withNames(play, names)),
+      currentPlay: withNames(held.currentPlay, names)
+    }
+  }
   const fixtureGame = asGameDetail(game)
   const context = {
     gamePk: 'g1',
@@ -322,25 +361,88 @@ async function open(fixture: Fixture = {}): Promise<{
       false
     )
   }
-  const save = (change: {
-    plays?: StoredGame['plays']
-    remove?: number[]
-    currentPlay?: StoredGame['currentPlay']
-  }): StoredGame => {
+  // The lineups as held, as a digest: every lineup action of the game. A
+  // save naming an older one is refused, as the server refuses a post built
+  // on lineups somebody else has saved since.
+  const lineupsDigest = (): string =>
+    createHash('sha1')
+      .update(
+        JSON.stringify(
+          [...held.plays, held.currentPlay].flatMap(play =>
+            (
+              (play as { teamStation?: { actions?: unknown[] } } | null)
+                ?.teamStation?.actions ?? []
+            ).filter(action => (action as { type?: string }).type === 'lineup')
+          )
+        )
+      )
+      .digest('hex')
+      .slice(0, 16)
+  // The server's arbitration (`postPlays.ts`): a save built on a scoring base
+  // somebody else has moved on is refused as stale when it carries no scoring
+  // of its own, and answered with what is held, superseded, when it does.
+  const save = (
+    change: Pick<
+      SaveChange,
+      | 'plays'
+      | 'remove'
+      | 'currentPlay'
+      | 'scoringBase'
+      | 'scoringMutation'
+      | 'lineupsBase'
+    >
+  ): StoredGame => {
+    if (
+      change.lineupsBase !== undefined &&
+      change.lineupsBase !== lineupsDigest()
+    )
+      throw new HttpError(
+        'conflict',
+        'Somebody else changed the lineups since this was read',
+        { stale: true }
+      )
+    const prior = held.scoringMutation
+    if (
+      change.scoringBase !== undefined &&
+      !sameScoringMutation(change.scoringBase, prior)
+    ) {
+      if (change.scoringMutation == null)
+        throw new HttpError(
+          'conflict',
+          'Somebody else changed the scoring since this lineup was read',
+          { stale: true }
+        )
+      return {
+        ...held,
+        lineupsDigest: lineupsDigest(),
+        superseded: !sameScoringMutation(change.scoringMutation, prior)
+      }
+    }
+    if (
+      change.scoringMutation != null &&
+      sameScoringMutation(change.scoringMutation, prior)
+    )
+      return { ...held, lineupsDigest: lineupsDigest(), superseded: false }
     const kept = new Map(held.plays.map(play => [play.about.atBatIndex, play]))
     for (const index of change.remove ?? []) kept.delete(index)
     for (const play of change.plays ?? []) kept.set(play.about.atBatIndex, play)
     held.plays = [...kept.values()]
     if (change.currentPlay !== undefined) held.currentPlay = change.currentPlay
-    return held
+    if (change.scoringMutation != null)
+      held.scoringMutation = change.scoringMutation
+    return { ...held, lineupsDigest: lineupsDigest(), superseded: false }
   }
   const peer = async (
     actions: ScoringAction[]
   ): Promise<ScoringSession['state']> => {
     const other = await ScoringSession.open(
       {
-        load: async () => held,
-        save: async (_id, change) => save(change)
+        load: async () => ({ ...held, lineupsDigest: lineupsDigest() }),
+        save: async (_id, change) => {
+          const kept = save(change)
+          saves.push(`peer: ${actions.map(action => action.type).join(',')}`)
+          return kept
+        }
       },
       'g1',
       context,
@@ -387,7 +489,7 @@ async function open(fixture: Fixture = {}): Promise<{
       }
       let body: unknown
       if (u.pathname.endsWith('/auth/me'))
-        body = { id: 999, displayName: 'Scorer', isAdmin: false }
+        body = { id: userIdOfGumbo(999), displayName: 'Scorer', isAdmin: false }
       else if (u.pathname === '/api/v1/me/roles')
         body = { teams: [], players: [] }
       else if (u.pathname === '/api/v1/me/notifications/summary')
@@ -400,6 +502,23 @@ async function open(fixture: Fixture = {}): Promise<{
           dictation: false,
           dictationModels: []
         }
+      // A signed-in scorer's app asks for these on any screen; nothing in them.
+      else if (u.pathname === '/api/v1/time') body = { now: Date.now() }
+      else if (
+        [
+          '/api/v1/users',
+          '/api/v1/live',
+          '/api/v1/chat/conversations',
+          '/api/v1/chat/blocks'
+        ].includes(u.pathname)
+      )
+        body = []
+      else if (u.pathname === '/api/v1/me/umpire-leagues')
+        body = { leagues: [] }
+      else if (u.pathname === '/api/v1/me/home')
+        body = { teams: [], seasons: [], leagues: [] }
+      else if (u.pathname === '/api/v1/me/account/chat-age')
+        body = { confirmed: false, source: null, confirmedAt: null }
       else if (u.pathname === '/api/v1/games/g1') body = game
       // Nobody has planned the game, so no inning's column moves the defence.
       else if (
@@ -408,27 +527,56 @@ async function open(fixture: Fixture = {}): Promise<{
         const [, , , , , , teamId, , inning] = u.pathname.split('/')
         body = { teamId, inning: Number(inning), column: [] }
       } else if (u.pathname.endsWith('/events')) {
+        let superseded: boolean | undefined
+        let refused: HttpError | undefined
         if (request.method === 'POST') {
           let bytes = ''
           for await (const chunk of request) bytes += String(chunk)
-          save(JSON.parse(bytes === '' ? '{}' : bytes))
+          const change = JSON.parse(bytes === '' ? '{}' : bytes) as SaveChange
+          const actions = [...(change.plays ?? []), change.currentPlay]
+            .flatMap(
+              play =>
+                (
+                  play as {
+                    teamStation?: { actions?: Array<{ type?: string }> }
+                  } | null
+                )?.teamStation?.actions ?? []
+            )
+            .map(action => action.type)
+          const against = lineupsDigest()
+          try {
+            superseded = save(change).superseded
+            saves.push(
+              `page: ${actions.join(',')} on ${change.lineupsBase ?? '-'} of ${against}: ${superseded === true ? 'superseded' : 'kept'}`
+            )
+          } catch (error) {
+            if (!(error instanceof HttpError)) throw error
+            refused = error
+            saves.push(
+              `page: ${actions.join(',')} on ${change.lineupsBase ?? '-'} of ${against}: refused`
+            )
+          }
         }
-        body = {
-          plays: held.plays.map(play => ({
-            id: `evt_${play.about.atBatIndex}`,
-            gameId: 'g1',
-            gumbo: play
-          })),
-          currentPlay: held.currentPlay
-        }
+        const read = named()
+        if (refused != null) {
+          response.statusCode = refused.status
+          body = refused.toApiError()
+        } else
+          body = {
+            plays: read.plays.map(play => ({
+              id: `evt_${play.about.atBatIndex}`,
+              gameId: 'g1',
+              gumbo: play
+            })),
+            currentPlay: read.currentPlay,
+            lineupsDigest: lineupsDigest(),
+            ...(held.scoringMutation == null
+              ? {}
+              : { scoringMutation: held.scoringMutation }),
+            ...(superseded == null ? {} : { superseded })
+          }
       } else if (u.pathname.endsWith('/roster'))
-        body = roster(
-          u.pathname.includes('/away/') ? 'away' : 'home',
-          u.pathname.includes('/home/')
-            ? (fixture.homeRoster ?? 10)
-            : (fixture.awayRoster ?? 10),
-          fixture.collisionNames
-        )
+        body = sideRoster(u.pathname.includes('/away/') ? 'away' : 'home')
       else if (u.pathname.endsWith('/default-lineup')) {
         const side = u.pathname.includes('/away/') ? 'away' : 'home'
         body =
@@ -451,18 +599,31 @@ async function open(fixture: Fixture = {}): Promise<{
         body = {
           away: side('away', game.awayTeamName),
           home: side('home', game.homeTeamName),
-          digest: `d${held.plays.length}`
+          digest: lineupsDigest()
         }
       } else if (u.pathname === '/api/v1/teams') body = []
       else if (u.pathname.endsWith('/live-streams'))
         body = { gameId: 'g1', mine: [], others: [], canAdd: 0, maxCameras: 3 }
       else if (
         request.method === 'POST' &&
-        u.pathname.endsWith('/roster-players')
+        (u.pathname.endsWith('/roster-players') ||
+          // Placeholders are made for this game only, as guests.
+          u.pathname.endsWith('/guest-players'))
       ) {
         let bytes = ''
         for await (const chunk of request) bytes += String(chunk)
-        body = rosterEntryFromBody(JSON.parse(bytes === '' ? '{}' : bytes))
+        const {
+          side,
+          teamId: _teamId,
+          ...input
+        } = JSON.parse(bytes === '' ? '{}' : bytes) as Record<string, unknown>
+        const entry = rosterEntryFromBody(input)
+        created[
+          side === 'away' || u.pathname.includes('/teams/away/')
+            ? 'away'
+            : 'home'
+        ].push(entry)
+        body = entry
         response.statusCode = 201
       } else {
         unexpected.push(`${request.method} ${u.pathname}`)
@@ -499,7 +660,10 @@ async function open(fixture: Fixture = {}): Promise<{
         appId: url,
         stepDelay: 300,
         artifacts: 'on-failure',
-        extra: { browser: 'chrome', windowSize: `390x${fixture.height ?? 844}` }
+        extra: {
+          browser: process.env.TS_CHROME_PATH ?? 'chrome',
+          windowSize: `390x${fixture.height ?? 844}`
+        }
       }),
       url,
       dispose
@@ -517,7 +681,23 @@ async function open(fixture: Fixture = {}): Promise<{
         return unexpected
       },
       peer,
-      savedPlays: () => held.plays.length
+      /** A player another device created on `side`, as the API keeps him. */
+      created: (
+        side: 'away' | 'home',
+        body: { firstName: string; lastName: string; jersey: string }
+      ) => {
+        // As the app's Create Player sends him: no positions, bats right.
+        const entry = rosterEntryFromBody({
+          ...body,
+          positions: [],
+          bats: 'right',
+          throws: 'right'
+        })
+        created[side].push(entry)
+        return entry
+      },
+      savedPlays: () => held.plays.length,
+      saves
     }
   } catch (error) {
     if (page != null) await page.close()
@@ -531,10 +711,43 @@ async function click(page: Page, label: string): Promise<void> {
     label === 'Create Player' &&
     (await page.$('[aria-label="First Name"]')) == null
   await page.waitForSelector(selector)
-  const point = await page.evaluate(s => {
-    const nodes = document.querySelectorAll(s)
-    const box = nodes[nodes.length - 1].getBoundingClientRect()
-    return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+  // Where it comes to rest: a sheet slides up into place, and a tap at its
+  // first position lands below the screen.
+  const centre = async (): Promise<{ x: number; y: number }> =>
+    await page.evaluate(s => {
+      const nodes = document.querySelectorAll(s)
+      const box = nodes[nodes.length - 1].getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }, selector)
+  let point = await centre()
+  for (let tries = 0; tries < 30; tries++) {
+    await new Promise(resolve => setTimeout(resolve, 100))
+    const next = await centre()
+    const settled = next.x === point.x && next.y === point.y
+    point = next
+    if (settled) break
+  }
+  // Then into view, as a scorer scrolls a short sheet to it; and of the
+  // copies a sheet kept mounted under another may hold, the one a tap there
+  // reaches.
+  point = await page.evaluate(s => {
+    const nodes = [...document.querySelectorAll(s)]
+    nodes[nodes.length - 1].scrollIntoView({
+      block: 'nearest',
+      behavior: 'instant'
+    })
+    const centre = (node: Element): { x: number; y: number } => {
+      const box = node.getBoundingClientRect()
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    const reached = nodes.filter(node => {
+      const { x, y } = centre(node)
+      const hit = document.elementFromPoint(x, y)
+      return hit !== null && (hit === node || node.contains(hit))
+    })
+    return centre(
+      reached.length > 0 ? reached[reached.length - 1] : nodes[nodes.length - 1]
+    )
   }, selector)
   await page.mouse.click(point.x, point.y)
   if (opening) await page.waitForSelector('[aria-label="First Name"]')
@@ -862,14 +1075,11 @@ describe('current defensive scoring setup browser', function () {
     try {
       await click(page, 'Swing in Play')
       await click(page, 'Single')
-      await page.focus('[role="application"]')
-      await page.keyboard.press('Space')
-      await page.keyboard.press('Enter')
+      // In a play, a tapped defender takes the ball where he stands.
+      const field = maestroDriver(page.driver)
+      await tapFielder(field, 'SS')
       expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
-      await page.waitForSelector(
-        '[aria-label^="Drag up and down for ball trajectory."]'
-      )
-      await page.keyboard.press('Enter')
+      await setTrajectory(field)
       await page.waitForSelector('[aria-label="Time to edit play"]', {
         timeout: 30000
       })
@@ -968,7 +1178,7 @@ describe('current defensive scoring setup browser', function () {
   })
   it('E9 preserves peer-saved pitches through warning and field roster mutations', async () => {
     for (const route of ['lineup', 'defender'] as const) {
-      const { page, peer, unexpected } = await open({ awayCount: 8 })
+      const { page, peer, unexpected, saves } = await open({ awayCount: 8 })
       try {
         if (route === 'defender') await tapSlot(page, 'P')
         await peer([
@@ -978,8 +1188,55 @@ describe('current defensive scoring setup browser', function () {
         if (route === 'lineup') {
           await click(page, 'Set Lineup')
           // Save Rosters lights for a change: the ninth batter.
-          await click(page, `Add ${roster('away')[8].shortName} to Lineup`)
-          await click(page, 'Save Rosters')
+          const add = `Add ${roster('away')[8].shortName} to Lineup`
+          await click(page, add)
+          // A clean editor is drawn again as the peer's pitches come in: a
+          // tap as it is replaced lands on the one going, and the scorer taps
+          // again.
+          const nine = async (): Promise<boolean> =>
+            await page
+              .waitForFunction(
+                () =>
+                  document.querySelectorAll(
+                    '[data-roster-target^="lineup-"][data-roster-player]'
+                  ).length === 9,
+                { timeout: 1500 }
+              )
+              .then(
+                () => true,
+                () => false
+              )
+          if (
+            !(await nine()) &&
+            (await page.$(`[aria-label="${add}"]`)) != null
+          )
+            await click(page, add)
+          try {
+            await click(page, 'Save Rosters')
+          } catch (error) {
+            // What the sheet showed, and every save, when it did not light.
+            const sheet = await page.evaluate(() => ({
+              save: [
+                ...document.querySelectorAll('[aria-label="Save Rosters"]')
+              ].map(n => ({
+                disabled: n.getAttribute('aria-disabled'),
+                rect: (({ x, y, width, height }) => [x, y, width, height])(
+                  n.getBoundingClientRect()
+                )
+              })),
+              lineup: [
+                ...document.querySelectorAll('[data-roster-target^="lineup-"]')
+              ].map(n => n.textContent),
+              alerts: [...document.querySelectorAll('[role="alert"]')].map(
+                n => n.textContent
+              ),
+              viewport: [innerWidth, innerHeight]
+            }))
+            throw new Error(
+              `Save Rosters: ${JSON.stringify({ sheet, saves }, undefined, 1)}`,
+              { cause: error }
+            )
+          }
         } else await choose(page, 'P', 1)
         await page.waitForSelector('[aria-label*="2 balls"]')
         await new Promise(resolve => setTimeout(resolve, 150))
@@ -990,17 +1247,27 @@ describe('current defensive scoring setup browser', function () {
         await page.close()
       }
     }
-    const { page, peer, unexpected } = await open({ homeRoster: 8 })
+    const { page, peer, unexpected, created, saves } = await open({
+      homeRoster: 8
+    })
     try {
       await tapSlot(page, 'RF')
       await click(page, 'Create Player')
       await click(page, 'Create Placeholder Player')
       await click(page, 'Player count 2')
+      // The peer creates his player first: a game adds only a player who
+      // exists (develop b9f65cb37).
+      const julio = created('home', {
+        firstName: 'Julio',
+        lastName: 'Rodriguez',
+        jersey: '10'
+      })
       const added = await peer([
         {
           type: 'lineup',
           kind: 'addPlayer',
           side: 'home',
+          player: julio.gumboId!,
           name: 'Julio Rodriguez',
           jersey: '10'
         }
@@ -1018,7 +1285,15 @@ describe('current defensive scoring setup browser', function () {
       ])
       await click(page, 'Create')
       await page.waitForSelector('[aria-label*="2 balls"]')
-      expect(await page.$$('[aria-label^="Assign RF "]')).has.length(11)
+      // The eight on the roster, the two placeholders made here and the
+      // peer's Julio Rodriguez.
+      const choices = await page.$$eval('[aria-label^="Assign RF "]', nodes =>
+        nodes.map(node => node.getAttribute('aria-label'))
+      )
+      expect(
+        choices,
+        JSON.stringify({ choices, saves }, undefined, 1)
+      ).has.length(11)
       expect(await page.$('[aria-label="Create Player"]')).not.equals(null)
       expect(unexpected).deep.equals([])
     } finally {
@@ -1070,8 +1345,14 @@ describe('current defensive scoring setup browser', function () {
         else await click(page, 'Create Player')
         await page.waitForSelector('[aria-label="Game over"]')
         await tapField(page, 'P')
-        expect(await page.$('[aria-label="Defensive roster"]')).equals(null)
-        expect(await page.$('[aria-label="First Name"]')).equals(null)
+        expect(
+          await page.$('[aria-label="Defensive roster"]'),
+          `${opening}: the defensive roster after Game over`
+        ).equals(null)
+        expect(
+          await page.$('[aria-label="First Name"]'),
+          `${opening}: player entry after Game over`
+        ).equals(null)
         expect(
           (await peer([])).liveData.boxscore.teams.home.players
         ).has.length(10)

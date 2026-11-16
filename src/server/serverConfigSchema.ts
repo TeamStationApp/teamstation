@@ -324,7 +324,9 @@ export const asServerConfig = asObject({
 
   /**
    * True only on a seat or stack that holds invented data: the fixtures script
-   * (`npm run fixtures`) refuses to run anywhere else. Production never sets it.
+   * (`npm run fixtures`) refuses to run anywhere else, and `test.rateLimitScale`
+   * applies only here. Production never sets it, so production neither reads
+   * that setting nor pays for the query.
    */
   testSettings: asOptional(asBoolean, false),
 

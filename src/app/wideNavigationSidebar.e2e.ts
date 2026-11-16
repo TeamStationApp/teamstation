@@ -2,13 +2,13 @@ import assert from 'node:assert/strict'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
 import { tessFixture } from '../test/tessFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 /**
  * Build with npm run build.web, then run with node -r sucrase/register.

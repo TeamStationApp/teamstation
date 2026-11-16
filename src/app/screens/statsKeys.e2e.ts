@@ -14,7 +14,7 @@ import {
   required,
   shot,
   signInWeb
-} from '../replay/kit.e2e'
+} from '../../../e2e/rigs/replayKit'
 
 async function main(): Promise<void> {
   const seed = JSON.parse(readFileSync(required('TEST_SEED'), 'utf8')) as {
@@ -81,8 +81,11 @@ async function main(): Promise<void> {
             const key=scope.querySelector('[data-testid="box-stats-key"]');
             if(!key || !key.textContent.includes('#P - Number of pitches') || !key.textContent.includes('S - Strikes'))throw Error('Missing bottom key');
             if(scope.querySelectorAll('[data-testid="box-stats-key"]').length!==1)throw Error('Repeated box key');
-            for(const definition of ['AB - At bats','R - Runs scored','H - Hits','RBI - Runs batted in','BB - Base on balls (walks)','SO - Strikeouts','HR - Home runs','HBP - Hit by pitch','AVG - Batting average','IP - Innings pitched','BF - Batters faced','ER - Earned runs','E - Errors']) {
-              if(!key.textContent.includes(definition))throw Error('Missing box definition '+definition);
+            // The replay draws its compact columns (replayBoxLabels, 3e0e1d4a7),
+            // without HR, AVG or BF, and its key defines what it draws.
+            const compact=${JSON.stringify(name)}==='replay-box';
+            for(const definition of ['AB - At bats','R - Runs scored','H - Hits','RBI - Runs batted in','BB - Base on balls (walks)','SO - Strikeouts','HR - Home runs','HBP - Hit by pitch','AVG - Batting average','IP - Innings pitched','BF - Batters faced','ER - Earned runs','E - Errors'].filter(definition=>!compact||!/^(HR|AVG|BF) /.test(definition))) {
+              if(!key.textContent.includes(definition))throw Error(${JSON.stringify(name)}+': missing box definition '+definition);
             }
             const text=scope.textContent;
             if(!text.includes('HBP') || !text.includes('#P') || !text.includes('SO'))throw Error('Missing box labels');
@@ -104,11 +107,16 @@ async function main(): Promise<void> {
             key.scrollIntoView({block:'center', behavior:'instant'});
             if(${JSON.stringify(name)}==='replay-box') {
               // A phone's replay deck scrolls behind its playback controls.
-              // Its bottom padding must let the final definitions clear them.
+              // Its bottom padding must let the final definitions clear them:
+              // the rewind and pause buttons floating at the bottom since
+              // 7301e87a4, not a 96-point bar.
               scope.scrollTop=scope.scrollHeight;
               const last=key.children[0].lastElementChild.getBoundingClientRect();
               const deck=scope.getBoundingClientRect();
-              if(last.top<deck.top || last.bottom>innerHeight-96)throw Error('Last definition hidden by playback controls');
+              const controls=[...document.querySelectorAll('[data-testid="replay-pause"],[data-testid="replay-rewind"]')].map(n=>n.getBoundingClientRect()).filter(r=>r.height>0);
+              if(controls.length===0)throw Error('No playback controls');
+              const clear=Math.min(...controls.map(r=>r.top));
+              if(last.top<deck.top || last.bottom>clear)throw Error('Last definition hidden by playback controls: its bottom '+Math.round(last.bottom)+', the top of the controls '+Math.round(clear)+', the deck '+Math.round(deck.top)+' to '+Math.round(deck.bottom));
               const figures=scope.querySelector('[data-testid="replay-box-score-tables"]');
               if(figures)figures.scrollLeft=figures.scrollWidth;
             }

@@ -1,7 +1,7 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { rosterEditFixture } from '../../app/scoring/scoringRosterEdit.e2e.fixture'
+import { rosterEditFixture } from '../../../e2e/fixtures/scoringRosterEditFixture'
 import { asRosterEntry } from '../../common/api'
 import { managesRoster } from '../../common/roles'
 import { userIdOfGumbo } from '../../common/userId'

@@ -114,6 +114,16 @@ export default [
   },
 
   {
+    files: ['e2e/**/*.ts', 'e2e/**/*.tsx'],
+    languageOptions: {
+      parserOptions: {
+        projectService: false,
+        project: './tsconfig.e2e.json'
+      }
+    }
+  },
+
+  {
     files: [
       'scripts/stampWallClockSei.ts',
       'scripts/packedLeagueCounts.ts',
@@ -153,6 +163,8 @@ export default [
     ignores: [
       '**/lib/**',
       '**/dist/**',
+      // Coverage reports, and the web builds browser scripts keep beside them.
+      'coverage/**',
       '.cursor/**',
       '.test-tools/**',
       'tools/**',

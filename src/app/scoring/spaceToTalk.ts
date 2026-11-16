@@ -113,11 +113,8 @@ const MODIFIERS = [
   'ScrollLock'
 ]
 
-/**
- * Where Space is an element's own: the field's grab key on a canvas
- * (`role="application"`), and a media player's play and pause.
- */
-const OWNS_SPACE = '[role="application"], video, audio'
+/** Where Space is an element's own: a media player's play and pause. */
+const OWNS_SPACE = 'video, audio'
 
 /**
  * Space held `holdMs` talks, wherever the focus is, text fields included; a

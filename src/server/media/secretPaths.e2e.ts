@@ -10,7 +10,7 @@ import { promisify } from 'node:util'
 import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 
-import { createLiveHarness } from '../../app/player/liveHarness.e2e'
+import { createLiveHarness } from '../../../e2e/rigs/liveHarness'
 import { signInTestAccount } from '../../test/passwordFixtures'
 import { scratchDatabase } from '../../test/scoreboardKit'
 import { startFakeSpace } from '../dev/fakeSpace'

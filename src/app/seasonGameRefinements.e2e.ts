@@ -6,13 +6,15 @@ import { createInterface } from 'node:readline'
 import { expect } from 'chai'
 import { sql } from 'kysely'
 
-import { userIdOfGumbo } from '../common/userId'
-import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   absent,
   type BrowserSession,
   browserSession,
   capture,
+  chooseDate,
+  chooseTime,
+  chooseTimezone,
   contains,
   diagnostic,
   fill as fillInput,
@@ -20,9 +22,10 @@ import {
   maestro,
   show,
   tap
-} from '../test/refinementsMaestro.e2e'
+} from '../../e2e/rigs/refinementsMaestro'
+import { userIdOfGumbo } from '../common/userId'
+import { gameVersion, materialGame } from '../server/schedule/gameApprovals'
 import { refinementsFixture } from '../test/seasonGameRefinementsFixture'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 /**
  * Setup: run npm run build.web, then set TS_REFINEMENTS_ARTIFACTS to a private
@@ -159,6 +162,24 @@ async function main(): Promise<void> {
       .selectAll()
       .where('id', '=', id)
       .executeTakeFirstOrThrow()
+  /** Scrolls the schedule until every game its header counts is loaded. */
+  const allGames = async (b: BrowserSession): Promise<void> => {
+    await b.page.waitForFunction(
+      () => {
+        const counted = /(\d+) games?/.exec(document.body.innerText)
+        const rows = document.querySelectorAll(
+          '[data-scene-role="top"] [data-testid="schedule-display-row"]'
+        )
+        if (counted !== null && rows.length >= Number(counted[1])) return true
+        // The list scrolls inside its own container; the last row's
+        // reaching the end asks for the next page.
+        if (rows.length > 0)
+          rows[rows.length - 1].scrollIntoView({ block: 'end' })
+        return false
+      },
+      { timeout: 30000, polling: 500 }
+    )
+  }
   const openSettings = async (b: BrowserSession, id: string): Promise<void> => {
     await visit(b, `/games/${id}/settings`)
     await contains(b.page, 'Swap home and away')
@@ -786,6 +807,8 @@ async function main(): Promise<void> {
     expect((await game(seed.managedGameId)).away_team_id).equals(
       f.standaloneTeam
     )
+    // The Eagles' own admin proposes: the season's admin, who also runs the
+    // Hawks, consents for both sides of a season game and saves at once.
     const finalId = 'baseline-hawks-eagles'
     await openSettings(admin, finalId)
     await fill(admin.m, 'Venue name (optional)', 'Demo Proposed Final Field')
@@ -804,10 +827,11 @@ async function main(): Promise<void> {
       timeout: 15000
     })
     await contains(admin.page, 'Pending approval')
+    await allGames(admin)
     await absent(admin.page, '2–5')
-    await visit(opponent, `/notifications/${finalProposal.id}`)
-    await tap(opponent.m, 'Decline invitation')
-    await contains(opponent.page, 'Declined')
+    await visit(admin, `/notifications/${finalProposal.id}`)
+    await tap(admin.m, 'Decline invitation')
+    await contains(admin.page, 'Declined')
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
     await admin.m.scrollUntilVisible({
       element: { text: '2–5' },
@@ -1002,9 +1026,13 @@ async function main(): Promise<void> {
     await contains(admin.page, 'Demo City')
     await tap(admin.m, 'Continue')
     await tap(admin.m, 'Skip')
-    await fill(admin.m, 'Date', dateOf('2026-10-22').toISOString().slice(0, 10))
-    await fill(admin.m, 'Time', '20:15')
-    await fill(admin.m, 'Time zone', 'America/Los_Angeles')
+    await chooseDate(
+      admin.m,
+      'Date',
+      dateOf('2026-10-22').toISOString().slice(0, 10)
+    )
+    await chooseTime(admin.m, 'Start time', '20:15')
+    await chooseTimezone(admin.m, 'America/Los_Angeles')
     await tap(admin.m, 'Exhibition', 'switch')
     await tap(admin.m, 'Save')
     await contains(admin.page, 'Game changes saved')

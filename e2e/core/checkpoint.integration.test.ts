@@ -403,6 +403,17 @@ describe('golden store', function () {
         headRef: 'fffffff'
       })
     ).to.throw('The run is from abc1234')
+    // The same commit abbreviated longer, as a full clone does beside a
+    // shallow one's run.
+    expect(
+      acceptGolden({
+        root,
+        store,
+        runDir: makeRun(),
+        checkpoint: 'screen',
+        headRef: 'abc1234ef'
+      }).sha256
+    ).length(64)
     expect(() =>
       acceptGolden({
         root,

@@ -23,7 +23,7 @@ import {
   shot,
   type WebSession,
   webSession
-} from './playerLayoutsRig.e2e'
+} from '../../../e2e/rigs/playerLayoutsRig'
 
 interface Driver {
   pressKey: (args: { key: string }) => Promise<unknown>

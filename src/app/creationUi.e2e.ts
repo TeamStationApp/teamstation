@@ -4,17 +4,17 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
-import { userIdOfGumbo } from '../common/userId'
-import { googlePlaces } from '../server/location/googlePlaces'
-import { googlePlacesStub } from '../test/googlePlacesStub'
-import { groupFixture } from '../test/groupFixtures'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
 import {
   fill,
   freezeBrowserClock,
   press,
   text
-} from './creationBrowserActions.e2e'
+} from '../../e2e/rigs/creationBrowserActions'
+import { userIdOfGumbo } from '../common/userId'
+import { googlePlaces } from '../server/location/googlePlaces'
+import { googlePlacesStub } from '../test/googlePlacesStub'
+import { groupFixture } from '../test/groupFixtures'
 
 const artifacts = process.env.TS_CREATION_ARTIFACTS
 if (artifacts == null) throw new Error('Set TS_CREATION_ARTIFACTS for UI proof')
@@ -168,6 +168,8 @@ async function main(): Promise<void> {
       'PASS: name-first league and season creation, initials preview, persisted creation, blue wrapped calendar with white dates'
     )
     const admin = await login(101)
+    // Wide, the navigation is the sidebar (develop 30f330991, a0db231a9):
+    // its tabs down the left in order, the account at its foot below them.
     const desktop = await navigation(admin)
     // Desktop navigation occupies the left sidebar; mobile keeps its tabs below.
     for (let index = 1; index < desktop.length; index++) {

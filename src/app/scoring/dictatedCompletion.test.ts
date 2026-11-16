@@ -600,6 +600,28 @@ describe('a dictated sentence finishes the play', function () {
       expect(state.session.liveData.linescore.outs).equals(1)
     })
 
+    it('gives a caught foul the model credited to the center fielder to the corner infielder away from the batter', function () {
+      const credited = (bats: 'R' | 'L'): number | undefined => {
+        const state = game()
+        state.session.liveData.plays.currentPlay!.matchup.batSide = {
+          code: bats
+        }
+        const [inPlay] = playDefaults(state.session, [
+          { type: 'ballInPlay', contact: 'swing', fielder: 17, depth: 'deep' },
+          { type: 'result', eventType: 'field_out', foulCaught: true }
+        ])
+        return inPlay.type === 'ballInPlay' ? inPlay.fielder : undefined
+      }
+      expect(credited('R'), 'right-handed: the first baseman').equals(12)
+      expect(credited('L'), 'left-handed: the third baseman').equals(15)
+      // A fair fly is still his.
+      const [fly] = playDefaults(game().session, [
+        { type: 'ballInPlay', contact: 'swing', fielder: 17 },
+        catchOut
+      ])
+      expect(fly).deep.include({ fielder: 17 })
+    })
+
     it('gives a fly sent a direction to that outfielder, the gaps to center', function () {
       const fielderFor = (
         direction: 'left' | 'left_center' | 'right'

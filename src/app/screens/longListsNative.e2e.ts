@@ -3,13 +3,13 @@ import { execFileSync, spawn } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
+import { log, maestro } from '../../../e2e/rigs/refinementsMaestro'
 import {
   LONG_LISTS_SHAPE,
   type LongListsSeed,
   longListsSupport
 } from '../../test/longListsSeed'
 import { dismissNotificationAskOn } from '../../test/notificationAsk'
-import { log, maestro } from '../../test/refinementsMaestro.e2e'
 
 /**
  * The long lists scenarios on a phone, through maestro-d's JavaScript library,
@@ -520,7 +520,9 @@ async function main(): Promise<void> {
   }
 
   const webOnly = (name: string) => async () => {
-    await note(`${name}: a browser scenario, in src/test/longLists.e2e.ts`)
+    await note(
+      `${name}: a browser scenario, in the harness's app-shell/lists list-screens`
+    )
   }
   const cases: Record<string, () => Promise<void>> = {
     E1: webOnly('E1'),

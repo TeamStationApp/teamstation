@@ -1,10 +1,12 @@
+import { execFileSync } from 'node:child_process'
+
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { accountHarness } from '../../test/accountHarness'
 import { authRoutes } from '../routes/auth'
 import type { SmtpSettings } from '../serverConfig'
-import { deliverSignInCode } from './codeDelivery'
+import { accountCodeSender, deliverSignInCode } from './codeDelivery'
 
 const smtp: SmtpSettings = {
   host: 'mail.example.com',
@@ -109,5 +111,58 @@ describe('production sign-in code delivery adapter', function () {
     } finally {
       await h.close()
     }
+  })
+})
+
+describe('accountCodeSender', function () {
+  it('refuses when mail is not configured, and logs no code', async function () {
+    const logged: string[] = []
+    const send = accountCodeSender(
+      { ...smtp, host: '' },
+      {
+        logger: {
+          log: (line: string) => logged.push(line),
+          error: (line: string) => logged.push(line)
+        }
+      }
+    )
+    let message = ''
+    try {
+      await send('person@example.test', '123456')
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).equals('Email is not configured')
+    expect(logged).deep.equals([])
+  })
+
+  it('logs its recipient like every other code', async function () {
+    const logged: string[] = []
+    const send = accountCodeSender(smtp, {
+      send: async () => ({ accepted: 1, messageId: 'id' }),
+      logger: {
+        log: (line: string) => logged.push(line),
+        error: (line: string) => logged.push(line)
+      }
+    })
+    await send('person@example.test', '123456')
+    expect(logged.join()).includes('sign-in code sent to person@example.test')
+    expect(logged.join()).not.includes('123456')
+  })
+
+  it('is how codes are sent: nothing else calls the sender directly', function () {
+    const callers = execFileSync(
+      'git',
+      ['grep', '-l', 'sendSignInCode', '--', 'src/server'],
+      { encoding: 'utf8' }
+    )
+      .trim()
+      .split('\n')
+      .filter(file => !file.endsWith('.test.ts'))
+      .sort()
+    expect(callers).deep.equals([
+      'src/server/auth/codeDelivery.ts',
+      'src/server/email/sendMail.ts'
+    ])
   })
 })

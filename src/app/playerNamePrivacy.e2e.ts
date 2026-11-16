@@ -3,6 +3,14 @@ import { join, resolve } from 'node:path'
 
 import { expect } from 'chai'
 
+import {
+  absent,
+  browserSession,
+  capture,
+  contains,
+  maestro,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import type { PlayerNamePrivacy } from '../common/playerNamePrivacy'
 import { userIdOfGumbo } from '../common/userId'
 import { SESSION_COOKIE } from '../server/auth/tokens'
@@ -19,14 +27,6 @@ import {
   TEAMMATE,
   TROUT
 } from '../test/playerNamePrivacyFixture'
-import {
-  absent,
-  browserSession,
-  capture,
-  contains,
-  maestro,
-  tap
-} from '../test/refinementsMaestro.e2e'
 import {
   dropPrefix,
   quiet,
@@ -411,7 +411,16 @@ async function main(): Promise<void> {
     await capture(m, artifacts!, 'scoring-overlay-after.png')
     await m.tapOn({ css: '[aria-label="Open scoring menu"]' })
     await tap(m, 'Set Team Rosters')
-    await m.tapOn({ css: '[aria-label="Away Team"]' })
+    // The sheet draws its tabs again as it finishes opening: a tap that finds
+    // the tab it aimed at replaced is made again on the new one.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await m.tapOn({ css: '[aria-label="Away Team"]' })
+        break
+      } catch (error) {
+        if (attempt === 3 || !String(error).includes('detached')) throw error
+      }
+    }
     await m.tapOn({ css: '[aria-label="Lineup"]' })
     await contains(page, '1. Alex Lee')
     await capture(m, artifacts!, 'scoring-lineup-after.png')
@@ -622,7 +631,9 @@ async function main(): Promise<void> {
       events,
       TEAMMATE
     )
-    expect(teammate).match(/^\{"plays":/)
+    // The teammate is answered the events (develop aa70c77db puts the
+    // attributed scoring updates beside the plays), never a refusal.
+    expect(JSON.parse(teammate)).to.have.property('plays').that.is.an('array')
     expect(teammate).not.include('modelNames')
     expect(teammate).not.include('firstName')
     expect(teammate).not.include('lastName')

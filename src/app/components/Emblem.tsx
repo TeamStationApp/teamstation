@@ -65,7 +65,12 @@ export function Emblem(props: EmblemProps): React.ReactElement {
   }
 
   const tile = (
-    <View style={[styles.tile, box, tint != null && { backgroundColor: tint }]}>
+    <View
+      // Tinted by the group's id: an end-to-end golden masks it, since a
+      // fixture's ids, and so its colours, are new each run.
+      testID="emblem"
+      style={[styles.tile, box, tint != null && { backgroundColor: tint }]}
+    >
       {icon != null ? (
         <Icon name={icon} size={size / 2} color={theme.emblemColor} />
       ) : props.fitInitials === true ? (

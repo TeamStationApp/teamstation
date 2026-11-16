@@ -39,7 +39,9 @@ function databaseUrl(): string {
     databaseUrl: string
   }
   if (
-    !/^postgres(ql)?:\/\/(localhost|127\.0\.0\.1)[:/]/.test(config.databaseUrl)
+    !/^postgres(ql)?:\/\/([^@/]+@)?(localhost|127\.0\.0\.1)[:/]/.test(
+      config.databaseUrl
+    )
   ) {
     throw new Error('serverConfig.json does not name a local database')
   }

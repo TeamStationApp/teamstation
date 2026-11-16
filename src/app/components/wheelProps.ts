@@ -11,7 +11,7 @@ export interface WheelProps {
   /**
    * Each row's `testID` is this, a dash, and the option; `testID` unless set.
    * Only the scrolling column (Android and browsers) has rows: on iOS a test
-   * reads and turns the system's wheel through `src/test/iosWheel.e2e.ts`.
+   * reads and turns the system's wheel through `e2e/rigs/iosWheel.ts`.
    */
   rowTestID?: string
   /**

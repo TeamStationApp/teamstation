@@ -17,10 +17,10 @@ import { join } from 'node:path'
 
 import { executablePath } from 'puppeteer'
 
+import { privateJson } from '../../../e2e/fixtures/chat2Fixture'
 import { TeamStationClient } from '../../common/api'
 import { passwordBytes } from '../../common/passwordProtocol'
 import { nativeArgon } from '../../server/auth/passwords'
-import { privateJson } from '../../test/chat2Fixture.e2e'
 import { maestroClient } from '../../test/chat117Maestro.e2e'
 import { readSeedTable } from '../../test/chatSeedTable'
 

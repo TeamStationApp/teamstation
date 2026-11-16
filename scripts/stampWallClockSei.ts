@@ -14,7 +14,7 @@ import { stampWallClock } from '../src/server/media/wallClockStamp'
  *
  *   node -r sucrase/register scripts/stampWallClockSei.ts \
  *     --in take.mp4 --out stamped.mp4 --start <wall ms> [--uncorrected] \
- *     [--ffmpeg /opt/homebrew/bin/ffmpeg]
+ *     [--ffmpeg $TS_FFMPEG, else /opt/homebrew/bin/ffmpeg]
  *
  * The input is an fMP4 or an MP4. An MP4 that is not fragmented is first
  * fragmented by FFmpeg, `-c copy`, which moves the samples into fragments and
@@ -27,7 +27,11 @@ const { values } = parseArgs({
     out: { type: 'string' },
     start: { type: 'string' },
     uncorrected: { type: 'boolean', default: false },
-    ffmpeg: { type: 'string', default: '/opt/homebrew/bin/ffmpeg' }
+    // The pinned FFmpeg where the run names one (TS_FFMPEG), Homebrew's otherwise.
+    ffmpeg: {
+      type: 'string',
+      default: process.env.TS_FFMPEG ?? '/opt/homebrew/bin/ffmpeg'
+    }
   }
 })
 const start = Number(values.start)

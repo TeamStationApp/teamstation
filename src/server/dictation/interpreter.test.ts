@@ -876,6 +876,35 @@ describe('dictation interpreter', function () {
       })
     })
 
+    it('takes a question with one option as its answer: an option with actions settles the sentence', async function () {
+      const stub = provider([
+        ask([{ label: 'Double steal', actions: [ball] }], 'Which runners?')
+      ])
+      const it = new Interpretation(config(stub.fetch), 'c', 'double steal')
+      const turn = await it.start()
+      expect(turn.kind).equals('actions')
+      expect(turn.kind === 'actions' && turn.actions).deep.equals([ball])
+      expect(it.asking).equals(false)
+    })
+
+    it('takes a question with one option as its answer: a label alone goes back to the model', async function () {
+      const stub = provider(
+        [ask([{ label: 'Both runners' }], 'Which runners?')],
+        [call('a1', 'pitch', { call: 'B' })]
+      )
+      const turn = await new Interpretation(
+        config(stub.fetch),
+        'c',
+        'double steal'
+      ).start()
+      expect(turn.kind).equals('actions')
+      const answered = stub.sent[1].body.messages.find(m => m.role === 'tool')
+      expect(answered).deep.include({
+        tool_call_id: 'q1',
+        content: 'Both runners'
+      })
+    })
+
     it('caps a question at five options', async function () {
       const seven = Array.from({ length: 7 }, (_, i) => ({
         label: `option ${i}`
@@ -952,7 +981,7 @@ describe('dictation interpreter', function () {
     })
 
     it('refuses an answer with no question open or no such option', async function () {
-      const stub = provider([ask([{ label: 'a' }])])
+      const stub = provider([ask([{ label: 'a' }, { label: 'b' }])])
       const it = new Interpretation(config(stub.fetch), 'c', 'x')
       expect(await it.answer(0)).deep.equals({
         kind: 'error',
@@ -968,9 +997,9 @@ describe('dictation interpreter', function () {
 
     it('gives up after a third question about one sentence', async function () {
       const stub = provider(
-        [ask([{ label: 'a' }])],
-        [ask([{ label: 'b' }])],
-        [ask([{ label: 'c' }])]
+        [ask([{ label: 'a' }, { label: 'a2' }])],
+        [ask([{ label: 'b' }, { label: 'b2' }])],
+        [ask([{ label: 'c' }, { label: 'c2' }])]
       )
       const it = new Interpretation(config(stub.fetch), 'c', 'x')
       expect((await it.start()).kind).equals('ask')
@@ -2831,6 +2860,19 @@ describe('dictation interpreter, player tags', function () {
         { type: 'baseRunning', kind: 'steal', runner: 4, to: '2B' },
         { type: 'fieldingPlay', fielders: [14, 15] }
       ],
+      dropped: []
+    })
+  })
+
+  it('leaves a ball’s call alone when a player is written as the same letter', async function () {
+    // A one-word name is written as its initial (develop 811093a96).
+    const game = `At bat: B #1 ${writtenTag(1)}.\nFielders: P F0 #0 ${writtenTag(10)}.`
+    const stub = provider([call('p', 'pitch', { call: 'B' })])
+    expect(
+      await new Interpretation(config(stub.fetch), game, 'Ball one').start()
+    ).deep.equals({
+      kind: 'actions',
+      actions: [{ type: 'pitch', call: 'B' }],
       dropped: []
     })
   })

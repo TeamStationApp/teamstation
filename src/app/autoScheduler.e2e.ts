@@ -16,6 +16,19 @@ import { promisify } from 'node:util'
 
 import { expect } from 'chai'
 
+import { recordBrowserCoverage } from '../../e2e/rigs/browserCoverage'
+import {
+  absent,
+  type BrowserSession,
+  browserSession,
+  capture,
+  contains,
+  fill,
+  log,
+  maestro,
+  show,
+  tap
+} from '../../e2e/rigs/refinementsMaestro'
 import { asPreparedPreview } from '../common/schedulePreviews'
 import { buildSchedule, engineResult } from '../common/scheduler/engine'
 import { googlePlaces } from '../server/location/googlePlaces'
@@ -34,19 +47,6 @@ import {
 import { interceptGoogleMaps } from '../test/googleMapsIntercept'
 import { googlePlacesStub } from '../test/googlePlacesStub'
 import { mapFrameOf, waitInMapFrame } from '../test/mapFrameProbe'
-import {
-  absent,
-  type BrowserSession,
-  browserSession,
-  capture,
-  contains,
-  fill,
-  log,
-  maestro,
-  show,
-  tap
-} from '../test/refinementsMaestro.e2e'
-import { recordBrowserCoverage } from './browserCoverage.e2e'
 
 const WIDTH = 402
 const HEIGHT = 874
@@ -217,10 +217,10 @@ async function e1(run: Run): Promise<void> {
   await at(admin, /\/scheduler$/)
   await admin.m.tapOn({ text: 'Field Manager', timeout: 15000 })
   await at(admin, /\/scheduler\/fields$/)
-  await contains(admin.page, 'Claimed venues nearby')
+  await contains(admin.page, 'CLAIMED VENUES NEARBY')
   await contains(admin.page, 'Harbor Field')
   await fill(admin.m, 'Search venues', 'Example Park')
-  await contains(admin.page, 'Unclaimed venues')
+  await contains(admin.page, 'UNCLAIMED VENUES')
   await capture(admin.m, artifacts, 'field-manager-search.png')
   await tapLabel(admin, 'Open Example Park')
   await at(admin, /^\/venues\/place\/example-park$/)
@@ -247,8 +247,8 @@ async function e1(run: Run): Promise<void> {
   await contains(admin.page, 'Demo League A')
   await absent(admin.page, 'Claim pending')
   await run.visit(admin, `/groups/league/${fx.f.leagueA}/scheduler/fields`)
-  await contains(admin.page, 'Your leagues’ venues')
-  await contains(admin.page, 'Claimed venues nearby')
+  await contains(admin.page, 'YOUR LEAGUES’ VENUES')
+  await contains(admin.page, 'CLAIMED VENUES NEARBY')
   await capture(admin.m, artifacts, 'field-manager-list.png')
   await run.pass(
     'E1',
@@ -376,12 +376,15 @@ async function e2(run: Run): Promise<void> {
   await contains(admin.page, '5:00 PM – 9:00 PM')
   // The year's dates, October to September.
   await tapLabel(admin, 'Dates: Open all year')
-  for (let month = 0; month < 24; month++) {
+  // The calendar opens on this month, which can be after October 2026.
+  const opening = new Date().getFullYear() * 12 + new Date().getMonth()
+  const toOctober = 2026 * 12 + 9 - opening
+  for (let month = 0; month < Math.abs(toOctober); month++) {
     const shown = await admin.page.evaluate(
       () => document.querySelector('[aria-label="2026-10-01"]') != null
     )
     if (shown) break
-    await tapLabel(admin, 'Previous month')
+    await tapLabel(admin, toOctober < 0 ? 'Previous month' : 'Next month')
   }
   await tapLabel(admin, '2026-10-01')
   for (let month = 0; month < 12; month++) {
@@ -1287,10 +1290,20 @@ async function e7(run: Run): Promise<void> {
             )
       return title == null ? null : title.innerText
     })
-  const firstStuck = await stuck()
+  // As one week's end pushes its head up, for about a head's height, none
+  // sits at the rows' bottom until the next arrives: scroll on in short steps.
+  const stuckSoon = async (): Promise<string | null> => {
+    for (let step = 0; step < 6; step++) {
+      const title = await stuck()
+      if (title !== null) return title
+      await wheel(admin, 30)
+    }
+    return await stuck()
+  }
+  const firstStuck = await stuckSoon()
   expect(firstStuck).matches(/^Week \d+ · /)
   await wheel(admin, 900)
-  const laterStuck = await stuck()
+  const laterStuck = await stuckSoon()
   expect(laterStuck).matches(/^Week \d+ · /)
   expect(Number(/\d+/.exec(laterStuck!)![0])).greaterThan(
     Number(/\d+/.exec(firstStuck!)![0])
@@ -1661,15 +1674,14 @@ async function e10(run: Run): Promise<void> {
   const capacity = await storedPreview(run, capacityId)
   trace('E10 const unmet = capacity.options[0].unmet[')
   const unmet = capacity.options[0].unmet[0]
-  const missingTeamGames = capacity.options[0].fairness
-    .filter(row => !row.exhibitionTeam)
-    .reduce((total, row) => total + Math.max(0, 40 - row.regularGames), 0)
-  expect(missingTeamGames).greaterThan(0)
-  expect(unmet.message).equals(
-    `${missingTeamGames} requested team games remain unplaced`
+  // Short of 40 for every team: the same count each ("every team gets…"),
+  // or one apart team by team ("Demo Rockets gets 33 of 40…; the others get
+  // 34 of 40"), as the fixture's ids and the hour of the run fall.
+  expect(unmet.message).matches(
+    /^(every team gets \d+ of the 40 requested regular-season games|.+ gets \d+ of 40 regular-season games(; .+ gets? \d+ of 40)+)$/
   )
   expect(unmet.cause).equals(
-    'The submitted option leaves requested games unplaced within the selected constraints.'
+    'not enough 50/70 field time to give every team 40 games'
   )
   trace('E10 const counts = new Set')
   const counts = new Set(
@@ -1833,6 +1845,8 @@ async function e11(run: Run): Promise<void> {
   const built = await api<{
     id: string
     options: Array<{ games: Array<{ key: string }> }>
+    // E10 published the league's games: working around them leaves nothing
+    // to place, so this preview plans the season afresh. It is never published.
   }>(
     fx,
     101,

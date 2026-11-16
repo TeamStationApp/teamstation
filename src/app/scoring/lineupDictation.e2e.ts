@@ -11,16 +11,16 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import type { Page } from 'puppeteer'
 
-import { DEFAULT_DICTATION_MODEL } from '../../common/api'
-import { ONE_CATEGORY_AT_A_TIME } from '../../common/scoring/rosterCommands'
-import type { LineupFixture } from '../../server/dev/lineupFixture'
-import { fakeMicrophone } from '../../test/fakeMicrophone.e2e'
-import { signInTestAccount } from '../../test/passwordFixtures'
+import { fakeMicrophone } from '../../../e2e/rigs/fakeMicrophone'
 import {
   type BrowserSession,
   browserSession,
   maestro
-} from '../../test/refinementsMaestro.e2e'
+} from '../../../e2e/rigs/refinementsMaestro'
+import { DEFAULT_DICTATION_MODEL } from '../../common/api'
+import { ONE_CATEGORY_AT_A_TIME } from '../../common/scoring/rosterCommands'
+import type { LineupFixture } from '../../server/dev/lineupFixture'
+import { signInTestAccount } from '../../test/passwordFixtures'
 
 /**
  * The roster screen and lineup dictation end to end, as the scorekeeper, in
@@ -62,7 +62,7 @@ const NINE = [
   'Bregman',
   'Alvarez',
   'Tucker',
-  'Semien',
+  'Garcia',
   'Pena'
 ]
 const clip = (name: string): string =>
@@ -288,7 +288,7 @@ describe('the roster screen for a scorekeeper', function () {
     await new Promise(resolve => setTimeout(resolve, 300))
   }
 
-  it('E1: labels the tabs Roster, Lineup and Defense over a bar of Create Player, a round mic and a dim Save', async function () {
+  it('E1: labels the tabs Roster, Lineup and Defense over a bar of Cancel, a round mic and a dim Save, Create Player the last roster row', async function () {
     const fixture = lineupFixture()
     await scoreGame(fixture.gameId)
     await acceptLineups()
@@ -310,23 +310,21 @@ describe('the roster screen for a scorekeeper', function () {
     for (const tab of ['Roster', 'Lineup', 'Defense']) {
       await tap(tab, 'tab')
       await page.waitForSelector(`[aria-label="${tab}"][aria-selected="true"]`)
-      const add = await page.$eval('[aria-label="Create Player"]', node => {
-        const words = node.querySelector('div')!
-        const style = getComputedStyle(node)
-        return {
-          text: node.textContent,
-          color: getComputedStyle(words).color,
-          border: style.borderTopWidth,
-          background: style.backgroundColor
-        }
-      })
-      expect(add.text).equals('Create Player')
-      // Green text, with no outline and no fill.
-      const [red, green, blue] = add.color.match(/\d+/g)!.map(Number)
-      expect(green).greaterThan(red + 60)
-      expect(green).greaterThan(blue)
-      expect(add.border).equals('0px')
-      expect(add.background).equals('rgba(0, 0, 0, 0)')
+      // Create Player is the Roster tab's last row, not the bar's (develop
+      // c86e67394): the bar is Cancel, the mic and Save Rosters.
+      if (tab === 'Roster')
+        expect(
+          await page.$eval('[aria-label="Create Player"]', node => ({
+            text: node.textContent,
+            inList: node.closest('[data-testid="Edit roster players"]') != null
+          }))
+        ).deep.equals({ text: 'Create Player›', inList: true })
+      expect(
+        await page.$eval(
+          '[data-testid="Roster footer bar"]',
+          node => node.textContent
+        )
+      ).not.includes('Create Player')
       const bar = await box('[data-testid="Roster footer bar"]')
       const mic = await box('[data-testid="Roster mic"]')
       const save = await box('[aria-label="Save Rosters"]')
@@ -515,7 +513,13 @@ describe('the roster screen for a scorekeeper', function () {
       const from = await page.$$eval(
         '[data-roster-target="roster"] [data-roster-player]',
         (nodes, index) => {
-          const r = nodes[index].getBoundingClientRect()
+          // A card lifts at once from its grip; pressed elsewhere it waits,
+          // and a move first scrolls the list (develop d09de6a09).
+          // No `??` here: page code cannot reach Sucrase's helper.
+          let grip: Element = nodes[index]
+          const found = grip.querySelector('[data-roster-grip]')
+          if (found !== null) grip = found
+          const r = grip.getBoundingClientRect()
           return { x: r.x + r.width / 2, y: r.y + r.height / 2 }
         },
         source
@@ -598,14 +602,15 @@ describe('the roster screen for a scorekeeper', function () {
       await new Promise(resolve => setTimeout(resolve, 300))
       const footer = await box('[data-testid="Roster footer"]')
       inside(footer)
-      const add = await box('[aria-label="Create Player"]')
+      // The bar is Cancel, the mic and Save Rosters; Create Player is the
+      // Roster list's last row, which scrolls (develop c86e67394).
       const mic = await box('[data-testid="Roster mic"]')
       const save = await box('[aria-label="Save Rosters"]')
       const cancel = await box('[aria-label="Cancel"]')
-      for (const each of [add, mic, save, cancel]) inside(each)
-      apart(add, mic)
+      for (const each of [mic, save, cancel]) inside(each)
+      apart(cancel, mic)
       apart(mic, save)
-      apart(add, save)
+      apart(cancel, save)
       for (const selector of lists[tab]) {
         const list = await box(selector)
         // The list ends above the bar, and scrolls under it rather than
@@ -618,6 +623,11 @@ describe('the roster screen for a scorekeeper', function () {
         expect(['auto', 'scroll']).includes(overflow)
       }
     }
+    // The loop ends on Defense, where the roster list is not drawn.
+    await tap('Roster', 'tab')
+    await page.$eval('[aria-label="Create Player"]', node => {
+      node.scrollIntoView({ block: 'center' })
+    })
     await tap('Create Player')
     await page.waitForSelector('[aria-label="First Name"]')
     await new Promise(resolve => setTimeout(resolve, 500))

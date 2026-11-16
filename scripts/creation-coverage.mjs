@@ -255,7 +255,6 @@ if (!reportOnly) {
       '--only',
       scenario
     ])
-  run('node', ['-r', 'sucrase/register', 'src/app/settingsPillSweep.e2e.ts'])
   run('node', [
     '-r',
     'sucrase/register',
