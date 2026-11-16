@@ -293,6 +293,23 @@ describe('the wall clock of a live stream (U25)', function () {
       return NOW - 500
     })
     expect(most).equals(4)
+    // A stamped stream is placed by its stamps, and asks for no write times.
+    const stampedLive = join(dir, 'stampedNoStat')
+    await mkdir(stampedLive)
+    await writeLive(stamped, stampedLive, { seconds: 3 })
+    let stats = 0
+    const placed = await scanNewSegments(
+      stampedLive,
+      undefined,
+      atNow,
+      undefined,
+      async () => {
+        stats++
+        return NOW
+      }
+    )
+    expect(placed.points.every(point => point.source === 'sei')).equals(true)
+    expect(stats).equals(0)
     // A write time that cannot be read is the look's.
     const unread = await scanNewSegments(
       live,

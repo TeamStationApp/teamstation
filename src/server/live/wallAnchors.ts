@@ -148,17 +148,19 @@ export async function scanNewSegments(
       ).placement
     }
   }
-  // Asked for together, not one segment at a time: a listed segment is
-  // written in full, and each stream's poll would otherwise wait on them in
-  // series. One that cannot be said falls back to the look, as a missing
-  // file does.
-  const writes = fresh.map(
-    async segment =>
-      await writtenAt(join(directory, segment.uri)).catch(() => null)
-  )
+  // First each segment's frames, in order: a placement carries from one
+  // segment to the next.
+  const read: Array<{
+    segment: PlaylistSegment
+    startMs: number
+    lengthMs: number
+    frames: ScannedFrame[]
+    failed: boolean
+  }> = []
   for (const [index, segment] of fresh.entries()) {
     const lengthMs = segment.durationSec * 1000
     let frames: ScannedFrame[] = []
+    let failed = false
     const track = await trackOf(segment)
     if (track != null) {
       const bytes = await readPart(join(directory, segment.uri))
@@ -179,27 +181,42 @@ export async function scanNewSegments(
         placement = scanned.placement
       } catch (error) {
         unreadable.push(`${segment.uri}: ${String(error)}`)
-        if (last != null) {
-          startMs += lengthMs
-          continue
-        }
+        failed = true
       }
     }
+    read.push({ segment, startMs, lengthMs, frames, failed })
+    startMs += lengthMs
+  }
+  // Then when each unstamped segment was written, asked for together rather
+  // than one after another; a stamped one needs none. One that cannot be said
+  // falls back to the look, as a missing file does.
+  const written = await Promise.all(
+    read.map(async row =>
+      row.frames.some(frame => frame.stamp != null)
+        ? null
+        : await writtenAt(join(directory, row.segment.uri)).catch(() => null)
+    )
+  )
+  for (const [index, row] of read.entries()) {
+    const { frames, lengthMs } = row
+    // A segment that could not be read is passed over once a stamp has been
+    // seen; before that it is placed by its arrival, as an unstamped one.
+    if (row.failed && last != null) continue
     const kept = thinStamps(frames, last)
     if (frames.some(frame => frame.stamp != null)) {
       points.push(...kept.map(point => ({ ...point, source: 'sei' as const })))
       last = kept.at(-1) ?? last
       if (last != null) latest = { mediaMs: last.mediaMs, wallMs: last.wallMs }
     } else {
-      const mediaMs = Math.round(startMs)
+      const mediaMs = Math.round(row.startMs)
       // Its last frame arrived when the splitter last wrote it, which is
       // anything up to a look before the look that found it listed. Timed
       // from the look, every stream ran up to a second late, a different
       // amount each — and since a point never goes behind the one before it,
       // each stream's timeline settled at the latest of its looks: angles
       // played side by side a second apart.
-      const written = await writes[index]
-      const arrivedAt = written == null ? seenAt : Math.min(written, seenAt)
+      const writtenMs = written[index]
+      const arrivedAt = writtenMs == null ? seenAt : Math.min(writtenMs, seenAt)
       const wallMs = Math.round(
         Math.max(
           arrivedAt - lengthMs,
@@ -209,7 +226,6 @@ export async function scanNewSegments(
       points.push({ mediaMs, wallMs, source: 'arrival', corrected: true })
       latest = { mediaMs, wallMs }
     }
-    startMs += lengthMs
   }
   return {
     points,
