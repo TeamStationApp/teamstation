@@ -1,5 +1,7 @@
 import { Platform } from 'react-native'
 
+import { PLAN_COLUMN_WIDTH } from './planColumns'
+
 /**
  * The game plan sheet's sizes. A cell holds at most two characters of a
  * monospace font, whose every glyph is 0.6 em wide: 19.2 points at 16, plus
@@ -16,7 +18,12 @@ export const PLAN_CELL_FONT = {
   fontFamily: PLAN_CELL_FONT_FAMILY,
   fontSize: PLAN_CELL_FONT_SIZE
 } as const
-export const PLAN_COLUMN_WIDTH = 28
+export {
+  PLAN_COLUMN_WIDTH,
+  PLAN_MAX_WIDTH,
+  PLAN_REFERENCE_WIDTH,
+  planColumnWidth
+} from './planColumns'
 /** A row of the sheet: a dense table's cells are touch targets too. */
 export const PLAN_ROW_HEIGHT = 44
 /** The inning numbers above the columns. */
@@ -24,8 +31,9 @@ export const PLAN_HEADER_HEIGHT = 32
 /** The batting slot's number, left of the player. */
 export const PLAN_SLOT_WIDTH = 24
 /**
- * The player, "Ruth #27": as wide as an inning column more than it was for
- * six innings, now that a plan opens with five. A name wider still pans.
+ * The player, "Ruth #27": as wide as a two-character inning column more than
+ * it was for six innings, now that a plan opens with five. A name wider
+ * still pans.
  */
 export const PLAN_PLAYER_WIDTH = 136 + PLAN_COLUMN_WIDTH
 /**

@@ -19,8 +19,11 @@ import { ThemeProvider } from '../../theme/ThemeContext'
 import { PLAN_REFUSAL_MS } from './PlanCell'
 import {
   PLAN_COLUMN_WIDTH,
+  PLAN_MAX_WIDTH,
   PLAN_PLAYER_WIDTH,
+  PLAN_REFERENCE_WIDTH,
   PLAN_SLOT_WIDTH,
+  planColumnWidth,
   planPickerTop
 } from './planLayout'
 import { type PlanContext, PlanTab } from './PlanTab'
@@ -283,6 +286,48 @@ describe('the game plan tab', function () {
     expect(cells().map(row => row.length)).deep.equals([7, 7, 7])
     expect(byId('Plan inning 7')).not.equals(null)
     expect(cell(3, 7)).not.equals(null)
+  })
+
+  it('makes an inning column two characters wide on a phone, growing with the window to three times that', function () {
+    expect(PLAN_REFERENCE_WIDTH * 3).equals(PLAN_MAX_WIDTH)
+    expect(
+      [0, 375, 402, 834, 1024, 1206, 1920].map(planColumnWidth)
+    ).deep.equals([28, 28, 28, 58, 71, 84, 84])
+  })
+
+  it('grows the inning columns with the window, up to three times a phone’s, and stops the tab at 1206 points', async function () {
+    const widths = (): string[] =>
+      [byId('Plan inning 1')!, cell(1, 1).parentElement!].map(
+        node => getComputedStyle(node).width
+      )
+    const sized = async (width: number): Promise<void> => {
+      Object.defineProperty(document.documentElement, 'clientWidth', {
+        configurable: true,
+        get: () => width
+      })
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+      await settle()
+    }
+    try {
+      await sized(402)
+      await mount()
+      expect(widths()).deep.equals(['28px', '28px'])
+      await sized(1024)
+      expect(widths()).deep.equals(['71px', '71px'])
+      expect(byId('Plan add inning')!.style.width).equals('71px')
+      await sized(1920)
+      expect(widths()).deep.equals(['84px', '84px'])
+      expect(getComputedStyle(byId('Plan tab')!).maxWidth).equals('1206px')
+      expect(getComputedStyle(byId('Plan tab')!).alignSelf).equals('center')
+    } finally {
+      delete (document.documentElement as unknown as Record<string, unknown>)
+        .clientWidth
+      await act(async () => {
+        window.dispatchEvent(new window.Event('resize'))
+      })
+    }
   })
 
   it('opens a new plan with five innings, and a player column an inning wider, each name a non-selectable ticker', async function () {

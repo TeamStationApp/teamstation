@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  useWindowDimensions,
   View,
   type ViewProps
 } from 'react-native'
@@ -52,13 +53,14 @@ import {
   startAssignDrag
 } from './planGesture'
 import {
-  PLAN_COLUMN_WIDTH,
   PLAN_HEADER_HEIGHT,
+  PLAN_MAX_WIDTH,
   PLAN_PICKER_HEIGHT,
   PLAN_PICKER_WIDTH,
   PLAN_PLAYER_WIDTH,
   PLAN_ROW_HEIGHT,
   PLAN_SLOT_WIDTH,
+  planColumnWidth,
   planPickerTop
 } from './planLayout'
 import { PlanPositionErrors } from './PlanPositionErrors'
@@ -134,9 +136,10 @@ const holds = (node: unknown, other: EventTarget | null): boolean =>
 
 /**
  * The coach's game plan: a row of a blue Help and a red Clear, then a sheet
- * of the lineup in batting order, one two-character column per inning, then
- * each inning's position errors, then the playing-time warnings. The player column stays put while the innings
- * scroll sideways. A cell is set by typing (web) or from the field picker;
+ * of the lineup in batting order, one column per inning, two characters wide
+ * on a phone and wider on a wider window, then each inning's position
+ * errors, then the playing-time warnings. The player column stays put while
+ * the innings scroll sideways. A cell is set by typing (web) or from the field picker;
  * a player is dragged up or down to change the batting order, and his row's
  * innings move with him. A plan is on while any cell holds a position, so
  * every change carries that as `enabled`. The innings added past the first
@@ -202,6 +205,8 @@ function PlanSheet({
   const surface = theme.scoringSurface
   const web = os === 'web'
   const engine = useRosterGesture()
+  // The inning columns grow with the window, up to three times a phone's.
+  const column = planColumnWidth(useWindowDimensions().width)
   const players = useMemo(() => batters.map(batter => batter.player), [batters])
   const aligned = useMemo(() => alignPlan(plan, players), [plan, players])
   // Live: every cell and every move of a player is judged again at once.
@@ -680,7 +685,14 @@ function PlanSheet({
     <View
       ref={tab}
       testID="Plan tab"
-      style={{ flex: 1, minHeight: 0 }}
+      // Never wider than three phones, centred under the tabs above it.
+      style={{
+        flex: 1,
+        minHeight: 0,
+        width: '100%',
+        maxWidth: PLAN_MAX_WIDTH,
+        alignSelf: 'center'
+      }}
       onLayout={event => {
         const { width, height } = event.nativeEvent.layout
         setArea({ width, height })
@@ -948,7 +960,7 @@ function PlanSheet({
                         </Text>
                       )
                       const style = {
-                        width: PLAN_COLUMN_WIDTH,
+                        width: column,
                         height: PLAN_HEADER_HEIGHT,
                         alignItems: 'center' as const,
                         justifyContent: 'center' as const,
@@ -991,7 +1003,7 @@ function PlanSheet({
                           emit(addInning(aligned))
                         }}
                         style={{
-                          width: PLAN_COLUMN_WIDTH,
+                          width: column,
                           alignItems: 'center',
                           justifyContent: 'center'
                         }}
@@ -1037,7 +1049,7 @@ function PlanSheet({
                           <View
                             key={inning}
                             style={{
-                              width: PLAN_COLUMN_WIDTH,
+                              width: column,
                               height: PLAN_ROW_HEIGHT - 1,
                               borderRightWidth: StyleSheet.hairlineWidth,
                               borderColor: surface.divider

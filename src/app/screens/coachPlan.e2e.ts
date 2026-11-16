@@ -2439,6 +2439,76 @@ describe('Coach Plan', function () {
   })
 
   /**
+   * P27: an inning column at a phone's 402 points, an iPad's 1024 and a
+   * desktop's 1920, the window resized under the open Plan tab; the tab
+   * stops at 1206 points. Saves `plan-chrome-wide-after.png` at 1920.
+   */
+  it('P27 grows the inning columns with the window, and stops the Plan tab at 1206 points', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, HOME_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    const cdp = await coach.page.createCDPSession()
+    const measure = async (
+      width: number,
+      height: number
+    ): Promise<{ column: number; tab: number; left: number }> => {
+      await cdp.send('Emulation.setDeviceMetricsOverride', {
+        width,
+        height,
+        deviceScaleFactor: 1,
+        mobile: false
+      })
+      await coach.page.waitForFunction(
+        (wide: number) =>
+          Math.abs(
+            document
+              .querySelector('[data-testid="Plan cell 1-1"]')!
+              .parentElement!.getBoundingClientRect().width -
+              Math.round((28 * Math.min(Math.max(wide, 402), 1206)) / 402)
+          ) < 1,
+        { timeout: 10000 },
+        width
+      )
+      return await coach.page.evaluate(() => ({
+        column: document
+          .querySelector('[data-testid="Plan cell 1-1"]')!
+          .parentElement!.getBoundingClientRect().width,
+        tab: document
+          .querySelector('[data-testid="Plan tab"]')!
+          .getBoundingClientRect().width,
+        left: document
+          .querySelector('[data-testid="Plan tab"]')!
+          .getBoundingClientRect().left
+      }))
+    }
+    try {
+      const phone = await measure(WIDTH, HEIGHT)
+      const tablet = await measure(1024, 1366)
+      const desktop = await measure(1920, 1080)
+      console.log(
+        `    P27 widths: ${JSON.stringify({ phone, tablet, desktop })}`
+      )
+      expect(phone.column).equals(28)
+      expect(tablet.column).equals(71)
+      expect(desktop.column).equals(84)
+      expect(desktop.tab).equals(1206)
+      // Centred in the window, as the tabs above it are.
+      expect(desktop.left).equals((1920 - 1206) / 2)
+      if (ARTIFACTS != null)
+        await writeFile(
+          join(ARTIFACTS, 'plan-chrome-wide-after.png'),
+          await coach.page.screenshot()
+        )
+    } finally {
+      await cdp.send('Emulation.clearDeviceMetricsOverride')
+      await cdp.detach()
+    }
+  })
+
+  /**
    * P25: a scoring screen reopened in the 3rd, which has scored nothing
    * since, reads in a lineup edit made elsewhere and then the head coach's
    * change to inning 3, and puts the coach's column on the field.
