@@ -123,8 +123,6 @@ export interface SoakSettings {
   ffmpeg: string
   /** The bench clock's offset from UTC, in minutes. */
   offsetMinutes?: number
-  /** The installed TeamStation Develop build, which iOS attaches name so no other is put in its place. */
-  iosApp: string
   /** The module that makes the network conditioner (`loadShaper`), for a watcher's outage; receiver-outage is blocked without it. */
   shaper?: string
   /** Each watcher role's address on a test network, for an outage through the conditioner. */
@@ -148,8 +146,7 @@ export function soakSettings(raw: unknown): SoakSettings {
       ? ''
       : 'ndiCapture.command',
     strings(soak.tvJoinSteps) ? '' : 'tvJoinSteps',
-    typeof soak.ffmpeg === 'string' ? '' : 'ffmpeg',
-    typeof soak.iosApp === 'string' ? '' : 'iosApp'
+    typeof soak.ffmpeg === 'string' ? '' : 'ffmpeg'
   ].filter(Boolean)
   if (missing.length > 0) {
     throw new BlockedError(
@@ -164,7 +161,6 @@ export function soakSettings(raw: unknown): SoakSettings {
     ndiCapture: { command: capture.command as string[] },
     tvJoinSteps: soak.tvJoinSteps as string[],
     ffmpeg: soak.ffmpeg as string,
-    iosApp: soak.iosApp as string,
     ...(typeof soak.offsetMinutes === 'number'
       ? { offsetMinutes: soak.offsetMinutes }
       : {}),
@@ -450,8 +446,7 @@ export function deviceKit(
     attachIos: async role =>
       await recovering(role, {
         platform: 'ios',
-        appId: DEVELOP_APP,
-        appFile: settings.iosApp
+        appId: DEVELOP_APP
       }),
     attachSafari: async role =>
       await recovering(role, { platform: 'ios', appId: SAFARI }),

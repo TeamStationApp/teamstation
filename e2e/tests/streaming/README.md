@@ -39,11 +39,10 @@ Not tested here: TV01 (needs more than four cameras; runs use at most four), IOS
 ## What a run needs
 
 - **A stack:** a droplet of its own from the pool, `npm run -s e2e -- stack up --ref <ref>` (see `e2e/README.md`), named to the scenario with `--stack <id>`. Several scenarios can run on several stacks at once with `run-many`, as long as they do not share a device.
-- **The app builds:** TeamStation Develop and TeamStation TV develop builds, installed on every watcher device and pointed at the stack with `e2e/rigs/app/setServer.ts`, which sets the server for the next fresh launch; on Android, uninstall first when the signing key changed and grant `CAMERA`, `RECORD_AUDIO` and `POST_NOTIFICATIONS`.
+- **The app builds:** TeamStation Develop and TeamStation TV develop builds, installed on every watcher device and pointed at the stack with `e2e/rigs/app/setServer.ts`, which sets the server for the next fresh launch. Install with `npm run -s e2e -- prepare --package <file>`: a run attaches a phone without installing anything, and an iPhone's clearState puts back the package `prepare` recorded; on Android, uninstall first when the signing key changed and grant `CAMERA`, `RECORD_AUDIO` and `POST_NOTIFICATIONS`.
 - **Every device reserved** for the scenario's minutes plus about 15.
 - **Local settings** (`~/.config/teamstation-e2e/local.json`, untracked), block `soak`:
   - `tvRemote`, `ndiCapture`, `tvJoinSteps`, `ffmpeg`, `offsetMinutes`: the bench's TV remote helper, NDI capture, TV join steps, the pinned ffmpeg and the bench clock's offset from UTC;
-  - `iosApp`: the unpacked `.app` of the installed iOS build (maestro-d attaches with it);
   - `shaper` and `shapedIps`: a module on this machine that makes the network conditioner (it exports `shaper(tools)` returning a `Shaper`, as `e2e/rigs/streaming/shaper.ts` describes; a bench's conditioner client lives with its local settings, not in this repository), and each watcher role's address on the shaped test network, for receiver-outage. Without `shaper` every watcher is reported blocked, and so is a watcher without an address.
 - **Simulated video:** every targeted scenario publishes only synthetic cameras (`SyntheticPublisher`), each burning its label and the bench clock into its frames. No phone publishes, so the bench phones are free to be watchers.
 

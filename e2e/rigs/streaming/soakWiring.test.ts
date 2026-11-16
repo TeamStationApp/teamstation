@@ -103,8 +103,7 @@ describe('the soak wiring', function () {
       ndiCapture: { command: ['python3', 'ndi.py', '{out}'] },
       tvJoinSteps: ['app:app.teamstation.tv', 'select'],
       ffmpeg: '/opt/ffmpeg',
-      offsetMinutes: -480,
-      iosApp: '/b/TeamStation Develop.app'
+      offsetMinutes: -480
     })
     expect(settings.tvRemote.env).deep.equals({ TEAM: 't' })
     expect(settings.offsetMinutes).equals(-480)
@@ -113,14 +112,13 @@ describe('the soak wiring', function () {
         tvRemote: { command: ['r'] },
         ndiCapture: { command: ['n'] },
         tvJoinSteps: [],
-        ffmpeg: 'f',
-        iosApp: 'a'
+        ffmpeg: 'f'
       }).tvRemote.env
     ).deep.equals({})
     const error = thrown(() => soakSettings(undefined))
     expect(error).instanceOf(BlockedError)
     expect(error.message).includes(
-      'no tvRemote.command, ndiCapture.command, tvJoinSteps, ffmpeg, iosApp'
+      'no tvRemote.command, ndiCapture.command, tvJoinSteps, ffmpeg'
     )
   })
 
@@ -129,8 +127,7 @@ describe('the soak wiring', function () {
       tvRemote: { command: ['r'] },
       ndiCapture: { command: ['n'] },
       tvJoinSteps: [],
-      ffmpeg: 'f',
-      iosApp: 'a'
+      ffmpeg: 'f'
     }
     expect(
       soakSettings({
@@ -428,7 +425,6 @@ function partsRig(): {
       ndiCapture: { command: ['n'] },
       tvJoinSteps: [],
       ffmpeg: '/opt/ffmpeg',
-      iosApp: 'a',
       offsetMinutes: -480
     },
     world: {

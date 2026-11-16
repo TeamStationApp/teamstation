@@ -345,7 +345,6 @@ function rig(
     ndiCapture: { command: ['ndi'] },
     tvJoinSteps: [],
     ffmpeg: 'f',
-    iosApp: 'a',
     shaper: '/Users/dev/.config/teamstation-e2e/shaper.mjs',
     shapedIps: { iphone: '192.0.2.1' },
     ...options.settings

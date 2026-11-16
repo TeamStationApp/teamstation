@@ -44,8 +44,7 @@ const SETTINGS: SoakSettings = {
   tvRemote: { command: ['python3', 'remote.py'], env: { TEAM: 't' } },
   ndiCapture: { command: ['ndi', '--out', '{out}'] },
   tvJoinSteps: ['select'],
-  ffmpeg: '/opt/ffmpeg',
-  iosApp: '/b/TeamStation Develop.app'
+  ffmpeg: '/opt/ffmpeg'
 }
 
 const MANIFEST = {
@@ -300,8 +299,7 @@ describe('the device kit', function () {
         'iphone',
         {
           platform: 'ios',
-          appId: DEVELOP_APP,
-          appFile: '/b/TeamStation Develop.app'
+          appId: DEVELOP_APP
         }
       ],
       ['android', { platform: 'android', appId: DEVELOP_APP }]
