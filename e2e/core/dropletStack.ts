@@ -1,5 +1,11 @@
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -75,8 +81,11 @@ export async function runOnStack(options: {
   scratch: string
   config?: Record<string, unknown>
 }): Promise<unknown> {
-  const { cwd, handle, script, args, scratch } = options
-  mkdirSync(scratch, { recursive: true })
+  const { cwd, handle, script, args } = options
+  mkdirSync(options.scratch, { recursive: true })
+  // A directory of this call's own: two seeds at once in one process (run-many)
+  // must not share a server config, or one seeds the other's database.
+  const scratch = mkdtempSync(join(options.scratch, 'seed-'))
   const config = join(scratch, 'serverConfig.json')
   writeFileSync(
     config,
@@ -89,7 +98,7 @@ export async function runOnStack(options: {
   )
   const register = join(cwd, 'node_modules/sucrase/register')
   if (!existsSync(dirname(register))) {
-    rmSync(config, { force: true })
+    rmSync(scratch, { recursive: true, force: true })
     throw new HarnessError(`no sucrase under ${cwd}: run npm install there`)
   }
   const child = spawn(
@@ -105,7 +114,7 @@ export async function runOnStack(options: {
     child.on('close', resolve)
   })
   // It names the database's password: gone as soon as the seed is.
-  rmSync(config, { force: true })
+  rmSync(scratch, { recursive: true, force: true })
   if (status !== 0) {
     throw new HarnessError(`${script} failed: ${stderr.slice(-2000)}`)
   }
