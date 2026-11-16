@@ -144,6 +144,30 @@ describe('the streaming scripts against an attached stack', function () {
     expect(restart).instanceOf(BlockedError)
   })
 
+  it('follows the log again when SSH cannot start, without throwing', async function () {
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-attached-'))
+    let tails = 0
+    const stack = attachedLegacyStack(HANDLE, dir, {
+      everyMs: 1000,
+      spawn: command => {
+        if (command !== 'ssh') return fakeChild('', true)
+        tails++
+        const child = fakeChild('', false)
+        // Unheard, an error event is thrown.
+        if (tails === 1) {
+          setImmediate(() => {
+            child.emit('error', new Error('spawn ssh ENOENT'))
+            child.emit('exit', -2)
+          })
+        }
+        return child
+      }
+    })
+    await new Promise(resolve => setTimeout(resolve, 2300))
+    await stack.stop()
+    expect(tails).equals(2)
+  }).timeout(5000)
+
   it('follows the log again when SSH drops', async function () {
     const dir = mkdtempSync(join(tmpdir(), 'e2e-attached-'))
     let tails = 0

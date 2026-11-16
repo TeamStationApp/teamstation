@@ -158,9 +158,15 @@ export function attachedLegacyStack(
     tail.stdout?.pipe(log, { end: false })
     // Read and dropped: a pipe nobody reads fills, and its writer stops.
     tail.stderr?.resume()
-    tail.on('exit', () => {
-      if (tail != null && !stopped) setTimeout(follow, 2000)
-    })
+    // A tail that ends, or that could not start, is started again.
+    let again = false
+    const retry = (): void => {
+      if (again || stopped) return
+      again = true
+      setTimeout(follow, 2000)
+    }
+    tail.on('exit', retry)
+    tail.on('error', retry)
   }
   let stopped = false
   let copying: Promise<void> | undefined

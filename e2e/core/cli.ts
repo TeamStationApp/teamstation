@@ -74,6 +74,12 @@ function retryCount(value: string): number {
   return Number(value)
 }
 
+/** Whether a process's command line is `stack serve` for exactly `id`. */
+export function servesStack(command: string, id: string): boolean {
+  // An id is a-z, 0-9 and - (`checkStackId`), so it needs no escaping.
+  return new RegExp(`\\bstack serve\\b.*--id ${id}(\\s|$)`).test(command.trim())
+}
+
 /**
  * Stops the `stack serve` for `id`, if that is still what `pid` is: after a
  * crash or a reboot the number can be gone, or another process's.
@@ -82,9 +88,7 @@ function stopServe(pid: number, id: string): boolean {
   const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
     encoding: 'utf8'
   }).stdout
-  if (!/\bstack serve\b/.test(command) || !command.includes(`--id ${id}`)) {
-    return false
-  }
+  if (!servesStack(command, id)) return false
   try {
     process.kill(pid, 'SIGTERM')
     return true

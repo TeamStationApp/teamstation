@@ -136,7 +136,6 @@ export function listStacks(dir: string): StackEntry[] {
     .map(name => readStack(dir, name.slice(0, -'.json'.length)))
 }
 
-/** Forgets a stack; a `stack up` one is stopped first, an attached one is left running. */
 /**
  * Forgets a stack, stopping it first when this machine started it. `kill`
  * says whether it stopped anything: a `stack serve` that died without

@@ -5,7 +5,7 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { STACKS, writeStackEntry } from './attach'
-import { main } from './cli'
+import { main, servesStack } from './cli'
 import { HarnessError } from './result'
 
 describe('the CLI', function () {
@@ -38,5 +38,13 @@ describe('the CLI', function () {
     } finally {
       rmSync(file, { force: true })
     }
+  })
+
+  it('stops only the stack serve for exactly the id it names', function () {
+    const serve = 'node -r sucrase/register e2e/core/cli.ts stack serve --id ab'
+    expect(servesStack(serve, 'ab')).equals(true)
+    expect(servesStack(`${serve} --lan`, 'ab')).equals(true)
+    expect(servesStack(`${serve}c --lan`, 'ab')).equals(false)
+    expect(servesStack('sleep 60', 'ab')).equals(false)
   })
 })

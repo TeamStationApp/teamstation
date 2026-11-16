@@ -94,7 +94,11 @@ describe('an attached stack’s copies', function () {
     })
     const done = await Promise.race([
       stack.ensureApi().then(() => true),
-      new Promise(resolve => setTimeout(() => resolve(false), 10000))
+      new Promise(resolve => {
+        setTimeout(() => {
+          resolve(false)
+        }, 10000)
+      })
     ])
     await stack.stop()
     expect(done).equals(true)
