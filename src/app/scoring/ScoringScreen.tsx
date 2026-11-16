@@ -1898,10 +1898,20 @@ function ScoringPanel(props: {
   )
   // The state as its reader may read it now, for everything that draws a
   // name. What it does still goes through `state`: only the names differ.
-  const readableState = useMemo(() => {
-    const named = readable(state.session)
-    return named === state.session ? state : { ...state, session: named }
-  }, [readable, state])
+  // Named from the session alone, so a change to the rest of the state (a
+  // grab's gesture flag) keeps the same game, and the field the same
+  // players: a new players array would cancel the grab under the finger.
+  const readableSession = useMemo(
+    () => readable(state.session),
+    [readable, state.session]
+  )
+  const readableState = useMemo(
+    () =>
+      readableSession === state.session
+        ? state
+        : { ...state, session: readableSession },
+    [readableSession, state]
+  )
   // Words the scoring wrote of a player by the full name the game holds
   // (a step's label, a dictated question), by the label he may be read by.
   const publicText = useMemo(() => {
@@ -1917,8 +1927,8 @@ function ScoringPanel(props: {
       swaps.reduce((out, [full, label]) => out.split(full).join(label), text)
   }, [state.session, readableState])
   const displaySession = useMemo(
-    () => withRosterDetails(readableState.session, props.rosters),
-    [readableState, props.rosters]
+    () => withRosterDetails(readableSession, props.rosters),
+    [readableSession, props.rosters]
   )
   const missing = missingDefense(session)
   const battingCount =
