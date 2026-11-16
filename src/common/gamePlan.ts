@@ -357,6 +357,93 @@ export function plannedInnings(
 }
 
 /**
+ * The positions a complete field holds, in the order the plan's errors list
+ * them. DH and EH bat without fielding, so neither is required.
+ */
+export const REQUIRED_PLAN_POSITIONS: readonly PlanCell[] = [
+  'P',
+  'C',
+  '1B',
+  '2B',
+  '3B',
+  'SS',
+  'LF',
+  'CF',
+  'RF'
+]
+
+/**
+ * What keeps one inning of a plan from being a complete, unique field: the
+ * required positions nobody holds, and the positions two or more players
+ * hold, each in `PLAN_CELLS` order.
+ */
+export interface PlanPositionError {
+  /** From 1. */
+  inning: number
+  missing: PlanCell[]
+  duplicated: PlanCell[]
+}
+
+/** The values held by two or more of one inning's cells: EH never is. */
+function duplicatedIn(column: readonly PlanCell[]): PlanCell[] {
+  return PLAN_CELLS.filter(
+    value => value !== 'EH' && column.filter(cell => cell === value).length > 1
+  )
+}
+
+/**
+ * The position errors of each inning that holds an assignment (any cell but
+ * the bench, DH and EH included) and is not a complete, unique field, in
+ * inning order. An inning with nothing assigned has none. `innings` stops it
+ * short of the plan's last inning: a final game is judged on the innings it
+ * reached, as its playing-time warnings are.
+ */
+export function planPositionErrors(
+  plan: Pick<GamePlan, 'innings' | 'rows'>,
+  innings = plan.innings
+): PlanPositionError[] {
+  const errors: PlanPositionError[] = []
+  for (let inning = 0; inning < Math.min(innings, plan.innings); inning++) {
+    const column = plan.rows.map(row => row.cells[inning] ?? '')
+    if (column.every(cell => cell === '')) continue
+    const missing = REQUIRED_PLAN_POSITIONS.filter(
+      position => !column.includes(position)
+    )
+    const duplicated = duplicatedIn(column)
+    if (missing.length > 0 || duplicated.length > 0)
+      errors.push({ inning: inning + 1, missing, duplicated })
+  }
+  return errors
+}
+
+/**
+ * The cells whose value another cell of their inning holds too, as
+ * `<row>-<inning>`, both from 0: EH and the bench never are. Read from the
+ * plan's position errors, worked out here when not given.
+ */
+export function duplicatedCells(
+  plan: Pick<GamePlan, 'innings' | 'rows'>,
+  errors: readonly PlanPositionError[] = planPositionErrors(plan)
+): Set<string> {
+  const cells = new Set<string>()
+  for (const { inning, duplicated } of errors)
+    plan.rows.forEach((row, at) => {
+      if (duplicated.includes(row.cells[inning - 1] ?? ''))
+        cells.add(`${at}-${inning - 1}`)
+    })
+  return cells
+}
+
+/**
+ * Values as the plan's errors list them: "SS", "SS and 2B", and "SS, 1B,
+ * CF, and C".
+ */
+export function positionList(values: readonly string[]): string {
+  if (values.length < 3) return values.join(' and ')
+  return `${values.slice(0, -1).join(', ')}, and ${values[values.length - 1]}`
+}
+
+/**
  * The defence the plan's column for `inning` (from 1) gives the side, or
  * null when there is no such column, it is not planned (none of the side's
  * batters has a field position in it), or it changes nothing. Each batter is

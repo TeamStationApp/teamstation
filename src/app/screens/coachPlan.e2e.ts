@@ -359,6 +359,24 @@ const OPENING_PLAN: PlanCell[][] = SHIFT_PLAN.map(row => [
   ...row.slice(1)
 ])
 
+/**
+ * #299's plan for the home side's nine: inning 1 misses 3B and the outfield
+ * and doubles SS; inning 2 holds only two DHs; inning 3 is a whole field;
+ * inning 4 has two EHs, which is no duplicate, and misses CF and RF; inning
+ * 5 is empty.
+ */
+const ERROR_PLAN: PlanCell[][] = [
+  ['P', 'DH', 'P', 'EH', ''],
+  ['C', 'DH', 'C', 'EH', ''],
+  ['1B', '', '1B', 'P', ''],
+  ['2B', '', '2B', 'C', ''],
+  ['SS', '', '3B', '1B', ''],
+  ['SS', '', 'SS', '2B', ''],
+  ['', '', 'LF', '3B', ''],
+  ['', '', 'CF', 'SS', ''],
+  ['', '', 'RF', 'LF', '']
+]
+
 /** Who a plan's column puts at each position, by gumboId; null for none. */
 function columnDefense(
   fixture: LineupFixture,
@@ -1063,6 +1081,37 @@ describe('Coach Plan', function () {
       await coach.tap('Home Team', 'tab')
     await coach.defense()
     await coach.shot(`defense-scorekeeper-${PHASE}.png`)
+  })
+
+  /**
+   * #299's captures, the same on the base and the branch: the coach's Plan
+   * tab holding ERROR_PLAN, scrolled through whole, and the game's pills as
+   * the home team's assistant sees them.
+   */
+  it('captures the plan’s position errors and pills, and the assistant’s pills', async function () {
+    if (!CAPTURING && ARTIFACTS == null) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, ERROR_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    await coach.tallShot(
+      `plan-phone-web-${PHASE}.png`,
+      '[data-testid="Plan scroll"]'
+    )
+    await coach.as(fixture, 'assistant')
+    await coach.page.goto(`${APP}/games/${fixture.gameId}`, {
+      waitUntil: 'domcontentloaded'
+    })
+    await coach.page.waitForSelector('[aria-label="Game sections"]', {
+      timeout: 60000
+    })
+    await coach.page.waitForFunction(
+      () => String(document.body.textContent).includes('Hosts'),
+      { timeout: 30000 }
+    )
+    await new Promise(resolve => setTimeout(resolve, 500))
+    await coach.shot(`coach-assistant-${PHASE}.png`)
   })
 
   it('captures the coach Plan tab, holding P8’s plan, and its picker', async function () {
@@ -2319,6 +2368,77 @@ describe('Coach Plan', function () {
   })
 
   /**
+   * P26: the position errors under the sheet for ERROR_PLAN, in order and
+   * before the warnings; the doubled cells red, EH's not; and Clear and an
+   * added inning's number that same red.
+   */
+  it('P26 lists each inning’s missing and doubled positions under the sheet, and reds the doubled cells, Clear and an added inning', async function () {
+    if (CAPTURING) this.skip()
+    const fixture = await lineupFixture()
+    await savePlan(fixture, ERROR_PLAN)
+    await coach.as(fixture, 'headCoach')
+    await coach.coachGame(fixture.gameId)
+    await coach.plan()
+    const RED = 'rgb(248, 113, 113)'
+    const read = async (): Promise<{
+      lines: string[]
+      before: boolean
+      text: string
+    }> =>
+      await coach.page.evaluate(() => {
+        const errors = document.querySelector(
+          '[data-testid="Plan position errors"]'
+        )
+        const warnings = document.querySelector('[data-testid="Plan warnings"]')
+        return {
+          lines: Array.from(
+            document.querySelectorAll('[data-testid^="Plan position "]')
+          )
+            .filter(node =>
+              /^Plan position (missing|duplicate) \d+$/.test(
+                String(node.getAttribute('data-testid'))
+              )
+            )
+            .map(node => String(node.textContent)),
+          before:
+            errors != null &&
+            (warnings == null ||
+              (errors.compareDocumentPosition(warnings) &
+                Node.DOCUMENT_POSITION_FOLLOWING) !==
+                0),
+          text: String(document.body.textContent)
+        }
+      })
+    const shown = await read()
+    console.log(`    P26 errors: ${JSON.stringify(shown.lines)}`)
+    expect(shown.lines).deep.equals([
+      'Inning 1 is missing players for positions: 3B, LF, CF, and RF',
+      'Inning 1 has multiple players assigned to SS',
+      'Inning 2 is missing players for positions: P, C, 1B, 2B, 3B, SS, LF, CF, and RF',
+      'Inning 2 has multiple players assigned to DH',
+      'Inning 4 is missing players for positions: CF and RF'
+    ])
+    expect(shown.before).equals(true)
+    expect(shown.text).not.includes('Two players at')
+    const colour = async (id: string): Promise<string> =>
+      await coach.page.$eval(`[data-testid="${id}"]`, node => {
+        const text = node.querySelector('[dir="auto"]')
+        // No `??` here: the page has no sucrase helpers.
+        // eslint-disable-next-line @typescript-eslint/prefer-nullish-coalescing
+        return getComputedStyle(text == null ? node : text).color
+      })
+    for (const id of ['5-1', '6-1', '1-2', '2-2'])
+      expect(await colour(`Plan cell ${id}`), id).equals(RED)
+    for (const id of ['1-1', '1-4', '2-4', '9-3'])
+      expect(await colour(`Plan cell ${id}`), id).not.equals(RED)
+    expect(await colour('Plan clear')).equals(RED)
+    await coach.tapCss('[data-testid="Plan add inning"]')
+    await coach.page.waitForSelector('[data-testid="Plan inning 6"]')
+    expect(await colour('Plan inning 6')).equals(RED)
+    expect(await colour('Plan inning 5')).not.equals(RED)
+  })
+
+  /**
    * P25: a scoring screen reopened in the 3rd, which has scored nothing
    * since, reads in a lineup edit made elsewhere and then the head coach's
    * change to inning 3, and puts the coach's column on the field.
@@ -2598,7 +2718,7 @@ describe('Coach Plan', function () {
     expect(layout.clear.y + layout.clear.height).at.most(layout.sheet.y + 1)
     // Blue Help, red Clear.
     expect(layout.helpColor).not.equals(layout.clearColor)
-    expect(layout.clearColor).equals('rgb(168, 53, 53)')
+    expect(layout.clearColor).equals('rgb(248, 113, 113)')
     const text = await coach.planHelpSheet()
     expect(text).equals(
       'Tap and hold a player to drag them to a new batting order. Tap or hold an inning slot to set a player’s position.'
@@ -2644,10 +2764,10 @@ describe('Coach Plan', function () {
     // A plan opens with five innings: the sixth is the added one.
     for (const header of headers.slice(0, 5)) {
       expect(header.role, header.id).not.equals('button')
-      expect(header.color, header.id).not.equals('rgb(168, 53, 53)')
+      expect(header.color, header.id).not.equals('rgb(248, 113, 113)')
     }
     expect(headers[5].role).equals('button')
-    expect(headers[5].color).equals('rgb(168, 53, 53)')
+    expect(headers[5].color).equals('rgb(248, 113, 113)')
     const confirm = '[aria-label="Delete inning 6?"]'
     // Inning 1's number does nothing.
     await coach.page.click('[data-testid="Plan inning 1"]')

@@ -2147,17 +2147,16 @@ describe('the coach’s game plan', function () {
     await type(1, 1, ['p'])
     await type(2, 1, ['p'])
     expect(
-      document.querySelector(
-        '[data-testid="Plan warning red duplicatePosition"]'
-      )
-    ).not.equals(null)
+      document.querySelector('[data-testid="Plan position duplicate 1"]')
+        ?.textContent
+    ).equals('Inning 1 has multiple players assigned to P')
     await click('Save Rosters')
     // Its inning 1, two pitchers and the rest blank, benches the Defense
     // tab's other fielders before the first pitch: the notice says so too.
     await waitFor(
       () =>
         document.body.textContent!.includes(
-          'Saved. Defense set from the plan’s inning 1. Plan has 1 red and 1 yellow playing-time warnings.'
+          'Saved. Defense set from the plan’s inning 1. Plan has 1 playing-time warning.'
         ),
       'the warning notice'
     )

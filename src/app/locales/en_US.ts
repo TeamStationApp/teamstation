@@ -211,6 +211,8 @@ export const enUs = {
   plan_bench: 'Bench',
   plan_close_picker: 'Close the field',
   plan_no_warnings: 'No playing-time warnings.',
+  plan_position_missing: 'Inning %1$s is missing players for positions: %2$s',
+  plan_position_duplicate: 'Inning %1$s has multiple players assigned to %2$s',
   plan_warning_red: 'Red warning: %s',
   plan_warning_yellow: 'Yellow warning: %s',
   plan_clear: 'Clear',

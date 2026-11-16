@@ -910,6 +910,115 @@ describe('the game plan tab', function () {
     )
   })
 
+  it('lists each inning’s missing and doubled positions under the sheet, before the warnings, and reds a doubled cell', async function () {
+    await mount({
+      context: ruled({}),
+      plan: {
+        ...PLAN,
+        rows: [
+          { player: LINEUP[0], cells: ['SS', 'EH', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['SS', 'EH', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['', '', '', '', '', ''] }
+        ]
+      }
+    })
+    const text = (id: string): string | null => byId(id)?.textContent ?? null
+    expect(text('Plan position missing 1')).equals(
+      'Inning 1 is missing players for positions: P, C, 1B, 2B, 3B, LF, CF, and RF'
+    )
+    expect(text('Plan position duplicate 1')).equals(
+      'Inning 1 has multiple players assigned to SS'
+    )
+    // Two EHs are no duplicate; inning 2 still fields nobody.
+    expect(text('Plan position missing 2')).equals(
+      'Inning 2 is missing players for positions: P, C, 1B, 2B, 3B, SS, LF, CF, and RF'
+    )
+    expect(byId('Plan position duplicate 2')).equals(null)
+    // An inning with nothing assigned has no error.
+    expect(byId('Plan position missing 3')).equals(null)
+    // No line names the players of a doubled position any more.
+    expect(document.body.textContent).not.includes('Two players at')
+    // Under the sheet, then the warnings.
+    const errors = byId('Plan position errors')!
+    expect(
+      byId('Plan sheet')!.compareDocumentPosition(errors) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    expect(
+      errors.compareDocumentPosition(byId('Plan warnings')!) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).not.equals(0)
+    // The doubled cells are the errors' red; EH and the others are not.
+    const colour = (node: Element): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    const red = colour(byId('Plan position duplicate 1')!)
+    expect(colour(cell(1, 1))).equals(red)
+    expect(colour(cell(2, 1))).equals(red)
+    expect(colour(cell(1, 2))).not.equals(red)
+    expect(colour(cell(3, 1))).not.equals(red)
+    // Clear is that red too.
+    expect(colour(byId('Plan clear')!)).equals(red)
+    // Fixed, the line and the colour go at once.
+    await press(cell(2, 1))
+    await key('c')
+    await key('Enter')
+    expect(byId('Plan position duplicate 1')).equals(null)
+    expect(text('Plan position missing 1')).equals(
+      'Inning 1 is missing players for positions: P, 1B, 2B, 3B, LF, CF, and RF'
+    )
+    expect(colour(cell(1, 1))).not.equals(red)
+  })
+
+  it('judges a final game that stopped short on the innings it played', async function () {
+    await mount({
+      context: { ...NO_RULES, status: 'final', playedInnings: 1 },
+      plan: {
+        ...PLAN,
+        rows: [
+          { player: LINEUP[0], cells: ['P', 'SS', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['C', 'SS', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['1B', '', '', '', '', ''] }
+        ]
+      }
+    })
+    // Inning 2 was never played: no lines for it, and no red cells.
+    expect(byId('Plan position missing 1')).not.equals(null)
+    expect(byId('Plan position duplicate 2')).equals(null)
+    expect(byId('Plan position missing 2')).equals(null)
+    const colour = (node: Element): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    expect(colour(cell(1, 2))).equals(colour(cell(1, 1)))
+  })
+
+  it('reds a doubled cell on a phone too, and shows no errors for an empty plan', async function () {
+    await mount({ os: 'ios' })
+    expect(byId('Plan position errors')).equals(null)
+    await act(async () => {
+      root!.unmount()
+    })
+    root = undefined
+    host!.remove()
+    await mount({
+      os: 'ios',
+      plan: {
+        ...PLAN,
+        rows: [
+          { player: LINEUP[0], cells: ['DH', '', '', '', '', ''] },
+          { player: LINEUP[1], cells: ['DH', '', '', '', '', ''] },
+          { player: LINEUP[2], cells: ['P', '', '', '', '', ''] }
+        ]
+      }
+    })
+    expect(byId('Plan position duplicate 1')!.textContent).equals(
+      'Inning 1 has multiple players assigned to DH'
+    )
+    const colour = (node: Element): string =>
+      getComputedStyle(node.querySelector('[dir="auto"]') ?? node).color
+    const red = colour(byId('Plan position duplicate 1')!)
+    expect(colour(cell(1, 1))).equals(red)
+    expect(colour(cell(3, 1))).not.equals(red)
+  })
+
   it('says a team with rules has nothing to warn of, and shows nothing for one with none', async function () {
     await mount({ context: ruled({}) })
     expect(byId('Plan warnings')!.textContent).equals(

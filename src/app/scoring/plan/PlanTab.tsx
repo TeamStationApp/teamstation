@@ -16,12 +16,14 @@ import {
   alignPlan,
   clearPlan,
   DEFAULT_PLAN_INNINGS,
+  duplicatedCells,
   type GamePlan,
   MAX_PLAN_INNINGS,
   type PlanCell,
   planCellEntry,
   planCellOf,
   planHasPositions,
+  planPositionErrors,
   removeInning
 } from '../../../common/gamePlan'
 import { type PlanSameDay, planWarnings } from '../../../common/planWarnings'
@@ -59,6 +61,7 @@ import {
   PLAN_SLOT_WIDTH,
   planPickerTop
 } from './planLayout'
+import { PlanPositionErrors } from './PlanPositionErrors'
 import { PlanWarnings } from './PlanWarnings'
 
 /**
@@ -132,7 +135,7 @@ const holds = (node: unknown, other: EventTarget | null): boolean =>
 /**
  * The coach's game plan: a row of a blue Help and a red Clear, then a sheet
  * of the lineup in batting order, one two-character column per inning, then
- * the playing-time warnings. The player column stays put while the innings
+ * each inning's position errors, then the playing-time warnings. The player column stays put while the innings
  * scroll sideways. A cell is set by typing (web) or from the field picker;
  * a player is dragged up or down to change the batting order, and his row's
  * innings move with him. A plan is on while any cell holds a position, so
@@ -212,6 +215,20 @@ function PlanSheet({
         sameDay: context.sameDay
       }),
     [aligned, context]
+  )
+  // Each inning that is not a complete, unique field, and its doubled cells.
+  // A final game that stopped short is judged on the innings it reached.
+  const reached =
+    context.status === 'final' && context.playedInnings != null
+      ? context.playedInnings
+      : aligned.innings
+  const positionErrors = useMemo(
+    () => planPositionErrors(aligned, reached),
+    [aligned, reached]
+  )
+  const doubled = useMemo(
+    () => duplicatedCells(aligned, positionErrors),
+    [aligned, positionErrors]
   )
   // Every change says whether the plan is now on: whether it holds a
   // position.
@@ -745,7 +762,7 @@ function PlanSheet({
                 <Text
                   selectable={false}
                   style={{
-                    color: theme.scoringOutColor,
+                    color: surface.danger,
                     fontFamily: theme.boldTextFont,
                     fontSize: 16
                   }}
@@ -921,7 +938,7 @@ function PlanSheet({
                             ...header,
                             fontSize: 13,
                             color: added
-                              ? theme.scoringOutColor
+                              ? surface.danger
                               : active
                                 ? surface.accent
                                 : surface.mutedText
@@ -1015,6 +1032,7 @@ function PlanSheet({
                           inning + 1
                         )
                         const testID = `Plan cell ${index + 1}-${inning + 1}`
+                        const duplicated = doubled.has(`${index}-${inning}`)
                         return (
                           <View
                             key={inning}
@@ -1030,6 +1048,7 @@ function PlanSheet({
                                 testID={testID}
                                 label={label}
                                 value={cell}
+                                duplicated={duplicated}
                                 highlighted={selected}
                                 editing={
                                   selected && editing !== ''
@@ -1049,6 +1068,7 @@ function PlanSheet({
                                 testID={testID}
                                 label={label}
                                 value={cell}
+                                duplicated={duplicated}
                                 selected={selected}
                                 onPress={() => {
                                   setPicking(at)
@@ -1084,6 +1104,7 @@ function PlanSheet({
                 </View>
               </ScrollView>
             </View>
+            <PlanPositionErrors errors={positionErrors} />
             <PlanWarnings warnings={warnings} rules={context.rules != null} />
             {/* Said to a screen reader when a cell refuses what was typed. */}
             <Text

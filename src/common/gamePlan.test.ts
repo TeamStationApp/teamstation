@@ -11,6 +11,7 @@ import {
   columnPlan,
   completeCell,
   DEFAULT_PLAN_INNINGS,
+  duplicatedCells,
   type GamePlan,
   inningDefense,
   MAX_PLAN_INNINGS,
@@ -22,6 +23,8 @@ import {
   planHasPositions,
   plannedInnings,
   planPlayerKey,
+  planPositionErrors,
+  positionList,
   removeInning
 } from './gamePlan'
 import { type Position, POSITIONS } from './scoring/state'
@@ -500,5 +503,128 @@ describe('game plan model', function () {
         )
       ).deep.equals(defense({ P: 9, RF: 4 }))
     })
+  })
+})
+
+describe('plan position errors', function () {
+  /** A plan of these rows' cells, one row per array, one cell per inning. */
+  const planned = (cells: PlanCell[][]): GamePlan => ({
+    enabled: true,
+    innings: cells[0].length,
+    rows: cells.map((row, at) => ({
+      player: { gumboId: null, fullName: `Player ${at + 1}`, jersey: '' },
+      cells: row
+    }))
+  })
+  const FIELD: PlanCell[] = ['P', 'C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF']
+  /** One inning: the cells given, top to bottom. */
+  const inning = (...cells: PlanCell[]): GamePlan =>
+    planned(cells.map(cell => [cell]))
+
+  it('finds nothing in a plan with nothing assigned, a dash being no assignment', function () {
+    expect(planPositionErrors(inning('', '', ''))).deep.equals([])
+    expect(planPositionErrors({ innings: 2, rows: [] })).deep.equals([])
+  })
+
+  it('lists the required positions an inning with any assignment misses, in field order', function () {
+    expect(planPositionErrors(inning('P'))).deep.equals([
+      {
+        inning: 1,
+        missing: ['C', '1B', '2B', '3B', 'SS', 'LF', 'CF', 'RF'],
+        duplicated: []
+      }
+    ])
+    // DH alone is an assignment, and fields nobody.
+    expect(planPositionErrors(inning('DH', ''))).deep.equals([
+      { inning: 1, missing: FIELD, duplicated: [] }
+    ])
+  })
+
+  it('finds nothing in a complete, unique field, with or without DH and EH', function () {
+    expect(planPositionErrors(inning(...FIELD))).deep.equals([])
+    expect(
+      planPositionErrors(inning(...FIELD, 'DH', 'EH', 'EH', ''))
+    ).deep.equals([])
+  })
+
+  it('lists the positions two or more players hold, DH included and EH never', function () {
+    expect(
+      planPositionErrors(inning(...FIELD.slice(0, 8), 'RF', 'RF'))
+    ).deep.equals([{ inning: 1, missing: [], duplicated: ['RF'] }])
+    expect(
+      planPositionErrors(inning(...FIELD, 'SS', '2B', '2B', 'DH', 'DH'))
+    ).deep.equals([{ inning: 1, missing: [], duplicated: ['2B', 'SS', 'DH'] }])
+    expect(planPositionErrors(inning(...FIELD, 'EH', 'EH', 'EH'))).deep.equals(
+      []
+    )
+    // Two on the bench are no duplicate.
+    expect(planPositionErrors(inning(...FIELD, '', ''))).deep.equals([])
+  })
+
+  it('names both problems of one inning, and each inning in order', function () {
+    const plan = planned([
+      ['P', 'DH', 'P', 'EH', ''],
+      ['C', 'DH', 'C', 'EH', ''],
+      ['1B', '', '1B', 'P', ''],
+      ['2B', '', '2B', 'C', ''],
+      ['SS', '', '3B', '1B', ''],
+      ['SS', '', 'SS', '2B', ''],
+      ['', '', 'LF', '3B', ''],
+      ['', '', 'CF', 'SS', ''],
+      ['', '', 'RF', 'LF', '']
+    ])
+    expect(planPositionErrors(plan)).deep.equals([
+      { inning: 1, missing: ['3B', 'LF', 'CF', 'RF'], duplicated: ['SS'] },
+      { inning: 2, missing: FIELD, duplicated: ['DH'] },
+      { inning: 4, missing: ['CF', 'RF'], duplicated: [] }
+    ])
+    expect([...duplicatedCells(plan)].sort()).deep.equals([
+      '0-1',
+      '1-1',
+      '4-0',
+      '5-0'
+    ])
+  })
+
+  it('reads only the plan’s innings, a short row as the bench', function () {
+    const plan: GamePlan = {
+      enabled: true,
+      innings: 2,
+      rows: [
+        {
+          player: { gumboId: null, fullName: 'Short', jersey: '' },
+          cells: ['P', 'P', 'P'] as PlanCell[]
+        },
+        {
+          player: { gumboId: null, fullName: 'Shorter', jersey: '' },
+          cells: ['P'] as PlanCell[]
+        }
+      ]
+    }
+    expect(planPositionErrors(plan).map(error => error.inning)).deep.equals([
+      1, 2
+    ])
+    expect([...duplicatedCells(plan)]).deep.equals(['0-0', '1-0'])
+  })
+
+  it('judges only the innings asked, for a final game that stopped short', function () {
+    const plan = planned([
+      ['P', 'SS', 'SS'],
+      ['C', 'SS', '']
+    ])
+    expect(planPositionErrors(plan, 1).map(error => error.inning)).deep.equals([
+      1
+    ])
+    expect(duplicatedCells(plan, planPositionErrors(plan, 1)).size).equals(0)
+    expect(planPositionErrors(plan, 9).map(error => error.inning)).deep.equals([
+      1, 2, 3
+    ])
+  })
+
+  it('lists one, two, three and four values as a sentence does', function () {
+    expect(positionList(['SS'])).equals('SS')
+    expect(positionList(['SS', '2B'])).equals('SS and 2B')
+    expect(positionList(['SS', '1B', 'CF'])).equals('SS, 1B, and CF')
+    expect(positionList(['SS', '1B', 'CF', 'C'])).equals('SS, 1B, CF, and C')
   })
 })
