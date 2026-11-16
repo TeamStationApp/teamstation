@@ -166,6 +166,7 @@ export function VideoViewNative(props: VideoViewProps): React.ReactElement {
       // still until they pressed play. Leaving the app still pauses it.
       playWhenInactive
       viewType={Platform.OS === 'android' ? ViewType.TEXTURE : undefined}
+      onLoadStart={handle.handleLoadStart}
       onLoad={handle.handleLoad}
       onProgress={handle.handleProgress}
       onSeek={handle.handleSeek}

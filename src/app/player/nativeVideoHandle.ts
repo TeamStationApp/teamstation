@@ -137,36 +137,11 @@ export class NativeVideoHandle implements VideoHandle {
   /** What is playing, kept so a stalled stream can be asked for again. */
   source: string | null = null
 
-  /**
-   * The source as the view built it, buffer and live settings included. On
-   * Android a different one, the same address with other settings among
-   * them, is a new item ExoPlayer opens from nothing, so what was loaded no
-   * longer counts. AVPlayer reads none of those settings and need not reopen
-   * an address it holds, so on iOS only a new address starts again.
-   */
-  get sourceConfig(): ReactVideoSource | null {
-    return this.config
-  }
-
-  set sourceConfig(config: ReactVideoSource | null) {
-    // By value, as ExoPlayer compares them: a new object for the same source
-    // opens nothing, and nothing would raise the tile again.
-    if (
-      this.readyOnBuffer &&
-      this.config != null &&
-      canonical(config) !== canonical(this.config)
-    ) {
-      this.state = 0
-      this.loaded = false
-      this.emit('emptied')
-    }
-    this.config = config
-  }
+  /** The source as the view built it, buffer and live settings included. */
+  sourceConfig: ReactVideoSource | null = null
 
   /** The item has been reported loaded since it was last opened. */
   private loaded = false
-
-  private config: ReactVideoSource | null = null
 
   /**
    * Whether `reload` has to clear the player's source before handing it the
@@ -367,6 +342,19 @@ export class NativeVideoHandle implements VideoHandle {
 
   // ---- what the view feeds in -----------------------------------------
 
+  /**
+   * Android's player has started opening an item: on its own (back from the
+   * background, or retrying) as well as when handed a source. What the last
+   * item had no longer counts, and its first picture and buffer-ready report
+   * come next, ahead of its load. A source the player judges the same as the
+   * one it holds opens nothing and says nothing, and changes nothing here.
+   */
+  handleLoadStart = (): void => {
+    if (!this.readyOnBuffer) return
+    this.state = 0
+    this.loaded = false
+  }
+
   handleLoad = (data: OnLoadData): void => {
     // A live stream has no length, and ExoPlayer says so with a **zero** — not
     // a `NaN`, which is what a browser gives and what every caller checks for
@@ -382,9 +370,10 @@ export class NativeVideoHandle implements VideoHandle {
     // say so, before it reports the load, and knocking that picture back to
     // "metadata only" left every tile of a phone's grid short for good — the
     // grid waits for `HAVE_ENOUGH_DATA` before it plays, so it held them
-    // frozen on their first frame until somebody scrubbed. A load reported
-    // again for the same item is the player opening it once more by itself,
-    // with nothing drawn yet.
+    // frozen on their first frame until somebody scrubbed. On iOS a load
+    // reported again for the same item is the player opening it once more by
+    // itself, with nothing drawn yet. Android says when it opens an item
+    // (`handleLoadStart`), and its readiness reports come before the load.
     this.state = this.loaded
       ? HAVE_METADATA
       : Math.max(this.state, HAVE_METADATA)
@@ -727,15 +716,4 @@ export class NativeVideoHandle implements VideoHandle {
       entry.fn()
     }
   }
-}
-
-/** A value as text with its keys in order, so two equal sources compare equal however they were built. */
-function canonical(value: unknown): string {
-  return JSON.stringify(value, (_key, inner: unknown) =>
-    inner != null && typeof inner === 'object' && !Array.isArray(inner)
-      ? Object.fromEntries(
-          Object.entries(inner).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-        )
-      : inner
-  )
 }

@@ -260,48 +260,45 @@ describe('NativeVideoHandle', function () {
     expect(handle.readyState).equals(4)
   })
 
-  it('on Android, starts from nothing loaded when the view hands it a source with other settings', function () {
+  it('on Android, starts from nothing loaded each time its player opens an item, and keeps what is reported before the load', function () {
     const handle = new NativeVideoHandle(() => undefined)
     handle.readyOnBuffer = true
-    const first = { uri: 'https://media.example.test/a/index.m3u8' }
-    handle.sourceConfig = first
-    handle.handleReadyForDisplay()
-    // The same source again on the next render changes nothing, nor does an
-    // equal one built afresh, which ExoPlayer does not reopen.
-    handle.sourceConfig = first
-    handle.sourceConfig = { ...first }
-    expect(handle.readyState).equals(4)
-    // Nor one with the same settings built in another order.
-    const settled = {
-      uri: first.uri,
-      bufferConfig: { minBufferMs: 2000, maxBufferMs: 30000 }
+    const load = {
+      currentTime: 0,
+      duration: 0,
+      naturalSize: { width: 1280, height: 720, orientation: 'landscape' }
+    } as unknown as Parameters<NativeVideoHandle['handleLoad']>[0]
+    // ExoPlayer's order on every open: load start, first picture and
+    // buffer-ready, then the load.
+    const open = (): void => {
+      handle.handleLoadStart()
+      expect(handle.readyState).equals(0)
+      handle.handleReadyForDisplay()
+      handle.handleBuffer({ isBuffering: false })
+      handle.handleLoad(load)
     }
-    handle.sourceConfig = settled
-    handle.handleReadyForDisplay()
-    handle.sourceConfig = {
-      bufferConfig: { maxBufferMs: 30000, minBufferMs: 2000 },
-      uri: first.uri
-    }
+    open()
     expect(handle.readyState).equals(4)
-    let emptied = 0
-    handle.addEventListener('emptied', () => {
-      emptied += 1
-    })
-    handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 5000 } }
-    expect(handle.readyState).equals(0)
-    expect(emptied).equals(1)
+    // Opened again by the player itself, back from the background.
+    open()
+    expect(handle.readyState).equals(4)
+    // A source the view builds afresh, which the player does not reopen.
+    handle.sourceConfig = { uri: 'https://media.example.test/a/index.m3u8' }
+    handle.sourceConfig = { uri: 'https://media.example.test/a/index.m3u8' }
+    expect(handle.readyState).equals(4)
   })
 
-  it('on iOS, keeps what it has when only the settings around the same address change', function () {
+  it('on iOS, takes no notice of a load start, nor of settings around the same address', function () {
     const handle = new NativeVideoHandle(() => undefined)
     const first = { uri: 'https://media.example.test/a/index.m3u8' }
     handle.sourceConfig = first
     handle.handleReadyForDisplay()
+    handle.handleLoadStart()
     handle.sourceConfig = { ...first, bufferConfig: { minBufferMs: 2000 } }
     expect(handle.readyState).equals(4)
   })
 
-  it('drops back to metadata when the same item is reported loaded again', function () {
+  it('on iOS, drops back to metadata when the same item is reported loaded again', function () {
     const handle = new NativeVideoHandle(() => undefined)
     const load = {
       currentTime: 0,
@@ -311,7 +308,7 @@ describe('NativeVideoHandle', function () {
     handle.handleReadyForDisplay()
     handle.handleLoad(load)
     expect(handle.readyState).equals(4)
-    // ExoPlayer preparing the item once more by itself: nothing drawn yet.
+    // AVPlayer opening the item once more by itself: nothing drawn yet.
     handle.handleLoad(load)
     expect(handle.readyState).equals(1)
     // A new source's first load keeps a picture reported ahead of it again.
