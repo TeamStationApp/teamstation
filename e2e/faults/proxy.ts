@@ -13,13 +13,17 @@ import type { ServerError } from '../core/invariants'
 
 /**
  * Sits between the app and a server, recording every 5xx, and breaking the matched
- * routes when a fault is named. With none it only records.
+ * routes when a fault is named. With none it only records. The fault can be
+ * changed while it runs (`setFault`), from the next request on.
  */
 export interface FaultProxyOptions {
   target: string
   fault?: string
   match?: RegExp
   host?: string
+  port?: number
+  /** Answers a request first; true when it did, so the proxy leaves it. */
+  control?: (req: IncomingMessage, res: ServerResponse) => boolean
 }
 
 export interface FaultProxy {
@@ -28,6 +32,9 @@ export interface FaultProxy {
   errors: ServerError[]
   /** What the proxy broke on purpose. */
   injections: Array<{ at: number; fault: string; path: string }>
+  /** The fault it applies now, or null for none. */
+  fault: () => string | null
+  setFault: (fault: string | null) => void
   close: () => Promise<void>
 }
 
@@ -58,7 +65,7 @@ export function corruptShown(value: unknown, key = ''): unknown {
 export async function startFaultProxy(
   options: FaultProxyOptions
 ): Promise<FaultProxy> {
-  const { fault } = options
+  let fault: string | null = options.fault ?? null
   const match = options.match ?? API_BUT_SIGN_IN
   const target = new URL(options.target)
   const errors: ServerError[] = []
@@ -135,6 +142,7 @@ export async function startFaultProxy(
   }
 
   const server: Server = createServer((req, res) => {
+    if (options.control?.(req, res) === true) return
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
     const matched = match.test(path)
     if (matched && fault === 'api-500') {
@@ -197,7 +205,7 @@ export async function startFaultProxy(
   const host = options.host ?? '127.0.0.1'
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, host, resolve)
+    server.listen(options.port ?? 0, host, resolve)
   })
   const { port } = server.address() as { port: number }
   return {
@@ -205,6 +213,15 @@ export async function startFaultProxy(
     port,
     errors,
     injections,
+    fault: () => fault,
+    setFault: next => {
+      fault = next
+      // Requests api-hang was holding are let go once it is not the fault.
+      if (next !== 'api-hang') {
+        for (const res of held) res.destroy()
+        held.clear()
+      }
+    },
     close: async () => {
       for (const res of held) res.destroy()
       for (const socket of open) socket.destroy()
