@@ -1,6 +1,13 @@
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { expect } from 'chai'
@@ -9,6 +16,7 @@ import { Pool } from 'pg'
 
 import { newStackId, projectKey, STACKS, writeStackEntry } from './attach'
 import { failedStart, projectOf, pruneStacks, startStack } from './stack'
+import { ownerText, thisHost } from './stackOwner'
 
 describe('a stack with a fault proxy in front of its API', function () {
   this.timeout(120000)
@@ -145,46 +153,58 @@ describe('a stack’s name, and what a dead one leaves', function () {
     expect(await databases(`e2e_${stack.id}`)).deep.equals([])
   })
 
-  it('prunes the entry, directory and database of a stack whose process is gone, and only those', async function () {
+  it('prunes the entry, directory and database of its own dead stack, and nothing else', async function () {
+    // Its own registry and its own ids: the machine's stacks are never in reach.
+    const dir = mkdtempSync(join(tmpdir(), 'e2e-prune-'))
     const dead = newStackId('pruneDead')
     const live = newStackId('pruneLive')
+    const away = newStackId('pruneAway')
+    const ids = [dead, live, away]
+    const host = thisHost()
+    const owners: Record<string, string> = {
+      [dead]: ownerText({ host, pid: 999999 }),
+      [live]: ownerText({ host, pid: process.pid }),
+      // Another machine's, on the same test cluster.
+      [away]: ownerText({
+        host: host === 'abcdef' ? '123456' : 'abcdef',
+        pid: 999999
+      })
+    }
     const pool = await testPool()
     try {
-      for (const [id, pid] of [
-        [dead, 999999],
-        [live, process.pid]
-      ] as const) {
+      for (const id of ids) {
+        const pid = id === live ? process.pid : 999999
         writeStackEntry(
-          STACKS,
-          join(STACKS, `${id}.json`),
+          dir,
+          join(dir, `${id}.json`),
           JSON.stringify({ id, origin: 'http://127.0.0.1:1', pid })
         )
-        mkdirSync(join(STACKS, id), { recursive: true })
-        writeFileSync(join(STACKS, id, 'owner.pid'), String(pid))
+        mkdirSync(join(dir, id), { recursive: true })
+        writeFileSync(join(dir, id, 'owner'), owners[id])
         await pool.query(`create database "e2e_${id}"`)
-        await pool.query(
-          `comment on database "e2e_${id}" is 'e2e stack of pid ${pid}'`
-        )
+        await pool.query(`comment on database "e2e_${id}" is '${owners[id]}'`)
       }
       const alive = (pid: number): boolean => pid === process.pid
-      const pruned = await pruneStacks({ alive })
-      expect(pruned.entries).includes(dead).and.not.includes(live)
+      const pruned = await pruneStacks({ dir, ids, alive })
+      expect(pruned.databases).deep.equals([`e2e_${dead}`])
       expect(pruned.directories).includes(dead).and.not.includes(live)
-      expect(pruned.databases).includes(`e2e_${dead}`)
-      expect(pruned.databases).not.includes(`e2e_${live}`)
-      expect(existsSync(join(STACKS, `${dead}.json`))).equals(false)
-      expect(existsSync(join(STACKS, dead))).equals(false)
+      expect(pruned.directories).not.includes(away)
+      expect(pruned.kept).deep.include({
+        name: `e2e_${away}`,
+        why: 'elsewhere'
+      })
+      expect(existsSync(join(dir, `${dead}.json`))).equals(false)
+      expect(existsSync(join(dir, dead))).equals(false)
+      expect(existsSync(join(dir, `${live}.json`))).equals(true)
       expect(await databases(`e2e_${dead}`)).deep.equals([])
-      expect(existsSync(join(STACKS, `${live}.json`))).equals(true)
       expect(await databases(`e2e_${live}`)).deep.equals([`e2e_${live}`])
+      expect(await databases(`e2e_${away}`)).deep.equals([`e2e_${away}`])
     } finally {
-      await pool.query(`drop database if exists "e2e_${live}" with (force)`)
-      await pool.query(`drop database if exists "e2e_${dead}" with (force)`)
-      await pool.end()
-      for (const id of [dead, live]) {
-        rmSync(join(STACKS, `${id}.json`), { force: true })
-        rmSync(join(STACKS, id), { recursive: true, force: true })
+      for (const id of ids) {
+        await pool.query(`drop database if exists "e2e_${id}" with (force)`)
       }
+      await pool.end()
+      rmSync(dir, { recursive: true, force: true })
     }
   })
 })

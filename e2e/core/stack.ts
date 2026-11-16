@@ -33,6 +33,12 @@ import { ROOT } from './manifest'
 import { startPlacesStub } from './placesStub'
 import { BlockedError, HarnessError } from './result'
 import type { StackHandle } from './spec'
+import {
+  judgeOwner,
+  judgePid,
+  ownerText,
+  type OwnerVerdict
+} from './stackOwner'
 
 export interface StackOptions {
   id?: string
@@ -259,9 +265,8 @@ export async function runStops(
   }
 }
 
-/** The file in a stack's directory, and the database comment, that name its owner's pid. */
-const OWNER = 'owner.pid'
-const OWNER_COMMENT = 'e2e stack of pid '
+/** The file in a stack's directory that names its owner (`ownerText`). */
+const OWNER = 'owner'
 
 /**
  * The project a stack started from this checkout is named for: its branch's
@@ -287,42 +292,62 @@ export function isAlive(pid: number): boolean {
   }
 }
 
+export interface Pruned {
+  entries: string[]
+  directories: string[]
+  databases: string[]
+  /** What was left because it was not this machine's to judge, or could not be read. */
+  kept: Array<{ name: string; why: OwnerVerdict }>
+}
+
 /**
  * Removes what stacks whose process has gone left behind: a killed or
  * crashed one never stops, and since no later stack takes its id, nothing
- * else would. Only this machine's stacks (`<project>_<hex>`) are looked at,
- * and only by their owner's pid: an entry, a directory and a database each.
+ * else would. Only stacks named `<project>_<hex>` are looked at, only by
+ * their owner (`judgeOwner`), and only in `dir` and among `ids` when given:
+ * an entry, a directory and a database each.
  */
 export async function pruneStacks(
   options: {
+    dir?: string
+    ids?: string[]
     alive?: (pid: number) => boolean
     databaseUrl?: string
   } = {}
-): Promise<{ entries: string[]; directories: string[]; databases: string[] }> {
+): Promise<Pruned> {
+  const dir = options.dir ?? STACKS
   const alive = options.alive ?? isAlive
-  const pruned = {
-    entries: [] as string[],
-    directories: [] as string[],
-    databases: [] as string[]
+  const ours = (id: string): boolean =>
+    isLocalStackId(id) && (options.ids == null || options.ids.includes(id))
+  const pruned: Pruned = {
+    entries: [],
+    directories: [],
+    databases: [],
+    kept: []
   }
-  const names = existsSync(STACKS) ? readdirSync(STACKS) : []
+  const decide = (name: string, verdict: OwnerVerdict): boolean => {
+    if (verdict === 'elsewhere' || verdict === 'unreadable') {
+      pruned.kept.push({ name, why: verdict })
+    }
+    return verdict === 'gone'
+  }
+  const names = existsSync(dir) ? readdirSync(dir) : []
   for (const name of names) {
     const id = name.replace(/\.json$/, '')
-    if (!name.endsWith('.json') || !isLocalStackId(id)) continue
-    const entry = readStack(STACKS, id)
-    if (entry.handle != null || (entry.pid != null && alive(entry.pid))) {
-      continue
-    }
+    if (!name.endsWith('.json') || !ours(id)) continue
+    const entry = readStack(dir, id)
+    if (entry.handle != null) continue
+    if (!decide(name, judgePid(entry.pid, alive))) continue
     for (const file of [`${id}.json`, `${id}.log`, `${id}.errors.jsonl`]) {
-      rmSync(join(STACKS, file), { force: true })
+      rmSync(join(dir, file), { force: true })
     }
     pruned.entries.push(id)
   }
   for (const name of names) {
-    const owner = join(STACKS, name, OWNER)
-    if (!isLocalStackId(name) || !existsSync(owner)) continue
-    if (alive(Number(readFileSync(owner, 'utf8')))) continue
-    rmSync(join(STACKS, name), { recursive: true, force: true })
+    const owner = join(dir, name, OWNER)
+    if (!ours(name) || !existsSync(owner)) continue
+    if (!decide(name, judgeOwner(readFileSync(owner, 'utf8'), alive))) continue
+    rmSync(join(dir, name), { recursive: true, force: true })
     pruned.directories.push(name)
   }
   const databaseUrl =
@@ -335,14 +360,8 @@ export async function pruneStacks(
        from pg_database where datname like 'e2e\\_%'`
     )
     for (const row of rows) {
-      const id = row.name.slice('e2e_'.length)
-      if (
-        !isLocalStackId(id) ||
-        row.owner?.startsWith(OWNER_COMMENT) !== true
-      ) {
-        continue
-      }
-      if (alive(Number(row.owner.slice(OWNER_COMMENT.length)))) continue
+      if (!ours(row.name.slice('e2e_'.length))) continue
+      if (!decide(row.name, judgeOwner(row.owner, alive))) continue
       await admin.query(`drop database if exists "${row.name}" with (force)`)
       pruned.databases.push(row.name)
     }
@@ -371,7 +390,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
   const dir = join(STACKS, id)
   mkdirSync(dir, { recursive: true })
   // Whose it is, for `stack prune` once that process is gone.
-  writeFileSync(join(dir, OWNER), String(process.pid))
+  writeFileSync(join(dir, OWNER), ownerText())
   const host = options.lan === true ? lanAddress() : '127.0.0.1'
   const stops: Array<() => Promise<void> | void> = []
   const stop = async (): Promise<void> => {
@@ -477,9 +496,7 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       const admin = new Pool({ connectionString: testDatabaseUrl })
       try {
         await admin.query(`create database ${quoted}`)
-        await admin.query(
-          `comment on database ${quoted} is '${OWNER_COMMENT}${process.pid}'`
-        )
+        await admin.query(`comment on database ${quoted} is '${ownerText()}'`)
       } catch (error) {
         await admin.end()
         throw error
