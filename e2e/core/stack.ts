@@ -368,6 +368,11 @@ export async function startStack(options: StackOptions): Promise<RunningStack> {
       const databaseName = `e2e_${id.replace(/-/g, '_')}`
       const admin = new Pool({ connectionString: testDatabaseUrl })
       try {
+        // One left by a serve that died before it could drop it: the id is
+        // this stack's now, and no running serve holds it.
+        await admin.query(
+          `drop database if exists ${databaseName} with (force)`
+        )
         await admin.query(`create database ${databaseName}`)
       } catch (error) {
         await admin.end()

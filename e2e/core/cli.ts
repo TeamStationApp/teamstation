@@ -85,10 +85,7 @@ export function servesStack(command: string, id: string): boolean {
  * crash or a reboot the number can be gone, or another process's.
  */
 function stopServe(pid: number, id: string): boolean {
-  const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
-    encoding: 'utf8'
-  }).stdout
-  if (!servesStack(command, id)) return false
+  if (!isServing(pid, id)) return false
   try {
     process.kill(pid, 'SIGTERM')
     return true
@@ -96,6 +93,14 @@ function stopServe(pid: number, id: string): boolean {
     if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
     throw error
   }
+}
+
+/** Whether `pid` is still the `stack serve` for `id`. */
+function isServing(pid: number, id: string): boolean {
+  const command = spawnSync('ps', ['-p', String(pid), '-o', 'command='], {
+    encoding: 'utf8'
+  }).stdout
+  return servesStack(command, id)
 }
 
 function stackState(id: string): StackEntry {
@@ -273,6 +278,21 @@ export async function main(argv: string[]): Promise<number> {
         const id = checkStackId(
           values.id ?? Math.random().toString(36).slice(2, 10)
         )
+        const file = join(STACKS, `${id}.json`)
+        // An entry is a stack only while its serve runs: one whose serve was
+        // killed, or lost to a reboot, is forgotten, not taken for this one.
+        if (existsSync(file)) {
+          const old = readStack(STACKS, id)
+          if (old.handle != null) {
+            throw new HarnessError(
+              `Stack "${id}" is attached; stack down it first`
+            )
+          }
+          if (old.pid != null && isServing(old.pid, id)) {
+            throw new HarnessError(`Stack "${id}" is already up`)
+          }
+          rmSync(file, { force: true })
+        }
         const args = [
           '-r',
           require.resolve('sucrase/register'),
@@ -303,9 +323,11 @@ export async function main(argv: string[]): Promise<number> {
         })
         child.unref()
         const end = Date.now() + 300000
-        const file = join(STACKS, `${id}.json`)
         const why = (): string => readFileSync(log, 'utf8').trim().slice(-2000)
-        while (!existsSync(file)) {
+        // Its own entry: the one this child writes once its stack is up.
+        const started = (): boolean =>
+          existsSync(file) && readStack(STACKS, id).pid === child.pid
+        while (!started()) {
           if (exited != null) {
             throw new Error(`The stack exited (${exited}): ${why()}`)
           }
