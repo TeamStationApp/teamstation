@@ -1,30 +1,19 @@
 import React, { useEffect, useState } from 'react'
-import { Modal, Platform, Pressable, Text, TextInput, View } from 'react-native'
+import { Modal, Pressable, Text, TextInput, View } from 'react-native'
 
 import type { TeamStationClient } from '../../common/api'
 import { type BuildInfo, buildInfo } from '../../common/distribution'
 import { lstrings, sprintf } from '../locales/strings'
-import { appOrigin } from '../native/config'
-import { isDevelopBuild, saveServerOverride } from '../native/serverOverride'
 import { browserOrigin } from '../platform/browserOrigin'
-import { deviceStorage } from '../platform/deviceStorage'
 import { openExternal } from '../platform/externalBrowser'
+import { developServerControl } from '../platform/serverControl'
+import type { ServerControl } from '../platform/serverControlType'
 import { RenderErrorProbe } from '../sentry'
 import { nativeCrash } from '../sentrySdk'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import { Button } from './Button'
 
-/** Keeps another server for the next launch (null for this build's own), answering the host kept. */
-export type ServerControl = (origin: string | null) => Promise<string | null>
-
-/** A develop phone build's own control; none on the web or in a stable build. */
-export function developServerControl(
-  os: string = Platform.OS,
-  origin: string | undefined = appOrigin
-): ServerControl | undefined {
-  if (os === 'web' || !isDevelopBuild(origin)) return undefined
-  return async server => await saveServerOverride(deviceStorage, origin, server)
-}
+export type { ServerControl }
 
 export function BuildInfoModal({
   client,
