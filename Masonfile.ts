@@ -967,9 +967,23 @@ export async function playAccessToken(
   return token
 }
 
+/** A Play release's status: live on its track, or waiting in Play Console. */
+export type PlayReleaseStatus = 'completed' | 'draft'
+
+/**
+ * Play's refusal of a completed release while the app has never been
+ * published. Until its first release is sent for review in Play Console, the
+ * API may only create drafts.
+ */
+const PLAY_DRAFT_APP =
+  /only releases with status draft may be created on draft app/i
+
 /**
  * Uploads `bundle` and releases it to `track` with status completed, in one
  * edit that is committed at the end. An edit that fails part way is deleted.
+ * While the app is still a draft, Play refuses a completed release, so the
+ * bundle goes up again in a new edit as a draft release, which someone then
+ * sends for review in Play Console.
  */
 export async function releaseToPlayTrack(options: {
   token: string
@@ -977,7 +991,34 @@ export async function releaseToPlayTrack(options: {
   track: string
   notes: string
   fetcher: Fetch
-}): Promise<{ editId: string; versionCode: number }> {
+}): Promise<{
+  editId: string
+  versionCode: number
+  status: PlayReleaseStatus
+}> {
+  try {
+    return await releaseInPlayEdit(options, 'completed')
+  } catch (error) {
+    if (!(error instanceof Error) || !PLAY_DRAFT_APP.test(error.message))
+      throw error
+    return await releaseInPlayEdit(options, 'draft')
+  }
+}
+
+async function releaseInPlayEdit(
+  options: {
+    token: string
+    bundle: Uint8Array
+    track: string
+    notes: string
+    fetcher: Fetch
+  },
+  status: PlayReleaseStatus
+): Promise<{
+  editId: string
+  versionCode: number
+  status: PlayReleaseStatus
+}> {
   const { token, track, fetcher } = options
   const auth = { Authorization: `Bearer ${token}` }
   const json = { ...auth, 'Content-Type': 'application/json' }
@@ -1014,7 +1055,7 @@ export async function releaseToPlayTrack(options: {
         releases: [
           {
             versionCodes: [String(versionCode)],
-            status: 'completed',
+            status,
             releaseNotes: [{ language: 'en-US', text: options.notes }]
           }
         ]
@@ -1026,7 +1067,7 @@ export async function releaseToPlayTrack(options: {
       headers: auth
     })
     if (!committed.ok) throw await playFailure('commit', committed)
-    return { editId, versionCode }
+    return { editId, versionCode, status }
   } catch (error) {
     await fetcher(edit, { method: 'DELETE', headers: auth }).catch(
       () => undefined
@@ -1050,13 +1091,22 @@ export async function releasePlayTesting(ctx: Stage): Promise<void> {
   )
   const fetcher: Fetch = async (input, init) => await fetch(input, init)
   const token = await playAccessToken(key, fetcher)
-  const { editId, versionCode } = await releaseToPlayTrack({
+  const { editId, versionCode, status } = await releaseToPlayTrack({
     token,
     bundle: readFileSync(workspacePath(ctx, bundle)),
     track: PLAY_TRACK,
     notes: PLAY_RELEASE_NOTES,
     fetcher
   })
+  if (status === 'draft') {
+    ctx.log.warn(
+      `Google Play ${PLAY_TRACK} has versionCode ${versionCode} as a draft (edit ${editId}): the app has never been published, so send the release for review in Play Console.`
+    )
+    ctx.describe(
+      `Google Play closed testing has a draft of versionCode ${versionCode}`
+    )
+    return
+  }
   ctx.log.info(
     `Google Play ${PLAY_TRACK} has versionCode ${versionCode} (edit ${editId}).`
   )
