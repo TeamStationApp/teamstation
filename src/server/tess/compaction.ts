@@ -36,7 +36,8 @@ import { MAX_TOKENS, type MessagesResponse } from './messagesApi'
 export const KEPT_TURNS = 3
 
 /**
- * Sonnet 5.5 supports 1M tokens without a beta header. Keep a quarter of
+ * Sonnet 5.5 supports 1M tokens without a beta header, under its plain,
+ * dated or provider-prefixed id. Keep a quarter of
  * that window for tool rounds before the next compaction, and reserve the
  * full answer budget in every request. Unverified model overrides retain
  * the conservative 200K window and 150K compaction threshold.
@@ -45,7 +46,9 @@ export function contextLimits(model: string): {
   compactAbove: number
   inputCeiling: number
 } {
-  const ceiling = model === 'claude-sonnet-5-5' ? 1000000 : 200000
+  const ceiling = /(^|[./])claude-sonnet-5-5($|[-@:])/.test(model)
+    ? 1000000
+    : 200000
   return { compactAbove: ceiling * 0.75, inputCeiling: ceiling - MAX_TOKENS }
 }
 
