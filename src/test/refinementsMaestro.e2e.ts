@@ -92,8 +92,6 @@ export async function browserSession(
     p => p.url() === `about:blank#${device}`
   )
   if (page == null) throw new Error('Owned Maestro browser target missing')
-  // Reapply the requested size after Puppeteer attaches to the Maestro tab.
-  await page.setViewport({ width, height, deviceScaleFactor: 1 })
   expect(
     await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   ).deep.equals({ width, height })
