@@ -86,7 +86,27 @@ async function settled(page: Page): Promise<void> {
         ([request, at]) =>
           `${request.method()} ${new URL(request.url()).pathname} (${now - at} ms)`
       )
-      throw new Error(`The page never settled; still open: ${busy.join(', ')}`)
+      // Whether the server answers the same reads now, with the page's own
+      // headers: a server holding them, or a request the browser lost.
+      const again = await Promise.all(
+        [...open.keys()]
+          .filter(request => request.method() === 'GET')
+          .map(async request => {
+            const started = Date.now()
+            try {
+              const answer = await fetch(request.url(), {
+                headers: request.headers(),
+                signal: AbortSignal.timeout(10000)
+              })
+              return `${new URL(request.url()).pathname} again: ${answer.status} in ${Date.now() - started} ms`
+            } catch (error) {
+              return `${new URL(request.url()).pathname} again: no answer in ${Date.now() - started} ms (${String(error)})`
+            }
+          })
+      )
+      throw new Error(
+        `The page never settled; still open: ${busy.join(', ')}${again.length === 0 ? '' : `; ${again.join('; ')}`}`
+      )
     }
     await new Promise(resolve => setTimeout(resolve, 100))
   }
