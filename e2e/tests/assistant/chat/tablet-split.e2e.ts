@@ -67,7 +67,11 @@ export default defineE2e({
         await openTess(native)
         await native.show('Ask Tess')
         const field = (await native.find('Tess field'))!.bounds!
-        expect(field.x + field.width).lessThanOrEqual(400)
+        // Her column is beside the app on the right (fb5ef504a), at most 400
+        // points wide.
+        const { width } = await native.screen()
+        expect(field.x).greaterThanOrEqual(width - 400)
+        expect(field.x + field.width).lessThanOrEqual(width)
         await ctx.checkpoint('split', {
           expect: [{ text: 'Close Tess' }]
         })
@@ -99,7 +103,7 @@ export default defineE2e({
           expect: [{ text: 'Ask Tess' }]
         })
         await native.tap('Close')
-        expect(t.beaconHits(), 'a remote load').equals(0)
+        expect(await t.beaconHits(), 'a remote load').equals(0)
       })
     },
     'upright-fills-the-screen': async ctx => {

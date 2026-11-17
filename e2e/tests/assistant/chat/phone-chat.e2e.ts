@@ -165,7 +165,7 @@ export default defineE2e({
         await ctx.checkpoint('table-closed', {
           expect: [{ text: 'Ask Tess' }],
           readBack: async () => {
-            expect(t.beaconHits(), 'a remote load').equals(0)
+            expect(await t.beaconHits(), 'a remote load').equals(0)
           }
         })
       })
@@ -218,13 +218,13 @@ export default defineE2e({
       await onPhone(ctx, async native => {
         const { m, t } = native
         await openChat(native)
-        const heardBefore = t.dictation.heard.length
+        const heardBefore = (await t.heard()).length
         // The first hold can be the microphone permission, which records nothing.
         // A hold that sent audio is heard as the fixture phrase; keep going until
         // two of those have landed.
         let nonempty = 0
         for (let tries = 0; nonempty < 2 && tries < 4; tries++) {
-          const before = t.dictation.heard.length
+          const before = (await t.heard()).length
           await native.hold('Dictate', 2500)
           await native.tapIfShown('Allow', 3000)
           // The words under the mic are labelled "Dictation status" for assistive
@@ -232,13 +232,13 @@ export default defineE2e({
           // says the hold was transcribed, and Tess has answered once she stops thinking.
           await eventually(
             async () => {
-              expect(t.dictation.heard.length).greaterThan(before)
+              expect((await t.heard()).length).greaterThan(before)
             },
             30000,
             1000
           )
           await m.assertNotVisible({ id: 'Tess thinking', timeout: 60000 })
-          nonempty = t.dictation.heard
+          nonempty = (await t.heard())
             .slice(heardBefore)
             .filter(text => text !== '').length
         }

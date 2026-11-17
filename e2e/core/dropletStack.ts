@@ -140,6 +140,8 @@ export async function seedOnStack(
 
 /** The fault server's control route on a droplet, by its token. */
 export interface FaultControl {
+  /** Any of the fault server's control routes, `route` under /__e2e/. */
+  call: (method: string, route: string, body?: unknown) => Promise<unknown>
   setFault: (fault: string | null) => Promise<void>
   serverErrors: (since: number) => Promise<ServerError[]>
   /** The Jev stand-in's script and the requests it has seen since it was set. */
@@ -175,6 +177,7 @@ export function faultControl(
     return await reply.json()
   }
   return {
+    call,
     setFault: async fault => {
       await call('PUT', 'fault', { fault })
     },

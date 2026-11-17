@@ -1,19 +1,42 @@
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawnSync } from 'node:child_process'
 
-import type { TessFixture } from '../../src/test/tessFixture'
+import { Pool } from 'pg'
+
+import { routePath } from '../../src/app/navigation/routes'
+import { HEARD, tessScript } from '../../src/test/tessFixture'
+import {
+  faultControl,
+  nodeDatabaseUrl,
+  requireDropletHandle
+} from '../core/dropletStack'
 import { eventually } from '../core/readback'
+import { BlockedError } from '../core/result'
 import type { E2eContext } from '../core/spec'
+import { SSH_OPTIONS } from '../core/streamingStack'
 import { typeInto } from '../core/typeInto'
+import { toWire } from '../faults/standIns'
+import { setServer } from './app/setServer'
 
 /**
- * Tess in the phone or tablet app, on the same fixture as the browser's. The app's
- * address is fixed when its bundle is made, and names the stack's front server, which
- * sends the API on to the fixture once the scenario adopts it. The fixture binds where
- * the device reaches, so a remote load from rich HTML would reach its beacon. The
- * sign-in code comes from the fixture and is never printed.
+ * Tess in the phone or tablet app, against a droplet stack: the `tess` world
+ * seeded on it, her answers scripted on its fault server's model, dictation
+ * heard by its recogniser. The device runs the branch's develop build, which
+ * `setServer` points at the stack after a clean launch, and signs in with the
+ * world's admin and password. Nothing listens on this machine.
  */
 
-const APP_ID = 'app.teamstation.app'
+const APP_ID = 'app.teamstation.develop'
+
+/** What the scenarios read of the world and of the stack's stand-ins. */
+export interface TessWorld {
+  games: { finals: string[]; may3: string; scheduled: string }
+  links: { teamSettings: string; firstBaseAngle: string }
+  players: { visible: string; hidden: string }
+  /** Hits on the stack's beacon, which a remote load from rich HTML would make. */
+  beaconHits: () => Promise<number>
+  /** What the recogniser heard each utterance as, oldest first. */
+  heard: () => Promise<string[]>
+}
 
 interface TreeNode {
   type?: string
@@ -33,7 +56,7 @@ const wait = async (ms: number): Promise<void> => {
 }
 
 export interface TessNative {
-  t: TessFixture
+  t: TessWorld
   m: any
   nodes: () => Promise<TreeNode[]>
   find: (text: string) => Promise<TreeNode | undefined>
@@ -70,21 +93,72 @@ export interface TessNativeOptions {
   launch?: Record<string, unknown>
 }
 
-/** Starts the fixture, signs user 101 in through the app, runs the scenario. */
+/** Seeds the world, scripts Tess, signs the admin in through the app, runs the scenario. */
 export async function withTessNative(
   ctx: E2eContext,
   options: TessNativeOptions,
   run: (native: TessNative) => Promise<void>
 ): Promise<void> {
-  const { tessFixture } = await import('../../src/test/tessFixture')
-  const { userIdOfGumbo } = await import('../../src/common/userId')
   const android = options.surface === 'android-app'
-  const t = await tessFixture({
-    bindHost: new URL(ctx.stack.origin).hostname,
-    videos: false
+  if (ctx.stack.attached == null)
+    throw new BlockedError('needs a droplet stack: --stack <id>')
+  const handle = requireDropletHandle(ctx.stack.attached)
+  if (handle.faults == null)
+    throw new BlockedError(`stack "${handle.id}" has no fault server`)
+  const control = faultControl(handle.faults)
+  const world = await ctx.fixture('tess')
+  const id = (name: string): string => world.ids[name]
+  const games = {
+    finals: id('finals').split(','),
+    may3: id('may3'),
+    scheduled: id('scheduled')
+  }
+  const firstBase = 'vid_tess_first'
+  const links = {
+    teamSettings: routePath({
+      name: 'groupSettings',
+      kind: 'team',
+      id: id('teamA')
+    }),
+    firstBaseAngle: routePath({
+      name: 'game',
+      gameId: games.may3,
+      tab: 'watch',
+      videoId: firstBase,
+      angles: [firstBase]
+    })
+  }
+  const players = { visible: id('visiblePlayer'), hidden: id('hiddenPlayer') }
+  await control.call(
+    'PUT',
+    'model/script',
+    toWire(
+      tessScript({
+        teamA: id('teamA'),
+        seasonA: id('season'),
+        may3: games.may3,
+        scheduled: games.scheduled,
+        links,
+        players,
+        origin: () => ctx.stack.origin
+      })
+    )
+  )
+  await control.call('PUT', 'speech', { heard: HEARD })
+  const t: TessWorld = {
+    games,
+    links,
+    players,
+    beaconHits: async () =>
+      ((await control.call('GET', 'beacon')) as { hits: number }).hits,
+    heard: async () =>
+      ((await control.call('GET', 'speech')) as { said: string[] }).said
+  }
+  const database = new Pool({
+    connectionString: nodeDatabaseUrl(handle.databaseUrl),
+    max: 1
   })
   try {
-    await ctx.stack.adopt(t.f.h.origin)
     const m = await ctx.attach('user', {
       platform: android ? 'android' : 'ios',
       appId: APP_ID,
@@ -237,59 +311,74 @@ export async function withTessNative(
           .filter((text, index, all) => all.indexOf(text) === index),
       gamesOfTeam: async () =>
         (
-          await t.f.h.db
-            .selectFrom('games')
-            .select('id')
-            .where(eb =>
-              eb.or([
-                eb('home_team_id', '=', t.f.teamA),
-                eb('away_team_id', '=', t.f.teamA)
-              ])
-            )
-            .execute()
-        ).length
+          await database.query(
+            'select count(*)::int as n from games where home_team_id = $1 or away_team_id = $1',
+            [id('teamA')]
+          )
+        ).rows[0].n as number
     }
 
     if (options.landscape === true)
       await m.setOrientation({ orientation: 'LANDSCAPE' })
+    // A clean launch forgets any server a link kept, so the stack is set after it.
     await m.launchApp({
       appId: APP_ID,
       clearState: true,
       ...options.launch
     })
+    await setServer({
+      platform: android ? 'android' : 'ios',
+      udid: ctx.device('user'),
+      appId: APP_ID,
+      origin: ctx.stack.origin,
+      device: m
+    })
     await show('E-mail address', 30000)
-    const { email } = await t.f.h.db
-      .selectFrom('user_emails')
-      .select('email')
-      .where('user_id', '=', userIdOfGumbo(101))
-      .executeTakeFirstOrThrow()
-    // A phone's keyboard sometimes drops or swaps a key under the driver. The form
-    // then waits for a code sent to another address; switching to a password and back
-    // offers to send one again.
-    let code: string | undefined
-    for (let attempt = 1; code == null; attempt++) {
-      if (attempt > 3) throw new Error('No sign-in code was sent')
-      if (attempt > 1) {
-        await tap('Use a password instead')
-        await tap('Use a sign-in code')
+    const admin = world.accounts.admin
+    // By a sign-in code: an iPad's password field does not take the focus a tap
+    // gives it, and its code field does. The stack sends no mail; its server
+    // logs each code, read here over the observer's SSH and never printed.
+    const codeFor = async (email: string): Promise<string> => {
+      let refused = ''
+      for (let waited = 0; waited < 30000; waited += 1000) {
+        // A world's address is new each run, so its first logged code is this one.
+        // A dropped SSH connection is retried like a code not logged yet.
+        const read = spawnSync(
+          'ssh',
+          [
+            ...SSH_OPTIONS,
+            handle.ssh,
+            `grep -F 'sign-in code for ${email}:' ${handle.serverLog} || true`
+          ],
+          { encoding: 'utf8', timeout: 15000 }
+        )
+        if (read.status === 0) {
+          const line = read.stdout.trim().split('\n').at(-1)
+          const code = /: (\d{6})$/.exec(line ?? '')?.[1]
+          if (code != null) return code
+        } else {
+          const stderr = read.stderr.trim()
+          refused = stderr !== '' ? stderr : String(read.error ?? read.status)
+        }
+        await wait(1000)
       }
-      await typeInto(m, 'E-mail address', email)
-      await m.hideKeyboard()
-      await native.tapIfShown('Send me a sign-in code', 2000)
-      // The code field focuses and its keyboard covers the prompt on Android.
-      if (options.surface === 'android-app') await m.hideKeyboard()
-      await show('.*six-digit code.*', 30000)
-      for (let waited = 0; code == null && waited < 5000; waited += 1000) {
-        code = t.f.h.mail.get(email)
-        if (code == null) await wait(1000)
-      }
+      throw new Error(
+        `The stack logged no sign-in code for ${email}${refused === '' ? '' : `: ${refused}`}`
+      )
     }
-    await typeInto(m, 'Sign-in code', code)
+    await typeInto(m, 'E-mail address', admin.email)
     await m.hideKeyboard()
-    await native.tapIfShown('Sign in', 2000)
+    await native.tapIfShown('Send me a sign-in code', 2000)
+    // The code field focuses and its keyboard covers the prompt on Android.
+    if (android) await m.hideKeyboard()
+    await show('.*six-digit code.*', 30000)
+    await typeInto(m, 'Sign-in code', await codeFor(admin.email))
+    await m.hideKeyboard()
+    // On iOS dismissing the keyboard submits the form; the button is gone then.
+    await m.tapOn({ text: 'Sign in', optional: true, timeout: 2000 })
     await show('TeamStation menu', 60000)
     await run(native)
   } finally {
-    await t.close()
+    await database.end()
   }
 }
