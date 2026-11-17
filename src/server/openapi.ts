@@ -11224,6 +11224,52 @@ export function openApiDocument(version: string): OpenApiDocument {
           responses: { 101: { description: 'The publisher socket' } }
         }
       },
+      '/search': {
+        get: {
+          summary: 'Search leagues, seasons, teams and people over a WebSocket',
+          description:
+            'The search field\u2019s socket. Frames are JSON text of at most ' +
+            "4096 bytes. Send `{ type: 'search', seq, text, location, " +
+            'mode, forTeam?, forGame? }` on every change to the text or the ' +
+            'location pill: `seq` a growing integer, `location` a pill ' +
+            '(`{ kind: city | region | country, id, label, city?, region?, ' +
+            'country, latitude?, longitude? }`) or null, `mode` `all` or ' +
+            '`people`, and in mode `people` the `forTeam` (and maybe ' +
+            '`forGame`) a player would be added to. Each is answered at once ' +
+            "with `{ type: 'results', seq, stage: 'lexicographic', results, " +
+            'locations }`. A second after the last frame, Jev\u2019s ranking ' +
+            "of the same rows follows as `stage: 'jev'`, for the latest " +
+            '`seq` only; a newer frame cancels it, and with no Jev key or ' +
+            'no Jev answer it never comes. No answer is sent once a newer ' +
+            'frame\u2019s has been. An empty text with no pill answers ' +
+            '`results: []`. A row is `{ kind: league | season | team, id, ' +
+            'name, imageUrl, cityLine, associations, follow }`, `follow` ' +
+            'being `follow`, `following` or null (signed out, or the ' +
+            "reader's own group), or `{ kind: 'person', userId, name, " +
+            'avatarUrl, associations, roster? }`. In mode `people` with ' +
+            '`forTeam` (Add Existing Player) every person row carries ' +
+            '`roster`: `{ gumboId, shortName, nameFormat?, compactName?, ' +
+            'compactFormat?, shortParts, bats, throws, teams, tier }`, the ' +
+            'card `GET /users?forTeam=` answers, and an empty text lists ' +
+            'the reach nearest first instead of nothing. ' +
+            'A frame the server refuses is ' +
+            "answered with `{ type: 'error', seq?, code, message }`: " +
+            '`malformed`, `tooLarge` (over 4096 bytes; past 16384 the socket ' +
+            'closes with 1009), `internal`, or, for `forTeam`, `notFound`, ' +
+            '`forbidden` or `badRequest`, as `GET /users?forTeam=` answers. ' +
+            '**Who may call:** anybody. A session token, by bearer header or ' +
+            'session cookie, searches as that person and finds people within ' +
+            'their groups; no token, or one that signs nobody in, searches ' +
+            'signed out and finds no people. A browser page whose `Origin` ' +
+            'is not the app\u2019s is refused with 403. Close codes: 4401 the ' +
+            'session was signed out, 1001 the server is restarting.',
+          security: [{}, { bearer: [] }],
+          responses: {
+            101: { description: 'The search socket' },
+            403: errorResponse
+          }
+        }
+      },
       '/director/events/{gameId}/claim': {
         post: {
           summary: 'Take a game, and get the URL to publish it to',

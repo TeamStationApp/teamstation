@@ -134,6 +134,8 @@ import {
   quit,
   scoreboardPrefix
 } from './scoreboard/scoreboardStore'
+import { warmLocationsInBackground } from './search/locations'
+import { attachSearchSocket } from './search/socket'
 import {
   eventControlIssuerOf,
   primaryHost,
@@ -1028,6 +1030,12 @@ function runWorker(): void {
       console.log(
         `worker ${process.pid} listening on ${serverConfig.listenHost}:${serverConfig.listenPort}`
       )
+      // The place catalog and its search indexes, built once the worker
+      // listens rather than by the first search, in short stretches that
+      // leave requests answered meanwhile. A search waits for them.
+      warmLocationsInBackground(line => {
+        console.log(`worker ${process.pid}: ${line}`)
+      })
     }
   )
   // One upgrade listener. Node delivers an upgrade to every listener on the
@@ -1057,9 +1065,16 @@ function runWorker(): void {
           allowedOrigins: [...serverConfig.corsOrigins, publicUrl],
           listenForUpgrades: false
         })
+  // The search field's socket, for anybody, signed in or not.
+  const searchSocket = attachSearchSocket({
+    db,
+    deps: { space: mediaContext.space, jevBaseUrl: serverConfig.jev.baseUrl },
+    allowedOrigins: [...serverConfig.corsOrigins, publicUrl]
+  })
   const unbindUpgrades = bindUpgrades(server, [
     (req, socket, head) => gameSocket.acceptUpgrade(req, socket, head),
     (req, socket, head) => dictation?.acceptUpgrade(req, socket, head) === true,
+    (req, socket, head) => searchSocket.acceptUpgrade(req, socket, head),
     (req, socket, head) => {
       scoreboard.hub.handleUpgrade(req, socket, head)
       return true
@@ -1082,6 +1097,7 @@ function runWorker(): void {
     if (closing) return
     closing = true
     dictation?.close()
+    searchSocket.close()
     unbindUpgrades()
     // Before the server: an upgraded socket is not one of its connections,
     // so closing the server would leave every scoreboard socket open.

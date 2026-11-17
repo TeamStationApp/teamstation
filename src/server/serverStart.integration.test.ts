@@ -9,7 +9,9 @@ import { expect } from 'chai'
 import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 import { generateVAPIDKeys } from 'web-push'
+import WebSocket from 'ws'
 
+import { SEARCH_SOCKET_PATH } from '../common/search/types'
 import { userIdOfGumbo } from '../common/userId'
 import { migrations } from '../migrate/migrations'
 import { migrateUp } from '../migrate/runner'
@@ -295,7 +297,7 @@ describe('the server process', function () {
 
   for (const workers of [1, 2]) {
     it(`serves the chat routes with ${workers === 1 ? 'one process' : 'a primary and two workers'}, and stops on SIGTERM`, async function () {
-      const code = await start(workers, async base => {
+      const code = await start(workers, async (base, said) => {
         const health = await fetch(`${base}/api/v1/health`)
         expect(health.status).equals(200)
         const tv = await fetch(`${base}/api/v1/auth/tv/start`, {
@@ -311,6 +313,39 @@ describe('the server process', function () {
         expect(chats.status).equals(401)
         const unknown = await fetch(`${base}/api/v1/no-such-route`)
         expect(unknown.status).equals(404)
+        // The search socket takes its upgrade, signed out too.
+        const ws = new WebSocket(
+          `${base.replace(/^http/, 'ws')}${SEARCH_SOCKET_PATH}`
+        )
+        const frame = await new Promise<{ type: string; seq?: number }>(
+          (resolve, reject) => {
+            ws.once('error', reject)
+            ws.once('message', data => {
+              resolve(JSON.parse((data as Buffer).toString('utf8')))
+            })
+            ws.once('open', () => {
+              ws.send(
+                JSON.stringify({
+                  type: 'search',
+                  seq: 1,
+                  text: 'nobody here',
+                  location: null,
+                  mode: 'all'
+                })
+              )
+            })
+          }
+        )
+        ws.close()
+        expect(frame).include({ type: 'results', seq: 1 })
+        // Each worker builds the place catalog's search indexes once it
+        // listens, without waiting for a search.
+        const deadline = Date.now() + 20000
+        const ready = (): number =>
+          (said().match(/: search places ready in \d+ ms/g) ?? []).length
+        while (ready() < workers && Date.now() < deadline)
+          await new Promise(resolve => setTimeout(resolve, 50))
+        expect(ready()).equals(workers)
       })
       expect(code).equals(0)
     })

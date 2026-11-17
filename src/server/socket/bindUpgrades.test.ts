@@ -5,7 +5,7 @@ import { connect as connectTcp } from 'node:net'
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
-import { bindUpgrades } from './bindUpgrades'
+import { bindUpgrades, claimUpgrade, leaveUpgrade } from './bindUpgrades'
 
 describe('bindUpgrades', function () {
   it('gives each upgrade to the first claim that takes it', async function () {
@@ -46,6 +46,84 @@ describe('bindUpgrades', function () {
       ])
     } finally {
       unbind()
+      await new Promise<void>(resolve => {
+        server.close(() => {
+          resolve()
+        })
+      })
+    }
+  })
+})
+
+describe('leaveUpgrade', function () {
+  it('answers at once alone, and after the others only when none took it', async function () {
+    const server = createServer()
+    const orphaned: string[] = []
+    // The listener under test, first, as the harness's is.
+    server.on('upgrade', (req, socket) => {
+      leaveUpgrade(server, socket, () => {
+        orphaned.push(String(req.url))
+        socket.end('orphan')
+      })
+    })
+    await new Promise<void>(resolve => {
+      server.listen(0, '127.0.0.1', () => {
+        resolve()
+      })
+    })
+    const port = (server.address() as AddressInfo).port
+    try {
+      expect(await ask(port, '/alone')).equals('orphan')
+      const unbind = bindUpgrades(server, [
+        (req, socket) => {
+          if (req.url !== '/taken') return false
+          // Answered a tick later, as a claim that reads a session is.
+          setTimeout(() => socket.end('taken'), 20)
+          return true
+        },
+        (req, socket) => {
+          if (req.url !== '/answered') return false
+          socket.end('answered')
+          return true
+        }
+      ])
+      // Taken before the deferred check: left alone.
+      expect(await ask(port, '/taken')).equals('taken')
+      expect(await ask(port, '/answered')).equals('answered')
+      unbind()
+      // Another listener that neither claims nor answers: orphaned a tick on.
+      const idle = (): undefined => undefined
+      server.on('upgrade', idle)
+      expect(await ask(port, '/nobody')).equals('orphan')
+      server.off('upgrade', idle)
+      expect(orphaned).deep.equals(['/alone', '/nobody'])
+    } finally {
+      await new Promise<void>(resolve => {
+        server.close(() => {
+          resolve()
+        })
+      })
+    }
+  })
+
+  it('leaves a socket another listener claimed first', async function () {
+    const server = createServer()
+    server.on('upgrade', (_req, socket) => {
+      claimUpgrade(socket)
+      setTimeout(() => socket.end('first'), 20)
+    })
+    server.on('upgrade', (_req, socket) => {
+      leaveUpgrade(server, socket, () => socket.end('orphan'))
+    })
+    await new Promise<void>(resolve => {
+      server.listen(0, '127.0.0.1', () => {
+        resolve()
+      })
+    })
+    const port = (server.address() as AddressInfo).port
+    try {
+      expect(await ask(port, '/any')).equals('first')
+    } finally {
       await new Promise<void>(resolve => {
         server.close(() => {
           resolve()

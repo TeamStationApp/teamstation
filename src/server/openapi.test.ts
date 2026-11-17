@@ -138,13 +138,15 @@ const UNDOCUMENTED = new Set([
 ])
 
 /**
- * The scoreboard's sockets. The server's upgrade handler answers them, not a
- * router, so no router lists them; the document describes them all the same.
+ * The scoreboard's and search's sockets. The server's upgrade handler
+ * answers them, not a router, so no router lists them; the document
+ * describes them all the same.
  */
 const UPGRADE_ONLY = new Set([
   'GET /scoreboard/{gameId}/socket',
   'GET /scoreboard/{gameId}/publish',
-  'GET /scoreboard/{gameId}/dashboard'
+  'GET /scoreboard/{gameId}/dashboard',
+  'GET /search'
 ])
 
 describe('the API document', function () {
@@ -316,6 +318,17 @@ describe('the API document', function () {
       invented,
       `promised but not served: ${invented.join(', ')}`
     ).deep.equals([])
+  })
+
+  it('describes the search socket, its frames and its close codes', function () {
+    const paths = openApiDocument('0.0.0').paths as Record<
+      string,
+      { get?: { description?: string; responses?: Record<string, unknown> } }
+    >
+    const socket = paths['/search']?.get
+    expect(Object.keys(socket?.responses ?? {})).includes('101')
+    for (const phrase of ["stage: 'jev'", 'latest', '4401', 'Origin', '4096'])
+      expect(socket?.description ?? '').includes(phrase)
   })
 
   it('describes a player\u2019s settings, with the positions a coach may give', function () {

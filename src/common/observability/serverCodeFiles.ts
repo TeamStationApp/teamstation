@@ -402,6 +402,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/search/locations.js',
   'server/search/reach.js',
   'server/search/readerCache.js',
+  'server/search/socket.js',
   'server/sentry/instrument.js',
   'server/sentry/options.js',
   'server/serverConfig.js',

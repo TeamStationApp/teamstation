@@ -33,6 +33,7 @@ import type { ChangeFeed } from '../changeFeed/feed'
 import { PostgresFeed } from '../changeFeed/postgresFeed'
 import { mayPost, type PostingStanding } from '../chat/messages'
 import { type Database, isConnectionUnavailable } from '../db/database'
+import { claimUpgrade, leaveUpgrade } from './bindUpgrades'
 import {
   ChatFanout,
   type ChatFanoutOptions,
@@ -122,7 +123,7 @@ export interface GameSocketOptions {
   /**
    * When false, nothing here listens for upgrades. The server calls
    * `acceptUpgrade` from the one listener every socket shares. Default
-   * true: this is the only socket, and any other path is refused.
+   * true: this listens itself, and refuses a path no listener takes.
    */
   listenForUpgrades?: boolean
 }
@@ -1121,9 +1122,15 @@ export function attachGameSocket(
     socket: Duplex,
     head: Buffer
   ): void => {
-    if (!acceptUpgrade(req, socket, head)) {
-      refuseUpgrade(socket, 404, 'Not Found')
+    if (acceptUpgrade(req, socket, head)) {
+      claimUpgrade(socket)
+      return
     }
+    // Another listener's path, such as the search socket beside a fixture's
+    // game socket: answered 404 only when no listener takes it.
+    leaveUpgrade(server, socket, () => {
+      refuseUpgrade(socket, 404, 'Not Found')
+    })
   }
   if (options.listenForUpgrades !== false) server.on('upgrade', upgrade)
 
