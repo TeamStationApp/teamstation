@@ -2,7 +2,11 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 import type { OnSeekData, VideoRef } from 'react-native-video'
 
-import { MAX_INTERPOLATION_MS, NativeVideoHandle } from './nativeVideoHandle'
+import {
+  MAX_INTERPOLATION_MS,
+  NativeVideoHandle,
+  SEEKABLE_QUIET_MS
+} from './nativeVideoHandle'
 
 /** The calls a handle makes on the player, in order. */
 function fakePlayer(): { ref: VideoRef; calls: string[] } {
@@ -733,5 +737,39 @@ describe('NativeVideoHandle’s seekable end, for a resume that waits on it (U23
     expect(heard).deep.equals(['durationchange', 'progress', 'timeupdate'])
     expect(handle.seekableEnd).equals(64)
     expect(handle.liveEdge).equals(64)
+  })
+})
+
+describe('NativeVideoHandle’s seekable end, from a player gone quiet', function () {
+  it('says the end it last reported is old once the player has not reported for a while, as a paused iPhone does not', function () {
+    let now = 1000
+    const handle = new NativeVideoHandle(
+      () => undefined,
+      () => now
+    )
+    handle.attach(fakePlayer().ref)
+    const report = (seekableDuration: number): void => {
+      handle.handleProgress({
+        currentTime: 3,
+        seekableDuration
+      } as unknown as Parameters<NativeVideoHandle['handleProgress']>[0])
+    }
+    // Nothing reported yet: nothing to be old.
+    expect(handle.seekableQuiet).equals(false)
+    report(92)
+    expect(handle.seekableQuiet).equals(false)
+    now += SEEKABLE_QUIET_MS
+    expect(handle.seekableQuiet).equals(false)
+    now += 1
+    expect(handle.seekableQuiet).equals(true)
+    // Still the end it last said: only the caller knows anything newer.
+    expect(handle.seekableEnd).equals(92)
+    report(160)
+    expect(handle.seekableQuiet).equals(false)
+    expect(handle.seekableEnd).equals(160)
+    // A new source knows nothing yet.
+    handle.reset()
+    now += SEEKABLE_QUIET_MS * 2
+    expect(handle.seekableQuiet).equals(false)
   })
 })

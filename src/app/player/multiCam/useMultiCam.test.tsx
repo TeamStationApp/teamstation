@@ -1929,6 +1929,84 @@ describe('useMultiCam with a live camera behind the game (U27)', function () {
     expect(mc().tiles.B?.parked ?? null).equals(null)
     expect(tiles.B.currentTime).greaterThan(140)
   })
+  it('puts back a phone tile whose player went quiet while it waited, once its timeline has the moment past a hole', async function () {
+    this.timeout(10_000)
+    // B's camera was away for 64 s after its first 100 s: its media goes on
+    // from 100 s at T0 + 164 s.
+    const holed = (after: number): WallMapping =>
+      fromFragments([
+        ...Array.from({ length: 25 }, (unused, index) => ({
+          start: index * 4,
+          duration: 4,
+          programDateTime: T0 + index * 4000
+        })),
+        ...Array.from({ length: after / 4 }, (unused, index) => ({
+          start: 100 + index * 4,
+          duration: 4,
+          programDateTime: T0 + 164_000 + index * 4000
+        }))
+      ])
+    const held: Record<string, WallMapping> = { A: dated(400), B: holed(0) }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 400])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 400 } })
+        // An iPhone's player: no seekable or buffered ranges, only the end
+        // it last reported, short of the hole, and nothing more while it is
+        // paused.
+        Object.assign(tiles.B, { seekableEnd: 92, seekableQuiet: true })
+        tiles.B.currentTime = 92
+      }
+    )
+    await ticks(2)
+    expect(mc().tiles.B?.parked).equals('notYet')
+    expect(tiles.A.paused).equals(false)
+
+    // The camera is back: the server's timeline goes on past the hole, while
+    // B's player, paused, still says 92 s.
+    held.B = holed(100)
+    await until(() => mc().tiles.B?.parked === null, 5000)
+    expect(mc().tiles.B?.parked ?? null).equals(null)
+    // Sent to the first picture after the hole, or just ahead of it.
+    expect(tiles.B.currentTime).within(100, 100 + JOIN_LEAD_SEC)
+    expect(mc().waiting).equals(false)
+  })
+
+  it('keeps a quiet phone tile waiting while its timeline has no newer footage either', async function () {
+    this.timeout(10_000)
+    const held: Record<string, WallMapping> = {
+      A: dated(300),
+      B: dated(100)
+    }
+    const { mc, tiles } = await grid(
+      {
+        videos: [liveVideo('A', 0), liveVideo('B', 0)],
+        order: ['A', 'B'],
+        atMs: T0 + 150_000
+      },
+      { fallbackMapping: id => held[id] ?? null },
+      tiles => {
+        for (const tile of Object.values(tiles))
+          tile.duration = Number.POSITIVE_INFINITY
+        fill(tiles.A, [100, 300])
+        Object.assign(tiles.A, { seekable: { length: 1, end: () => 300 } })
+        Object.assign(tiles.B, { seekableEnd: 92, seekableQuiet: true })
+        tiles.B.currentTime = 92
+      }
+    )
+    await ticks(3)
+    expect(mc().tiles.B?.parked).equals('notYet')
+    expect(tiles.B.currentTime, 'never sought').equals(92)
+  })
+
   it('runs a live game’s bar from its first camera to the newest footage any angle has, and lands a move past live at the live point', async function () {
     const served: Record<string, WallMapping | null> = {
       A: dated(300),

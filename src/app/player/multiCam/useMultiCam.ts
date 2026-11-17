@@ -433,8 +433,13 @@ export function useMultiCam(
   const tileMappings = useRef(new Map<string, WallMapping | null>())
   const fallbackRef = useRef(fallbackMapping)
   fallbackRef.current = fallbackMapping
-  /** How far a tile's player can reach, for its newest footage. */
-  const seekableEndRef = useRef<(id: string) => number | null>(() => null)
+  /**
+   * How far a tile's player can reach, for its newest footage, and whether
+   * its player has gone quiet about it (`TileHandle.seekableQuiet`).
+   */
+  const seekableEndRef = useRef<
+    (id: string) => { end: number | null; quiet: boolean }
+  >(() => ({ end: null, quiet: false }))
   /**
    * The best mapping a tile has now: the server's wall timeline, then its
    * player's own.
@@ -444,7 +449,10 @@ export function useMultiCam(
    * after their pictures on a live ingest, and later still after a camera
    * stalled. A grid placed by them drew every board step that far ahead of its
    * picture, and two angles out of step by the stall. Its newest footage is
-   * the timeline's wall time at what the player can reach.
+   * the timeline's wall time at what the player can reach — or, from a
+   * player that has stopped saying what it can reach, the later of that and
+   * the timeline's own newest picture: an iPhone tile paused to wait for its
+   * live footage reports nothing more, and waited for good.
    */
   const mappingOf = (id: string): WallMapping | null => {
     const served = fallbackRef.current?.(id) ?? null
@@ -452,8 +460,11 @@ export function useMultiCam(
     return {
       ...served,
       newestWall: () => {
-        const end = seekableEndRef.current(id)
-        return (end == null ? null : served.wallAt(end)) ?? served.newestWall()
+        const { end, quiet } = seekableEndRef.current(id)
+        const reached = end == null ? null : served.wallAt(end)
+        const known = served.newestWall()
+        if (reached == null) return known
+        return quiet && known != null ? Math.max(reached, known) : reached
       }
     }
   }
@@ -565,7 +576,9 @@ export function useMultiCam(
   const seekedAt = useRef(new Map<string, number>())
   seekableEndRef.current = id => {
     const element = elements.current.get(id)
-    return element == null ? null : seekableEndOf(element)
+    return element == null
+      ? { end: null, quiet: false }
+      : { end: seekableEndOf(element), quiet: element.seekableQuiet === true }
   }
   /** Tiles that have had pictures at some point, for telling a stall apart. */
   const everStarted = useRef(new Set<string>())

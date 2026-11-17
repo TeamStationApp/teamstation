@@ -59,6 +59,13 @@ import {
  * is read to the frame, and this is read as nearly so.
  */
 
+/**
+ * How long without a progress report before the seekable end the player last
+ * reported counts as old (`seekableQuiet`): eight of its quarter-second
+ * reports.
+ */
+export const SEEKABLE_QUIET_MS = 2000
+
 /** What the component has to pass to the player. */
 export interface NativeVideoProps {
   paused: boolean
@@ -196,6 +203,9 @@ export class NativeVideoHandle implements VideoHandle {
    * newest moment. From the player's progress reports; null until one says.
    */
   private seekableTo: number | null = null
+
+  /** When `seekableTo` was last reported, by `clock`. */
+  private seekableAt = 0
 
   constructor(onPropsChange: () => void, clock: () => number = steadyNow) {
     this.onPropsChange = onPropsChange
@@ -391,11 +401,28 @@ export class NativeVideoHandle implements VideoHandle {
     return this.seekableTo
   }
 
+  /**
+   * Whether the player has stopped reporting how far it could seek, so that
+   * `seekableEnd` says only where its footage had reached, not where it is.
+   *
+   * AVPlayer reports progress only while its time moves: a paused or stalled
+   * iPhone tile says nothing, however far its live playlist grows. A camera
+   * the grid paused to wait for its footage then never heard that the
+   * footage had come, and waited for good. Android reports while paused.
+   */
+  get seekableQuiet(): boolean {
+    return (
+      this.seekableTo != null &&
+      this.clock() - this.seekableAt > SEEKABLE_QUIET_MS
+    )
+  }
+
   handleProgress = (data: OnProgressData): void => {
     // AVPlayer reports the length of its seekable range, which for a game's
     // playlist starts at its first segment and so ends at the newest one.
     if (Number.isFinite(data.seekableDuration) && data.seekableDuration > 0) {
       this.seekableTo = data.seekableDuration
+      this.seekableAt = this.clock()
       // A live game's playlist grows. AVPlayer gives its length once, on
       // load, and a browser's grows with it: held at that first length, a
       // tile played up to it and the grid took it for the end of the footage
