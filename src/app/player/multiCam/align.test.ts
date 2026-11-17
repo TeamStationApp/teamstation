@@ -1,11 +1,14 @@
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
+import type { WallAnchor } from '../../../common/wallTimeline'
 import type { AngleVideo } from '../wallClock'
+import { fromAnchors } from '../wallMapping'
 import {
   correctionFor,
   endFor,
   everythingEnded,
+  farSideOfHole,
   hasStalled,
   holdExpired,
   isFinished,
@@ -286,5 +289,55 @@ describe('the moment a live grid opens on', function () {
     expect(LIVE_OPEN_WAIT_MS).equals(3000)
     expect(liveOpeningMs([500_000, null], LIVE_OPEN_WAIT_MS - 1)).equals(null)
     expect(liveOpeningMs([null, 500_000], LIVE_OPEN_WAIT_MS)).equals(455_000)
+  })
+})
+
+describe('the far side of a hole in a recording', function () {
+  const T0 = Date.parse('2026-05-01T18:00:00.000Z')
+  const on = (anchors: WallAnchor[]): AngleVideo => {
+    const mapping = fromAnchors(anchors)
+    return {
+      startAt: new Date(T0).toISOString(),
+      syncOffsetSec: 0,
+      durationSec: null,
+      clock: () => mapping
+    }
+  }
+
+  it('waits at the first picture after a camera’s 8 s hole', function () {
+    const video = on([
+      [0, T0],
+      [100_000, T0 + 108_000]
+    ])
+    expect(farSideOfHole(video, T0 + 103_000)).equals(100)
+    // Within a second of it, speed closes the rest.
+    expect(farSideOfHole(video, T0 + 107_500)).equals(null)
+    expect(farSideOfHole(video, T0 + 99_000)).equals(null)
+    expect(farSideOfHole(video, T0 + 110_000)).equals(null)
+  })
+
+  it('finds no hole at one point out of line, which the recording runs back from', function () {
+    // A frame whose own clock jumped 2 s on and came back half a second
+    // later: the recording shows every moment, and none is behind a hole.
+    const video = on([
+      [0, T0],
+      [200_000, T0 + 202_000],
+      [200_500, T0 + 200_500]
+    ])
+    for (let at = 199_000; at < 203_000; at += 100) {
+      expect(farSideOfHole(video, T0 + at), `at ${at}`).equals(null)
+    }
+  })
+
+  it('finds none where the timeline runs on without a gap', function () {
+    const video = on(
+      Array.from({ length: 300 }, (unused, index): WallAnchor => [
+        index * 2000,
+        T0 + index * 2000
+      ])
+    )
+    for (let at = 0; at < 600_000; at += 777) {
+      expect(farSideOfHole(video, T0 + at), `at ${at}`).equals(null)
+    }
   })
 })
