@@ -82,6 +82,35 @@ export function sourceRoot(moduleDirectory = __dirname): string {
   return resolve(moduleDirectory, '../../../src')
 }
 
+/**
+ * Names under src that are not open source: a host's secrets (src/.gitignore),
+ * build output, dependencies and hidden tool state. Refused at any depth.
+ */
+const PRIVATE_NAMES = new Set([
+  'serverConfig.json',
+  'clientConfig.json',
+  'clientConfig.xcconfig',
+  'local.properties',
+  'node_modules',
+  'lib',
+  'dist',
+  'build',
+  'build-device',
+  'build-local',
+  'web-build',
+  'Pods',
+  'DerivedData'
+])
+
+export function isPrivateName(name: string): boolean {
+  return (
+    name.startsWith('.') ||
+    PRIVATE_NAMES.has(name) ||
+    name.endsWith('.keystore') ||
+    name.endsWith('.xcuserdatad')
+  )
+}
+
 interface SourceResult {
   content: string
   is_error?: boolean
@@ -89,6 +118,7 @@ interface SourceResult {
 
 interface Budget {
   visited: number
+  skipped: number
   limited: boolean
 }
 
@@ -99,6 +129,15 @@ export function sourceBrowser(root = sourceRoot()): {
 } {
   let mapRead = false
   let completeMap: string | undefined
+  let checkedRoot: Promise<string> | undefined
+
+  // Checked once per turn; every path is still checked against it.
+  async function rootPath(): Promise<string> {
+    const rootStat = await lstat(root)
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink())
+      throw new Error('root')
+    return await realpath(root)
+  }
 
   async function checkedPath(path: string): Promise<string> {
     const parts = path.split('/')
@@ -108,13 +147,17 @@ export function sourceBrowser(root = sourceRoot()): {
       /[\\\0]/.test(path)
     )
       throw new Error('path')
-    const rootStat = await lstat(root)
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink())
-      throw new Error('root')
-    const canonicalRoot = await realpath(root)
+    if (checkedRoot == null) {
+      checkedRoot = rootPath()
+      checkedRoot.catch(() => {
+        checkedRoot = undefined
+      })
+    }
+    const canonicalRoot = await checkedRoot
     let target = canonicalRoot
     for (const part of parts.slice(1)) {
       if (part === '' || part === '.') continue
+      if (isPrivateName(part)) throw new Error('private')
       target = resolve(target, part)
       if ((await lstat(target)).isSymbolicLink()) throw new Error('link')
     }
@@ -147,11 +190,15 @@ export function sourceBrowser(root = sourceRoot()): {
         stat.size > SOURCE_LIMITS.fileBytes
       )
         throw new Error('file')
+      // A file too large for what is left of the scan is skipped, not read.
       if (scan != null && scan.bytes + stat.size > SOURCE_LIMITS.scannedBytes) {
         scan.limited = true
         throw new Error('scan limit')
       }
-      const buffer = Buffer.alloc(SOURCE_LIMITS.fileBytes + 1)
+      // One byte past the stat'd size shows growth since the stat.
+      const buffer = Buffer.alloc(
+        Math.min(stat.size, SOURCE_LIMITS.fileBytes) + 1
+      )
       let bytes = 0
       for (;;) {
         const read = await file.read(
@@ -170,6 +217,7 @@ export function sourceBrowser(root = sourceRoot()): {
         }
         if (bytes > SOURCE_LIMITS.fileBytes) throw new Error('size')
         if (read.bytesRead === 0) break
+        if (bytes === buffer.length) throw new Error('changed')
       }
       const data = buffer.subarray(0, bytes)
       if (data.includes(0)) throw new Error('binary')
@@ -185,9 +233,18 @@ export function sourceBrowser(root = sourceRoot()): {
   async function* entries(
     path: string,
     recursive: boolean,
-    budget: Budget
+    budget: Budget,
+    nested = false
   ): AsyncGenerator<{ path: string; directory: boolean }> {
-    const directory = await opendir(await checkedPath(path))
+    let directory
+    try {
+      directory = await opendir(await checkedPath(path))
+    } catch (error) {
+      // A subdirectory that cannot be opened is skipped, not the whole search.
+      if (!nested) throw error
+      budget.skipped += 1
+      return
+    }
     for await (const entry of directory) {
       budget.visited += 1
       if (budget.visited > SOURCE_LIMITS.visitedEntries) {
@@ -195,9 +252,11 @@ export function sourceBrowser(root = sourceRoot()): {
         return
       }
       if (!entry.isDirectory() && !entry.isFile()) continue
+      if (isPrivateName(entry.name)) continue
       const child = `${path.replace(/\/$/, '')}/${entry.name}`
       yield { path: child, directory: entry.isDirectory() }
-      if (recursive && entry.isDirectory()) yield* entries(child, true, budget)
+      if (recursive && entry.isDirectory())
+        yield* entries(child, true, budget, true)
       if (budget.limited) return
     }
   }
@@ -278,7 +337,7 @@ export function sourceBrowser(root = sourceRoot()): {
           return { content }
         }
 
-        const budget = { visited: 0, limited: false }
+        const budget = { visited: 0, skipped: 0, limited: false }
         const output: string[] = []
         let size = 0
         const add = (line: string): boolean => {
@@ -334,10 +393,6 @@ export function sourceBrowser(root = sourceRoot()): {
           try {
             file = await textFile(entry.path, scan)
           } catch {
-            if (scan.limited) {
-              budget.limited = true
-              break
-            }
             skipped += 1
             continue
           }
@@ -364,8 +419,8 @@ export function sourceBrowser(root = sourceRoot()): {
         return {
           content:
             (output.length === 0 ? '[No matches.]' : output.join('\n')) +
-            `\n[${skipped} files skipped.]` +
-            (budget.limited
+            `\n[${skipped + budget.skipped} files skipped.]` +
+            (budget.limited || scan.limited
               ? '\n[Search limited; choose a narrower path.]'
               : '')
         }

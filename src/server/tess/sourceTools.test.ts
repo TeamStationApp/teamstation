@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   mkdtemp,
   readFile,
@@ -356,6 +357,65 @@ describe('Tess source tools', function () {
     ).includes('needle')
   })
 
+  it('hides secrets, build output and hidden files from every tool', async () => {
+    await unlock()
+    for (const path of [
+      'serverConfig.json',
+      'feature/clientConfig.json',
+      'release.keystore',
+      '.env',
+      'node_modules/pkg/index.js',
+      'lib/server/index.js'
+    ]) {
+      await mkdir(join(root, path, '..'), { recursive: true })
+      await writeFile(join(root, path), 'SECRET_VALUE\n')
+      expect((await read(`src/${path}`)).is_error).equals(true)
+    }
+    for (const path of ['src', 'src/feature'])
+      expect(
+        (await browser.run('source_list_directory', { path })).content
+      ).not.match(/serverConfig|clientConfig|keystore|\.env|node_modules|lib/)
+    expect(
+      (await browser.run('source_list_directory', { path: 'src/lib' })).is_error
+    ).equals(true)
+    const searched = await browser.run('source_search', {
+      path: 'src',
+      text: 'SECRET_VALUE'
+    })
+    expect(searched.content).includes('[No matches.]')
+    expect(searched.content).includes('[0 files skipped.]')
+  })
+
+  it('skips files too large for the rest of the scan and unreadable directories', async () => {
+    await unlock()
+    await mkdir(join(root, 'scan'))
+    // Eight of these fit the scan with 80 bytes to spare; the ninth does not.
+    await Promise.all(
+      Array.from({ length: 9 }, async (_, i) => {
+        await writeFile(
+          join(root, 'scan', `large${i}`),
+          Buffer.alloc(SOURCE_LIMITS.fileBytes - 10, 65)
+        )
+      })
+    )
+    await writeFile(join(root, 'scan', 'b'), 'needle\n')
+    await mkdir(join(root, 'scan', 'closed'))
+    await writeFile(join(root, 'scan', 'closed', 'c'), 'needle\n')
+    await chmod(join(root, 'scan', 'closed'), 0)
+    try {
+      const result = await browser.run('source_search', {
+        path: 'src/scan',
+        text: 'needle'
+      })
+      expect(result.is_error).not.equals(true)
+      expect(result.content).includes('src/scan/b:1: needle')
+      expect(result.content).includes('[2 files skipped.]')
+      expect(result.content).includes('[Search limited;')
+    } finally {
+      await chmod(join(root, 'scan', 'closed'), 0o755)
+    }
+  })
+
   it('caps scanned bytes and visited entries even when nothing matches', async () => {
     await unlock()
     await mkdir(join(root, 'bytes'))
@@ -443,6 +503,15 @@ describe('Tess source tools', function () {
     })
     expect(result.is_error).not.equals(true)
     expect(result.content).not.match(/Output limited|More lines/)
+    // The real map must stay within one complete read, or every tool stays locked.
+    const real = sourceBrowser()
+    real.acceptMapResult(
+      await real.run('source_read_file', { path: DIRECTORY_MAP })
+    )
+    expect(
+      (await real.run('source_list_directory', { path: 'src/server/tess' }))
+        .is_error
+    ).not.equals(true)
     const map = await readFile(join(sourceRoot(), 'DIRECTORY_MAP.md'), 'utf8')
     for (const match of map.matchAll(/`(src\/[^`]+)`/g))
       await import('node:fs/promises').then(async fs => {
