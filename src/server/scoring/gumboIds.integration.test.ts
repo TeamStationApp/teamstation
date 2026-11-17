@@ -248,6 +248,18 @@ describe('independent account and scoring identities', function () {
     expect(
       same[0].members.find(row => row.userId === userIdOfGumbo(ids[0]))?.plays
     ).equals(1)
+    // Members of the season, so its list holds them: nobody is on it only
+    // for playing.
+    await db
+      .insertInto('season_members')
+      .values(
+        ids.slice(0, 2).map(id => ({
+          id: `smb_mapping_${id}`,
+          user_id: userIdOfGumbo(id),
+          season_id: 'sea_demo'
+        }))
+      )
+      .execute()
     const roster = await levelPeople(db, undefined, {
       kind: 'season',
       id: 'sea_demo'

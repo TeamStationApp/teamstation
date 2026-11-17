@@ -603,12 +603,12 @@ async function main(): Promise<void> {
     expect(sticky?.bottom).lessThan((sticky?.height ?? 0) / 2)
     // The season's people, on its People tab now the Manage page is gone.
     await visit(admin, `/seasons/${f.seasonA}?tab=people`)
-    // The league's administrator, inherited and pilled, and the child only
-    // as a player of the season's Demo Comets, both by short name.
+    // The league's administrator, inherited and pilled; no Players section,
+    // so the child who only plays for the season's Demo Comets is not there.
     await contains(admin.page, 'ADMINS')
     await contains(admin.page, 'League admin')
-    await contains(admin.page, 'PLAYERS')
-    await contains(admin.page, 'Demo CDemo Comets')
+    await absent(admin.page, 'PLAYERS')
+    await absent(admin.page, 'Demo CDemo Comets')
     await absent(admin.page, 'Demo Child Player')
     await capture(admin.m, artifacts, 'people-after.png')
     await pass(

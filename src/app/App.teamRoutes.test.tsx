@@ -1131,3 +1131,161 @@ describe('a season’s and a league’s People tab, however the page is opened',
     }
   })
 })
+
+describe('a people section’s adds, through the app', () => {
+  confirmedChatAgeHooks()
+  const team = asGroupDetail({
+    nonMemberView: false,
+    group: {
+      kind: 'team',
+      id: 'canonical',
+      name: 'Demo Hawks',
+      imageUrl: null,
+      locality: null
+    },
+    parents: [],
+    children: [],
+    participatingSeasons: [],
+    competingTeams: [],
+    games: [],
+    staff: [],
+    canViewPrivate: true,
+    canManage: true,
+    canManageRoster: true,
+    canManagePeople: true,
+    canSeePeople: true
+  })
+  const admin = asRosterEntry({
+    userId: userIdOfGumbo(1),
+    gumboId: 1,
+    shortName: 'Demo Admin',
+    jersey: null,
+    positions: [],
+    isPlayer: false,
+    role: 'owner',
+    section: 'admin',
+    staffRoles: [],
+    inheritedFrom: null
+  })
+
+  /** The app at `address`, and where pressing `labels` in turn leads. */
+  const follow = async (address: string, labels: string[]): Promise<string> => {
+    const proto = TeamStationClient.prototype
+    const originals = Object.getOwnPropertyDescriptors(proto)
+    Object.defineProperty(proto, 'offline', {
+      configurable: true,
+      get: () => false,
+      set: () => undefined
+    })
+    proto.whoAmI = async () =>
+      asSessionUser({
+        id: userIdOfGumbo(1),
+        displayName: 'Demo Admin',
+        isAdmin: false
+      })
+    proto.myRoles = async () => ({ teams: {}, guardianOf: [] })
+    proto.hasNotifications = async () => false
+    proto.group = async () => team
+    proto.gameProposals = async () => []
+    proto.roster = async () => [admin]
+    proto.teamGamesPage = async (_id, query) => pageOfGames([], query)
+    proto.teamStats = async () => []
+    proto.teamPitchingStats = async () => []
+    proto.standings = async () => []
+    proto.follows = async () => []
+    proto.rosterCandidates = async () => []
+    const settle = async (): Promise<void> => {
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 60))
+      })
+    }
+    window.history.replaceState(null, '', address)
+    const restoreRects = measureBoxes()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => {
+        root.render(<App />)
+      })
+      await settle()
+      for (const label of labels) {
+        const button = [
+          ...document.querySelectorAll<HTMLElement>('[role="button"]')
+        ]
+          .filter(node => node.closest('[data-scene-role="covered"]') == null)
+          .find(node => node.getAttribute('aria-label') === label)
+        expect(button, label).not.equals(undefined)
+        await act(async () => {
+          button!.click()
+        })
+        await settle()
+      }
+      return window.location.pathname + window.location.search
+    } finally {
+      await act(async () => {
+        root.unmount()
+      })
+      host.remove()
+      restoreRects()
+      Object.defineProperties(proto, originals)
+      window.history.replaceState(null, '', '/')
+    }
+  }
+
+  for (const [address, from] of [
+    ['/teams/canonical?tab=team', 'team'],
+    ['/groups/team/canonical?tab=team', 'group']
+  ] as const) {
+    const back = `teamId=canonical&teamAddress=${from}&teamTab=team`
+    it(`opens Add People, Add Player and Create Player from a ${from} page’s Team tab, over its settings`, async () => {
+      expect(await follow(address, ['Add Admin to Demo Hawks'])).equals(
+        `/groups/team/canonical/settings/people?${back}&role=admin`
+      )
+      expect(await follow(address, ['Add Staff to Demo Hawks'])).equals(
+        `/groups/team/canonical/settings/people?${back}`
+      )
+      expect(await follow(address, ['Add Spectator to Demo Hawks'])).equals(
+        `/groups/team/canonical/settings/people?${back}`
+      )
+      expect(
+        await follow(address, [
+          'Add Player to Demo Hawks',
+          'Add existing player'
+        ])
+      ).equals(`/groups/team/canonical/settings/add-player?${back}`)
+      expect(
+        await follow(address, ['Add Player to Demo Hawks', 'Create new player'])
+      ).equals(`/groups/team/canonical/settings/create-player?${back}`)
+    }).timeout(30000)
+  }
+
+  it('rebuilds the team page on its Team tab under settings, from each add’s address', () => {
+    for (const name of [
+      'groupAddPeople',
+      'teamAddPlayer',
+      'teamCreatePlayer'
+    ] as const)
+      for (const address of ['team', 'group'] as const) {
+        const teamReturn = { id: 'canonical', address, tab: 'team' }
+        const stack = stackFor({
+          name,
+          kind: 'team',
+          id: 'canonical',
+          teamReturn
+        }).home!
+        expect(stack[0]).deep.equals(
+          address === 'team'
+            ? stackFor({ name: 'team', teamId: 'canonical', tab: 'team' })
+                .home![0]
+            : { name: 'group', kind: 'team', id: 'canonical', tab: 'team' }
+        )
+        expect(stack.at(-2)).deep.equals({
+          name: 'groupSettings',
+          kind: 'team',
+          id: 'canonical',
+          teamReturn
+        })
+      }
+  })
+})

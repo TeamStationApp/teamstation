@@ -11,7 +11,10 @@ import type { StoredBlock } from './conversation'
  * `shortName`) is a person, and a player when it says so. A roster or
  * people-list entry is one in the `player` section; an entry listed for
  * another part (an admin, staff, family, a spectator, a follower) is not,
- * since only a player has a profile to open. Another object with `isPlayer`
+ * since only a player has a profile to open, unless it is a season's or
+ * league's player: those lists have no Players section and file a player by
+ * their other tie, `isPlayer` and with the `teamNames` they play for. Another
+ * object with `isPlayer`
  * is one when it is true. Without either, a player is a stat line or a
  * listed player (an object under `batting`, `pitching`, `players`,
  * `batters` or `lineup`), or a player's own read, which carries how they bat
@@ -39,7 +42,10 @@ function isPlayerRecord(
   listed: boolean
 ): boolean {
   if (typeof record.section === 'string')
-    return record.section === 'player' && record.isPlayer !== false
+    return (
+      (record.section === 'player' && record.isPlayer !== false) ||
+      (record.isPlayer === true && Array.isArray(record.teamNames))
+    )
   if (typeof record.isPlayer === 'boolean') return record.isPlayer
   return listed || 'bats' in record || 'throws' in record
 }

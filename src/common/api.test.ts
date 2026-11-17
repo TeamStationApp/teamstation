@@ -6,6 +6,7 @@ import { mintedRosterEntry } from '../test/mintedRosterEntry'
 import { testPasswordParameters } from '../test/passwordFixtures'
 import { asAccountSettings } from './accountSettings'
 import {
+  asAccountAffiliations,
   asChatBlock,
   asGameDetail,
   asHighlight,
@@ -174,6 +175,81 @@ describe('api client', function () {
       }).setPlayerBatsThrows(userId, { bats: 'right', throws: 'left' })
     ).deep.equals(settings)
     expect(player.calls[0].url).equals(`/api/v1/players/${userId}/settings`)
+  })
+  it('reads the account’s affiliations, and refuses a group of another kind', async () => {
+    const group = {
+      id: 'tea_hawks',
+      kind: 'team',
+      name: 'Demo Hawks',
+      imageUrl: null,
+      locality: null
+    }
+    const answer = {
+      groups: [
+        {
+          kind: 'team',
+          id: 'tea_hawks',
+          group,
+          roles: ['admin', 'coach'],
+          headCoach: true,
+          player: true,
+          member: false,
+          following: true
+        }
+      ],
+      players: [
+        {
+          userId: userIdOfGumbo(400),
+          name: 'Mookie B',
+          avatarUrl: null,
+          teamNames: ['Demo Hawks']
+        }
+      ]
+    }
+    const stub = stubFetch(200, answer)
+    const read = await new TeamStationClient({
+      baseUrl: '/api/v1',
+      fetch: stub.fetch
+    }).accountAffiliations()
+    expect(stub.calls.map(call => [call.method, call.url])).deep.equals([
+      ['GET', '/api/v1/me/affiliations']
+    ])
+    expect(read.groups[0]).deep.includes({
+      kind: 'team',
+      roles: ['admin', 'coach'],
+      headCoach: true,
+      player: true,
+      member: false,
+      following: true
+    })
+    expect(read.groups[0].group).deep.equals(asPublicGroup(group))
+    expect(read.players).deep.equals(answer.players)
+    // An older answer with only the groups, and no flags, reads as none.
+    expect(
+      asAccountAffiliations({
+        groups: [{ kind: 'league', id: 'lea_a', group, roles: [] }]
+      })
+    ).deep.equals({
+      groups: [
+        {
+          kind: 'league',
+          id: 'lea_a',
+          group: asPublicGroup(group),
+          roles: [],
+          headCoach: false,
+          player: false,
+          member: false,
+          following: false
+        }
+      ],
+      players: []
+    })
+    expect(() =>
+      asAccountAffiliations({
+        groups: [{ ...answer.groups[0], kind: 'club' }],
+        players: []
+      })
+    ).throws()
   })
   it('writes a game availability switch and reads the two exclusion lists', async () => {
     const set = stubFetch(200, { away: [123], home: [] })

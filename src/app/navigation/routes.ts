@@ -51,7 +51,13 @@ export type CreationRoute =
     }
   | { name: 'umpireRequirementEdit'; id: string; seasonIds: string[] }
   | UmpireScheduleRoute
-  | ({ name: 'groupAddPeople'; kind: GroupKind; id: string } & SettingsContext)
+  | ({
+      name: 'groupAddPeople'
+      kind: GroupKind
+      id: string
+      /** Opens with this role checked: Add Admin's. */
+      role?: 'admin'
+    } & SettingsContext)
   | ({ name: 'groupInvites'; kind: GroupKind; id: string } & SettingsContext)
   /** Team settings' Create Player. */
   | ({ name: 'teamCreatePlayer'; kind: 'team'; id: string } & SettingsContext)
@@ -463,7 +469,13 @@ export function parseRoute(path: string, search = ''): Route {
             : {})
         }
         if (parts[4] === 'people')
-          return { name: 'groupAddPeople', kind: id, id: groupId, ...context }
+          return {
+            name: 'groupAddPeople',
+            kind: id,
+            id: groupId,
+            ...context,
+            ...(query.get('role') === 'admin' ? { role: 'admin' as const } : {})
+          }
         if (parts[4] === 'invites')
           return { name: 'groupInvites', kind: id, id: groupId, ...context }
         if (parts[4] === 'create-player' && id === 'team')
@@ -847,8 +859,11 @@ export function routePath(route: Route): string {
       }
       return `/groups/${route.kind}/${encodeURIComponent(route.id)}/settings${query.size === 0 ? '' : '?' + query.toString()}`
     }
-    case 'groupAddPeople':
-      return settingsChildPath(route, 'people')
+    case 'groupAddPeople': {
+      const path = settingsChildPath(route, 'people')
+      if (route.role !== 'admin') return path
+      return `${path}${path.includes('?') ? '&' : '?'}role=admin`
+    }
     case 'groupInvites':
       return settingsChildPath(route, 'invites')
     case 'teamCreatePlayer':

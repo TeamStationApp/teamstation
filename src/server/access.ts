@@ -74,7 +74,7 @@ async function guardedPeople(
  * one read of the links for all of their rows, one of the merges of everybody
  * linked.
  */
-async function guardedPeopleOfEach(
+export async function guardedPeopleOfEach(
   db: Kysely<Database>,
   actors: ReadonlyMap<string, OnePerson>
 ): Promise<Map<string, OnePerson[]>> {
@@ -289,7 +289,7 @@ export async function teamsPlayedOnNow(
 }
 
 /** `teamsPlayedOnNow` in one read, with the teams each row plays on. */
-async function teamsPlayedOnNowByRow(
+export async function teamsPlayedOnNowByRow(
   db: Kysely<Database>,
   userIds: readonly string[]
 ): Promise<Map<string, string[]>> {
@@ -1571,7 +1571,9 @@ export async function mayViewFullName(
  *
  * The level rule is the person profile's: a level's administrators, coaches
  * and assistants (`roleScopes`, carried down from league to season to team)
- * read in full everybody its people list holds (`onPeopleList`):
+ * read in full everybody they may open as a person from it (`onPeopleList`:
+ * its people list, and on a season or league also the players of its teams,
+ * whom that list leaves out):
  *
  * - its members (a team's memberships, player or not; `season_members`;
  *   `league_members`), its role holders (`scope_roles`) and its followers;
@@ -1803,7 +1805,8 @@ interface ListLevels extends ScopeSet {
 }
 
 /**
- * Every level whose people list (`onPeopleList`) holds each of these people,
+ * Every level each of these people may be opened from (`onPeopleList`: its
+ * people list, or for a season or league, playing on a team it reaches),
  * keyed by the id asked about, in a fixed number of reads however many there
  * are: each person's rows (`onePeople`), the players they guard
  * (`guardedPeopleOfEach`), their memberships and those players', their season

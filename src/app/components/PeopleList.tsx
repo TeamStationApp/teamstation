@@ -5,6 +5,7 @@ import type { RosterEntry, RosterSection } from '../../common/api'
 import type { StringKey } from '../locales/en_US'
 import { lstrings, sprintf } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
+import { Button } from './Button'
 import { ListCard } from './ListCard'
 import { ListRow } from './ListRow'
 import { PersonAffiliationLine } from './PersonAffiliationLine'
@@ -31,43 +32,117 @@ export interface PeopleListProps {
    * and anybody else opens their profile for whoever manages the level.
    */
   onOpen?: (person: RosterEntry) => (() => void) | undefined
+  /**
+   * Sections drawn even with nobody in them: the header and a `0` count,
+   * and no empty card.
+   */
+  kept?: readonly RosterSection[]
+  /**
+   * What adds somebody to a section: a pill left of its count, or under an
+   * empty section's header a blue button the size of Add Game.
+   */
+  adds?: Partial<Record<RosterSection, PeopleAdd>>
+}
+
+/** An add on a people section, opening wherever people are added to it. */
+export interface PeopleAdd {
+  label: string
+  /** Names the group, since several sections carry an add. */
+  accessibilityLabel: string
+  onPress: () => void
 }
 
 /**
  * A team's roster, or a season's or league's people: Admins, Staff, Players,
  * Family members, Spectators and Followers. The server decides who is in
- * which section; this draws them in order and leaves out an empty one.
+ * which section; this draws them in order and leaves out an empty one,
+ * unless it is `kept`.
  */
 export function PeopleList({
   people,
-  onOpen
+  onOpen,
+  kept = [],
+  adds = {}
 }: PeopleListProps): React.ReactElement {
-  const styles = getStyles(useTheme())
+  const theme = useTheme()
+  const styles = getStyles(theme)
   return (
     <>
       {PEOPLE_SECTIONS.map(([section, heading]) => {
         const listed = people.filter(person => person.section === section)
-        if (listed.length === 0) return null
+        if (listed.length === 0 && !kept.includes(section)) return null
+        const add = adds[section]
+        const testID = `people-add-${section}`
         return (
           <View key={section} style={styles.section}>
             <SectionHeader
               title={lstrings[heading]}
               note={String(listed.length)}
+              noteActions={
+                add == null || listed.length === 0
+                  ? undefined
+                  : [{ ...add, testID }]
+              }
             />
-            <ListCard>
-              {listed.map(person => (
-                <PersonRow
-                  key={person.userId}
-                  person={person}
-                  onPress={onOpen?.(person)}
+            {listed.length === 0 ? (
+              add == null ? null : (
+                <Button
+                  label={add.label}
+                  accessibilityLabel={add.accessibilityLabel}
+                  testID={testID}
+                  color={theme.scoreActionColor}
+                  style={styles.emptyAdd}
+                  onPress={() => {
+                    add.onPress()
+                  }}
                 />
-              ))}
-            </ListCard>
+              )
+            ) : (
+              <ListCard>
+                {listed.map(person => (
+                  <PersonRow
+                    key={person.userId}
+                    person={person}
+                    onPress={onOpen?.(person)}
+                  />
+                ))}
+              </ListCard>
+            )}
           </View>
         )
       })}
     </>
   )
+}
+
+/** Add Staff and Add Spectator, each opening the group's Add People screen. */
+export function peopleAdds(
+  name: string,
+  onAddPeople: (role?: 'admin') => void
+): Partial<Record<RosterSection, PeopleAdd>> {
+  return {
+    admin: {
+      label: lstrings.people_add_admin,
+      accessibilityLabel: sprintf(lstrings.people_add_admin_to, name),
+      onPress: () => {
+        onAddPeople('admin')
+      }
+    },
+    staff: {
+      label: lstrings.people_add_staff,
+      accessibilityLabel: sprintf(lstrings.people_add_staff_to, name),
+      onPress: () => {
+        onAddPeople()
+      }
+    },
+    spectator: {
+      label: lstrings.people_add_spectator,
+      accessibilityLabel: sprintf(lstrings.people_add_spectator_to, name),
+      onPress: () => {
+        onAddPeople()
+      }
+    }
+  }
 }
 
 /** Shared member/public presentation; callers alone supply navigation. */
@@ -160,5 +235,6 @@ export function inheritedPill(
 const getStyles = cacheStyles((theme: Theme) => ({
   section: {
     gap: theme.rem(theme.spaceMdRem)
-  }
+  },
+  emptyAdd: { alignSelf: 'center' as const }
 }))

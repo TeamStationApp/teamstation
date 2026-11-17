@@ -1,9 +1,13 @@
 import React, { useEffect, useState } from 'react'
 import { Text } from 'react-native'
 
-import type { LevelPeople, TeamStationClient } from '../../common/api'
+import type {
+  LevelPeople,
+  RosterSection,
+  TeamStationClient
+} from '../../common/api'
 import { Card } from '../components'
-import { PeopleList } from '../components/PeopleList'
+import { peopleAdds, PeopleList } from '../components/PeopleList'
 import { useSceneReveals } from '../components/sceneShown'
 import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
@@ -20,17 +24,27 @@ export interface LevelPeopleTabProps {
   ) => void
   /** Anybody else, as a profile, for whoever manages the level's people. */
   onOpenPerson?: (userId: string, name: string) => void
+  /** The level's name, for the adds' accessible labels. */
+  name?: string
+  /**
+   * The level's Add People screen, which Add Staff and Add Spectator open
+   * for its administrators.
+   */
+  onAddPeople?: (role?: 'admin') => void
 }
 
 /**
- * A season's or league's People tab: its people in the roster's six
- * sections. Your own row opens your profile here, including when you also
- * play on a team the level reaches, because that player page has no section
- * for this level. Anyone else's player row opens their page. Every other
- * row opens a profile for the level's administrators, coaches and assistants.
+ * A season's or league's People tab: its people in the roster's sections,
+ * with no Players (the server lists nobody for playing). Admins, Staff and
+ * Spectators show their header and count even when empty, and the level's
+ * administrators get Add Staff and Add Spectator beside them. Your own row
+ * opens your profile here, including when you also play on a team the level
+ * reaches, because that player page has no section for this level. Anyone
+ * else's player row opens their page. Every other row opens a profile for
+ * the level's administrators, coaches and assistants.
  */
 export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
-  const { client, kind, id, onOpenPlayer, onOpenPerson } = props
+  const { client, kind, id, onOpenPlayer, onOpenPerson, onAddPeople } = props
   const styles = getStyles(useTheme())
   const [answer, setAnswer] = useState<LevelPeople | undefined>()
   const [error, setError] = useState<string | undefined>()
@@ -64,15 +78,15 @@ export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
         <Text style={styles.muted}>{error ?? lstrings.common_loading}</Text>
       </Card>
     )
-  if (answer.people.length === 0)
-    return (
-      <Card>
-        <Text style={styles.muted}>{lstrings.people_none}</Text>
-      </Card>
-    )
   return (
     <PeopleList
       people={answer.people}
+      kept={KEPT}
+      adds={
+        answer.admin && onAddPeople != null
+          ? peopleAdds(props.name ?? '', onAddPeople)
+          : undefined
+      }
       onOpen={person => {
         if (person.self && onOpenPerson != null)
           return () => {
@@ -95,6 +109,8 @@ export function LevelPeopleTab(props: LevelPeopleTabProps): React.ReactElement {
     />
   )
 }
+
+const KEPT: readonly RosterSection[] = ['admin', 'staff', 'spectator']
 
 const getStyles = cacheStyles((theme: Theme) => ({
   muted: {

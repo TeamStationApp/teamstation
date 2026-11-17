@@ -454,6 +454,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/umpires/schedule.js',
   'server/umpires/types.js',
   'server/userIdSchema.js',
+  'server/users/accountAffiliations.js',
   'server/users/deleted.js',
   'server/users/insertUser.js',
   'server/users/mintUserId.js',

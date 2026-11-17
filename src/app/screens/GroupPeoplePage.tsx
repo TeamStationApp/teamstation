@@ -14,11 +14,14 @@ export function GroupPeoplePage({
   client,
   group,
   invites,
+  role,
   onDone
 }: {
   client: TeamStationClient
   group: GroupRef
   invites: boolean
+  /** Add People opens with this role checked: Add Admin's. */
+  role?: 'admin'
   onDone: (notice?: string) => void
 }): React.ReactElement {
   const [detail, setDetail] = useState<GroupDetail>()
@@ -85,6 +88,7 @@ export function GroupPeoplePage({
       client={client}
       group={ref}
       scopeName={detail.group.name}
+      admin={role === 'admin'}
       onDone={onDone}
       onCancel={() => {
         onDone()

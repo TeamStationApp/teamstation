@@ -7,9 +7,9 @@ import type { GroupRef } from '../../common/groupCreation'
 import type { RoleFlag } from '../../common/roles'
 import { Button, Card, Screen, TextField } from '../components'
 import { CancelAction } from '../components/CancelAction'
-import { adminLabel, flagLabel } from '../components/roleLabels'
 import { RoleSwitches } from '../components/RoleSwitches'
 import { useLatestRequest } from '../hooks/useLatestRequest'
+import { lstrings } from '../locales/strings'
 import { cacheStyles, type Theme, useTheme } from '../theme/ThemeContext'
 import {
   PeopleAccountSearch,
@@ -20,12 +20,15 @@ export function AddPeopleScreen({
   client,
   group,
   scopeName,
+  admin = false,
   onDone,
   onCancel
 }: {
   client: TeamStationClient
   group: GroupRef
   scopeName: string
+  /** Opens with Admin checked, as Add Admin opens it. */
+  admin?: boolean
   onDone: (notice?: string) => void
   onCancel: () => void
 }): React.ReactElement {
@@ -33,7 +36,7 @@ export function AddPeopleScreen({
   const [addresses, setAddresses] = useState('')
   const [selected, setSelected] = useState<SelectedAccount[]>([])
   const [roles, setRoles] = useState<{ admin: boolean; flags: RoleFlag[] }>({
-    admin: false,
+    admin,
     flags: []
   })
   const [busy, setBusy] = useState(false)
@@ -192,15 +195,12 @@ export function AddPeopleScreen({
             flags={roles.flags}
             busy={busy}
             onChange={setRoles}
+            spectator={
+              group.kind === 'team'
+                ? lstrings.role_spectator_detail_team
+                : lstrings.role_spectator_detail
+            }
           />
-          <Text style={styles.hint}>
-            Adds them as:{' '}
-            {roles.admin
-              ? adminLabel(group.kind)
-              : roles.flags.length > 0
-                ? roles.flags.map(flagLabel).join(', ')
-                : 'Member'}
-          </Text>
         </Card>
         {errors.map(row => (
           <Text key={row.email} accessibilityRole="alert" style={styles.error}>

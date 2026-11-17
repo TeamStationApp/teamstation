@@ -656,10 +656,25 @@ describe('a game named in player name privacy', function () {
 
     it('names a level list and a people search with no single team', async function () {
       await privacy(f.teamA, 'initials')
+      // A member of the league, as nobody is on its list only for playing.
+      await f.h.db
+        .insertInto('league_members')
+        .values({
+          id: makeId('leagueMember'),
+          user_id: userIdOfGumbo(ALEX),
+          league_id: f.leagueA,
+          joined_at: new Date()
+        })
+        .execute()
       // The league's admin reads Alex in full, the public format beside it.
       expect(await name(`/leagues/${f.leagueA}/people`, 101)).include(
         '"shortName":"Alex Lee","nameFormat":"full","compactName":"A L"'
       )
+      await f.h.db
+        .deleteFrom('league_members')
+        .where('user_id', '=', userIdOfGumbo(ALEX))
+        .where('league_id', '=', f.leagueA)
+        .execute()
       await f.h.db
         .insertInto('user_links')
         .values({
