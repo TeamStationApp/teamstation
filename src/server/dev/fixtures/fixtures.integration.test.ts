@@ -26,6 +26,7 @@ import {
   runFixture,
   WORLDS
 } from './cli'
+import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
@@ -271,6 +272,57 @@ describe('fixture worlds', function () {
       'First Base',
       'Home Plate'
     ])
+  })
+
+  it('coach-game gives the home team a head coach, an assistant and a scorekeeper, and names its lineup', async function () {
+    const world = await runCoachGame({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const roles = await the()
+      .selectFrom('scope_roles')
+      .select(['user_id', 'role'])
+      .where('scope_type', '=', 'team')
+      .where('scope_id', '=', world.ids.homeTeam)
+      .execute()
+    const roleOf = (name: string): string[] =>
+      roles
+        .filter(row => row.user_id === world.accounts[name].userId)
+        .map(row => row.role)
+    expect(roleOf('coach')).deep.equals(['coach'])
+    expect(roleOf('assistant')).deep.equals(['assistant'])
+    expect(roleOf('scorekeeper')).deep.equals(['scorekeeper'])
+    for (const account of Object.values(world.accounts)) {
+      expect(isTestAddress(MAILBOX, account.email)).equals(true)
+    }
+    const game = await the()
+      .selectFrom('games')
+      .select(['home_team_id', 'away_team_id', 'status'])
+      .where('id', '=', world.ids.game)
+      .executeTakeFirstOrThrow()
+    expect(game).deep.equals({
+      home_team_id: world.ids.homeTeam,
+      away_team_id: world.ids.awayTeam,
+      status: 'scheduled'
+    })
+    const lineup = Array.from(
+      { length: 9 },
+      (_, i) => world.ids[`homePlayer${i + 1}`]
+    )
+    expect(new Set(lineup).size).equals(9)
+    const jerseys = await the()
+      .selectFrom('memberships')
+      .innerJoin('gumbo_ids', 'gumbo_ids.user_id', 'memberships.user_id')
+      .select(['gumbo_ids.gumbo_id', 'memberships.jersey'])
+      .where('memberships.team_id', '=', world.ids.homeTeam)
+      .where('memberships.is_player', '=', true)
+      .execute()
+    expect(
+      lineup.map(id => jerseys.find(row => String(row.gumbo_id) === id)?.jersey)
+    ).deep.equals(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
+    // The world runs on a database the baseline accepts: no other address.
+    expect(await refuseRealAddresses(the(), MAILBOX)).not.equals(undefined)
   })
 
   it('creates accounts with no role by default and distinct passwords', async function () {

@@ -130,12 +130,22 @@ export interface LineupFixture {
   >
 }
 
-/** Makes the fixture in `trx`. */
-export async function createLineupFixture(
+/** The lineup game itself: its teams, default lineups and players. */
+export interface LineupGame {
+  gameId: string
+  seasonId: string
+  teams: Record<'home' | 'away', string>
+  players: LineupFixture['players']
+}
+
+/**
+ * Makes `scoring-game`'s league, season, teams and game with the lineup
+ * names, and sets each team's default lineup to its first nine.
+ */
+export async function createLineupGame(
   trx: Transaction<Database>,
-  password: string,
   mint?: Mint
-): Promise<LineupFixture> {
+): Promise<LineupGame> {
   const minter = mint ?? (await userMinter(trx))
   // Every run's teams have the same names, so its screens look the same.
   const game = await createScoringGame(trx, minter, {
@@ -168,42 +178,6 @@ export async function createLineupFixture(
       .where('id', '=', teams[side])
       .execute()
   }
-  const person = async (
-    who: (typeof PEOPLE)[Person]
-  ): Promise<{ email: string; userId: string }> => {
-    const userId = await loginUser(trx, minter, who.email, password, who.name)
-    for (const side of who.teams) {
-      await trx
-        .insertInto('memberships')
-        .values({
-          id: makeId('membership'),
-          user_id: userId,
-          team_id: teams[side],
-          role: 'member'
-        })
-        .execute()
-      if (who.role != null)
-        await trx
-          .insertInto('scope_roles')
-          .values({
-            id: makeId('scopeRole'),
-            user_id: userId,
-            scope_type: 'team',
-            scope_id: teams[side],
-            role: who.role
-          })
-          .execute()
-    }
-    return { email: who.email, userId }
-  }
-  const users: LineupFixture['users'] = {
-    scorekeeper: await person(PEOPLE.scorekeeper),
-    headCoach: await person(PEOPLE.headCoach),
-    assistant: await person(PEOPLE.assistant),
-    awayCoach: await person(PEOPLE.awayCoach),
-    member: await person(PEOPLE.member),
-    teamAdmin: await person(PEOPLE.teamAdmin)
-  }
   const sidePlayers = async (
     side: 'home' | 'away'
   ): Promise<LineupFixture['players']['home']> =>
@@ -215,17 +189,74 @@ export async function createLineupFixture(
         jersey: String(i + 1)
       }))
     )
-  const players: LineupFixture['players'] = {
-    away: await sidePlayers('away'),
-    home: await sidePlayers('home')
-  }
   return {
     gameId: game.games[0],
     seasonId: game.seasonId,
     teams,
-    users,
-    players
+    players: {
+      away: await sidePlayers('away'),
+      home: await sidePlayers('home')
+    }
   }
+}
+
+/** Makes `userId` a member of `teamId`, with `role` there when it has one. */
+export async function joinTeam(
+  trx: Transaction<Database>,
+  userId: string,
+  teamId: string,
+  role?: Role
+): Promise<void> {
+  await trx
+    .insertInto('memberships')
+    .values({
+      id: makeId('membership'),
+      user_id: userId,
+      team_id: teamId,
+      role: 'member'
+    })
+    .execute()
+  if (role != null)
+    await trx
+      .insertInto('scope_roles')
+      .values({
+        id: makeId('scopeRole'),
+        user_id: userId,
+        scope_type: 'team',
+        scope_id: teamId,
+        role
+      })
+      .execute()
+}
+
+/** Makes the fixture in `trx`. */
+export async function createLineupFixture(
+  trx: Transaction<Database>,
+  password: string,
+  mint?: Mint
+): Promise<LineupFixture> {
+  const minter = mint ?? (await userMinter(trx))
+  const { gameId, seasonId, teams, players } = await createLineupGame(
+    trx,
+    minter
+  )
+  const person = async (
+    who: (typeof PEOPLE)[Person]
+  ): Promise<{ email: string; userId: string }> => {
+    const userId = await loginUser(trx, minter, who.email, password, who.name)
+    for (const side of who.teams)
+      await joinTeam(trx, userId, teams[side], who.role)
+    return { email: who.email, userId }
+  }
+  const users: LineupFixture['users'] = {
+    scorekeeper: await person(PEOPLE.scorekeeper),
+    headCoach: await person(PEOPLE.headCoach),
+    assistant: await person(PEOPLE.assistant),
+    awayCoach: await person(PEOPLE.awayCoach),
+    member: await person(PEOPLE.member),
+    teamAdmin: await person(PEOPLE.teamAdmin)
+  }
+  return { gameId, seasonId, teams, users, players }
 }
 
 /**

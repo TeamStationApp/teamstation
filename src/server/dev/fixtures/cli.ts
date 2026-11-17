@@ -4,6 +4,7 @@ import type { FixtureManifest, WorldContext } from './accounts'
 import { makeNonce } from './accounts'
 import { splitMailbox } from './address'
 import { refuseRealAddresses, runBaseline } from './baseline'
+import { runCoachGame } from './coachGame'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -21,7 +22,8 @@ export const WORLDS: Record<
   (context: WorldContext) => Promise<FixtureManifest>
 > = {
   'team-with-roster': runTeamWithRoster,
-  streaming: runStreaming
+  streaming: runStreaming,
+  'coach-game': runCoachGame
 }
 
 export function refuseWithoutTestSettings(testSettings: boolean): void {
