@@ -3,6 +3,7 @@ import ObjectiveC
 import React
 import React_RCTAppDelegate
 import ReactAppDependencyProvider
+import TeamStationSplash
 
 @main
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -10,6 +11,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
   var reactNativeDelegate: ReactNativeDelegate?
   var reactNativeFactory: RCTReactNativeFactory?
+  /// How many launch splashes `attach` has put up: one per process. The app's
+  /// hosted tests read it.
+  @objc private(set) var splashInstalls = 0
 
   func application(
     _ application: UIApplication,
@@ -33,7 +37,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
   /**
    * Puts the app's window in `scene`. True the first time, when this starts
-   * React Native; false when iOS has connected a new scene to a running app.
+   * React Native and puts the launch splash over it; false when iOS has
+   * connected a new scene to a running app, which gets no splash.
    *
    * There is one window for the life of the process, moved to whichever scene
    * is connected, because things stay pinned to it: the React root,
@@ -59,6 +64,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
       in: window,
       launchOptions: launchOptions
     )
+    // The launch splash plays over React Native while it starts, and leaves
+    // once it has played and React Native has drawn.
+    SplashOverlay.install(
+      in: window,
+      firstContent: .RCTContentDidAppear,
+      develop: Bundle.main.bundleIdentifier == "app.teamstation.develop"
+    )
+    splashInstalls += 1
+    window.rootViewController?.setNeedsStatusBarAppearanceUpdate()
     return true
   }
 
@@ -245,6 +259,9 @@ enum StatusBarAppearance {
   nonisolated(unsafe) static var animation: UIStatusBarAnimation = .none
 
   static func install() {
+    NotificationCenter.default.addObserver(forName: SplashOverlay.didDismiss, object: nil, queue: .main) { _ in
+      MainActor.assumeIsolated { refresh(animated: true) }
+    }
     if let manager = reactNativeClass("RCTStatusBarManager") {
       let setHidden: @convention(block) (AnyObject, Bool, NSString?) -> Void = { _, hidden, name in
         DispatchQueue.main.async {
@@ -340,8 +357,10 @@ class PortraitRootViewController: UIViewController {
     StatusBarAppearance.hidden
   }
 
+  /// Light over the launch splash, whatever React Native has asked for, and
+  /// React Native's own once the splash has gone.
   override var preferredStatusBarStyle: UIStatusBarStyle {
-    StatusBarAppearance.style
+    SplashOverlay.isShowing ? .lightContent : StatusBarAppearance.style
   }
 
   override var preferredStatusBarUpdateAnimation: UIStatusBarAnimation {

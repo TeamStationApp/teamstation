@@ -57,6 +57,8 @@
 		E5877E23843C3DB5EB6E0DB1 /* ChatCryptoProvider.mm in Sources */ = {isa = PBXBuildFile; fileRef = 082EAD2A56E0FED3688B7251 /* ChatCryptoProvider.mm */; };
 		E9069F64069382B9405F6C85 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */; };
 		F3A7C1D20000000000000002 /* PhoneStream in Frameworks */ = {isa = PBXBuildFile; productRef = F3A7C1D20000000000000003 /* PhoneStream */; };
+		5A1A5C000000000000000002 /* TeamStationSplash in Frameworks */ = {isa = PBXBuildFile; productRef = 5A1A5C000000000000000003 /* TeamStationSplash */; };
+		5A1A5C000000000000000005 /* SplashInstallTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A1A5C000000000000000004 /* SplashInstallTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -74,6 +76,7 @@
 		5CE4E0A10000000000000001 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SceneDelegate.swift; path = TeamStation/SceneDelegate.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000003 /* LinkLaunchOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = LinkLaunchOptions.swift; path = TeamStation/LinkLaunchOptions.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneLifecycleTests.swift; sourceTree = "<group>"; };
+		5A1A5C000000000000000004 /* SplashInstallTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SplashInstallTests.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000007 /* LinkLaunchOptionsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LinkLaunchOptionsTests.swift; sourceTree = "<group>"; };
 		5CE4E0A10000000000000009 /* TeamStationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TeamStationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A0B5E8A10000000000000001 /* NativeSentryPrivacy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = NativeSentryPrivacy.swift; path = ../mobile/apps/common/TeamStationSentry/Sources/TeamStationSentry/NativeSentryPrivacy.swift; sourceTree = SOURCE_ROOT; };
@@ -143,6 +146,7 @@
 			files = (
 				0C80B921A6F3F58F76C31292 /* libPods-TeamStation.a in Frameworks */,
 				F3A7C1D20000000000000002 /* PhoneStream in Frameworks */,
+				5A1A5C000000000000000002 /* TeamStationSplash in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -249,6 +253,7 @@
 			children = (
 				5CE4E0A10000000000000007 /* LinkLaunchOptionsTests.swift */,
 				5CE4E0A10000000000000005 /* SceneLifecycleTests.swift */,
+				5A1A5C000000000000000004 /* SplashInstallTests.swift */,
 				A26200000000000000000002 /* GlassViewTests.swift */,
 				D3C1A9E10000000000000006 /* DeclaredAgeTests.swift */,
 				C0EC71A10000000000000004 /* ConnectionsTests.swift */,
@@ -366,6 +371,7 @@
 			name = TeamStation;
 			packageProductDependencies = (
 				F3A7C1D20000000000000003 /* PhoneStream */,
+				5A1A5C000000000000000003 /* TeamStationSplash */,
 			);
 			productName = TeamStation;
 			productReference = 13B07F961A680F5B00A75B9A /* TeamStation.app */;
@@ -415,6 +421,7 @@
 			mainGroup = 83CBB9F61A601CBA00E9B192;
 			packageReferences = (
 				F3A7C1D20000000000000001 /* XCLocalSwiftPackageReference "../mobile/apps/common/PhoneStream" */,
+				5A1A5C000000000000000001 /* XCLocalSwiftPackageReference "../mobile/apps/common/TeamStationSplash" */,
 			);
 			productRefGroup = 83CBBA001A601CBA00E9B192 /* Products */;
 			projectDirPath = "";
@@ -578,6 +585,7 @@
 			files = (
 				5CE4E0A10000000000000008 /* LinkLaunchOptionsTests.swift in Sources */,
 				5CE4E0A10000000000000006 /* SceneLifecycleTests.swift in Sources */,
+				5A1A5C000000000000000005 /* SplashInstallTests.swift in Sources */,
 				A26200000000000000000001 /* GlassViewTests.swift in Sources */,
 				D3C1A9E10000000000000007 /* DeclaredAgeTests.swift in Sources */,
 				C0EC71A10000000000000005 /* ConnectionsTests.swift in Sources */,
@@ -952,12 +960,20 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = ../mobile/apps/common/PhoneStream;
 		};
+		5A1A5C000000000000000001 /* XCLocalSwiftPackageReference "../mobile/apps/common/TeamStationSplash" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../mobile/apps/common/TeamStationSplash;
+		};
 /* End XCLocalSwiftPackageReference section */
 
 /* Begin XCSwiftPackageProductDependency section */
 		F3A7C1D20000000000000003 /* PhoneStream */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = PhoneStream;
+		};
+		5A1A5C000000000000000003 /* TeamStationSplash */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = TeamStationSplash;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};

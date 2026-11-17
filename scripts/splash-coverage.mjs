@@ -1,9 +1,12 @@
 // The launch splash's changed-line coverage gates, at 90%:
 //
-//   TS_COVERAGE_BASE=origin/develop node scripts/splash-coverage.mjs --js
+//   TS_COVERAGE_BASE=origin/develop node scripts/splash-coverage.mjs --js|--swift|--all
 //
 // --js     scripts/splash/** through c8 over the unit test and the macOS-only
 //          generator test (scripts/splash/splashAssets.mac-test.ts).
+// --swift  mobile/apps/common/TeamStationSplash/** and the phone app's
+//          AppDelegate (scripts/splash-coverage-native.mjs), on the iOS
+//          simulator SPLASH_IOS_SIMULATOR.
 // Every command is printed on a `$` line before it runs.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
@@ -15,7 +18,7 @@ if (base == null)
     'Supply TS_COVERAGE_BASE, the base the branch is measured from'
   )
 const modes = process.argv.slice(2)
-const known = ['--js', '--all']
+const known = ['--js', '--swift', '--all']
 if (modes.length === 0 || modes.some(mode => !known.includes(mode)))
   throw new Error(`Specify one of ${known.join(', ')}`)
 const all = modes.includes('--all')
@@ -61,4 +64,9 @@ if (all || modes.includes('--js')) {
     '.mjs',
     'scripts/splash'
   ])
+}
+
+if (all || modes.includes('--swift')) {
+  const { swiftGate } = await import('./splash-coverage-native.mjs')
+  swiftGate({ run, base })
 }
