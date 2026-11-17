@@ -10,15 +10,17 @@ import { tessRoutes } from '../routes/tess'
 import { umpireRoutes } from '../routes/umpires'
 import { type ServerConfig, tessSettings } from '../serverConfig'
 import type { StoredBlock } from './conversation'
+import type { ToolUseBlock } from './messagesApi'
 
 /**
- * Tess against the real model, seven cases: an off-topic request is declined
+ * Tess against the real model, eight cases: an off-topic request is declined
  * with no tool call; "where are my team's settings" is answered with a path
  * link; adding a game ends in a proposed change, never a write, its details
  * in plain words with no ids, and the turn's second request reading the
  * cached prefix; a stats
  * question reads the API; a chart request draws one; recording a pitch is
- * refused; a fewest-first umpire question pages the leaderboard. Each case is
+ * refused; a fewest-first umpire question pages the leaderboard; a source
+ * question reads the directory map and then the relevant implementation. Each case is
  * one message to a fresh conversation, through the real routes, the real API
  * and a scratch database. Not part of `npm test`, and it costs money: about
  * fifteen requests.
@@ -172,6 +174,51 @@ const CASES: Case[] = [
       })
       if (!fewestFirst) return 'the leaderboard was not read with order=asc'
       return turn.answer.includes('Jackie') ? null : 'Jackie was not named'
+    }
+  },
+  {
+    name: 'a source question reads the map before targeted source',
+    text: 'How many tool rounds can Tess use before stopping? Explain from TeamStation source code and quote the relevant constant with its source path.',
+    check: turn => {
+      const calls = turn.blocks.filter(
+        (block): block is ToolUseBlock =>
+          block.type === 'tool_use' && block.name.startsWith('source_')
+      )
+      const first = calls[0]
+      if (
+        first?.name !== 'source_read_file' ||
+        (first.input as { path?: string }).path !== 'src/DIRECTORY_MAP.md'
+      )
+        return 'directory map was not read first'
+      if (
+        !calls
+          .slice(1)
+          .some(
+            block =>
+              (block.input as { path?: string }).path ===
+              'src/server/tess/agent.ts'
+          )
+      )
+        return 'agent implementation was not read or searched'
+      if (
+        calls
+          .slice(1)
+          .some(
+            block =>
+              block.name === 'source_search' &&
+              (block.input as { path?: string }).path === 'src'
+          )
+      )
+        return 'source search was not narrowed'
+      if (
+        !turn.answer.includes('MAX_TOOL_ROUNDS') ||
+        !/\b10\b/.test(turn.answer) ||
+        !turn.answer.includes('src/server/tess/agent.ts')
+      )
+        return 'answer did not cite the actual limit and source'
+      return turn.writes === 0 && turn.changes.length === 0
+        ? null
+        : 'source question proposed or performed a write'
     }
   }
 ]

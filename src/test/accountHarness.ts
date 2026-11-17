@@ -263,7 +263,13 @@ export async function accountHarness(
   )
   app.use(
     '/api/v1',
-    authRoutes(db, { space, sendCode, publicUrl: 'http://localhost' })
+    authRoutes(db, {
+      space,
+      sendCode,
+      publicUrl: 'http://localhost',
+      // Native fixture builds identify the app independently of the test API.
+      appOrigins: ['https://app.teamstation.app']
+    })
   )
   app.use('/api/v1', meRoutes(db, undefined, media))
   app.use('/api/v1', teamRoutes(db, media))

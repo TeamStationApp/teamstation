@@ -44,6 +44,7 @@ import {
   type ToolUseBlock
 } from './messagesApi'
 import { systemBlocks } from './prompt'
+import { sourceBrowser } from './sourceTools'
 import { stepLabel } from './stepLabels'
 import { runTool, type ToolOutcome, TOOLS } from './tools'
 import { withTurn } from './turns'
@@ -492,8 +493,11 @@ async function respond(
     } catch (error) {
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
-      if (isTooLong(error)) known = await compact(deps, userId, measure)
-      else await describeAttachments(deps, userId)
+      if (isTooLong(error)) {
+        known = await compact(deps, userId, measure)
+        // Compaction can remove a map before the model has received it.
+        source = sourceBrowser()
+      } else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
       return await once(toolChoice)
     }
@@ -501,6 +505,7 @@ async function respond(
   let last: MessagesResponse
   // The changes the turn has proposed, which one hold confirms together.
   const proposals = { count: 0 }
+  let source = sourceBrowser()
   try {
     for (let round = 1; ; round += 1) {
       const response = await call()
@@ -537,7 +542,8 @@ async function respond(
         credentials: user.credentials,
         origin: deps.origin(),
         now: deps.now?.() ?? new Date(),
-        proposals
+        proposals,
+        source
       }
       const outcomes: ToolOutcome[] = []
       for (const call of calls) {
@@ -572,9 +578,12 @@ async function respond(
         outcomes.map(outcome => outcome.result)
       )
       // A result too large to keep failed after all.
-      for (const [at, result] of results.entries())
+      for (const [at, result] of results.entries()) {
+        if (calls[at].name === 'source_read_file')
+          source.acceptMapResult(result)
         if (result.content === TOO_LARGE_NOW)
           await step(calls[at].id, stepLabel(calls[at]), 'failed')
+      }
       const changes: StoredBlock[] = outcomes.flatMap(outcome =>
         outcome.changeId == null
           ? []
