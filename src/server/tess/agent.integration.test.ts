@@ -32,8 +32,9 @@ import {
   SUMMARY_SYSTEM
 } from './compaction'
 import { loadConversation, STOPPED_NOTE } from './conversation'
+import { DIRECTORY_MAP, MAP_FIRST } from './sourceTools'
 import { READING_API, stepLabel } from './stepLabels'
-import { PROPOSED } from './tools'
+import { PROPOSED, TOOLS } from './tools'
 import { stopTurn, TURN_RUNNING, TURN_STOP_POLL_MS } from './turns'
 import { usageWeeks } from './usage'
 
@@ -104,6 +105,9 @@ describe("Tess's agent loop", function () {
     })
     expect(request.system[2].cache_control).equals(undefined)
     expect(request.tools.map((tool: Block) => tool.name)).deep.equals([
+      'source_list_directory',
+      'source_read_file',
+      'source_search',
       'api_get',
       'graphql_query',
       'confirmChange'
@@ -336,7 +340,7 @@ describe("Tess's agent loop", function () {
     ).equals(true)
     const closing = calls.at(-1) as Block
     expect(closing.tool_choice).deep.equals({ type: 'none' })
-    expect(closing.tools).length(3)
+    expect(closing.tools).length(TOOLS.length)
     const limited = closing.messages.at(-1).content[0]
     expect(limited).deep.include({ content: TOOL_LIMIT, is_error: true })
     expectValidRequest(closing.messages)
@@ -494,6 +498,95 @@ describe("Tess's agent loop", function () {
     await runTurn(w.deps(), w.user(101), { text: 'Read all of it' })
     const result = model.messageCalls()[1].messages.at(-1).content[0]
     expect(result).deep.include({ content: TOO_LARGE_NOW, is_error: true })
+  })
+
+  it('keeps source exploration locked in the map-read batch, then unlocks the next round', async () => {
+    const search = {
+      name: 'source_search',
+      input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+    }
+    model.reply(
+      callTools([
+        { id: 'map', name: 'source_read_file', input: { path: DIRECTORY_MAP } },
+        { ...search, id: 'same-batch' }
+      ]),
+      callTools([{ ...search, id: 'next-round' }]),
+      say('The limit is 10.')
+    )
+    await runTurn(w.deps(), w.user(101), {
+      text: 'Explain the tool-round limit.'
+    })
+    const first = model.messageCalls()[1].messages.at(-1).content as Block[]
+    expect(first.find(b => b.tool_use_id === 'map')?.content).includes(
+      'Source directory map'
+    )
+    expect(first.find(b => b.tool_use_id === 'same-batch')).deep.include({
+      content: MAP_FIRST,
+      is_error: true
+    })
+    const next = model.messageCalls()[2].messages.at(-1).content[0]
+    expect(next.is_error).not.equals(true)
+    expect(next.content).includes('MAX_TOOL_ROUNDS = 10')
+  })
+
+  it('keeps source locked when fitting discards the map, until another complete map is retained', async () => {
+    const map = { name: 'source_read_file', input: { path: DIRECTORY_MAP } }
+    const search = {
+      name: 'source_search',
+      input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+    }
+    model.reply(
+      callTools([{ ...map, id: 'discarded-map' }], { input_tokens: 191790 }),
+      callTools([{ ...search, id: 'blocked' }]),
+      callTools([{ ...map, id: 'retained-map' }]),
+      callTools([{ ...search, id: 'allowed' }]),
+      say('The limit is 10.')
+    )
+    await runTurn(w.deps(), w.user(101), {
+      text: 'Explain the tool-round limit.'
+    })
+    const calls = model.messageCalls()
+    expect(calls[1].messages.at(-1).content[0]).deep.include({
+      content: TOO_LARGE_NOW,
+      is_error: true
+    })
+    expect(calls[2].messages.at(-1).content[0]).deep.include({
+      content: MAP_FIRST,
+      is_error: true
+    })
+    expect(calls[3].messages.at(-1).content[0].content).includes(
+      'Source directory map'
+    )
+    expect(calls[4].messages.at(-1).content[0].content).includes(
+      'MAX_TOOL_ROUNDS = 10'
+    )
+  })
+
+  it('requires the map again after a rejected request compacts source context', async () => {
+    for (const text of ['one', 'two', 'three']) {
+      model.reply(say(`About ${text}`))
+      await runTurn(w.deps(), w.user(101), { text })
+    }
+    model.calls.length = 0
+    model.reply(
+      callTools([{ name: 'source_read_file', input: { path: DIRECTORY_MAP } }]),
+      TOO_LONG,
+      say('Earlier context summarized.'),
+      callTools([
+        {
+          name: 'source_search',
+          input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
+        }
+      ]),
+      say('I need the source map again.')
+    )
+    model.count(40000)
+    await runTurn(w.deps(), w.user(101), {
+      text: 'Explain the tool-round limit.'
+    })
+    expect(model.messageCalls().at(-1)!.messages.at(-1).content[0]).deep.include(
+      { content: MAP_FIRST, is_error: true }
+    )
   })
 
   it('counts a round that takes the request near the ceiling, and drops the largest result until it fits', async () => {

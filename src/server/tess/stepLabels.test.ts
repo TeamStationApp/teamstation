@@ -13,6 +13,16 @@ const read = (path: unknown, query?: unknown): string =>
   stepLabel({ name: 'api_get', input: { path, query } })
 
 describe("Tess's step labels", function () {
+  it('labels source tools without echoing untrusted paths or search text', () => {
+    for (const [name, label] of [
+      ['source_list_directory', 'Listing source files'],
+      ['source_read_file', 'Reading TeamStation source'],
+      ['source_search', 'Searching TeamStation source']
+    ])
+      expect(
+        stepLabel({ name, input: { path: 'untrusted', text: 'untrusted' } })
+      ).equals(label)
+  })
   it('names a read by the API document’s summary of its route', () => {
     const paths = openApiDocument('').paths as Record<
       string,

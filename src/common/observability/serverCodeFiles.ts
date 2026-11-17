@@ -437,6 +437,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/tess/prompt.js',
   'server/tess/sitemapCli.js',
   'server/tess/sitemapGenerator.js',
+  'server/tess/sourceTools.js',
   'server/tess/stepLabels.js',
   'server/tess/tess.integration.js',
   'server/tess/tools.js',

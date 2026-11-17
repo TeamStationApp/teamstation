@@ -25,6 +25,9 @@ import type { TessNativeManifest } from '../../test/tessNativeFixture.e2e'
  *   restored before anything is committed; this script refuses to run when
  *   the committed file has one.
  *
+ * `TS_TESS_SKIP_MICROPHONE=1` omits the two unsent-dictation scenarios for
+ * server-agent-only regressions; the final result reports those skips.
+ *
  * `TS_TESS_APP_ID` names the app when the build has its own bundle id, so
  * it installs beside the TeamStation app already on the phone. maestro-d
  * records the screen of a simulator or an emulator only; for the phone,
@@ -59,6 +62,7 @@ async function main(): Promise<void> {
   const layout = (process.env.TS_TESS_LAYOUT ?? 'iphone') as Layout
   if (!['iphone', 'ipad', 'android'].includes(layout))
     throw new Error('TS_TESS_LAYOUT is iphone, ipad or android')
+  const skipMicrophone = process.env.TS_TESS_SKIP_MICROPHONE === '1'
   const before = process.env.TS_UI_BEFORE === '1'
   const suffix = before ? 'before' : 'after'
   const out = resolve(
@@ -342,18 +346,9 @@ async function main(): Promise<void> {
       waited += 1000
     )
       await new Promise(resolve => setTimeout(resolve, 1000))
-    // The keys can be typed before the keyboard rises. Its return key, also
-    // named Send, sits below the screen until it has; Send is tapped after.
-    if (!android)
-      await until('the keyboard up', async () => {
-        const { height } = await screen()
-        return (await nodes()).every(
-          node =>
-            node.id !== 'Send' ||
-            node.bounds == null ||
-            node.bounds.y + node.bounds.height <= height
-        )
-      })
+    // tapExactly waits for the app's Send button to settle. Do not wait for
+    // the keyboard's Send key: a simulator using hardware input can keep it
+    // offscreen even after the field has received every character.
   }
   const say = async (words: string, answered: string): Promise<void> => {
     await typeIn(words)
@@ -624,47 +619,51 @@ async function main(): Promise<void> {
       // field, at the cursor after the last, and nothing is sent. The first
       // press may ask for the microphone; a hold the question cut short
       // heard nothing, and is held again.
-      const voice = join(out, 'narrow-voice.mp4')
-      const heardBefore = (await control<{ heard: string[] }>('/dictation'))
-        .heard.length
-      const callsBefore = await modelCalls()
-      await startRecording(voice)
-      const said = async (): Promise<string[]> =>
-        (await control<{ heard: string[] }>('/dictation')).heard
-          .slice(heardBefore)
-          .filter(text => text !== '')
-      for (let attempt = 1; (await said()).length < 2; attempt++) {
-        if (attempt > 4) throw new Error('Two holds were never heard')
-        const heardSoFar = (await control<{ heard: string[] }>('/dictation'))
+      if (skipMicrophone) {
+        console.log('SKIP N8 unsent microphone holds (server-agent-only scope)')
+      } else {
+        const voice = join(out, 'narrow-voice.mp4')
+        const heardBefore = (await control<{ heard: string[] }>('/dictation'))
           .heard.length
-        await hold('Dictate', 2500)
-        await m.tapOn({ text: 'Allow', optional: true, timeout: 3000 })
+        const callsBefore = await modelCalls()
+        await startRecording(voice)
+        const said = async (): Promise<string[]> =>
+          (await control<{ heard: string[] }>('/dictation')).heard
+            .slice(heardBefore)
+            .filter(text => text !== '')
+        for (let attempt = 1; (await said()).length < 2; attempt++) {
+          if (attempt > 4) throw new Error('Two holds were never heard')
+          const heardSoFar = (await control<{ heard: string[] }>('/dictation'))
+            .heard.length
+          await hold('Dictate', 2500)
+          await m.tapOn({ text: 'Allow', optional: true, timeout: 3000 })
+          await until(
+            `hold ${attempt} heard`,
+            async () =>
+              (await control<{ heard: string[] }>('/dictation')).heard.length >
+              heardSoFar
+          )
+          await until(
+            `hold ${attempt} closed the microphone`,
+            async () => await micIs('Off')
+          )
+        }
         await until(
-          `hold ${attempt} heard`,
-          async () =>
-            (await control<{ heard: string[] }>('/dictation')).heard.length >
-            heardSoFar
+          'both holds in the field',
+          async () => await fieldHolds(`${HEARD} ${HEARD}`)
         )
+        await stopRecording(voice)
+        expect(await modelCalls(), 'nothing sent').equals(callsBefore)
+        expect(await find('Tess thinking')).equals(undefined)
+        // Emptied for what is typed next: the cursor is after the words.
+        await m.tapOn({ id: 'Tess field', timeout: 20000 })
+        await m.eraseText({ characters: 2 * HEARD.length + 10 })
         await until(
-          `hold ${attempt} closed the microphone`,
-          async () => await micIs('Off')
+          'the field emptied',
+          async () => (await valueOf('Tess field')) === ''
         )
+        console.log('N8 two holds put their words in the field; nothing sent')
       }
-      await until(
-        'both holds in the field',
-        async () => await fieldHolds(`${HEARD} ${HEARD}`)
-      )
-      await stopRecording(voice)
-      expect(await modelCalls(), 'nothing sent').equals(callsBefore)
-      expect(await find('Tess thinking')).equals(undefined)
-      // Emptied for what is typed next: the cursor is after the words.
-      await m.tapOn({ id: 'Tess field', timeout: 20000 })
-      await m.eraseText({ characters: 2 * HEARD.length + 10 })
-      await until(
-        'the field emptied',
-        async () => (await valueOf('Tess field')) === ''
-      )
-      console.log('N8 two holds put their words in the field; nothing sent')
 
       // N10: a reply streams in over the phone's XMLHttpRequest: the open
       // "Thinking" row and her summary show before her answer does, and a
@@ -762,36 +761,44 @@ async function main(): Promise<void> {
       console.log('N11 a queued message waited for the 2 s hold, then went')
       // The words go in at the cursor: at the start of "world", put there
       // by a tap at the field's left edge.
-      await typeIn('world')
-      const box = (await find('Tess field'))!.bounds!
-      const whole = await screen()
-      await m.tapOn({
-        point: `${(100 * (box.x + 6)) / whole.width}%,${(100 * (box.y + box.height / 2)) / whole.height}%`
-      })
-      const callsBeforeMic = await modelCalls()
-      const micVideo = join(out, 'narrow-mic.mp4')
-      await startRecording(micVideo)
-      // By its test id: with the keyboard up, the text "Dictate" also names
-      // the keyboard's own dictation key, which opens iOS's dictation.
-      await m.tapOn({ id: 'Tess mic', timeout: 20000 })
-      await until('recording', async () => await micIs('Recording'))
-      await m.assertVisible({ id: 'Tess waveform', timeout: 10000 })
-      await new Promise(resolve => setTimeout(resolve, 1500))
-      // Without waiting for the screen to settle: the waveform keeps moving.
-      await writeFile(join(out, 'narrow-waveform.png'), await m.screenshot())
-      console.log('Saved narrow-waveform.png')
-      await m.tapOn({ id: 'Tess mic', timeout: 20000 })
-      await until(
-        'the words at the cursor',
-        async () => await fieldHolds(`${HEARD} world`)
-      )
-      await until('the microphone closed', async () => await micIs('Off'))
-      await m.assertNotVisible({ id: 'Tess waveform', timeout: 10000 })
-      await stopRecording(micVideo)
-      expect(await modelCalls(), 'nothing sent').equals(callsBeforeMic)
-      await capture('narrow-mic-transcript.png')
-      await webcam('narrow-webcam-mic-transcript.jpg')
-      console.log('N11 a tap recorded; the words went in at the cursor, unsent')
+      if (skipMicrophone) {
+        console.log(
+          'SKIP N11 unsent microphone draft (server-agent-only scope)'
+        )
+      } else {
+        await typeIn('world')
+        const box = (await find('Tess field'))!.bounds!
+        const whole = await screen()
+        await m.tapOn({
+          point: `${(100 * (box.x + 6)) / whole.width}%,${(100 * (box.y + box.height / 2)) / whole.height}%`
+        })
+        const callsBeforeMic = await modelCalls()
+        const micVideo = join(out, 'narrow-mic.mp4')
+        await startRecording(micVideo)
+        // By its test id: with the keyboard up, the text "Dictate" also names
+        // the keyboard's own dictation key, which opens iOS's dictation.
+        await m.tapOn({ id: 'Tess mic', timeout: 20000 })
+        await until('recording', async () => await micIs('Recording'))
+        await m.assertVisible({ id: 'Tess waveform', timeout: 10000 })
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        // Without waiting for the screen to settle: the waveform keeps moving.
+        await writeFile(join(out, 'narrow-waveform.png'), await m.screenshot())
+        console.log('Saved narrow-waveform.png')
+        await m.tapOn({ id: 'Tess mic', timeout: 20000 })
+        await until(
+          'the words at the cursor',
+          async () => await fieldHolds(`${HEARD} world`)
+        )
+        await until('the microphone closed', async () => await micIs('Off'))
+        await m.assertNotVisible({ id: 'Tess waveform', timeout: 10000 })
+        await stopRecording(micVideo)
+        expect(await modelCalls(), 'nothing sent').equals(callsBeforeMic)
+        await capture('narrow-mic-transcript.png')
+        await webcam('narrow-webcam-mic-transcript.jpg')
+        console.log(
+          'N11 a tap recorded; the words went in at the cursor, unsent'
+        )
+      }
 
       // N9: sideways it is still the full-screen chat. An iPhone keeps the
       // app's own screens upright (`PortraitRootViewController`; only the
@@ -951,7 +958,9 @@ async function main(): Promise<void> {
       await show('File')
       console.log('A4 the sheet offers Photo and File')
     }
-    console.log(`Tess native scenarios passed (${layout})`)
+    console.log(
+      `Tess native scenarios passed (${layout}${layout === 'iphone' && skipMicrophone ? '; microphone scenarios skipped' : ''})`
+    )
   } finally {
     // The simulator's own recorder writes its file out on an interrupt.
     recorder?.kill('SIGINT')
