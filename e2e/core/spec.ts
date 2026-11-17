@@ -3,6 +3,7 @@ import type { BrowserPage, Emulation } from './browserCdp'
 import type { CheckpointSpec } from './checkpoint'
 import type { FixtureAccount, FixtureManifest } from './fixtures'
 import type { ServerError } from './invariants'
+import type { JevControl, JevView } from './jevStub'
 
 /** The contract every end-to-end and integration test declares. */
 export const SURFACES = [
@@ -115,6 +116,12 @@ export interface StackHandle {
   attached?: AttachedHandle
   /** Sets the proxy fault the stack's fault server applies, or clears it. */
   setFault?: (fault: string | null) => Promise<void>
+  /** The Jev stand-in beside the stack's fault server, which `jev.baseUrl` names. */
+  jev?: {
+    read: () => Promise<JevView>
+    /** Replaces its script, forgetting the requests seen so far. */
+    set: (control: Partial<JevControl>) => Promise<JevView>
+  }
 }
 
 export interface WebSession {

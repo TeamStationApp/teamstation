@@ -1,6 +1,281 @@
 {
   "scenarios": [
     {
+      "id": "app-shell/search/live-jev#real-ranking",
+      "title": "The real Jev model ranks a search and names its model",
+      "kind": "e2e",
+      "covers": [
+        "src/server/search/jev.ts",
+        "src/server/search/socket.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [
+        "jev"
+      ],
+      "costUsd": 0,
+      "minutes": 3,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/live-jev",
+      "file": "e2e/tests/app-shell/search/live-jev.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#city-widens",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/location#state-filters",
+      "title": "A city pill finds its organizations first and then the nearest; a state pill only filters",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/LocationPill.tsx",
+        "src/server/search/**",
+        "src/server/location/places.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/location",
+      "file": "e2e/tests/app-shell/search/location.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#jev-down",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#jev-reorders",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#mixed-kinds",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/one-field#stale-typing",
+      "title": "One field finds leagues, seasons, teams and people; Jev re-ranks them, and a Jev failure or older typing never shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/common/searchSocket.ts",
+        "src/common/search/**",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/one-field",
+      "file": "e2e/tests/app-shell/search/one-field.e2e.ts"
+    },
+    {
+      "id": "app-shell/search/open#each-kind",
+      "title": "A search result opens its own league, season, team or player page",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/SearchScreen.tsx",
+        "src/app/components/SearchResultRow.tsx",
+        "src/app/App.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "app-shell/search/open",
+      "file": "e2e/tests/app-shell/search/open.e2e.ts"
+    },
+    {
       "id": "app-shell/splash/android-launch#dismiss",
       "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
       "kind": "e2e",
@@ -359,6 +634,177 @@
       "sendsNoMail": true,
       "spec": "app-shell/splash/phone-launch",
       "file": "e2e/tests/app-shell/splash/phone-launch.e2e.ts"
+    },
+    {
+      "id": "people/add-existing/engine#scoring-offline",
+      "title": "Add Player finds only people in the adder’s groups, and offline filters the kept players with no stale rows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/hooks/useRosterCandidates.ts",
+        "src/app/screens/AddPlayerScene.tsx",
+        "src/app/scoring/ExistingPlayerSheet.tsx",
+        "src/server/users/rosterCandidates.ts",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/add-existing/engine",
+      "file": "e2e/tests/people/add-existing/engine.e2e.ts"
+    },
+    {
+      "id": "people/add-existing/engine#team-settings",
+      "title": "Add Player finds only people in the adder’s groups, and offline filters the kept players with no stale rows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/hooks/useRosterCandidates.ts",
+        "src/app/screens/AddPlayerScene.tsx",
+        "src/app/scoring/ExistingPlayerSheet.tsx",
+        "src/server/users/rosterCandidates.ts",
+        "src/server/search/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 5,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/add-existing/engine",
+      "file": "e2e/tests/people/add-existing/engine.e2e.ts"
+    },
+    {
+      "id": "people/search/reach#people-in-groups-only",
+      "title": "Search finds people only in the reader’s groups, by the name they are shown, and nobody signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/server/search/reach.ts",
+        "src/server/search/gather.ts",
+        "src/server/search/socket.ts",
+        "src/app/screens/SearchScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/search/reach",
+      "file": "e2e/tests/people/search/reach.e2e.ts"
+    },
+    {
+      "id": "people/search/reach#signed-out",
+      "title": "Search finds people only in the reader’s groups, by the name they are shown, and nobody signed out",
+      "kind": "e2e",
+      "covers": [
+        "src/server/search/reach.ts",
+        "src/server/search/gather.ts",
+        "src/server/search/socket.ts",
+        "src/app/screens/SearchScreen.tsx"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "people/search/reach",
+      "file": "e2e/tests/people/search/reach.e2e.ts"
+    },
+    {
+      "id": "platform/node-admin/jev-key#set-and-clear",
+      "title": "The node administrator sets and removes the Jev key, which no route or log shows",
+      "kind": "e2e",
+      "covers": [
+        "src/app/screens/NodeSettingsCard.tsx",
+        "src/server/nodeSettings.ts",
+        "src/server/routes/nodeAdministration.ts"
+      ],
+      "stack": "isolated",
+      "fixtures": [
+        "search"
+      ],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "platform/node-admin/jev-key",
+      "file": "e2e/tests/platform/node-admin/jev-key.e2e.ts"
     },
     {
       "id": "platform/push/browser#dms-mentions-reminders",

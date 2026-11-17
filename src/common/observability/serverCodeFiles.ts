@@ -96,6 +96,7 @@ export const SERVER_CODE_FILES = new Set([
   'server/dev/fixtures/coachGame.js',
   'server/dev/fixtures/nodeSettings.js',
   'server/dev/fixtures/packedLeague.js',
+  'server/dev/fixtures/search.js',
   'server/dev/fixtures/streaming.js',
   'server/dev/fixtures/teamWithRoster.js',
   'server/dev/importArchiveCameras.js',

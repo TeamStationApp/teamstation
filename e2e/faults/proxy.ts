@@ -72,6 +72,8 @@ export async function startFaultProxy(
   const injections: FaultProxy['injections'] = []
   const held = new Set<ServerResponse>()
   const open = new Set<Duplex>()
+  /** The app's side of each upgraded connection, by the path it asked for. */
+  const upgraded = new Map<Duplex, string>()
 
   const inject = (req: IncomingMessage): void => {
     injections.push({
@@ -173,11 +175,18 @@ export async function startFaultProxy(
     forward(req, res, matched && fault === 'wrong-data')
   })
 
+  /** Whether `socket-drop` drops a socket on this path. */
+  const drops = (path: string): boolean => !path.startsWith('/api/v1/none')
+
   server.on('upgrade', (req, socket, head) => {
     open.add(socket)
-    socket.on('close', () => open.delete(socket))
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
-    if (fault === 'socket-drop' && !path.startsWith('/api/v1/none')) {
+    upgraded.set(socket, path)
+    socket.on('close', () => {
+      open.delete(socket)
+      upgraded.delete(socket)
+    })
+    if (fault === 'socket-drop' && drops(path)) {
       inject(req)
       socket.destroy()
       return
@@ -216,6 +225,14 @@ export async function startFaultProxy(
     fault: () => fault,
     setFault: next => {
       fault = next
+      // A socket open when socket-drop is set is dropped then, as every one
+      // asked for after it is refused.
+      if (next === 'socket-drop')
+        for (const [socket, path] of upgraded)
+          if (drops(path)) {
+            injections.push({ at: Date.now(), fault: next, path })
+            socket.destroy()
+          }
       // Requests api-hang was holding are let go once it is not the fault.
       if (next !== 'api-hang') {
         for (const res of held) res.destroy()

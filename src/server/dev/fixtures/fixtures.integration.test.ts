@@ -31,6 +31,11 @@ import {
 import { runCoachGame } from './coachGame'
 import { NODE_SETTINGS, UNSET_SETTINGS } from './nodeSettings'
 import { runPackedLeague, runPackedLeagueLimit } from './packedLeague'
+import {
+  hasGroupCoordinates,
+  runSearch,
+  SEARCH_JEV_PLACEHOLDER
+} from './search'
 import { runStreaming } from './streaming'
 import { runTeamWithRoster } from './teamWithRoster'
 
@@ -442,6 +447,214 @@ describe('fixture worlds', function () {
     ).deep.equals(['1', '2', '3', '4', '5', '6', '7', '8', '9'])
     // The world runs on a database the baseline accepts: no other address.
     expect(await refuseRealAddresses(the(), MAILBOX)).not.equals(undefined)
+  })
+
+  it('search gives each scenario its own named organizations, people in and out of reach, and a Jev key', async function () {
+    const { searchOnce } = await import('../../search/engine')
+    const { jevKey } = await import('../../nodeSettings')
+    const world = await runSearch({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    const other = await runSearch({
+      db: the(),
+      mailbox: MAILBOX,
+      nonce: makeNonce()
+    })
+    expect(Object.keys(world.accounts).sort()).deep.equals([
+      'child',
+      'coach',
+      'guardian',
+      'hawk',
+      'nodeAdmin',
+      'reliever',
+      'seasonPlayer',
+      'stranger',
+      'teammate'
+    ])
+    expect(await jevKey(the())).equals(SEARCH_JEV_PLACEHOLDER)
+    const admin = await the()
+      .selectFrom('users')
+      .select('is_admin')
+      .where('id', '=', world.accounts.nodeAdmin.userId as never)
+      .executeTakeFirstOrThrow()
+    expect(admin.is_admin).equals(true)
+    // Every league and team has the coordinates of its city.
+    expect(await hasGroupCoordinates(the())).equals(true)
+    const placed = await the()
+      .selectFrom('teams')
+      .select(['name', 'latitude'])
+      .where('name', 'like', `%${world.nonce}`)
+      .execute()
+    expect(placed.length).equals(9)
+    expect(placed.every(row => row.latitude != null)).equals(true)
+
+    const deps = {
+      space: {
+        endpoint: '',
+        region: '',
+        bucket: '',
+        accessKeyId: '',
+        secretAccessKey: '',
+        pathStyle: false
+      },
+      jevBaseUrl: 'http://127.0.0.1:1',
+      log: () => undefined
+    }
+    const actor = (
+      role: string
+    ): { userId: string; isAdmin: boolean; scopes: [] } => ({
+      userId: world.accounts[role].userId,
+      isAdmin: false,
+      scopes: []
+    })
+    const ask = (
+      text: string,
+      location: any = null
+    ): { text: string; location: any; mode: 'all' } => ({
+      text,
+      location,
+      mode: 'all' as const
+    })
+    const names = async (
+      role: string | null,
+      text: string,
+      location: any = null
+    ): Promise<string[]> =>
+      (
+        await searchOnce(
+          the(),
+          role == null ? null : actor(role),
+          ask(text, location),
+          deps
+        )
+      ).results.map(result => result.name)
+    const tag = world.nonce
+
+    // One field finds the four kinds, the world's own only.
+    const coach = await searchOnce(
+      the(),
+      actor('coach'),
+      ask(`hawk ${tag}`),
+      deps
+    )
+    const kinds = new Set(coach.results.map(result => result.kind))
+    expect([...kinds].sort()).deep.equals([
+      'league',
+      'person',
+      'season',
+      'team'
+    ])
+    // Another world's match one typed word of two, after all of this one's.
+    const mine = coach.results.map(result => result.name.endsWith(tag))
+    expect(mine.lastIndexOf(true)).lessThan(
+      coach.results.findIndex(result => result.name.endsWith(other.nonce))
+    )
+    const follow = (name: string): unknown =>
+      coach.results.find(result => result.name === `${name} ${tag}`)
+    expect((follow('Demo Hawks') as any).follow).equals(null)
+    expect((follow('Ridge Hawks') as any).follow).equals('follow')
+    const shown = coach.results.map(result => result.name)
+    expect(shown.indexOf(`Hawks Blue ${tag}`)).lessThan(
+      shown.indexOf(`Hawks Gold ${tag}`)
+    )
+
+    // The guardian finds the child's teammate only by both names, shortened.
+    expect(await names('guardian', 'Freddie')).includes('Freddie F')
+    expect(await names('guardian', 'Freeman')).deep.equals([])
+    expect(await names('guardian', 'Freddie Freeman')).deep.equals([
+      'Freddie F'
+    ])
+    expect(await names('guardian', 'Yoshinobu Yamamoto')).deep.equals([])
+    // Signed out: organizations, and nobody.
+    const signedOut = await names(null, `hawk ${tag}`)
+    expect(signedOut).includes(`Ridge Hawks ${tag}`)
+    expect(signedOut.some(name => name.startsWith('LaTroy'))).equals(false)
+    expect(await names(null, 'LaTroy Hawkins')).deep.equals([])
+
+    // Add Player finds a player of the same season, never one of another league.
+    const adding = async (text: string): Promise<string[]> =>
+      (
+        await searchOnce(
+          the(),
+          actor('coach'),
+          { text, location: null, mode: 'people', forTeam: world.ids.team },
+          deps
+        )
+      ).results.map(result => result.name)
+    expect(await adding('Corbin')).deep.equals(['Corbin Burnes'])
+    expect(await adding('Yoshinobu Yamamoto')).deep.equals([])
+    expect(await adding('Freddie')).deep.equals([])
+
+    // The pills the location scenarios tap.
+    const pills = async (text: string): Promise<string[]> =>
+      (await searchOnce(the(), actor('coach'), ask(text), deps)).locations.map(
+        location => location.label
+      )
+    expect((await pills('san die'))[0]).equals('San Diego, CA')
+    expect(await pills('californ')).includes('California')
+
+    // San Diego first, then the cities around it by distance; no people.
+    const sanDiego = {
+      kind: 'city',
+      id: 'geonames:5391811',
+      label: 'San Diego, CA',
+      city: 'San Diego',
+      region: 'California',
+      country: 'US',
+      latitude: 32.71571,
+      longitude: -117.16472
+    }
+    const widened = await searchOnce(
+      the(),
+      actor('coach'),
+      ask(`hawk ${tag}`, sanDiego),
+      deps
+    )
+    // Another world's are in the same rings, after this one's in each.
+    const teams = widened.results
+      .filter(result => result.kind === 'team' && result.name.endsWith(tag))
+      .map(result => result.name.replace(` ${tag}`, ''))
+    expect(teams).deep.equals([
+      'Demo Hawks',
+      'Bay Hawks',
+      'Ridge Hawks',
+      'Hawks Blue',
+      'Hawks Gold',
+      'East Hawks',
+      'North Hawks',
+      'Desert Hawks',
+      'Capital Hawks'
+    ])
+    expect(widened.results.some(result => result.kind === 'person')).equals(
+      false
+    )
+    // California only, with no widening.
+    const california = await names('coach', `hawk ${tag}`, {
+      kind: 'region',
+      id: 'region:US:California',
+      label: 'California',
+      region: 'California',
+      country: 'US'
+    })
+    expect(california).includes(`Capital Hawks ${tag}`)
+    expect(california.some(name => name.startsWith('Desert'))).equals(false)
+  })
+
+  it('search knows a database without organization coordinates', async function () {
+    const { sql } = await import('kysely')
+    await the()
+      .transaction()
+      .execute(async trx => {
+        await sql`alter table leagues drop column latitude cascade`.execute(trx)
+        expect(await hasGroupCoordinates(trx)).equals(false)
+        throw new Error('rolled back')
+      })
+      .catch((error: unknown) => {
+        expect((error as Error).message).equals('rolled back')
+      })
+    expect(await hasGroupCoordinates(the())).equals(true)
   })
 
   it('creates accounts with no role by default and distinct passwords', async function () {
