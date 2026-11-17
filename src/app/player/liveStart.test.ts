@@ -2,7 +2,11 @@ import { expect } from 'chai'
 import { describe, it } from 'mocha'
 
 import { seekTo } from './explicitSeek'
-import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
+import {
+  joinLiveOnFirstPlay,
+  keepLiveCushion,
+  LIVE_DELAY_SEC
+} from './liveStart'
 import { seekBy } from './zones'
 
 function fixture(): {
@@ -184,5 +188,102 @@ describe('joining the latest footage on first play', function () {
     ])
       f.emit(event)
     expect(f.video.currentTime).equals(0)
+  })
+})
+
+describe('keeping the live cushion after the stream was away', function () {
+  function cushioned(): {
+    video: HTMLVideoElement
+    end: (sec: number) => void
+    play: (sec: number) => void
+    tick: () => void
+    emit: (name: string) => void
+    detach: () => void
+  } {
+    const video = document.createElement('video')
+    let end = 0
+    let paused = false
+    let at = 0
+    Object.defineProperty(video, 'paused', { get: () => paused })
+    Object.defineProperty(video, 'currentTime', {
+      get: () => at,
+      set: (sec: number) => {
+        at = sec
+      }
+    })
+    Object.defineProperty(video, 'seekable', {
+      get: () => ({ length: 1, start: () => 0, end: () => end })
+    })
+    let run: (() => void) | undefined
+    const detach = keepLiveCushion(video, () => true, {
+      setTimeout: next => {
+        run = next
+        return 1
+      },
+      clearTimeout: () => {
+        run = undefined
+      }
+    })
+    return {
+      video,
+      end: sec => {
+        end = sec
+      },
+      play: sec => {
+        paused = false
+        at = sec
+      },
+      tick: () => {
+        run?.()
+      },
+      emit: name => video.dispatchEvent(new window.Event(name)),
+      detach
+    }
+  }
+
+  it('puts a player that played its cushion away during a cut back behind the newest footage', function () {
+    const f = cushioned()
+    // Joined 45 s behind.
+    f.end(600)
+    f.play(555)
+    f.tick()
+    // A 32 s cut: the end stands still while the picture plays on.
+    f.play(587)
+    f.tick()
+    expect(f.video.currentTime).equals(587)
+    // The stream is back and the end moves on: 600 + 4 is the new end.
+    f.end(604)
+    f.play(588)
+    f.tick()
+    expect(f.video.currentTime).equals(604 - LIVE_DELAY_SEC)
+    f.detach()
+  })
+
+  it('leaves a player that is about its cushion where it is', function () {
+    const f = cushioned()
+    f.end(600)
+    f.play(555)
+    f.tick()
+    f.end(604)
+    f.play(561)
+    f.tick()
+    expect(f.video.currentTime).equals(561)
+    f.detach()
+  })
+
+  it('keeps a viewer’s own jump towards the newest footage', function () {
+    const f = cushioned()
+    f.end(600)
+    f.play(555)
+    f.tick()
+    f.emit('pointerdown')
+    f.video.currentTime = 595
+    f.emit('seeking')
+    f.tick()
+    f.end(604)
+    f.play(596)
+    f.tick()
+    expect(f.video.currentTime).equals(596)
+    f.detach()
   })
 })

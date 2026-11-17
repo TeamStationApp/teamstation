@@ -4,7 +4,11 @@ import { watchLivePlaylist } from './livePlaylistWatch'
 import { liveRejoin } from './liveRejoin'
 import { observeLiveStalls } from './liveStallDiagnostics'
 import { recoverLiveStalls } from './liveStallRecovery'
-import { joinLiveOnFirstPlay, LIVE_DELAY_SEC } from './liveStart'
+import {
+  joinLiveOnFirstPlay,
+  keepLiveCushion,
+  LIVE_DELAY_SEC
+} from './liveStart'
 import { AHEAD_SEC, BEHIND_SEC } from './multiCam/buffering'
 import { HEVC_TYPE } from './playable'
 import type { PlayIntent } from './playIntent'
@@ -102,6 +106,12 @@ export function attachHls(
     intent.startAtLiveEdge !== false
       ? joinLiveOnFirstPlay(video)
       : undefined
+  // WebKit's player keeps no live position of its own once a stream has been
+  // away; hls.js keeps its `liveSyncDuration`.
+  const stopCushion =
+    engine === 'native' && intent?.isLive != null && intent.buffer == null
+      ? keepLiveCushion(video, intent.wantsToPlay)
+      : undefined
   const stopDiagnostics = reportsLiveStalls(intent)
     ? observeLiveStalls(video, {
         engine,
@@ -111,6 +121,7 @@ export function attachHls(
     : undefined
   return () => {
     stopDiagnostics?.()
+    stopCushion?.()
     stopJoining?.()
     stopRecovery?.()
     detach()
