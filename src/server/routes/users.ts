@@ -55,9 +55,13 @@ export interface UserMatch {
  * `me` is accepted, and never beside `externalId`.
  *
  * `forTeam=<teamId>`, with `forGame`, `q` and `limit`, asks for the players a
- * roster manager may add to that team (`rosterCandidates`): one answer of at
- * most 100, with no further pages, so `after` answers nothing. `limit` is
- * read only beside `capped=1`, which the current client sends.
+ * roster manager may add to that team (`rosterCandidates`), as the search
+ * engine's people gather finds them, lexicographic only: one answer of at
+ * most the engine's 50, with no further pages, so `after` answers nothing.
+ * Each row lists the folded typed words that found that person (`matched`).
+ * `limit` is read only beside `capped=1`, which the current client sends.
+ * Installed builds still ask here; the current app asks the search socket
+ * in mode `people`, which carries the same card on each person row.
  */
 export function userRoutes(
   db: Kysely<Database>,

@@ -17,6 +17,7 @@ import {
   resolvePlayerNamePrivacy,
   spokenFormat
 } from '../../common/playerNamePrivacy'
+import type { FullNameGrants } from '../access'
 import { anyOf } from '../db/anyOf'
 import type { Database } from '../db/database'
 import { isWithdrawnKey } from '../games/withdrawn'
@@ -65,23 +66,25 @@ async function resolveTeams(
   teamIds: readonly string[]
 ): Promise<Map<string, ResolvedPlayerNamePrivacy>> {
   if (teamIds.length === 0) return new Map()
-  const teams = await db
-    .selectFrom('teams')
-    .select(['id', 'name', 'league_id', 'player_name_privacy'])
-    .where('id', '=', anyOf(teamIds))
-    .execute()
-  const parents = await db
-    .selectFrom('season_team_parents')
-    .innerJoin('seasons', 'seasons.id', 'season_team_parents.season_id')
-    .select([
-      'season_team_parents.team_id as teamId',
-      'seasons.id as id',
-      'seasons.name as name',
-      'seasons.league_id as leagueId',
-      'seasons.player_name_privacy as player_name_privacy'
-    ])
-    .where('season_team_parents.team_id', '=', anyOf(teamIds))
-    .execute()
+  const [teams, parents] = await Promise.all([
+    db
+      .selectFrom('teams')
+      .select(['id', 'name', 'league_id', 'player_name_privacy'])
+      .where('id', '=', anyOf(teamIds))
+      .execute(),
+    db
+      .selectFrom('season_team_parents')
+      .innerJoin('seasons', 'seasons.id', 'season_team_parents.season_id')
+      .select([
+        'season_team_parents.team_id as teamId',
+        'seasons.id as id',
+        'seasons.name as name',
+        'seasons.league_id as leagueId',
+        'seasons.player_name_privacy as player_name_privacy'
+      ])
+      .where('season_team_parents.team_id', '=', anyOf(teamIds))
+      .execute()
+  ])
   const leagues = await leagueSources(db, [
     ...teams.map(team => team.league_id),
     ...parents.map(parent => parent.leagueId)
@@ -189,17 +192,21 @@ export async function teamFormats(
 ): Promise<Map<string, PlayerNamePrivacy>> {
   const wanted = [...new Set(teamIds)]
   if (wanted.length === 0) return new Map()
-  const merged = await db
-    .selectFrom('teams')
-    .select('id')
-    .where('id', '=', anyOf(wanted))
-    .where('merged_into', 'is not', null)
-    .execute()
+  // The teams as asked are resolved while their merges are read: only a
+  // survivor not asked about is resolved after.
+  const [merged, asked] = await Promise.all([
+    db
+      .selectFrom('teams')
+      .select('id')
+      .where('id', '=', anyOf(wanted))
+      .where('merged_into', 'is not', null)
+      .execute(),
+    resolveTeams(db, wanted)
+  ])
   const survivors = new Map<string, string>()
   for (const { id } of merged) survivors.set(id, await followMerges(db, id))
-  const resolved = await resolveTeams(db, [
-    ...new Set(wanted.map(id => survivors.get(id) ?? id))
-  ])
+  const later = [...new Set(survivors.values())].filter(id => !asked.has(id))
+  const resolved = new Map([...asked, ...(await resolveTeams(db, later))])
   const formats = new Map<string, PlayerNamePrivacy>()
   for (const id of wanted) {
     const team = resolved.get(survivors.get(id) ?? id)
@@ -319,14 +326,16 @@ export async function currentFormats(
     .where('memberships.is_player', '=', true)
     .where('teams.merged_into', 'is', null)
     .execute()
-  const formats = await teamFormats(
-    db,
-    plays.map(play => play.teamId)
-  )
-  const open = await openAddsOf(
-    db,
-    plays.map(play => play.teamId)
-  )
+  const [formats, open] = await Promise.all([
+    teamFormats(
+      db,
+      plays.map(play => play.teamId)
+    ),
+    openAddsOf(
+      db,
+      plays.map(play => play.teamId)
+    )
+  ])
   const byUser = new Map<string, PlayerNamePrivacy[]>()
   for (const play of plays) {
     const format = formats.get(play.teamId)
@@ -375,6 +384,8 @@ export interface PublicPerson {
 export interface ReaderOptions {
   /** Anybody this reader may read in full (`fullNamesFor`) is shown so. */
   reader?: Reader
+  /** The reader's own `fullNameGrants`, handed on to `fullNamesFor`. */
+  grants?: FullNameGrants
   /**
    * Whom of these people the caller has already found `reader` may read in
    * full (its own `mayViewFullNames`), so that nobody asks again (`fullNamesFor`).
@@ -397,15 +408,21 @@ async function readerFormats(
   full: Set<string>
 }> {
   // A withdrawn player's line reads as its placeholder, for every reader.
-  const full = await fullNamesFor(
-    db,
-    options.reader,
-    people.flatMap(entry =>
-      isWithdrawnKey(String(entry.person.id)) ? [] : [String(entry.person.id)]
+  // The two are read side by side.
+  const [full, shown] = await Promise.all([
+    fullNamesFor(
+      db,
+      options.reader,
+      people.flatMap(entry =>
+        isWithdrawnKey(String(entry.person.id)) ? [] : [String(entry.person.id)]
+      ),
+      {
+        ...(options.readsFull == null ? {} : { known: options.readsFull }),
+        ...(options.grants == null ? {} : { grants: options.grants })
+      }
     ),
-    options.readsFull == null ? {} : { known: options.readsFull }
-  )
-  const shown = await shownFormats(db, people)
+    shownFormats(db, people)
+  ])
   const formats =
     full.size === 0
       ? shown
@@ -443,20 +460,22 @@ async function shownFormats(
   const named = (entry: PublicPerson): boolean =>
     entry.player !== false && !withdrawn(entry)
   const players = people.filter(named)
-  const teams = await teamFormats(
-    db,
-    players.flatMap(entry => entry.teamId ?? [])
-  )
+  const [teams, lent] = await Promise.all([
+    teamFormats(
+      db,
+      players.flatMap(entry => entry.teamId ?? [])
+    ),
+    lentPlayers(
+      db,
+      players.flatMap(entry =>
+        entry.teamId == null
+          ? []
+          : [{ userId: String(entry.person.id), teamId: entry.teamId }]
+      )
+    )
+  ])
   const held = (entry: PublicPerson): PlayerNamePrivacy | undefined =>
     entry.teamId == null ? undefined : teams.get(entry.teamId)
-  const lent = await lentPlayers(
-    db,
-    players.flatMap(entry =>
-      entry.teamId == null
-        ? []
-        : [{ userId: String(entry.person.id), teamId: entry.teamId }]
-    )
-  )
   const borrowed = (entry: PublicPerson): boolean =>
     entry.candidate === true ||
     lent.has(`${entry.teamId} ${String(entry.person.id)}`)
@@ -522,13 +541,18 @@ export interface ReaderNaming {
 /**
  * `publicFormats` for these people, with the ones `reader` may read in full
  * (`fullNamesFor`) named in full, and everyone's public label kept beside.
+ * `grants` is the reader's own `fullNameGrants`, when the caller holds them.
  */
 export async function readerNaming(
   db: Db,
   people: readonly PublicPerson[],
-  reader: Reader | undefined
+  reader: Reader | undefined,
+  options: { grants?: FullNameGrants } = {}
 ): Promise<ReaderNaming> {
-  const { shown, formats, full } = await readerFormats(db, people, { reader })
+  const { shown, formats, full } = await readerFormats(db, people, {
+    reader,
+    ...(options.grants == null ? {} : { grants: options.grants })
+  })
   const names = formatForReader(
     people.map(({ person }) => ({ person, format: formats.get(person.id)! }))
   )

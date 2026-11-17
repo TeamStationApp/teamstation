@@ -3,13 +3,18 @@ import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { badRequest, forbidden, notFound } from '../../common/errors'
 import { storedGuests } from '../../common/guests'
 import { type NamedPerson, shortParts } from '../../common/names'
-import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
+import {
+  DEFAULT_PLAYER_NAME_PRIVACY,
+  type PlayerNamePrivacy
+} from '../../common/playerNamePrivacy'
+import { wordsOf } from '../../common/search/match'
+import type { SearchAsk } from '../../common/search/types'
 import { teamsOfRow } from '../../common/teamLists'
 import {
   canManageRoster,
   canScore,
   canSeeTeam,
-  guardedRows,
+  type FullNameGrants,
   nonMemberTeam,
   openAddTeams,
   roleScopes,
@@ -19,19 +24,26 @@ import {
 import { onePerson } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import type { Database } from '../db/database'
-import {
-  compactFields,
-  type ReaderNaming,
-  readerNaming
-} from '../groups/playerNamePrivacy'
+import { compactFields, type ReaderNaming } from '../groups/playerNamePrivacy'
 import { imageUrl } from '../media/imageUrls'
 import type { SpaceSettings } from '../media/spacesHls'
+import {
+  candidateOrder,
+  gather,
+  PERSON_TIERS,
+  type PersonCandidate,
+  type PersonTier
+} from '../search/gather'
 import { personAffiliations } from './personAffiliations'
 import { readerOf } from './readerNames'
 
-/** How close a player is to the asker, nearest first. */
-export const CANDIDATE_TIERS = ['mine', 'season', 'league', 'other'] as const
-export type CandidateTier = (typeof CANDIDATE_TIERS)[number]
+/**
+ * How close a player is to the asker, nearest first: the engine's
+ * `PERSON_TIERS`. There is no tier past the league: nobody outside the
+ * asker's reach is found.
+ */
+export const CANDIDATE_TIERS = PERSON_TIERS
+export type CandidateTier = PersonTier
 
 /** One player the asker may add, as little about them as the card shows. */
 export interface RosterCandidate {
@@ -40,6 +52,12 @@ export interface RosterCandidate {
   externalIds: string[]
   /** `Jordan P`, the short name in its format alone. */
   shortName: string
+  /** The format of `shortName`, unless it is the built-in one. */
+  nameFormat?: PlayerNamePrivacy
+  /** The public name, when `shortName` is full only because of the reader. */
+  compactName?: string
+  /** The format of `compactName`, unless it is the built-in one. */
+  compactFormat?: PlayerNamePrivacy
   /**
    * The public label split where it was built: "Mookie" and "B", even for an
    * asker who reads the name in full.
@@ -58,6 +76,13 @@ export interface RosterCandidate {
   affiliations: string
   tier: CandidateTier
   /**
+   * The typed words, folded, that found this player by a name the asker
+   * may find them by: what the phone keeps to find them again offline. A
+   * search keeps anybody any one typed word finds, so it may be fewer than
+   * were typed. Absent when nothing typed found them.
+   */
+  matched?: string[]
+  /**
    * Always empty: an installed build's cleaner needs the field, and goes on
    * from it with `after`, which answers nothing. The search has no pages.
    */
@@ -67,7 +92,7 @@ export interface RosterCandidate {
 export interface CandidateQuery {
   teamId: string
   gameId?: string
-  /** Trimmed; its words each prefix-match a name. */
+  /** Trimmed; matched as the search engine matches people's names. */
   q: string
   /**
    * At most `CANDIDATE_LIMIT.max`. Read only with `capped=1`: an installed
@@ -96,22 +121,12 @@ export function fullAccount(user: string): RawBuilder<boolean> {
     ))`
 }
 
-/** Somebody with no tie to the asker is listed only once this much is typed. */
-export const OTHER_TIER_QUERY = 3
 /**
  * One answer per search, of at most this many rows; `limit` may ask fewer
  * beside `capped=1`.
  */
 export const CANDIDATE_LIMIT = { default: 100, max: 100 } as const
 
-/**
- * The most matches one search reads looking for rows the asker is shown: a
- * common surname that the rows hide would otherwise walk every match
- * site-wide on each keystroke. It reads them `CANDIDATE_SCAN_BATCH` at a
- * time, and answers what it kept by then.
- */
-export const CANDIDATE_SCAN = 1000
-export const CANDIDATE_SCAN_BATCH = 200
 export const CANDIDATE_QUERY_MAX = 100
 
 /** The query string of `GET /users?forTeam=`, checked. */
@@ -156,13 +171,8 @@ export function candidateQueryOf(
   }
 }
 
-/** Where the scan of one search goes on: after this row. Never sent. */
-interface ScanPosition {
-  tier: number
-  userId: string
-}
-
-interface Target {
+/** Where a player would be added, as `candidateTarget` checked it. */
+export interface CandidateTarget {
   teamId: string
   leagueId: string | null
   /** The season a game is in, when one is asked about. */
@@ -185,7 +195,7 @@ export async function candidateTarget(
   actor: Actor,
   teamId: string,
   gameId?: string
-): Promise<Target> {
+): Promise<CandidateTarget> {
   const team = await db
     .selectFrom('teams')
     .select(['id', 'league_id'])
@@ -234,16 +244,36 @@ export async function candidateTarget(
   }
 }
 
-interface CandidateRow {
-  user_id: string
-  tier: number
-  first_name: string | null
-  last_name: string | null
-  display_name: string
-  bats: RosterCandidate['bats']
-  throws: RosterCandidate['throws']
-  avatar_path: string | null
-  gumbo_id: number | null
+/**
+ * Who is on the target's team already, or with a game anybody in it, as the
+ * body of a recursive CTE named `held`: every player membership of those
+ * teams, the game's guests, and the accounts those were merged into. A
+ * search for players to add leaves them all out.
+ */
+export function heldSql(target: CandidateTarget): RawBuilder<unknown> {
+  const inGame =
+    target.game == null
+      ? []
+      : [target.game.home_team_id, target.game.away_team_id]
+  const guests =
+    target.game == null
+      ? null
+      : storedGuests(target.game.guests, teamsOfRow(target.game))
+  const guestGumbos = guests == null ? [] : [...guests.away, ...guests.home]
+  return sql`
+      select m.user_id as id from memberships m
+        where m.is_player
+          and (m.team_id = ${target.teamId}
+            ${inGame.length === 0 ? sql`` : sql`or m.team_id in (${sql.join(inGame)})`})
+      ${
+        guestGumbos.length === 0
+          ? sql``
+          : sql`union select user_id from gumbo_ids
+                  where gumbo_id in (${sql.join(guestGumbos)})`
+      }
+      union
+      select u.merged_into from held h join users u on u.id = h.id
+        where u.merged_into is not null`
 }
 
 /**
@@ -306,15 +336,19 @@ export async function hasTie(
 }
 
 /**
- * Every live player the asker may add, nearest first: the asker's own teams
- * and guarded players, then the season (the game's, or any `forTeam` is in),
- * then the team's league, then, once three letters are typed, everyone else.
- * A full account that plays for no team is everyone else too (or the
- * asker's own, when they guard it).
- * Players already on the team, and with a game anybody already in it, are
- * left out. One answer per search, of at most `ask.limit` rows, in order of
- * (tier, folded first, folded last, id); there are no further pages, so a
- * request with `after` answers none.
+ * Every live person the asker may add, from the search engine's people
+ * gather (`gather` in mode `people`), in its lexicographic order: the people
+ * of the asker's reach (`searchReach`, which for this team also holds the
+ * team, its managing season and its league) and the asker's own wards. With
+ * nothing typed, nearest first: the asker's own teams and wards (`mine`),
+ * then the target's season (`season`: the game's, or any `forTeam` is in),
+ * then the rest of the reach (`league`). Nobody outside the reach is found,
+ * however much is typed. People already on the team, and with a game
+ * anybody already in it, are left out. One answer per search, of at most
+ * `ask.limit` rows (up to `CANDIDATE_LIMIT.max`, which installed builds
+ * ask for and count to tell the user the list was cut), in the engine's
+ * order; the search socket shows `SEARCH_RESULTS_MAX` of these. There are
+ * no further pages, so a request with `after` answers none.
  */
 export async function rosterCandidates(
   db: Kysely<Database>,
@@ -324,301 +358,117 @@ export async function rosterCandidates(
   /** What the asker may see, when the route has read it already. */
   scopes?: VisibleScopes
 ): Promise<RosterCandidate[]> {
-  const target = await candidateTarget(db, actor, ask.teamId, ask.gameId)
-  if (ask.after === true) return []
-  const words = ask.q === '' ? [] : ask.q.split(' ')
-  const inGame =
-    target.game == null
-      ? []
-      : [target.game.home_team_id, target.game.away_team_id]
-  const guestGumbos =
-    target.game == null
-      ? []
-      : (() => {
-          const guests = storedGuests(
-            target.game.guests,
-            teamsOfRow(target.game)
-          )
-          return [...guests.away, ...guests.home]
-        })()
-  const seasons =
-    target.gameSeasonId != null
-      ? sql`select ${target.gameSeasonId}::text as season_id`
-      : sql`select season_id from team_seasons where team_id = ${target.teamId}`
-  // Each word is a literal prefix: `%`, `_` and `\` in it match only
-  // themselves.
-  const literal = (word: string): string => word.replace(/[\\%_]/g, '\\$&')
-  const matches =
-    words.length === 0
-      ? sql`true`
-      : sql.join(
-          words.map(
-            word => sql`(
-              ts_name_fold(u.first_name) like ts_name_fold(${literal(word)}) || '%'
-              or ts_name_fold(u.last_name) like ts_name_fold(${literal(word)}) || '%'
-              or ts_name_fold(u.display_name) like ts_name_fold(${literal(word)}) || '%'
-            )`
-          ),
-          sql` and `
-        )
-  // Strangers are listed only once three letters or digits are typed. A word
-  // that starts another counts for nothing, as each matches alone: `j j j` is
-  // one letter, and `ab a` two, while `Bo Li` is a name typed whole.
-  const letters = [
-    ...new Set(
-      words.map(word => word.replace(/[^\p{L}\p{N}]/gu, '').toLowerCase())
-    )
-  ]
-  const strangers =
-    letters
-      .filter(
-        word => !letters.some(other => other !== word && other.startsWith(word))
-      )
-      .join('').length >= OTHER_TIER_QUERY
-  const page = async (
-    after: ScanPosition | null,
-    limit: number
-  ): Promise<CandidateRow[]> =>
-    (
-      await sql<CandidateRow>`
-    with recursive
-    team_seasons as (
-      select season_id, team_id from season_teams where active
-      union
-      select season_id, team_id from season_team_parents
-    ),
-    target_seasons as (${seasons}),
-    caller_teams as (
-      select team_id from memberships where user_id = ${actor.userId}
-      union
-      select scope_id from scope_roles
-        where user_id = ${actor.userId} and scope_type = 'team'
-    ),
-    guarded as (
-      select unnest(${await guardedRows(db, actor.userId)}::text[]) as user_id
-    ),
-    named as (select u.id from users u where ${matches}),
-    named_origins as (
-      select id from named
-      union
-      select u.id from users u join named_origins n on u.merged_into = n.id
-    ),
-    -- Full accounts the words name: with no strangers asked for, only the
-    -- ones the caller guards.
-    accounts as (
-      select u.id from users u
-        where ${fullAccount('u')} and u.merged_into is null
-          ${words.length === 0 ? sql`` : sql`and u.id in (select id from named)`}
-          ${strangers ? sql`` : sql`and u.id in (select user_id from guarded)`}
-    ),
-    played as (
-      select m.user_id as origin, m.user_id as id, m.team_id, t.league_id
-        from memberships m
-        join teams t on t.id = m.team_id and t.merged_into is null
-        where m.is_player
-          -- Only the people the search can answer: those the words name
-          -- (and accounts merged into them), and with no strangers asked
-          -- for, only the caller's, the season's and the league's.
-          ${words.length === 0 ? sql`` : sql`and m.user_id in (select id from named_origins)`}
-          ${
-            strangers
-              ? sql``
-              : sql`and (m.team_id in (select team_id from caller_teams)
-                    or m.team_id in (
-                      select team_id from team_seasons
-                        where season_id in (select season_id from target_seasons)
-                    )
-                    or t.league_id = ${target.leagueId}
-                    or m.user_id in (select user_id from guarded))`
-          }
-      -- A full account plays for no team in particular.
-      union all
-      select id, id, null::text, null::text from accounts
-    ),
-    survivor as (
-      select origin, id, team_id, league_id from played
-      union all
-      select s.origin, u.merged_into, s.team_id, s.league_id
-        from survivor s join users u on u.id = s.id
-        where u.merged_into is not null
-    ),
-    resolved as (
-      select s.id as user_id, s.team_id, s.league_id
-        from survivor s join users u on u.id = s.id
-        where u.merged_into is null and u.disabled_at is null
-    ),
-    -- Who is on the team already, or in the game: from every membership of
-    -- those teams, as the narrowed list above may not hold them.
-    held as (
-      select m.user_id as id from memberships m
-        where m.is_player
-          and (m.team_id = ${target.teamId}
-            ${inGame.length === 0 ? sql`` : sql`or m.team_id in (${sql.join(inGame)})`})
-      ${
-        guestGumbos.length === 0
-          ? sql``
-          : sql`union select user_id from gumbo_ids
-                  where gumbo_id in (${sql.join(guestGumbos)})`
-      }
-      union
-      select u.merged_into from held h join users u on u.id = h.id
-        where u.merged_into is not null
-    ),
-    excluded as (
-      select id as user_id from held
-    ),
-    ranked as (
-      select r.user_id, min(case
-          when r.team_id in (select team_id from caller_teams)
-            or r.user_id in (select user_id from guarded) then 0
-          when r.team_id in (
-            select team_id from team_seasons
-              where season_id in (select season_id from target_seasons)
-          ) then 1
-          when r.league_id is not null and r.league_id = ${target.leagueId} then 2
-          else 3
-        end) as tier
-        from resolved r
-        where r.user_id not in (select user_id from excluded)
-        group by r.user_id
-    ),
-    cursor_user as (
-      select ts_name_fold(first_name) as first, ts_name_fold(last_name) as last
-        from users where id = ${after?.userId ?? null}
-    )
-    select ranked.user_id, ranked.tier, u.first_name, u.last_name,
-           u.display_name, u.bats, u.throws, u.avatar_path, g.gumbo_id
-      from ranked
-      join users u on u.id = ranked.user_id
-      left join gumbo_ids g on g.user_id = u.id
-      where ${matches}
-        and ${strangers ? sql`true` : sql`ranked.tier < 3`}
-        ${
-          after == null
-            ? sql``
-            : sql`and (ranked.tier, ts_name_fold(u.first_name),
-                       ts_name_fold(u.last_name), u.id)
-                  > (${after.tier}, (select first from cursor_user),
-                     (select last from cursor_user), ${after.userId})`
-        }
-      order by ranked.tier, ts_name_fold(u.first_name),
-               ts_name_fold(u.last_name), u.id
-      limit ${limit}
-  `.execute(db)
-    ).rows
-  const nameOf = (row: CandidateRow): NamedPerson => ({
-    id: row.user_id,
-    firstName: row.first_name,
-    lastName: row.last_name,
-    displayName: row.display_name
-  })
-  // Anybody's player, from anywhere: the formats of the teams they play for,
-  // and in full for those the asker may read in full.
-  // The public label goes beside a full one: a phone adding him offline puts
-  // it on the field, the board strip and the lineup QR.
-  const nameRows = async (rows: CandidateRow[]): Promise<ReaderNaming> =>
-    await readerNaming(
-      db,
-      rows.map(row => ({ person: nameOf(row) })),
-      readerOf(actor)
-    )
-  // The words find a stored name, but only somebody the asker reads in full
-  // is found by it: anybody else by the name their row shows, or by both
-  // halves of the stored one typed whole, so no word confirms a surname the
-  // row hides. Matches are read `CANDIDATE_SCAN_BATCH` at a time until
-  // enough are found, none are left, or `CANDIDATE_SCAN` have been read; what
-  // was found by then is the answer.
-  let people: CandidateRow[] = []
-  let naming: ReaderNaming | undefined
-  let after: ScanPosition | null = null
-  for (let read = 0; ;) {
-    const rows = await page(after, CANDIDATE_SCAN_BATCH)
-    read += rows.length
-    const pageNaming = rows.length === 0 ? undefined : await nameRows(rows)
-    const found =
-      pageNaming == null || words.length === 0
-        ? rows
-        : rows.filter(
-            row =>
-              pageNaming.readsFull.has(row.user_id) ||
-              shownMatches(words, pageNaming.names.get(row.user_id) ?? '', row)
-          )
-    people = [...people, ...found].slice(0, ask.limit)
-    if (pageNaming != null)
-      naming = naming == null ? pageNaming : joinNaming(naming, pageNaming)
-    const last = rows.at(-1)
-    if (
-      people.length >= ask.limit ||
-      rows.length < CANDIDATE_SCAN_BATCH ||
-      last == null ||
-      read >= CANDIDATE_SCAN
-    )
-      break
-    after = { tier: last.tier, userId: last.user_id }
+  if (ask.after === true) {
+    await candidateTarget(db, actor, ask.teamId, ask.gameId)
+    return []
   }
-  if (people.length === 0 || naming == null) return []
-  const teams = await currentTeams(
-    db,
-    people.map(row => row.user_id)
-  )
-  const named = people.map(nameOf)
-  const seen = scopes ?? (await visibleScopes(db, actor.userId, actor.isAdmin))
-  // The line tells two candidates of one short name apart by where they are
-  // now: only teams of a season ending today or later.
-  const affiliations = await personAffiliations(
-    db,
-    people.map(row => row.user_id),
-    {
-      reader: readerOf(actor),
-      scopes: seen,
-      teams: await currentSeasonTeams(
-        db,
-        people.map(row => row.user_id)
-      ),
-      readsFull: naming.readsFull
-    }
-  )
-  return people.map((row, index) => {
-    const short = naming.names.get(row.user_id) ?? ''
-    const format = naming.formats.get(row.user_id)
+  const searched: SearchAsk = {
+    text: ask.q,
+    location: null,
+    mode: 'people',
+    forTeam: ask.teamId,
+    ...(ask.gameId == null ? {} : { forGame: ask.gameId })
+  }
+  // Installed builds ask for a hundred and tell the user the list was cut
+  // when that many come back, so the route gathers as many as it is asked.
+  const gathered = await gather(db, actor, searched, { peopleMax: ask.limit })
+  const people = [...gathered.candidates]
+    .sort(candidateOrder(searched))
+    .flatMap(({ candidate }) =>
+      candidate.kind === 'person' ? [candidate] : []
+    )
+    .slice(0, ask.limit)
+  if (people.length === 0 || gathered.naming == null) return []
+  const rows = await rosterRows(db, actor, people, gathered.naming, {
+    space,
+    scopes
+  })
+  const matched = new Map(people.map(person => [person.id, person.matched]))
+  return rows.map(row => {
+    const words = matched.get(row.userId) ?? []
     return {
-      userId: row.user_id,
-      gumboId: row.gumbo_id,
-      externalIds: [],
-      shortName: short,
-      ...(format == null || format === DEFAULT_PLAYER_NAME_PRIVACY
-        ? {}
-        : { nameFormat: format }),
-      ...compactFields(naming, named[index]),
-      // Split from the public label: the add-to-roster form stores the parts
-      // on the session player, and the lineup QR sends them to GameChanger.
-      shortParts: shortParts(
-        named[index],
-        naming.compact.get(row.user_id) ?? short
-      ),
-      avatarUrl: space == null ? null : imageUrl(space, row.avatar_path),
-      bats: row.bats,
-      throws: row.throws,
-      // No team the line leaves out for the reader.
-      teams: (teams.get(row.user_id) ?? []).filter(each =>
-        canSeeTeam(seen, each.teamId)
-      ),
-      affiliations: affiliations.get(row.user_id) ?? '',
-      tier: CANDIDATE_TIERS[row.tier],
+      ...row,
+      ...(words.length === 0 ? {} : { matched: [...words] }),
       cursor: '' as const
     }
   })
 }
 
-/** A name folded as `ts_name_fold` folds it: no accents, lower case. */
-const fold = (name: string | null): string =>
-  (name ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
-
-/** Folded words of a name. */
-const wordsOf = (name: string | null): string[] =>
-  fold(name)
-    .split(/\s+/)
-    .filter(word => word !== '')
+/**
+ * The card of each of these people, as Add Existing Player draws it: what
+ * `GET /users?forTeam=` answers, and what a search in mode `people` with
+ * `forTeam` carries on each person row (`roster`). One source of the naming
+ * rules for both: the name the asker reads, the public label beside it, the
+ * parts split from that label, the teams the asker may see of a season
+ * ending today or later, and the affiliation line.
+ */
+export async function rosterRows(
+  db: Kysely<Database>,
+  actor: Actor,
+  people: readonly PersonCandidate[],
+  naming: ReaderNaming,
+  {
+    space,
+    scopes,
+    grants,
+    affiliationBudget
+  }: {
+    space?: SpaceSettings
+    /** The most characters the affiliation line takes (`affiliationText`). */
+    affiliationBudget?: number
+    /** What the asker may see, when the caller has read it already. */
+    scopes?: VisibleScopes
+    /** The asker's full-name grants, when the caller has read them already. */
+    grants?: FullNameGrants
+  } = {}
+): Promise<Array<Omit<RosterCandidate, 'cursor'>>> {
+  if (people.length === 0) return []
+  const ids = people.map(person => person.id)
+  const teams = await currentTeams(db, ids)
+  const seen = scopes ?? (await visibleScopes(db, actor.userId, actor.isAdmin))
+  // The line tells two candidates of one short name apart by where they are
+  // now: only teams of a season ending today or later.
+  const affiliations = await personAffiliations(db, ids, {
+    reader: readerOf(actor),
+    scopes: seen,
+    teams: await currentSeasonTeams(db, ids),
+    readsFull: naming.readsFull,
+    ...(affiliationBudget == null ? {} : { budget: affiliationBudget }),
+    ...(grants == null ? {} : { grants })
+  })
+  return people.map(person => {
+    const named: NamedPerson = {
+      id: person.id,
+      firstName: person.firstName,
+      lastName: person.lastName,
+      displayName: person.displayName
+    }
+    const short = naming.names.get(person.id) ?? person.name
+    const format = naming.formats.get(person.id)
+    return {
+      userId: person.id,
+      gumboId: person.gumboId,
+      externalIds: [],
+      shortName: short,
+      ...(format == null || format === DEFAULT_PLAYER_NAME_PRIVACY
+        ? {}
+        : { nameFormat: format }),
+      ...compactFields(naming, named),
+      // Split from the public label: the add-to-roster form stores the parts
+      // on the session player, and the lineup QR sends them to GameChanger.
+      shortParts: shortParts(named, naming.compact.get(person.id) ?? short),
+      avatarUrl: space == null ? null : imageUrl(space, person.avatarPath),
+      bats: person.bats,
+      throws: person.throws,
+      // No team the line leaves out for the reader.
+      teams: (teams.get(person.id) ?? []).filter(each =>
+        canSeeTeam(seen, each.teamId)
+      ),
+      affiliations: affiliations.get(person.id) ?? '',
+      tier: person.tier ?? 'league'
+    }
+  })
+}
 
 /**
  * Whether the typed words find a row the asker does not read in full: each
@@ -629,16 +479,19 @@ const wordsOf = (name: string | null): string[] =>
 export function shownMatches(
   words: readonly string[],
   shown: string,
-  row: Pick<CandidateRow, 'first_name' | 'last_name'>
+  row: { first_name: string | null; last_name: string | null }
 ): boolean {
-  const typed = words.map(fold)
+  // Split as the search splits what was typed: on spaces, hyphens and
+  // punctuation, so a hyphenated surname is its words.
+  const typed = words.flatMap(word => wordsOf(word))
   const label = wordsOf(shown)
   const onLabel = (word: string): boolean =>
     label.some(each => each.startsWith(word))
   if (typed.every(onLabel)) return true
-  const halves = [wordsOf(row.first_name), wordsOf(row.last_name)].filter(
-    half => half.length > 0
-  )
+  const halves = [
+    wordsOf(row.first_name ?? ''),
+    wordsOf(row.last_name ?? '')
+  ].filter(half => half.length > 0)
   if (halves.length < 2) return false
   const stored = halves.flat()
   return (
@@ -647,17 +500,6 @@ export function shownMatches(
       word => onLabel(word) || stored.some(part => part.startsWith(word))
     )
   )
-}
-
-/** Two pages' `readerNaming`, as one. */
-function joinNaming(a: ReaderNaming, b: ReaderNaming): ReaderNaming {
-  return {
-    names: new Map([...a.names, ...b.names]),
-    formats: new Map([...a.formats, ...b.formats]),
-    compact: new Map([...a.compact, ...b.compact]),
-    compactFormats: new Map([...a.compactFormats, ...b.compactFormats]),
-    readsFull: new Set([...a.readsFull, ...b.readsFull])
-  }
 }
 
 /**

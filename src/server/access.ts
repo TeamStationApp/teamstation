@@ -1495,7 +1495,8 @@ async function nameAuthority(
   actorUserId: string,
   playerUserIds: readonly string[],
   about: { isAdmin: boolean },
-  known: ReadonlyMap<string, OnePerson>
+  known: ReadonlyMap<string, OnePerson>,
+  grants?: FullNameGrants
 ): Promise<{
   allowed: Set<string>
   people: ReadonlyMap<string, OnePerson>
@@ -1509,10 +1510,9 @@ async function nameAuthority(
   const others = asked.filter(id => id !== actorUserId)
   if (others.length === 0) return { allowed, people: new Map() }
   const gathered = await onePeople(db, [
-    actorUserId,
+    ...(grants == null ? [actorUserId] : []),
     ...others.filter(id => known.get(id)?.userIds.includes(id) !== true)
   ])
-  const actor = gathered.get(actorUserId)!
   const players = new Map(
     others.map(id => [
       id,
@@ -1521,13 +1521,9 @@ async function nameAuthority(
         : gathered.get(id)!
     ])
   )
-  const links = await db
-    .selectFrom('user_links')
-    .select('related_user_id')
-    .where('user_id', '=', anyOf(actor.userIds))
-    .where('kind', 'in', ['guardian', 'family'])
-    .execute()
-  const children = new Set(links.map(row => row.related_user_id))
+  const children =
+    grants?.children ??
+    (await readerChildren(db, gathered.get(actorUserId)!.userIds))
   for (const [id, player] of players)
     if (
       player.userIds.includes(actorUserId) ||
@@ -1536,14 +1532,8 @@ async function nameAuthority(
       allowed.add(id)
   const remaining = [...players].filter(([id]) => !allowed.has(id))
   if (remaining.length === 0) return { allowed, people: players }
-  const scopes = await roleScopes(db, actorUserId, false)
-  const staffOf = [
-    ...new Set(
-      (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(
-        role => [...scopes[role].teamIds]
-      )
-    )
-  ]
+  const scopes = grants?.roles ?? (await roleScopes(db, actorUserId, false))
+  const staffOf = grants?.staffOf ?? staffTeams(scopes)
   if (staffOf.length === 0) return { allowed, people: players, roles: scopes }
   const rows = remaining.flatMap(([, player]) => player.userIds)
   const [plays, held] = await Promise.all([
@@ -1554,7 +1544,7 @@ async function nameAuthority(
       .where('is_player', '=', true)
       .where('team_id', '=', anyOf(staffOf))
       .execute(),
-    openAddsOf(db, staffOf)
+    grants?.staffHeld ?? openAddsOf(db, staffOf)
   ])
   const teamsByRow = new Map<string, string[]>()
   for (const play of plays) listUnder(teamsByRow, play.user_id, play.team_id)
@@ -1569,6 +1559,97 @@ async function nameAuthority(
     )
       allowed.add(id)
   return { allowed, people: players, roles: scopes }
+}
+
+/** The rows these rows are a guardian or family of, as linked. */
+async function readerChildren(
+  db: Kysely<Database>,
+  rows: readonly string[]
+): Promise<Set<string>> {
+  const links = await db
+    .selectFrom('user_links')
+    .select('related_user_id')
+    .where('user_id', '=', anyOf(rows))
+    .where('kind', 'in', ['guardian', 'family'])
+    .execute()
+  return new Set(links.map(row => row.related_user_id))
+}
+
+/** The teams a reader's staff roles reach, whose players they name in full. */
+function staffTeams(scopes: RoleScopes): string[] {
+  return [
+    ...new Set(
+      (['admin', 'coach', 'assistant', 'scorekeeper'] as const).flatMap(
+        role => [...scopes[role].teamIds]
+      )
+    )
+  ]
+}
+
+/**
+ * What `mayViewFullNames` reads about the reader alone, whoever it is asked
+ * about: their rows, the people they are a guardian or family of, their
+ * roles, the teams they are staff of and those teams' open adds, and whether
+ * their own account is open. A caller that names many lists for one reader
+ * in a short while (the search socket) reads these once with
+ * `fullNameGrants` and hands them back in; they are as fresh as that read.
+ */
+export interface FullNameGrants {
+  readerUserId: string
+  reader: OnePerson
+  children: ReadonlySet<string>
+  roles: RoleScopes
+  staffOf: readonly string[]
+  staffHeld: ReadonlyMap<string, Set<string>>
+  /** Open, not closed into another, and able to sign in. */
+  standing: boolean
+}
+
+/** `FullNameGrants` for this reader, in two round trips after their roles. */
+export async function fullNameGrants(
+  db: Kysely<Database>,
+  readerUserId: string
+): Promise<FullNameGrants> {
+  const [people, roles, standing] = await Promise.all([
+    onePeople(db, [readerUserId]),
+    roleScopes(db, readerUserId, false),
+    readerStanding(db, readerUserId)
+  ])
+  const reader = people.get(readerUserId)!
+  const staffOf = staffTeams(roles)
+  const [children, staffHeld] = await Promise.all([
+    readerChildren(db, reader.userIds),
+    staffOf.length === 0
+      ? new Map<string, Set<string>>()
+      : openAddsOf(db, staffOf)
+  ])
+  return {
+    readerUserId,
+    reader,
+    children,
+    roles,
+    staffOf,
+    staffHeld,
+    standing
+  }
+}
+
+/** Whether a reader's own account is open, not closed into another, and signs in. */
+async function readerStanding(
+  db: Kysely<Database>,
+  readerUserId: string
+): Promise<boolean> {
+  const standing = await db
+    .selectFrom('users')
+    .select(['disabled_at', 'merged_into', 'login_enabled'])
+    .where('id', '=', readerUserId)
+    .executeTakeFirst()
+  return (
+    standing != null &&
+    standing.disabled_at == null &&
+    standing.merged_into == null &&
+    standing.login_enabled
+  )
 }
 
 /**
@@ -1617,52 +1698,62 @@ export async function mayViewFullName(
  *
  * A fixed number of queries whatever the length of the list; `known` is
  * passed through to `mayEditNames`, and the rows and roles it read on the way
- * are reused.
+ * are reused. `grants`, this reader's `fullNameGrants`, saves reading what
+ * depends on the reader alone.
  */
 export async function mayViewFullNames(
   db: Kysely<Database>,
   readerUserId: string,
   userIds: readonly string[],
   about: { isAdmin: boolean },
-  known: ReadonlyMap<string, OnePerson> = new Map()
+  known: ReadonlyMap<string, OnePerson> = new Map(),
+  grants?: FullNameGrants
 ): Promise<Set<string>> {
-  const edit = await nameAuthority(db, readerUserId, userIds, about, known)
+  // Another reader's grants are nobody's here.
+  const own = grants?.readerUserId === readerUserId ? grants : undefined
+  // With the reader's grants in hand, whether the level rule can say yes is
+  // known before anybody is read: if it can, the people's levels are read
+  // while their edit rights are, for everybody but the reader, rather than
+  // after for whoever those leave.
+  let people = known
+  let speculated: ReturnType<typeof peopleListLevels> | undefined
+  const others = [...new Set(userIds)].filter(id => id !== readerUserId)
+  if (
+    own != null &&
+    !about.isAdmin &&
+    own.standing &&
+    managesAny(own.roles) &&
+    others.length > 0
+  ) {
+    const gathered = await onePeople(
+      db,
+      others.filter(id => known.get(id)?.userIds.includes(id) !== true)
+    )
+    people = new Map([...gathered, ...known])
+    speculated = peopleListLevels(db, others, people)
+    speculated.catch(() => undefined)
+  }
+  const edit = await nameAuthority(
+    db,
+    readerUserId,
+    userIds,
+    about,
+    people,
+    own
+  )
   const { allowed } = edit
   const asked = [...new Set(userIds)].filter(id => !allowed.has(id))
   if (asked.length === 0) return allowed
 
-  const standing = await db
-    .selectFrom('users')
-    .select(['is_admin', 'disabled_at', 'merged_into', 'login_enabled'])
-    .where('id', '=', readerUserId)
-    .executeTakeFirst()
-  if (
-    standing == null ||
-    standing.disabled_at != null ||
-    standing.merged_into != null ||
-    !standing.login_enabled
-  )
+  if (!(own?.standing ?? (await readerStanding(db, readerUserId))))
     return allowed
-  const roles = edit.roles ?? (await roleScopes(db, readerUserId, false))
-  const manages = emptyScopes()
-  for (const role of ['admin', 'coach', 'assistant'] as const)
-    for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const)
-      for (const id of roles[role][key]) manages[key].add(id)
-  if (
-    manages.leagueIds.size === 0 &&
-    manages.seasonIds.size === 0 &&
-    manages.teamIds.size === 0
-  )
-    return allowed
+  const roles =
+    own?.roles ?? edit.roles ?? (await roleScopes(db, readerUserId, false))
+  if (!managesAny(roles)) return allowed
+  const manages = managedScopes(roles)
 
-  const levels = await peopleListLevels(
-    db,
-    asked,
-    new Map([...edit.people, ...known])
-  )
-  const external = await externalCustodians(db, [
-    ...new Set([...levels.values()].flatMap(level => [...level.teamIds]))
-  ])
+  const { levels, external } = await (speculated ??
+    peopleListLevels(db, asked, new Map([...edit.people, ...known])))
   const administers = (custodian: Custodian): boolean =>
     custodian.type === 'league'
       ? roles.admin.leagueIds.has(custodian.id)
@@ -1684,6 +1775,25 @@ export async function mayViewFullNames(
     if (managed) allowed.add(id)
   }
   return allowed
+}
+
+/** The leagues, seasons and teams a reader manages people on. */
+function managedScopes(roles: RoleScopes): ScopeSet {
+  const manages = emptyScopes()
+  for (const role of ['admin', 'coach', 'assistant'] as const)
+    for (const key of ['leagueIds', 'seasonIds', 'teamIds'] as const)
+      for (const id of roles[role][key]) manages[key].add(id)
+  return manages
+}
+
+/** Whether a reader manages people anywhere. */
+function managesAny(roles: RoleScopes): boolean {
+  const manages = managedScopes(roles)
+  return (
+    manages.leagueIds.size > 0 ||
+    manages.seasonIds.size > 0 ||
+    manages.teamIds.size > 0
+  )
 }
 
 /**
@@ -1789,7 +1899,7 @@ export async function mayViewFullNameOf(
   if (manages.size === 0) return allowed
   const level = (
     await peopleListLevels(db, [userId], new Map([[userId, person]]))
-  ).get(userId)!
+  ).levels.get(userId)!
   const external = await externalCustodians(db, [...level.teamIds])
   for (const [id, scopes] of manages) {
     const admin = roles.get(id)!.admin
@@ -1971,12 +2081,18 @@ interface ListLevels extends ScopeSet {
  * above it would carry them down, unless something the add did not bring put
  * them on it: a role on it, or a settled player of it they guard. Somebody
  * the add found on the team already stays where they were.
+ *
+ * With them, the custodian of each external team any of those levels holds
+ * (`externalCustodians`), and maybe of a few more.
  */
 async function peopleListLevels(
   db: Kysely<Database>,
   asked: readonly string[],
   known: ReadonlyMap<string, OnePerson>
-): Promise<Map<string, ListLevels>> {
+): Promise<{
+  levels: Map<string, ListLevels>
+  external: Map<string, Custodian>
+}> {
   const gathered = await onePeople(
     db,
     asked.filter(id => known.get(id)?.userIds.includes(id) !== true)
@@ -2084,7 +2200,10 @@ async function peopleListLevels(
     }
     belongs.set(id, set)
   }
-  await inheritSets(db, [...belongs.values()])
+  // Carried down while the teams below are read: `belongs` is filled in
+  // place, and read only once both are done.
+  const inherited = inheritSets(db, [...belongs.values()])
+  inherited.catch(() => undefined)
 
   const followedTeams = followRows
     .filter(row => row.group_type === 'team')
@@ -2095,25 +2214,49 @@ async function peopleListLevels(
   const teamIds = [
     ...new Set([...memberships.map(row => row.team_id), ...followedTeams])
   ]
-  const teams =
+  // The levels above every team a membership names are read with the
+  // teams: those they play on are among them.
+  const [teams, parents] =
     teamIds.length === 0
-      ? []
-      : await db
-          .selectFrom('teams')
-          .select(['id', 'league_id', 'merged_into'])
-          .where('id', '=', anyOf(teamIds))
-          .execute()
+      ? [[], []]
+      : await Promise.all([
+          db
+            .selectFrom('teams')
+            .select(['id', 'league_id', 'merged_into'])
+            .where('id', '=', anyOf(teamIds))
+            .execute(),
+          db
+            .selectFrom(permissionParents(db))
+            .innerJoin('seasons', 'seasons.id', 'permission_parents.season_id')
+            .select([
+              'permission_parents.team_id',
+              'permission_parents.season_id',
+              'seasons.league_id'
+            ])
+            .where('permission_parents.team_id', '=', anyOf(teamIds))
+            .execute()
+        ])
   const teamOf = new Map(teams.map(team => [team.id, team]))
   const openTeams = teams
     .filter(team => team.merged_into == null)
     .map(team => team.id)
+  await inherited
   // Every open add keeps its membership from settling them, and so what it
   // carries up and to their family; only the adds that brought somebody to a
   // team take it off their levels: one who was on it already, in another
-  // role, stays where they were (`openArrivalsOf`).
-  const [held, arrived] = await Promise.all([
+  // role, stays where they were (`openArrivalsOf`). The custodians are read
+  // beside them, of every team a level could hold: the teams carried down,
+  // the teams read here and the teams those were closed into.
+  const [held, arrived, external] = await Promise.all([
     openAddsOf(db, openTeams),
-    openArrivalsOf(db, openTeams)
+    openArrivalsOf(db, openTeams),
+    externalCustodians(db, [
+      ...new Set([
+        ...[...belongs.values()].flatMap(set => [...set.teamIds]),
+        ...teamIds,
+        ...teams.flatMap(team => team.merged_into ?? [])
+      ])
+    ])
   ])
   const holds = (
     by: ReadonlyMap<string, Set<string>>,
@@ -2146,24 +2289,6 @@ async function peopleListLevels(
       : (guarded.get(id) ?? []).flatMap(child => settledOn(child.userIds, true))
     playing.set(id, { own: settledOn(person.userIds, true), children })
   }
-  const played = [
-    ...new Set(
-      [...playing.values()].flatMap(each => [...each.own, ...each.children])
-    )
-  ]
-  const parents =
-    played.length === 0
-      ? []
-      : await db
-          .selectFrom(permissionParents(db))
-          .innerJoin('seasons', 'seasons.id', 'permission_parents.season_id')
-          .select([
-            'permission_parents.team_id',
-            'permission_parents.season_id',
-            'seasons.league_id'
-          ])
-          .where('permission_parents.team_id', '=', anyOf(played))
-          .execute()
   const above = new Map<string, Array<(typeof parents)[number]>>()
   for (const row of parents) {
     const list = above.get(row.team_id)
@@ -2216,7 +2341,7 @@ async function peopleListLevels(
       if (!kept.has(team)) level.teamIds.delete(team)
     levels.set(id, level)
   }
-  return levels
+  return { levels, external }
 }
 
 /** Whose administrators manage an external team's people. */

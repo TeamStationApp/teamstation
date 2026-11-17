@@ -105,6 +105,43 @@ describe('person affiliations', function () {
     )
   })
 
+  it('fits a line into a budget: guardian links first, then teams, each name cut, the rest counted', function () {
+    const teams = Array.from({ length: 40 }, (_, at) => `Demo Team ${at}`)
+    const line = affiliationText(teams, ['Cody D'], ['Tim R'], [], [], 120)
+    expect(line.length).most(120)
+    expect(line).match(/^Guardian of Cody D · Guardians: Tim R · Demo Team 0, /)
+    expect(line).match(/, \+\d+ more$/)
+    // A name longer than 80 ends in an ellipsis.
+    expect(
+      affiliationText([`Long ${'L'.repeat(100)}`], [], [], [], [], 500)
+    ).equals(`Long ${'L'.repeat(74)}…`)
+    // A part that cannot fit at all is counted with what follows it.
+    const crowded = affiliationText(
+      ['Demo Hawks', 'Demo Owls'],
+      Array.from({ length: 20 }, (_, at) => `Child ${at}`),
+      [],
+      [],
+      [],
+      60
+    )
+    expect(crowded.length).most(60)
+    expect(crowded).match(/^Guardian of Child 0, .*\+\d+ more · \+2 more$/)
+    expect(
+      affiliationText(
+        ['Demo Hawks', 'Demo Owls'],
+        Array.from({ length: 20 }, (_, at) => `Child ${at}`),
+        [],
+        [],
+        [],
+        20
+      )
+    ).equals('+22 more')
+    // A line that fits is whole.
+    expect(affiliationText(['Demo Hawks'], ['Cody D'], [], [], [], 500)).equals(
+      'Guardian of Cody D · Demo Hawks'
+    )
+  })
+
   it('names family by a family link after the guardians, by the same rules', async function () {
     // Rod is family of Alfonso, on no level of his own.
     await insertFixtureUsers(f.h.db, {

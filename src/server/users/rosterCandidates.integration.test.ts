@@ -7,6 +7,7 @@ import { after, before, describe, it } from 'mocha'
 import { Pool } from 'pg'
 
 import { makeId } from '../../common/ids'
+import { SEARCH_RESULTS_MAX } from '../../common/search/types'
 import { migrations } from '../../migrate/migrations'
 import { migrateUp } from '../../migrate/runner'
 import { testDatabaseUrl } from '../../migrate/testDatabase'
@@ -17,23 +18,26 @@ import { jsonBody } from '../jsonBody'
 import { withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import { userRoutes } from '../routes/users'
+import { searchJev, searchOnce } from '../search/engine'
+import { gather, PEOPLE_ONLY_MAX, PER_KIND } from '../search/gather'
 import { ensureGumboId, insertUser } from './insertUser'
 import { mintUserId } from './mintUserId'
 import { runSpoken } from './readerNames'
 import {
   CANDIDATE_LIMIT,
-  CANDIDATE_SCAN,
-  CANDIDATE_SCAN_BATCH,
-  rosterCandidates
+  rosterCandidates,
+  shownMatches
 } from './rosterCandidates'
 
 /**
  * `GET /users?forTeam=`, through the real router.
  *
- * The coach coaches the Falcons and is a member of the Owls. The Falcons play
- * the Herons in the current Fall season of the Ridgeview league. The Bears are
- * in that season too, the Hawks in the league's other season, the Pirates only
- * in a season that ended yesterday, and the Gulls and Mets in another league.
+ * The coach coaches the Falcons and is a member of the Owls, which are in no
+ * league. The Falcons play the Herons in the current Fall season of the
+ * Ridgeview league. The Bears are in that season too, the Hawks in the
+ * league's other season, the Pirates only in a season that ended yesterday,
+ * and the Gulls and Mets in another league, outside the coach's reach: their
+ * players are outsiders to him, whom no search finds.
  */
 const adminUrl = testDatabaseUrl
 const scratchName = `teamstation_candidates_${process.pid}_${Date.now()}`
@@ -63,6 +67,15 @@ const team = {
   mets: 'tem_candMets'
 }
 const GAME = 'gam_candGame'
+/** Media settings for the engine's search, which reads no image. */
+const SPACE = {
+  endpoint: 'https://media.example.test',
+  region: 'test',
+  bucket: 'synthetic-images',
+  accessKeyId: '00000000000000000000',
+  secretAccessKey: '0000000000000000000000000000000000000000',
+  pathStyle: true
+}
 
 describe('roster candidates', function () {
   this.timeout(60000)
@@ -160,7 +173,7 @@ describe('roster candidates', function () {
           name: 'Lakeside Herons',
           league_id: 'lea_candRidgeview'
         },
-        { id: team.owls, name: 'Ridgeview Owls', league_id: 'lea_candCoastal' },
+        { id: team.owls, name: 'Ridgeview Owls' },
         {
           id: team.bears,
           name: 'Valley Bears',
@@ -366,6 +379,10 @@ describe('roster candidates', function () {
   it('ranks the asker’s own teams, the game’s season, then the league, and leaves the team and the game out', async function () {
     const answer = await ask(COACH, { forTeam: team.falcons, forGame: GAME })
     expect(answer.status).equals(200)
+    // The players in the coach's reach, each tier by name. The coach
+    // himself and the Falcons' viewer, who hold places on his teams, and the
+    // Herons' scorekeeper, on a team of the game's season, play nowhere and
+    // are not offered.
     expect(
       answer.body.map((row: any) => [row.shortName, row.tier])
     ).deep.equals([
@@ -387,7 +404,14 @@ describe('roster candidates', function () {
       'Clayton Kershaw',
       'Pete Alonso',
       'Aaron Judge (old)',
-      'Herons A'
+      'Herons A',
+      // Members of teams in the reach who play on none of them.
+      'Dave Roberts',
+      'Oliver Marmol',
+      'Tony Kemp',
+      // On the Gulls and the Mets, of a league outside the coach's reach.
+      'José Ramírez',
+      'Page Player00'
     ])
       expect(ids).not.includes(id(left))
   })
@@ -403,36 +427,37 @@ describe('roster candidates', function () {
     expect(names(answer.body)).not.includes('Clayton K')
   })
 
-  it('lists people with no tie only once three letters are typed', async function () {
+  it('finds people in the reach from two letters, and nobody outside it however much is typed', async function () {
+    // Max Fried plays in the Falcons' league: two letters find him.
     const two = await ask(COACH, {
       forTeam: team.falcons,
       forGame: GAME,
-      q: 'jo'
+      q: 'ma'
     })
-    expect(names(two.body)).deep.equals([])
-    const three = await ask(COACH, {
-      forTeam: team.falcons,
-      forGame: GAME,
-      q: 'jos'
-    })
-    expect(three.body.map((row: any) => [row.shortName, row.tier])).deep.equals(
-      [['José R', 'other']]
-    )
-    const accented = await ask(COACH, {
-      forTeam: team.falcons,
-      forGame: GAME,
-      q: 'josé'
-    })
-    const plain = await ask(COACH, {
-      forTeam: team.falcons,
-      forGame: GAME,
-      q: 'JOSE'
-    })
-    expect(names(accented.body)).deep.equals(['José R'])
-    expect(names(plain.body)).deep.equals(['José R'])
+    expect(two.body.map((row: any) => [row.shortName, row.tier])).deep.equals([
+      ['Max F', 'league']
+    ])
+    // José Ramírez plays only for the Gulls, of another league: once three
+    // letters were typed he was found as a stranger, and now never is.
+    for (const q of [
+      'jo',
+      'jos',
+      'josé',
+      'JOSE',
+      'jose ramirez',
+      'José Ramírez',
+      'j j j',
+      'ab a'
+    ])
+      expect(
+        names(
+          (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q })).body
+        ).filter(name => name.startsWith('Jos')),
+        q
+      ).deep.equals([])
   })
 
-  it('lists a full account that plays for no team, as a stranger or as the guardian’s own', async function () {
+  it('lists a full account that plays for no team only as the guardian’s own', async function () {
     const d = db!
     const account = async (
       name: string,
@@ -475,19 +500,16 @@ describe('roster candidates', function () {
       .executeTakeFirstOrThrow()
     const link = makeId('userLink')
     try {
-      // Two letters name nobody with no tie; three find the full account,
-      // and neither a password-only, a switched-off nor a deleted one.
-      const two = await ask(COACH, { forTeam: team.falcons, q: 'ra' })
-      expect(names(two.body)).not.includes('Rafael D')
-      const three = await ask(COACH, { forTeam: team.falcons, q: 'raf' })
-      expect(three.status).equals(200)
-      expect(
-        three.body.map((row: any) => [row.shortName, row.tier, row.teams])
-      ).deep.equals([['Rafael D', 'other', []]])
-      const ids = three.body.map((row: any) => row.userId)
-      expect(ids).not.includes(montero)
-      expect(ids).not.includes(palmeiro)
-      expect(ids).not.includes(furcal)
+      // A full account with no tie was found once three letters were typed;
+      // now it is outside the reach, as a password-only, a switched-off and
+      // a deleted one are.
+      for (const q of ['ra', 'raf', 'rafael', 'rafael devers']) {
+        const answer = await ask(COACH, { forTeam: team.falcons, q })
+        expect(answer.status).equals(200)
+        const ids = answer.body.map((row: any) => row.userId)
+        for (const nobody of [devers, montero, palmeiro, furcal])
+          expect(ids, q).not.includes(nobody)
+      }
       // Not with nothing typed, until the coach is Harper's guardian.
       const before = await ask(COACH, { forTeam: team.falcons })
       expect(before.body.map((row: any) => row.userId)).not.includes(harper)
@@ -505,6 +527,11 @@ describe('roster candidates', function () {
         guarded.body.find((row: any) => row.userId === harper)?.tier
       ).equals('mine')
       expect(guarded.body.map((row: any) => row.userId)).not.includes(devers)
+      // And by what is typed.
+      const typed = await ask(COACH, { forTeam: team.falcons, q: 'bry' })
+      expect(
+        typed.body.map((row: any) => [row.userId, row.tier, row.teams])
+      ).deep.equals([[harper, 'mine', []]])
     } finally {
       await d.deleteFrom('user_links').where('id', '=', link).execute()
       await d
@@ -590,36 +617,22 @@ describe('roster candidates', function () {
     }
   })
 
-  it('takes wildcards as the characters they are, and counts only letters and digits toward a stranger', async function () {
-    for (const q of ['%%%', '___', '%', '\\%', 'r_m'])
+  it('takes wildcards as the characters they are, and text with no letters or digits as finding nobody', async function () {
+    for (const q of ['%%%', '___', '%', '\\%', '-'])
       expect(
         names(
           (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q })).body
         ),
         q
       ).deep.equals([])
-    // Punctuation does not make up the three letters a stranger needs.
-    expect(
-      names(
-        (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q: 'ra-' }))
-          .body
-      )
-    ).deep.equals([])
   })
 
-  it('counts no word that starts another toward a stranger', async function () {
-    for (const q of ['j j j', 'a a a', 'ab a'])
-      expect(
-        names((await ask(COACH, { forTeam: team.falcons, q })).body).filter(
-          name => name.startsWith('Jos')
-        ),
-        q
-      ).deep.equals([])
-  })
-
-  it('matches the start of every word typed', async function () {
+  it('ranks first whoever matches the most words typed', async function () {
+    // The engine's lexicographic order: Mookie B matches both words, the
+    // rest one each.
     const both = await ask(COACH, { forTeam: team.falcons, q: 'mo  b' })
-    expect(names(both.body)).deep.equals(['Mookie B'])
+    expect(names(both.body)[0]).equals('Mookie B')
+    expect(names(both.body)).includes('Corbin B')
     const cody = await ask(COACH, { forTeam: team.falcons, q: 'cody' })
     expect(cody.body.map((row: any) => row.shortParts)).deep.equals([
       { first: 'Cody', last: 'B' },
@@ -628,8 +641,8 @@ describe('roster candidates', function () {
   })
 
   it('finds nobody the asker reads short by a surname the row hides', async function () {
-    // The coach reads Mookie (his own Owls) and José (a stranger) short.
-    for (const q of ['bet', 'betts', 'ramírez', 'ram'])
+    // The coach reads Mookie (his own Owls) and Corbin (in the season) short.
+    for (const q of ['bet', 'betts', 'burnes', 'bur'])
       expect(
         names(
           (await ask(COACH, { forTeam: team.falcons, forGame: GAME, q })).body
@@ -643,16 +656,81 @@ describe('roster candidates', function () {
     })
     expect(names(mookie.body)).deep.equals(['Mookie B'])
     expect(JSON.stringify(mookie.body)).not.includes('Betts')
-    const jose = await ask(COACH, {
+    const corbin = await ask(COACH, {
       forTeam: team.falcons,
       forGame: GAME,
-      q: 'jose ramirez'
+      q: 'corbin burnes'
     })
-    expect(names(jose.body)).deep.equals(['José R'])
-    // A half typed whole beside the other's start is still the surname alone.
-    expect(
-      names((await ask(COACH, { forTeam: team.falcons, q: 'mo betts' })).body)
-    ).deep.equals([])
+    expect(names(corbin.body)).deep.equals(['Corbin B'])
+    // A half typed whole beside the other's start finds whom the start alone
+    // finds: the surname confirms nothing.
+    const mo = await ask(COACH, { forTeam: team.falcons, q: 'mo' })
+    const moBetts = await ask(COACH, { forTeam: team.falcons, q: 'mo betts' })
+    expect(names(moBetts.body)).deep.equals(names(mo.body))
+    expect(JSON.stringify(moBetts.body)).not.includes('Betts')
+  })
+
+  it('finds a hidden hyphenated surname typed whole with the first name', async function () {
+    // The coach reads him short, on the Bears in the Falcons' season.
+    const ikf = await person('Isiah Kiner-Falefa', { teamId: team.bears })
+    try {
+      for (const q of ['isiah kiner-falefa', 'Isiah Kiner Falefa']) {
+        const found = await ask(COACH, { forTeam: team.falcons, q })
+        expect(names(found.body), q).deep.equals(['Isiah K'])
+        expect(JSON.stringify(found.body)).not.includes('Falefa')
+      }
+      // Half the surname confirms nothing.
+      const half = await ask(COACH, {
+        forTeam: team.falcons,
+        q: 'isiah falefa'
+      })
+      expect(names(half.body)).deep.equals(
+        names((await ask(COACH, { forTeam: team.falcons, q: 'isiah' })).body)
+      )
+      // Typed whole, every word found him, the surname's halves too: the
+      // words the phone keeps to find him again.
+      const engine = await searchOnce(
+        db!,
+        { userId: id('Dave Roberts'), isAdmin: false, scopes: [] },
+        {
+          text: 'isiah kiner-falefa',
+          location: null,
+          mode: 'people',
+          forTeam: team.falcons
+        },
+        { space: SPACE, jevBaseUrl: 'http://jev.example.test' }
+      )
+      expect(
+        engine.results.map(result =>
+          result.kind === 'person' ? result.roster?.matched : undefined
+        )
+      ).deep.equals([['isiah', 'kiner', 'falefa']])
+      // The route says the same, and only the words that found each row: a
+      // search keeps anybody any one typed word found.
+      const whole = await ask(COACH, {
+        forTeam: team.falcons,
+        q: 'isiah kiner-falefa'
+      })
+      expect(
+        (whole.body as Array<{ userId: string; matched?: string[] }>).map(
+          row => [row.userId, row.matched]
+        )
+      ).deep.equals([[ikf, ['isiah', 'kiner', 'falefa']]])
+      const halfRows = half.body as Array<{
+        userId: string
+        matched?: string[]
+      }>
+      expect(halfRows.find(row => row.userId === ikf)?.matched).deep.equals([
+        'isiah'
+      ])
+      const stored = { first_name: 'Isiah', last_name: 'Kiner-Falefa' }
+      expect(shownMatches(['kiner', 'falefa', 'isiah'], 'I K', stored)).equals(
+        true
+      )
+      expect(shownMatches(['kiner', 'isiah'], 'I K', stored)).equals(false)
+    } finally {
+      await db!.deleteFrom('memberships').where('user_id', '=', ikf).execute()
+    }
   })
 
   it('reads on past rows a hidden surname found, to fill the answer', async function () {
@@ -676,8 +754,8 @@ describe('roster candidates', function () {
     }
   })
 
-  /** Strangers on the Gulls, put in at once: a user and a membership each. */
-  async function strangers(names: string[]): Promise<string[]> {
+  /** Players on the Bears, put in at once: a user and a membership each. */
+  async function bears(names: string[]): Promise<string[]> {
     const rows = names.map(name => {
       const [first, ...rest] = name.split(' ')
       return {
@@ -694,7 +772,7 @@ describe('roster candidates', function () {
         rows.map(row => ({
           id: makeId('membership'),
           user_id: row.id,
-          team_id: team.gulls,
+          team_id: team.bears,
           role: 'member' as const,
           is_player: true
         }))
@@ -703,52 +781,70 @@ describe('roster candidates', function () {
     return rows.map(row => row.id)
   }
 
-  it('finds a stranger named John past hidden Johnsons in one answer, and stops at the scan bound', async function () {
-    // Strangers on the Gulls, read short by the coach: every Davey… Johnson
-    // sorts ahead of John Smoltz and is found by his hidden surname alone.
-    const hidden = await strangers(
+  it('finds John past a thousand hidden Johnsons in one answer', async function () {
+    // Bears, in the Falcons' season, read short by the coach: every Davey…
+    // Johnson holds "john" in his hidden surname, and none is found by it.
+    const hidden = await bears(
       Array.from(
-        { length: 95 },
+        { length: 1095 },
         (_, index) => `Davey${String(index).padStart(4, '0')} Johnson`
       )
     )
-    const john = await person('John Smoltz', { teamId: team.gulls })
-    let reads = 0
-    const counted = db!.withPlugin({
-      transformQuery: args => {
-        const node = args.node as { kind: string; sqlFragments?: string[] }
-        if (
-          node.kind === 'RawNode' &&
-          node.sqlFragments?.join('').includes('cursor_user') === true
-        )
-          reads++
-        return args.node
-      },
-      transformResult: async args => await Promise.resolve(args.result)
-    })
-    const actor = { userId: id('Dave Roberts'), isAdmin: false, scopes: [] }
+    const john = await person('John Smoltz', { teamId: team.bears })
     try {
       const answer = await ask(COACH, { forTeam: team.falcons, q: 'john' })
       expect(answer.status).equals(200)
       expect(answer.body.map((row: any) => row.userId)).deep.equals([john])
       expect(JSON.stringify(answer.body)).not.includes('Johnson')
-      // A thousand more ahead of him: the search reads its bound of matches
-      // and answers what it kept by then.
-      hidden.push(
-        ...(await strangers(
-          Array.from(
-            { length: CANDIDATE_SCAN },
-            (_, index) => `Davey${String(index + 95).padStart(4, '0')} Johnson`
-          )
-        ))
+    } finally {
+      await db!
+        .deleteFrom('memberships')
+        .where('user_id', 'in', [...hidden, john])
+        .execute()
+    }
+  })
+
+  it('reads on, a page at a time, past three hundred rows a hidden surname found first', async function () {
+    // Bears, read short by the coach, whose shorter names the prefilter
+    // ranks first: each A… Johnson holds "john" only in his hidden surname.
+    const hidden = await bears(
+      Array.from(
+        { length: 300 },
+        (_, index) => `A${String(index).padStart(3, '0')} Johnson`
       )
-      const bounded = await rosterCandidates(counted, actor, {
-        teamId: team.falcons,
-        q: 'john',
-        limit: CANDIDATE_LIMIT.max
-      })
-      expect(bounded).deep.equals([])
-      expect(reads).equals(CANDIDATE_SCAN / CANDIDATE_SCAN_BATCH)
+    )
+    // John plays for the coach's own Owls, whose name his line shows.
+    const john = await person('John Mayberry', { teamId: team.owls })
+    try {
+      const answer = await ask(COACH, { forTeam: team.falcons, q: 'john' })
+      expect(answer.status).equals(200)
+      expect(answer.body.map((row: any) => row.userId)).deep.equals([john])
+      // The search socket's people, in mode all, read on the same way.
+      const socket = await searchOnce(
+        db!,
+        { userId: id('Dave Roberts'), isAdmin: false, scopes: [] },
+        { text: 'john', location: null, mode: 'all' },
+        { space: SPACE, jevBaseUrl: 'http://jev.example.test' }
+      )
+      expect(
+        socket.results.flatMap(row =>
+          row.kind === 'person' ? [row.userId] : []
+        )
+      ).deep.equals([john])
+      // His line is read though he came after the rows it was started for.
+      const line = socket.results.find(row => row.kind === 'person')
+      expect(line?.associations).includes('Owls')
+      // Affiliations start for the first twenty rows alone, not every row
+      // read: the twenty the search would answer were none hidden.
+      const handed: string[][] = []
+      await gather(
+        db!,
+        { userId: id('Dave Roberts'), isAdmin: false, scopes: [] },
+        { text: 'john', location: null, mode: 'all' },
+        { onPeople: ({ ids }) => handed.push(ids) }
+      )
+      expect(handed.map(ids => ids.length)).deep.equals([PER_KIND])
+      expect(handed[0]).not.includes(john)
     } finally {
       await db!
         .deleteFrom('memberships')
@@ -758,21 +854,21 @@ describe('roster candidates', function () {
   })
 
   it('sends no team the reader may not see, in teams or on the line', async function () {
-    // José Ramírez, a stranger to the coach, plays for the Gulls, which are
-    // not the coach's to see.
+    // Max Fried, in the Falcons' league, plays for the Hawks, which are not
+    // the coach's to see.
     const answer = await ask(COACH, {
       forTeam: team.falcons,
       forGame: GAME,
-      q: 'jos'
+      q: 'max'
     })
     expect(answer.body.map((row: any) => row.userId)).deep.equals([
-      id('José Ramírez')
+      id('Max Fried')
     ])
     const [row] = answer.body
-    expect(row.tier).equals('other')
+    expect(row.tier).equals('league')
     expect(row.teams).deep.equals([])
     expect(row.affiliations).equals('')
-    expect(JSON.stringify(answer.body)).not.includes('Coastal Gulls')
+    expect(JSON.stringify(answer.body)).not.includes('Hillcrest Hawks')
   })
 
   it('sends nothing about a person but the card, with teams in a current or future season', async function () {
@@ -816,6 +912,7 @@ describe('roster candidates', function () {
         'cursor',
         'externalIds',
         'gumboId',
+        'matched',
         'shortName',
         'shortParts',
         'teams',
@@ -824,6 +921,8 @@ describe('roster candidates', function () {
         'userId'
       ].sort()
     )
+    // The typed word that found the person, folded: nothing else of theirs.
+    expect(row.matched).deep.equals(['jos'])
     expect(row).to.include({
       bats: 'right',
       throws: 'left',
@@ -866,13 +965,13 @@ describe('roster candidates', function () {
       expect(mookie.body.map((row: any) => row.affiliations)).deep.equals([
         'Guardians: Bob M'
       ])
-      // The Gulls are not the coach's to see.
-      const ramirez = await ask(COACH, {
+      // The Hawks are not the coach's to see.
+      const fried = await ask(COACH, {
         forTeam: team.falcons,
         forGame: GAME,
-        q: 'jos'
+        q: 'max'
       })
-      expect(ramirez.body.map((row: any) => row.affiliations)).deep.equals([''])
+      expect(fried.body.map((row: any) => row.affiliations)).deep.equals([''])
     } finally {
       await db!.deleteFrom('user_links').where('id', '=', link).execute()
     }
@@ -915,6 +1014,7 @@ describe('roster candidates', function () {
   it('sends the public label beside a name full only for the asker', async function () {
     // Coaching the Owls too, the coach reads their players in full.
     const role = makeId('scopeRole')
+    const hawk = makeId('membership')
     await db!
       .insertInto('scope_roles')
       .values({
@@ -940,13 +1040,25 @@ describe('roster candidates', function () {
         first: 'Mookie',
         last: 'B'
       })
-      // Nobody else is told more than the public label.
+      // Nobody else is told more than the public label: on the Hawks too,
+      // Mookie is in the Herons' league, inside their scorekeeper's reach.
+      await db!
+        .insertInto('memberships')
+        .values({
+          id: hawk,
+          user_id: id('Mookie Betts'),
+          team_id: team.hawks,
+          role: 'member',
+          is_player: true
+        })
+        .execute()
       const other = await ask(HERON_SCORER, { forTeam: team.herons, q: 'mook' })
       expect(other.body[0]).to.include({ shortName: 'Mookie B' })
       expect(other.body[0]).not.have.property('compactName')
       expect(other.body[0]).not.have.property('nameFormat')
     } finally {
       await db!.deleteFrom('scope_roles').where('id', '=', role).execute()
+      await db!.deleteFrom('memberships').where('id', '=', hawk).execute()
     }
   })
 
@@ -993,48 +1105,62 @@ describe('roster candidates', function () {
     }
   })
 
-  it('answers at most a hundred, fewer when a capped request’s limit asks, and nothing to a request with after', async function () {
-    // Sixty-five Page Players on the Mets, and forty more.
-    // An installed build asks for thirty, draws no capped notice, and pages
-    // on with after, which answers nothing: it is answered every match.
-    const uncapped = await ask(COACH, {
-      forTeam: team.falcons,
-      q: 'page',
-      limit: '30'
-    })
-    expect(uncapped.status).equals(200)
-    expect(uncapped.body).length(65)
-    const more = []
-    for (let index = 65; index < 105; index++)
-      more.push(
-        await person(`Page Player${String(index).padStart(3, '0')}`, {
-          teamId: team.mets
-        })
-      )
+  it('answers up to the hundred an installed build asks for, fewer when a capped request’s limit asks, and nothing to a request with after; the socket shows fifty', async function () {
+    let extra: string[] = ['usr_none']
+    // Sixty-five Page Players on the Mets, brought into the coach's reach.
+    await db!
+      .updateTable('teams')
+      .set({ league_id: 'lea_candRidgeview' })
+      .where('id', '=', team.mets)
+      .execute()
     try {
-      const all = await ask(COACH, { forTeam: team.falcons, q: 'page' })
-      expect(all.status).equals(200)
-      expect(all.body).length(CANDIDATE_LIMIT.max)
-      expect(new Set(all.body.map((row: any) => row.userId)).size).equals(100)
-      expect(all.body.every((row: any) => row.cursor === '')).equals(true)
-      const thirty = await ask(COACH, {
+      // An installed build asks for thirty, draws no capped notice, and pages
+      // on with after, which answers nothing: it is answered the whole list.
+      const uncapped = await ask(COACH, {
+        forTeam: team.falcons,
+        q: 'page',
+        limit: '30'
+      })
+      expect(uncapped.status).equals(200)
+      expect(uncapped.body).length(65)
+      expect(new Set(uncapped.body.map((row: any) => row.userId)).size).equals(
+        65
+      )
+      expect(uncapped.body.every((row: any) => row.cursor === '')).equals(true)
+      // The search socket gathers all sixty-five and shows the first fifty.
+      const socket = await searchOnce(
+        db!,
+        { userId: id('Dave Roberts'), isAdmin: false, scopes: [] },
+        { text: 'page', location: null, mode: 'people', forTeam: team.falcons },
+        {
+          space: {
+            endpoint: 'https://media.example.test',
+            region: 'test',
+            bucket: 'synthetic-images',
+            accessKeyId: '00000000000000000000',
+            secretAccessKey: '0000000000000000000000000000000000000000',
+            pathStyle: true
+          },
+          jevBaseUrl: 'http://jev.example.test'
+        }
+      )
+      expect(socket.context.ordered).length(65)
+      expect(
+        socket.results.map(row => (row.kind === 'person' ? row.userId : ''))
+      ).deep.equals(
+        uncapped.body.slice(0, SEARCH_RESULTS_MAX).map((row: any) => row.userId)
+      )
+      const ten = await ask(COACH, {
         forTeam: team.falcons,
         q: 'page',
         capped: '1',
-        limit: '30'
+        limit: '10'
       })
-      expect(thirty.body.map((row: any) => row.userId)).deep.equals(
-        all.body.slice(0, 30).map((row: any) => row.userId)
+      expect(ten.body.map((row: any) => row.userId)).deep.equals(
+        uncapped.body.slice(0, 10).map((row: any) => row.userId)
       )
-      // An unmarked limit below the cap is answered whole.
-      const installed = await ask(COACH, {
-        forTeam: team.falcons,
-        q: 'page',
-        limit: '30'
-      })
-      expect(installed.body).length(CANDIDATE_LIMIT.max)
       // An installed build scrolling on from its last row stops there.
-      for (const after of ['', 'eyJ0aWVyIjozfQ', all.body[29].userId]) {
+      for (const after of ['', 'eyJ0aWVyIjozfQ', uncapped.body[9].userId]) {
         const scrolled = await ask(COACH, {
           forTeam: team.falcons,
           q: 'page',
@@ -1044,9 +1170,145 @@ describe('roster candidates', function () {
         expect(scrolled.status).equals(200)
         expect(scrolled.body).deep.equals([])
       }
+      // Even scrolling on, a team the asker may not add to is refused.
+      const refused = await ask(VIEWER, { forTeam: team.falcons, after: '' })
+      expect(refused.status).equals(403)
+      // Forty more Page players on the Bears: an installed build asking for
+      // a hundred, capped, gets a hundred, and tells the user more may match.
+      extra = await bears(
+        Array.from(
+          { length: 40 },
+          (_, index) => `Page Extra${String(index).padStart(2, '0')}`
+        )
+      )
+      const asks: Array<Record<string, string>> = [
+        { capped: '1', limit: '100' },
+        { capped: '1' },
+        { limit: '30' }
+      ]
+      for (const more of asks) {
+        const full = await ask(COACH, {
+          forTeam: team.falcons,
+          q: 'page',
+          ...more
+        })
+        expect(full.body, JSON.stringify(more)).length(CANDIDATE_LIMIT.max)
+      }
+      const fifty = await searchOnce(
+        db!,
+        { userId: id('Dave Roberts'), isAdmin: false, scopes: [] },
+        { text: 'page', location: null, mode: 'people', forTeam: team.falcons },
+        { space: SPACE, jevBaseUrl: 'http://jev.example.test' }
+      )
+      expect(fifty.results).length(SEARCH_RESULTS_MAX)
+      expect(fifty.context.ordered).length(PEOPLE_ONLY_MAX)
     } finally {
-      await db!.deleteFrom('memberships').where('user_id', 'in', more).execute()
+      await db!
+        .updateTable('teams')
+        .set({ league_id: 'lea_candCoastal' })
+        .where('id', '=', team.mets)
+        .execute()
+      await db!
+        .deleteFrom('memberships')
+        .where('user_id', 'in', extra)
+        .execute()
     }
+  })
+
+  it('answers as the search engine’s people rows carry it, one card for both', async function () {
+    const actor = { userId: id('Dave Roberts'), isAdmin: false, scopes: [] }
+    const deps = {
+      // Nobody here has a picture, so no address is made from it.
+      space: {
+        endpoint: 'https://media.example.test',
+        region: 'test',
+        bucket: 'synthetic-images',
+        accessKeyId: '00000000000000000000',
+        secretAccessKey: '0000000000000000000000000000000000000000',
+        pathStyle: true
+      },
+      jevBaseUrl: 'http://jev.example.test'
+    }
+    for (const q of ['', 'cody', 'mookie betts']) {
+      const route = await ask(COACH, {
+        forTeam: team.falcons,
+        forGame: GAME,
+        q
+      })
+      const engine = await searchOnce(
+        db!,
+        actor,
+        {
+          text: q,
+          location: null,
+          mode: 'people',
+          forTeam: team.falcons,
+          forGame: GAME
+        },
+        deps
+      )
+      expect(engine.locations, q).deep.equals([])
+      // The route's rows, built from the person row and its card.
+      const cards = engine.results.map(result => {
+        if (result.kind !== 'person' || result.roster == null)
+          throw new Error('Expected a person row with its card')
+        // The words that found the person go to the phone with the card.
+        const { tier, ...card } = result.roster
+        return {
+          userId: result.userId,
+          externalIds: [],
+          ...card,
+          avatarUrl: result.avatarUrl,
+          affiliations: result.associations,
+          tier,
+          cursor: ''
+        }
+      })
+      const sorted = (rows: any[]): any[] =>
+        rows.map(row =>
+          Object.fromEntries(
+            Object.entries(row).sort(([a], [b]) => (a < b ? -1 : 1))
+          )
+        )
+      expect(sorted(cards), q).deep.equals(sorted(route.body))
+    }
+    // Mode all carries no card, and an empty field there answers nothing.
+    const all = await searchOnce(
+      db!,
+      actor,
+      { text: 'cody', location: null, mode: 'all' },
+      deps
+    )
+    const person = all.results.find(result => result.kind === 'person')
+    expect(person).not.equals(undefined)
+    expect(person).not.have.property('roster')
+    expect(
+      (
+        await searchOnce(
+          db!,
+          actor,
+          { text: '', location: null, mode: 'all' },
+          deps
+        )
+      ).results
+    ).deep.equals([])
+    // An empty Add Player field stays nearest first: Jev is not asked.
+    const empty = await searchOnce(
+      db!,
+      actor,
+      { text: '', location: null, mode: 'people', forTeam: team.falcons },
+      deps
+    )
+    expect(empty.results.length).greaterThan(0)
+    expect(
+      await searchJev(
+        db!,
+        actor,
+        { text: '', location: null, mode: 'people', forTeam: team.falcons },
+        empty.context,
+        deps
+      )
+    ).equals(null)
   })
 
   it('refuses a malformed question and anybody who may not add to the team', async function () {

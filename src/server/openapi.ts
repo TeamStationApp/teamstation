@@ -7809,19 +7809,23 @@ export function openApiDocument(version: string): OpenApiDocument {
             '`affiliations` the line Add Person shows under a name. ' +
             'With `forTeam` instead, the answer is the players a roster ' +
             'manager of that team (or, with `forGame`, a scorekeeper of either ' +
-            'team in that game) may add to it: every live player, and every ' +
-            'full account (switched on, with an email) though it plays for ' +
-            'no team, nearest first by `tier` (`mine`: a team you are on or ' +
-            "hold a role on, or a person you guard; `season`: a team in the game's " +
-            "season, or any season the team is in; `league`: a team in the team's " +
-            'league; `other`: everyone else, a full account that plays for no ' +
-            'team among them, listed only once `q` holds three characters). ' +
+            'team in that game) may add to it, as the search socket finds ' +
+            'people in mode `people`, lexicographic only: everybody live in ' +
+            "the caller's reach (a membership or role on the caller's teams, " +
+            'seasons and leagues, their seasons and leagues, and this ' +
+            "team's season and league), and the caller's own wards; nobody " +
+            'outside it, however much `q` holds. With no `q`, nearest first ' +
+            'by `tier` (`mine`: on a team you are on or hold a role on, or ' +
+            "a person you guard; `season`: on a team in the game's season, " +
+            'or any season the team is in; `league`: anybody else in the ' +
+            'reach), then by name; with `q`, by how well the name you are ' +
+            'shown matches it. ' +
             'Players already on the team, and with `forGame` ' +
             'anybody already in that game, are left out. Each row adds ' +
             '`shortParts`, `bats`, `throws`, `teams` (the teams they play for ' +
             'in a season ending today or later), `affiliations` (the line ' +
             'under the name, as on the account search), `tier` and `cursor` ' +
-            '(always empty: the search answers once, at most 100 rows, with ' +
+            '(always empty: the search answers once, at most 20 rows, with ' +
             'no further pages, and a request with `after` answers `[]`), and ' +
             'nothing else about the person; `nameFormat` when `shortName` is ' +
             'not in the built-in format, and beside a name full only for the ' +
@@ -7908,7 +7912,7 @@ export function openApiDocument(version: string): OpenApiDocument {
               in: 'query',
               schema: { type: 'string', maxLength: 100, default: '' },
               description:
-                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: every word must start a first, last or display name, ignoring case and accents. With view=directory: at most 120 characters, matched anywhere in the display name or any address, ignoring case; those whose name or an address starts with it come first, then by name; empty answers [].'
+                'With hasVideo: results add optional recentVideoTeams [{id,name}], up to two teams from actual participation in accessible recordings, newest first; case-insensitive public name substring (omitted: all); never private names. With forTeam: matched as the search socket matches people, ignoring case and accents: the more words of the name you are shown it matches, the higher; a stored surname you are not shown finds nobody unless the stored first and last names are typed whole. Text with no letters or digits finds nobody. With view=directory: at most 120 characters, matched anywhere in the display name or any address, ignoring case; those whose name or an address starts with it come first, then by name; empty answers [].'
             },
             {
               name: 'limit',
@@ -7920,14 +7924,14 @@ export function openApiDocument(version: string): OpenApiDocument {
                 default: 100
               },
               description:
-                'With hasVideo: default 50, maximum 100. With forTeam: default and maximum 100; a smaller one answers fewer only beside capped=1, and is otherwise read as 100. With view=directory: default and maximum 10.'
+                'With hasVideo: default 50, maximum 100. With forTeam: at most 100 is accepted, and the answer is at most 20; a smaller one answers fewer only beside capped=1. With view=directory: default and maximum 10.'
             },
             {
               name: 'capped',
               in: 'query',
               schema: { type: 'string', enum: ['1'] },
               description:
-                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is up to 100 whatever limit says, for installed builds that send limit=30 and page on with after.'
+                'With forTeam: the caller tells the user when the answer is full, so limit is read. Omitted: the answer is the whole list (at most 20) whatever limit says, for installed builds that send limit=30 and page on with after.'
             },
             {
               name: 'after',

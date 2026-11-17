@@ -1,36 +1,107 @@
 import type { Kysely } from 'kysely'
 
 import { DEFAULT_PLAYER_NAME_PRIVACY } from '../../common/playerNamePrivacy'
-import { canSeePerson, canSeeTeam, type VisibleScopes } from '../access'
+import {
+  canSeePerson,
+  canSeeTeam,
+  type FullNameGrants,
+  type VisibleScopes
+} from '../access'
 import { onePeople } from '../admin/people'
 import type { Database } from '../db/database'
 import { currentFormats, formatForReader } from '../groups/playerNamePrivacy'
 import { openAddsOf } from '../openAdds'
 import { fullNamesFor, isSpoken, type Reader } from './readerNames'
 
+/** The longest name an associations line holds whole; longer ones end in `…`. */
+export const ASSOCIATION_NAME_MAX = 80
+/** `, +9999 more`: room kept for the count of what did not fit. */
+const MORE_RESERVE = 12
+/** ` · +9999 more`: room kept, between parts, for the count of the rest. */
+const PART_RESERVE = 15
+
+/** A name of at most `ASSOCIATION_NAME_MAX`, cut short with `…`. */
+export function shortened(name: string): string {
+  return name.length <= ASSOCIATION_NAME_MAX
+    ? name
+    : `${name.slice(0, ASSOCIATION_NAME_MAX - 1).trimEnd()}…`
+}
+
+/**
+ * These names, each once and in order, joined with commas into at most
+ * `budget` characters: the first that fit, then `+N more` for the rest.
+ */
+export function listedNames(
+  names: Array<string | null | undefined>,
+  budget: number
+): string {
+  const unique = [
+    ...new Set(names.filter((name): name is string => name != null))
+  ].map(shortened)
+  const kept: string[] = []
+  let length = 0
+  for (const [index, name] of unique.entries()) {
+    const next = (kept.length === 0 ? 0 : 2) + name.length
+    const last = index === unique.length - 1
+    if (length + next + (last ? 0 : MORE_RESERVE) > budget) break
+    kept.push(name)
+    length += next
+  }
+  const rest = unique.length - kept.length
+  if (rest === 0) return kept.join(', ')
+  return [...kept, `+${rest} more`].join(', ')
+}
+
 /**
  * The same affiliation wording on every list that names a person: the
  * players they guard, their guardians, the players they are family of
  * (a `family` link, such as a grandparent's), their family, then their teams.
+ *
+ * With a `budget`, the line is at most that many characters: each part, in
+ * that order, takes what it needs of what is left, its names cut to
+ * `ASSOCIATION_NAME_MAX`, and what does not fit is counted as `+N more`.
  */
 export function affiliationText(
   teams: string[],
   children: string[],
   guardians: string[],
   relativeOf: string[] = [],
-  relatives: string[] = []
+  relatives: string[] = [],
+  budget?: number
 ): string {
-  const part = (label: string, names: string[]): string =>
-    names.length === 0 ? '' : `${label}${[...new Set(names)].join(', ')}`
-  return [
-    part('Guardian of ', children),
-    part('Guardians: ', guardians),
-    part('Family of ', relativeOf),
-    part('Family: ', relatives),
-    [...new Set(teams)].join(', ')
+  const parts: Array<[string, string[]]> = [
+    ['Guardian of ', children],
+    ['Guardians: ', guardians],
+    ['Family of ', relativeOf],
+    ['Family: ', relatives],
+    ['', teams]
   ]
-    .filter(Boolean)
-    .join(' · ')
+  if (budget == null)
+    return parts
+      .flatMap(([label, names]) =>
+        names.length === 0 ? [] : [`${label}${[...new Set(names)].join(', ')}`]
+      )
+      .join(' · ')
+  const out: string[] = []
+  let left = budget
+  for (const [index, [label, names]] of parts.entries()) {
+    if (names.length === 0) continue
+    const separator = out.length === 0 ? 0 : 3
+    const later = parts.slice(index + 1).some(([, rest]) => rest.length > 0)
+    const room = left - separator - label.length - (later ? PART_RESERVE : 0)
+    if (room < MORE_RESERVE) {
+      // Nothing of this part fits: the rest of the line is counted.
+      const rest = parts
+        .slice(index)
+        .reduce((sum, [, each]) => sum + new Set(each).size, 0)
+      out.push(`+${rest} more`)
+      break
+    }
+    const listed = `${label}${listedNames(names, room)}`
+    out.push(listed)
+    left -= separator + listed.length
+  }
+  return out.join(' · ')
 }
 
 /** Whom an affiliation line is for, and where it is drawn. */
@@ -54,8 +125,18 @@ export interface AffiliationOptions {
    * Whom of `ids` the caller has already found `reader` reads in full (its
    * own `fullNamesFor`, such as `readerNaming`'s `readsFull`), taken as the
    * answer for them. Their guardians, players and family are asked here.
+   * A promise of them is waited for only once the rest is read, so a caller
+   * may start the lines while it is still finding them.
    */
-  readsFull?: ReadonlySet<string>
+  readsFull?: ReadonlySet<string> | PromiseLike<ReadonlySet<string>>
+  /** The reader's own `fullNameGrants`, handed on to `fullNamesFor`. */
+  grants?: FullNameGrants
+  /**
+   * The most characters a line may take (`affiliationText`'s budget), its
+   * teams then listed newest first; with none, a line is whole and its teams
+   * are in name order.
+   */
+  budget?: number
 }
 
 /**
@@ -83,7 +164,7 @@ export async function personAffiliations(
   ids: string[],
   options: AffiliationOptions = {}
 ): Promise<Map<string, string>> {
-  const { reader, scopes, onTeam, teams, readsFull } = options
+  const { reader, scopes, onTeam, teams, grants, budget } = options
   if (ids.length === 0) return new Map()
   // A machine, Tess and anything stored or sent on read no line at all.
   if (scopes == null || isSpoken()) return new Map(ids.map(id => [id, '']))
@@ -110,46 +191,67 @@ export async function personAffiliations(
     for (const alias of person.userIds) canonical.set(alias, person.userId)
   }
   const canon = (id: string): string => canonical.get(id) ?? id
-  const held = await db
-    .selectFrom('memberships as m')
-    .innerJoin('teams as t', 't.id', 'm.team_id')
-    .select(['m.user_id', 'm.team_id', 'm.is_player', 't.name'])
-    .where('m.user_id', 'in', [...canonical.keys()])
-    .where('t.merged_into', 'is', null)
-    .orderBy('t.name')
-    .execute()
-  // A team holding somebody only by an add their side may yet reject is not
-  // theirs: it neither names them nor shows them to its people.
-  const open = await openAddsOf(db, [...new Set(held.map(m => m.team_id))])
-  const memberships = held.filter(m => {
-    const holds = open.get(m.team_id)
-    return (
-      holds?.has(m.user_id) !== true && holds?.has(canon(m.user_id)) !== true
-    )
-  })
-  const users = await db
-    .selectFrom('users')
-    .select([
-      'id',
-      'first_name as firstName',
-      'last_name as lastName',
-      'display_name as displayName'
-    ])
-    .where('id', 'in', [...new Set(canonical.values())])
-    .execute()
-  const players = new Set([
-    ...links.map(l => canon(l.related_user_id)),
-    ...memberships.filter(m => m.is_player).map(m => canon(m.user_id))
-  ])
-  const formats = await currentFormats(
-    db,
-    [...canonical.keys()].filter(id => players.has(canon(id))),
-    canonical
-  )
   // The people asked about, as asked, answer from `readsFull` when there is
   // one; everybody else is asked.
   const answered = new Set(
-    readsFull == null ? [] : ids.filter(id => canon(id) === id)
+    options.readsFull == null ? [] : ids.filter(id => canon(id) === id)
+  )
+  // Everything left depends only on who is related, so it is read side by
+  // side: the teams and their open adds, the names and who of them the
+  // reader reads in full, and the formats. The formats are read for every
+  // row: `currentFormats` gives the built-in one to anybody who plays on no
+  // team but by an open add, as a non-player's is.
+  const settled = (async () => {
+    const held = await db
+      .selectFrom('memberships as m')
+      .innerJoin('teams as t', 't.id', 'm.team_id')
+      .select([
+        'm.user_id',
+        'm.team_id',
+        'm.is_player',
+        'm.joined_at',
+        't.name'
+      ])
+      .where('m.user_id', 'in', [...canonical.keys()])
+      .where('t.merged_into', 'is', null)
+      .orderBy('t.name')
+      .execute()
+    // A team holding somebody only by an add their side may yet reject is
+    // not theirs: it neither names them nor shows them to its people.
+    const open = await openAddsOf(db, [...new Set(held.map(m => m.team_id))])
+    return held.filter(m => {
+      const holds = open.get(m.team_id)
+      return (
+        holds?.has(m.user_id) !== true && holds?.has(canon(m.user_id)) !== true
+      )
+    })
+  })()
+  const naming = (async () => {
+    const users = await db
+      .selectFrom('users')
+      .select([
+        'id',
+        'first_name as firstName',
+        'last_name as lastName',
+        'display_name as displayName'
+      ])
+      .where('id', 'in', [...new Set(canonical.values())])
+      .execute()
+    const asked = await fullNamesFor(
+      db,
+      reader,
+      users.flatMap(person => (answered.has(person.id) ? [] : [person.id])),
+      grants == null ? {} : { grants }
+    )
+    return { users, asked }
+  })()
+  const [memberships, { users, asked }, formats, readsFull] = await Promise.all(
+    [
+      settled,
+      naming,
+      currentFormats(db, [...canonical.keys()], canonical),
+      options.readsFull
+    ]
   )
   const full = new Set([
     ...users.flatMap(person =>
@@ -157,11 +259,7 @@ export async function personAffiliations(
         ? [person.id]
         : []
     ),
-    ...(await fullNamesFor(
-      db,
-      reader,
-      users.flatMap(person => (answered.has(person.id) ? [] : [person.id]))
-    ))
+    ...asked
   ])
   const names = formatForReader(
     users.map(person => ({
@@ -212,17 +310,18 @@ export async function personAffiliations(
       const children = playersOf(id, 'guardian')
       const relativeOf = playersOf(id, 'family')
       const family = new Set([id, ...children, ...relativeOf])
-      const teamNames =
+      const listed =
         onTeam != null
           ? []
-          : memberships
-              .filter(
-                m =>
-                  family.has(canon(m.user_id)) &&
-                  canSeeTeam(scopes, m.team_id) &&
-                  (teams == null || teams.has(m.team_id))
-              )
-              .map(m => m.name)
+          : memberships.filter(
+              m =>
+                family.has(canon(m.user_id)) &&
+                canSeeTeam(scopes, m.team_id) &&
+                (teams == null || teams.has(m.team_id))
+            )
+      const teamNames = (budget == null ? listed : newestFirst(listed)).map(
+        m => m.name
+      )
       return [
         asked,
         affiliationText(
@@ -230,9 +329,16 @@ export async function personAffiliations(
           named(children),
           named(adultsOf(id, 'guardian')),
           named(relativeOf),
-          named(adultsOf(id, 'family'))
+          named(adultsOf(id, 'family')),
+          budget
         )
       ]
     })
   )
+}
+
+/** Memberships, the latest joined first; ties keep their order. */
+function newestFirst<T extends { joined_at: Date | string }>(rows: T[]): T[] {
+  const at = (row: T): number => new Date(row.joined_at).getTime()
+  return [...rows].sort((a, b) => at(b) - at(a))
 }
