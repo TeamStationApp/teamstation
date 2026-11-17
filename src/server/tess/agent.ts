@@ -9,11 +9,10 @@ import {
 } from './changes'
 import {
   compact,
-  COMPACT_ABOVE,
+  contextLimits,
   describeAttachments,
   estimateTokens,
-  fitPictures,
-  INPUT_CEILING
+  fitPictures
 } from './compaction'
 import {
   appendMessages,
@@ -367,7 +366,7 @@ async function buildRequest(
  * attachments is measured with
  * `count_tokens`; one without is taken at the size the last request and its
  * answer had, with the message's own at its most, and measured when that
- * comes to more than 150,000. Above 150,000 the conversation is compacted
+ * exceeds the model's threshold. Above that the conversation is compacted
  * first, down to nothing but the message when it must be; still too large
  * with the message, it is refused. Compaction cannot make the message
  * itself smaller, so it is measured alone first: one that would not fit
@@ -383,6 +382,7 @@ async function guard(
   content: StoredBlock[],
   onEvent?: TurnEvents
 ): Promise<void> {
+  const { compactAbove, inputCeiling } = contextLimits(deps.settings.model)
   let told = false
   const preparing = async (): Promise<void> => {
     if (told) return
@@ -402,25 +402,25 @@ async function guard(
       ? await measure()
       : (await contextTokensOf(deps.db, userId)) +
         estimateTokens(JSON.stringify(content))
-  if (ids.length === 0 && tokens > COMPACT_ABOVE) tokens = await measure()
+  if (ids.length === 0 && tokens > compactAbove) tokens = await measure()
   const refused = (): HttpError =>
     tooLarge(
       ids.length > 0
         ? 'That attachment is too large for the conversation'
         : 'The conversation is too long to go on'
     )
-  if (tokens > COMPACT_ABOVE) {
+  if (tokens > compactAbove) {
     const alone = await countTokens(
       deps.settings,
       await buildRequest(deps, userId, system, content, true),
       { fetch: deps.fetch }
     )
-    if (alone + (tokens > alone ? MAX_TOKENS : 0) > INPUT_CEILING)
+    if (alone + (tokens > alone ? MAX_TOKENS : 0) > inputCeiling)
       throw refused()
     await preparing()
     tokens = await compact(deps, userId, measure, { keepNone: true })
   }
-  if (tokens <= INPUT_CEILING) return
+  if (tokens <= inputCeiling) return
   throw refused()
 }
 
@@ -431,8 +431,8 @@ async function guard(
  * call, which may use no tool, gives her answer. A call the provider refuses
  * for its length is sent again, once, after the conversation is compacted;
  * one it refuses for its bytes, once, after its attachments are described.
- * The size of the last request and its answer is saved, and above 150,000
- * the conversation is compacted; a compaction that fails then leaves the
+ * The size of the last request and its answer is saved; above the model's
+ * threshold the conversation is compacted; a compaction that fails then leaves the
  * answer as it is, to be tried again before the next message. When she
  * fails after storing a round, the size it had is saved, so the next
  * message is measured against it. Each call is streamed, and what it tells
@@ -453,6 +453,7 @@ async function respond(
   onEvent?: TurnEvents
 ): Promise<void> {
   const { db, settings } = deps
+  const { compactAbove } = contextLimits(settings.model)
   const { userId } = user
   const relay = relayOf(onEvent)
   const step = async (
@@ -494,9 +495,8 @@ async function respond(
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
       if (isTooLong(error)) {
+        // Compaction keeps the current turn, so a map it read stays read.
         known = await compact(deps, userId, measure)
-        // Compaction can remove a map before the model has received it.
-        source = sourceBrowser()
       } else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
       return await once(toolChoice)
@@ -505,7 +505,7 @@ async function respond(
   let last: MessagesResponse
   // The changes the turn has proposed, which one hold confirms together.
   const proposals = { count: 0 }
-  let source = sourceBrowser()
+  const source = sourceBrowser()
   try {
     for (let round = 1; ; round += 1) {
       const response = await call()
@@ -598,7 +598,7 @@ async function respond(
     }
   } catch (error) {
     // Still too long once compacted: the next message compacts again first.
-    const size = isTooLong(error) ? Math.max(known, COMPACT_ABOVE + 1) : known
+    const size = isTooLong(error) ? Math.max(known, compactAbove + 1) : known
     if (size > 0) await saveContextTokens(db, userId, size)
     if (!(error instanceof TessStopped)) throw error
     await appendMessages(db, userId, [
@@ -608,7 +608,7 @@ async function respond(
   }
   const tokens = inputOf(last) + last.usage.outputTokens
   await saveContextTokens(db, userId, tokens)
-  if (tokens <= COMPACT_ABOVE) return
+  if (tokens <= compactAbove) return
   try {
     await compact(deps, userId, measure)
   } catch (error) {
@@ -717,8 +717,8 @@ function contentOf(result: ToolResultBlock): string {
 /**
  * Tool results that keep the next request, `request` with this round, under
  * the ceiling: a result that would not fit at its estimate is replaced by a
- * note asking for less. When the round takes the request above 150,000 it is
- * counted, and the largest results give way until it fits.
+ * note asking for less. Above the model's threshold the round is counted,
+ * and the largest results give way until it fits.
  */
 async function fitted(
   deps: TessDeps,
@@ -726,12 +726,13 @@ async function fitted(
   response: MessagesResponse,
   results: ToolResultBlock[]
 ): Promise<ToolResultBlock[]> {
+  const { compactAbove, inputCeiling } = contextLimits(deps.settings.model)
   const tooLarge = (result: ToolResultBlock): ToolResultBlock => ({
     ...result,
     content: TOO_LARGE_NOW,
     is_error: true
   })
-  let room = INPUT_CEILING - inputOf(response) - response.usage.outputTokens
+  let room = inputCeiling - inputOf(response) - response.usage.outputTokens
   const kept = results.map(result => {
     const tokens = estimateTokens(contentOf(result))
     if (tokens <= room) {
@@ -740,14 +741,14 @@ async function fitted(
     }
     return tooLarge(result)
   })
-  if (INPUT_CEILING - room <= COMPACT_ABOVE) return kept
+  if (inputCeiling - room <= compactAbove) return kept
   for (;;) {
     const tokens = await countTokens(
       deps.settings,
       withExchange(request, response.content, kept),
       { fetch: deps.fetch }
     )
-    if (tokens <= INPUT_CEILING) return kept
+    if (tokens <= inputCeiling) return kept
     let largest = -1
     kept.forEach((result, at) => {
       if (

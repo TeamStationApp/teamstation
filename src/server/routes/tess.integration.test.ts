@@ -30,6 +30,7 @@ import { TESS_HEADER, withActor } from '../middleware/withAuth'
 import { errorHandler } from '../middleware/withErrors'
 import type { TurnEvents } from '../tess/agent'
 import { ownedAttachments } from '../tess/attachments'
+import { contextLimits } from '../tess/compaction'
 import { appendMessages, saveContextTokens } from '../tess/conversation'
 import { weekStartUtc } from '../tess/usage'
 import { KEEP_ALIVE_MS, tessRoutes, turnStream } from './tess'
@@ -1016,6 +1017,7 @@ describe("Tess's routes", function () {
 
   it('opens the stream before compacting for a message, keeps it open, and refuses once compacted as an error event', async () => {
     const slow = await tessWorld({ keepAliveMs: 40 })
+    const { compactAbove, inputCeiling } = contextLimits(TEST_SETTINGS.model)
     try {
       const userId = slow.userId(101)
       /** Two stored turns, and a size that needs compacting before the next. */
@@ -1029,12 +1031,12 @@ describe("Tess's routes", function () {
               content: [{ type: 'text', text: `About ${text}` }]
             }
           ])
-        await saveContextTokens(slow.h.db, userId, 160000)
+        await saveContextTokens(slow.h.db, userId, compactAbove + 10000)
       }
       // A message that would not fit beside any summary: refused at once,
       // as JSON, and nothing is compacted.
       await longConversation()
-      slow.model.count(160000, 250000)
+      slow.model.count(compactAbove + 10000, inputCeiling + 58192)
       const refused = await streamed(slow, '/me/tess/messages', {
         text: 'Read all of it'
       })
@@ -1056,7 +1058,7 @@ describe("Tess's routes", function () {
       }, say('Here it is.'))
       // The conversation with the message, the message alone, then the
       // conversation compacted twice.
-      slow.model.count(160000, 1000, 160000, 30000)
+      slow.model.count(compactAbove + 10000, 1000, compactAbove + 10000, 30000)
       const seen: TurnStreamEvent[] = []
       const events = await readTurnStream(
         await streamed(slow, '/me/tess/messages', { text: 'Go on' }),
@@ -1084,7 +1086,13 @@ describe("Tess's routes", function () {
       slow.model.reset()
       await longConversation()
       slow.model.reply(say('A summary.'), say('A shorter summary.'))
-      slow.model.count(160000, 1000, 210000, 210000, 210000)
+      slow.model.count(
+        compactAbove + 10000,
+        1000,
+        inputCeiling + 18192,
+        inputCeiling + 18192,
+        inputCeiling + 18192
+      )
       const tooLarge = await streamed(slow, '/me/tess/messages', {
         text: 'And again'
       })
