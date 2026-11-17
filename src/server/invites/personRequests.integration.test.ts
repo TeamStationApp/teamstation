@@ -11,6 +11,7 @@ import {
 import { insertFixtureUsers } from '../../test/insertFixtureUsers'
 import { createSession } from '../auth/sessions'
 import { hashToken } from '../auth/tokens'
+import { applyParents, previewParents } from '../groups/relationships'
 import { rolesAt } from './people'
 import { invitePerson } from './personRequests'
 
@@ -418,6 +419,18 @@ describe('personal group invitations and accepted role grants', function () {
   })
 
   it('does not count a pending replacement administrator, and gives nobody off the list a role by id', async () => {
+    // Make the direct administrator the team's only effective authority.
+    await applyParents(
+      f.h.db,
+      [actor(101)],
+      await previewParents(f.h.db, [
+        {
+          child: { kind: 'team', id: f.teamA },
+          parent: { kind: 'league', id: f.leagueA },
+          operation: 'detach'
+        }
+      ])
+    )
     await invite('replacement@example.com')
     const bypass = await f.h.request(
       'PUT',

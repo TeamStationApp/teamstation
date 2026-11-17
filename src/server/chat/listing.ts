@@ -8,7 +8,14 @@ import type {
   ChatMember,
   ChatPerson
 } from '../../common/api'
-import { hasRole, openAdds, roleScopes, type VisibleScopes } from '../access'
+import {
+  hasRole,
+  levelsAboveTeam,
+  openAdds,
+  roleScopes,
+  type VisibleScopes
+} from '../access'
+import { anyOf } from '../db/anyOf'
 import type { ChatKind, Database } from '../db/database'
 import {
   compactFields,
@@ -572,19 +579,18 @@ export async function moderatorsOf(
   if (conversation.kind === 'dm' || scopeId == null) return new Set()
   let raw: string[] = []
   if (conversation.kind.startsWith('team')) {
-    // `hasRole(admin | coach)` on the team, read for everybody at once: the
-    // team's own, its seasons' and their leagues', and site administrators.
+    // `hasRole(admin | coach)` on the team: the team's own, its permission
+    // parents' (as canModerate reads them), owners and managers, and these
+    // members' site administrators. A grant left on an account since merged
+    // counts for its survivor, as the chat audience does; a suspended
+    // survivor holds no role (`roleScopesForUsers`).
+    const { seasonIds, leagueIds } = await levelsAboveTeam(db, scopeId)
     const { rows } = await sql<{ userId: string }>`
-      with seasons as (
-        select s.id, s.league_id
-        from season_teams st join seasons s on s.id = st.season_id
-        where st.team_id = ${scopeId}
-      )
       select user_id as "userId" from scope_roles
       where role in ('admin', 'coach') and (
         (scope_type = 'team' and scope_id = ${scopeId})
-        or (scope_type = 'season' and scope_id in (select id from seasons))
-        or (scope_type = 'league' and scope_id in (select league_id from seasons))
+        or (scope_type = 'season' and scope_id = any(${seasonIds}::text[]))
+        or (scope_type = 'league' and scope_id = any(${leagueIds}::text[]))
       )
       union
       select user_id from memberships
@@ -593,7 +599,25 @@ export async function moderatorsOf(
       select id from users
       where is_admin and id = any(${memberIds}::text[])
     `.execute(db)
-    raw = rows.map(row => row.userId)
+    const members = new Set(memberIds)
+    const held = [
+      ...new Set(
+        (
+          await survivors(
+            db,
+            rows.map(row => row.userId)
+          )
+        ).values()
+      )
+    ].filter(id => members.has(id))
+    if (held.length === 0) return new Set()
+    const open = await db
+      .selectFrom('users')
+      .select('id')
+      .where('id', '=', anyOf(held))
+      .where('disabled_at', 'is', null)
+      .execute()
+    return new Set(open.map(row => row.id))
   } else if (conversation.kind.startsWith('season')) {
     raw = await seasonStaffIds(db, [scopeId])
   } else {

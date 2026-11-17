@@ -11,7 +11,7 @@ import {
   type ScheduleGameRow,
   type ScheduleGamesResponse
 } from '../../common/scheduleGames'
-import { adminScopes } from '../access'
+import { adminScopes, hierarchyReady } from '../access'
 import { lockPlayerEdits } from '../admin/people'
 import type { Actor } from '../auth/sessions'
 import { gameNeedsAttention } from '../autoScheduler/attention'
@@ -41,10 +41,12 @@ import { materialGame, requireImmediateGameConsent } from './gameApprovals'
 /**
  * Who may write a team's schedule, and into which seasons.
  *
- * `teamAdminIds` are the teams this person administers in their own right —
- * an administrator's `scope_roles` team row, or owning or managing it — and
- * not the ones a season or league right carries down, because that right is
- * judged season by season. `seasonIds` are the seasons they administer, a league's included.
+ * `teamAdminIds` are the teams this person administers: in their own right
+ * (a `scope_roles` team row, or owning or managing it), and after the
+ * ownership cutover also through a management parent. Before it a team's
+ * parents are its competition seasons, whose rights are judged season by
+ * season instead. `seasonIds` also permits scheduling in an administered
+ * season when the team itself is not administered by this person.
  */
 export interface ScheduleRights {
   siteAdmin: boolean
@@ -58,6 +60,12 @@ export async function scheduleRights(
   isAdmin: boolean
 ): Promise<ScheduleRights> {
   const scopes = await adminScopes(db, userId, isAdmin)
+  if (await hierarchyReady(db))
+    return {
+      siteAdmin: isAdmin,
+      teamAdminIds: scopes.teamIds,
+      seasonIds: scopes.seasonIds
+    }
   const teamRoles = await db
     .selectFrom('scope_roles')
     .select(['scope_id'])
@@ -321,12 +329,7 @@ function messageOf(error: unknown): string {
 }
 
 async function requirePublicationReady(db: Kysely<Database>): Promise<void> {
-  const ready = await db
-    .selectFrom('system_settings')
-    .select('value')
-    .where('key', '=', 'creation.hierarchyReady')
-    .executeTakeFirst()
-  if (ready?.value !== true)
+  if (!(await hierarchyReady(db)))
     throw new RowError(
       'forbidden',
       'Finish organization setup before publishing schedule changes'

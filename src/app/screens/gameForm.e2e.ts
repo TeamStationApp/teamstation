@@ -667,10 +667,14 @@ async function scenes({ f, seeded, m, page, artifacts }: Scene): Promise<void> {
   await tap('Skip')
   await wait(`document.querySelector('[data-testid="team-selector"]')==null`)
   await tap('Save')
-  await wait(`location.pathname.startsWith('/notifications/')`)
-  const requestId = await evaluate<string>(
-    `location.pathname.split('/').at(-1)`
-  )
+  await wait(`!location.pathname.endsWith('/create-game')`)
+  const createdRequest = await f.h.db
+    .selectFrom('group_requests')
+    .select('id')
+    .where('initiating_team_id', '=', f.teamA)
+    .orderBy('sent_at', 'desc')
+    .executeTakeFirstOrThrow()
+  const requestId = createdRequest.id
   const made = await placeholders()
   assert.equal(made.length, 1)
   assert.equal(made[0].locality, null)

@@ -308,7 +308,7 @@ export function peopleRoutes(
   /**
    * Leaves a team, season or league: its membership and every role there.
    * A level above that makes them a member or gives them a role is left as
-   * it is; they leave it there. The last direct administrator stays (409).
+   * it is; they leave it there. The last effective administrator stays (409).
    */
   router.delete(
     '/me/groups/:kind/:id',

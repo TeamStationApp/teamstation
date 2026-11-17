@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { expect } from 'chai'
 import puppeteer, { type Browser, type Page } from 'puppeteer'
 
+import { userIdOfGumbo } from '../common/userId'
 import { type GroupFixture, groupFixture } from '../test/groupFixtures'
 import { recordBrowserCoverage } from './browserCoverage.e2e'
 import {
@@ -65,14 +66,14 @@ async function main(): Promise<void> {
     const recipient = await actorPage(106)
     const node = await actorPage(105)
     await team.bringToFront()
-    // The team's only direct administrator cannot be taken out.
+    // A standalone team's last administrator cannot be taken out.
     expect(
       (
         await f.h.request(
           'DELETE',
-          `/manage/team/${f.teamA}/people/101`,
+          `/manage/team/${f.standaloneTeam}/people/${userIdOfGumbo(103)}`,
           undefined,
-          101
+          103
         )
       ).status
     ).equals(409)
@@ -85,7 +86,7 @@ async function main(): Promise<void> {
     await press(team, 'Add Person to Team')
     await fill(team, 'E-mail addresses', 'fixture106@example.com')
     await toggle(team, 'Team admin')
-    await press(team, 'Send invite')
+    await press(team, 'Add people')
     await text(team, 'Team management')
     await team.screenshot({
       path: join(artifacts!, 'admin-added-at-once.png')
@@ -94,12 +95,13 @@ async function main(): Promise<void> {
     await recipient.goto(f.h.origin + '/notifications', {
       waitUntil: 'networkidle0'
     })
+    await press(recipient, 'History')
     await text(recipient, 'added you as Admin')
     expect(
       (
         await f.h.request(
           'DELETE',
-          `/manage/team/${f.teamA}/people/101`,
+          `/manage/team/${f.teamA}/people/${userIdOfGumbo(101)}`,
           undefined,
           101
         )
@@ -116,7 +118,7 @@ async function main(): Promise<void> {
       path: join(artifacts!, 'roster-admin-after.png')
     })
     lines.push(
-      "E9 PASS: the sole direct administrator cannot be taken out; an administrator added from Settings takes effect at once and is told in the inbox; only then does the first administrator's removal succeed"
+      'E9 PASS: a standalone last administrator cannot be taken out; an administrator added from Settings takes effect at once and is told in the inbox; a covered team administrator can be removed while parent administration remains'
     )
 
     await node.bringToFront()
@@ -125,33 +127,13 @@ async function main(): Promise<void> {
     // Suspension remains an API action; this screen manages node access.
     const protectedAccount = await f.h.request(
       'PATCH',
-      '/users/106/administration',
+      `/users/${userIdOfGumbo(106)}/administration`,
       { suspended: true },
       105
     )
-    expect(protectedAccount.status).equals(409)
-    const second = await f.h.request(
-      'POST',
-      `/manage/team/${f.teamA}/people`,
-      {
-        email: 'fixture103@example.com',
-        admin: true,
-        idempotencyKey: 'browser-node-replacement'
-      },
-      105
-    )
-    expect(second.status).equals(201)
-    expect(await second.json()).deep.include({ added: true })
-    expect(
-      (
-        await f.h.request(
-          'PATCH',
-          '/users/106/administration',
-          { suspended: true },
-          105
-        )
-      ).status
-    ).equals(200)
+    // A sole direct team administrator: the parent league still has an
+    // active administrator, so the team stays administered.
+    expect(protectedAccount.status).equals(200)
     expect(
       (await f.h.request('GET', '/me/groups', undefined, 106)).status
     ).equals(401)
@@ -159,7 +141,7 @@ async function main(): Promise<void> {
       (
         await f.h.request(
           'PATCH',
-          '/users/106/administration',
+          `/users/${userIdOfGumbo(106)}/administration`,
           { suspended: false },
           105
         )
@@ -191,7 +173,7 @@ async function main(): Promise<void> {
       path: join(artifacts!, 'node-admin-protected.png')
     })
     lines.push(
-      'E9 PASS: sole direct administrator suspension is blocked; a second administrator added at once enables suspension; reactivation preserves identity and requires a fresh sign-in; node role appears on that account; lower scopes cannot read or moderate the node'
+      'E9 PASS: a sole direct team administrator can be suspended while an active parent administrator remains; reactivation preserves identity and requires a fresh sign-in; node role appears on that account; lower scopes cannot read or moderate the node'
     )
 
     const unknownEmail = 'new-browser-member@example.com'

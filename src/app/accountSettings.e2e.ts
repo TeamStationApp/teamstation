@@ -24,7 +24,11 @@ const nextPassword = makeToken()
 const waitText = async (value: string): Promise<void> => {
   await page.waitForFunction(
     text => {
-      const content = document.body.textContent
+      const active = document.body.cloneNode(true) as HTMLElement
+      active.querySelectorAll('[aria-hidden="true"]').forEach(node => {
+        node.remove()
+      })
+      const content = active.textContent
       if (content === null) return false
       return content.toLowerCase().includes(text.toLowerCase())
     },
@@ -35,7 +39,9 @@ const waitText = async (value: string): Promise<void> => {
 async function press(label: string): Promise<void> {
   await page.evaluate(label => {
     const button = [
-      ...document.querySelectorAll<HTMLElement>('[role="button"]')
+      ...document.querySelectorAll<HTMLElement>(
+        '[role="button"]:not([aria-hidden="true"] *)'
+      )
     ].find(
       node =>
         (node.hasAttribute('aria-label')
@@ -57,9 +63,10 @@ async function openAccount(): Promise<void> {
   })
   await page.waitForSelector('[role="button"][aria-label="Account"]')
   await press('Account')
+  await waitText('Email addresses')
 }
 async function fill(label: string, value: string): Promise<void> {
-  const selector = `input[aria-label="${label}"]`
+  const selector = `input[aria-label="${label}"]:not([aria-hidden="true"] *)`
   await page.waitForSelector(selector)
   await page.$eval(selector, input => {
     ;(input as HTMLInputElement).select()
@@ -109,7 +116,24 @@ describe('account settings in the finished desktop application', function () {
   this.timeout(180000)
   before(async () => {
     await mkdir(artifacts, { recursive: true })
-    h = await accountHarness(path.resolve('dist'))
+    h = await accountHarness(path.resolve('dist'), (app, { space }) => {
+      // The stock web build permits same-origin images. Proxy the local
+      // object store through this harness, retaining real uploads and reads.
+      const objectBase = `${space.endpoint}/${space.bucket}`
+      space.mediaBaseUrl = '/fixture-media'
+      app.get('/fixture-media/{*key}', async (req, res) => {
+        const response = await fetch(
+          objectBase + req.path.slice('/fixture-media'.length)
+        )
+        res
+          .status(response.status)
+          .type('png')
+          .send(Buffer.from(await response.arrayBuffer()))
+      })
+    })
+    // Password derivation can block this process past the HTTP idle timeout.
+    // Keep fixture connections alive until teardown so a reused socket is valid.
+    h.server.keepAliveTimeout = 0
     browser = await puppeteer.launch({ headless: true })
     page = await browser.newPage()
     page.on('request', request => {
@@ -161,21 +185,19 @@ describe('account settings in the finished desktop application', function () {
     await page.reload({ waitUntil: 'networkidle0' })
     await page.waitForSelector('[aria-label="Change photo"]')
     await waitText('Mookie Betts')
-    expect(
-      await page.evaluate(() =>
-        [...document.images].some(
-          image =>
-            image.complete &&
-            image.naturalWidth > 0 &&
-            image.src.includes('/images/user/')
-        )
+    await page.waitForFunction(() =>
+      [...document.images].some(
+        image =>
+          image.complete &&
+          image.naturalWidth > 0 &&
+          image.src.includes('/fixture-media/images/user/')
       )
-    ).equals(true)
+    )
     await page.screenshot({ path: path.join(artifacts, 'account-after.png') })
     await press('Back')
     // The picture stays on Account, so only the page going says Back landed.
     await page.waitForFunction(
-      () => document.body.textContent?.includes('Email addresses') !== true
+      () => !document.body.innerText.includes('Email addresses')
     )
     await page.waitForSelector('[aria-label^="Account, Mookie Betts"]')
     await openAccount()
@@ -189,8 +211,10 @@ describe('account settings in the finished desktop application', function () {
       name: string
       avatarUrl: string
     }
-    expect(player.name).equals('Mookie B')
-    expect((await fetch(player.avatarUrl)).status).equals(200)
+    expect(player.name).equals('Mookie Betts')
+    expect((await fetch(new URL(player.avatarUrl, h.origin))).status).equals(
+      200
+    )
   })
   it('sets and changes a password, signs in again, and keeps code login', async () => {
     await press('Set password')
@@ -388,7 +412,7 @@ describe('account settings in the finished desktop application', function () {
       path.join(artifacts, 'account-api.log'),
       [
         '$ accountSettings.e2e.ts: real HTTP API and desktop browser scenarios (credential values omitted)',
-        'PUT /me/account/name → 200; account Mookie Betts, player Mookie B, header Mookie Betts; persisted on reload',
+        'PUT /me/account/name → 200; account, own player and header Mookie Betts; persisted on reload',
         'PUT /me/account/photo → 200; two PNG objects uploaded to S3-compatible Space; GET signed object → 200; persisted on reload',
         'PUT /me/account/password → 200 setup; incorrect current password → 400; correct current password → 200',
         'POST /auth/password → 200 after setup/change; POST /auth/email-code/verify → 200 afterward',
@@ -434,7 +458,11 @@ describe('account settings in the finished desktop application', function () {
     await page.click('[data-testid="delete-account-cancel"]')
     await page.waitForFunction(() => {
       // No optional chaining in the page: its transpiled helper is absent.
-      const content = document.body.textContent
+      const active = document.body.cloneNode(true) as HTMLElement
+      active.querySelectorAll('[aria-hidden="true"]').forEach(node => {
+        node.remove()
+      })
+      const content = active.textContent
       if (content === null) return true
       return !content.includes('irrecoverable')
     })

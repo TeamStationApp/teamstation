@@ -895,18 +895,19 @@ describe('the manage page', function () {
     ).equals(400)
   })
 
-  it('will not let an administrator clear their own admin, and lets them add flags', async function () {
+  it('lets a covered administrator clear their own admin and add flags', async function () {
     if (db == null) this.skip()
-    const refused = await ask(
+    const cleared = await ask(
       `/manage/season/sea_spring/people/${userIdOfGumbo(bossId)}/roles`,
       BOSS,
       'PUT',
       { admin: false, flags: ['coach'] }
     )
-    expect(refused.status).equals(409)
+    expect(cleared.status).equals(200)
+    expect(cleared.body.roles).deep.equals(['coach'])
     const kept = await ask(
       `/manage/season/sea_spring/people/${userIdOfGumbo(bossId)}/roles`,
-      BOSS,
+      CHIEF,
       'PUT',
       { admin: true, flags: ['coach'] }
     )

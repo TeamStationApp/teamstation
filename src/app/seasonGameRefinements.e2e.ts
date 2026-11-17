@@ -15,7 +15,7 @@ import {
   capture,
   contains,
   diagnostic,
-  fill,
+  fill as fillInput,
   log,
   maestro,
   show,
@@ -110,6 +110,49 @@ async function main(): Promise<void> {
     if (user != null) await login(b, user)
     return b
   }
+  const fill = async (
+    m: BrowserSession['m'],
+    label: string,
+    value: string
+  ): Promise<void> => {
+    if (label === 'Date') {
+      await m.tapOn({ id: 'event-schedule-date' })
+      await fillInput(m, 'Year', value.slice(0, 4))
+      await m.tapOn({ css: '[aria-label^="Choose month:"]' })
+      const month = new Date(value + 'T12:00:00Z').toLocaleString('en-US', {
+        month: 'long',
+        timeZone: 'UTC'
+      })
+      await tap(m, month)
+      await tap(m, `Choose ${value}`)
+      await tap(m, 'Use date')
+    } else if (label === 'Time') {
+      await m.tapOn({ id: 'event-schedule-time' })
+      const [hour, minute] = value.split(':').map(Number)
+      for (const [column, option] of [
+        ['hour', hour % 12 === 0 ? 12 : hour % 12],
+        ['minute', minute],
+        ['period', hour < 12 ? 0 : 1]
+      ] as const) {
+        const index =
+          column === 'hour'
+            ? option - 1
+            : column === 'minute'
+              ? option / 5
+              : option
+        await m.evalBrowserScript({
+          script: `document.querySelector('[data-testid="event-time-${column}-wheel"]').scrollTo({top:${index * 44},behavior:'instant'})`
+        })
+        await m.tapOn({ id: `event-time-${column}-${option}` })
+      }
+      await tap(m, 'Use time')
+    } else if (label === 'Time zone') {
+      await m.tapOn({ id: 'event-schedule-timezone' })
+      await tap(m, `Use time zone ${value}`)
+    } else {
+      await fillInput(m, label, value)
+    }
+  }
   const game = async (id: string): Promise<any> =>
     await f.h.db
       .selectFrom('games')
@@ -126,7 +169,7 @@ async function main(): Promise<void> {
     name: string
   ): Promise<void> => {
     // The team's row opens the selector that slides up.
-    await tap(b.m, old)
+    await tap(b.m, `${old}, Away`)
     await fill(b.m, 'Search all teams', name)
     await tap(b.m, `Choose ${name}`)
     await contains(b.page, name)
@@ -448,6 +491,7 @@ async function main(): Promise<void> {
       centerElement: true,
       timeout: 15000
     })
+    await admin.m.waitForAnimationToEnd()
     await tap(admin.m, pendingLabel)
     await contains(admin.page, 'Withdraw invitation')
     expect(new URL(admin.page.url()).pathname).equals(
@@ -666,7 +710,7 @@ async function main(): Promise<void> {
     }
 
     await visit(admin, `/games/${seed.gameId}`)
-    await contains(admin.page, 'Event settings')
+    await show(admin.m, 'Event settings')
     await tap(admin.m, 'Event settings')
     await contains(admin.page, 'Game Settings')
     await capture(admin.m, artifacts, 'game-settings-after.png')
@@ -675,19 +719,22 @@ async function main(): Promise<void> {
     await fill(admin.m, 'Date', dateOf('2026-10-24').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '16:45')
     await fill(admin.m, 'Time zone', 'America/Los_Angeles')
-    await fill(admin.m, 'Venue (optional)', 'Preview only field')
+    await fill(admin.m, 'Venue name (optional)', 'Preview only field')
     await tap(admin.m, 'Cancel')
     expect(await game(seed.gameId)).deep.equals(before)
     await openSettings(admin, seed.managedGameId)
     const count = (await f.h.db.selectFrom('teams').select('id').execute())
       .length
-    await tap(admin.m, 'Demo Comets')
+    await tap(admin.m, 'Demo Comets, Away')
     await contains(admin.page, 'Demo Unscheduled')
-    await tap(admin.m, 'Create Placeholder Team')
+    await tap(
+      admin.m,
+      'Create Placeholder Team, A team that is not on TeamStation yet'
+    )
     await fill(admin.m, 'Team name', 'Demo Preview Opponent')
     await tap(admin.m, 'Continue')
-    await tap(admin.m, 'Skip')
-    await admin.m.waitForAnimationToEnd()
+    await contains(admin.page, 'Demo City')
+    await tap(admin.m, 'Continue')
     await tap(admin.m, 'Skip')
     await contains(admin.page, 'Demo Preview Opponent')
     await tap(admin.m, 'Cancel')
@@ -699,13 +746,21 @@ async function main(): Promise<void> {
       'separate Settings preview/swap/venue and staged-placeholder Cancel leave stored matchup and team count unchanged'
     )
 
+    // Active participants now accept their host season's scheduling consent.
+    // These approval scenarios need a visiting opponent outside that consent.
+    await f.h.db
+      .updateTable('season_teams')
+      .set({ active: false })
+      .where('season_id', '=', f.seasonA)
+      .where('team_id', '=', f.teamB)
+      .execute()
     const opponent = await make('web-refinements-opponent', 1440, 1000, 102)
     const visitors = await make('web-refinements-visitors', 1440, 1000, 103)
     await openSettings(admin, seed.managedGameId)
     await choose(admin, 'Demo Comets', 'Demo Visitors')
     await contains(
       admin.page,
-      'An admin of Demo Visitors must approve changes.'
+      'An administrator, coach or assistant of Demo Visitors must approve changes.'
     )
     await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
@@ -729,7 +784,7 @@ async function main(): Promise<void> {
     )
     const finalId = 'baseline-hawks-eagles'
     await openSettings(admin, finalId)
-    await fill(admin.m, 'Venue (optional)', 'Demo Proposed Final Field')
+    await fill(admin.m, 'Venue name (optional)', 'Demo Proposed Final Field')
     await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const finalProposal = await f.h.db
@@ -739,15 +794,25 @@ async function main(): Promise<void> {
       .where('status', '=', 'pending')
       .executeTakeFirstOrThrow()
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
+    await admin.m.scrollUntilVisible({
+      element: { text: '.*Demo Eagles.*Demo Hawks.*Pending approval.*' },
+      centerElement: true,
+      timeout: 15000
+    })
     await contains(admin.page, 'Pending approval')
     await absent(admin.page, '2–5')
     await visit(opponent, `/notifications/${finalProposal.id}`)
     await tap(opponent.m, 'Decline invitation')
     await contains(opponent.page, 'Declined')
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
+    await admin.m.scrollUntilVisible({
+      element: { text: '2–5' },
+      centerElement: true,
+      timeout: 15000
+    })
     await contains(admin.page, '2–5')
     await openSettings(admin, finalId)
-    await fill(admin.m, 'Venue (optional)', 'Demo Expiring Final Field')
+    await fill(admin.m, 'Venue name (optional)', 'Demo Expiring Final Field')
     await tap(admin.m, 'Save')
     await contains(admin.page, 'Game proposal sent')
     const expiring = await f.h.db
@@ -765,6 +830,11 @@ async function main(): Promise<void> {
       .where('id', '=', expiring.id)
       .execute()
     await visit(admin, `/seasons/${f.seasonA}?tab=schedule&when=all`)
+    await admin.m.scrollUntilVisible({
+      element: { text: '2–5' },
+      centerElement: true,
+      timeout: 15000
+    })
     await contains(admin.page, '2–5')
     expect((await game(finalId)).venue).equals('Demo Field')
     await pass(
@@ -917,13 +987,16 @@ async function main(): Promise<void> {
       })
       .execute()
     await openSettings(admin, saveId)
-    await tap(admin.m, 'Demo Comets')
+    await tap(admin.m, 'Demo Comets, Away')
     await contains(admin.page, 'Demo Unscheduled')
-    await tap(admin.m, 'Create Placeholder Team')
+    await tap(
+      admin.m,
+      'Create Placeholder Team, A team that is not on TeamStation yet'
+    )
     await fill(admin.m, 'Team name', 'Demo Saved Opponent')
     await tap(admin.m, 'Continue')
-    await tap(admin.m, 'Skip')
-    await admin.m.waitForAnimationToEnd()
+    await contains(admin.page, 'Demo City')
+    await tap(admin.m, 'Continue')
     await tap(admin.m, 'Skip')
     await fill(admin.m, 'Date', dateOf('2026-10-22').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '20:15')
@@ -934,7 +1007,9 @@ async function main(): Promise<void> {
     await capture(admin.m, artifacts, 'success-toast.png')
     const toast = await diagnostic(admin.page, () => {
       const node = [...document.querySelectorAll('[role="alert"]')].find(
-        n => n.textContent === 'Game changes saved'
+        n =>
+          n.textContent != null &&
+          n.textContent.startsWith('Game changes saved:')
       )
       if (node == null) return null
       const r = node.getBoundingClientRect()
@@ -979,7 +1054,7 @@ async function main(): Promise<void> {
       { timeout: 8000 }
     )
     await openSettings(admin, saveId)
-    await fill(admin.m, 'Venue (optional)', 'Recoverable draft')
+    await fill(admin.m, 'Venue name (optional)', 'Recoverable draft')
     await f.h.db
       .updateTable('games')
       .set({ venue: 'Another committed field' })
@@ -991,7 +1066,7 @@ async function main(): Promise<void> {
     expect(
       await diagnostic(admin.page, () => {
         const node = document.querySelector<HTMLInputElement>(
-          'input[aria-label="Venue (optional)"]'
+          'input[aria-label="Venue name (optional)"]'
         )
         return node == null ? undefined : node.value
       })
@@ -999,7 +1074,7 @@ async function main(): Promise<void> {
     await capture(admin.m, artifacts, 'game-settings-error-after.png')
     await tap(admin.m, 'Cancel')
     await openSettings(admin, saveId)
-    await tap(admin.m, 'Withdraw Demo Hawks from game')
+    await tap(admin.m, 'Withdraw Demo Hawks')
     await tap(admin.m, 'Confirm withdrawal')
     await contains(admin.page, 'Game changes saved')
     expect(await game(saveId)).includes({
@@ -1011,14 +1086,18 @@ async function main(): Promise<void> {
       'B8',
       'inherited/custodian authority saves one placeholder immediately; toast appears and clears after five seconds; stale error preserves draft without toast; withdrawal keeps attributed canceled event'
     )
-    await visit(admin, `/groups/team/${f.teamA}`)
-    await tap(admin.m, 'Manage')
-    await tap(admin.m, 'Create Game')
+    await visit(admin, `/teams/${f.teamA}?tab=schedule`)
+    await admin.m.scrollUntilVisible({
+      element: { text: 'Add Game' },
+      centerElement: true,
+      timeout: 15000
+    })
+    await tap(admin.m, 'Add Game')
     // A team page's game is a scrimmage or exhibition: there is no season
     // to choose, and none is sent.
     await contains(admin.page, 'always creates a scrimmage/exhibition game')
     await absent(admin.page, 'Find a season you manage')
-    await tap(admin.m, 'Choose Away Team')
+    await tap(admin.m, 'Choose Away Team, Away')
     await fill(admin.m, 'Search all teams', 'Demo Eagles')
     await admin.page.waitForFunction(() =>
       [...document.querySelectorAll('[role="button"]')].some(n => {
@@ -1036,8 +1115,11 @@ async function main(): Promise<void> {
     await tap(admin.m, opponentLabel)
     await fill(admin.m, 'Date', dateOf('2026-10-28').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '19:00')
-    await fill(admin.m, 'Venue (optional)', 'Demo Administered Host Field')
+    await fill(admin.m, 'Venue name (optional)', 'Demo Administered Host Field')
     await tap(admin.m, 'Save')
+    await admin.page.waitForFunction(() =>
+      location.pathname.startsWith('/notifications/')
+    )
     await contains(admin.page, 'Pending')
     const foreignId = new URL(admin.page.url()).pathname.split('/').at(-1)!
     const foreign = await f.h.db
@@ -1072,7 +1154,7 @@ async function main(): Promise<void> {
     )
     await visit(admin, `/groups/season/${f.seasonA}?tab=schedule&when=upcoming`)
     await tap(admin.m, 'Create Game')
-    await tap(admin.m, 'Choose Home Team')
+    await tap(admin.m, 'Choose Home Team, Home')
     await fill(admin.m, 'Search all teams', 'Demo Eagles')
     await admin.page.waitForFunction(() =>
       [...document.querySelectorAll('[role="button"]')].some(n => {
@@ -1087,7 +1169,7 @@ async function main(): Promise<void> {
     )
     if (homeGuest == null) throw new Error('Host-only home opponent missing')
     await tap(admin.m, homeGuest)
-    await tap(admin.m, 'Choose Away Team')
+    await tap(admin.m, 'Choose Away Team, Away')
     await fill(admin.m, 'Search all teams', 'Demo Visitors')
     await admin.page.waitForFunction(() =>
       [...document.querySelectorAll('[role="button"]')].some(n => {
@@ -1106,8 +1188,11 @@ async function main(): Promise<void> {
     await tap(admin.m, awayGuest)
     await fill(admin.m, 'Date', dateOf('2026-10-29').toISOString().slice(0, 10))
     await fill(admin.m, 'Time', '19:00')
-    await fill(admin.m, 'Venue (optional)', 'Demo Host-only Field')
+    await fill(admin.m, 'Venue name (optional)', 'Demo Host-only Field')
     await tap(admin.m, 'Save')
+    await admin.page.waitForFunction(() =>
+      location.pathname.startsWith('/notifications/')
+    )
     await contains(admin.page, 'Pending')
     const hostOnlyId = new URL(admin.page.url()).pathname.split('/').at(-1)!
     const sides = await f.h.db
@@ -1161,7 +1246,7 @@ async function main(): Promise<void> {
       throw new Error('Accepted host-only proposal has no published game')
     await visit(admin, `/games/${hostPublished.game_id}?tab=watch`)
     await contains(admin.page, 'No videos')
-    await absent(admin.page, 'Event settings')
+    await admin.m.assertNotVisible({ text: 'Event settings' })
     const requestCount = (
       await f.h.db.selectFrom('group_requests').select('id').execute()
     ).length
