@@ -9,6 +9,7 @@ Read this map first when answering how TeamStation works. Choose a relevant dire
 - App navigation and rendering: `src/app/App.tsx`, `src/app/navigation/routes.ts`, `src/app/web/index.tsx`, `src/app/native/index.tsx`.
 - Tess response/tool rounds and limits: `src/server/tess/agent.ts`; tool dispatch: `src/server/tess/tools.ts`; source boundary and map-first state: `src/server/tess/sourceTools.ts`.
 - Tess instructions: `src/server/tess/prompt.ts`; model requests: `src/server/tess/messagesApi.ts`; progress labels: `src/server/tess/stepLabels.ts`; HTTP entry: `src/server/routes/tess.ts`.
+- Tess context budgets and summarization: `src/server/tess/compaction.ts`, with budget unit checks in `src/server/tess/compaction.test.ts` and conversation checks in `src/server/tess/compaction.integration.test.ts`.
 - Tess source tests: `src/server/tess/sourceTools.test.ts` and `src/server/tess/sourceTools.integration.test.ts`; real-model checks: `src/server/tess/tess.integration.ts`.
 - Scoring rules: `src/common/scoring/`; scoring controls: `src/app/scoring/`; persistence: `src/server/scoring/` and `src/server/events/`.
 - Schedules: `src/server/schedule/`; automatic placement: `src/common/autoScheduler/` and `src/server/autoScheduler/`.

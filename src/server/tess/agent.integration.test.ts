@@ -26,6 +26,7 @@ import {
 } from './agent'
 import { storeAttachment } from './attachments'
 import {
+  contextLimits,
   DESCRIBE_SYSTEM,
   MAX_PICTURES,
   PICTURE_BYTES,
@@ -37,6 +38,8 @@ import { READING_API, stepLabel } from './stepLabels'
 import { PROPOSED, TOOLS } from './tools'
 import { stopTurn, TURN_RUNNING, TURN_STOP_POLL_MS } from './turns'
 import { usageWeeks } from './usage'
+
+const { compactAbove, inputCeiling } = contextLimits('claude-sonnet-5-5')
 
 type Block = Record<string, any>
 interface Message {
@@ -491,7 +494,7 @@ describe("Tess's agent loop", function () {
   it('replaces a tool result that would take the request over the ceiling', async () => {
     model.reply(
       callTools([{ name: 'api_get', input: { path: '/me/roles' } }], {
-        input_tokens: 191790
+        input_tokens: inputCeiling - 18
       }),
       say('That was too much to read.')
     )
@@ -536,7 +539,9 @@ describe("Tess's agent loop", function () {
       input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
     }
     model.reply(
-      callTools([{ ...map, id: 'discarded-map' }], { input_tokens: 191790 }),
+      callTools([{ ...map, id: 'discarded-map' }], {
+        input_tokens: inputCeiling - 18
+      }),
       callTools([{ ...search, id: 'blocked' }]),
       callTools([{ ...map, id: 'retained-map' }]),
       callTools([{ ...search, id: 'allowed' }]),
@@ -584,9 +589,9 @@ describe("Tess's agent loop", function () {
     await runTurn(w.deps(), w.user(101), {
       text: 'Explain the tool-round limit.'
     })
-    expect(model.messageCalls().at(-1)!.messages.at(-1).content[0]).deep.include(
-      { content: MAP_FIRST, is_error: true }
-    )
+    expect(
+      model.messageCalls().at(-1)!.messages.at(-1).content[0]
+    ).deep.include({ content: MAP_FIRST, is_error: true })
   })
 
   it('counts a round that takes the request near the ceiling, and drops the largest result until it fits', async () => {
@@ -600,13 +605,13 @@ describe("Tess's agent loop", function () {
             id: 'toolu_large'
           }
         ],
-        { input_tokens: 160000 }
+        { input_tokens: compactAbove + 10000 }
       ),
       say('Here is part of it.')
     )
     // Both fit at their estimate; counted, the round is over the ceiling
     // until the larger result gives way.
-    model.count(195000)
+    model.count(inputCeiling + 3192)
     await runTurn(w.deps(), w.user(101), { text: 'Read both' })
     expect(model.calls.map(call => call.path)).deep.equals([
       '/messages',
@@ -689,12 +694,12 @@ describe("Tess's agent loop", function () {
       'assistant',
       'user'
     ])
-    expect(marked.contextTokens).greaterThan(150000)
+    expect(marked.contextTokens).greaterThan(compactAbove)
 
     model.calls.length = 0
     model.reply(say('They asked about one.'), say('You hold no roles.'))
     // The conversation with the message, the message alone, then compacted.
-    model.count(160000, 1000, 160000, 30000)
+    model.count(compactAbove + 10000, 1000, compactAbove + 10000, 30000)
     const compacting: TurnEvent[] = []
     await runTurn(w.deps(), w.user(101), { text: 'Try again' }, event => {
       compacting.push(event)
@@ -905,7 +910,7 @@ describe("Tess's agent loop", function () {
       model.reply(say(`About ${text}`))
       await runTurn(w.deps(), w.user(101), { text })
     }
-    model.reply(say('About four', { input_tokens: 160000 }), {
+    model.reply(say('About four', { input_tokens: compactAbove + 10000 }), {
       status: 529,
       error: 'overloaded_error'
     })
@@ -915,11 +920,11 @@ describe("Tess's agent loop", function () {
     expect(kept.messages.at(-1)?.content).deep.equals([
       { type: 'text', text: 'About four' }
     ])
-    expect(kept.contextTokens).equals(160020)
+    expect(kept.contextTokens).equals(compactAbove + 10020)
 
     model.calls.length = 0
     model.reply(say('They said one.'), say('About five'))
-    model.count(160000, 1000, 30000)
+    model.count(compactAbove + 10000, 1000, 30000)
     await runTurn(w.deps(), w.user(101), { text: 'five' })
     expect(model.messageCalls()[0].system[0].text).equals(SUMMARY_SYSTEM)
     expect((await loadConversation(w.h.db, w.userId(101))).summary).equals(
@@ -993,7 +998,7 @@ describe("Tess's agent loop", function () {
     model.calls.length = 0
     // With the conversation, then alone: alone it leaves no room for the
     // summary compaction would write.
-    model.count(250000, 190000)
+    model.count(inputCeiling + 58192, inputCeiling - 1808)
     try {
       await runTurn(w.deps(), w.user(101), {
         text: 'Read this',
@@ -1327,7 +1332,7 @@ describe("Tess's agent loop", function () {
     model.reply(
       callTools(
         [{ name: 'api_get', input: { path: '/me/roles' }, id: 'toolu_big' }],
-        { input_tokens: 900000 }
+        { input_tokens: inputCeiling + 1000 }
       ),
       say('Too much.')
     )

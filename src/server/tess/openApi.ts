@@ -176,7 +176,7 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
                 contextTokens: {
                   type: 'integer',
                   description:
-                    'The size of the last request and its answer; above 150,000 the conversation is compacted'
+                    "The size of the last request and its answer; above the configured model's threshold the conversation is compacted"
                 },
                 answering: {
                   type: 'boolean',
@@ -205,7 +205,7 @@ export function tessPaths(errorResponse: unknown): Record<string, unknown> {
           "caller's uploads. `screen` is the page beside the chat, sent by a " +
           'wide screen only. The conversation is compacted first when it ' +
           'needs to be. A message whose attachments would take it above ' +
-          "the model's 200,000-token window, with room for her answer, is " +
+          "the model's context window, with room for her answer, is " +
           'refused with 413: the message is not kept, and its attachments ' +
           'are, to be sent again without the one too large. A model ' +
           'failure is 503, and a message Tess had not begun to answer is ' +
