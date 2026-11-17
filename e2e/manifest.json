@@ -1,0 +1,569 @@
+{
+  "scenarios": [
+    {
+      "id": "streaming/basic/four-synthetic#scrub",
+      "title": "Four synthetic cameras stream live to an iPhone, an Android phone, Chrome, TeamStation TV and iPhone Safari for 30 minutes of scrubbing, every angle moving, recovering and aligned, with no memory growth",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/server/live/**",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "tv",
+              "needs": [
+                "apple-tv"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 35,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/basic/four-synthetic",
+      "file": "e2e/tests/streaming/basic/four-synthetic.e2e.ts"
+    },
+    {
+      "id": "streaming/soak/two-hour#six-surfaces",
+      "title": "A two-hour game streams to six watching surfaces through scrubs, cuts, outages and relaunches without a stall or memory growth",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/stream/**",
+        "src/server/live/**",
+        "src/server/ingest/**",
+        "appletv/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "publisherA",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "publisherB",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone",
+                "safari"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "tv",
+              "needs": [
+                "apple-tv",
+                "ndi-output"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 135,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/soak/two-hour",
+      "file": "e2e/tests/streaming/soak/two-hour.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/angle-ends#finished-game",
+      "title": "A camera that ends says so and never \"catching up\"; the finished game seeks to its middle and plays on with no Retry",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/server/live/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/angle-ends",
+      "file": "e2e/tests/streaming/targeted/angle-ends.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/cold-join#grid-opens",
+      "title": "A cold start opens the live grid with every angle moving within 20 s, without a seek, five times on each watcher",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 20,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/cold-join",
+      "file": "e2e/tests/streaming/targeted/cold-join.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/drift#30min",
+      "title": "For 30 minutes every watcher shows the angles within 500 ms of each other, by their burned-in clocks",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 36,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/drift",
+      "file": "e2e/tests/streaming/targeted/drift.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/gap-seek#paused",
+      "title": "A paused seek into a camera's missing footage shows its notice and holds the others at that moment; play resumes every angle; a skip before the take stays inside it",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/common/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 15,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/gap-seek",
+      "file": "e2e/tests/streaming/targeted/gap-seek.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/owner-panel#unanswered-read",
+      "title": "The owner's camera panel shows a camera ended after one of its reads went unanswered for 90 s, without a reload",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/stream/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": []
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 6,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/owner-panel",
+      "file": "e2e/tests/streaming/targeted/owner-panel.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/publisher-outage#45s",
+      "title": "A camera out for 45 s says so, then rejoins within 30 s, live and while the viewer is rewound",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/server/live/**",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 14,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/publisher-outage",
+      "file": "e2e/tests/streaming/targeted/publisher-outage.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/receiver-outage#180s",
+      "title": "A watcher whose own network is out for three minutes plays again within 30 s, and keeps a pause and a rewind across the outage",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "ipad",
+              "needs": [
+                "ipad"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 25,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/receiver-outage",
+      "file": "e2e/tests/streaming/targeted/receiver-outage.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/tv#cameras",
+      "title": "TeamStation TV starts cold to its code or home, offers four cameras, skips inside the take, recovers a camera after its outage and shows one ended",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/tv/**",
+        "appletv/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "tv",
+              "needs": [
+                "apple-tv"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 12,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/tv",
+      "file": "e2e/tests/streaming/targeted/tv.e2e.ts"
+    }
+  ]
+}

@@ -17,7 +17,8 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // testing track (alpha). One platform failing leaves the other running.
 //
 // The `seat` parameter picks the server the app talks to. A development seat
-// N points the app at https://developN.teamstation.app. Left at `production`,
+// N points the app at https://developN.teamstation.app, and a host name
+// (`e2e-03.teamstation.app`, an end-to-end stack) at that host. Left at `production`,
 // a master build keeps the app's own server, and every other branch points
 // at https://develop.teamstation.app. Only a master build of production goes
 // to TestFlight and to Google Play.
@@ -29,6 +30,19 @@ import type { Setup, Stage, WorkflowBuilder } from '@mason/types'
 // build does.
 
 export const STABLE_APP = 'app.teamstation.app'
+/** A develop phone build's test-control scheme, beside `teamstation`: its server link. */
+export const PHONE_DEVELOP_SCHEME = 'teamstation-develop'
+/** A develop TV build's test-control scheme: its server link. */
+export const TV_DEVELOP_SCHEME = 'teamstationtv-develop'
+/** A host a build may be pointed at by name: one of teamstation.app's. */
+export const SEAT_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.teamstation\.app$/
+/** `production`, a development seat 1–8, or a host name. */
+export const SEAT_PARAM = {
+  type: 'string',
+  pattern:
+    '^(production|[1-8]|[a-z0-9-]+(\\.[a-z0-9-]+)*\\.teamstation\\.app)$',
+  default: 'production'
+} as const
 export const TV_APP = 'app.teamstation.tv'
 export const DEVELOP_APP = 'app.teamstation.develop'
 export const DEVELOP_DISPLAY_NAME = 'TeamStation Develop'
@@ -94,10 +108,10 @@ function rewriteOnce(
   } catch {
     throw new Error(`${file} is missing ${from}`)
   }
-  if (!text.includes(from)) {
-    if (text.includes(to)) return
-    throw new Error(`${file} is missing ${from}`)
-  }
+  // Done already: also where what it writes keeps what it found, as an
+  // added scheme does.
+  if (text.includes(to)) return
+  if (!text.includes(from)) throw new Error(`${file} is missing ${from}`)
   writeFileSync(full, text.replaceAll(from, to))
 }
 
@@ -168,6 +182,27 @@ export function applyDevelopIdentity(root: string): void {
     '<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>',
     `<key>CFBundleURLName</key>\n\t\t\t<string>${DEVELOP_APP}</string>`
   )
+  // The test-control scheme a develop build alone claims: its server link.
+  rewrite(
+    'ios/TeamStation/Info.plist',
+    '\t\t\t\t<string>teamstation</string>\n\t\t\t</array>',
+    `\t\t\t\t<string>teamstation</string>\n\t\t\t\t<string>${PHONE_DEVELOP_SCHEME}</string>\n\t\t\t</array>`
+  )
+  rewrite(
+    'android/app/src/main/AndroidManifest.xml',
+    '            <data android:scheme="teamstation" />\n',
+    `            <data android:scheme="teamstation" />\n            <data android:scheme="${PHONE_DEVELOP_SCHEME}" />\n`
+  )
+}
+
+/** A develop TV build claims its test-control scheme, for its server link. */
+export function applyTvDevelopScheme(root: string): void {
+  rewriteOnce(
+    root,
+    'appletv/ios/TeamStationTV/Info.plist',
+    '\t<key>TVAppOrigin</key>\n',
+    `\t<key>CFBundleURLTypes</key>\n\t<array>\n\t\t<dict>\n\t\t\t<key>CFBundleURLSchemes</key>\n\t\t\t<array>\n\t\t\t\t<string>${TV_DEVELOP_SCHEME}</string>\n\t\t\t</array>\n\t\t</dict>\n\t</array>\n\t<key>TVAppOrigin</key>\n`
+  )
 }
 
 export function setup(m: Setup): void {
@@ -181,11 +216,7 @@ export function setup(m: Setup): void {
     'build',
     {
       params: {
-        seat: {
-          type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
-          default: 'production'
-        }
+        seat: SEAT_PARAM
       }
     },
     w => {
@@ -199,11 +230,7 @@ export function setup(m: Setup): void {
     {
       triggers: [{ request: true }],
       params: {
-        seat: {
-          type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
-          default: 'production'
-        }
+        seat: SEAT_PARAM
       }
     },
     w => {
@@ -459,10 +486,15 @@ export function seatEnvironment(
       TS_APP_ORIGIN: DEVELOP_ORIGIN
     }
   }
-  if (typeof seat !== 'string' || !/^[1-8]$/.test(seat)) {
+  if (
+    typeof seat !== 'string' ||
+    !(/^[1-8]$/.test(seat) || SEAT_HOST.test(seat))
+  ) {
     throw new Error(`Unknown seat ${String(seat)}`)
   }
-  const origin = `https://develop${seat}.teamstation.app`
+  const origin = /^[1-8]$/.test(seat)
+    ? `https://develop${seat}.teamstation.app`
+    : `https://${seat}`
   return {
     TS_API_BASE_URL: `${origin}/api/v1`,
     TS_APP_ORIGIN: DEVELOP_ORIGIN
@@ -538,6 +570,9 @@ async function install(ctx: Stage, cwd?: string): Promise<void> {
 export async function buildTv(ctx: Stage): Promise<void> {
   const environment = seatEnvironment(ctx)
   const api = environment.TS_API_BASE_URL
+  if (environment.TS_APP_ORIGIN === DEVELOP_ORIGIN) {
+    applyTvDevelopScheme(developRoot(ctx))
+  }
   const version = appVersion(ctx)
   const build = ctx.getBuildNumber(TV_APP)
   const provenance = provenanceEnvironment(ctx, version, build)
@@ -932,9 +967,23 @@ export async function playAccessToken(
   return token
 }
 
+/** A Play release's status: live on its track, or waiting in Play Console. */
+export type PlayReleaseStatus = 'completed' | 'draft'
+
+/**
+ * Play's refusal of a completed release while the app has never been
+ * published. Until its first release is sent for review in Play Console, the
+ * API may only create drafts.
+ */
+const PLAY_DRAFT_APP =
+  /only releases with status draft may be created on draft app/i
+
 /**
  * Uploads `bundle` and releases it to `track` with status completed, in one
  * edit that is committed at the end. An edit that fails part way is deleted.
+ * While the app is still a draft, Play refuses a completed release, so the
+ * bundle goes up again in a new edit as a draft release, which someone then
+ * sends for review in Play Console.
  */
 export async function releaseToPlayTrack(options: {
   token: string
@@ -942,7 +991,34 @@ export async function releaseToPlayTrack(options: {
   track: string
   notes: string
   fetcher: Fetch
-}): Promise<{ editId: string; versionCode: number }> {
+}): Promise<{
+  editId: string
+  versionCode: number
+  status: PlayReleaseStatus
+}> {
+  try {
+    return await releaseInPlayEdit(options, 'completed')
+  } catch (error) {
+    if (!(error instanceof Error) || !PLAY_DRAFT_APP.test(error.message))
+      throw error
+    return await releaseInPlayEdit(options, 'draft')
+  }
+}
+
+async function releaseInPlayEdit(
+  options: {
+    token: string
+    bundle: Uint8Array
+    track: string
+    notes: string
+    fetcher: Fetch
+  },
+  status: PlayReleaseStatus
+): Promise<{
+  editId: string
+  versionCode: number
+  status: PlayReleaseStatus
+}> {
   const { token, track, fetcher } = options
   const auth = { Authorization: `Bearer ${token}` }
   const json = { ...auth, 'Content-Type': 'application/json' }
@@ -979,7 +1055,7 @@ export async function releaseToPlayTrack(options: {
         releases: [
           {
             versionCodes: [String(versionCode)],
-            status: 'completed',
+            status,
             releaseNotes: [{ language: 'en-US', text: options.notes }]
           }
         ]
@@ -991,7 +1067,7 @@ export async function releaseToPlayTrack(options: {
       headers: auth
     })
     if (!committed.ok) throw await playFailure('commit', committed)
-    return { editId, versionCode }
+    return { editId, versionCode, status }
   } catch (error) {
     await fetcher(edit, { method: 'DELETE', headers: auth }).catch(
       () => undefined
@@ -1015,13 +1091,22 @@ export async function releasePlayTesting(ctx: Stage): Promise<void> {
   )
   const fetcher: Fetch = async (input, init) => await fetch(input, init)
   const token = await playAccessToken(key, fetcher)
-  const { editId, versionCode } = await releaseToPlayTrack({
+  const { editId, versionCode, status } = await releaseToPlayTrack({
     token,
     bundle: readFileSync(workspacePath(ctx, bundle)),
     track: PLAY_TRACK,
     notes: PLAY_RELEASE_NOTES,
     fetcher
   })
+  if (status === 'draft') {
+    ctx.log.warn(
+      `Google Play ${PLAY_TRACK} has versionCode ${versionCode} as a draft (edit ${editId}): the app has never been published, so send the release for review in Play Console.`
+    )
+    ctx.describe(
+      `Google Play closed testing has a draft of versionCode ${versionCode}`
+    )
+    return
+  }
   ctx.log.info(
     `Google Play ${PLAY_TRACK} has versionCode ${versionCode} (edit ${editId}).`
   )

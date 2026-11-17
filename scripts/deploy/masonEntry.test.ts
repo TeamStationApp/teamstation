@@ -40,6 +40,7 @@ import {
   releaseIos,
   releasePlayTesting,
   releaseToPlayTrack,
+  SEAT_PARAM,
   seatEnvironment,
   setup,
   signAabScript,
@@ -409,13 +410,21 @@ describe('TeamStation pipeline Masonfile', () => {
     ])
     assert.deepEqual(workflows.build?.options, {
       params: {
-        seat: {
-          type: 'choice',
-          choices: ['production', '1', '2', '3', '4', '5', '6', '7', '8'],
-          default: 'production'
-        }
+        seat: SEAT_PARAM
       }
     })
+    // A seat, production, or a host name: an end-to-end stack's.
+    const pattern = new RegExp(SEAT_PARAM.pattern)
+    for (const seat of ['production', '1', '8', 'e2e-03.teamstation.app']) {
+      assert.match(seat, pattern)
+    }
+    for (const seat of [
+      '9',
+      'evil.example.com',
+      'e2e-03.teamstation.app.evil.test'
+    ]) {
+      assert.doesNotMatch(seat, pattern)
+    }
     assert.equal(android[0]?.name, 'compile')
     assert.equal(android[0]?.on.type, 'do-linux')
     assert.equal(android[0]?.tools.rust, '1.98.0')
@@ -663,7 +672,9 @@ describe('TeamStation pipeline Masonfile', () => {
       'ios/TeamStation.xcodeproj/project.pbxproj':
         'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
       'ios/TeamStation/Info.plist':
-        '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n',
+        '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n\t\t\t<array>\n\t\t\t\t<string>teamstation</string>\n\t\t\t</array>\n',
+      'android/app/src/main/AndroidManifest.xml':
+        '            <data android:scheme="teamstation" />\n',
       'package.json': JSON.stringify({ version: '1.2.3' })
     }
     for (const [file, text] of Object.entries(files)) {
@@ -1111,6 +1122,22 @@ describe('TeamStation pipeline Masonfile', () => {
         TS_APP_ORIGIN: 'https://develop.teamstation.app'
       }
     )
+    assert.deepEqual(
+      seatEnvironment({
+        run: {
+          branch: 'paul/example',
+          params: { seat: 'e2e-03.teamstation.app' }
+        }
+      }),
+      {
+        TS_API_BASE_URL: 'https://e2e-03.teamstation.app/api/v1',
+        TS_APP_ORIGIN: 'https://develop.teamstation.app'
+      }
+    )
+    assert.throws(
+      () => seated({ seat: 'evil.example.com' }),
+      /Unknown seat evil\.example\.com/
+    )
     assert.throws(() => seated({ seat: '9' }), /Unknown seat 9/)
     assert.throws(() => seated({ seat: 3 }), /Unknown seat 3/)
   })
@@ -1208,7 +1235,9 @@ describe('TeamStation pipeline Masonfile', () => {
         'ios/TeamStation.xcodeproj/project.pbxproj':
           'PRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app.tests;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\nPRODUCT_BUNDLE_IDENTIFIER = app.teamstation.app;\nPRODUCT_NAME = TeamStation;\n',
         'ios/TeamStation/Info.plist':
-          '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n'
+          '<key>CFBundleDisplayName</key>\n\t<string>TeamStation</string>\n<key>CFBundleURLName</key>\n\t\t\t<string>app.teamstation.app</string>\n\t\t\t<array>\n\t\t\t\t<string>teamstation</string>\n\t\t\t</array>\n',
+        'android/app/src/main/AndroidManifest.xml':
+          '            <data android:scheme="teamstation" />\n        </intent-filter>\n'
       }
       for (const [file, text] of Object.entries(files)) {
         const full = path.join(root, file)
@@ -1217,6 +1246,24 @@ describe('TeamStation pipeline Masonfile', () => {
       }
       applyDevelopIdentity(root)
       applyDevelopIdentity(root)
+      // The develop app claims its test-control scheme beside its own, once.
+      const plistText = readFileSync(
+        path.join(root, 'ios/TeamStation/Info.plist'),
+        'utf8'
+      )
+      assert.equal(
+        plistText.match(/<string>teamstation-develop<\/string>/g)?.length,
+        1
+      )
+      assert.match(plistText, /<string>teamstation<\/string>/)
+      const manifest = readFileSync(
+        path.join(root, 'android/app/src/main/AndroidManifest.xml'),
+        'utf8'
+      )
+      assert.equal(
+        manifest.match(/android:scheme="teamstation-develop"/g)?.length,
+        1
+      )
       const gradle = readFileSync(
         path.join(root, 'android/app/build.gradle'),
         'utf8'
@@ -1540,13 +1587,26 @@ describe('request-only Apple TV workflow', () => {
     ['master', 'production', 'app'],
     ['develop', 'production', 'develop'],
     ['feature', '5', 'develop5'],
-    ['master', '2', 'develop2']
+    ['master', '2', 'develop2'],
+    ['feature', 'e2e-03.teamstation.app', 'e2e-03']
   ]) {
     it(`archives a standalone TV app for ${branch}/${seat}`, async () => {
       const commands: Array<[string, string | undefined]> = []
       const saved: string[] = []
       let published = false
+      const workspace = mkdtempSync(path.join(tmpdir(), 'tv-app-'))
+      const plist = path.join(workspace, 'appletv/ios/TeamStationTV/Info.plist')
+      mkdirSync(path.dirname(plist), { recursive: true })
+      writeFileSync(
+        plist,
+        '<dict>\n\t<key>TVAppOrigin</key>\n\t<string>$(TV_APP_ORIGIN)</string>\n</dict>\n'
+      )
+      writeFileSync(
+        path.join(workspace, 'package.json'),
+        readFileSync('package.json', 'utf8')
+      )
       await buildTv({
+        workspace,
         run: { branch, commit: '0'.repeat(40), params: { seat } },
         async sh(command, options) {
           commands.push([command, options?.cwd])
@@ -1621,6 +1681,11 @@ describe('request-only Apple TV workflow', () => {
       assert.deepEqual(commands.at(-1), ['pod install', 'appletv/ios'])
       assert.deepEqual(saved, ['tvos-ipa', 'tvos-dsym'])
       assert.ok(published)
+      // A develop TV build alone claims the scheme its server link uses.
+      const claimed = readFileSync(plist, 'utf8').includes(
+        '<string>teamstationtv-develop</string>'
+      )
+      assert.equal(claimed, host !== 'app')
     })
   }
 
@@ -1798,7 +1863,11 @@ describe('Google Play closed-testing release', () => {
       notes: 'Notes',
       fetcher: api.fetcher
     })
-    assert.deepEqual(result, { editId: 'edit-7', versionCode: 26111501 })
+    assert.deepEqual(result, {
+      editId: 'edit-7',
+      versionCode: 26111501,
+      status: 'completed'
+    })
     const base =
       'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.teamstation.app'
     assert.deepEqual(
@@ -1887,6 +1956,81 @@ describe('Google Play closed-testing release', () => {
       /no versionCode/
     )
     assert.equal(noCode.calls.at(-1)?.method, 'DELETE')
+  })
+
+  it('releases a draft in a new edit while the app has never been published', async () => {
+    let edits = 0
+    const api = recorder(call => {
+      if (call.url.endsWith('/edits'))
+        return reply(200, { id: `edit-${(edits += 1)}` })
+      if (call.url.includes('/bundles'))
+        return reply(200, { versionCode: 26111604 })
+      if (call.url.endsWith('edit-1:commit'))
+        return reply(400, {
+          error: {
+            message:
+              'Only releases with status draft may be created on draft app.'
+          }
+        })
+      return reply(200, {})
+    })
+    const result = await releaseToPlayTrack({
+      token: 'token-1',
+      bundle: new Uint8Array([1]),
+      track: 'alpha',
+      notes: 'Notes',
+      fetcher: api.fetcher
+    })
+    assert.deepEqual(result, {
+      editId: 'edit-2',
+      versionCode: 26111604,
+      status: 'draft'
+    })
+    const base =
+      'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.teamstation.app'
+    const upload =
+      'https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/app.teamstation.app'
+    assert.deepEqual(
+      api.calls.map(call => `${call.method} ${call.url}`),
+      [
+        `POST ${base}/edits`,
+        `POST ${upload}/edits/edit-1/bundles?uploadType=media`,
+        `PUT ${base}/edits/edit-1/tracks/alpha`,
+        `POST ${base}/edits/edit-1:commit`,
+        `DELETE ${base}/edits/edit-1`,
+        `POST ${base}/edits`,
+        `POST ${upload}/edits/edit-2/bundles?uploadType=media`,
+        `PUT ${base}/edits/edit-2/tracks/alpha`,
+        `POST ${base}/edits/edit-2:commit`
+      ]
+    )
+    const statuses = api.calls
+      .filter(call => call.url.endsWith('/tracks/alpha'))
+      .map(call => JSON.parse(String(call.body)).releases[0].status)
+    assert.deepEqual(statuses, ['completed', 'draft'])
+
+    const other = recorder(call => {
+      if (call.url.endsWith('/edits')) return reply(200, { id: 'edit-3' })
+      if (call.url.includes('/bundles'))
+        return reply(200, { versionCode: 26111605 })
+      if (call.url.endsWith(':commit'))
+        return reply(400, { error: { message: 'Version code already used.' } })
+      return reply(200, {})
+    })
+    await assert.rejects(
+      releaseToPlayTrack({
+        token: 'token-1',
+        bundle: new Uint8Array([1]),
+        track: 'alpha',
+        notes: 'Notes',
+        fetcher: other.fetcher
+      }),
+      /Version code already used/
+    )
+    assert.equal(
+      other.calls.filter(call => call.url.endsWith('/edits')).length,
+      1
+    )
   })
 
   it('releases the stashed bundle from the play stage and logs the versionCode', async () => {

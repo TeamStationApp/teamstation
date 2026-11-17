@@ -12,13 +12,18 @@ import type {
 } from 'react-native-video'
 
 import {
+  nextReadiness,
+  NOTHING_LOADED,
+  type Readiness,
+  type ReadinessEvent
+} from './nativeReadiness'
+import {
   answersSeek,
   SEEK_TOLERANCE,
   shouldAdoptProgress,
   shouldResumeAfterSeek
 } from './seekTracker'
 import {
-  HAVE_CURRENT_DATA,
   HAVE_ENOUGH_DATA,
   type VideoEventName,
   type VideoHandle,
@@ -100,7 +105,8 @@ export class NativeVideoHandle implements VideoHandle {
   /** When, on `clock`, `time` was true. */
   private timeAt = 0
   private length = Number.POSITIVE_INFINITY
-  private state = 0
+  /** Changed only by `advance`. */
+  private readiness: Readiness = NOTHING_LOADED
   private width = 0
   private height = 0
   /**
@@ -150,6 +156,15 @@ export class NativeVideoHandle implements VideoHandle {
    * source a new one. iOS loads whatever it is handed.
    */
   clearBeforeReload = false
+
+  /**
+   * Whether a loaded player's buffer-ready report is enough to play, picture
+   * reported or not. Set by the view on Android, whose player can report its
+   * first picture before its load and so leave a tile looking short for
+   * good. AVPlayer says it is ready before it has a picture, so on iOS the
+   * picture is still what is waited for.
+   */
+  readyOnBuffer = false
 
   /**
    * The player has run out of picture and is waiting for more, from the
@@ -260,7 +275,7 @@ export class NativeVideoHandle implements VideoHandle {
   }
 
   get readyState(): number {
-    return this.state
+    return this.readiness.state
   }
 
   get videoWidth(): number {
@@ -329,6 +344,17 @@ export class NativeVideoHandle implements VideoHandle {
 
   // ---- what the view feeds in -----------------------------------------
 
+  /**
+   * Android's player has started opening an item: on its own (back from the
+   * background, or retrying) as well as when handed a source. What the last
+   * item had no longer counts, and its first picture and buffer-ready report
+   * come next, ahead of its load. A source the player judges the same as the
+   * one it holds opens nothing and says nothing, and changes nothing here.
+   */
+  handleLoadStart = (): void => {
+    this.advance('loadStart')
+  }
+
   handleLoad = (data: OnLoadData): void => {
     // A live stream has no length, and ExoPlayer says so with a **zero** — not
     // a `NaN`, which is what a browser gives and what every caller checks for
@@ -340,7 +366,12 @@ export class NativeVideoHandle implements VideoHandle {
     this.length = length
     this.width = data.naturalSize.width
     this.height = data.naturalSize.height
-    this.state = 1
+    // The first load never lowers: ExoPlayer draws its first frame, and
+    // says so, before it reports the load, and knocking that picture back to
+    // "metadata only" left every tile of a phone's grid short for good — the
+    // grid waits for `HAVE_ENOUGH_DATA` before it plays, so it held them
+    // frozen on their first frame until somebody scrubbed.
+    this.advance('load')
     // A fresh source starts where it says it does, and a seek aimed at the
     // *previous* one will never be answered now.
     this.pendingSeekTo = null
@@ -456,9 +487,7 @@ export class NativeVideoHandle implements VideoHandle {
   handleReadyForDisplay = (): void => {
     this.rebase()
     this.failed = false
-    // A picture is up: what a browser calls `HAVE_ENOUGH_DATA`, which is what
-    // the multi-camera grid asks before it believes a tile has started.
-    this.state = Math.max(this.state, HAVE_ENOUGH_DATA)
+    this.advance('picture')
     this.emit('canplay')
     this.emit('loadeddata')
   }
@@ -475,7 +504,8 @@ export class NativeVideoHandle implements VideoHandle {
    *
    * Android's player says ready only once it holds what it was told to start
    * with (`bufferForPlaybackMs`); AVPlayer says it when it judges playback
-   * likely to keep up.
+   * likely to keep up. On Android it is enough to play once the source has
+   * loaded, picture reported or not (`readyOnBuffer`).
    */
   handleBuffer = (data: OnBufferData): void => {
     this.rebase()
@@ -487,7 +517,7 @@ export class NativeVideoHandle implements VideoHandle {
     const stoppedAt = this.playerStoppedAt
     this.playerStoppedAt = null
     if (data.isBuffering) {
-      this.state = Math.min(this.state, HAVE_CURRENT_DATA)
+      this.advance('bufferStart')
       // The player's "not playing" just before this was the stall, not a
       // pause: it is still meant to be playing, and plays on by itself.
       if (
@@ -501,11 +531,9 @@ export class NativeVideoHandle implements VideoHandle {
       }
       return
     }
-    if (this.state < HAVE_CURRENT_DATA || this.state === HAVE_ENOUGH_DATA) {
-      return
-    }
-    this.state = HAVE_ENOUGH_DATA
-    this.emit('canplay')
+    const before = this.readiness.state
+    this.advance('bufferEnd')
+    if (this.readiness.state !== before) this.emit('canplay')
   }
 
   handleVideoTracks = (data: OnVideoTracksData): void => {
@@ -596,8 +624,9 @@ export class NativeVideoHandle implements VideoHandle {
       this.props = { ...this.props, paused: true }
       this.onPropsChange()
     }
-    // A fresh attempt, paused until somebody plays it.
+    // A fresh attempt, paused until somebody plays it, with nothing loaded yet.
     this.failed = false
+    this.advance('reopen')
     if (this.clearBeforeReload) this.player?.setSource(undefined)
     // The whole source, not only its address: on Android the buffer and the
     // live offset travel with it, and a bare address put ExoPlayer back on
@@ -610,10 +639,10 @@ export class NativeVideoHandle implements VideoHandle {
     this.reportedPlaying = false
     this.actuallyPlaying = false
     this.emit('emptied')
+    this.advance('reopen')
     this.time = 0
     this.timeAt = this.clock()
     this.length = Number.POSITIVE_INFINITY
-    this.state = 0
     this.width = 0
     this.height = 0
     this.pendingSeekTo = null
@@ -635,7 +664,7 @@ export class NativeVideoHandle implements VideoHandle {
       this.props.paused ||
       this.failed ||
       this.over ||
-      this.state !== HAVE_ENOUGH_DATA ||
+      this.readiness.state !== HAVE_ENOUGH_DATA ||
       this.pendingSeekTo != null
     ) {
       return 0
@@ -648,6 +677,18 @@ export class NativeVideoHandle implements VideoHandle {
       (elapsed / 1000) * this.props.rate,
       Math.max(0, this.length - this.time)
     )
+  }
+
+  /**
+   * Moves the readiness on for what the player reported. The carried
+   * playhead reads it, so the playhead is fixed first whenever it changes.
+   */
+  private advance(event: ReadinessEvent): void {
+    const next = nextReadiness(this.readiness, event, {
+      readyOnBuffer: this.readyOnBuffer
+    })
+    if (next.state !== this.readiness.state) this.rebase()
+    this.readiness = next
   }
 
   /**

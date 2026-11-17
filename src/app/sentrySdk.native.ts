@@ -13,7 +13,7 @@ import {
 } from '@sentry/react-native'
 
 import { hostOfUrl } from '../common/sentry/environment'
-import { apiBaseUrl } from './native/config'
+import { currentApiBaseUrl } from './native/config'
 
 export {
   addBreadcrumb,
@@ -27,7 +27,7 @@ export {
 
 /** The host of the server this build talks to. */
 export function sentryHost(): string | undefined {
-  return hostOfUrl(apiBaseUrl)
+  return hostOfUrl(currentApiBaseUrl())
 }
 
 /**
