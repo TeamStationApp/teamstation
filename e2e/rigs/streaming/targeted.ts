@@ -10,6 +10,11 @@ import {
   readingEpochMs,
   type TileClock
 } from './clockReader'
+import {
+  DropletPublisher,
+  type DropletPublisherOptions,
+  requirePublisher
+} from './dropletPublisher'
 import { type OwnerApi, ownerApi } from './ownerApi'
 import type { SoakSampler } from './soakRun'
 import { signInApp } from './soakSignIn'
@@ -39,7 +44,6 @@ import { MobileSafariSurface } from './surfaces/mobileSafari'
 import { NativeAppSurface } from './surfaces/nativeApp'
 import type { SoakSurfaceDriver } from './surfaces/surface'
 import type { TvRemote } from './surfaces/tv'
-import { SyntheticPublisher } from './syntheticPublisher'
 
 /**
  * The targeted streaming scenarios' runner (`e2e/tests/streaming/targeted/`).
@@ -422,9 +426,7 @@ export interface TargetedDeps {
   signInApp: typeof signInApp
   recordSessions: (world: StreamingWorld, file: string) => Promise<void>
   memorySamplers: typeof memorySamplers
-  publisher: (
-    options: ConstructorParameters<typeof SyntheticPublisher>[0]
-  ) => PublisherLike
+  publisher: (options: DropletPublisherOptions) => PublisherLike
   run: (command: string, args: string[]) => Promise<unknown>
   now: () => number
   sleep: (ms: number) => Promise<void>
@@ -440,7 +442,7 @@ export const realTargetedDeps: TargetedDeps = {
     await recordSessions(world, file)
   },
   memorySamplers,
-  publisher: options => new SyntheticPublisher(options),
+  publisher: options => new DropletPublisher(options),
   run: async (command, args) => await run(command, args),
   now: Date.now,
   sleep: realSleep
@@ -459,7 +461,17 @@ export async function runTargeted(
   deps: TargetedDeps = realTargetedDeps
 ): Promise<TargetedOutcome> {
   const world = await deps.openWorld({ ctx, cwd, synthetic: setup.synthetic })
-  const kit = deps.deviceKit(ctx, world.settings)
+  let publisher: ReturnType<typeof requirePublisher>
+  let kit: ReturnType<TargetedDeps['deviceKit']>
+  try {
+    // Before any device: a stack with no publisher droplet has no cameras.
+    publisher = requirePublisher(world.handle)
+    kit = deps.deviceKit(ctx, world.settings)
+  } catch (error) {
+    // The world's log mirror would otherwise hold the run open.
+    await world.close()
+    throw error
+  }
   const record = new Recorder(ctx.artifact('targeted.jsonl'), kit.saveShot)
   const watchers: Watcher[] = []
   const urlFiles: string[] = []
@@ -594,14 +606,7 @@ export async function runTargeted(
       urlFiles.push(urlFile)
       publishers.set(
         stream.label,
-        deps.publisher({
-          ffmpeg: world.settings.ffmpeg,
-          urlFile,
-          label: stream.label,
-          ...(world.settings.offsetMinutes == null
-            ? {}
-            : { offsetMinutes: world.settings.offsetMinutes })
-        })
+        deps.publisher({ publisher, urlFile, label: stream.label })
       )
     }
     const takeStartMs = deps.now()

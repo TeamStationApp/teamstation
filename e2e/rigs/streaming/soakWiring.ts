@@ -5,6 +5,7 @@ import { join } from 'node:path'
 
 import type { E2eContext } from '../../core/spec'
 import { SSH_OPTIONS, type StreamingHandle } from '../../core/streamingStack'
+import { DropletPublisher, requirePublisher } from './dropletPublisher'
 import { PhonePublisher } from './phonePublisher'
 import { sampleMeminfo } from './samplers/adbMeminfo'
 import { sampleChrome } from './samplers/chromeProcess'
@@ -35,7 +36,6 @@ import { MobileSafariSurface } from './surfaces/mobileSafari'
 import { NativeAppSurface } from './surfaces/nativeApp'
 import type { SoakSurfaceDriver } from './surfaces/surface'
 import type { TvRemote } from './surfaces/tv'
-import { SyntheticPublisher } from './syntheticPublisher'
 
 export {
   ANDROID_MAX_HOLD_MS,
@@ -299,6 +299,8 @@ export async function soakParts(
   let closeWeb: (() => Promise<void>) | undefined
   try {
     const { handle, settings, world, links, link } = opened
+    // Before any device: a stack with no publisher droplet has no cameras.
+    const publisher = requirePublisher(handle)
     const { attachIos, attachAndroid, openIn, saveShot } = deps.deviceKit(
       ctx,
       settings
@@ -426,13 +428,10 @@ export async function soakParts(
           angle: 'PhoneB',
           openIn: openIn('publisherB', 'android')
         }),
-        publisherC: new SyntheticPublisher({
-          ffmpeg: settings.ffmpeg,
+        publisherC: new DropletPublisher({
+          publisher,
           urlFile,
-          label: 'Synthetic',
-          ...(settings.offsetMinutes == null
-            ? {}
-            : { offsetMinutes: settings.offsetMinutes })
+          label: 'Synthetic'
         })
       },
       samplers: [

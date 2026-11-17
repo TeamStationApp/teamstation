@@ -37,6 +37,7 @@ const HANDLE: StreamingHandle = {
   hlsRoot: '/example/hls',
   databaseUrl: 'postgres://u:p@db.example.test/ts?sslmode=require',
   rtmp: 'rtmp://203.0.113.7:1935/live/',
+  publisher: { url: 'https://pub.example.test/__e2e/publishers', token: 'pt' },
   serverConfig: { sessionSecret: 's', live: { rtmpPort: 1935 } }
 }
 

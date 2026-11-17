@@ -364,7 +364,11 @@ function rig(
       id: 'streamtest-1',
       origin: 'https://stack.example.test',
       api: 'https://stack.example.test/api/v1',
-      rtmp: 'rtmp://h:1936'
+      rtmp: 'rtmp://h:1936',
+      publisher: {
+        url: 'https://pub.example.test/__e2e/publishers',
+        token: 'pt'
+      }
     },
     settings,
     world: {
@@ -449,7 +453,7 @@ function rig(
     },
     publisher: publisher => {
       log.push(
-        `publisher ${publisher.label} ${publisher.ffmpeg} ${readFileSync(publisher.urlFile, 'utf8')} ${String(publisher.offsetMinutes)}`
+        `publisher ${publisher.label} ${publisher.publisher.url} ${readFileSync(publisher.urlFile, 'utf8')}`
       )
       return {
         start: async () => {
@@ -461,7 +465,8 @@ function rig(
         cut: async seconds => {
           log.push(`cut ${publisher.label} ${seconds}`)
         },
-        clockBase: () => benchClock(publisher.offsetMinutes)
+        // The rig's readings are drawn on the bench clock.
+        clockBase: () => benchClock()
       }
     },
     run: async (command, args) => {
@@ -514,7 +519,7 @@ describe('running a targeted scenario', function () {
           '/Users/dev/.config/teamstation-e2e/shaper.mjs'
         )
         expect(session.shapedIps).deep.equals({ iphone: '192.0.2.1' })
-        expect(session.clockBase('SynthA')).deep.equals(benchClock(undefined))
+        expect(session.clockBase('SynthA')).deep.equals(benchClock())
         expect(session.clockBase('SynthZ')).equals(undefined)
         expect(session.streamId('SynthB')).equals('st-b')
         expect(() => session.streamId('SynthZ')).throws(
@@ -545,7 +550,7 @@ describe('running a targeted scenario', function () {
     expect(r.log).includes('signed in app.teamstation.develop tok')
     expect(r.log).includes(`sessions ${join(r.dir, 'sessions.json')}`)
     expect(r.log).includes(
-      'publisher SynthA f rtmp://h:1936/live/key-a undefined'
+      'publisher SynthA https://pub.example.test/__e2e/publishers rtmp://h:1936/live/key-a'
     )
     expect(r.log).includes('cdp Fetch.enable')
     expect(r.log).includes('cdp on Fetch.requestPaused')
@@ -647,13 +652,13 @@ describe('running a targeted scenario', function () {
   })
 
   it('hands back the watchers that failed a step, with the summary written', async function () {
-    const r = rig({ settings: { offsetMinutes: 60 }, androidJoinFails: false })
+    const r = rig({ androidJoinFails: false })
     const outcome = await runTargeted(
       r.ctx,
       '/repo',
       { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
       async session => {
-        expect(session.clockBase('SynthA')).deep.equals(benchClock(60))
+        expect(session.clockBase('SynthA')).deep.equals(benchClock())
         expect(session.now()).equals(T0 + 1000)
         await session.record.check(
           session.watchers[0],
@@ -670,11 +675,45 @@ describe('running a targeted scenario', function () {
       failed: ['android'],
       steps: join(r.dir, 'targeted.jsonl')
     })
-    expect(r.log).includes('publisher SynthA f rtmp://h:1936/live/key-a 60')
+    expect(r.log).includes(
+      'publisher SynthA https://pub.example.test/__e2e/publishers rtmp://h:1936/live/key-a'
+    )
     expect(summary(r.dir)).deep.equals({
       verdicts: { android: 'failed' },
       steps: 1
     })
+  })
+
+  it('is blocked before any device on a stack with no publisher droplet', async function () {
+    const r = rig()
+    const open = r.deps.openWorld
+    let closed = 0
+    r.deps.openWorld = async options => {
+      const world = await open(options)
+      return {
+        ...world,
+        handle: { ...world.handle, publisher: undefined },
+        close: async () => {
+          closed += 1
+          await world.close()
+        }
+      }
+    }
+    let failure: unknown
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
+      async () => {},
+      r.deps
+    ).catch((error: unknown) => {
+      failure = error
+    })
+    expect(failure).instanceOf(BlockedError)
+    expect(String(failure)).includes('has no publisher droplet')
+    expect(r.log.filter(line => line.startsWith('attach'))).deep.equals([])
+    // Its log mirror is let go: nothing holds the run open.
+    expect(closed).equals(1)
   })
 
   it('is blocked when every watcher was, or none took a step', async function () {

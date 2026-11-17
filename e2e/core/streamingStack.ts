@@ -39,6 +39,8 @@ export interface StreamingHandle extends AttachedHandle {
   hlsRoot: string
   /** A Postgres URL this Mac can reach. */
   databaseUrl: string
+  /** The publisher droplet that sends the synthetic cameras, and its token. */
+  publisher?: { url: string; token: string }
 }
 
 export function requireStreamingHandle(
