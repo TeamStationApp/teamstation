@@ -10,7 +10,10 @@ import {
   testDatabaseUrlOf
 } from '../testDatabase'
 import { migration125SolverLimit as migration } from './125solverLimit'
-import { migrations } from './index'
+import { migrations as all } from './index'
+
+// Up to this one: a later migration would be the one rolled back.
+const migrations = all.slice(0, all.indexOf(migration) + 1)
 
 describe('the solver limit and proven previews', function () {
   this.timeout(60000)

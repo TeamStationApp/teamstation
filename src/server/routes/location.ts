@@ -21,7 +21,8 @@ import {
   nearestPlace,
   placeAttribution,
   placeById,
-  placeSnapshot
+  placeSnapshot,
+  placesReady
 } from '../location/places'
 import { requireActor } from '../middleware/withAuth'
 import { withAsync } from '../middleware/withErrors'
@@ -94,6 +95,8 @@ export function locationRoutes(
       if (typeof query !== 'string' || query.length > 120)
         throw badRequest('Enter a city or region')
       const session = sessionToken(req.query.session)
+      // A worker still warming the catalog finishes it first.
+      await placesReady()
       const places = findPlaces(query)
       const google = cities?.googlePlaces
       const signedIn = req.actor != null && !isMachine(req.actor)
@@ -141,6 +144,7 @@ export function locationRoutes(
           place: await cities.googlePlaces.locality(id.slice(7), session)
         })
       } else if (id.startsWith('geonames:')) {
+        await placesReady()
         const place = placeById(id.slice(9))
         if (place == null) throw notFound()
         res.json({ place })

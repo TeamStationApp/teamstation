@@ -81,6 +81,7 @@ import {
   ensurePersonLink,
   personTerms
 } from '../invites/personRequests'
+import { coordinateColumns } from '../location/places'
 import type { MediaContext } from '../media/mediaContext'
 import { releaseReplacedPicture } from '../media/republishImages'
 import { requireActor } from '../middleware/withAuth'
@@ -1212,12 +1213,14 @@ export function groupRoutes(
             .where('id', '=', ref.id)
             .execute()
         }
-        if (ref.kind !== 'season' && req.body?.locality != null)
+        if (ref.kind !== 'season' && req.body?.locality != null) {
+          const locality = clean(asLocality, req.body.locality)
           await trx
             .updateTable(ref.kind === 'team' ? 'teams' : 'leagues')
-            .set({ locality: clean(asLocality, req.body.locality) })
+            .set({ locality, ...coordinateColumns(locality) })
             .where('id', '=', ref.id)
             .execute()
+        }
         if (
           ref.kind === 'season' &&
           (Object.hasOwn(req.body ?? {}, 'startsOn') ||

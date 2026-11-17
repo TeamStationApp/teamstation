@@ -99,6 +99,12 @@ export interface LeaguesTable {
   umpire_credits: Generated<boolean>
   id: string
   locality: Json | null
+  /**
+   * Where its locality is, from the places catalog, or null when the catalog
+   * has no such city (126groupCoordinates). Written with every locality.
+   */
+  latitude: number | null
+  longitude: number | null
   picture_catalog_id: Generated<string | null>
   name: string
   short_name: string | null
@@ -168,6 +174,9 @@ export interface TeamsTable {
   id: string
   league_id: Generated<string | null>
   locality: Json | null
+  /** As a league's: its locality's coordinates, or null (126groupCoordinates). */
+  latitude: number | null
+  longitude: number | null
   picture_catalog_id: Generated<string | null>
   custodian_type: Generated<'league' | 'season' | 'team' | null>
   custodian_id: Generated<string | null>
