@@ -69,14 +69,20 @@ export function frameLogScript(): string {
   canvas.width = ${W}
   canvas.height = ${H}
   const context = canvas.getContext('2d', { willReadFrequently: true })
+  // Only the clock's box is read back: the whole frame, every frame of every
+  // tile, was a new buffer outside the JS heap each time, and the renderer
+  // grew by gigabytes an hour.
+  const xs = points.flat().map(([x]) => x), ys = points.flat().map(([, y]) => y)
+  const x0 = Math.min(...xs), y0 = Math.min(...ys)
+  const bw = Math.max(...xs) - x0 + 1, bh = Math.max(...ys) - y0 + 1
   const ink = (data, x, y) => {
-    const at = (y * ${W} + x) * 4
+    const at = ((y - y0) * bw + (x - x0)) * 4
     const r = data[at], g = data[at + 1], b = data[at + 2]
     return r > 150 && g > 100 && b < 110 && r - b > 90
   }
   const readClock = video => {
     context.drawImage(video, 0, 0, ${W}, ${H})
-    const data = context.getImageData(0, 0, ${W}, ${H}).data
+    const data = context.getImageData(x0, y0, bw, bh).data
     let text = ''
     for (const digit of points) {
       const bits = digit.map(([x, y]) => (ink(data, x, y) ? '1' : '0')).join('')

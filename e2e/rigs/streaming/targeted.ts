@@ -37,13 +37,14 @@ import {
   signInTv,
   type StreamingWorld,
   TV_APP,
-  tvKit
+  tvKit,
+  TvSignInError
 } from './streamingSession'
 import { ChromeSurface } from './surfaces/chrome'
 import { MobileSafariSurface } from './surfaces/mobileSafari'
 import { NativeAppSurface } from './surfaces/nativeApp'
 import type { SoakSurfaceDriver } from './surfaces/surface'
-import type { TvRemote } from './surfaces/tv'
+import type { TvCapture, TvRemote } from './surfaces/tv'
 
 /**
  * The targeted streaming scenarios' runner (`e2e/tests/streaming/targeted/`).
@@ -421,7 +422,7 @@ export interface TargetedDeps {
   tvKit: (
     ctx: E2eContext,
     settings: StreamingWorld['settings']
-  ) => { tv: TargetedDriver; remote: TvRemote }
+  ) => { tv: TargetedDriver; remote: TvRemote; capture?: TvCapture }
   signInTv: typeof signInTv
   signInApp: typeof signInApp
   recordSessions: (world: StreamingWorld, file: string) => Promise<void>
@@ -520,14 +521,18 @@ export async function runTargeted(
           }
         })
       } else if (role === 'tv') {
-        const { tv, remote } = deps.tvKit(ctx, world.settings)
+        const { tv, remote, capture } = deps.tvKit(ctx, world.settings)
         try {
           await deps.signInTv(remote, world)
         } catch (error) {
           // A TV that never gets past signing in is the TV's failure, not the
-          // run's: the other watchers carry on without it.
+          // run's: the other watchers carry on without it. What its screen
+          // held and a picture of it say why.
+          if (error instanceof TvSignInError) {
+            writeFileSync(ctx.artifact('tv-signin-dump.txt'), error.lastDump)
+          }
           await record.step(
-            { role },
+            { role, ...(capture == null ? {} : { screenshot: capture }) },
             'sign-in',
             'TeamStation TV opens and signs in',
             (error as Error).message,

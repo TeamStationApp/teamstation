@@ -31,6 +31,7 @@ import { SAFARI } from './surfaces/mobileSafari'
 import {
   ndiCapture,
   remoteHelper,
+  type TvCapture,
   type TvRemote,
   TvSurface
 } from './surfaces/tv'
@@ -119,10 +120,6 @@ export interface SoakSettings {
   ndiCapture: { command: string[] }
   /** From TeamStation TV's home to the game's multi-camera player. */
   tvJoinSteps: string[]
-  /** The suite's pinned ffmpeg, which can encode HEVC with drawtext. */
-  ffmpeg: string
-  /** The bench clock's offset from UTC, in minutes. */
-  offsetMinutes?: number
   /** The module that makes the network conditioner (`loadShaper`), for a watcher's outage; receiver-outage is blocked without it. */
   shaper?: string
   /** Each watcher role's address on a test network, for an outage through the conditioner. */
@@ -145,8 +142,7 @@ export function soakSettings(raw: unknown): SoakSettings {
     strings(capture.command) && capture.command.length > 0
       ? ''
       : 'ndiCapture.command',
-    strings(soak.tvJoinSteps) ? '' : 'tvJoinSteps',
-    typeof soak.ffmpeg === 'string' ? '' : 'ffmpeg'
+    strings(soak.tvJoinSteps) ? '' : 'tvJoinSteps'
   ].filter(Boolean)
   if (missing.length > 0) {
     throw new BlockedError(
@@ -160,10 +156,6 @@ export function soakSettings(raw: unknown): SoakSettings {
     },
     ndiCapture: { command: capture.command as string[] },
     tvJoinSteps: soak.tvJoinSteps as string[],
-    ffmpeg: soak.ffmpeg as string,
-    ...(typeof soak.offsetMinutes === 'number'
-      ? { offsetMinutes: soak.offsetMinutes }
-      : {}),
     ...(typeof soak.shaper === 'string' && soak.shaper !== ''
       ? { shaper: soak.shaper }
       : {}),
@@ -497,7 +489,7 @@ export function tvKit(
     options: { env?: Record<string, string | undefined> }
   ) => Promise<{ stdout: string }> = async (command, args, options) =>
     await run(command, args, { env: options.env })
-): { tv: TvSurface; remote: TvRemote } {
+): { tv: TvSurface; remote: TvRemote; capture: TvCapture } {
   const remote = remoteHelper(
     {
       command: settings.tvRemote.command,
@@ -505,22 +497,33 @@ export function tvKit(
     },
     exec
   )
+  const capture = ndiCapture(
+    { command: settings.ndiCapture.command, out: ctx.artifact('tv-ndi.png') },
+    async (command, args) => await exec(command, args, {}),
+    path => readFileSync(path)
+  )
   const tv = new TvSurface({
     remote,
-    capture: ndiCapture(
-      { command: settings.ndiCapture.command, out: ctx.artifact('tv-ndi.png') },
-      async (command, args) => await exec(command, args, {}),
-      path => readFileSync(path)
-    ),
+    capture,
     bundleId: TV_APP,
     appName: 'TeamStation',
     joinSteps: settings.tvJoinSteps
   })
-  return { tv, remote }
+  return { tv, remote, capture }
 }
 
 /** TeamStation TV past sign-in: its home (which offers Sign out) or its player. */
 const TV_SIGNED_IN = /'tv-player'|tv-page-(?:home|player)|label: 'Sign out'/
+
+/** A TV that never got past signing in, with what its screen last held. */
+export class TvSignInError extends Error {
+  constructor(
+    message: string,
+    readonly lastDump: string
+  ) {
+    super(message)
+  }
+}
 
 /**
  * Signs TeamStation TV in as the owner, approving the code it shows. A TV
@@ -538,8 +541,10 @@ export async function signInTv(
 ): Promise<boolean> {
   let approved = false
   let steps = [`app:${TV_APP}`, 'wait:4', 'dump']
+  let last = ''
   for (let i = 0; i < tries; i++) {
     const shown = await remote(steps)
+    last = shown
     steps = [`app:${TV_APP}`, 'wait:5', 'dump']
     const code = tvCodeIn(shown)
     if (code != null) {
@@ -549,7 +554,10 @@ export async function signInTv(
     }
     if (TV_SIGNED_IN.test(shown)) return approved
   }
-  throw new Error(`the TV is still signing in after ${tries} looks`)
+  throw new TvSignInError(
+    `the TV is still signing in after ${tries} looks`,
+    last
+  )
 }
 
 /**

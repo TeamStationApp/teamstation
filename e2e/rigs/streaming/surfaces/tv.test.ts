@@ -172,13 +172,12 @@ describe('the TV surface', function () {
       ['right', 'wait:0.5', 'dump'],
       ['select']
     ])
-    runs.length = 0
+  })
+
+  it('goes to the present by running the transport bar to its end', async function () {
+    const { surface, runs } = tv()
     await surface.jumpToPresent()
-    expect(runs).deep.equals([
-      ['dump'],
-      ['down', 'wait:0.5', 'dump'],
-      ['select']
-    ])
+    expect(runs).deep.equals([new Array(20).fill('right')])
   })
 
   it('says when it cannot find or reach a control', async function () {

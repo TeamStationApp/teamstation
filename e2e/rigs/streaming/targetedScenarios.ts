@@ -665,3 +665,300 @@ export const tvCameras: TargetedScenario = {
     )
   }
 }
+
+/** How long each cut lasts, in turn, until the run ends. */
+export const CUT_LADDER_SEC = [4, 8, 16, 32, 64]
+/** How soon after the stream returns a watcher should show it again, beyond its own delay. */
+export const RECOVER_MS = 5000
+/** How long a watcher is given at all, beyond its own delay, before it is said not to recover. */
+export const GIVE_UP_MS = 90_000
+/** How long after a watcher reaches the camera's return its angles are compared. */
+export const ALIGN_AFTER_MS = 10_000
+/** How far apart a watcher's angles may be, as the basic soak allows. */
+export const ALIGNED_MS = 1000
+/** How long a watcher's other angles are waited for to reach the return, beyond its delay. */
+export const ALIGN_WAIT_MS = 120_000
+
+/** How far behind the wall clock a look shows `angle`, or null without a clock reading. */
+function delayOf(look: Look, angle: string): number | null {
+  const shown = tile(look, angle)?.wallMs
+  return shown == null ? null : look.atMs - shown
+}
+
+/**
+ * Waits for a watcher to show `angle` again after its return at `backMs`:
+ * moving, and, where its clock reads, a frame from after the return. Gives
+ * when that look began, or null when it never did within `giveUpMs`.
+ */
+async function backAfter(
+  session: TargetedSession,
+  watcher: Watcher,
+  angle: string,
+  backMs: number,
+  giveUpMs: number
+): Promise<{
+  seenAtMs: number | null
+  last: Look | null
+  missedMs: number | null
+  grid: boolean
+}> {
+  const end = session.now() + giveUpMs
+  let last: Look | null = null
+  // How far past the return the other angles had got in a look that did not
+  // show this one back: the measure for a grid, read from its own picture,
+  // not from when a slow look happened to land.
+  let missedMs: number | null = null
+  let grid = false
+  while (session.now() < end) {
+    const look = await session.look(watcher)
+    last = look
+    const shown = tile(look, angle)
+    const rest = moments(others(look, angle))
+    if (rest.length > 0) grid = true
+    // Back is moving with a frame from after the return, read off its clock:
+    // a watcher whose clock reads (it is only asked of one whose delay was
+    // read before the cut) is not back on a picture whose clock is unread.
+    if (
+      shown?.advancing === true &&
+      shown.wallMs != null &&
+      shown.wallMs >= backMs
+    ) {
+      return { seenAtMs: look.atMs, last, missedMs, grid }
+    }
+    if (rest.length > 0) {
+      const past = Math.max(...rest) - backMs
+      missedMs = missedMs == null ? past : Math.max(missedMs, past)
+    }
+    await session.sleep(1000)
+  }
+  return { seenAtMs: null, last, missedMs, grid }
+}
+
+/** How long a watcher with no clock is watched for the cut reaching it. */
+export const NO_CLOCK_WATCH_MS = 75_000
+
+/**
+ * For a watcher whose clock cannot be read (the TV): watches it from the
+ * cut's start, while the stream is away, for the hole reaching it. A stall is
+ * the hole; the stream comes back to it `seconds` after the stall begins, and
+ * it should move again within 5 s of that. Watched only from the return, a
+ * watcher less far behind live than the cut was already stalled, and was
+ * timed from the return: up to a whole cut late passed. A watcher that never
+ * stalls played through the hole.
+ */
+async function throughStall(
+  session: TargetedSession,
+  watcher: Watcher,
+  angle: string,
+  seconds: number
+): Promise<{ late: number | null; observed: string }> {
+  const end = session.now() + seconds * 1000 + NO_CLOCK_WATCH_MS
+  let stalledAtMs: number | null = null
+  // The first of a run of still looks: a stall is two in a row, as one
+  // look's motion read can miss. A look without the tile reads nothing.
+  let stillAtMs: number | null = null
+  let last: Look | null = null
+  while (session.now() < end || stalledAtMs != null) {
+    const look = await session.look(watcher)
+    last = look
+    const shown = tile(look, angle)
+    const moving = shown?.advancing === true && shown.notice == null
+    const still =
+      shown != null &&
+      !moving &&
+      (shown.notice != null || shown.advancing === false)
+    if (stalledAtMs == null) {
+      if (moving) stillAtMs = null
+      else if (still) {
+        if (stillAtMs == null) stillAtMs = look.atMs
+        else stalledAtMs = stillAtMs
+      }
+    } else if (moving) {
+      const late = Math.max(0, look.atMs - stalledAtMs - seconds * 1000)
+      return {
+        late,
+        observed: `${angle} stalled at the hole and moved again ${(late / 1000).toFixed(1)} s after the stream would have reached it (no clock: timed from the stall)`
+      }
+    }
+    if (
+      stalledAtMs != null &&
+      look.atMs - stalledAtMs > seconds * 1000 + GIVE_UP_MS
+    ) {
+      break
+    }
+    await session.sleep(1000)
+  }
+  if (stalledAtMs == null) {
+    return {
+      late: 0,
+      observed: `${angle} moved throughout the cut and the ${Math.round(NO_CLOCK_WATCH_MS / 1000)} s after the stream returned (no clock: no stall seen)`
+    }
+  }
+  return {
+    late: null,
+    observed: `${angle} stalled and not back after ${Math.round((seconds * 1000 + GIVE_UP_MS) / 1000)} s: ${last == null ? 'no look' : describe(last)}`
+  }
+}
+
+/**
+ * Cuts the stream of SynthA, the camera every watcher shows (Safari's too),
+ * for 4, 8, 16, 32 and 64 s in turn until the run's minutes are up, and
+ * checks every watcher shows it again within 5 s of its return, beyond the
+ * watcher's own delay behind live, measured just before each cut. A watcher
+ * whose clock cannot be read (the TV) is timed from its stall instead. Ten
+ * seconds after a watcher reaches the return in its own picture, a watcher showing several angles must have
+ * them within a second of each other: a camera back from a cut must not run
+ * ahead of, or behind, the rest.
+ */
+export function streamCuts(
+  minutes: number,
+  options: {
+    /** Whole ladders to finish however long they take, before the minutes count. */
+    fullLadders?: number
+  } = {}
+): TargetedScenario {
+  const rounds = (options.fullLadders ?? 0) * CUT_LADDER_SEC.length
+  return {
+    setup: {
+      synthetic: ['SynthA', 'SynthB', 'SynthC', 'SynthD'],
+      watchers: ['iphone', 'android', 'chrome', 'tv', 'safari'],
+      safariAngle: 'SynthA',
+      leadMs: MIN
+    },
+    run: async session => {
+      const angle = 'SynthA'
+      const endMs = session.now() + minutes * MIN
+      for (let round = 0; round < rounds || session.now() < endMs; round++) {
+        const seconds = CUT_LADDER_SEC[round % CUT_LADDER_SEC.length]
+        const before = new Map<Watcher, number | null>()
+        await Promise.all(
+          session.watchers.map(async watcher => {
+            before.set(watcher, delayOf(await session.look(watcher), angle))
+          })
+        )
+        // A watcher with no clock is watched from the cut's start.
+        const stalls = new Map(
+          session.watchers
+            .filter(watcher => before.get(watcher) == null)
+            .map(watcher => [
+              watcher,
+              throughStall(session, watcher, angle, seconds)
+            ])
+        )
+        // Handled at once: a failed cut is the scenario's failure, not an unheard watch's.
+        for (const stall of stalls.values()) stall.catch(() => undefined)
+        await session.publishers.get(angle)!.cut(seconds)
+        const backMs = session.now()
+        await Promise.all(
+          session.watchers.map(async watcher => {
+            const delay = before.get(watcher) ?? null
+            const step = `cut-${seconds}s-${round + 1}`
+            const expected = `after a ${seconds} s cut the camera is shown again within ${RECOVER_MS / 1000} s of its return`
+            if (delay == null) {
+              // Watched since the cut's start (`stalls`).
+              const { late, observed } = await stalls.get(watcher)!
+              await session.record.check(
+                watcher,
+                step,
+                expected,
+                observed,
+                late != null && late <= RECOVER_MS
+              )
+              return
+            }
+            const { seenAtMs, last, missedMs, grid } = await backAfter(
+              session,
+              watcher,
+              angle,
+              backMs,
+              GIVE_UP_MS + delay
+            )
+            // A grid is judged by its other angles: how far past the return
+            // they had got while this one was not back. A single picture
+            // (Safari's) by the time it was seen, less its delay.
+            const late =
+              seenAtMs == null
+                ? null
+                : grid
+                  ? Math.max(0, missedMs ?? 0)
+                  : seenAtMs - backMs - delay
+            const observed =
+              late == null
+                ? `${angle} not back after ${Math.round((GIVE_UP_MS + delay) / 1000)} s: ${last == null ? 'no look' : describe(last)}`
+                : grid
+                  ? missedMs == null || missedMs <= 0
+                    ? `${angle} back before the other angles reached the stream's return`
+                    : `${angle} back; the other angles had got ${(missedMs / 1000).toFixed(1)} s past the stream's return without it`
+                  : `${angle} back ${(late / 1000).toFixed(1)} s after the stream, beyond the ${(delay / 1000).toFixed(1)} s it ran behind`
+            // A single picture (Safari's) keeps the 5 s only while its
+            // cushion lasts: a cut longer than the delay it had left runs it
+            // dry, and it takes as long as the player needs (Paul's
+            // decision; #322). It is then asked only to come back.
+            const outlasted = !grid && delay < seconds * 1000
+            await session.record.check(
+              watcher,
+              step,
+              outlasted
+                ? `after a ${seconds} s cut, longer than the ${(delay / 1000).toFixed(1)} s of cushion left, the camera is shown again`
+                : expected,
+              outlasted && late != null
+                ? `${observed} (cushion used up: not held to ${RECOVER_MS / 1000} s)`
+                : observed,
+              late != null && (outlasted || late <= RECOVER_MS)
+            )
+          })
+        )
+        // Ten seconds after each watcher reaches the return in its own
+        // picture: one running behind live is still before it at first, and
+        // a grid can fall further behind during the cut than it ran before
+        // it, so its other angles are read until they show that moment.
+        const alignStart = session.now()
+        await Promise.all(
+          session.watchers.map(async watcher => {
+            const delay = before.get(watcher) ?? 0
+            await session.sleep(
+              Math.max(0, backMs + delay - alignStart) + ALIGN_AFTER_MS
+            )
+            const until = session.now() + ALIGN_WAIT_MS
+            let look = await session.look(watcher)
+            const reached = (seen: Look): boolean =>
+              others(seen, angle).some(
+                t => t.wallMs != null && t.wallMs >= backMs + ALIGN_AFTER_MS
+              )
+            // One picture (Safari's) has no other angles to wait for.
+            while (
+              moments(others(look, angle)).length > 0 &&
+              !reached(look) &&
+              session.now() < until
+            ) {
+              await session.sleep(2000)
+              look = await session.look(watcher)
+            }
+            // A still angle is looked at once more before it counts: one
+            // look's motion read can miss on a phone, and an angle truly
+            // left still is still on the next.
+            const stillIn = (seen: Look): LookTile[] =>
+              (seen.tiles ?? []).filter(t => t.advancing === false)
+            if (stillIn(look).length > 0) {
+              await session.sleep(2000)
+              look = await session.look(watcher)
+            }
+            const spread = spreadMs(moments(look.tiles ?? []))
+            // One angle (Safari's player) or no clocks (the TV): nothing to align.
+            if (spread == null) return
+            // An angle left still, with no clock to compare, is not aligned.
+            const still = stillIn(look)
+            await session.record.check(
+              watcher,
+              `aligned-after-cut-${seconds}s-${round + 1}`,
+              `every angle moves, within ${ALIGNED_MS / 1000} s of each other, ${ALIGN_AFTER_MS / 1000} s after the camera is back`,
+              `spread ${Math.round(spread)} ms${still.length > 0 ? `, ${still.map(t => t.angle).join(', ')} still` : ''}: ${describe(look)}`,
+              spread <= ALIGNED_MS && still.length === 0
+            )
+          })
+        )
+        await session.sleep(10_000)
+      }
+    }
+  }
+}

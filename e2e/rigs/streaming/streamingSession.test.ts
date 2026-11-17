@@ -23,6 +23,7 @@ import {
   type SoakSettings,
   TV_APP,
   tvKit,
+  TvSignInError,
   type WorldDeps
 } from './streamingSession'
 import { awaitable, fakeDevice, fixture, png } from './surfaces/fakes.test'
@@ -43,8 +44,7 @@ const HANDLE: StreamingHandle = {
 const SETTINGS: SoakSettings = {
   tvRemote: { command: ['python3', 'remote.py'], env: { TEAM: 't' } },
   ndiCapture: { command: ['ndi', '--out', '{out}'] },
-  tvJoinSteps: ['select'],
-  ffmpeg: '/opt/ffmpeg'
+  tvJoinSteps: ['select']
 }
 
 const MANIFEST = {
@@ -493,6 +493,11 @@ describe('signing the TV in', function () {
       'the TV is still signing in after 3 looks'
     )
     expect(looks).equals(3)
+    // What the screen last held comes with it, for the run's record.
+    expect(failed).instanceOf(TvSignInError)
+    expect((failed as TvSignInError).lastDump).equals(
+      'Other, identifier: tv-brand-screen'
+    )
   })
 })
 

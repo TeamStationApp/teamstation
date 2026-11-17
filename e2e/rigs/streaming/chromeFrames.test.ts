@@ -1,4 +1,4 @@
-import { Script } from 'node:vm'
+import { runInNewContext, Script } from 'node:vm'
 
 import { expect } from 'chai'
 import { describe, it } from 'mocha'
@@ -54,6 +54,53 @@ describe("Chrome's frame log", function () {
     )
     // drawnPicture shows 17:04:05.678.
     expect(digits.join('')).equals('170405678')
+  })
+
+  it("reads each frame's clock from its box alone, not the whole frame", function () {
+    const picture = drawnPicture('SYNTHA', 4)
+    const reads: number[][] = []
+    let onFrame: (now: number, meta: Record<string, number>) => void = () => {}
+    const video = {
+      requestVideoFrameCallback: (callback: typeof onFrame) => {
+        onFrame = callback
+      },
+      getBoundingClientRect: () => ({})
+    }
+    const tile = {
+      getAttribute: () => 'SynthA angle',
+      getBoundingClientRect: () => ({}),
+      querySelector: () => video
+    }
+    const context = {
+      drawImage: () => undefined,
+      getImageData: (x: number, y: number, w: number, h: number) => {
+        reads.push([x, y, w, h])
+        const data = new Uint8ClampedArray(w * h * 4)
+        for (let row = 0; row < h; row++) {
+          const from = ((y + row) * picture.width + x) * 4
+          data.set(picture.data.subarray(from, from + w * 4), row * w * 4)
+        }
+        return { data }
+      }
+    }
+    const window: Record<string, unknown> = {}
+    runInNewContext(frameLogScript(), {
+      window,
+      document: {
+        createElement: () => ({ getContext: () => context }),
+        querySelectorAll: (selector: string) =>
+          selector === 'video' ? [video] : [tile]
+      },
+      performance: { timeOrigin: 0 },
+      setInterval: () => 0
+    })
+    onFrame(0, { presentedFrames: 1, mediaTime: 0, expectedDisplayTime: 0 })
+    // drawnPicture shows 17:04:05.678.
+    expect((window.__tsFrames as unknown[][])[0][4]).equals(
+      ((17 * 60 + 4) * 60 + 5) * 1000 + 678
+    )
+    const [[, , w, h]] = reads
+    expect(w * h).lessThan((320 * 180) / 4)
   })
 
   it('installs a logger that parses, and a drain that hands over and empties the log', function () {

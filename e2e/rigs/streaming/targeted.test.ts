@@ -8,7 +8,11 @@ import { describe, it } from 'mocha'
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
 import { benchClock, type TileClock } from './clockReader'
-import type { SoakSettings, StreamingWorld } from './streamingSession'
+import {
+  type SoakSettings,
+  type StreamingWorld,
+  TvSignInError
+} from './streamingSession'
 import { awaitable, type Call, fakeDevice, png } from './surfaces/fakes.test'
 import type { SurfaceProbe } from './surfaces/surface'
 import {
@@ -353,7 +357,6 @@ function rig(
     tvRemote: { command: ['remote'], env: {} },
     ndiCapture: { command: ['ndi'] },
     tvJoinSteps: [],
-    ffmpeg: 'f',
     shaper: '/Users/dev/.config/teamstation-e2e/shaper.mjs',
     shapedIps: { iphone: '192.0.2.1' },
     ...options.settings
@@ -869,5 +872,36 @@ describe('a TV that never signs in', function () {
     const steps = readFileSync(join(r.dir, 'targeted.jsonl'), 'utf8')
     expect(steps).contains('"step":"sign-in","surface":"tv"')
     expect(steps).contains('the TV is still signing in after 8 looks')
+  })
+
+  it('keeps what its screen last held and a picture of it', async function () {
+    const r = rig()
+    const kit = r.deps.tvKit
+    r.deps.tvKit = (ctx, settings) => ({
+      ...kit(ctx, settings),
+      capture: async () => png(2, 2)
+    })
+    r.deps.signInTv = async () => {
+      throw new TvSignInError(
+        'the TV is still signing in after 8 looks',
+        "Other, identifier: 'tv-brand-screen'"
+      )
+    }
+    await runTargeted(
+      r.ctx,
+      '/repo',
+      { synthetic: ['SynthA'], watchers: ['tv', 'iphone'], leadMs: 0 },
+      async () => {},
+      r.deps
+    ).catch(() => undefined)
+    expect(readFileSync(join(r.dir, 'tv-signin-dump.txt'), 'utf8')).equals(
+      "Other, identifier: 'tv-brand-screen'"
+    )
+    const signIn = readFileSync(join(r.dir, 'targeted.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map(line => JSON.parse(line) as { step: string; screenshot?: string })
+      .find(step => step.step === 'sign-in')
+    expect(signIn?.screenshot).equals('sign-in-tv-1.png')
   })
 })

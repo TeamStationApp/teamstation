@@ -623,6 +623,8 @@
       "covers": [
         "e2e/rigs/streaming/**",
         "src/app/player/**",
+        "src/app/tv/**",
+        "src/app/screens/GameScreen.tsx",
         "src/server/live/**",
         "src/server/ingest/**"
       ],
@@ -1137,6 +1139,73 @@
       "manual": false,
       "spec": "streaming/targeted/receiver-outage",
       "file": "e2e/tests/streaming/targeted/receiver-outage.e2e.ts"
+    },
+    {
+      "id": "streaming/targeted/stream-cuts#ladder-15min",
+      "title": "A camera cut for 4 to 64 s plays again on every watcher within 5 s of its return",
+      "kind": "e2e",
+      "covers": [
+        "e2e/rigs/streaming/**",
+        "src/app/player/**",
+        "src/app/tv/**",
+        "src/app/screens/GameScreen.tsx",
+        "src/server/live/**",
+        "src/server/ingest/**"
+      ],
+      "stack": "isolated",
+      "fixtures": [],
+      "exclusive": true,
+      "surfaces": {
+        "web-chromium": {
+          "devices": [
+            {
+              "role": "iphone",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "android",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "tv",
+              "needs": [
+                "apple-tv"
+              ],
+              "hardware": "required"
+            },
+            {
+              "role": "safari",
+              "needs": [
+                "ios-phone"
+              ],
+              "hardware": "required"
+            }
+          ]
+        }
+      },
+      "services": [
+        "web",
+        "api"
+      ],
+      "apps": [
+        "teamstation-ios",
+        "teamstation-android",
+        "teamstation-tv"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 30,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "spec": "streaming/targeted/stream-cuts",
+      "file": "e2e/tests/streaming/targeted/stream-cuts.e2e.ts"
     },
     {
       "id": "streaming/targeted/tv#cameras",

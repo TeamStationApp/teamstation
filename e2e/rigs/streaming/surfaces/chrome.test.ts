@@ -267,6 +267,17 @@ describe('the Chrome surface', function () {
       'tapOn'
     ])
     expect(calls[1][1]).deep.equals({ x: 540, y: 101 })
+    // Still down after the press: Tab shows them.
+    calls.length = 0
+    refusals = 2
+    await surface.jumpToPresent()
+    expect(calls.map(call => call[0])).deep.equals([
+      'tapOn',
+      'tapOnPoint',
+      'tapOn',
+      'evalBrowserScript',
+      'tapOn'
+    ])
     refusals = 5
     expect(
       await surface.jumpToPresent().then(

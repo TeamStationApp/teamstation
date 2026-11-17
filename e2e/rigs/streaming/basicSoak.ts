@@ -1,3 +1,5 @@
+import { cpus, loadavg } from 'node:os'
+
 import {
   analyseFrames,
   FRAME_DRAIN_SCRIPT,
@@ -63,7 +65,28 @@ export interface BasicOptions {
   random?: () => number
   /** The watchers, of BASIC_WATCHERS; all of them unless a run leaves some out. */
   watchers?: WatcherRole[]
+  /** This machine's load and cores, for the report: whether the bench machine kept up. */
+  machine?: Machine
+  /**
+   * Whether Chrome logs every presented frame (true unless told otherwise).
+   * Off, a run shows Chrome's own memory without the logger's reads.
+   */
+  frameLog?: boolean
 }
+
+/** The machine running the soak: its one-minute load average, and how many cores it has. */
+export interface Machine {
+  load: () => number
+  cores: number
+}
+
+const THIS_MACHINE: Machine = {
+  load: () => loadavg()[0],
+  cores: cpus().length
+}
+
+/** How often this machine's load is read. */
+export const LOAD_EVERY_MS = 30_000
 
 export const BASIC_WATCHERS: WatcherRole[] = [
   'iphone',
@@ -72,12 +95,6 @@ export const BASIC_WATCHERS: WatcherRole[] = [
   'tv',
   'safari'
 ]
-
-/**
- * Watchers that are only looked at, never scrubbed: Safari watches one angle
- * in the game page's own player, which has no full-screen transport.
- */
-const WATCH_ONLY = new Set<WatcherRole>(['safari'])
 
 /**
  * `BASIC_WATCHERS` in the environment: a comma list of the watchers a run
@@ -216,7 +233,7 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
       const startMs = session.now()
       const endMs = startMs + options.minutes * MIN
       const lookEvery = options.lookEveryMs ?? 30_000
-      const scrubbed = session.watchers.filter(w => !WATCH_ONLY.has(w.role))
+      const scrubbed = session.watchers
       const actions = planActions(
         startMs,
         endMs,
@@ -263,8 +280,9 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
       const quiet: Array<[number, number]> = []
       // The logger is put in again before each drain: a rejoin that loads
       // the page afresh loses it, and what it missed shows as a stall.
+      const logFrames = options.frameLog !== false
       const drain = async (): Promise<void> => {
-        if (chrome?.evaluate == null) return
+        if (chrome?.evaluate == null || !logFrames) return
         try {
           frames.push(...parseFrames(await chrome.evaluate(FRAME_DRAIN_SCRIPT)))
           await chrome.evaluate(frameLogScript())
@@ -272,12 +290,19 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
           // A drain that fails loses nothing: the page keeps the frames for the next.
         }
       }
-      if (chrome?.evaluate != null) {
+      if (chrome?.evaluate != null && logFrames) {
         await chrome.evaluate(frameLogScript()).catch(() => undefined)
       }
       const nextLook = new Map(session.watchers.map(w => [w, startMs]))
       let nextSample = startMs
+      const machine = options.machine ?? THIS_MACHINE
+      const loads: Array<{ atMs: number; load: number }> = []
+      let nextLoad = startMs
       while (session.now() < endMs) {
+        if (session.now() >= nextLoad) {
+          nextLoad = session.now() + LOAD_EVERY_MS
+          loads.push({ atMs: session.now(), load: machine.load() })
+        }
         const due = actions[0]
         if (due != null && due.atMs <= session.now()) {
           actions.shift()
@@ -304,7 +329,9 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
           const back = await waitFor(
             async () => {
               const look = await session.look(watcher)
-              return { ok: playState(look) !== 'failed', value: look }
+              // Unknown is not done: the first look after a scrub can
+              // straddle the seek, and the next tells whether it moves.
+              return { ok: playState(look) === 'passed', value: look }
             },
             {
               timeoutMs: RECOVERY_MS,
@@ -377,7 +404,7 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
       }
       await drain()
       const analysis =
-        chrome == null
+        chrome == null || !logFrames
           ? null
           : analyseFrames(frames, quiet, {
               startMs,
@@ -419,11 +446,29 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
         )
       }
       session.writeArtifact(
+        'mac-load.jsonl',
+        loads.map(row => JSON.stringify(row)).join('\n') + '\n'
+      )
+      session.writeArtifact(
         'basic-report.md',
-        basicReport(session.record.steps, memory, options.minutes, analysis)
+        basicReport(session.record.steps, memory, options.minutes, analysis, {
+          cores: machine.cores,
+          loads: loads.map(row => row.load)
+        })
       )
     }
   }
+}
+
+/** Whether the machine running the soak kept up: its load against its cores. Informational. */
+export function machineLine(machine: {
+  cores: number
+  loads: number[]
+}): string {
+  const median = medianMs(machine.loads) ?? 0
+  const highest = Math.max(...machine.loads)
+  const over = machine.loads.filter(load => load > machine.cores).length
+  return `Load average (1 min), every ${LOAD_EVERY_MS / 1000} s: median ${median.toFixed(1)}, highest ${highest.toFixed(1)}, on ${machine.cores} cores; ${over === 0 ? 'under the core count throughout' : `over it in ${over} of ${machine.loads.length} readings`}.`
 }
 
 function memoryLine(verdict: ProcessVerdict): string {
@@ -437,7 +482,8 @@ export function basicReport(
   steps: StepRecord[],
   memory: ProcessVerdict[],
   minutes: number,
-  frames: FrameAnalysis | null = null
+  frames: FrameAnalysis | null = null,
+  machine: { cores: number; loads: number[] } | null = null
 ): string {
   const surfaces = [...new Set(steps.map(step => step.surface))]
   const count = (surface: string, prefix: string): string => {
@@ -501,6 +547,9 @@ export function basicReport(
             ),
           ''
         ]),
+    ...(machine == null || machine.loads.length === 0
+      ? []
+      : ['## This Mac', '', machineLine(machine), '']),
     '## Memory',
     '',
     '| Device | Process | Verdict |',
