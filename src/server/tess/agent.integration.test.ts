@@ -567,7 +567,7 @@ describe("Tess's agent loop", function () {
     )
   })
 
-  it('requires the map again after a rejected request compacts source context', async () => {
+  it('keeps the map read this turn after a rejected request compacts earlier turns', async () => {
     for (const text of ['one', 'two', 'three']) {
       model.reply(say(`About ${text}`))
       await runTurn(w.deps(), w.user(101), { text })
@@ -583,15 +583,15 @@ describe("Tess's agent loop", function () {
           input: { path: 'src/server/tess/agent.ts', text: 'MAX_TOOL_ROUNDS' }
         }
       ]),
-      say('I need the source map again.')
+      say('The limit is 10.')
     )
     model.count(40000)
     await runTurn(w.deps(), w.user(101), {
       text: 'Explain the tool-round limit.'
     })
-    expect(
-      model.messageCalls().at(-1)!.messages.at(-1).content[0]
-    ).deep.include({ content: MAP_FIRST, is_error: true })
+    const searched = model.messageCalls().at(-1)!.messages.at(-1).content[0]
+    expect(searched.is_error).not.equals(true)
+    expect(searched.content).includes('MAX_TOOL_ROUNDS = 10')
   })
 
   it('counts a round that takes the request near the ceiling, and drops the largest result until it fits', async () => {

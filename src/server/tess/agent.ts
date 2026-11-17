@@ -495,9 +495,8 @@ async function respond(
       if (compacted || !(isTooLong(error) || isTooLarge(error))) throw error
       compacted = true
       if (isTooLong(error)) {
+        // Compaction keeps the current turn, so a map it read stays read.
         known = await compact(deps, userId, measure)
-        // Compaction can remove a map before the model has received it.
-        source = sourceBrowser()
       } else await describeAttachments(deps, userId)
       request = await buildRequest(deps, userId, system)
       return await once(toolChoice)
@@ -506,7 +505,7 @@ async function respond(
   let last: MessagesResponse
   // The changes the turn has proposed, which one hold confirms together.
   const proposals = { count: 0 }
-  let source = sourceBrowser()
+  const source = sourceBrowser()
   try {
     for (let round = 1; ; round += 1) {
       const response = await call()
