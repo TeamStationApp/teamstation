@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 
 import { attachDevice, connectDaemon } from '../../core/maestro'
+import { iosIsSimulator } from '../../core/prepare'
 import { loadSettings } from '../../core/settings'
 
 /**
@@ -62,6 +63,8 @@ export async function setServer(options: {
   origin: string | null
   /** A phone's maestro-d device; unused for the TV. */
   device?: ServerDevice
+  /** An iOS simulator, which takes the link through simctl, not devicectl. */
+  simulator?: boolean
   run?: Run
   sleep?: (ms: number) => Promise<void>
 }): Promise<void> {
@@ -97,7 +100,11 @@ export async function setServer(options: {
   if (device == null)
     throw new Error(`setServer on ${platform} needs a maestro-d device`)
   await device.stopApp({ appId })
-  if (platform === 'ios') {
+  if (platform === 'ios' && options.simulator === true) {
+    // A simulator's system hands its own app the link: devicectl sees only
+    // phones.
+    await (options.run ?? realRun)('xcrun', ['simctl', 'openurl', udid, link])
+  } else if (platform === 'ios') {
     // Handed to the develop app by its id: on a phone, the system's own
     // handling of a link stops short of the app it names.
     await (options.run ?? realRun)('xcrun', [
@@ -170,7 +177,11 @@ if (require.main === module) {
             appId: args.appId
           }
         )) as unknown as ServerDevice
-        await setServer({ ...args, device })
+        await setServer({
+          ...args,
+          device,
+          simulator: args.platform === 'ios' && iosIsSimulator(args.udid)
+        })
       } finally {
         await daemon.shutdown()
       }
