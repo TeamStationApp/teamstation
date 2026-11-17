@@ -1,5 +1,5 @@
 import { asArray, asMaybe, asString, type Cleaner } from 'cleaners'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useContext, useEffect, useRef, useState } from 'react'
 
 import {
   asRosterCandidate,
@@ -7,11 +7,25 @@ import {
   type RosterCandidate,
   type TeamStationClient
 } from '../../common/api'
-import { HttpError } from '../../common/errors'
-import { candidatesKey, searchWords } from '../sync/documentKeys'
+import { HttpError, unauthorized } from '../../common/errors'
+import { SEARCH_TEXT_MAX, type SearchResult } from '../../common/search/types'
+import type {
+  SearchSocket,
+  SearchSocketStatus
+} from '../../common/searchSocket'
+import { candidatesKey, foundWords, searchWords } from '../sync/documentKeys'
+import {
+  makeSearchSocket,
+  SearchSocketFactoryContext
+} from './searchSocketFactory'
 import { useDebouncedValue } from './useDebouncedValue'
 
-/** How long typing must pause before the server is asked. */
+/**
+ * How long typing must pause before `GET /users?forTeam=` is asked, where
+ * there is no search socket: one request per settled search. The socket is
+ * asked on every change, with no pause: the engine answers at once, and an
+ * answer for older typing never arrives.
+ */
 export const CANDIDATE_DEBOUNCE_MS = 500
 
 export interface RosterCandidates {
@@ -29,7 +43,7 @@ export interface RosterCandidates {
   capped: boolean
   /** The client cannot reach the server, so nothing is asked. */
   offline: boolean
-  /** The settled search the rows answer. */
+  /** The search the rows answer (over HTTP, once typing settles). */
   query: string
   retry: () => void
 }
@@ -97,24 +111,33 @@ function foundFor(client: TeamStationClient, teamId: string): KeptCandidate[] {
 }
 
 /**
- * Keeps `rows`, the answer to a search for `query`, as found for `teamId`,
- * newest first and each once, with the words that found each.
+ * A row of an answer to `query`, with the words of it that found him
+ * (`matched`, none kept when empty): the words the server says did
+ * (`found`, folded). A search keeps anybody any one typed word finds.
+ */
+export function withMatched(
+  row: RosterCandidate,
+  query: string,
+  found: readonly string[]
+): KeptCandidate {
+  const words = foundWords(query, found)
+  return words.length === 0 ? row : { ...row, matched: words }
+}
+
+/**
+ * Keeps `rows`, an answer, as found for `teamId`, newest first and each
+ * once, each with the words that found him.
  */
 function keepFound(
   client: TeamStationClient,
   teamId: string,
-  rows: readonly RosterCandidate[],
-  query: string
+  rows: readonly KeptCandidate[]
 ): void {
   if (rows.length === 0) return
   const byTeam = found.get(client) ?? new Map<string, KeptCandidate[]>()
   found.set(client, byTeam)
   const key = `${client.token ?? ''} ${teamId}`
-  const words = searchWords(query)
-  const answered = rows.map(row =>
-    words.length === 0 ? row : { ...row, matched: words }
-  )
-  byTeam.set(key, merged(answered, byTeam.get(key) ?? []).slice(0, 500))
+  byTeam.set(key, merged(rows, byTeam.get(key) ?? []).slice(0, 500))
 }
 
 /**
@@ -162,6 +185,9 @@ function merged<T extends KeptCandidate>(
   ]
 }
 
+/** What a search says when the session is refused: the route's 401. */
+const SIGNED_OUT_PROBLEM = unauthorized().message
+
 function problemOf(error: unknown): string {
   return error instanceof HttpError
     ? error.message
@@ -169,23 +195,326 @@ function problemOf(error: unknown): string {
 }
 
 /**
+ * The card of a person row of a search in mode `people` with `forTeam`, as
+ * `GET /users?forTeam=` answers it; null for any other row.
+ */
+export function rosterCandidateOf(
+  result: SearchResult
+): RosterCandidate | null {
+  if (result.kind !== 'person' || result.roster == null) return null
+  const card = result.roster
+  return {
+    userId: result.userId,
+    gumboId: card.gumboId,
+    externalIds: [],
+    shortName: card.shortName,
+    ...(card.nameFormat == null ? {} : { nameFormat: card.nameFormat }),
+    ...(card.compactName == null ? {} : { compactName: card.compactName }),
+    ...(card.compactFormat == null
+      ? {}
+      : { compactFormat: card.compactFormat }),
+    shortParts: card.shortParts,
+    avatarUrl: result.avatarUrl,
+    bats: card.bats,
+    throws: card.throws,
+    teams: card.teams,
+    affiliations: result.associations,
+    tier: card.tier
+  }
+}
+
+/** An answer, with the search it answers. */
+interface Answer {
+  query: string
+  rows: RosterCandidate[]
+}
+
+/** What one source of candidates says about the search typed now. */
+interface Source {
+  /** The answer to the search typed now; none until it comes. */
+  answer: Answer | undefined
+  /** An answer is on its way. */
+  pending: boolean
+  error: string | undefined
+  /** Nothing can be asked: no signal. */
+  offline: boolean
+  /** The search the source answers. */
+  query: string
+  retry: () => void
+}
+
+/**
+ * The search socket's people search (mode `people`, `forTeam`, `forGame`),
+ * asked on every change of the typed text, with no pause. Only an answer
+ * for the latest ask reaches here (`SearchSocket` drops the rest), so the
+ * answer is always for the text typed now, and none is shown until it
+ * comes. Off (`socket` null), it asks nothing. A socket closed for a
+ * session the server no longer takes (`unauthorized`) fails as the route's
+ * 401 does: the client is told (`onSessionRefused`) and the search says to
+ * sign in.
+ */
+function useSocketSource({
+  socket,
+  client,
+  teamId,
+  gameId,
+  typed
+}: {
+  socket: SearchSocket | null
+  client: TeamStationClient
+  teamId: string
+  gameId: string | undefined
+  typed: string
+}): Source {
+  const [status, setStatus] = useState<SearchSocketStatus>(
+    socket?.status ?? 'connecting'
+  )
+  const [answer, setAnswer] = useState<Answer & { seq: number }>()
+  const [error, setError] = useState<{ seq: number; message: string }>()
+  const [attempt, setAttempt] = useState(0)
+  // The latest ask: its seq, and the text it asked.
+  const asked = useRef({ seq: 0, query: '' })
+
+  useEffect(() => {
+    if (socket == null) return
+    setStatus(socket.status)
+    const stops = [
+      socket.onStatus(next => {
+        setStatus(next)
+        // The server no longer takes the session: told as a REST 401 is.
+        if (next === 'unauthorized') client.onSessionRefused?.()
+      }),
+      socket.onResults(results => {
+        // Only the latest ask is answered: one resent after a reconnect too.
+        if (results.seq < asked.current.seq) return
+        asked.current = { ...asked.current, seq: results.seq }
+        const query = asked.current.query
+        const rows: RosterCandidate[] = []
+        const kept: KeptCandidate[] = []
+        for (const result of results.results) {
+          const row = rosterCandidateOf(result)
+          if (row == null) continue
+          rows.push(row)
+          // Only the words that found him: an answer lists anybody any
+          // one typed word found.
+          kept.push(
+            withMatched(
+              row,
+              query,
+              result.kind === 'person' ? (result.roster?.matched ?? []) : []
+            )
+          )
+        }
+        keepFound(client, teamId, kept)
+        client.keepRosterCandidates(teamId, kept).catch(() => undefined)
+        setAnswer({ seq: results.seq, query, rows })
+        setError(undefined)
+      }),
+      socket.onError(refused => {
+        setError({
+          seq: refused.seq ?? asked.current.seq,
+          message: refused.message
+        })
+      })
+    ]
+    return () => {
+      for (const stop of stops) stop()
+    }
+  }, [socket, client, teamId])
+
+  useEffect(() => {
+    if (socket == null) return
+    const query = typed.slice(0, SEARCH_TEXT_MAX)
+    const seq = socket.search({
+      text: query,
+      location: null,
+      mode: 'people',
+      forTeam: teamId,
+      ...(gameId == null ? {} : { forGame: gameId })
+    })
+    asked.current = { seq, query }
+    setError(undefined)
+  }, [socket, typed, teamId, gameId, attempt])
+
+  const retry = useCallback((): void => {
+    setAttempt(count => count + 1)
+  }, [])
+  const query = typed.slice(0, SEARCH_TEXT_MAX)
+  // An answer for other typing, or asked before the latest ask (for another
+  // team or game, or before a retry), is not this one's.
+  const current =
+    answer?.query === query && answer.seq >= asked.current.seq
+      ? answer
+      : undefined
+  // A session the server no longer takes fails the search as the route's
+  // 401 does, and shows nothing it found before.
+  const signedOut = status === 'unauthorized'
+  const refused = signedOut
+    ? SIGNED_OUT_PROBLEM
+    : error != null && error.seq >= asked.current.seq
+      ? error.message
+      : undefined
+  return {
+    answer: signedOut ? undefined : current,
+    pending:
+      socket != null &&
+      current == null &&
+      refused == null &&
+      status !== 'offline',
+    error: refused,
+    offline: status === 'offline',
+    query,
+    retry
+  }
+}
+
+/**
+ * `GET /users?forTeam=`, where there is no search socket: asked once the
+ * typing pauses (`CANDIDATE_DEBOUNCE_MS`), one request per settled search,
+ * each aborting the one before. An answer for other typing than the text
+ * typed now is not shown. Off (`enabled` false), it asks nothing.
+ */
+function useHttpSource({
+  enabled,
+  client,
+  teamId,
+  gameId,
+  typed,
+  cacheFirst
+}: {
+  enabled: boolean
+  client: TeamStationClient
+  teamId: string
+  gameId: string | undefined
+  typed: string
+  cacheFirst: boolean
+}): Source {
+  const settled = useDebouncedValue(typed, CANDIDATE_DEBOUNCE_MS)
+  const [phoneOffline, setOffline] = useState(client.offline)
+  const offline = phoneOffline && !cacheFirst
+  useEffect(() => {
+    setOffline(client.offline)
+    return client.subscribeOffline(setOffline)
+  }, [client])
+
+  const [answer, setAnswer] = useState<Answer>()
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string>()
+  const [attempt, setAttempt] = useState(0)
+
+  useEffect(() => {
+    if (!enabled || offline) return
+    if (cacheFirst && phoneOffline) {
+      // The phone's people are the whole list until the signal is back.
+      setAnswer(undefined)
+      setLoading(false)
+      setError(undefined)
+      return
+    }
+    const controller = new AbortController()
+    let current = true
+    setLoading(true)
+    setError(undefined)
+    setAnswer(undefined)
+    client
+      .rosterCandidates({
+        teamId,
+        gameId,
+        q: settled,
+        // It draws `capped` when the answer is full: as many as the socket
+        // answers, so "Showing the first 50" counts what is shown.
+        capped: true,
+        limit: ROSTER_CANDIDATE_MAX,
+        signal: controller.signal
+      })
+      .then(
+        answered => {
+          if (!current) return
+          // A server that answers more than asked still shows the first 50.
+          const found = answered.slice(0, ROSTER_CANDIDATE_MAX)
+          // Only the words that found each: the route, as the socket, lists
+          // anybody any one typed word found.
+          keepFound(
+            client,
+            teamId,
+            found.map(({ matched, ...row }) =>
+              withMatched(row, settled, matched ?? [])
+            )
+          )
+          setAnswer({ query: settled, rows: found.map(listedRow) })
+          setLoading(false)
+        },
+        (caught: unknown) => {
+          if (!current) return
+          setLoading(false)
+          // With the phone's people shown, no signal is no failure.
+          if (
+            cacheFirst &&
+            caught instanceof HttpError &&
+            caught.code === 'offline'
+          )
+            return
+          setError(problemOf(caught))
+        }
+      )
+    return () => {
+      current = false
+      controller.abort()
+    }
+  }, [
+    enabled,
+    client,
+    teamId,
+    gameId,
+    settled,
+    offline,
+    attempt,
+    cacheFirst,
+    phoneOffline
+  ])
+
+  const retry = useCallback((): void => {
+    setAttempt(count => count + 1)
+  }, [])
+  return {
+    // The rows of an older search are not this one's (#210).
+    answer: answer?.query === typed ? answer : undefined,
+    // Typing not settled yet is a search on its way too.
+    pending:
+      loading ||
+      (enabled &&
+        !offline &&
+        !(cacheFirst && phoneOffline) &&
+        settled !== typed),
+    error,
+    offline,
+    query: settled,
+    retry
+  }
+}
+
+/**
  * The players a roster manager may add to `teamId` (and, with `gameId`, to
- * its side of that game), nearest first, searched by `query` once typing
- * pauses for half a second: one request per search, whose answer of at most
- * `ROSTER_CANDIDATE_MAX` is the list, with no further pages. Both the scoring sheet and the
- * team's Add Player scene draw it.
+ * its side of that game), as the search engine finds them: over the search
+ * socket in mode `people` where the app provides one
+ * (`SearchSocketFactoryContext`), asked on every change of `query` with no
+ * pause; else from `GET /users?forTeam=`, once typing pauses for half a
+ * second. Either answers at most one full answer, with no further pages.
+ * Both the scoring sheet and the team's Add Player scene draw it.
  *
- * Each settled search aborts the one before it, and an answer for anything
- * but the current search is dropped, so a slow reply never replaces a newer
- * one.
+ * Only the answer to the text typed now is listed: an answer for older
+ * typing never replaces a newer one, and while the current text's answer is
+ * on its way, no row of an older one is shown.
  *
  * `cacheFirst` (the scoring screen, which never waits on the network): the
- * people the phone keeps for the team that match the query are listed at
- * once, and the server's matches join them when they come. With no signal
- * the phone's are the list, and the search is not `offline`. Nobody in
- * `excluded` (by user id: those already on the team's roster or in the
- * game) is listed, since the phone's kept rows, and an answer read before an
- * add landed, may still hold him.
+ * people the phone keeps for the team that match the text typed now are
+ * listed at once, and the server's matches join them when they come. With
+ * no signal (the socket `offline`) the phone's are the list, and the search
+ * is not `offline`. Every answer is kept, the phone's file written from the
+ * socket's answers as from the route's. Nobody in `excluded` (by user id:
+ * those already on the team's roster or in the game) is listed, since the
+ * phone's kept rows, and an answer read before an add landed, may still
+ * hold him.
  */
 export function useRosterCandidates({
   client,
@@ -202,9 +531,30 @@ export function useRosterCandidates({
   cacheFirst?: boolean
   excluded?: ReadonlySet<string>
 }): RosterCandidates {
-  const settled = useDebouncedValue(query.trim(), CANDIDATE_DEBOUNCE_MS)
-  const [phoneOffline, setOffline] = useState(client.offline)
-  const offline = phoneOffline && !cacheFirst
+  const factory = useContext(SearchSocketFactoryContext)
+  // The socket, once made; null where none can be: the route is asked.
+  const [socket, setSocket] = useState<SearchSocket | null | undefined>(
+    factory == null ? null : undefined
+  )
+  useEffect(() => {
+    if (factory == null) {
+      setSocket(null)
+      return
+    }
+    let made: SearchSocket
+    try {
+      made = makeSearchSocket(factory, client, true)
+    } catch {
+      // No address or no WebSocket here.
+      setSocket(null)
+      return
+    }
+    setSocket(made)
+    return () => {
+      made.close()
+    }
+  }, [factory, client])
+
   // The people found before for the team: this session's at once, then
   // those the phone keeps.
   const [kept, setKept] = useState<KeptCandidate[]>(() =>
@@ -231,85 +581,33 @@ export function useRosterCandidates({
       current = false
     }
   }, [client, teamId, cacheFirst])
-  // Those matching what is typed, as it is typed.
+
   const typed = query.trim()
+  const viaSocket = useSocketSource({
+    socket: socket ?? null,
+    client,
+    teamId,
+    gameId,
+    typed
+  })
+  const viaHttp = useHttpSource({
+    enabled: socket === null,
+    client,
+    teamId,
+    gameId,
+    typed,
+    cacheFirst
+  })
+  const source = socket === null ? viaHttp : viaSocket
+  // With no signal, the phone's people are the list, and nothing failed.
+  const phoneOnly = cacheFirst && source.offline
+  const rows = phoneOnly ? [] : (source.answer?.rows ?? [])
+  // Those the phone keeps matching what is typed, as it is typed.
   const cachedRows = cacheFirst
     ? kept
         .filter(candidate => candidateMatches(candidate, typed))
         .map(listedRow)
     : []
-  useEffect(() => {
-    setOffline(client.offline)
-    return client.subscribeOffline(setOffline)
-  }, [client])
-
-  const [rows, setRows] = useState<RosterCandidate[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string>()
-  const [attempt, setAttempt] = useState(0)
-
-  useEffect(() => {
-    if (offline) return
-    if (cacheFirst && phoneOffline) {
-      // The phone's people are the whole list until the signal is back.
-      setRows([])
-      setLoading(false)
-      setError(undefined)
-      return
-    }
-    const controller = new AbortController()
-    let current = true
-    setLoading(true)
-    setError(undefined)
-    setRows([])
-    client
-      .rosterCandidates({
-        teamId,
-        gameId,
-        q: settled,
-        // It draws `capped` when the answer is full.
-        capped: true,
-        signal: controller.signal
-      })
-      .then(
-        found => {
-          if (!current) return
-          keepFound(client, teamId, found, settled)
-          setRows(found)
-          setLoading(false)
-        },
-        (caught: unknown) => {
-          if (!current) return
-          setLoading(false)
-          // With the phone's people shown, no signal is no failure.
-          if (
-            cacheFirst &&
-            caught instanceof HttpError &&
-            caught.code === 'offline'
-          )
-            return
-          setError(problemOf(caught))
-        }
-      )
-    return () => {
-      current = false
-      controller.abort()
-    }
-  }, [
-    client,
-    teamId,
-    gameId,
-    settled,
-    offline,
-    attempt,
-    cacheFirst,
-    phoneOffline
-  ])
-
-  const retry = useCallback((): void => {
-    setAttempt(count => count + 1)
-  }, [])
-
   // The server's rows first, nearest first, then the phone's it has not
   // listed; the phone's alone while the server's are on their way.
   const listed = cacheFirst ? merged(rows, cachedRows) : rows
@@ -317,15 +615,16 @@ export function useRosterCandidates({
     excluded == null || excluded.size === 0
       ? listed
       : listed.filter(row => !excluded.has(row.userId))
+  const loading = !phoneOnly && source.pending
   return {
     rows: shownRows,
     loading: loading && shownRows.length === 0,
     // The server's answer still coming under the phone's rows.
     updating: loading && shownRows.length > 0,
-    error,
+    error: phoneOnly ? undefined : source.error,
     capped: !loading && rows.length >= ROSTER_CANDIDATE_MAX,
-    offline,
-    query: settled,
-    retry
+    offline: source.offline && !cacheFirst,
+    query: source.query,
+    retry: source.retry
   }
 }

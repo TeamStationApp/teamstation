@@ -1,3 +1,5 @@
+import { wordsOf } from '../../common/search/match'
+
 /**
  * The documents the phone keeps, one per GET it can show without a signal,
  * and the key each is stored under.
@@ -74,15 +76,26 @@ export function searchWords(query: string): string[] {
 }
 
 /**
- * The words a search of `GET /users?forTeam=` sent (`q`), none without one.
- * The server matched each of them to the start of a name of every person it
- * found, which may be a name the person's short name leaves out.
+ * The words of `query` that found a person, by the folded words the server
+ * says did (`found`): each typed word all of whose folded parts it lists. A
+ * search keeps anybody any one typed word finds, so a person found by
+ * "john smith" may be kept by "smith" alone.
  */
-export function candidatesWordsOf(path: string): string[] {
-  if (!path.startsWith('/users?')) return []
-  return searchWords(
-    new URLSearchParams(path.slice('/users?'.length)).get('q') ?? ''
-  )
+export function foundWords(query: string, found: readonly string[]): string[] {
+  return searchWords(query).filter(word => {
+    const parts = wordsOf(word)
+    return parts.length > 0 && parts.every(part => found.includes(part))
+  })
+}
+
+/**
+ * What a search of `GET /users?forTeam=` asked (`q`), empty without one.
+ * Each row of its answer lists the folded words of it that found him
+ * (`matched`), which may be a name the person's short name leaves out.
+ */
+export function candidatesQueryOf(path: string): string {
+  if (!path.startsWith('/users?')) return ''
+  return new URLSearchParams(path.slice('/users?'.length)).get('q') ?? ''
 }
 
 /** Requests with no id in them, by path and query exactly as sent. */

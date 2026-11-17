@@ -250,7 +250,7 @@ describe('adding an existing player from Set Team Rosters', function () {
     })
   })
 
-  it('W3 lists the Owls first, then the season and league, never a stranger or a Falcon', async function () {
+  it('W3 lists the Owls first, then the season and league, finds them by name too, never a stranger or a Falcon', async function () {
     await tap('Home Team')
     await tap('Add Existing Player')
     await browser.assertVisible({
@@ -266,7 +266,10 @@ describe('adding an existing player from Set Team Rosters', function () {
       )
     ).greaterThanOrEqual(first.length - 1)
     await shot('web-search-first-page')
+    // One answer holds the engine's fifty, nearest first: the forty-two
+    // Owls, then the season's players, then the league's.
     const all = await allCandidates()
+    expect(all.length).lessThanOrEqual(50)
     const burnes = all.indexOf('Corbin B')
     expect(burnes, 'Burnes listed').greaterThan(-1)
     expect(all.indexOf('Max F'), 'Fried after Burnes').greaterThan(burnes)
@@ -280,30 +283,38 @@ describe('adding an existing player from Set Team Rosters', function () {
     ).equals(true)
     expect(all).not.includes('Jose R')
     expect(all).not.includes('Clayton K')
+    for (const [typed, name] of [
+      ['Corbin', 'Corbin B'],
+      ['Max', 'Max F']
+    ]) {
+      await tap('Search players')
+      await browser.inputText({ text: typed })
+      await browser.assertVisible({
+        css: label(`Choose ${name}`),
+        timeout: 15000
+      })
+      await tap('Clear search')
+      await browser.assertVisible({
+        css: label('Choose Aaron J'),
+        timeout: 15000
+      })
+    }
   })
 
-  it('W4 asks once for a quickly typed search, and finds a stranger by three letters of the name he shows, never by his surname alone', async function () {
-    // The browser's own record of what it fetched, from here on.
+  it('W4 asks the search socket as each letter is typed, and never finds a stranger, by the name he shows or by his surname', async function () {
+    // The browser's own record of what it fetched, from here on: the
+    // search asks the socket, not `GET /users?forTeam=`.
     await browser.evalBrowserScript({
       script: `performance.clearResourceTimings(); performance.setResourceTimingBufferSize(1000); return ''`,
       output: 'counting'
     })
-    // Jose Ramirez reads "Jose R" to the coach: he is found by what it shows.
+    // Jose Ramirez plays only for the Coastal Gulls, of another league:
+    // outside the coach's reach. Three letters once found him as a stranger;
+    // now they find only Jose Altuve, an Owl.
     await tap('Search players')
     await browser.inputText({ text: 'Jos' })
-    await browser.assertVisible({ css: label('Choose Jose R'), timeout: 15000 })
-    const asks = await probe<string[]>(
-      `performance.getEntriesByType('resource').map(entry => entry.name).filter(name => name.includes('forTeam'))`
-    )
-    expect(asks.filter(url => /[?&]q=/.test(url))).deep.equals(
-      asks.filter(url => url.includes('q=Jos'))
-    )
-    console.log(
-      `      search requests while "Jos" was typed: ${JSON.stringify(asks.map(url => new URL(url).search))}`
-    )
-    expect(asks.filter(url => url.includes('q=Jos'))).has.length(1)
-    // His card's line names no team the coach may not see: Coastal Gulls
-    // are in another league.
+    await browser.assertVisible({ css: label('Choose Jose A'), timeout: 15000 })
+    expect(await candidates()).not.includes('Jose R')
     expect(await pageText()).not.includes('Coastal Gulls')
     await shot('web-search-jos')
     await tap('Clear search')
@@ -311,40 +322,34 @@ describe('adding an existing player from Set Team Rosters', function () {
       css: label('Choose Aaron J'),
       timeout: 15000
     })
-    // His surname alone finds nobody: the coach was never shown it.
-    await tap('Search players')
-    await browser.inputText({ text: 'Ramirez' })
-    await browser.assertVisible({
-      text: '.*No players match.*Ramirez.*',
-      timeout: 15000
-    })
-    expect(await candidates()).not.includes('Jose R')
-    await tap('Clear search')
-    await browser.assertVisible({
-      css: label('Choose Aaron J'),
-      timeout: 15000
-    })
-    // "Mo", "Moo", "Mookie" typed at once: one search, for "Mookie".
-    await browser.evalBrowserScript({
-      script: `performance.clearResourceTimings(); return ''`,
-      output: 'counting'
-    })
+    // His surname, or his whole name, finds nobody.
+    for (const typed of ['Ramirez', 'Jose Ramirez']) {
+      await tap('Search players')
+      await browser.inputText({ text: typed })
+      await browser.assertVisible({
+        text: `.*No players match.*${typed}.*`,
+        timeout: 15000
+      })
+      expect(await candidates()).not.includes('Jose R')
+      await tap('Clear search')
+      await browser.assertVisible({
+        css: label('Choose Aaron J'),
+        timeout: 15000
+      })
+    }
     await tap('Search players')
     await browser.inputText({ text: 'Mookie' })
     await browser.assertVisible({
       css: label('Choose Mookie B'),
       timeout: 15000
     })
-    const typed = (
-      await probe<string[]>(
-        `performance.getEntriesByType('resource').map(entry => entry.name).filter(name => name.includes('forTeam'))`
-      )
-    ).filter(url => /[?&]q=/.test(url))
-    console.log(
-      `      search requests while "Mookie" was typed: ${JSON.stringify(typed.map(url => new URL(url).search))}`
+    const asked = await probe<string[]>(
+      `performance.getEntriesByType('resource').map(entry => entry.name).filter(name => name.includes('forTeam'))`
     )
-    expect(typed).has.length(1)
-    expect(typed[0]).includes('q=Mookie')
+    console.log(
+      `      candidate requests over HTTP while searching: ${JSON.stringify(asked)}`
+    )
+    expect(asked).deep.equals([])
     await tap('Clear search')
     await browser.assertVisible({
       css: label('Choose Aaron J'),
@@ -520,11 +525,12 @@ describe('adding an existing player from Set Team Rosters', function () {
         expect(took).lessThan(2500)
         expect(loadingMore).equals(true)
       })
+      // Corbin Burnes, of the season, was not found before.
       await tap('Search players')
-      await browser.inputText({ text: 'Jos' })
+      await browser.inputText({ text: 'Corbin' })
       const started = Date.now()
       await browser.assertVisible({
-        css: label('Choose Jose R'),
+        css: label('Choose Corbin B'),
         timeout: 30000
       })
       console.log(

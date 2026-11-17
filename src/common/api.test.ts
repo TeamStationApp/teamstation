@@ -732,6 +732,16 @@ describe('api client', function () {
     ])
   })
 
+  it('keeps no roster candidates on the web, and asks nothing to', async function () {
+    const { fetch, calls } = stubFetch(200, [])
+    const client = new TeamStationClient({
+      baseUrl: 'http://example.com/api/v1',
+      fetch
+    })
+    await client.keepRosterCandidates('tem_one', [])
+    expect(calls).deep.equals([])
+  })
+
   it('requests team pitching with optional season filtering', async function () {
     const { fetch, calls } = stubFetch(200, [])
     const client = new TeamStationClient({

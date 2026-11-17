@@ -180,6 +180,7 @@ import type {
 } from './scoring/session'
 import { type Position, POSITIONS, type Side } from './scoring/state'
 import { SCORING_FEATURE_HEADER, SCORING_FEATURES } from './scoring/teamRecord'
+import { SEARCH_RESULTS_MAX } from './search/types'
 import {
   asScheduleSetup,
   asSeasonScheduleSettings,
@@ -2325,8 +2326,26 @@ const cleanRosterCandidate = asObject({
 })
 export const asRosterCandidate: Cleaner<RosterCandidate> = cleanRosterCandidate
 
-/** The most rows one roster search answers: there are no further pages. */
-export const ROSTER_CANDIDATE_MAX = 100
+/**
+ * A player a search found, with the typed words, folded, that found him
+ * (`matched`): a search keeps anybody any one typed word finds, so these
+ * may be fewer than were typed. Absent when nothing typed found him.
+ */
+export type FoundRosterCandidate = RosterCandidate & { matched?: string[] }
+const cleanFoundWords = asObject({ matched: asOptional(asArray(asString)) })
+export const asFoundRosterCandidate: Cleaner<FoundRosterCandidate> = raw => {
+  const candidate = asRosterCandidate(raw)
+  const { matched } = cleanFoundWords(raw)
+  return matched == null || matched.length === 0
+    ? candidate
+    : { ...candidate, matched }
+}
+
+/**
+ * The most rows one roster search answers, as the search engine shows them:
+ * there are no further pages.
+ */
+export const ROSTER_CANDIDATE_MAX = SEARCH_RESULTS_MAX
 
 /**
  * An existing player's add: their entry, with the notice their side was sent
@@ -7135,7 +7154,7 @@ export class TeamStationClient {
     limit?: number
     capped?: boolean
     signal?: AbortSignal
-  }): Promise<RosterCandidate[]> {
+  }): Promise<FoundRosterCandidate[]> {
     const params = new URLSearchParams({ forTeam: ask.teamId })
     if (ask.gameId != null) params.set('forGame', ask.gameId)
     if (ask.q != null && ask.q !== '') params.set('q', ask.q)
@@ -7144,7 +7163,7 @@ export class TeamStationClient {
     return await this.request(
       'GET',
       `/users?${params.toString()}`,
-      asArray(asRosterCandidate),
+      asArray(asFoundRosterCandidate),
       undefined,
       ask.signal == null ? {} : { signal: ask.signal }
     )
@@ -8283,6 +8302,20 @@ export class TeamStationClient {
    * what the last answer for `key` stored, or nothing. The web keeps none.
    */
   async cached<T>(_key: string, _cleaner: Cleaner<T>): Promise<T | undefined> {
+    return undefined
+  }
+
+  /**
+   * Keeps the people a search for `teamId` found, each with the typed words
+   * that found him (`matched`), as the ones Add Existing Player lists at
+   * once and offline: what an answer of `rosterCandidates` keeps by itself,
+   * for an answer that came another way (the search socket). The web keeps
+   * none.
+   */
+  async keepRosterCandidates(
+    _teamId: string,
+    _rows: ReadonlyArray<RosterCandidate & { matched?: string[] }>
+  ): Promise<void> {
     return undefined
   }
 
