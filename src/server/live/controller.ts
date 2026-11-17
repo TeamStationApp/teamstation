@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from 'fs'
 import { mkdir, readFile, rm, stat } from 'fs/promises'
-import { type Kysely, sql } from 'kysely'
+import { type Kysely, type RawBuilder, sql } from 'kysely'
 import { join } from 'path'
 
 import { canFilm, roleScopesForUsers } from '../access'
@@ -43,7 +43,11 @@ import {
   toRecording
 } from './finishVideo'
 import { OriginPublisher } from './originPublisher'
-import { quietStreamCanEnd, quietStreamEndsAt } from './quietStream'
+import {
+  quietStreamCanEnd,
+  quietStreamEndsAt,
+  streamReceivedAt
+} from './quietStream'
 import { openSecret } from './secrets'
 import { spacePartReader } from './spacePieceReader'
 import {
@@ -240,8 +244,8 @@ const pendingStatus = new Map<
 const scannedPlaylists = new Map<string, { size: number; mtimeMs: number }>()
 /** How many wall-clock scans have run, for a test to see one did not. */
 let wallScans = 0
-/** Publisher events newer than a sync's database snapshot. */
-const publisherActivity = new Map<string, Date>()
+/** Received bytes newer than a sync's database snapshot or status flush. */
+const receivedActivity = new Map<string, number>()
 /** In-flight key lookups must not restore a key removed while they awaited. */
 let finalizationRevision = 0
 const finalizingStreams = new Map<string, number>()
@@ -874,7 +878,7 @@ export function stopLiveController(): void {
   tracked.clear()
   pendingStatus.clear()
   scannedPlaylists.clear()
-  publisherActivity.clear()
+  receivedActivity.clear()
   anchorCursors.clear()
   closedAfterGrace.clear()
 }
@@ -964,13 +968,55 @@ async function handle(
 
 /** Holds a stream's newest report for the next batched write. */
 function gatherStatus(status: LiveStatus): void {
+  const received = status.ingress.lastReceivedAt
+  if (received != null && Number.isFinite(received))
+    receivedActivity.set(
+      status.liveStreamId,
+      Math.max(receivedActivity.get(status.liveStreamId) ?? -Infinity, received)
+    )
   const at = new Date()
   const held = pendingStatus.get(status.liveStreamId)
   pendingStatus.set(status.liveStreamId, {
-    status,
+    status: {
+      ...status,
+      ingress: {
+        ...status.ingress,
+        lastReceivedAt:
+          receivedActivity.get(status.liveStreamId) ??
+          status.ingress.lastReceivedAt
+      }
+    },
     at,
     publishedAt: status.ingress.publishing ? at : (held?.publishedAt ?? null)
   })
+}
+
+/**
+ * Freeze a legacy clock before connection timestamps move, and preserve it
+ * across new ingest entries and delayed status writes. JSON null means this
+ * stream has never received bytes; an absent field is an older snapshot.
+ *
+ * Every write of `live_streams.status` goes through this, or the byte clock
+ * moves back or is lost. `publishing` is what a row with no report yet says
+ * until the ingest's first report lands.
+ */
+function statusWithReceiveClock(
+  report?: RawBuilder<unknown>,
+  publishing = false
+): RawBuilder<unknown> {
+  const previous = sql`coalesce(
+    live_streams.status #> '{ingress,lastReceivedAt}',
+    to_jsonb(extract(epoch from live_streams.last_published_at) * 1000),
+    'null'::jsonb)`
+  const snapshot =
+    report ??
+    sql`coalesce(live_streams.status,
+    jsonb_build_object('liveStreamId', live_streams.id,
+      'ingress', jsonb_build_object('publishing', ${sql.lit(publishing)},
+        'receivingPackets', false, 'bytesReceived', 0, 'bytesPerSecond', 0),
+      'outputs', '[]'::jsonb))`
+  return sql`jsonb_set(${snapshot}, '{ingress,lastReceivedAt}',
+    greatest(${snapshot} #> '{ingress,lastReceivedAt}', ${previous}))`
 }
 
 /**
@@ -981,13 +1027,10 @@ function gatherStatus(status: LiveStatus): void {
  * person takes to read it. These columns send no `live_changes` notice, so
  * the ingest does not wake itself with them.
  *
- * `last_published_at` moves every time video is arriving, not only when a
- * publish starts and stops. It is what "this stream has been silent for ten
- * minutes" is measured from, and a stamp that never moved meant any game
- * longer than ten minutes looked silent the moment anything else made the row
- * read `idle` — a restart, most of all. The recording was then closed under a
- * game that was still being played. It never moves back: a report gathered
- * before the publisher left is written after the stop stamped the row.
+ * `last_published_at` retains the connection/reconnect-grace clock. The
+ * independent byte clock is merged monotonically into status, so a delayed
+ * report or a new runtime entry cannot erase already observed activity. Any
+ * other writer of `status` must use `statusWithReceiveClock` too.
  */
 async function writeStatuses(db: Kysely<Database>): Promise<void> {
   if (pendingStatus.size === 0) return
@@ -996,7 +1039,7 @@ async function writeStatuses(db: Kysely<Database>): Promise<void> {
     ([, report]) =>
       sql`(${report.status.liveStreamId}, ${JSON.stringify(report.status)}::jsonb, ${report.at}::timestamptz, ${report.publishedAt}::timestamptz)`
   )
-  await sql`update live_streams set status = v.status, status_at = v.at,
+  await sql`update live_streams set status = ${statusWithReceiveClock(sql`v.status`)}, status_at = v.at,
   last_published_at = greatest(v.published_at, live_streams.last_published_at)
 from (values ${sql.join(values)}) as v(id, status, at, published_at)
 where live_streams.id = v.id`.execute(db)
@@ -1054,6 +1097,13 @@ function localTick(
 /** Test seam: how many wall-clock scans have run in this process. */
 export function wallScansForTest(): number {
   return wallScans
+}
+
+/** Test seam: the received-byte time held in memory for a stream. */
+export function receivedActivityForTest(
+  liveStreamId: string
+): number | undefined {
+  return receivedActivity.get(liveStreamId)
 }
 
 /** Test seam: one local tick, statuses included, settled. */
@@ -1120,7 +1170,6 @@ export async function beganPublishing(
   const generation = originGeneration
   const { db } = current
   const now = new Date()
-  publisherActivity.set(liveStreamId, now)
   const row = await db
     .selectFrom('live_streams')
     .leftJoin('videos', 'videos.id', 'live_streams.video_id')
@@ -1147,6 +1196,7 @@ export async function beganPublishing(
       .updateTable('live_streams')
       .set({
         state: 'publishing',
+        status: statusWithReceiveClock(undefined, true),
         first_published_at: row.firstPublishedAt ?? now,
         last_published_at: now,
         last_error: null,
@@ -1212,7 +1262,6 @@ async function stoppedPublishing(
 ): Promise<void> {
   const { db, mediaRoot } = current
   const now = new Date()
-  publisherActivity.set(liveStreamId, now)
   const row = await db
     .selectFrom('live_streams')
     .select(['video_id as videoId', 'game_id as gameId'])
@@ -1227,6 +1276,7 @@ async function stoppedPublishing(
       .updateTable('live_streams')
       .set({
         state: 'idle',
+        status: statusWithReceiveClock(),
         last_published_at: now,
         last_error: reason,
         updated_at: now
@@ -1397,8 +1447,10 @@ export async function sync(
       'live_streams.closes_at as closesAt',
       'live_streams.video_id as videoId',
       'live_streams.last_published_at as lastPublishedAt',
+      'live_streams.status as status',
       'live_streams.last_error as lastError',
       'live_streams.local_recording as localRecording',
+      'games.start_at as gameStartAt',
       'games.end_at as gameEndAt',
       'videos.start_at as videoStartAt'
     ])
@@ -1416,6 +1468,11 @@ export async function sync(
     // In a fixed order, so one tick goes through the streams as the last did.
     .orderBy('live_streams.id')
     .execute()
+
+  // A stream deleted, or finished elsewhere, no longer needs its bytes.
+  const open = new Set(rows.map(row => row.id))
+  for (const id of receivedActivity.keys())
+    if (!open.has(id)) receivedActivity.delete(id)
 
   // One syscall a sync, and only asked at all when there is something that
   // might want to start.
@@ -1486,33 +1543,28 @@ export async function sync(
         finish(row.id, 'the stream was ended')
         continue
       }
-      // A reconnect can start AND stop while the snapshot's permission or
-      // disk checks await. Completed events reset the quiet clock in memory;
-      // queued events and active ingest veto expiry before their writes land.
-      const activity = publisherActivity.get(row.id)
-      const quietRow =
-        activity == null
-          ? row
-          : {
-              ...row,
-              lastPublishedAt: new Date(
-                Math.max(
-                  activity.getTime(),
-                  millisOf(row.lastPublishedAt ?? row.opensAt) ?? 0
-                )
-              )
-            }
+      // A byte may arrive while the snapshot's permission/disk checks await.
+      // Observe the ingest now, including bytes not sampled or persisted yet.
+      const observedKey = tracked.get(row.id)?.key
+      const ingress =
+        observedKey == null ? undefined : statusFor(observedKey)?.ingress
+      const stored = streamReceivedAt(row.status, row.lastPublishedAt)
+      const received = [
+        stored,
+        receivedActivity.get(row.id),
+        ingress?.lastReceivedAt
+      ].filter((at): at is number => Number.isFinite(at))
+      const quietRow = {
+        ...row,
+        lastReceivedAt: received.length === 0 ? null : Math.max(...received)
+      }
       changesAt(millisOf(row.opensAt))
       changesAt(millisOf(row.closesAt))
       changesAt(quietStreamEndsAt(quietRow))
       if (row.state === 'idle' && row.lastPublishedAt != null)
         changesAt((millisOf(row.lastPublishedAt) ?? 0) + RECONNECT_GRACE_MS + 1)
       if (quietStreamCanEnd(quietRow, now)) {
-        const key = tracked.get(row.id)?.key
-        if (
-          key == null ||
-          (!work.has(key) && statusFor(key)?.ingress.publishing !== true)
-        ) {
+        if (observedKey == null || !work.has(observedKey)) {
           finish(row.id, 'the stream was quiet after the scheduled game end')
           continue
         }
@@ -1833,14 +1885,18 @@ export async function finishStream(
     liveStreamId,
     (finalizingStreams.get(liveStreamId) ?? 0) + 1
   )
+  let finished = false
   try {
     await finishStreamRecording(current, liveStreamId, reason, generation)
+    finished = true
   } finally {
     // A lookup can begin after the start revision but read before the commit.
     finalizationRevision++
     const remaining = finalizingStreams.get(liveStreamId)! - 1
     if (remaining === 0) finalizingStreams.delete(liveStreamId)
     else finalizingStreams.set(liveStreamId, remaining)
+    // A finish that failed leaves the stream open, judged on these bytes.
+    if (finished && remaining === 0) receivedActivity.delete(liveStreamId)
   }
 }
 
@@ -1852,7 +1908,6 @@ async function finishStreamRecording(
 ): Promise<void> {
   const { db, mediaRoot, ffmpegPath } = current
   const entry = tracked.get(liveStreamId)
-  publisherActivity.delete(liveStreamId)
   closedAfterGrace.delete(liveStreamId)
   if (entry != null) {
     tracked.delete(liveStreamId)

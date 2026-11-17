@@ -145,6 +145,93 @@ describe('live ingest', function () {
     resetForTest()
   })
 
+  it('tracks bytes independently of status reads, rates and reconnects', async function () {
+    setLive(KEY, spec())
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(null)
+    const session = {
+      id: 'clock-first',
+      streamApp: 'live',
+      streamName: KEY,
+      inBytes: 0,
+      videoCodec: 12
+    }
+    publishArrivedForTest(session)
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(null)
+    session.inBytes = 100
+    const first = statusFor(KEY)!.ingress.lastReceivedAt!
+    expect(first).is.a('number')
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(first)
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.bytesPerSecond).equals(100)
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.bytesPerSecond).equals(0)
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(first)
+    publishGoneForTest(session)
+    const next = { ...session, id: 'clock-next', inBytes: 0 }
+    publishArrivedForTest(next)
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(first)
+    await new Promise(resolve => setTimeout(resolve, 5))
+    next.inBytes = 10
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.bytesPerSecond).equals(10)
+    expect(statusFor(KEY)!.ingress.lastReceivedAt!).greaterThan(first)
+  })
+
+  it('observes the final unsampled bytes when a publisher disconnects', function () {
+    setLive(KEY, spec())
+    const session = {
+      id: 'clock-short',
+      streamApp: 'live',
+      streamName: KEY,
+      inBytes: 0,
+      videoCodec: 12
+    }
+    publishArrivedForTest(session)
+    session.inBytes = 32
+    publishGoneForTest(session)
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).is.a('number')
+    expect(statusFor(KEY)?.ingress.publishing).equals(false)
+  })
+
+  it('observes unsampled bytes before forced closure and counts bytes on accept', async function () {
+    setLive(KEY, spec())
+    const session = {
+      id: 'clock-force',
+      streamApp: 'live',
+      streamName: KEY,
+      inBytes: 15,
+      videoCodec: 12
+    }
+    publishArrivedForTest(session)
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).is.a('number')
+    const first = statusFor(KEY)!.ingress.lastReceivedAt!
+    await new Promise(resolve => setTimeout(resolve, 5))
+    session.inBytes = 64
+    clearLive(KEY, 'ended')
+    const reports = events.filter(event => event.type === 'status')
+    expect(reports.at(-1)?.status.ingress.lastReceivedAt).greaterThan(first)
+  })
+
+  it('does not count a connect that never shows HEVC as received bytes', function () {
+    setLive(KEY, spec())
+    const session = {
+      id: 'clock-refused',
+      streamApp: 'live',
+      streamName: KEY,
+      inBytes: 40,
+      videoCodec: 0
+    }
+    publishArrivedForTest(session)
+    session.inBytes = 90
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(null)
+    session.videoCodec = 7
+    session.inBytes = 140
+    tickSamplerForTest()
+    expect(statusFor(KEY)?.ingress.publishing).equals(false)
+    expect(statusFor(KEY)?.ingress.lastReceivedAt).equals(null)
+  })
+
   it('refuses a key that could be a path or an argument', function () {
     expect(isPublishableKey('ts_abcdefgh')).equals(true)
     expect(isPublishableKey('../../etc/passwd')).equals(false)
