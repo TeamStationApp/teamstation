@@ -701,7 +701,8 @@ async function f2(run: Run): Promise<void> {
     // In the Auto-Scheduler, playoffs joins the run and saves a number.
     await run.visit(`/groups/league/${fx.f.leagueA}/scheduler`)
     await contains(b.page, 'SELECT SEASONS TO AUTO SCHEDULE.')
-    await clickLabel(b, 'Demo Playoffs')
+    // The season's checkbox, "Auto-schedule <season>" (a86703d7e).
+    await clickLabel(b, 'Auto-schedule Demo Playoffs')
     await labelled(b, 'Demo Playoffs Regular-season games: 0')
     await scrollToText(b, 'SELECT SEASONS TO AUTO SCHEDULE.')
     await gridTo(b, 'Demo Playoffs Regular-season games: 0')

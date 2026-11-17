@@ -95,8 +95,9 @@ async function main(): Promise<void> {
     expect(body).not.includes('FIELDS FOR THIS RUN')
     expect(body).not.includes('SCHEDULE SETTINGS')
     expect(await b.page.$$('[data-testid="season-schedule-grid"]')).length(1)
-    await label('Demo Playoffs')
-    await label('Demo Playoffs')
+    // Off and on again: the season's checkbox, "Auto-schedule <season>" (a86703d7e).
+    await label('Auto-schedule Demo Playoffs')
+    await label('Auto-schedule Demo Playoffs')
     const rowLabels = [
       'Game length in minutes',
       'Time between games in minutes',
