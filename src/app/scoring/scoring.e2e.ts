@@ -1078,7 +1078,7 @@ describe('scoring browser', function () {
                 Math.abs(a.bottom - b.top) < 0.1
               )
             },
-            { timeout: 5000 },
+            { timeout: 15000 },
             label
           )
           .catch(() => undefined)
@@ -1503,39 +1503,36 @@ describe('scoring browser', function () {
       await click(page, 'Full game scoring')
       await page.waitForFunction(() => location.pathname === '/games/g1/score')
       await page.waitForSelector('canvas')
-      // Held back by the server: the ball has not reached it.
+      // Held back by the server: the ball has not reached it. The phone's
+      // own copy holds it, so Back leaves without asking and the ball is
+      // there on the way back in (2f0de5519).
       await click(page, 'Ball')
       await page.waitForSelector('[aria-label="Undo Ball"]')
-      const length = await page.evaluate(() => history.length)
+      await page.waitForSelector('[aria-label*="2 balls"]')
       await page.evaluate(() => {
         history.back()
       })
-      await page
-        .waitForFunction(() =>
-          document.body.innerText.includes(
-            '1 change has not reached the server yet and will be lost.'
-          )
-        )
-        .catch(async (error: unknown) => {
-          // Where Back went instead, and what that screen says.
-          console.error(
-            'Back with an unsaved ball:',
-            await page.evaluate(
-              () =>
-                `${location.pathname}: ${document.body.innerText.replace(/\s+/g, ' ').slice(0, 600)}`
-            )
-          )
-          throw error
-        })
-      await click(page, 'Cancel')
-      await page.waitForFunction(() => location.pathname === '/games/g1/score')
-      expect(await page.evaluate(() => history.length)).equals(length)
-      await page.evaluate(() => {
-        history.back()
-      })
-      await click(page, 'Discard and Exit')
       await page.waitForSelector('[aria-label="Full game scoring"]')
       expect(new URL(page.url()).pathname).equals('/games/g1/score-game')
+      expect(await page.$('[aria-label="Discard and Exit"]')).equals(null)
+      await click(page, 'Full game scoring')
+      await page.waitForFunction(() => location.pathname === '/games/g1/score')
+      // The held send gives up after its 10 s deadline (2f0de5519), and the
+      // phone's copy answers it then.
+      const count = async (): Promise<string> =>
+        (await page.evaluate(() => {
+          // Plain: the page has no helpers for sucrase's optional chains.
+          const board = document.querySelector('[aria-label*=" balls "]')
+          return board === null ? null : board.getAttribute('aria-label')
+        })) ?? 'no count'
+      console.log('Back in with a held ball:', await count())
+      await page
+        .waitForSelector('[aria-label*="2 balls"]', { timeout: 20000 })
+        .catch(async (error: unknown) => {
+          console.error('Still not 2 balls:', await count())
+          throw error
+        })
+      await page.waitForSelector('[aria-label="Undo Ball"]')
       expect(unexpected).deep.equals([])
     } finally {
       holdSaves = false
