@@ -39,7 +39,9 @@ describe('the fault server', function () {
       listen: { host: '127.0.0.1', port: 0 },
       target: `http://127.0.0.1:${apiPort}`,
       places: { host: '127.0.0.1', port: 0 },
-      token: TOKEN
+      token: TOKEN,
+      modelPort: 0,
+      speechPort: 0
     })
     base = started.proxy.url
   })
@@ -123,6 +125,28 @@ describe('the fault server', function () {
     await new Promise(resolve => setTimeout(resolve, 50))
     await control('PUT', 'fault', { fault: null })
     expect(await hung).equals('let go')
+  })
+
+  it('serves the stand-ins behind the token, the beacon to anyone, and delays and logs the API', async function () {
+    expect((await control('GET', 'speech', undefined, null)).status).equals(401)
+    expect((await control('GET', 'speech')).body).deep.include({ begun: 0 })
+    expect((await fetch(`${base}/__tess/beacon`)).status).equals(204)
+    expect((await control('GET', 'beacon')).body).deep.equals({ hits: 1 })
+    await control('PUT', 'delay', { prefix: '/api/v1/teams', ms: 300 })
+    const startedAt = Date.now()
+    expect((await fetch(`${base}/api/v1/teams/t1`)).status).equals(200)
+    expect(Date.now() - startedAt).greaterThanOrEqual(290)
+    await control('PUT', 'delay', null)
+    const logged = await control(
+      'GET',
+      `requests?since=${startedAt}&path=/api/v1/teams`
+    )
+    expect(
+      logged.body.requests.map((row: { path: string }) => row.path)
+    ).includes('/api/v1/teams/t1')
+    expect(started.standIns?.model.baseUrl).matches(
+      /^http:\/\/127\.0\.0\.1:\d+\/v1$/
+    )
   })
 
   it('serves the Places stand-in beside it', async function () {

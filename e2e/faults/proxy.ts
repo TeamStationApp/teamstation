@@ -24,6 +24,10 @@ export interface FaultProxyOptions {
   port?: number
   /** Answers a request first; true when it did, so the proxy leaves it. */
   control?: (req: IncomingMessage, res: ServerResponse) => boolean
+  /** How long to hold a request for this path before handling it; none by default. */
+  delay?: (path: string) => number
+  /** Told of each request the proxy handles, with its path. */
+  onRequest?: (method: string, path: string) => void
 }
 
 export interface FaultProxy {
@@ -146,6 +150,22 @@ export async function startFaultProxy(
   const server: Server = createServer((req, res) => {
     if (options.control?.(req, res) === true) return
     const path = new URL(req.url ?? '/', 'http://proxy').pathname
+    options.onRequest?.(req.method ?? 'GET', path)
+    const ms = options.delay?.(path) ?? 0
+    if (ms > 0) {
+      setTimeout(() => {
+        handle(req, res, path)
+      }, ms)
+      return
+    }
+    handle(req, res, path)
+  })
+
+  function handle(
+    req: IncomingMessage,
+    res: ServerResponse,
+    path: string
+  ): void {
     const matched = match.test(path)
     if (matched && fault === 'api-500') {
       inject(req)
@@ -173,7 +193,7 @@ export async function startFaultProxy(
       return
     }
     forward(req, res, matched && fault === 'wrong-data')
-  })
+  }
 
   /** Whether `socket-drop` drops a socket on this path. */
   const drops = (path: string): boolean => !path.startsWith('/api/v1/none')

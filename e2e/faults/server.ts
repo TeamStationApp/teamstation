@@ -6,6 +6,14 @@ import { asJevControl, JevStub } from '../core/jevStub'
 import { PLACES_ANSWERS, startPlacesStub } from '../core/placesStub'
 import { FAULTS } from './catalogue'
 import { type FaultProxy, startFaultProxy } from './proxy'
+import {
+  beaconRoute,
+  delayFor,
+  logForwarded,
+  standInRoute,
+  type StandIns,
+  startStandIns
+} from './standIns'
 
 /**
  * The fault server a droplet stack runs between Caddy and its API, with the
@@ -27,6 +35,11 @@ import { type FaultProxy, startFaultProxy } from './proxy'
  *   GET  /__e2e/jev                       the Jev stand-in's script and requests
  *   PUT  /__e2e/jev    { passThrough?, rule?, queries? }
  *                                         replaces the script, forgetting the requests
+ *
+ * On a stack it also hosts the stand-ins `standIns.ts` describes, the
+ * scripted model and the recogniser on their own ports, with their routes
+ * under /__e2e/ (model, speech, delay, beacon, requests) and the public
+ * /__tess/beacon.
  */
 const CONTROL = '/__e2e/'
 
@@ -70,10 +83,12 @@ function withJson(
 export function controlRoutes(
   proxy: () => FaultProxy,
   token: string,
-  jev?: JevStub
+  jev?: JevStub,
+  standIns?: StandIns
 ): (req: IncomingMessage, res: ServerResponse) => boolean {
   return (req, res) => {
     const url = new URL(req.url ?? '/', 'http://faults')
+    if (standIns != null && beaconRoute(standIns, req, res)) return true
     if (!url.pathname.startsWith(CONTROL)) return false
     const route = url.pathname.slice(CONTROL.length)
     if (route === 'health' && req.method === 'GET') {
@@ -123,7 +138,10 @@ export function controlRoutes(
         }
         json(res, 200, jev!.set(control))
       })
-    } else {
+    } else if (
+      standIns == null ||
+      !standInRoute(standIns, route, req, res, url)
+    ) {
       json(res, 404, { error: `no route ${req.method} ${url.pathname}` })
     }
     return true
@@ -135,6 +153,9 @@ export interface FaultServerOptions {
   target: string
   places?: { host: string; port: number }
   token: string
+  /** The stand-ins' ports, their own fixed ones by default (tests use 0). */
+  modelPort?: number
+  speechPort?: number
 }
 
 export async function startFaultServer(
@@ -144,6 +165,7 @@ export async function startFaultServer(
   proxy: FaultProxy
   placesUrl?: string
   jev?: JevStub
+  standIns?: StandIns
   close: () => Promise<void>
 }> {
   if (options.token.length < 32) throw new Error('the stack token is too short')
@@ -153,6 +175,19 @@ export async function startFaultServer(
     if (holder.proxy == null) throw new Error('the fault proxy has not started')
     return holder.proxy
   }
+  // On a stack, beside the Places stand-in: the scripted model, the
+  // recogniser, the read delay and the request log (`standIns.ts`).
+  const standIns =
+    options.places == null
+      ? undefined
+      : await startStandIns({
+          ...(options.modelPort == null
+            ? {}
+            : { modelPort: options.modelPort }),
+          ...(options.speechPort == null
+            ? {}
+            : { speechPort: options.speechPort })
+        })
   const proxy = await startFaultProxy({
     target: options.target,
     host: options.listen.host,
@@ -161,8 +196,17 @@ export async function startFaultServer(
     control: controlRoutes(
       current,
       options.token,
-      options.places == null ? undefined : jev
-    )
+      options.places == null ? undefined : jev,
+      standIns
+    ),
+    ...(standIns == null
+      ? {}
+      : {
+          delay: path => delayFor(standIns, path),
+          onRequest: (method, path) => {
+            logForwarded(standIns, method, path)
+          }
+        })
   })
   holder.proxy = proxy
   const places =
@@ -177,8 +221,10 @@ export async function startFaultServer(
   return {
     proxy,
     ...(places == null ? {} : { placesUrl: places.url, jev }),
+    ...(standIns == null ? {} : { standIns }),
     close: async () => {
       places?.server.close()
+      await standIns?.close()
       await proxy.close()
     }
   }
