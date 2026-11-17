@@ -808,6 +808,11 @@ export async function build({
         join(res, 'splash_stadium_blurred.webp'),
         'webp'
       )
+      encodeUnder(
+        join(temp, 'launchFrame.png'),
+        join(res, 'splash_launch_frame.webp'),
+        'webp'
+      )
       for (const [only, name] of [
         ['mark', 'splash_mark'],
         ['markBlurred', 'splash_mark_blurred'],

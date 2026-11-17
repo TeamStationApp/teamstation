@@ -6,4 +6,15 @@
         <item name="android:editTextBackground">@drawable/rn_edit_text_material</item>
     </style>
 
+    <!--
+      The starting window: the launch splash's dark ground with no icon, until the
+      activity draws the splash's frame 0 over it. installSplashScreen() needs a
+      Theme.SplashScreen parent, and switches to AppTheme once the activity is up.
+    -->
+    <style name="Theme.TeamStation.Starting" parent="Theme.SplashScreen">
+        <item name="windowSplashScreenBackground">#030603</item>
+        <item name="windowSplashScreenAnimatedIcon">@drawable/splash_blank</item>
+        <item name="postSplashScreenTheme">@style/AppTheme</item>
+    </style>
+
 </resources>

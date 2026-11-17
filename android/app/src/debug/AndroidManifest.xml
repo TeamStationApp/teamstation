@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: the activity SplashOverlayDeviceTest puts the splash over. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="app.teamstation.app.splash.SplashHostActivity"
+            android:theme="@android:style/Theme.Material.NoActionBar"
+            android:exported="false" />
+    </application>
+</manifest>

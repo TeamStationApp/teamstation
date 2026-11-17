@@ -1,12 +1,17 @@
-// The launch splash's changed-line coverage gates, at 90%:
+// The launch splash's changed-line coverage gates: 90% for --js, which only
+// unit tests reach, and 95% for --swift and --kotlin, whose counters combine
+// the unit tests with the hosted and instrumented ones on a device (AGENTS.md):
 //
-//   TS_COVERAGE_BASE=origin/develop node scripts/splash-coverage.mjs --js|--swift|--all
+//   TS_COVERAGE_BASE=origin/develop node scripts/splash-coverage.mjs --js|--swift|--kotlin|--all
 //
 // --js     scripts/splash/** through c8 over the unit test and the macOS-only
 //          generator test (scripts/splash/splashAssets.mac-test.ts).
 // --swift  mobile/apps/common/TeamStationSplash/** and the phone app's
 //          AppDelegate (scripts/splash-coverage-native.mjs), on the iOS
 //          simulator SPLASH_IOS_SIMULATOR.
+// --kotlin android/app/src/main/java/app/teamstation/app/splash/** and
+//          MainActivity, from :app:splashCoverage (with TS_SPLASH_EXEC, the
+//          instrumented run's execution data, merged when it is set).
 // Every command is printed on a `$` line before it runs.
 import { execFileSync } from 'node:child_process'
 import { mkdirSync, rmSync } from 'node:fs'
@@ -18,7 +23,7 @@ if (base == null)
     'Supply TS_COVERAGE_BASE, the base the branch is measured from'
   )
 const modes = process.argv.slice(2)
-const known = ['--js', '--swift', '--all']
+const known = ['--js', '--swift', '--kotlin', '--all']
 if (modes.length === 0 || modes.some(mode => !known.includes(mode)))
   throw new Error(`Specify one of ${known.join(', ')}`)
 const all = modes.includes('--all')
@@ -69,4 +74,9 @@ if (all || modes.includes('--js')) {
 if (all || modes.includes('--swift')) {
   const { swiftGate } = await import('./splash-coverage-native.mjs')
   swiftGate({ run, base })
+}
+
+if (all || modes.includes('--kotlin')) {
+  const { kotlinGate } = await import('./splash-coverage-native.mjs')
+  kotlinGate({ run, base })
 }

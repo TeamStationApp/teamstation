@@ -1,6 +1,126 @@
 {
   "scenarios": [
     {
+      "id": "app-shell/splash/android-launch#dismiss",
+      "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/main/java/app/teamstation/app/splash/**",
+        "android/app/src/main/java/app/teamstation/app/MainActivity.kt",
+        "android/app/src/main/res/values/styles.xml",
+        "mobile/icons/splash/**"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/android-launch",
+      "file": "e2e/tests/app-shell/splash/android-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/android-launch#frames",
+      "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/main/java/app/teamstation/app/splash/**",
+        "android/app/src/main/java/app/teamstation/app/MainActivity.kt",
+        "android/app/src/main/res/values/styles.xml",
+        "mobile/icons/splash/**"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/android-launch",
+      "file": "e2e/tests/app-shell/splash/android-launch.e2e.ts"
+    },
+    {
+      "id": "app-shell/splash/android-launch#warm-resume",
+      "title": "The Android launch splash plays the design, dismisses to the app and skips a resume",
+      "kind": "e2e",
+      "covers": [
+        "android/app/src/main/java/app/teamstation/app/splash/**",
+        "android/app/src/main/java/app/teamstation/app/MainActivity.kt",
+        "android/app/src/main/res/values/styles.xml",
+        "mobile/icons/splash/**"
+      ],
+      "stack": "none",
+      "fixtures": [],
+      "exclusive": false,
+      "surfaces": {
+        "android-app": {
+          "devices": [
+            {
+              "role": "app",
+              "needs": [
+                "android-phone"
+              ],
+              "hardware": "none"
+            }
+          ]
+        }
+      },
+      "services": [],
+      "apps": [
+        "teamstation-android"
+      ],
+      "secrets": [],
+      "costUsd": 0,
+      "minutes": 4,
+      "guards": [],
+      "faults": [],
+      "manual": false,
+      "sendsNoMail": true,
+      "spec": "app-shell/splash/android-launch",
+      "file": "e2e/tests/app-shell/splash/android-launch.e2e.ts"
+    },
+    {
       "id": "app-shell/splash/ipad-launch#frames-landscape",
       "title": "The iPad launch splash crops less of the stadium in both orientations and survives a turn",
       "kind": "e2e",

@@ -84,3 +84,35 @@ export function swiftGate({ run, base }) {
     'ios/TeamStation/AppDelegate.swift'
   ])
 }
+
+/**
+ * The Kotlin gate: app.teamstation.app.splash and MainActivity, from
+ * :app:splashCoverage, which merges the JVM tests with TS_SPLASH_EXEC, the
+ * instrumented run's execution data, when it is set.
+ */
+export function kotlinGate({ run, base }) {
+  run('./android/gradlew', [
+    '-p',
+    'android',
+    ':app:splashCoverage',
+    '--rerun-tasks'
+  ])
+  run('node', [
+    'scripts/changed-line-check.cjs',
+    '--base',
+    base,
+    '--min',
+    '95',
+    '--jacoco',
+    'android/app/build/reports/jacoco/splashCoverage/splashCoverage.xml',
+    '--source-root',
+    'android/app/src/main/java',
+    '--ext',
+    '.kt',
+    // Generated constants: no executable line to measure.
+    '--exclude',
+    'android/app/src/main/java/app/teamstation/app/splash/SplashTimeline.kt',
+    'android/app/src/main/java/app/teamstation/app/splash',
+    'android/app/src/main/java/app/teamstation/app/MainActivity.kt'
+  ])
+}
