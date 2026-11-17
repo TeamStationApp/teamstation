@@ -957,6 +957,116 @@ describe('Videos tab autoplay', function () {
         expect(video.muted).equals(true)
       })
 
+  it('gives up on a recording before it played, and still opens the new address at the link’s moment', async function () {
+    this.timeout(20000)
+    const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+    Object.defineProperty(proto, 'canPlayType', {
+      configurable: true,
+      value: () => 'maybe'
+    })
+    try {
+      ready = 0
+      let asks = 0
+      await page(
+        [videoOf('v1', START)],
+        { autoPlay: false, startAtSec: 600 },
+        {
+          playback: async videoId => {
+            asks += 1
+            return {
+              ...playable(videoId),
+              url: `/media/${videoId}/master.m3u8?ask=${asks}`
+            }
+          }
+        }
+      )
+      const first = inline()
+      Object.defineProperty(first, 'error', {
+        configurable: true,
+        get: () => ({ code: 2 })
+      })
+      // It fails before any metadata, so before any position of its own.
+      for (const waitMs of [1100, 2100, 4100, 0]) {
+        await act(async () => {
+          first.dispatchEvent(new window.Event('error'))
+          await new Promise(resolve => setTimeout(resolve, waitMs))
+        })
+      }
+      await act(async () => {
+        await new Promise(resolve => setTimeout(resolve, 50))
+      })
+      expect(asks).equals(2)
+      const video = inline()
+      expect(video.src).includes('ask=2')
+      await act(async () => {
+        ready = 4
+        video.dispatchEvent(new window.Event('loadedmetadata'))
+      })
+      expect(video.currentTime, 'the link’s moment, not the start').equals(600)
+    } finally {
+      if (canPlay != null) Object.defineProperty(proto, 'canPlayType', canPlay)
+      else Reflect.deleteProperty(proto, 'canPlayType')
+    }
+  })
+
+  for (const watching of [true, false])
+    it(`asks for a new address when Safari's player gives up on a live game, and ${watching ? 'plays it as the viewer was' : 'leaves it paused as the viewer had it'}`, async function () {
+      this.timeout(20000)
+      const canPlay = Object.getOwnPropertyDescriptor(proto, 'canPlayType')
+      Object.defineProperty(proto, 'canPlayType', {
+        configurable: true,
+        value: () => 'maybe'
+      })
+      try {
+        let asks = 0
+        await page(
+          [{ ...videoOf('v1', START), status: 'live' }],
+          { autoPlay: false },
+          {
+            playback: async videoId => {
+              asks += 1
+              return {
+                ...playable(videoId),
+                url: `/media/${videoId}/master.m3u8?ask=${asks}`
+              }
+            }
+          }
+        )
+        const first = inline()
+        expect(first.src).includes('ask=1')
+        if (watching) {
+          await act(async () => {
+            first.dispatchEvent(new window.Event('play'))
+          })
+        }
+        // Four failures, each after the wait the player gives the one
+        // before, and it gives up on the address.
+        Object.defineProperty(first, 'error', {
+          configurable: true,
+          get: () => ({ code: 2 })
+        })
+        const before = plays.length
+        for (const waitMs of [1100, 2100, 4100, 0]) {
+          await act(async () => {
+            first.dispatchEvent(new window.Event('error'))
+            await new Promise(resolve => setTimeout(resolve, waitMs))
+          })
+        }
+        await act(async () => {
+          await new Promise(resolve => setTimeout(resolve, 50))
+        })
+        expect(asks).equals(2)
+        const video = inline()
+        expect(video.src).includes('ask=2')
+        expect(plays.length > before).equals(watching)
+        expect(video.paused).equals(!watching)
+      } finally {
+        if (canPlay != null)
+          Object.defineProperty(proto, 'canPlayType', canPlay)
+        else Reflect.deleteProperty(proto, 'canPlayType')
+      }
+    })
+
   it('starts a paused recording at its saved position when Videos is selected again', async function () {
     await page([videoOf('v1', START)], { initialTab: 'boxScore' })
     await select('Videos')

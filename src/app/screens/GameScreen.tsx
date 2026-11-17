@@ -1076,7 +1076,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, addressAttempt])
+  }, [client, videoId])
 
   // The app never builds a media URL: the server knows where the video is and
   // checks membership while it looks, so asking is the only way to find out.
@@ -1113,7 +1113,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     return () => {
       live = false
     }
-  }, [client, videoId, nonMemberView, props.signedIn])
+    // A player that gave up on its address asks for a new one.
+  }, [client, videoId, nonMemberView, props.signedIn, addressAttempt])
 
   // A live video is listed the moment its stream starts publishing, a few
   // seconds before its first segment is written, and until then the server
@@ -1305,6 +1306,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * is the one that comes back.
    */
   const lastTime = useRef(0)
+  /** The video `lastTime` was sampled from. */
+  const lastTimeFor = useRef<string | undefined>(undefined)
   /** The picture's own mapping onto the wall clock, from its stream's dates. */
   const mappingRef = useRef<WallMapping | null>(null)
   /** The server's wall timeline for it, as its board has it. */
@@ -1351,6 +1354,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const onTime = (): void => {
       if (!suspended.current && element.currentTime > 0) {
         lastTime.current = element.currentTime
+        lastTimeFor.current = placeFor.current.videoId
       }
     }
     const onPlay = (): void => {
@@ -1428,6 +1432,16 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
    * was opened at (`startAtSec`) rather than standing down at 0.
    */
   const attached = useRef(false)
+  /**
+   * The video playing when its player gave up on the address, and whether the
+   * viewer was watching it: the new address picks up as it was. A recording
+   * resumes at its moment; a live game rejoins at its live point, which the
+   * first play gives.
+   */
+  const gaveUpOn = useRef<{ videoId: string; live: boolean } | null>(null)
+  gaveUpOn.current =
+    videoId == null ? null : { videoId, live: freshStatus === 'live' }
+  const playAfterAddress = useRef(false)
   useLayoutEffect(() => {
     const element = playerNode
     covered.current =
@@ -1466,6 +1480,8 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
     const playOnEntry = watchPlayRequest.current === gameId
     watchPlayRequest.current = null
     if (playOnEntry) viewerWants.current = true
+    const playAgain = playAfterAddress.current
+    playAfterAddress.current = false
     attached.current = true
     // Only this attachment may answer a refused play. A detached picture
     // must not restart after its metadata or play promise arrives late.
@@ -1504,6 +1520,18 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       element,
       playbackUrl,
       () => {
+        const gaveUp = gaveUpOn.current
+        if (gaveUp?.live === true)
+          playAfterAddress.current = viewerWants.current
+        // Only once it has played: before that, a link's moment or a resume
+        // still pending is where the new address goes, not the start.
+        else if (gaveUp != null && lastTimeFor.current === gaveUp.videoId) {
+          setResumeAt({
+            videoId: gaveUp.videoId,
+            sec: lastTime.current,
+            playing: viewerWants.current
+          })
+        }
         setAddressAttempt(attempt => attempt + 1)
       },
       {
@@ -1651,7 +1679,7 @@ export function GameScreen(props: GameScreenProps): React.ReactElement {
       }
     }
 
-    if (playOnEntry || autoPlayRef.current === true) {
+    if (playOnEntry || playAgain || autoPlayRef.current === true) {
       // Silent unless a highlight brought it here, which every browser lets
       // start on its own; heard, it falls back to silent if refused. If it
       // will not start at all, a tap opens the player, and saying so would
