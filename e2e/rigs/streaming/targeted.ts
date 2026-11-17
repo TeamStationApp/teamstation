@@ -4,7 +4,12 @@ import { join } from 'node:path'
 
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
-import { MIN_CONFIDENCE, readingEpochMs, type TileClock } from './clockReader'
+import {
+  type ClockBase,
+  MIN_CONFIDENCE,
+  readingEpochMs,
+  type TileClock
+} from './clockReader'
 import { type OwnerApi, ownerApi } from './ownerApi'
 import type { SoakSampler } from './soakRun'
 import { signInApp } from './soakSignIn'
@@ -130,12 +135,13 @@ export function fractionFor(
 export function tileMoments(
   clocks: TileClock[],
   atMs: number,
-  offsetMinutes = 0
+  baseOf: (angle: string) => ClockBase | undefined
 ): Map<string, number> {
   const out = new Map<string, number>()
   for (const { angle, reading } of clocks) {
     if (reading == null || reading.confidence < MIN_CONFIDENCE) continue
-    out.set(angle, readingEpochMs(reading, atMs, offsetMinutes))
+    const base = baseOf(angle)
+    if (base != null) out.set(angle, readingEpochMs(reading, atMs, base))
   }
   return out
 }
@@ -307,7 +313,8 @@ export interface TargetedSession {
   record: Recorder
   /** When the cameras started publishing. */
   takeStartMs: number
-  offsetMinutes: number
+  /** Where a camera's burned clock starts, by its label. */
+  clockBase: (label: string) => ClockBase | undefined
   streamId: (label: string) => string
   /** A look at a watcher: its probe, with each tile's clock where the surface reads clocks. */
   look: (watcher: Watcher) => Promise<Look>
@@ -368,7 +375,7 @@ export function lookFrom(
   probe: Awaited<ReturnType<SoakSurfaceDriver['probe']>>,
   clocks: TileClock[],
   atMs: number,
-  offsetMinutes: number
+  baseOf: (angle: string) => ClockBase | undefined
 ): Look {
   if (probe.tiles == null) {
     return {
@@ -377,7 +384,7 @@ export function lookFrom(
       ...(probe.reason == null ? {} : { reason: probe.reason })
     }
   }
-  const moments = tileMoments(clocks, atMs, offsetMinutes)
+  const moments = tileMoments(clocks, atMs, baseOf)
   return {
     atMs,
     tiles: probe.tiles.map(tile => ({
@@ -394,6 +401,8 @@ export interface PublisherLike {
   start: () => Promise<void>
   stop: () => Promise<void>
   cut: (seconds: number) => Promise<void>
+  /** Where its burned clock starts, once it has started. */
+  clockBase: () => ClockBase | undefined
 }
 
 /** What `runTargeted` reaches outside this process; the real ones unless a test stands in. */
@@ -617,7 +626,8 @@ export async function runTargeted(
       }
     }
 
-    const offsetMinutes = world.settings.offsetMinutes ?? 0
+    const clockBase = (label: string): ClockBase | undefined =>
+      publishers.get(label)?.clockBase()
     const look = async (watcher: Watcher): Promise<Look> => {
       const atMs = deps.now()
       const probe = await watcher.surface.probe()
@@ -627,7 +637,7 @@ export async function runTargeted(
       } catch {
         // No clocks is a look without moments, not a failed look.
       }
-      return lookFrom(probe, clocks, atMs, offsetMinutes)
+      return lookFrom(probe, clocks, atMs, clockBase)
     }
     const session: TargetedSession = {
       world,
@@ -636,7 +646,7 @@ export async function runTargeted(
       owner: ownerApi({ api: world.handle.api, token: world.ownerToken }),
       record,
       takeStartMs,
-      offsetMinutes,
+      clockBase,
       streamId: label => {
         const stream = world.world.streams.find(s => s.label === label)
         if (stream == null) throw new Error(`no synthetic camera "${label}"`)

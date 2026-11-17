@@ -2,6 +2,7 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 import { connect as netConnect } from 'node:net'
 
+import { benchClock, type ClockBase } from './clockReader'
 import {
   FlvReader,
   parseRtmpUrl,
@@ -200,6 +201,13 @@ export class SyntheticPublisher {
     private readonly deps: PublisherDeps = nodeDeps
   ) {
     this.fps = options.fps ?? FPS
+  }
+
+  /** The bench clock it burns in, while it runs. */
+  clockBase(): ClockBase | undefined {
+    return this.target == null
+      ? undefined
+      : benchClock(this.options.offsetMinutes)
   }
 
   get running(): boolean {

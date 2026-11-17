@@ -121,6 +121,34 @@ describe("Chrome's frame log", function () {
     ).equals(true)
   })
 
+  it('compares the moments cameras show, when their clocks started apart', function () {
+    // Fixture clocks: SynthB's camera started 300 ms after SynthA's, so its
+    // clock reads 300 ms less for the same moment.
+    const started = { SynthA: 1_000_000, SynthB: 1_000_300 }
+    const fixture = (start: number) => (ms: number) => ms + 1_000_000 - start
+    const frames = [
+      ...run('SynthA', 0, 4_000, fixture(started.SynthA)),
+      ...run('SynthB', 0, 4_000, fixture(started.SynthB))
+    ].map(f => ({ ...f, displayMs: f.displayMs + 1_000_000 }))
+    const raw = analyseFrames(frames)
+    expect(raw.spreads[1].spreadMs).closeTo(300, 40)
+    const placed = analyseFrames(frames, [], {
+      clockBase: angle => ({
+        startedAtMs: started[angle as 'SynthA' | 'SynthB'],
+        loopMs: 1_800_000
+      })
+    })
+    expect(placed.spreads[1].spreadMs).closeTo(0, 40)
+    // An angle whose publisher gave no base is left out of the spread, not compared raw.
+    const half = analyseFrames(frames, [], {
+      clockBase: angle =>
+        angle === 'SynthA'
+          ? { startedAtMs: started.SynthA, loopMs: 1_800_000 }
+          : undefined
+    })
+    expect(half.spreads).deep.equals([])
+  })
+
   it('stalls an angle that stops for good until the end, and one that never presented a frame', function () {
     const frames = [
       ...run('SynthA', 0, 20_000, ms => ms),

@@ -155,7 +155,7 @@ function fakeSession(): {
     owner: { endCamera: async () => {} },
     record,
     takeStartMs: T0,
-    offsetMinutes: 0,
+    clockBase: () => undefined,
     streamId: label => label,
     look,
     seekTo: async () => null,

@@ -231,6 +231,7 @@ function session(
       },
       // The hole ends on the event loop's next turn: the scenario's own work
       // meanwhile (its sleeps and looks on this clock) is all done by then.
+      clockBase: () => undefined,
       cut: async (seconds: number): Promise<void> => {
         const start = now()
         const end = start + seconds * 1000
@@ -265,7 +266,7 @@ function session(
     owner,
     record,
     takeStartMs: T0,
-    offsetMinutes: 0,
+    clockBase: () => undefined,
     streamId: label => `id-${label}`,
     look: async w => byWatcher.get(w)!.look(),
     seekTo: async (w, targetMs) => {

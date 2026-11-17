@@ -1,3 +1,4 @@
+import { type ClockBase, readingEpochMs } from './clockReader'
 import {
   CLOCK_ORIGIN,
   clockLayout,
@@ -194,6 +195,12 @@ export function analyseFrames(
     startMs?: number
     endMs?: number
     expected?: string[]
+    /**
+     * Where each angle's clock starts: its spread is then of wall times, as
+     * cameras started at different moments burn in clocks that differ by as
+     * much. Without one, the clocks themselves are compared.
+     */
+    clockBase?: (angle: string) => ClockBase | undefined
   } = {}
 ): FrameAnalysis {
   const gapMs = options.gapMs ?? 1000
@@ -296,9 +303,16 @@ export function analyseFrames(
   for (const frame of frames) {
     if (frame.clockMsOfDay == null || inAny(frame.displayMs, quiet)) continue
     const second = Math.floor(frame.displayMs / 1000) * 1000
+    const base = options.clockBase?.(frame.angle)
+    // With bases, an angle without one cannot be placed in wall time; its raw clock would not compare.
+    if (options.clockBase != null && base == null) continue
     const row = seconds.get(second) ?? new Map<string, number>()
-    // The clock less how far into the second it was shown, so frames shown at different moments compare.
-    row.set(frame.angle, frame.clockMsOfDay - (frame.displayMs - second))
+    const shows =
+      base == null
+        ? frame.clockMsOfDay
+        : readingEpochMs({ msOfDay: frame.clockMsOfDay }, frame.displayMs, base)
+    // The moment shown less how far into the second it was shown, so frames shown at different moments compare.
+    row.set(frame.angle, shows - (frame.displayMs - second))
     seconds.set(second, row)
   }
   const spreads = [...seconds.entries()]

@@ -7,7 +7,7 @@ import { describe, it } from 'mocha'
 
 import { BlockedError } from '../../core/result'
 import type { E2eContext } from '../../core/spec'
-import type { TileClock } from './clockReader'
+import { benchClock, type TileClock } from './clockReader'
 import type { SoakSettings, StreamingWorld } from './streamingSession'
 import { awaitable, type Call, fakeDevice, png } from './surfaces/fakes.test'
 import type { SurfaceProbe } from './surfaces/surface'
@@ -80,8 +80,13 @@ describe('the targeted helpers', function () {
         clock('SynthC', T0, 0.5),
         { angle: 'SynthD', reading: null }
       ],
-      T0
+      T0,
+      () => benchClock()
     )
+    // An angle with no clock base yet has no moment.
+    expect([
+      ...tileMoments([clock('SynthA', T0)], T0, () => undefined)
+    ]).deep.equals([])
     expect([...moments]).deep.equals([
       ['SynthA', T0 + 1000],
       ['SynthB', T0 + 1400]
@@ -218,7 +223,9 @@ describe('the targeted helpers', function () {
       bar: 0.5,
       foreground: true
     }
-    expect(lookFrom(probe, [clock('SynthA', T0 + 500)], T0, 0)).deep.equals({
+    expect(
+      lookFrom(probe, [clock('SynthA', T0 + 500)], T0, () => benchClock())
+    ).deep.equals({
       atMs: T0,
       tiles: [
         { angle: 'SynthA', advancing: true, notice: null, wallMs: T0 + 500 },
@@ -235,11 +242,13 @@ describe('the targeted helpers', function () {
         { tiles: null, bar: null, foreground: null, reason: 'gone' },
         [],
         T0,
-        0
+        () => benchClock()
       )
     ).deep.equals({ atMs: T0, tiles: null, reason: 'gone' })
     expect(
-      lookFrom({ tiles: null, bar: null, foreground: null }, [], T0, 0)
+      lookFrom({ tiles: null, bar: null, foreground: null }, [], T0, () =>
+        benchClock()
+      )
     ).deep.equals({ atMs: T0, tiles: null })
   })
 })
@@ -451,7 +460,8 @@ function rig(
         },
         cut: async seconds => {
           log.push(`cut ${publisher.label} ${seconds}`)
-        }
+        },
+        clockBase: () => benchClock(publisher.offsetMinutes)
       }
     },
     run: async (command, args) => {
@@ -504,7 +514,8 @@ describe('running a targeted scenario', function () {
           '/Users/dev/.config/teamstation-e2e/shaper.mjs'
         )
         expect(session.shapedIps).deep.equals({ iphone: '192.0.2.1' })
-        expect(session.offsetMinutes).equals(0)
+        expect(session.clockBase('SynthA')).deep.equals(benchClock(undefined))
+        expect(session.clockBase('SynthZ')).equals(undefined)
         expect(session.streamId('SynthB')).equals('st-b')
         expect(() => session.streamId('SynthZ')).throws(
           'no synthetic camera "SynthZ"'
@@ -642,7 +653,7 @@ describe('running a targeted scenario', function () {
       '/repo',
       { synthetic: ['SynthA'], watchers: ['android'], leadMs: 1000 },
       async session => {
-        expect(session.offsetMinutes).equals(60)
+        expect(session.clockBase('SynthA')).deep.equals(benchClock(60))
         expect(session.now()).equals(T0 + 1000)
         await session.record.check(
           session.watchers[0],
@@ -696,6 +707,7 @@ describe('running a targeted scenario', function () {
   it('lets go of everything when the scenario throws', async function () {
     const r = rig()
     r.deps.publisher = () => ({
+      clockBase: () => undefined,
       start: async () => {},
       stop: async () => {
         throw new Error('already stopped')

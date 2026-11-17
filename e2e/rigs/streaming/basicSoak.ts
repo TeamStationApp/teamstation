@@ -382,7 +382,8 @@ export function basicScrub(options: BasicOptions): TargetedScenario {
           : analyseFrames(frames, quiet, {
               startMs,
               endMs: session.now(),
-              expected: BASIC_ANGLES
+              expected: BASIC_ANGLES,
+              clockBase: session.clockBase
             })
       if (analysis != null && chrome != null) {
         for (const angle of analysis.angles) {
