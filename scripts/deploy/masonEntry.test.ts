@@ -1863,7 +1863,11 @@ describe('Google Play closed-testing release', () => {
       notes: 'Notes',
       fetcher: api.fetcher
     })
-    assert.deepEqual(result, { editId: 'edit-7', versionCode: 26111501 })
+    assert.deepEqual(result, {
+      editId: 'edit-7',
+      versionCode: 26111501,
+      status: 'completed'
+    })
     const base =
       'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.teamstation.app'
     assert.deepEqual(
@@ -1952,6 +1956,81 @@ describe('Google Play closed-testing release', () => {
       /no versionCode/
     )
     assert.equal(noCode.calls.at(-1)?.method, 'DELETE')
+  })
+
+  it('releases a draft in a new edit while the app has never been published', async () => {
+    let edits = 0
+    const api = recorder(call => {
+      if (call.url.endsWith('/edits'))
+        return reply(200, { id: `edit-${(edits += 1)}` })
+      if (call.url.includes('/bundles'))
+        return reply(200, { versionCode: 26111604 })
+      if (call.url.endsWith('edit-1:commit'))
+        return reply(400, {
+          error: {
+            message:
+              'Only releases with status draft may be created on draft app.'
+          }
+        })
+      return reply(200, {})
+    })
+    const result = await releaseToPlayTrack({
+      token: 'token-1',
+      bundle: new Uint8Array([1]),
+      track: 'alpha',
+      notes: 'Notes',
+      fetcher: api.fetcher
+    })
+    assert.deepEqual(result, {
+      editId: 'edit-2',
+      versionCode: 26111604,
+      status: 'draft'
+    })
+    const base =
+      'https://androidpublisher.googleapis.com/androidpublisher/v3/applications/app.teamstation.app'
+    const upload =
+      'https://androidpublisher.googleapis.com/upload/androidpublisher/v3/applications/app.teamstation.app'
+    assert.deepEqual(
+      api.calls.map(call => `${call.method} ${call.url}`),
+      [
+        `POST ${base}/edits`,
+        `POST ${upload}/edits/edit-1/bundles?uploadType=media`,
+        `PUT ${base}/edits/edit-1/tracks/alpha`,
+        `POST ${base}/edits/edit-1:commit`,
+        `DELETE ${base}/edits/edit-1`,
+        `POST ${base}/edits`,
+        `POST ${upload}/edits/edit-2/bundles?uploadType=media`,
+        `PUT ${base}/edits/edit-2/tracks/alpha`,
+        `POST ${base}/edits/edit-2:commit`
+      ]
+    )
+    const statuses = api.calls
+      .filter(call => call.url.endsWith('/tracks/alpha'))
+      .map(call => JSON.parse(String(call.body)).releases[0].status)
+    assert.deepEqual(statuses, ['completed', 'draft'])
+
+    const other = recorder(call => {
+      if (call.url.endsWith('/edits')) return reply(200, { id: 'edit-3' })
+      if (call.url.includes('/bundles'))
+        return reply(200, { versionCode: 26111605 })
+      if (call.url.endsWith(':commit'))
+        return reply(400, { error: { message: 'Version code already used.' } })
+      return reply(200, {})
+    })
+    await assert.rejects(
+      releaseToPlayTrack({
+        token: 'token-1',
+        bundle: new Uint8Array([1]),
+        track: 'alpha',
+        notes: 'Notes',
+        fetcher: other.fetcher
+      }),
+      /Version code already used/
+    )
+    assert.equal(
+      other.calls.filter(call => call.url.endsWith('/edits')).length,
+      1
+    )
   })
 
   it('releases the stashed bundle from the play stage and logs the versionCode', async () => {
